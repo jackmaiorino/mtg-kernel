@@ -21,7 +21,7 @@ use crate::rl::{
     TerminalSafeCodeV2,
 };
 use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition};
-use crate::surface_v2::{SurfaceDecision, H2_PREDICATE_VERSION};
+use crate::surface_v2::{SuppressionAuditMode, SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -242,7 +242,27 @@ impl RlEpisodeSessionV1 {
         max_physical_decisions: u64,
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
+        profile: Option<&mut RlPhaseProfileV1>,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_profiled_in_audit_mode(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            profile,
+            SuppressionAuditMode::Off,
+        )
+    }
+
+    fn reset_with_decks_and_limits_profiled_in_audit_mode(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
         mut profile: Option<&mut RlPhaseProfileV1>,
+        suppression_audit_mode: SuppressionAuditMode,
     ) -> Result<Self, RlSessionError> {
         let mut session = measure_optional(&mut profile, RlPhaseV1::Reset, || {
             let resolved_decks = resolve_runtime_decks(&deck_ids)?;
@@ -265,7 +285,11 @@ impl RlEpisodeSessionV1 {
                 max_physical_decisions,
                 max_policy_steps,
                 state,
-                surface: PolicySurfaceV5::new(),
+                surface: if suppression_audit_mode == SuppressionAuditMode::Off {
+                    PolicySurfaceV5::new_for_session()
+                } else {
+                    PolicySurfaceV5::new_with_suppression_audit_mode(suppression_audit_mode)
+                },
                 policy_step_count: 0,
                 physical_decision_count: 0,
                 current: None,
@@ -1212,7 +1236,7 @@ mod tests {
     use super::*;
     use crate::card_def::card_id_by_name;
     use crate::rl::card_name;
-    use crate::state::{Counters, GameObject, GameState, ObjectStateV4, Step, Zone};
+    use crate::state::{Counters, GameObject, GameState, ObjectStateV4, SplitMix64, Step, Zone};
 
     fn attacker_state(count: usize) -> GameState {
         let mut state = GameState::new_from_libraries(&[], &[], card_name, 91);
@@ -1432,5 +1456,181 @@ mod tests {
 
         session.restore_v5(&snapshot);
         assert!(session.step(5, step, index, &id).is_ok());
+    }
+
+    fn reset_in_suppression_audit_mode(
+        episode_id: u64,
+        env_seed: u64,
+        deck_id: &str,
+        mode: SuppressionAuditMode,
+    ) -> RlEpisodeSessionV1 {
+        RlEpisodeSessionV1::reset_with_decks_and_limits_profiled_in_audit_mode(
+            episode_id,
+            env_seed,
+            4_096,
+            524_288,
+            [deck_id.to_string(), deck_id.to_string()],
+            None,
+            mode,
+        )
+        .unwrap()
+    }
+
+    fn prove_suppression_audit_mode_equivalence(deck_id: &str, seed: u64) {
+        let episode_id = seed ^ 0xA11D_1700_0000_0001;
+        let mut sessions = [
+            reset_in_suppression_audit_mode(episode_id, seed, deck_id, SuppressionAuditMode::Full),
+            reset_in_suppression_audit_mode(
+                episode_id,
+                seed,
+                deck_id,
+                SuppressionAuditMode::CountOnly,
+            ),
+            reset_in_suppression_audit_mode(episode_id, seed, deck_id, SuppressionAuditMode::Off),
+        ];
+        let mut policy_rng = SplitMix64::seed(seed ^ 0x50A1_CE00_0000_0005);
+        let mut reached_terminal = false;
+        let mut policy_steps_seen = 0u64;
+        let mut midrun_hash_checkpoint_seen = false;
+
+        for _ in 0..524_289 {
+            let reference = sessions[0].current_response();
+            let reference_bytes = serde_json::to_vec(&reference).unwrap();
+            let reference_context = sessions[0].surface.harness_public_context();
+            let compare_privileged_hashes = policy_steps_seen == 0
+                || policy_steps_seen == 32
+                || matches!(&reference, RlSessionResponseV1::Terminal(_));
+            let reference_hashes = compare_privileged_hashes.then(|| {
+                (
+                    sessions[0].diagnostic_state_hash(),
+                    sessions[0].privileged_environment_hash(),
+                )
+            });
+            midrun_hash_checkpoint_seen |= policy_steps_seen == 32;
+
+            for (index, session) in sessions.iter().enumerate().skip(1) {
+                assert_eq!(
+                    serde_json::to_vec(&session.current_response()).unwrap(),
+                    reference_bytes,
+                    "{deck_id} profile-off session response bytes diverged in audit mode {index}"
+                );
+                assert_eq!(
+                    session.surface.harness_public_context(),
+                    reference_context,
+                    "{deck_id} public H2 context diverged in audit mode {index}"
+                );
+                if let Some((reference_state_hash, reference_environment_hash)) = reference_hashes {
+                    assert_eq!(
+                        session.diagnostic_state_hash(),
+                        reference_state_hash,
+                        "{deck_id} diagnostic state hash diverged in audit mode {index}"
+                    );
+                    assert_eq!(
+                        session.privileged_environment_hash(),
+                        reference_environment_hash,
+                        "{deck_id} stable action/environment binding diverged in audit mode {index}"
+                    );
+                }
+            }
+
+            let RlSessionResponseV1::Decision(decision) = reference else {
+                reached_terminal = true;
+                break;
+            };
+            assert!(!decision.legal_actions.is_empty());
+            let selected_index =
+                (policy_rng.next_u64() % decision.legal_actions.len() as u64) as usize;
+            let selected = &decision.legal_actions[selected_index];
+            let expected_next = sessions[0]
+                .step(
+                    episode_id,
+                    decision.step,
+                    selected.selected_index,
+                    &selected.stable_id,
+                )
+                .unwrap();
+            let expected_next_bytes = serde_json::to_vec(&expected_next).unwrap();
+            for (index, session) in sessions.iter_mut().enumerate().skip(1) {
+                let next = session
+                    .step(
+                        episode_id,
+                        decision.step,
+                        selected.selected_index,
+                        &selected.stable_id,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    serde_json::to_vec(&next).unwrap(),
+                    expected_next_bytes,
+                    "{deck_id} decisions, actions, or stable ids diverged in audit mode {index}"
+                );
+            }
+            policy_steps_seen = policy_steps_seen.saturating_add(1);
+        }
+        assert!(
+            reached_terminal,
+            "{deck_id} fixture did not reach a terminal response"
+        );
+        assert!(
+            midrun_hash_checkpoint_seen,
+            "{deck_id} fixture did not reach its privileged mid-run hash checkpoint"
+        );
+
+        let full_surface = sessions[0].surface.harness_surface();
+        let count_surface = sessions[1].surface.harness_surface();
+        let off_surface = sessions[2].surface.harness_surface();
+        assert_eq!(
+            count_surface.suppression_counts(),
+            full_surface.suppression_counts(),
+            "{deck_id} CountOnly reason counts must exactly match Full records"
+        );
+        assert_eq!(
+            full_surface.suppression_counts().total(),
+            full_surface.suppressions().len() as u64
+        );
+        assert!(
+            !full_surface.suppressions().is_empty(),
+            "{deck_id} fixture must exercise at least one suppression"
+        );
+        assert!(count_surface.suppressions().is_empty());
+        assert_eq!(off_surface.suppression_counts().total(), 0);
+        assert!(off_surface.suppressions().is_empty());
+        assert_eq!(
+            sessions[1].diagnostic_state_hash(),
+            sessions[0].diagnostic_state_hash(),
+            "{deck_id} terminal state hash differs for CountOnly"
+        );
+        assert_eq!(
+            sessions[2].diagnostic_state_hash(),
+            sessions[0].diagnostic_state_hash(),
+            "{deck_id} terminal state hash differs for Off"
+        );
+    }
+
+    #[test]
+    fn suppression_audit_modes_are_byte_and_semantics_inert_for_burn_and_rally() {
+        prove_suppression_audit_mode_equivalence(CANONICAL_BURN_DECK_ID, 71_501);
+        prove_suppression_audit_mode_equivalence(CANONICAL_RALLY_DECK_ID, 71_502);
+    }
+
+    #[test]
+    fn suppression_audit_mode_does_not_change_integrity_error_precedence() {
+        for mode in [
+            SuppressionAuditMode::Full,
+            SuppressionAuditMode::CountOnly,
+            SuppressionAuditMode::Off,
+        ] {
+            let episode_id = 71_503;
+            let mut session =
+                reset_in_suppression_audit_mode(episode_id, 19_991, CANONICAL_RALLY_DECK_ID, mode);
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("Rally fixture must begin with a decision");
+            };
+            session.state.players[0].life -= 1;
+            let error = session
+                .step(episode_id, decision.step, u32::MAX, "unknown-action")
+                .unwrap_err();
+            assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        }
     }
 }

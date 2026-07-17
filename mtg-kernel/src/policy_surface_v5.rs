@@ -8,7 +8,7 @@
 use crate::engine::{Action, Decision};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::GameState;
-use crate::surface_v2::{HarnessSurfaceV2, SurfaceAction, SurfaceDecision};
+use crate::surface_v2::{HarnessSurfaceV2, SuppressionAuditMode, SurfaceAction, SurfaceDecision};
 use serde::{Deserialize, Serialize};
 
 pub const POLICY_SURFACE_VERSION: u32 = 5;
@@ -254,7 +254,7 @@ impl CombatScanV5 {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct PolicySurfaceV5 {
     inner: HarnessSurfaceV2,
     scan: Option<CombatScanV5>,
@@ -262,7 +262,21 @@ pub struct PolicySurfaceV5 {
 
 impl PolicySurfaceV5 {
     pub fn new() -> Self {
-        Self::default()
+        Self::new_with_suppression_audit_mode(SuppressionAuditMode::Full)
+    }
+
+    pub(crate) fn new_for_session() -> Self {
+        Self::new_with_suppression_audit_mode(SuppressionAuditMode::Off)
+    }
+
+    /// Diagnostic constructor for proving that suppression-audit retention is
+    /// observationally inert. Public standalone callers retain the historical
+    /// `Full` behavior; the privately owned production session selects `Off`.
+    pub fn new_with_suppression_audit_mode(mode: SuppressionAuditMode) -> Self {
+        Self {
+            inner: HarnessSurfaceV2::new_with_suppression_audit_mode(mode),
+            scan: None,
+        }
     }
 
     pub fn harness_surface(&self) -> &HarnessSurfaceV2 {
@@ -279,7 +293,8 @@ impl PolicySurfaceV5 {
 
     #[cfg(test)]
     pub(crate) fn reset_harness_context_for_test(&mut self) {
-        self.inner = HarnessSurfaceV2::new();
+        self.inner =
+            HarnessSurfaceV2::new_with_suppression_audit_mode(self.inner.suppression_audit_mode());
     }
 
     pub fn discard_unanswered_scan(&mut self) -> Result<(), String> {
@@ -458,6 +473,12 @@ impl PolicySurfaceV5 {
         self.inner.apply(state, aggregate)?;
         self.scan = None;
         Ok(())
+    }
+}
+
+impl Default for PolicySurfaceV5 {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

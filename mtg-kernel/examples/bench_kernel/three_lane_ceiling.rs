@@ -15,7 +15,9 @@ use mtg_kernel::rl_session::{
 };
 use mtg_kernel::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition};
 use mtg_kernel::state::{GameState, SplitMix64};
-use mtg_kernel::surface_v2::{HarnessSurfaceV2, SurfaceAction, SurfaceDecision};
+use mtg_kernel::surface_v2::{
+    HarnessSurfaceV2, SuppressionAuditMode, SurfaceAction, SurfaceDecision,
+};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier, OnceLock};
@@ -628,7 +630,7 @@ fn play_harness_surface_v2(
     decision_cap: u64,
 ) -> LaneGameResultV1 {
     let mut state = build_mirror_state_from_ids(deck.card_ids, seeds.env_seed);
-    let mut surface = HarnessSurfaceV2::new();
+    let mut surface = HarnessSurfaceV2::new_with_suppression_audit_mode(SuppressionAuditMode::Off);
     let mut policy = SeededUniformH2PolicyV1::new(seeds.policy_seed);
     let mut physical_decisions = 0u64;
     let outcome = loop {
@@ -1059,6 +1061,7 @@ struct LaneDefinitionV1 {
     lane: LaneKindV1,
     includes: &'static str,
     policy_adapter: &'static str,
+    suppression_audit_mode: &'static str,
 }
 
 #[derive(Serialize)]
@@ -1154,16 +1157,19 @@ fn build_record<'a>(
                     lane: LaneKindV1::EngineRaw,
                     includes: "engine_advance_step_only",
                     policy_adapter: "seeded_random_legal_raw_decision_adapter/v1",
+                    suppression_audit_mode: "not_applicable",
                 },
                 LaneDefinitionV1 {
                     lane: LaneKindV1::HarnessSurfaceV2,
                     includes: "engine_plus_harness_surface_v2_without_stable_ids_or_observations",
                     policy_adapter: POLICY_V1,
+                    suppression_audit_mode: SuppressionAuditMode::Off.as_str(),
                 },
                 LaneDefinitionV1 {
                     lane: LaneKindV1::RlSessionV5Inproc,
                     includes: "rl_episode_session_v1_policy_surface_v5_observations_legal_actions_privileged_integrity_transactional_clone_single_response_materialization",
                     policy_adapter: POLICY_V1,
+                    suppression_audit_mode: SuppressionAuditMode::Off.as_str(),
                 },
             ],
             exclusions: &[
@@ -1493,6 +1499,18 @@ mod tests {
         assert_eq!(
             value["workload"]["exclusions"][0],
             "jsonl_serialization_and_protocol"
+        );
+        assert_eq!(
+            value["workload"]["lanes"][0]["suppression_audit_mode"],
+            "not_applicable"
+        );
+        assert_eq!(
+            value["workload"]["lanes"][1]["suppression_audit_mode"],
+            "off"
+        );
+        assert_eq!(
+            value["workload"]["lanes"][2]["suppression_audit_mode"],
+            "off"
         );
     }
 

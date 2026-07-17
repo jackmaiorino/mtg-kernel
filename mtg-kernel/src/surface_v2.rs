@@ -370,12 +370,79 @@ enum OptionalCostStage {
     Which,
 }
 
+/// Controls diagnostic retention for decisions H2 suppresses internally.
+///
+/// This is deliberately excluded from [`HarnessSurfacePublicContextV2`]:
+/// suppression audit records are diagnostics, not policy-visible state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuppressionAuditMode {
+    /// Preserve the historical ordered records, action text, and before/after
+    /// diagnostic state hashes exactly.
+    #[default]
+    Full,
+    /// Retain only one fixed counter per suppression reason. No action text or
+    /// diagnostic state hash is constructed.
+    CountOnly,
+    /// Retain nothing and perform no suppression-audit hashing or allocation.
+    Off,
+}
+
+impl SuppressionAuditMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::CountOnly => "count_only",
+            Self::Off => "off",
+        }
+    }
+}
+
+/// Fixed-shape counters used by [`SuppressionAuditMode::CountOnly`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SuppressionCounts {
+    pub step_gated: u64,
+    pub no_real_option: u64,
+    pub no_eligible_attacker: u64,
+    pub no_eligible_blockers_for_attacker: u64,
+    pub combat_priority_action_spent: u64,
+    pub stack_top_is_casters_own: u64,
+}
+
+impl SuppressionCounts {
+    fn increment(&mut self, reason: SuppressionReason) {
+        let count = match reason {
+            SuppressionReason::StepGated => &mut self.step_gated,
+            SuppressionReason::NoRealOption => &mut self.no_real_option,
+            SuppressionReason::NoEligibleAttacker => &mut self.no_eligible_attacker,
+            SuppressionReason::NoEligibleBlockersForAttacker => {
+                &mut self.no_eligible_blockers_for_attacker
+            }
+            SuppressionReason::CombatPriorityActionSpent => &mut self.combat_priority_action_spent,
+            SuppressionReason::StackTopIsCastersOwn => &mut self.stack_top_is_casters_own,
+        };
+        *count = count.saturating_add(1);
+    }
+
+    pub fn total(self) -> u64 {
+        self.step_gated
+            .saturating_add(self.no_real_option)
+            .saturating_add(self.no_eligible_attacker)
+            .saturating_add(self.no_eligible_blockers_for_attacker)
+            .saturating_add(self.combat_priority_action_spent)
+            .saturating_add(self.stack_top_is_casters_own)
+    }
+}
+
 /// See the module doc. Structurally identical to `HarnessSurfaceV1` (same
 /// four suppression rules, same blockers-reshape bookkeeping) but a
 /// separate type, per the H2 contract.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct HarnessSurfaceV2 {
+    suppression_audit_mode: SuppressionAuditMode,
+    suppression_counts: SuppressionCounts,
     suppressions: Vec<Suppression>,
+    debug_surface_walk: bool,
     blockers: Option<BlockersReshape>,
     combat_priority_spent: [bool; 2],
     combat_priority_round_seen: Option<u64>,
@@ -557,6 +624,12 @@ pub struct HarnessSurfaceV2 {
     optional_cost: Option<OptionalCostReshape>,
 }
 
+impl Default for HarnessSurfaceV2 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// `REPLAY_DEBUG_SURFACE_WALK=1` diagnostic (ReferenceRules v2 grind, Sol
 /// #107 continuation): every engine-state field relevant to the stuck-
 /// trigger investigation (`rally/coverage_ledger.md`'s "castability-gap"
@@ -627,7 +700,59 @@ fn walk_decision_tag(decision: &Decision) -> String {
 
 impl HarnessSurfaceV2 {
     pub fn new() -> HarnessSurfaceV2 {
-        HarnessSurfaceV2::default()
+        Self::new_with_suppression_audit_mode(SuppressionAuditMode::Full)
+    }
+
+    pub fn new_with_suppression_audit_mode(
+        suppression_audit_mode: SuppressionAuditMode,
+    ) -> HarnessSurfaceV2 {
+        // The replay walk is itself a diagnostic log.  Cache the environment
+        // lookup once, but only Full may enable it: CountOnly and Off promise
+        // that a suppressed decision never builds an action string or emits a
+        // suppression log, even if a parent process happens to export the
+        // replay-debug variable.
+        let debug_surface_walk = suppression_audit_mode == SuppressionAuditMode::Full
+            && std::env::var("REPLAY_DEBUG_SURFACE_WALK").is_ok();
+        HarnessSurfaceV2 {
+            suppression_audit_mode,
+            suppression_counts: SuppressionCounts::default(),
+            suppressions: Vec::new(),
+            debug_surface_walk,
+            blockers: None,
+            combat_priority_spent: [false; 2],
+            combat_priority_round_seen: None,
+            combat_priority_stack_len_seen: 0,
+            combat_priority_mana_count_seen: 0,
+            combat_round_opening_mana_count: 0,
+            round_opening_stack_len: 0,
+            stack_len_round_seen: None,
+            last_seen_stack_len: None,
+            mana_count_at_last_stack_change: 0,
+            madness_cast_reprompt_exemption: None,
+            discard: None,
+            optional_cost: None,
+        }
+    }
+
+    pub const fn suppression_audit_mode(&self) -> SuppressionAuditMode {
+        self.suppression_audit_mode
+    }
+
+    /// Returns reason counts without adding work to the `Full` or `Off` hot
+    /// paths. Full derives them from its historical records on demand; Off
+    /// is intentionally all zero.
+    pub fn suppression_counts(&self) -> SuppressionCounts {
+        match self.suppression_audit_mode {
+            SuppressionAuditMode::Full => {
+                let mut counts = SuppressionCounts::default();
+                for suppression in &self.suppressions {
+                    counts.increment(suppression.reason);
+                }
+                counts
+            }
+            SuppressionAuditMode::CountOnly => self.suppression_counts,
+            SuppressionAuditMode::Off => SuppressionCounts::default(),
+        }
     }
 
     pub fn public_context(&self) -> HarnessSurfacePublicContextV2 {
@@ -716,15 +841,25 @@ impl HarnessSurfaceV2 {
         state.engine.pending_discard.as_ref().map(|pd| pd.count)
     }
 
-    fn record(
+    fn record<F>(
         &mut self,
         reason: SuppressionReason,
-        auto_action: impl Into<String>,
-        before: u64,
+        auto_action: F,
+        before: Option<u64>,
         state: &GameState,
-    ) {
-        let auto_action = auto_action.into();
-        if std::env::var("REPLAY_DEBUG_SURFACE_WALK").is_ok() {
+    ) where
+        F: FnOnce() -> String,
+    {
+        match self.suppression_audit_mode {
+            SuppressionAuditMode::CountOnly => {
+                self.suppression_counts.increment(reason);
+                return;
+            }
+            SuppressionAuditMode::Off => return,
+            SuppressionAuditMode::Full => {}
+        }
+        let auto_action = auto_action();
+        if self.debug_surface_walk {
             eprintln!(
                 "SURFACE_WALK SUPPRESS reason={reason:?} auto_action={auto_action:?} {}",
                 walk_state_snapshot(state)
@@ -733,9 +868,13 @@ impl HarnessSurfaceV2 {
         self.suppressions.push(Suppression {
             reason,
             auto_action,
-            state_hash_before: before,
+            state_hash_before: before.expect("Full suppression audit captures a before hash"),
             state_hash_after: state.state_hash(),
         });
+    }
+
+    fn suppression_state_hash(&self, state: &GameState) -> Option<u64> {
+        (self.suppression_audit_mode == SuppressionAuditMode::Full).then(|| state.state_hash())
     }
 
     /// See `HarnessSurfaceV1::next_decision` (`surface.rs`) -- identical
@@ -757,7 +896,7 @@ impl HarnessSurfaceV2 {
     /// investigation doesn't want.
     pub fn next_decision(&mut self, state: &mut GameState) -> SurfaceDecision {
         let sd = self.next_decision_inner(state);
-        if std::env::var("REPLAY_DEBUG_SURFACE_WALK").is_ok() {
+        if self.debug_surface_walk {
             eprintln!(
                 "SURFACE_WALK SURFACED {sd:?} {}",
                 walk_state_snapshot(state)
@@ -778,9 +917,9 @@ impl HarnessSurfaceV2 {
                 return sd;
             }
 
-            let before = state.state_hash();
+            let before = self.suppression_state_hash(state);
             let decision = engine::advance_until_decision(state);
-            if std::env::var("REPLAY_DEBUG_SURFACE_WALK").is_ok() {
+            if self.debug_surface_walk {
                 eprintln!(
                     "SURFACE_WALK RAW_DECISION {} {}",
                     walk_decision_tag(&decision),
@@ -932,7 +1071,7 @@ impl HarnessSurfaceV2 {
                                 .expect("Pass is always legal in an offered priority window");
                             self.record(
                                 SuppressionReason::StackTopIsCastersOwn,
-                                "Pass (forced: caster's own cast/activation/mana-ability still the last thing that happened this round)",
+                                || "Pass (forced: caster's own cast/activation/mana-ability still the last thing that happened this round)".to_string(),
                                 before,
                                 state,
                             );
@@ -969,7 +1108,7 @@ impl HarnessSurfaceV2 {
                                 .expect("Pass is always legal in an offered priority window");
                             self.record(
                                 SuppressionReason::CombatPriorityActionSpent,
-                                "Pass (forced: one action per round already taken)",
+                                || "Pass (forced: one action per round already taken)".to_string(),
                                 before,
                                 state,
                             );
@@ -981,7 +1120,7 @@ impl HarnessSurfaceV2 {
                             .expect("Pass is always legal in an offered priority window");
                         self.record(
                             SuppressionReason::StackTopIsCastersOwn,
-                            "Pass (forced: caster's own cast/activation still unresolved on the stack this round)",
+                            || "Pass (forced: caster's own cast/activation still unresolved on the stack this round)".to_string(),
                             before,
                             state,
                         );
@@ -1001,7 +1140,7 @@ impl HarnessSurfaceV2 {
                             } else {
                                 SuppressionReason::NoRealOption
                             },
-                            "Pass",
+                            || "Pass".to_string(),
                             before,
                             state,
                         );
@@ -1014,7 +1153,7 @@ impl HarnessSurfaceV2 {
                             .expect("declaring zero attackers is always legal here");
                         self.record(
                             SuppressionReason::NoEligibleAttacker,
-                            "DeclareAttackers([])",
+                            || "DeclareAttackers([])".to_string(),
                             before,
                             state,
                         );
@@ -1278,7 +1417,7 @@ impl HarnessSurfaceV2 {
     fn begin_blockers_reshape(
         &mut self,
         legal_blockers: Vec<(ObjectId, Vec<ObjectId>)>,
-        before: u64,
+        before: Option<u64>,
         state: &GameState,
     ) {
         let mut remaining = std::collections::VecDeque::new();
@@ -1286,7 +1425,7 @@ impl HarnessSurfaceV2 {
             if blockers.is_empty() {
                 self.record(
                     SuppressionReason::NoEligibleBlockersForAttacker,
-                    format!("skip attacker {attacker}"),
+                    || format!("skip attacker {attacker}"),
                     before,
                     state,
                 );
@@ -1348,10 +1487,10 @@ impl HarnessSurfaceV2 {
                 .filter(|b| !already_used.contains(b))
                 .collect();
             if filtered.is_empty() {
-                let before = state.state_hash();
+                let before = self.suppression_state_hash(state);
                 self.record(
                     SuppressionReason::NoEligibleBlockersForAttacker,
-                    format!("skip attacker {attacker} (every legal blocker already assigned to an earlier attacker this combat)"),
+                    || format!("skip attacker {attacker} (every legal blocker already assigned to an earlier attacker this combat)"),
                     before,
                     state,
                 );
@@ -1414,6 +1553,7 @@ mod tests {
     use crate::card_def::{self, CARD_DEFS};
     use crate::ids::PlayerId;
     use crate::state::{GameState, Target, Zone};
+    use std::cell::Cell;
 
     fn empty_game() -> GameState {
         GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1)
@@ -1451,6 +1591,43 @@ mod tests {
             crate::surface::H1_JAVA_ORACLE_COMMIT,
             "H2 must pin its own commit, not reuse H1's"
         );
+    }
+
+    #[test]
+    fn suppression_audit_mode_defaults_to_full_and_nonfull_never_builds_records() {
+        assert_eq!(
+            HarnessSurfaceV2::new().suppression_audit_mode(),
+            SuppressionAuditMode::Full
+        );
+        assert_eq!(
+            HarnessSurfaceV2::default().suppression_audit_mode(),
+            SuppressionAuditMode::Full
+        );
+
+        let state = empty_game();
+        for (mode, expected_count) in [
+            (SuppressionAuditMode::CountOnly, 1),
+            (SuppressionAuditMode::Off, 0),
+        ] {
+            let mut surface = HarnessSurfaceV2::new_with_suppression_audit_mode(mode);
+            let action_string_built = Cell::new(false);
+            assert_eq!(surface.suppression_state_hash(&state), None);
+            surface.record(
+                SuppressionReason::StepGated,
+                || {
+                    action_string_built.set(true);
+                    "must-not-be-built".to_string()
+                },
+                None,
+                &state,
+            );
+            assert!(
+                !action_string_built.get(),
+                "{mode:?} must not build suppression action text"
+            );
+            assert!(surface.suppressions().is_empty());
+            assert_eq!(surface.suppression_counts().total(), expected_count);
+        }
     }
 
     #[test]

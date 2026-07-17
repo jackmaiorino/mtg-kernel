@@ -102,6 +102,15 @@ Any raw-lane halt makes that trial invalid and opens a separate raw-engine
 correctness investigation; it is never discarded from the denominator or
 silently treated as H2/V5 evidence.
 
+H2 suppression auditing is explicit and policy-inert. `HarnessSurfaceV2::new`
+and the legacy raw-ceiling v1 retain `Full` ordered suppression records for
+replay diagnostics; `CountOnly` retains fixed reason counters; production
+RL sessions and the paired three-lane H2/V5 lanes select `Off`, which performs
+no suppression state hashing, action-text construction, or log retention.
+The three-lane artifact records `not_applicable/off/off` for its three lanes,
+and fixed Burn/Rally regressions require all modes to produce identical public
+contexts, response bytes, stable action IDs, state hashes, and terminal results.
+
 `kernel_rl_env --phase-profile-v1` leaves stdout protocol bytes unchanged and emits exactly one aggregate `MTG_KERNEL_PROFILE_V1` record on stderr after graceful EOF. The separate end-to-end harness collects that Rust record plus external Python `perf_counter_ns` phases into `kernel_rl_training_benchmark/v1`; timings never enter the deterministic training store:
 
 ```bash
