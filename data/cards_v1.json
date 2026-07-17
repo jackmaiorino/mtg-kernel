@@ -596,6 +596,7 @@
     },
     {
       "name": "Cryptic Serpent",
+      "engine_capability": "full",
       "mana_cost": "{5}{U}{U}",
       "mana_value": 7,
       "colors": [
