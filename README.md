@@ -56,7 +56,37 @@ On Windows, use `target/release/kernel_rl_env.exe` for `--env-bin`. Run `mtg-ker
 
 ## Performance evidence
 
-`bench_kernel` measures the Rust engine and policy surface only. It excludes Python orchestration, neural-network inference, optimization, and artifact persistence, so it must not be compared directly with end-to-end XMage trainer throughput. An end-to-end training speedup over XMage has not yet been established; designated-hardware trainer throughput remains an open roadmap gate.
+`bench_kernel --ceiling-json-v1` is an H2 engine-plus-`HarnessSurfaceV2` upper-bound diagnostic. It excludes production `PolicySurfaceV5` scalarization/transactional cloning, RL-session observation and legal-action encoding, privileged integrity checks, JSONL/IPC, neural inference and sampling, optimization, and artifact persistence. It therefore must not be compared directly with end-to-end XMage trainer throughput. An end-to-end training speedup over XMage has not yet been established; designated-hardware trainer throughput remains an open roadmap gate.
+
+The opt-in raw-ceiling lane emits one strict JSON record for a matched runtime deck and never counts safety-capped, halted, or apply-error episodes as completed games:
+
+```bash
+cargo run --release --locked --example bench_kernel -- \
+  --ceiling-json-v1 \
+  --git-commit 0123456789abcdef0123456789abcdef01234567 \
+  --deck Rally \
+  --actors 1,4,8,16 \
+  --warmup-ms 1000 \
+  --measure-ms 10000 \
+  --seed 71501
+```
+
+`kernel_rl_env --phase-profile-v1` leaves stdout protocol bytes unchanged and emits exactly one aggregate `MTG_KERNEL_PROFILE_V1` record on stderr after graceful EOF. The separate end-to-end harness collects that Rust record plus external Python `perf_counter_ns` phases into `kernel_rl_training_benchmark/v1`; timings never enter the deterministic training store:
+
+```bash
+python -m mtg_kernel_rl.training_benchmark \
+  --env-bin target/release/kernel_rl_env \
+  --out-dir runs/perf-rally \
+  --git-commit 0123456789abcdef0123456789abcdef01234567 \
+  --repo-root . \
+  --profile-mode off \
+  --deck-id Rally --trials 3 --until-update 10 \
+  --batch-episodes 2 --base-seed 71501 \
+  --learning-rate 0.001 --value-coef 0.5 \
+  --max-physical-decisions 5000 --max-policy-steps 640000
+```
+
+Use `--profile-mode off` for the primary uninstrumented throughput lane and `--profile-mode phase_v1` for diagnostic attribution. The H2 ceiling is a boundary-capacity diagnostic, not a core-engine physics verdict or training-speed claim. Failure routes the H2/kernel boundary to redesign; success only authorizes the next three in-process lanes: core engine, H2, and production `PolicySurfaceV5`/RL-session throughput. Unprofiled end-to-end training is a separate fourth boundary afterward. Only a fresh matched same-host XMage Rally benchmark and that end-to-end lane can establish a multiplier.
 
 ## Reference replay corpora
 

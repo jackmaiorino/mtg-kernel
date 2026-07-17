@@ -24,11 +24,15 @@ use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
+use mtg_kernel::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition};
 use mtg_kernel::state::{Counters, GameObject, GameState, SplitMix64, Target, Zone};
 use mtg_kernel::surface_v2::{HarnessSurfaceV2, SurfaceAction, SurfaceDecision};
 
 use std::collections::HashSet;
+use std::sync::{Arc, Barrier, OnceLock};
 use std::time::{Duration, Instant};
+
+use serde::Serialize;
 
 // ------------------------------------------------------------- tuning knobs
 
@@ -50,6 +54,24 @@ const ATTACK_INCLUDE_CHANCE: (u64, u64) = (1, 2);
 const BLOCK_CHANCE: (u64, u64) = (35, 100);
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--ceiling-json-v1") {
+        match CeilingConfigV1::parse(&args[1..]) {
+            Ok(config) => run_ceiling_json_v1(config),
+            Err(message) => {
+                eprintln!("{message}");
+                eprintln!(
+                    "usage: bench_kernel --ceiling-json-v1 --git-commit HEX40 [--deck Burn|Rally] [--actors 1,4,8,16] [--warmup-ms N] [--measure-ms N] [--seed N]"
+                );
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+    if !args.is_empty() {
+        eprintln!("usage: bench_kernel [--ceiling-json-v1 ...]");
+        std::process::exit(2);
+    }
     println!("=== mtg-kernel PERFORMANCE-ONLY benchmark suite (Sol #93 scope) ===");
     println!("Every number below is engine-only wall-clock time: no NN inference, no training.\n");
 
@@ -116,9 +138,13 @@ fn debug_name(card_id: u16) -> String {
 /// list independently (seeded), then draw their opening 7.
 fn build_mirror_state(seed: u64) -> GameState {
     let deck = burn_deck_ids();
+    build_mirror_state_from_ids(&deck, seed)
+}
+
+fn build_mirror_state_from_ids(deck: &[u16], seed: u64) -> GameState {
     let mut shuffle_rng = SplitMix64::seed(seed);
-    let lib0 = shuffled(&deck, &mut shuffle_rng);
-    let lib1 = shuffled(&deck, &mut shuffle_rng);
+    let lib0 = shuffled(deck, &mut shuffle_rng);
+    let lib1 = shuffled(deck, &mut shuffle_rng);
     let mut state = GameState::new_from_libraries(&lib0, &lib1, debug_name, seed);
     for _ in 0..7 {
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
@@ -307,7 +333,7 @@ fn warn_safety_cap_once() {
     use std::sync::atomic::{AtomicBool, Ordering};
     static WARNED: AtomicBool = AtomicBool::new(false);
     if !WARNED.swap(true, Ordering::Relaxed) {
-        eprintln!("WARNING: a game hit DECISION_SAFETY_CAP ({DECISION_SAFETY_CAP}) and was aborted early -- this should not happen for the Burn mainboard; throughput numbers may be skewed.");
+        eprintln!("WARNING: a game hit DECISION_SAFETY_CAP ({DECISION_SAFETY_CAP}) and was aborted early; it is excluded from natural-terminal throughput.");
     }
 }
 
@@ -337,7 +363,29 @@ fn play_one_game_raw(seed: u64) -> u64 {
 /// Plays one full Burn-mirror game through `HarnessSurfaceV2` (the
 /// H-visible decision surface). Returns H-visible decisions taken.
 fn play_one_game_surface(seed: u64) -> u64 {
-    let mut state = build_mirror_state(seed);
+    let deck = runtime_deck_by_id("Burn").expect("built-in Burn deck exists");
+    play_one_game_surface_for_deck(seed, deck).decisions
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SurfaceGameOutcomeV1 {
+    NaturalTerminal,
+    SafetyCap,
+    Halted,
+    ApplyError,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SurfaceGameResultV1 {
+    decisions: u64,
+    outcome: SurfaceGameOutcomeV1,
+}
+
+fn play_one_game_surface_for_deck(
+    seed: u64,
+    deck: &'static RuntimeDeckDefinition,
+) -> SurfaceGameResultV1 {
+    let mut state = build_mirror_state_from_ids(deck.card_ids, seed);
     let mut rng = SplitMix64::seed(seed ^ 0x5EED_1234_ABCD_0002);
     let mut surface = HarnessSurfaceV2::new();
     let mut decisions = 0u64;
@@ -345,12 +393,29 @@ fn play_one_game_surface(seed: u64) -> u64 {
         let sd = surface.next_decision(&mut state);
         decisions += 1;
         match &sd {
-            SurfaceDecision::Decision(Decision::GameOver { .. }) => break,
+            SurfaceDecision::Decision(Decision::GameOver { .. }) => {
+                return SurfaceGameResultV1 {
+                    decisions,
+                    outcome: SurfaceGameOutcomeV1::NaturalTerminal,
+                };
+            }
+            SurfaceDecision::Decision(Decision::Halted { .. }) => {
+                return SurfaceGameResultV1 {
+                    decisions,
+                    outcome: SurfaceGameOutcomeV1::Halted,
+                };
+            }
             SurfaceDecision::Decision(d) => {
                 let action = random_action_for_decision(d, &state, &mut rng);
-                surface
+                if surface
                     .apply(&mut state, SurfaceAction::Action(action))
-                    .expect("random policy only picks legal actions");
+                    .is_err()
+                {
+                    return SurfaceGameResultV1 {
+                        decisions,
+                        outcome: SurfaceGameOutcomeV1::ApplyError,
+                    };
+                }
             }
             SurfaceDecision::DeclareBlockersForAttacker { legal_blockers, .. } => {
                 let (num, den) = BLOCK_CHANCE;
@@ -359,17 +424,529 @@ fn play_one_game_surface(seed: u64) -> u64 {
                 } else {
                     Vec::new()
                 };
-                surface
+                if surface
                     .apply(&mut state, SurfaceAction::DeclareBlockersForAttacker(picks))
-                    .expect("blockers reshape accepts a subset of the offered legal_blockers");
+                    .is_err()
+                {
+                    return SurfaceGameResultV1 {
+                        decisions,
+                        outcome: SurfaceGameOutcomeV1::ApplyError,
+                    };
+                }
             }
         }
         if decisions >= DECISION_SAFETY_CAP {
             warn_safety_cap_once();
-            break;
+            return SurfaceGameResultV1 {
+                decisions,
+                outcome: SurfaceGameOutcomeV1::SafetyCap,
+            };
         }
     }
-    decisions
+}
+
+// ------------------------------------------ machine-readable raw ceiling v1
+
+const RAW_CEILING_SCHEMA_V1: &str = "kernel_rl_raw_ceiling/v1";
+const CEILING_SEED_PARTITION_STRIDE: u64 = 1u64 << 55;
+const CEILING_WARMUP_PARTITION_OFFSET: u64 = 256;
+
+fn ceiling_partition_seed(base_seed: u64, warmup: bool, actor: usize, index: u64) -> u64 {
+    assert!(actor < 256, "ceiling actor must fit its seed partition");
+    assert!(
+        index < CEILING_SEED_PARTITION_STRIDE,
+        "ceiling seed partition exhausted"
+    );
+    let partition = actor as u64
+        + if warmup {
+            CEILING_WARMUP_PARTITION_OFFSET
+        } else {
+            0
+        };
+    base_seed
+        .wrapping_add(partition.wrapping_mul(CEILING_SEED_PARTITION_STRIDE))
+        .wrapping_add(index)
+}
+
+#[derive(Debug)]
+struct CeilingConfigV1 {
+    git_commit: String,
+    deck_id: String,
+    actors: Vec<usize>,
+    warmup: Duration,
+    measure: Duration,
+    seed: u64,
+}
+
+impl CeilingConfigV1 {
+    fn parse(args: &[String]) -> Result<Self, String> {
+        let mut git_commit = None;
+        let mut deck_id = "Burn".to_string();
+        let mut actors = vec![1, 4, 8, 16];
+        let mut warmup_ms = 150u64;
+        let mut measure_ms = 4_000u64;
+        let mut seed = 0x9E37_0000u64;
+        let mut seen = HashSet::new();
+        let mut index = 0;
+        while index < args.len() {
+            let flag = args[index].as_str();
+            if !seen.insert(flag.to_string()) {
+                return Err(format!("duplicate option: {flag}"));
+            }
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| format!("missing value for {flag}"))?;
+            match flag {
+                "--git-commit" => {
+                    if value.len() != 40
+                        || !value
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    {
+                        return Err(
+                            "--git-commit must be 40 lowercase hexadecimal characters".to_string()
+                        );
+                    }
+                    git_commit = Some(value.clone());
+                }
+                "--deck" => {
+                    if runtime_deck_by_id(value).is_none() {
+                        return Err("--deck must be exact Burn or Rally".to_string());
+                    }
+                    deck_id = value.clone();
+                }
+                "--actors" => {
+                    let parsed = value
+                        .split(',')
+                        .map(|part| {
+                            part.parse::<usize>()
+                                .map_err(|_| "--actors must be a comma-separated integer list")
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if parsed.is_empty()
+                        || parsed.iter().any(|count| !(1..=256).contains(count))
+                        || parsed.iter().copied().collect::<HashSet<_>>().len() != parsed.len()
+                    {
+                        return Err("--actors must contain unique integers in the range 1..=256"
+                            .to_string());
+                    }
+                    actors = parsed;
+                }
+                "--warmup-ms" => {
+                    warmup_ms = parse_bounded_ms(value, "--warmup-ms", 0)?;
+                }
+                "--measure-ms" => {
+                    measure_ms = parse_bounded_ms(value, "--measure-ms", 1)?;
+                }
+                "--seed" => {
+                    seed = value
+                        .parse::<u64>()
+                        .map_err(|_| "--seed must be an unsigned 64-bit integer".to_string())?;
+                }
+                _ => return Err(format!("unknown option: {flag}")),
+            }
+            index += 2;
+        }
+        Ok(Self {
+            git_commit: git_commit.ok_or_else(|| "missing --git-commit".to_string())?,
+            deck_id,
+            actors,
+            warmup: Duration::from_millis(warmup_ms),
+            measure: Duration::from_millis(measure_ms),
+            seed,
+        })
+    }
+}
+
+fn parse_bounded_ms(value: &str, flag: &str, minimum: u64) -> Result<u64, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| format!("{flag} must be an unsigned integer"))?;
+    if !(minimum..=600_000).contains(&parsed) {
+        return Err(format!("{flag} must be in {minimum}..=600000"));
+    }
+    Ok(parsed)
+}
+
+#[derive(Serialize)]
+struct CeilingDeckV1<'a> {
+    id: &'a str,
+    runtime_deck_hash: u64,
+    source_path: &'a str,
+    source_sha256: &'a str,
+    mainboard_count: usize,
+}
+
+#[derive(Serialize)]
+struct CeilingBinaryV1<'a> {
+    package: &'static str,
+    package_version: &'static str,
+    git_commit_claim: &'a str,
+    source_verification: &'static str,
+    build_profile: &'static str,
+}
+
+#[derive(Serialize)]
+struct CeilingWorkloadV1<'a> {
+    driver: &'static str,
+    policy: &'static str,
+    ordered_deck_ids: [&'a str; 2],
+    includes: &'static str,
+    excludes: &'static [&'static str],
+    actor_counts: &'a [usize],
+    warmup_ns: u64,
+    measure_target_ns: u64,
+    seed: u64,
+    seed_schedule: &'static str,
+    phase_actor_partition_stride: u64,
+    warmup_partition_offset: u64,
+    partition_count: u64,
+    per_actor_game_seed_increment: u64,
+    decision_safety_cap: u64,
+}
+
+#[derive(Serialize)]
+struct CeilingTrialV1 {
+    actors: usize,
+    warmup_attempted_games: u64,
+    warmup_natural_terminal_games: u64,
+    warmup_safety_cap_truncations: u64,
+    warmup_halted_games: u64,
+    warmup_apply_errors: u64,
+    warmup_seed_partition_exhausted: bool,
+    attempted_games: u64,
+    natural_terminal_games: u64,
+    safety_cap_truncations: u64,
+    halted_games: u64,
+    apply_errors: u64,
+    measured_seed_partition_exhausted: bool,
+    outcomes_valid: bool,
+    decisions: u64,
+    actor_seed_starts: Vec<u64>,
+    actor_warmup_seed_starts: Vec<u64>,
+    actor_attempt_counts: Vec<u64>,
+    measurement_wall_ns: u64,
+    games_per_second: f64,
+    decisions_per_second: f64,
+    games_per_second_per_actor: f64,
+}
+
+#[derive(Serialize)]
+struct CeilingRecordV1<'a> {
+    schema: &'static str,
+    deck: CeilingDeckV1<'a>,
+    binary: CeilingBinaryV1<'a>,
+    hardware: CeilingHardwareV1,
+    workload: CeilingWorkloadV1<'a>,
+    trials: Vec<CeilingTrialV1>,
+}
+
+#[derive(Serialize)]
+struct CeilingHardwareV1 {
+    available_parallelism: usize,
+}
+
+fn duration_ns_u64(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
+fn measure_surface_ceiling_v1(
+    deck: &'static RuntimeDeckDefinition,
+    actors: usize,
+    warmup: Duration,
+    measure: Duration,
+    base_seed: u64,
+) -> CeilingTrialV1 {
+    let barrier = Arc::new(Barrier::new(actors));
+    let shared_start = Arc::new(OnceLock::new());
+    let handles: Vec<_> = (0..actors)
+        .map(|actor| {
+            let barrier = Arc::clone(&barrier);
+            let shared_start = Arc::clone(&shared_start);
+            std::thread::spawn(move || {
+                let lane_seed = ceiling_partition_seed(base_seed, false, actor, 0);
+                let warmup_lane_seed = ceiling_partition_seed(base_seed, true, actor, 0);
+                let warm_start = Instant::now();
+                let mut warmup_attempted_games = 0u64;
+                let mut warmup_natural_terminal_games = 0u64;
+                let mut warmup_safety_cap_truncations = 0u64;
+                let mut warmup_halted_games = 0u64;
+                let mut warmup_apply_errors = 0u64;
+                let mut warmup_seed_partition_exhausted = false;
+                while warm_start.elapsed() < warmup {
+                    if warmup_attempted_games >= CEILING_SEED_PARTITION_STRIDE {
+                        warmup_seed_partition_exhausted = true;
+                        break;
+                    }
+                    let warm_seed =
+                        ceiling_partition_seed(base_seed, true, actor, warmup_attempted_games);
+                    let result = play_one_game_surface_for_deck(warm_seed, deck);
+                    warmup_attempted_games = warmup_attempted_games.saturating_add(1);
+                    match result.outcome {
+                        SurfaceGameOutcomeV1::NaturalTerminal => {
+                            warmup_natural_terminal_games =
+                                warmup_natural_terminal_games.saturating_add(1)
+                        }
+                        SurfaceGameOutcomeV1::SafetyCap => {
+                            warmup_safety_cap_truncations =
+                                warmup_safety_cap_truncations.saturating_add(1)
+                        }
+                        SurfaceGameOutcomeV1::Halted => {
+                            warmup_halted_games = warmup_halted_games.saturating_add(1)
+                        }
+                        SurfaceGameOutcomeV1::ApplyError => {
+                            warmup_apply_errors = warmup_apply_errors.saturating_add(1)
+                        }
+                    }
+                }
+                barrier.wait();
+                if actor == 0 {
+                    shared_start
+                        .set(Instant::now())
+                        .expect("shared measurement start is set once");
+                }
+                barrier.wait();
+                let start = *shared_start.get().expect("actor zero set shared start");
+                let deadline = start + measure;
+                let mut attempted_games = 0u64;
+                let mut natural_terminal_games = 0u64;
+                let mut safety_cap_truncations = 0u64;
+                let mut halted_games = 0u64;
+                let mut apply_errors = 0u64;
+                let mut decisions = 0u64;
+                let mut measured_seed_partition_exhausted = false;
+                while Instant::now() < deadline {
+                    if attempted_games >= CEILING_SEED_PARTITION_STRIDE {
+                        measured_seed_partition_exhausted = true;
+                        break;
+                    }
+                    let seed = ceiling_partition_seed(base_seed, false, actor, attempted_games);
+                    let result = play_one_game_surface_for_deck(seed, deck);
+                    decisions = decisions.saturating_add(result.decisions);
+                    attempted_games = attempted_games.saturating_add(1);
+                    match result.outcome {
+                        SurfaceGameOutcomeV1::NaturalTerminal => {
+                            natural_terminal_games = natural_terminal_games.saturating_add(1)
+                        }
+                        SurfaceGameOutcomeV1::SafetyCap => {
+                            safety_cap_truncations = safety_cap_truncations.saturating_add(1)
+                        }
+                        SurfaceGameOutcomeV1::Halted => {
+                            halted_games = halted_games.saturating_add(1)
+                        }
+                        SurfaceGameOutcomeV1::ApplyError => {
+                            apply_errors = apply_errors.saturating_add(1)
+                        }
+                    }
+                }
+                (
+                    actor,
+                    lane_seed,
+                    warmup_lane_seed,
+                    warmup_attempted_games,
+                    warmup_natural_terminal_games,
+                    warmup_safety_cap_truncations,
+                    warmup_halted_games,
+                    warmup_apply_errors,
+                    warmup_seed_partition_exhausted,
+                    attempted_games,
+                    natural_terminal_games,
+                    safety_cap_truncations,
+                    halted_games,
+                    apply_errors,
+                    measured_seed_partition_exhausted,
+                    decisions,
+                )
+            })
+        })
+        .collect();
+    let mut warmup_attempted_games = 0u64;
+    let mut warmup_natural_terminal_games = 0u64;
+    let mut warmup_safety_cap_truncations = 0u64;
+    let mut warmup_halted_games = 0u64;
+    let mut warmup_apply_errors = 0u64;
+    let mut warmup_seed_partition_exhausted = false;
+    let mut attempted_games = 0u64;
+    let mut natural_terminal_games = 0u64;
+    let mut safety_cap_truncations = 0u64;
+    let mut halted_games = 0u64;
+    let mut apply_errors = 0u64;
+    let mut measured_seed_partition_exhausted = false;
+    let mut decisions = 0u64;
+    let mut actor_seed_starts = vec![0u64; actors];
+    let mut actor_warmup_seed_starts = vec![0u64; actors];
+    let mut actor_attempt_counts = vec![0u64; actors];
+    for handle in handles {
+        let (
+            actor,
+            lane_seed,
+            lane_warmup_seed,
+            lane_warmup_attempted,
+            lane_warmup_natural,
+            lane_warmup_safety_cap,
+            lane_warmup_halted,
+            lane_warmup_apply_errors,
+            lane_warmup_partition_exhausted,
+            lane_attempted,
+            lane_natural,
+            lane_safety_cap,
+            lane_halted,
+            lane_apply_errors,
+            lane_measured_partition_exhausted,
+            lane_decisions,
+        ) = handle.join().expect("ceiling worker panicked");
+        actor_seed_starts[actor] = lane_seed;
+        actor_warmup_seed_starts[actor] = lane_warmup_seed;
+        actor_attempt_counts[actor] = lane_attempted;
+        warmup_attempted_games = warmup_attempted_games.saturating_add(lane_warmup_attempted);
+        warmup_natural_terminal_games =
+            warmup_natural_terminal_games.saturating_add(lane_warmup_natural);
+        warmup_safety_cap_truncations =
+            warmup_safety_cap_truncations.saturating_add(lane_warmup_safety_cap);
+        warmup_halted_games = warmup_halted_games.saturating_add(lane_warmup_halted);
+        warmup_apply_errors = warmup_apply_errors.saturating_add(lane_warmup_apply_errors);
+        warmup_seed_partition_exhausted |= lane_warmup_partition_exhausted;
+        attempted_games = attempted_games.saturating_add(lane_attempted);
+        natural_terminal_games = natural_terminal_games.saturating_add(lane_natural);
+        safety_cap_truncations = safety_cap_truncations.saturating_add(lane_safety_cap);
+        halted_games = halted_games.saturating_add(lane_halted);
+        apply_errors = apply_errors.saturating_add(lane_apply_errors);
+        measured_seed_partition_exhausted |= lane_measured_partition_exhausted;
+        decisions = decisions.saturating_add(lane_decisions);
+    }
+    let wall = shared_start
+        .get()
+        .expect("measurement start is always set")
+        .elapsed();
+    assert_eq!(
+        warmup_attempted_games,
+        warmup_natural_terminal_games
+            .saturating_add(warmup_safety_cap_truncations)
+            .saturating_add(warmup_halted_games)
+            .saturating_add(warmup_apply_errors),
+        "every warmup game must have exactly one outcome"
+    );
+    assert_eq!(
+        attempted_games,
+        natural_terminal_games
+            .saturating_add(safety_cap_truncations)
+            .saturating_add(halted_games)
+            .saturating_add(apply_errors),
+        "every attempted game must have exactly one outcome"
+    );
+    let seconds = wall.as_secs_f64();
+    let games_per_second = natural_terminal_games as f64 / seconds;
+    let decisions_per_second = decisions as f64 / seconds;
+    let games_per_second_per_actor = games_per_second / actors as f64;
+    assert!(
+        games_per_second.is_finite()
+            && decisions_per_second.is_finite()
+            && games_per_second_per_actor.is_finite(),
+        "ceiling rates must be finite"
+    );
+    CeilingTrialV1 {
+        actors,
+        warmup_attempted_games,
+        warmup_natural_terminal_games,
+        warmup_safety_cap_truncations,
+        warmup_halted_games,
+        warmup_apply_errors,
+        warmup_seed_partition_exhausted,
+        attempted_games,
+        natural_terminal_games,
+        safety_cap_truncations,
+        halted_games,
+        apply_errors,
+        measured_seed_partition_exhausted,
+        outcomes_valid: warmup_safety_cap_truncations == 0
+            && warmup_halted_games == 0
+            && warmup_apply_errors == 0
+            && !warmup_seed_partition_exhausted
+            && safety_cap_truncations == 0
+            && halted_games == 0
+            && apply_errors == 0
+            && !measured_seed_partition_exhausted,
+        decisions,
+        actor_seed_starts,
+        actor_warmup_seed_starts,
+        actor_attempt_counts,
+        measurement_wall_ns: duration_ns_u64(wall),
+        games_per_second,
+        decisions_per_second,
+        games_per_second_per_actor,
+    }
+}
+
+fn run_ceiling_json_v1(config: CeilingConfigV1) {
+    let deck = runtime_deck_by_id(&config.deck_id).expect("validated runtime deck");
+    let trials = config
+        .actors
+        .iter()
+        .copied()
+        .map(|actors| {
+            measure_surface_ceiling_v1(deck, actors, config.warmup, config.measure, config.seed)
+        })
+        .collect();
+    let record = CeilingRecordV1 {
+        schema: RAW_CEILING_SCHEMA_V1,
+        deck: CeilingDeckV1 {
+            id: deck.id,
+            runtime_deck_hash: deck.runtime_deck_hash,
+            source_path: deck.source_path,
+            source_sha256: deck.source_sha256,
+            mainboard_count: deck.mainboard_count,
+        },
+        binary: CeilingBinaryV1 {
+            package: env!("CARGO_PKG_NAME"),
+            package_version: env!("CARGO_PKG_VERSION"),
+            git_commit_claim: &config.git_commit,
+            source_verification: "user_supplied_unverified/v1",
+            build_profile: if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            },
+        },
+        hardware: CeilingHardwareV1 {
+            available_parallelism: std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(1),
+        },
+        workload: CeilingWorkloadV1 {
+            driver: "HarnessSurfaceV2/v2",
+            policy: "seeded_random_legal/v1",
+            ordered_deck_ids: [deck.id, deck.id],
+            includes: "engine_plus_harness_surface_v2",
+            excludes: &[
+                "policy_surface_v5",
+                "rl_session_v1",
+                "observation_v5_feature_encoding",
+                "legal_action_v5_encoding",
+                "privileged_environment_integrity",
+                "jsonl_protocol",
+                "neural_inference",
+                "neural_policy_action_sampling",
+                "loss_backward_optimizer",
+                "artifact_persistence",
+                "python_ipc",
+            ],
+            actor_counts: &config.actors,
+            warmup_ns: duration_ns_u64(config.warmup),
+            measure_target_ns: duration_ns_u64(config.measure),
+            seed: config.seed,
+            seed_schedule: "wrapping_u64_phase_actor_partition_plus_game_index/v1",
+            phase_actor_partition_stride: CEILING_SEED_PARTITION_STRIDE,
+            warmup_partition_offset: CEILING_WARMUP_PARTITION_OFFSET,
+            partition_count: 512,
+            per_actor_game_seed_increment: 1,
+            decision_safety_cap: DECISION_SAFETY_CAP,
+        },
+        trials,
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&record).expect("ceiling record serializes")
+    );
 }
 
 // ---------------------------------------------------------- measurement
@@ -817,6 +1394,116 @@ fn section5_alloc_profile() {
         allocs as f64 / total_decisions as f64
     );
     println!();
+}
+
+#[cfg(test)]
+mod ceiling_tests {
+    use super::*;
+
+    const COMMIT: &str = "7735d368117c20211c66e72cb5efc71e1bd4d74f";
+
+    #[test]
+    fn ceiling_cli_is_strict_and_defaults_remain_explicit() {
+        let config = CeilingConfigV1::parse(&[
+            "--git-commit".to_string(),
+            COMMIT.to_string(),
+            "--deck".to_string(),
+            "Rally".to_string(),
+            "--actors".to_string(),
+            "1,4,8,16".to_string(),
+            "--warmup-ms".to_string(),
+            "0".to_string(),
+            "--measure-ms".to_string(),
+            "1".to_string(),
+            "--seed".to_string(),
+            "71501".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(config.deck_id, "Rally");
+        assert_eq!(config.actors, [1, 4, 8, 16]);
+        assert_eq!(config.warmup, Duration::ZERO);
+        assert_eq!(config.measure, Duration::from_millis(1));
+        assert_eq!(config.seed, 71501);
+
+        assert!(CeilingConfigV1::parse(&[]).is_err());
+        assert!(CeilingConfigV1::parse(&[
+            "--git-commit".to_string(),
+            COMMIT.to_string(),
+            "--actors".to_string(),
+            "1,1".to_string(),
+        ])
+        .is_err());
+        assert!(CeilingConfigV1::parse(&[
+            "--git-commit".to_string(),
+            COMMIT.to_string(),
+            "--deck".to_string(),
+            "rally".to_string(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn bounded_rally_ceiling_trial_reports_exact_counts_and_timing() {
+        let deck = runtime_deck_by_id("Rally").unwrap();
+        let trial =
+            measure_surface_ceiling_v1(deck, 1, Duration::ZERO, Duration::from_millis(1), 71501);
+        assert_eq!(trial.actors, 1);
+        assert_eq!(trial.warmup_attempted_games, 0);
+        assert_eq!(trial.warmup_natural_terminal_games, 0);
+        assert_eq!(trial.warmup_safety_cap_truncations, 0);
+        assert_eq!(trial.warmup_halted_games, 0);
+        assert_eq!(trial.warmup_apply_errors, 0);
+        assert!(trial.attempted_games >= 1);
+        assert_eq!(
+            trial.attempted_games,
+            trial.natural_terminal_games
+                + trial.safety_cap_truncations
+                + trial.halted_games
+                + trial.apply_errors
+        );
+        assert!(trial.decisions >= trial.attempted_games);
+        assert_eq!(trial.actor_seed_starts, [71501]);
+        assert_eq!(trial.actor_attempt_counts, [trial.attempted_games]);
+        assert!(trial.measurement_wall_ns >= 1_000_000);
+        assert!(trial.games_per_second.is_finite());
+        assert!(trial.decisions_per_second.is_finite());
+    }
+
+    #[test]
+    fn ceiling_seed_partitions_are_disjoint_across_phases_and_actors() {
+        let base_seed = u64::MAX - 71_500;
+        let mut seeds = HashSet::new();
+        for warmup in [false, true] {
+            for actor in 0..16 {
+                for game_index in 0..10_000 {
+                    assert!(
+                        seeds.insert(ceiling_partition_seed(base_seed, warmup, actor, game_index,))
+                    );
+                }
+            }
+        }
+        assert_eq!(seeds.len(), 2 * 16 * 10_000);
+
+        let trial = measure_surface_ceiling_v1(
+            runtime_deck_by_id("Rally").unwrap(),
+            4,
+            Duration::ZERO,
+            Duration::from_millis(1),
+            base_seed,
+        );
+        assert_eq!(
+            trial.actor_seed_starts,
+            (0..4)
+                .map(|actor| ceiling_partition_seed(base_seed, false, actor, 0))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            trial.actor_warmup_seed_starts,
+            (0..4)
+                .map(|actor| ceiling_partition_seed(base_seed, true, actor, 0))
+                .collect::<Vec<_>>()
+        );
+    }
 }
 
 #[cfg(not(feature = "count_allocs"))]

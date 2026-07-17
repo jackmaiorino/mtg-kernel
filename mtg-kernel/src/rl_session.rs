@@ -10,6 +10,7 @@
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::engine::Decision;
 use crate::ids::PlayerId;
+use crate::phase_profile::{measure_optional, RlPhaseProfileV1, RlPhaseV1};
 use crate::policy_surface_v5::{
     PolicyDecisionV5, PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM, POLICY_SURFACE_VERSION,
 };
@@ -225,33 +226,53 @@ impl RlEpisodeSessionV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
     ) -> Result<Self, RlSessionError> {
-        let resolved_decks = resolve_runtime_decks(&deck_ids)?;
-        let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
-        let state = build_deck_pair_state(
-            env_seed,
-            resolved_decks[0].card_ids,
-            resolved_decks[1].card_ids,
-        )
-        .map_err(|_| {
-            session_error(
-                RlSessionErrorCode::UnsupportedDeck,
-                "runtime deck catalog failed full-support preflight",
-            )
-        })?;
-        let mut session = RlEpisodeSessionV1 {
-            deck_ids,
-            deck_hashes,
+        Self::reset_with_decks_and_limits_profiled(
             episode_id,
+            env_seed,
             max_physical_decisions,
             max_policy_steps,
-            state,
-            surface: PolicySurfaceV5::new(),
-            policy_step_count: 0,
-            physical_decision_count: 0,
-            current: None,
-            terminal: None,
-        };
-        session.advance_to_decision_or_terminal();
+            deck_ids,
+            None,
+        )
+    }
+
+    fn reset_with_decks_and_limits_profiled(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mut profile: Option<&mut RlPhaseProfileV1>,
+    ) -> Result<Self, RlSessionError> {
+        let mut session = measure_optional(&mut profile, RlPhaseV1::Reset, || {
+            let resolved_decks = resolve_runtime_decks(&deck_ids)?;
+            let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
+            let state = build_deck_pair_state(
+                env_seed,
+                resolved_decks[0].card_ids,
+                resolved_decks[1].card_ids,
+            )
+            .map_err(|_| {
+                session_error(
+                    RlSessionErrorCode::UnsupportedDeck,
+                    "runtime deck catalog failed full-support preflight",
+                )
+            })?;
+            Ok(RlEpisodeSessionV1 {
+                deck_ids,
+                deck_hashes,
+                episode_id,
+                max_physical_decisions,
+                max_policy_steps,
+                state,
+                surface: PolicySurfaceV5::new(),
+                policy_step_count: 0,
+                physical_decision_count: 0,
+                current: None,
+                terminal: None,
+            })
+        })?;
+        session.advance_to_decision_or_terminal_profiled(profile);
         Ok(session)
     }
 
@@ -315,84 +336,127 @@ impl RlEpisodeSessionV1 {
         selected_index: u32,
         selected_action_id: &str,
     ) -> Result<RlSessionResponseV1, RlSessionError> {
-        if episode_id != self.episode_id {
-            return Err(session_error(
-                RlSessionErrorCode::EpisodeIdMismatch,
-                "step request episode_id does not match the active episode",
-            ));
-        }
-        if expected_step != self.policy_step_count {
-            return Err(session_error(
-                RlSessionErrorCode::ExpectedStepMismatch,
-                "step request expected_step does not match the active decision step",
-            ));
-        }
-        if self.terminal.is_some() {
-            return Err(session_error(
-                RlSessionErrorCode::EpisodeAlreadyTerminal,
-                "episode is already terminal; reset before stepping again",
-            ));
-        }
+        self.apply_step_profiled(
+            episode_id,
+            expected_step,
+            selected_index,
+            selected_action_id,
+            None,
+        )?;
+        Ok(self.current_response())
+    }
+
+    fn apply_step_profiled(
+        &mut self,
+        episode_id: u64,
+        expected_step: u64,
+        selected_index: u32,
+        selected_action_id: &str,
+        mut profile: Option<&mut RlPhaseProfileV1>,
+    ) -> Result<(), RlSessionError> {
+        measure_optional(&mut profile, RlPhaseV1::StepValidation, || {
+            if episode_id != self.episode_id {
+                return Err(session_error(
+                    RlSessionErrorCode::EpisodeIdMismatch,
+                    "step request episode_id does not match the active episode",
+                ));
+            }
+            if expected_step != self.policy_step_count {
+                return Err(session_error(
+                    RlSessionErrorCode::ExpectedStepMismatch,
+                    "step request expected_step does not match the active decision step",
+                ));
+            }
+            if self.terminal.is_some() {
+                return Err(session_error(
+                    RlSessionErrorCode::EpisodeAlreadyTerminal,
+                    "episode is already terminal; reset before stepping again",
+                ));
+            }
+            Ok(())
+        })?;
         let current = self
             .current
             .as_ref()
             .expect("nonterminal session has current decision");
-        let rebound = self.compute_environment_hash(Some(current)).map_err(|_| {
-            session_error(
-                RlSessionErrorCode::StaleEnvironmentBinding,
-                "active decision integrity validation failed",
-            )
-        })?;
-        if rebound != current.environment_hash {
-            return Err(session_error(
-                RlSessionErrorCode::StaleEnvironmentBinding,
-                "active decision no longer matches its privileged environment binding",
-            ));
-        }
-        let selected_index_usize = selected_index as usize;
-        let Some(selected) = current.candidates.get(selected_index_usize) else {
-            return Err(session_error(
-                RlSessionErrorCode::SelectedIndexOutOfRange,
-                "selected_index is outside the current legal action list",
-            ));
-        };
-        if selected.record.stable_id != selected_action_id {
-            let code = if current
-                .candidates
-                .iter()
-                .any(|candidate| candidate.record.stable_id == selected_action_id)
-            {
-                RlSessionErrorCode::SelectedActionIdMismatch
-            } else {
-                RlSessionErrorCode::SelectedActionIdUnknown
-            };
-            return Err(session_error(
-                code,
-                "selected_index and selected_action_id do not identify the same current action",
-            ));
-        }
-        let policy_action = selected.policy_action.clone();
-        let completes_physical = current.substep_index + 1 == current.substep_count;
-        self.surface
-            .apply(&mut self.state, policy_action)
-            .map_err(|_| {
+        measure_optional(&mut profile, RlPhaseV1::StepIntegrity, || {
+            let rebound = self.compute_environment_hash(Some(current)).map_err(|_| {
                 session_error(
                     RlSessionErrorCode::StaleEnvironmentBinding,
-                    "selected action no longer matches the active policy environment",
+                    "active decision integrity validation failed",
                 )
             })?;
+            if rebound != current.environment_hash {
+                return Err(session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "active decision no longer matches its privileged environment binding",
+                ));
+            }
+            Ok(())
+        })?;
+        let (policy_action, completes_physical) = measure_optional(
+            &mut profile,
+            RlPhaseV1::StepSelection,
+            || {
+                let selected_index_usize = selected_index as usize;
+                let Some(selected) = current.candidates.get(selected_index_usize) else {
+                    return Err(session_error(
+                        RlSessionErrorCode::SelectedIndexOutOfRange,
+                        "selected_index is outside the current legal action list",
+                    ));
+                };
+                if selected.record.stable_id != selected_action_id {
+                    let code = if current
+                        .candidates
+                        .iter()
+                        .any(|candidate| candidate.record.stable_id == selected_action_id)
+                    {
+                        RlSessionErrorCode::SelectedActionIdMismatch
+                    } else {
+                        RlSessionErrorCode::SelectedActionIdUnknown
+                    };
+                    return Err(session_error(
+                        code,
+                        "selected_index and selected_action_id do not identify the same current action",
+                    ));
+                }
+                Ok((
+                    selected.policy_action.clone(),
+                    current.substep_index + 1 == current.substep_count,
+                ))
+            },
+        )?;
+        measure_optional(&mut profile, RlPhaseV1::StepApply, || {
+            self.surface.apply(&mut self.state, policy_action)
+        })
+        .map_err(|_| {
+            session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "selected action no longer matches the active policy environment",
+            )
+        })?;
         self.current = None;
         self.policy_step_count += 1;
         if completes_physical {
             self.physical_decision_count += 1;
         }
-        self.advance_to_decision_or_terminal();
-        Ok(self.current_response())
+        self.advance_to_decision_or_terminal_profiled(profile);
+        Ok(())
     }
 
+    #[cfg(test)]
     fn advance_to_decision_or_terminal(&mut self) {
+        self.advance_to_decision_or_terminal_profiled(None);
+    }
+
+    fn advance_to_decision_or_terminal_profiled(
+        &mut self,
+        mut profile: Option<&mut RlPhaseProfileV1>,
+    ) {
         self.current = None;
-        let surfaced = match self.surface.next_decision(&mut self.state) {
+        let surfaced = match measure_optional(&mut profile, RlPhaseV1::Advance, || {
+            self.surface.next_decision(&mut self.state)
+        }) {
             Ok(decision) => decision,
             Err(_) => {
                 self.terminal = Some(halted_terminal(
@@ -477,15 +541,17 @@ impl RlEpisodeSessionV1 {
             ));
             return;
         };
-        let observation = match observe_policy_v5(
-            &self.state,
-            &self.surface,
-            actor,
-            self.policy_step_count,
-            self.physical_decision_count,
-            substep_index,
-            substep_count,
-        ) {
+        let observation = match measure_optional(&mut profile, RlPhaseV1::Observe, || {
+            observe_policy_v5(
+                &self.state,
+                &self.surface,
+                actor,
+                self.policy_step_count,
+                self.physical_decision_count,
+                substep_index,
+                substep_count,
+            )
+        }) {
             Ok(observation) => observation,
             Err(err) => {
                 self.terminal = Some(halted_terminal(
@@ -499,7 +565,9 @@ impl RlEpisodeSessionV1 {
                 return;
             }
         };
-        let candidates = match legal_action_candidates_v5(&surfaced, &self.state) {
+        let candidates = match measure_optional(&mut profile, RlPhaseV1::Actions, || {
+            legal_action_candidates_v5(&surfaced, &self.state)
+        }) {
             Ok(candidates) => candidates,
             Err(err) => {
                 self.terminal = Some(halted_terminal(
@@ -533,7 +601,9 @@ impl RlEpisodeSessionV1 {
             candidates,
             environment_hash: 0,
         };
-        current.environment_hash = match self.compute_environment_hash(Some(&current)) {
+        current.environment_hash = match measure_optional(&mut profile, RlPhaseV1::Postbind, || {
+            self.compute_environment_hash(Some(&current))
+        }) {
             Ok(hash) => hash,
             Err(_) => {
                 self.terminal = Some(halted_terminal(
@@ -704,6 +774,11 @@ struct CachedProtocolExchangeV1 {
     response_line: String,
 }
 
+enum RetryDispositionV1 {
+    Cached,
+    ReuseMismatch(Box<KernelRlResponseV1>),
+}
+
 #[derive(Default)]
 pub struct KernelRlJsonlServerV1 {
     session: Option<RlEpisodeSessionV1>,
@@ -716,50 +791,112 @@ impl KernelRlJsonlServerV1 {
     }
 
     pub fn handle_line(&mut self, line: &str) -> String {
-        let value = match parse_strict_json_value(line) {
+        self.handle_line_impl(line, None)
+    }
+
+    pub fn handle_line_profiled(&mut self, line: &str, profile: &mut RlPhaseProfileV1) -> String {
+        self.handle_line_impl(line, Some(profile))
+    }
+
+    fn handle_line_impl(
+        &mut self,
+        line: &str,
+        mut profile: Option<&mut RlPhaseProfileV1>,
+    ) -> String {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.request_lines = profile.request_lines.saturating_add(1);
+        }
+        let value = match measure_optional(&mut profile, RlPhaseV1::Parse, || {
+            parse_strict_json_value(line)
+        }) {
             Ok(value) => value,
             Err(_) => {
                 if serde_json::from_str::<serde::de::IgnoredAny>(line).is_ok() {
-                    return serialize_response(error_response(
-                        None,
-                        "malformed_request",
-                        "request does not match the v5 protocol schema",
-                    ));
+                    return serialize_response_profiled(
+                        error_response(
+                            None,
+                            "malformed_request",
+                            "request does not match the v5 protocol schema",
+                        ),
+                        &mut profile,
+                    );
                 }
-                return serialize_response(error_response(
-                    None,
-                    "malformed_json",
-                    "request line is not valid JSON",
-                ));
+                return serialize_response_profiled(
+                    error_response(None, "malformed_json", "request line is not valid JSON"),
+                    &mut profile,
+                );
             }
         };
         let request_id = request_id_from_value(&value);
-        let request = match serde_json::from_value::<KernelRlRequestV1>(value) {
+        let request = match measure_optional(&mut profile, RlPhaseV1::Decode, || {
+            serde_json::from_value::<KernelRlRequestV1>(value)
+        }) {
             Ok(request) => request,
             Err(_) => {
-                return serialize_response(error_response(
-                    request_id,
-                    "malformed_request",
-                    "request does not match the v5 protocol schema",
-                ));
+                return serialize_response_profiled(
+                    error_response(
+                        request_id,
+                        "malformed_request",
+                        "request does not match the v5 protocol schema",
+                    ),
+                    &mut profile,
+                );
             }
         };
-        if let Some(cached) = &self.last_exchange {
-            if cached.request_id == request.request_id() {
-                if cached.request == request {
-                    return cached.response_line.clone();
+        if let Some(profile) = profile.as_deref_mut() {
+            match &request {
+                KernelRlRequestV1::Reset { .. } => {
+                    profile.reset_requests = profile.reset_requests.saturating_add(1)
                 }
-                return serialize_response(error_response(
-                    Some(request.request_id().to_string()),
-                    "request_id_reuse_mismatch",
-                    "request_id was reused for a different immediate request payload",
-                ));
+                KernelRlRequestV1::Step { .. } => {
+                    profile.step_requests = profile.step_requests.saturating_add(1)
+                }
             }
+        }
+        let retry = measure_optional(&mut profile, RlPhaseV1::Retry, || {
+            self.last_exchange.as_ref().and_then(|cached| {
+                if cached.request_id != request.request_id() {
+                    return None;
+                }
+                if cached.request == request {
+                    Some(RetryDispositionV1::Cached)
+                } else {
+                    Some(RetryDispositionV1::ReuseMismatch(Box::new(error_response(
+                        Some(request.request_id().to_string()),
+                        "request_id_reuse_mismatch",
+                        "request_id was reused for a different immediate request payload",
+                    ))))
+                }
+            })
+        });
+        if let Some(retry) = retry {
+            return match retry {
+                RetryDispositionV1::Cached => {
+                    measure_optional(&mut profile, RlPhaseV1::Response, || ());
+                    let response_line =
+                        measure_optional(&mut profile, RlPhaseV1::Serialize, || {
+                            self.last_exchange
+                                .as_ref()
+                                .expect("cached retry has an exchange")
+                                .response_line
+                                .clone()
+                        });
+                    if let Some(profile) = profile.as_deref_mut() {
+                        profile.response_lines = profile.response_lines.saturating_add(1);
+                    }
+                    response_line
+                }
+                RetryDispositionV1::ReuseMismatch(response) => {
+                    let response =
+                        measure_optional(&mut profile, RlPhaseV1::Response, || *response);
+                    serialize_response_profiled(response, &mut profile)
+                }
+            };
         }
         let should_cache = request.schema_version() == RL_SESSION_SCHEMA_VERSION;
         let request_for_cache = request.clone();
-        let response = self.handle_request(request);
-        let response_line = serialize_response(response);
+        let response = self.handle_request_profiled(request, profile.as_deref_mut());
+        let response_line = serialize_response_profiled(response, &mut profile);
         if should_cache {
             self.last_exchange = Some(CachedProtocolExchangeV1 {
                 request_id: request_for_cache.request_id().to_string(),
@@ -770,7 +907,11 @@ impl KernelRlJsonlServerV1 {
         response_line
     }
 
-    fn handle_request(&mut self, request: KernelRlRequestV1) -> KernelRlResponseV1 {
+    fn handle_request_profiled(
+        &mut self,
+        request: KernelRlRequestV1,
+        mut profile: Option<&mut RlPhaseProfileV1>,
+    ) -> KernelRlResponseV1 {
         match request {
             KernelRlRequestV1::Reset {
                 schema_version,
@@ -782,29 +923,36 @@ impl KernelRlJsonlServerV1 {
                 max_policy_steps,
             } => {
                 if schema_version != RL_SESSION_SCHEMA_VERSION {
-                    return error_response(
-                        Some(request_id),
-                        "schema_version_mismatch",
-                        "unsupported request schema_version",
-                    );
+                    return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response(
+                            Some(request_id),
+                            "schema_version_mismatch",
+                            "unsupported request schema_version",
+                        )
+                    });
                 }
-                let session = match RlEpisodeSessionV1::reset_with_decks_and_limits(
+                let session = match RlEpisodeSessionV1::reset_with_decks_and_limits_profiled(
                     episode_id,
                     env_seed,
                     max_physical_decisions,
                     max_policy_steps,
                     deck_ids,
+                    profile.as_deref_mut(),
                 ) {
                     Ok(session) => session,
                     Err(err) => {
-                        return error_response(
-                            Some(request_id),
-                            session_error_code(&err.code),
-                            &err.message,
-                        );
+                        return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                            error_response(
+                                Some(request_id),
+                                session_error_code(&err.code),
+                                &err.message,
+                            )
+                        });
                     }
                 };
-                let response = session_response_to_protocol(request_id, session.current_response());
+                let response = measure_optional(&mut profile, RlPhaseV1::Response, || {
+                    session_response_to_protocol(request_id, session.current_response())
+                });
                 self.session = Some(session);
                 response
             }
@@ -817,31 +965,40 @@ impl KernelRlJsonlServerV1 {
                 selected_action_id,
             } => {
                 if schema_version != RL_SESSION_SCHEMA_VERSION {
-                    return error_response(
-                        Some(request_id),
-                        "schema_version_mismatch",
-                        "unsupported request schema_version",
-                    );
+                    return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response(
+                            Some(request_id),
+                            "schema_version_mismatch",
+                            "unsupported request schema_version",
+                        )
+                    });
                 }
                 let Some(session) = self.session.as_mut() else {
-                    return error_response(
-                        Some(request_id),
-                        "step_before_reset",
-                        "step request received before reset",
-                    );
+                    return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response(
+                            Some(request_id),
+                            "step_before_reset",
+                            "step request received before reset",
+                        )
+                    });
                 };
-                match session.step(
+                match session.apply_step_profiled(
                     episode_id,
                     expected_step,
                     selected_index,
                     &selected_action_id,
+                    profile.as_deref_mut(),
                 ) {
-                    Ok(response) => session_response_to_protocol(request_id, response),
-                    Err(err) => error_response(
-                        Some(request_id),
-                        session_error_code(&err.code),
-                        &err.message,
-                    ),
+                    Ok(()) => measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        session_response_to_protocol(request_id, session.current_response())
+                    }),
+                    Err(err) => measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response(
+                            Some(request_id),
+                            session_error_code(&err.code),
+                            &err.message,
+                        )
+                    }),
                 }
             }
         }
@@ -890,6 +1047,19 @@ fn session_response_to_protocol(
 
 fn serialize_response(response: KernelRlResponseV1) -> String {
     serde_json::to_string(&response).expect("protocol response serializes")
+}
+
+fn serialize_response_profiled(
+    response: KernelRlResponseV1,
+    profile: &mut Option<&mut RlPhaseProfileV1>,
+) -> String {
+    let line = measure_optional(profile, RlPhaseV1::Serialize, || {
+        serialize_response(response)
+    });
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.response_lines = profile.response_lines.saturating_add(1);
+    }
+    line
 }
 
 fn request_id_from_value(value: &Value) -> Option<String> {
@@ -1240,6 +1410,15 @@ mod tests {
             "active decision no longer matches its privileged environment binding"
         );
         assert!(!err.message.contains("0x"));
+
+        let err = session
+            .step(5, step, u32::MAX, "unknown-action")
+            .unwrap_err();
+        assert_eq!(
+            err.code,
+            RlSessionErrorCode::StaleEnvironmentBinding,
+            "privileged integrity failure retains precedence over invalid selection"
+        );
 
         session.restore_v5(&snapshot);
         session.policy_step_count += 1;
