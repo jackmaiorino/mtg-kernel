@@ -721,6 +721,18 @@ impl GameState {
         }
     }
 
+    /// Clears exact identities another observer knew in `owner`'s hand.
+    /// A private subset choice from the whole hand invalidates even facts
+    /// about cards that remain: retaining them would reveal which hidden
+    /// candidates were moved by elimination.
+    pub(crate) fn clear_nonowner_hand_knowledge(&mut self, owner: PlayerId) {
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            if observer != owner {
+                self.hand_knowledge[observer.index()][owner.index()].clear();
+            }
+        }
+    }
+
     /// Clears zone-incarnation relations from the moving object and all
     /// reverse references to it. This is called before/while zone-change
     /// generation advances so an attachment or exile provenance link can
@@ -837,8 +849,8 @@ impl GameState {
     }
 
     /// Clears all observers' facts about one library. Used for shuffles and
-    /// conservative invalidation when a generic zone change cannot preserve
-    /// what each observer knows about the mutation.
+    /// other whole-library randomization; known-position insertions/removals
+    /// instead shift every still-valid fact precisely.
     pub(crate) fn clear_library_knowledge(&mut self, owner: PlayerId) {
         for observer in [PlayerId::P0, PlayerId::P1] {
             self.library_knowledge[observer.index()][owner.index()].clear();
@@ -855,6 +867,24 @@ impl GameState {
             for entry in entries {
                 if entry.position as usize > position {
                     entry.position -= 1;
+                }
+            }
+        }
+    }
+
+    /// Updates exact position facts after an identity-hidden insertion at a
+    /// known library position. The inserted card is not learned here, but
+    /// every previously known card at or below the insertion remains known
+    /// and shifts one slot deeper. A caller with explicit visibility may
+    /// reveal the inserted prefix after the zone change commits.
+    pub(crate) fn note_library_insertion(&mut self, owner: PlayerId, position: usize) {
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            for entry in &mut self.library_knowledge[observer.index()][owner.index()] {
+                if entry.position as usize >= position {
+                    entry.position = entry
+                        .position
+                        .checked_add(1)
+                        .expect("a live library position fits u32");
                 }
             }
         }

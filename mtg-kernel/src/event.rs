@@ -50,6 +50,10 @@ pub struct ZoneChangeProposed {
     /// secret; public reveal effects opt in after populating the existing
     /// perspective-scoped library-knowledge table.
     pub preserve_known_identity: bool,
+    /// This is a private top-of-library insertion whose owner knows the
+    /// inserted identity. Other observers learn no new identity, while their
+    /// still-valid prior library position facts shift through the insertion.
+    pub reveal_library_insert_to_owner: bool,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -119,6 +123,7 @@ impl ProposedEvent {
             object,
             to_zone,
             preserve_known_identity: false,
+            reveal_library_insert_to_owner: false,
             touched_by: Vec::new(),
         })
     }
@@ -127,6 +132,19 @@ impl ProposedEvent {
             object,
             to_zone,
             preserve_known_identity: true,
+            reveal_library_insert_to_owner: false,
+            touched_by: Vec::new(),
+        })
+    }
+    /// Moves one privately selected card to the top of its owner's library.
+    /// The move remains a normal replaceable/logged zone change; this flag
+    /// only carries the visibility needed for exact library knowledge.
+    pub fn private_top_library_insert(object: ObjectId) -> ProposedEvent {
+        ProposedEvent::ZoneChange(ZoneChangeProposed {
+            object,
+            to_zone: Zone::Library,
+            preserve_known_identity: false,
+            reveal_library_insert_to_owner: true,
             touched_by: Vec::new(),
         })
     }
@@ -366,7 +384,13 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
         }
         ProposedEvent::ZoneChange(z) => {
             let from = state.objects.get(z.object).zone;
-            commit_zone_change(state, z.object, z.to_zone, z.preserve_known_identity);
+            commit_zone_change(
+                state,
+                z.object,
+                z.to_zone,
+                z.preserve_known_identity,
+                z.reveal_library_insert_to_owner,
+            );
             CommittedEvent::ZoneChange {
                 object: z.object,
                 from,
@@ -499,6 +523,7 @@ fn commit_zone_change(
     id: ObjectId,
     to_zone: Zone,
     preserve_known_identity: bool,
+    reveal_library_insert_to_owner: bool,
 ) {
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
@@ -534,11 +559,11 @@ fn commit_zone_change(
 
     match to_zone {
         Zone::Library => {
-            // A generic zone change does not carry enough visibility
-            // information to say which observers know the inserted card.
-            // Clear conservatively; a library effect that explicitly
-            // reveals the result can repopulate knowledge afterward.
-            state.clear_library_knowledge(owner);
+            // The insertion position is public even when the inserted
+            // identity is not. Preserve every still-valid older fact by
+            // shifting it deeper; a visibility-aware constructor may reveal
+            // the new top card to its owner after the incarnation advances.
+            state.note_library_insertion(owner, 0);
             state.players[owner.index()].library.insert(0, id);
         }
         Zone::Hand => state.players[owner.index()].hand.push(id),
@@ -567,6 +592,9 @@ fn commit_zone_change(
             obj.counters = Default::default();
             obj.attachments.clear();
         }
+    }
+    if to_zone == Zone::Library && reveal_library_insert_to_owner {
+        state.reveal_library_top(owner, owner, 1);
     }
     if to_zone == Zone::Hand && from_zone != Zone::Library {
         // Returning a publicly identified card to hand does not make that

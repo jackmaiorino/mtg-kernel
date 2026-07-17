@@ -551,9 +551,9 @@ mod tests {
 
     #[test]
     fn card_db_hash_v2_is_frozen() {
-        // Ponder is the only newly executable definition in this support
-        // slice; Mental Note and Thought Scour were accepted previously.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x55f9_ff27_1a23_beb3);
+        // Brainstorm is the only newly executable definition in this support
+        // slice; Ponder was accepted previously.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x8c2e_11c8_cbba_8039);
     }
 
     #[test]
@@ -622,7 +622,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 39, "36 deck cards plus three required tokens");
+        assert_eq!(full, 40, "37 deck cards plus three required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
