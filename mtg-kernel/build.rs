@@ -934,7 +934,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
 fn keywords_for(name: &str) -> &'static str {
     match name {
         "Masked Meower" | "Clockwork Percussionist" => "Keywords::HASTE",
-        "Sneaky Snacker" => "Keywords::FLYING",
+        "Sneaky Snacker" | "Bird Illusion Token" => "Keywords::FLYING",
         "Samurai Token" => "Keywords::VIGILANCE",
         _ => "Keywords::NONE",
     }
@@ -2417,7 +2417,7 @@ fn supertype_variant(t: &str) -> &'static str {
 
 /// Maps a `cards_v1.json` subtype string to a `card_def::Subtype` variant --
 /// a fully closed set (one variant per distinct string across the whole
-/// 135-card pool this increment's data covers), so this panics on an
+/// 136-definition pool this increment's data covers), so this panics on an
 /// unrecognized value same as `card_type_variant`/`supertype_variant`/
 /// `color_variant` -- see `Subtype`'s own doc for why it's closed rather
 /// than named-variants-plus-string-fallback (a `&'static str` payload can't
@@ -2480,6 +2480,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Warrior" => "Subtype::Warrior",
         "Wizard" => "Subtype::Wizard",
         "Zombie" => "Subtype::Zombie",
+        "Illusion" => "Subtype::Illusion",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

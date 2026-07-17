@@ -24,9 +24,9 @@ pub enum TriggerCondition {
     DealsDamage,
     /// The controller casts an instant or sorcery spell -- any such
     /// spell, not just ones this permanent's controller controls the
-    /// *source* of (Guttersnipe: "whenever you cast an instant or sorcery
-    /// spell"). Matched against `CommittedEvent::SpellCast`, logged by
-    /// `engine::finalize_cast`.
+    /// *source* of (Guttersnipe and Murmuring Mystic: "whenever you cast an
+    /// instant or sorcery spell"). Matched against
+    /// `CommittedEvent::SpellCast`, logged by `engine::finalize_cast`.
     CastInstantOrSorcery,
     /// The controller draws their `n`th card since the current turn began
     /// (Sneaky Snacker: "whenever you draw your third card in a turn").
@@ -72,6 +72,18 @@ fn guttersnipe_effect() -> EffectOp {
     }
 }
 
+fn murmuring_mystic_effect() -> EffectOp {
+    // Create a 1/1 blue Bird Illusion creature token with flying. Token
+    // characteristics live in the generated CardDef; the trigger uses the
+    // same generic CreateToken leaf as Voldaren Epicure and Rally cards.
+    let bird_illusion = crate::card_def::card_id_by_name("Bird Illusion Token")
+        .expect("Bird Illusion Token in CARD_DEFS");
+    EffectOp::CreateToken {
+        token_def: bird_illusion,
+        controller: PlayerRef::Controller,
+    }
+}
+
 fn voldaren_epicure_effect() -> EffectOp {
     // It deals 1 damage to each opponent. Create a Blood token.
     let blood_token =
@@ -106,6 +118,12 @@ const GUTTERSNIPE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     effect: guttersnipe_effect,
+}];
+const MURMURING_MYSTIC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastInstantOrSorcery,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    effect: murmuring_mystic_effect,
 }];
 const VOLDAREN_EPICURE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
@@ -196,11 +214,11 @@ const GOBLIN_BUSHWHACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     effect: goblin_bushwhacker_effect,
 }];
 
-/// The Burn 16's and Mono Red Rally's real triggered abilities, matched by
-/// card name (ids are codegen-assigned from `cards_v1.json`'s array order
-/// and not worth duplicating as constants here -- see `build.rs`'s module
-/// doc on id stability). Every other card in the pool has no triggered
-/// ability implemented and falls through to `&[]`.
+/// The pool's implemented triggered abilities, matched by card name (ids are
+/// codegen-assigned from `cards_v1.json`'s array order and not worth
+/// duplicating as constants here -- see `build.rs`'s module doc on id
+/// stability). Every other card in the pool has no triggered ability
+/// implemented and falls through to `&[]`.
 pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return &[];
@@ -210,6 +228,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
     }
     match card.name {
         "Guttersnipe" => &GUTTERSNIPE_TRIGGERS,
+        "Murmuring Mystic" => &MURMURING_MYSTIC_TRIGGERS,
         "Voldaren Epicure" => &VOLDAREN_EPICURE_TRIGGERS,
         "Sneaky Snacker" => &SNEAKY_SNACKER_TRIGGERS,
         "Burning-Tree Emissary" => &BURNING_TREE_EMISSARY_TRIGGERS,

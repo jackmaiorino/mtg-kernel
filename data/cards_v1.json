@@ -2354,6 +2354,7 @@
     },
     {
       "name": "Murmuring Mystic",
+      "engine_capability": "full",
       "mana_cost": "{3}{U}",
       "mana_value": 4,
       "colors": [
@@ -2363,8 +2364,8 @@
         "Creature"
       ],
       "subtypes": [
-        "HUMAN",
-        "WIZARD"
+        "Human",
+        "Wizard"
       ],
       "supertypes": [],
       "power": 1,
@@ -2377,7 +2378,8 @@
       "sideboard_only": false,
       "complexity": "simple",
       "mechanics": [
-        "token_creation"
+        "token_creation",
+        "spell_cast_trigger"
       ],
       "java_file": "Mage.Sets/src/mage/cards/m/MurmuringMystic.java"
     },
@@ -4092,6 +4094,36 @@
         "vigilance"
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/SamuraiToken.java"
+    },
+    {
+      "name": "Bird Illusion Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bird",
+        "Illusion"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/BirdIllusionToken.java"
     }
   ],
   "unresolved": [

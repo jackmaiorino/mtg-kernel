@@ -4,7 +4,7 @@ Date: 2026-07-17
 
 Status: bounded engineering evidence, not a science-release certificate
 
-Source: the repository source tree committed together with this record. Hosted CI is the independent verification of the committed source. The local artifact roots used below are intentionally outside the repository and are not a published artifact release.
+Historical source binding: this record belongs to feature checkpoint `a86b15e21b2a37e94c4f1f8748e49769bc79e998`, merged unchanged as `9fbc68f26b9d1737f236ed137228e62e495ef545`. Hosted CI independently verified that source. Later commits retain this file as historical evidence; their changed card-database or environment-binary identities do not reproduce the artifact hashes below unless the record is explicitly refreshed. The local artifact roots used below are intentionally outside the repository and are not a published artifact release.
 
 ## Scope
 
@@ -22,7 +22,7 @@ The frozen deck hashes are:
 | Burn | `0x5fdb7b92986b6fc1` |
 | Rally | `0x0c9f01c2544412bf` |
 
-The release environment binary used for every manual run below had SHA-256 `567b0acd81d3141645fd8c5a9a4f257ffa03ad4a0d49a94b8684cb6d543b3c80`.
+The checkpoint-bound release environment binary used for every manual run below had SHA-256 `567b0acd81d3141645fd8c5a9a4f257ffa03ad4a0d49a94b8684cb6d543b3c80`.
 
 ## Local validation host
 
