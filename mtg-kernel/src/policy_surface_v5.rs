@@ -140,7 +140,7 @@ enum CombatScanV5 {
         ordered_candidates: Vec<ObjectId>,
         cursor: usize,
         selected: Vec<ObjectId>,
-        bound_surface_hash: u64,
+        binding: CombatScanBindingV5,
     },
     Blockers {
         player: PlayerId,
@@ -148,8 +148,27 @@ enum CombatScanV5 {
         ordered_candidates: Vec<ObjectId>,
         cursor: usize,
         selected: Vec<ObjectId>,
-        bound_surface_hash: u64,
+        binding: CombatScanBindingV5,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "binding_kind", content = "binding", rename_all = "snake_case")]
+enum CombatScanBindingV5 {
+    /// Standalone/public `PolicySurfaceV5` callers may retain and mutate their
+    /// `GameState`, so their combat scan stays bound to the exact historical
+    /// state-and-H2-surface hash.
+    ExactSurfaceHash(u64),
+    /// `RlEpisodeSessionV1` privately owns both the state and surface. Its
+    /// crate-private path can therefore use a checked opaque revision without
+    /// weakening the standalone boundary.
+    OwnedEnvironmentRevision(u64),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum EnvironmentBindingModeV5 {
+    Exact,
+    OwnedRevision(u64),
 }
 
 impl CombatScanV5 {
@@ -157,20 +176,45 @@ impl CombatScanV5 {
         &self,
         state: &GameState,
         surface: &HarnessSurfaceV2,
+        mode: EnvironmentBindingModeV5,
     ) -> Result<(), String> {
-        let expected = match self {
-            CombatScanV5::Attackers {
-                bound_surface_hash, ..
+        let binding = match self {
+            CombatScanV5::Attackers { binding, .. } | CombatScanV5::Blockers { binding, .. } => {
+                *binding
             }
-            | CombatScanV5::Blockers {
-                bound_surface_hash, ..
-            } => *bound_surface_hash,
         };
-        let actual = surface_binding_hash(state, surface)?;
-        if actual != expected {
-            return Err("stale policy combat scan environment binding".to_string());
+        let valid = match (binding, mode) {
+            (CombatScanBindingV5::ExactSurfaceHash(expected), EnvironmentBindingModeV5::Exact) => {
+                surface_binding_hash(state, surface)? == expected
+            }
+            (
+                CombatScanBindingV5::OwnedEnvironmentRevision(expected),
+                EnvironmentBindingModeV5::OwnedRevision(actual),
+            ) => actual == expected,
+            _ => false,
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err("stale policy combat scan environment binding".to_string())
         }
-        Ok(())
+    }
+
+    fn rebind_owned_revision(&mut self, revision: u64) -> Result<(), String> {
+        let binding = match self {
+            CombatScanV5::Attackers { binding, .. } | CombatScanV5::Blockers { binding, .. } => {
+                binding
+            }
+        };
+        match binding {
+            CombatScanBindingV5::OwnedEnvironmentRevision(bound) => {
+                *bound = revision;
+                Ok(())
+            }
+            CombatScanBindingV5::ExactSurfaceHash(_) => {
+                Err("cannot rebind an exact policy combat scan as owned".to_string())
+            }
+        }
     }
 
     fn context_for(&self, observer: PlayerId) -> Result<PolicySurfaceContextIdsV5, String> {
@@ -334,8 +378,27 @@ impl PolicySurfaceV5 {
     }
 
     pub fn next_decision(&mut self, state: &mut GameState) -> Result<PolicyDecisionV5, String> {
+        self.next_decision_with_binding(state, EnvironmentBindingModeV5::Exact)
+    }
+
+    pub(crate) fn next_decision_owned(
+        &mut self,
+        state: &mut GameState,
+        environment_revision: u64,
+    ) -> Result<PolicyDecisionV5, String> {
+        self.next_decision_with_binding(
+            state,
+            EnvironmentBindingModeV5::OwnedRevision(environment_revision),
+        )
+    }
+
+    fn next_decision_with_binding(
+        &mut self,
+        state: &mut GameState,
+        binding_mode: EnvironmentBindingModeV5,
+    ) -> Result<PolicyDecisionV5, String> {
         if let Some(scan) = &self.scan {
-            scan.validate_binding(state, &self.inner)?;
+            scan.validate_binding(state, &self.inner, binding_mode)?;
             return policy_decision_for_scan(scan);
         }
 
@@ -349,7 +412,7 @@ impl PolicySurfaceV5 {
                     ordered_candidates: eligible,
                     cursor: 0,
                     selected: Vec::new(),
-                    bound_surface_hash: surface_binding_hash(state, &self.inner)?,
+                    binding: scan_binding(state, &self.inner, binding_mode)?,
                 });
                 policy_decision_for_scan(self.scan.as_ref().expect("scan just initialized"))
             }
@@ -364,7 +427,7 @@ impl PolicySurfaceV5 {
                     ordered_candidates: legal_blockers,
                     cursor: 0,
                     selected: Vec::new(),
-                    bound_surface_hash: surface_binding_hash(state, &self.inner)?,
+                    binding: scan_binding(state, &self.inner, binding_mode)?,
                 });
                 policy_decision_for_scan(self.scan.as_ref().expect("scan just initialized"))
             }
@@ -375,7 +438,35 @@ impl PolicySurfaceV5 {
     pub fn apply(&mut self, state: &mut GameState, action: PolicyActionV5) -> Result<(), String> {
         let mut next_surface = self.clone();
         let mut next_state = state.clone();
-        next_surface.apply_in_place(&mut next_state, action)?;
+        next_surface.apply_in_place(
+            &mut next_state,
+            action,
+            EnvironmentBindingModeV5::Exact,
+            None,
+        )?;
+        *self = next_surface;
+        *state = next_state;
+        Ok(())
+    }
+
+    pub(crate) fn apply_owned(
+        &mut self,
+        state: &mut GameState,
+        action: PolicyActionV5,
+        current_revision: u64,
+        next_revision: u64,
+    ) -> Result<(), String> {
+        if current_revision.checked_add(1) != Some(next_revision) {
+            return Err("invalid owned policy environment revision transition".to_string());
+        }
+        let mut next_surface = self.clone();
+        let mut next_state = state.clone();
+        next_surface.apply_in_place(
+            &mut next_state,
+            action,
+            EnvironmentBindingModeV5::OwnedRevision(current_revision),
+            Some(next_revision),
+        )?;
         *self = next_surface;
         *state = next_state;
         Ok(())
@@ -385,6 +476,8 @@ impl PolicySurfaceV5 {
         &mut self,
         state: &mut GameState,
         action: PolicyActionV5,
+        binding_mode: EnvironmentBindingModeV5,
+        next_owned_revision: Option<u64>,
     ) -> Result<(), String> {
         let Some(scan) = self.scan.as_mut() else {
             return match action {
@@ -392,7 +485,7 @@ impl PolicySurfaceV5 {
                 _ => Err("policy combat inclusion action without an active scan".to_string()),
             };
         };
-        scan.validate_binding(state, &self.inner)?;
+        scan.validate_binding(state, &self.inner, binding_mode)?;
         scan.validate_shape()?;
 
         let (expected_actor, expected_candidate, include) = match (&*scan, action) {
@@ -457,6 +550,9 @@ impl PolicySurfaceV5 {
         }
         *cursor += 1;
         if *cursor < ordered_candidates.len() {
+            if let Some(next_revision) = next_owned_revision {
+                scan.rebind_owned_revision(next_revision)?;
+            }
             return Ok(());
         }
 
@@ -476,6 +572,21 @@ impl PolicySurfaceV5 {
     }
 }
 
+fn scan_binding(
+    state: &GameState,
+    surface: &HarnessSurfaceV2,
+    mode: EnvironmentBindingModeV5,
+) -> Result<CombatScanBindingV5, String> {
+    match mode {
+        EnvironmentBindingModeV5::Exact => Ok(CombatScanBindingV5::ExactSurfaceHash(
+            surface_binding_hash(state, surface)?,
+        )),
+        EnvironmentBindingModeV5::OwnedRevision(revision) => {
+            Ok(CombatScanBindingV5::OwnedEnvironmentRevision(revision))
+        }
+    }
+}
+
 impl Default for PolicySurfaceV5 {
     fn default() -> Self {
         Self::new()
@@ -483,6 +594,9 @@ impl Default for PolicySurfaceV5 {
 }
 
 fn surface_binding_hash(state: &GameState, surface: &HarnessSurfaceV2) -> Result<u64, String> {
+    #[cfg(test)]
+    TEST_EXACT_SURFACE_HASH_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
+
     #[derive(Serialize)]
     struct SurfaceBindingEnvelopeV1 {
         schema_version: u32,
@@ -499,6 +613,21 @@ fn surface_binding_hash(state: &GameState, surface: &HarnessSurfaceV2) -> Result
     };
     let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
     Ok(fnv1a64(&bytes))
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_EXACT_SURFACE_HASH_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_test_exact_surface_hash_calls() {
+    TEST_EXACT_SURFACE_HASH_CALLS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn test_exact_surface_hash_calls() -> u64 {
+    TEST_EXACT_SURFACE_HASH_CALLS.with(std::cell::Cell::get)
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -933,9 +1062,11 @@ mod tests {
 
     #[test]
     fn external_state_staleness_is_sanitized_nonmutating_and_retryable_after_restore() {
+        reset_test_exact_surface_hash_calls();
         let (mut state, _) = attacker_state(2);
         let mut surface = PolicySurfaceV5::new();
         let decision = surface.next_decision(&mut state).unwrap();
+        assert_eq!(test_exact_surface_hash_calls(), 1);
         let actions = legal_action_candidates_v5(&decision, &state).unwrap();
         let pristine_state = state.clone();
         let pristine_surface = surface.clone();
@@ -945,6 +1076,7 @@ mod tests {
         let err = surface
             .apply(&mut state, actions[1].policy_action.clone())
             .unwrap_err();
+        assert_eq!(test_exact_surface_hash_calls(), 2);
         assert_eq!(err, "stale policy combat scan environment binding");
         assert!(!err.contains("0x"));
         assert_eq!(state, tampered_state);
@@ -952,9 +1084,11 @@ mod tests {
 
         state = pristine_state;
         assert_eq!(surface.next_decision(&mut state).unwrap(), decision);
+        assert_eq!(test_exact_surface_hash_calls(), 3);
         surface
             .apply(&mut state, actions[1].policy_action.clone())
             .unwrap();
+        assert_eq!(test_exact_surface_hash_calls(), 4);
         assert!(surface.scan_active());
     }
 }
