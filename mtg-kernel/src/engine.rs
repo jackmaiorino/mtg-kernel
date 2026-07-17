@@ -563,8 +563,8 @@ pub struct PendingCast {
     /// `None` until resolved, only meaningful for a modal card
     /// (`CardDef::mode2.is_some()`) -- pre-seeded to `Some(0)` at
     /// `begin_cast` for every non-modal card, so the "which mode" decision
-    /// stage is skipped entirely unless the card is Pyroblast/Red Elemental
-    /// Blast. `0` = the card's primary `target_spec`/`spell_effect`, `1` =
+    /// stage is skipped entirely unless the card is one of the four Blast
+    /// cards. `0` = the card's primary `target_spec`/`spell_effect`, `1` =
     /// `mode2`.
     pub mode_chosen: Option<u8>,
     /// Which zone this cast was announced from (Hand, Graveyard for
@@ -839,7 +839,7 @@ pub enum Decision {
         player: PlayerId,
         spell: ObjectId,
     },
-    /// Pyroblast/Red Elemental Blast: which of the spell's 2 modes to
+    /// The four Blast cards: which of the spell's 2 modes to
     /// resolve (`CardDef::mode2`). Asked before targeting, since the modes
     /// have different `TargetSpec`s, and only when both modes admit a
     /// complete mandatory target assignment. If exactly one mode is viable
@@ -1098,23 +1098,44 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::AnySpellOnStack
         | TargetSpec::InstantSpellOnStack
         | TargetSpec::BlueSpellOnStack
+        | TargetSpec::RedSpellOnStack
         | TargetSpec::AnyPermanent
-        | TargetSpec::BluePermanent => 1,
+        | TargetSpec::BluePermanent
+        | TargetSpec::RedPermanent => 1,
         TargetSpec::PlayerThenTheirCreature => 2,
     }
 }
 
-fn is_blue(state: &GameState, id: ObjectId) -> bool {
+fn is_color(state: &GameState, id: ObjectId, color: mana::ManaColor) -> bool {
     let def_idx = state.objects.get(id).card_def;
     card_def::CARD_DEFS[def_idx as usize]
         .colors
-        .contains(&mana::ManaColor::U)
+        .contains(&color)
 }
 
 fn battlefield_objects(state: &GameState) -> impl Iterator<Item = ObjectId> + '_ {
     [PlayerId::P0, PlayerId::P1]
         .into_iter()
         .flat_map(|p| state.players[p.index()].battlefield.iter().copied())
+}
+
+fn spell_targets_of_color(state: &GameState, color: mana::ManaColor) -> Vec<Target> {
+    state
+        .stack
+        .iter()
+        .filter(|item| item.kind == StackItemKind::Spell)
+        .map(|item| item.source)
+        .filter(|id| state.engine.pending_cast.as_ref().map(|p| p.spell) != Some(*id))
+        .filter(|&id| is_color(state, id, color))
+        .map(Target::Object)
+        .collect()
+}
+
+fn permanent_targets_of_color(state: &GameState, color: mana::ManaColor) -> Vec<Target> {
+    battlefield_objects(state)
+        .filter(|&id| is_color(state, id, color))
+        .map(Target::Object)
+        .collect()
 }
 
 /// `targets_chosen` is the *already-picked* prefix for this same targeting
@@ -1183,20 +1204,11 @@ pub fn legal_targets_for(
                 .map(|item| Target::Object(item.source))
                 .collect()
         }
-        TargetSpec::BlueSpellOnStack => state
-            .stack
-            .iter()
-            .filter(|item| item.kind == StackItemKind::Spell)
-            .map(|item| item.source)
-            .filter(|id| state.engine.pending_cast.as_ref().map(|p| p.spell) != Some(*id))
-            .filter(|&id| is_blue(state, id))
-            .map(Target::Object)
-            .collect(),
+        TargetSpec::BlueSpellOnStack => spell_targets_of_color(state, mana::ManaColor::U),
+        TargetSpec::RedSpellOnStack => spell_targets_of_color(state, mana::ManaColor::R),
         TargetSpec::AnyPermanent => battlefield_objects(state).map(Target::Object).collect(),
-        TargetSpec::BluePermanent => battlefield_objects(state)
-            .filter(|&id| is_blue(state, id))
-            .map(Target::Object)
-            .collect(),
+        TargetSpec::BluePermanent => permanent_targets_of_color(state, mana::ManaColor::U),
+        TargetSpec::RedPermanent => permanent_targets_of_color(state, mana::ManaColor::R),
     }
 }
 
@@ -3241,9 +3253,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let def = &card_def::CARD_DEFS[card_def_idx as usize];
     // 601.2b: a modal spell resolves whichever mode was chosen at cast time
     // (`PendingCast::mode_chosen`, threaded onto the `StackItem` by
-    // `finalize_cast`) -- `mode_chosen == 1` only for Pyroblast/Red
-    // Elemental Blast's destroy mode, everything else always resolves its
-    // primary `spell_effect`.
+    // `finalize_cast`) -- `mode_chosen == 1` only for a Blast card's
+    // destroy mode, everything else always resolves its primary
+    // `spell_effect`.
     let program = if item.mode_chosen == 1 {
         def.mode2.as_ref().map(|m| (m.effect)())
     } else {
@@ -5805,7 +5817,7 @@ mod tests {
 
     // ================================================================
     // Increment 7: Highway Robbery (+ Plot), Fiery Temper (Madness),
-    // Searing Blaze, Pyroblast / Red Elemental Blast.
+    // Searing Blaze and the four Blast cards.
     // ================================================================
 
     fn put_on_stack(state: &mut GameState, player: PlayerId, card_name: &str) -> ObjectId {

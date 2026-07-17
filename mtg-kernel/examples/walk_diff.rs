@@ -1350,11 +1350,11 @@ fn render_flashback_cost(components: &[CostComponent]) -> String {
 ///   -- the same convention `ChooseTargets` candidates already use)
 ///   instead of Java's recursive `canonicalStackObjectId` (stack-object
 ///   target -> `stack#M`, everything else -> raw UUID). This pool's only
-///   modal targeting (Pyroblast/Red Elemental Blast's `mode2`) targets
-///   permanents only, never a stack object, so the `stack#M`-target case
-///   is structurally unreachable here; flagged in case that changes.
+///   modal targeting (the four Blast cards' `mode2`) targets permanents
+///   only, never a stack object, so the `stack#M`-target case is
+///   structurally unreachable here; flagged in case that changes.
 /// - `modes=`: `mode#<StackItem::mode_chosen>` unconditionally (`0` for
-///   every non-modal card, `0`/`1` for Pyroblast/REB). UNVERIFIED against
+///   every non-modal card, `0`/`1` for the four Blasts). UNVERIFIED against
 ///   Java: this session could not confirm whether
 ///   `ability.getModes().getSelectedModes()` is non-empty (and thus
 ///   renders `mode#0`) for a *non*-modal ability's single implicit mode,
