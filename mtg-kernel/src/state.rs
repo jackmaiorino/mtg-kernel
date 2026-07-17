@@ -12,13 +12,13 @@ pub const STARTING_LIFE: i32 = 20;
 
 /// Exact diagnostic full-state hash contract written into privileged audit
 /// artifacts. The algorithm is FNV-1a-64 over the compact UTF-8 JSON bytes of
-/// `DiagnosticStateHashEnvelopeV2` below.
+/// `DiagnosticStateHashEnvelopeV3` below.
 ///
 /// Changing the envelope, JSON representation, or digest algorithm requires a
 /// new constant value and an audit-artifact schema bump. Policy artifacts do
 /// not contain this privileged full-state diagnostic.
-pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v2";
-pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 2;
+pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v3";
+pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
@@ -396,7 +396,7 @@ pub struct StackItem {
     /// Which mode this cast chose, for a modal spell (`card_def::CardDef::
     /// mode2`): `0` = the card's primary `target_spec`/`spell_effect`, `1`
     /// = `mode2`. Always `0` for a non-modal card (`mode2 == None`), which
-    /// is every card in this pool except Pyroblast/Red Elemental Blast.
+    /// is every card in this pool except the four Blast cards.
     pub mode_chosen: u8,
     /// True iff this item is a Madness triggered-ability offer (`card_def::
     /// CardDef::madness_cost`), not a normal spell/ability -- pushed by
@@ -1104,13 +1104,13 @@ impl Hasher for Fnv1a64 {
 }
 
 #[derive(Serialize)]
-struct DiagnosticStateHashEnvelopeV2<'a> {
+struct DiagnosticStateHashEnvelopeV3<'a> {
     schema_version: u32,
     state: &'a GameState,
 }
 
 fn diagnostic_state_hash_bytes(state: &GameState) -> Vec<u8> {
-    serde_json::to_vec(&DiagnosticStateHashEnvelopeV2 {
+    serde_json::to_vec(&DiagnosticStateHashEnvelopeV3 {
         schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION,
         state,
     })
@@ -1301,13 +1301,13 @@ mod tests {
 
         assert_eq!(
             DIAGNOSTIC_STATE_HASH_ALGORITHM,
-            "fnv1a64-serde-json-game-state-envelope-v2"
+            "fnv1a64-serde-json-game-state-envelope-v3"
         );
-        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 2);
+        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 3);
         assert!(
-            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":2,\"state\":{")
+            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":3,\"state\":{")
         );
-        assert_eq!(state.diagnostic_state_hash(), 0x6dcc_4332_ac75_cb3c);
+        assert_eq!(state.diagnostic_state_hash(), 0xa127_b021_904e_613b);
     }
 
     /// Draws to different players don't interact, so interleaving order

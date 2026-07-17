@@ -757,8 +757,8 @@ fn run(
             SurfaceDecision::Decision(Decision::ChooseCostTargets { .. }) => {
                 return Err("unhandled-decision:ChooseCostTargets".to_string())
             }
-            // Pyroblast/Red Elemental Blast are both sideboard-only for
-            // this pool's maindeck -- unobserved in this corpus (same
+            // All four Blast cards are sideboard-only for this pool's
+            // maindeck -- unobserved in this corpus (same
             // reasoning as ChooseCastMode/OrderTriggers above).
             SurfaceDecision::Decision(Decision::ChooseSpellMode { .. }) => {
                 return Err("unhandled-decision:ChooseSpellMode".to_string())

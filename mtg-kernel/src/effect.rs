@@ -117,9 +117,13 @@ pub enum EffectCond {
     /// instead of misfiring against a stale `ObjectId`.
     TargetInZone(u8, Zone),
     /// True iff `ctx.targets[idx]` is a `Target::Object(id)` whose card
-    /// definition's `colors` includes `color` (105.1/202.2). `false` for a
-    /// `Target::Player`. Pyroblast's/Red Elemental Blast's "if it's
-    /// blue"/"blue spell"/"blue permanent" checks.
+    /// definition's static `colors` includes `color` (105.1/202.2). `false`
+    /// for a `Target::Player`. Pyroblast and Hydroblast use this condition
+    /// for their resolution-time "if it's [color]" checks; the Elemental
+    /// Blasts' filtered target specs independently read the same static
+    /// `CardDef::colors` source while choosing and revalidating targets.
+    /// Unlike XMage's dynamic `getColor(game)`, this does not yet observe
+    /// continuous color-changing effects.
     TargetIsColor(u8, crate::mana::ManaColor),
     /// Both sub-conditions must hold.
     And(Box<EffectCond>, Box<EffectCond>),

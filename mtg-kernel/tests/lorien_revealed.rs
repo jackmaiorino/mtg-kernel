@@ -964,7 +964,7 @@ fn activation_discard_cross_slot_mismatch_halts_before_any_payment_mutation() {
 }
 
 #[test]
-fn diagnostic_hash_v2_covers_pending_activation_and_discard_binding() {
+fn diagnostic_hash_covers_pending_activation_and_discard_binding() {
     let mut state = ready_main(&["Island"], 0x4c4f_5249_454e_001a);
     let source = put_object(&mut state, PlayerId::P0, "Masked Meower", Zone::Battlefield);
     put_object(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
