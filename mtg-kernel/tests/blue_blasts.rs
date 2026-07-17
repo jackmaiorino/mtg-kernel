@@ -24,7 +24,7 @@
 
 use mtg_kernel::card_def::{card_id_by_name, TargetSpec, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
-use mtg_kernel::event::CommittedEvent;
+use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1, TargetRefV1};
@@ -314,7 +314,7 @@ fn blue_blasts_with_zero_viable_modes_are_not_offered_or_castable() {
 }
 
 #[test]
-fn blue_pending_cast_is_frozen_into_diagnostic_hash_v3() {
+fn blue_pending_cast_is_frozen_into_diagnostic_hash_v4() {
     let mut state = ready_game();
     put_spell_on_stack(&mut state, PlayerId::P1, "Lightning Bolt", false, false);
     let red_permanent = put_object(&mut state, PlayerId::P1, "Guttersnipe", Zone::Battlefield);
@@ -335,7 +335,7 @@ fn blue_pending_cast_is_frozen_into_diagnostic_hash_v3() {
     );
     assert_eq!(
         DIAGNOSTIC_STATE_HASH_ALGORITHM,
-        "fnv1a64-serde-json-game-state-envelope-v3"
+        "fnv1a64-serde-json-game-state-envelope-v4"
     );
     let json = serde_json::to_string(&state).unwrap();
     assert!(json.contains("\"target_spec\":\"RedSpellOnStack\""));
@@ -345,7 +345,7 @@ fn blue_pending_cast_is_frozen_into_diagnostic_hash_v3() {
         restored.diagnostic_state_hash(),
         state.diagnostic_state_hash()
     );
-    assert_eq!(state.diagnostic_state_hash(), 0x1969_8f67_c93c_160c);
+    assert_eq!(state.diagnostic_state_hash(), 0x358a_c803_ca4d_87b0);
 
     engine::step(&mut state, Action::ChooseSpellMode(1)).unwrap();
     let decision = engine::advance_until_decision(&mut state);
@@ -480,10 +480,16 @@ fn stale_red_spell_targets_fizzle_both_blue_blasts_without_double_moving() {
         let blast = put_object(&mut state, PlayerId::P0, blast_name, Zone::Hand);
         let decision = cast_for_mode(&mut state, blast, 0);
         choose_target(&mut state, &decision, target);
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert!(state.engine.pending_cast.is_none());
 
-        state.stack.retain(|item| item.source != target);
-        state.objects.get_mut(target).zone = Zone::Graveyard;
-        state.players[PlayerId::P1.index()].graveyard.push(target);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(target, Zone::Graveyard),
+        );
         resolve_blast(&mut state, blast);
 
         assert_eq!(

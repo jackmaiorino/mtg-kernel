@@ -392,7 +392,7 @@ class FeatureEncodingTest(unittest.TestCase):
         self.assertEqual(encoded.schema.object_group_count, 20)
         self.assertEqual(encoded.schema.action_ref_feature_dim, 25)
         self.assertEqual(encoded.schema.contract_digest, "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396")
-        self.assertEqual(encoded.schema.encoding_digest, "ea74553564d370a18679ee5ad62fb359f7ad659b06d42144eb2f53393eee434e")
+        self.assertEqual(encoded.schema.encoding_digest, "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c")
 
     def test_detached_historical_paid_cost_refs_get_dedicated_nodes(self) -> None:
         obs = complete_observation()
@@ -441,6 +441,126 @@ class FeatureEncodingTest(unittest.TestCase):
         for invalid in (duplicate, conflicting):
             with self.assertRaises(FeatureSchemaError):
                 assert_observation_classified(invalid)
+
+    def test_detached_historical_stack_target_resolves_to_its_own_generation_node(self) -> None:
+        obs = complete_observation()
+        actions = complete_legal_actions()
+        live = obs["projection"]["battlefield"][1][1]["stable"]
+        live["zone_change_count"] = 2
+        historical = deep_copy(live)
+        historical["zone_change_count"] = 0
+        obs["projection"]["stack"][0]["targets"] = [
+            {"target_kind": "object", "object": historical}
+        ]
+
+        encoded = encode_decision(obs, actions)
+        target_role = EDGE_ROLES.index("stack_target")
+        target_edges = torch.nonzero(
+            encoded.edge_features[:, target_role] == 1.0, as_tuple=False
+        ).flatten()
+        self.assertEqual(target_edges.numel(), 1)
+        target_node = int(encoded.edge_target_indices[int(target_edges.item())])
+        self.assertEqual(
+            int(encoded.object_groups[target_node]), OBJECT_GROUPS.index("stack_target")
+        )
+        self.assertEqual(
+            int(encoded.object_card_ids[target_node]), historical["card_db_id"] + 1
+        )
+
+        live_nodes = torch.nonzero(
+            (encoded.object_groups == OBJECT_GROUPS.index("opponent_battlefield"))
+            & (encoded.object_card_ids == live["card_db_id"] + 1),
+            as_tuple=False,
+        ).flatten()
+        self.assertEqual(live_nodes.numel(), 1)
+        self.assertNotEqual(target_node, int(live_nodes.item()))
+
+        mapping = {historical["arena_id"]: 303}
+        assert_encoded_equal(
+            self,
+            encoded,
+            encode_decision(
+                remap_all_arena_references(obs, mapping),
+                remap_all_arena_references(actions, mapping),
+            ),
+        )
+
+    def test_same_generation_historical_target_accepts_control_change_only(self) -> None:
+        obs = complete_observation()
+        actions = complete_legal_actions()
+        live = obs["projection"]["battlefield"][0][0]["stable"]
+        historical = deep_copy(live)
+        historical["controller"] = "p1"
+        obs["projection"]["stack"][0]["targets"] = [
+            {"target_kind": "object", "object": historical}
+        ]
+
+        encoded = encode_decision(obs, actions)
+        target_role = EDGE_ROLES.index("stack_target")
+        target_edges = torch.nonzero(
+            encoded.edge_features[:, target_role] == 1.0, as_tuple=False
+        ).flatten()
+        self.assertEqual(target_edges.numel(), 1)
+        target_node = int(encoded.edge_target_indices[int(target_edges.item())])
+        self.assertEqual(
+            int(encoded.object_groups[target_node]), OBJECT_GROUPS.index("self_battlefield")
+        )
+
+        live_controller = deep_copy(obs)
+        live_controller["projection"]["stack"][0]["targets"][0]["object"][
+            "controller"
+        ] = live["controller"]
+        self.assertNotEqual(
+            encoded_digest(encoded),
+            encoded_digest(encode_decision(live_controller, actions)),
+            "announcement-time controller provenance remains model input even when the target reuses the live node",
+        )
+
+        for field, replacement in (
+            ("card_db_id", historical["card_db_id"] + 1),
+            ("owner", "p1"),
+            ("zone", "Graveyard"),
+        ):
+            invalid = deep_copy(obs)
+            invalid["projection"]["stack"][0]["targets"][0]["object"][field] = replacement
+            with self.subTest(field=field), self.assertRaises(FeatureSchemaError):
+                encode_decision(invalid, actions)
+
+    def test_controller_conflicts_remain_invalid_outside_historical_stack_targets(self) -> None:
+        obs = complete_observation()
+        attacker = deep_copy(obs["projection"]["combat"]["ordered_attackers"][0])
+        attacker["controller"] = "p1" if attacker["controller"] == "p0" else "p0"
+        obs["projection"]["combat"]["ordered_attackers"][0] = attacker
+        with self.assertRaisesRegex(
+            FeatureSchemaError,
+            "inconsistent repeated stable reference",
+        ):
+            assert_observation_classified(obs)
+
+    def test_historical_stack_target_zone_allowlist_is_fail_closed(self) -> None:
+        actions = complete_legal_actions()
+        valid_stack = complete_observation()
+        valid_stack["projection"]["stack"][0]["targets"] = [
+            {
+                "target_kind": "object",
+                "object": stable_ref(9_901, 30, "p1", "Stack"),
+            }
+        ]
+        encode_decision(valid_stack, actions)
+
+        for index, zone in enumerate(("Hand", "Library", "Graveyard")):
+            invalid = complete_observation()
+            invalid["projection"]["stack"][0]["targets"] = [
+                {
+                    "target_kind": "object",
+                    "object": stable_ref(9_910 + index, 30, "p1", zone),
+                }
+            ]
+            with self.subTest(zone=zone), self.assertRaisesRegex(
+                FeatureSchemaError,
+                "Battlefield or Stack provenance",
+            ):
+                encode_decision(invalid, actions)
 
     def test_multiple_abilities_from_one_source_share_a_node_but_keep_stack_order(self) -> None:
         observation = complete_observation()

@@ -326,6 +326,7 @@ fn ponder_no_shuffle_golden_is_deepest_first_atomic_stable_and_restorable() {
                 object: ponder,
                 from: Zone::Stack,
                 to: Zone::Graveyard,
+                controller_before: PlayerId::P0,
             },
         ],
         "reorder, optional shuffle, and draw are one uninterrupted resolution"

@@ -595,6 +595,9 @@ enum Special {
         scry: u8,
         draw: u8,
     },
+    /// Target nonland permanent; its owner chooses whether the exact bound
+    /// incarnation goes second from top or on the bottom of their library.
+    DeemInferior,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -731,6 +734,7 @@ impl Special {
             Special::ScryThenDraw { scry, draw } => {
                 format!("scry_then_draw:{scry}:{draw}")
             }
+            Special::DeemInferior => "deem_inferior".to_string(),
         }
     }
 }
@@ -828,6 +832,7 @@ fn special_for(name: &str) -> Special {
         "Ponder" => Special::LookReorderMayShuffleThenDraw { look: 3, draw: 1 },
         "Brainstorm" => Special::DrawThenPutHandOnLibraryTop { draw: 3, put: 2 },
         "Preordain" => Special::ScryThenDraw { scry: 2, draw: 1 },
+        "Deem Inferior" => Special::DeemInferior,
         _ => Special::None,
     }
 }
@@ -920,6 +925,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::ScryThenDraw { scry, draw } => {
             format!("target=None;spell=ScryThenDraw(Controller,{scry},{draw});mana=None")
         }
+        Special::DeemInferior => "target=NonlandPermanent;spell=PutObjectInOwnersLibrarySecondOrBottom(Target0);mana=None".to_string(),
     }
 }
 
@@ -1247,6 +1253,9 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
         "Cryptic Serpent" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerGraveyardAnyType(&[CardType::Instant, CardType::Sorcery]) })"
+        }
+        "Deem Inferior" => {
+            "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerDrawsThisTurn })"
         }
         _ => "None",
     }
@@ -1680,6 +1689,20 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::DeemInferior))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_deem_inferior() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::PutObjectInOwnersLibrarySecondOrBottom {{ object: ObjectRef::Target(0) }})").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -2175,6 +2198,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::ScryThenDraw { scry, draw } => (
                 "TargetSpec::None",
                 format!("spell_effect_scry_then_draw_{scry}_{draw}"),
+                "no_effect".to_string(),
+            ),
+            Special::DeemInferior => (
+                "TargetSpec::NonlandPermanent",
+                "spell_effect_deem_inferior".to_string(),
                 "no_effect".to_string(),
             ),
             Special::MillThenDraw { player, mill, draw } => {

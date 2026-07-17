@@ -288,7 +288,7 @@ fn flashback_life_two_is_illegal_life_three_loses_and_life_four_resolves() {
 }
 
 #[test]
-fn counter_and_synthetic_illegal_target_both_exile_physical_flashback() {
+fn counter_exiles_physical_flashback_but_malformed_target_metadata_halts() {
     let cards = ["Lightning Bolt", "Mountain", "Fireblast"];
     let (mut countered, deep, _, _) = ready_deep(Zone::Graveyard, 4, 2, &cards, &cards);
     put_object(&mut countered, PlayerId::P1, "Island", Zone::Battlefield);
@@ -338,9 +338,25 @@ fn counter_and_synthetic_illegal_target_both_exile_physical_flashback() {
         .expect("Deep Analysis on stack")
         .targets
         .clear();
-    pass_until_stack_len(&mut fizzled, 0);
+    engine::step(&mut fizzled, Action::Pass).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut fizzled),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P1,
+            ..
+        }
+    ));
+    engine::step(&mut fizzled, Action::Pass).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut fizzled),
+        Decision::Halted {
+            mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        } if source == deep
+    ));
     assert!(draw_events_since(&fizzled, history_start, PlayerId::P1).is_empty());
-    assert_eq!(fizzled.objects.get(deep).zone, Zone::Exile);
+    assert_eq!(fizzled.objects.get(deep).zone, Zone::Stack);
+    assert_eq!(fizzled.stack.last().map(|item| item.source), Some(deep));
 }
 
 #[test]

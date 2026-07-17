@@ -42,9 +42,9 @@ pub const OBSERVATION_SCHEMA_VERSION: u32 = 4;
 pub const LEGAL_ACTION_SCHEMA_VERSION: u32 = 4;
 pub const OBSERVATION_SCHEMA_VERSION_V5: u32 = 5;
 pub const LEGAL_ACTION_SCHEMA_VERSION_V5: u32 = 5;
-pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 8;
+pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 9;
 pub const POLICY_EPISODE_SCHEMA_VERSION: u32 = 5;
-pub const MANIFEST_SCHEMA_VERSION: u32 = 6;
+pub const MANIFEST_SCHEMA_VERSION: u32 = 7;
 pub const DEFAULT_MAX_PHYSICAL_DECISIONS: u64 = 200_000;
 pub const DEFAULT_MAX_POLICY_STEPS: u64 = 25_600_000;
 pub const BURN_MIRROR_MATCHUP: &str = "burn_mirror";
@@ -3932,7 +3932,7 @@ fn object_is_live_in_zone_index(state: &GameState, id: ObjectId) -> Result<bool>
     Ok(match object.zone {
         Zone::Library => state.players[object.owner.index()].library.contains(&id),
         Zone::Hand => state.players[object.owner.index()].hand.contains(&id),
-        Zone::Battlefield => state.players[object.owner.index()]
+        Zone::Battlefield => state.players[object.controller.index()]
             .battlefield
             .contains(&id),
         Zone::Graveyard => state.players[object.owner.index()].graveyard.contains(&id),
@@ -4567,6 +4567,7 @@ fn pending_effect_semantic_v4(
                     player,
                     path,
                     options,
+                    ..
                 } => Ok(PendingEffectChoiceSemanticV4::Options {
                     player: (*player).into(),
                     structural_path: path.clone(),
@@ -4874,10 +4875,18 @@ fn pending_spell_copy_semantic_v2(
     acting_player: PlayerId,
     p: &engine::PendingSpellCopy,
 ) -> Result<PendingSpellCopySemanticV2> {
+    let parent = engine::validate_pending_spell_copy(state, p)
+        .map_err(|error| RlContractError(format!("invalid pending spell copy: {error}")))?;
+    let mut inherited_targets = stack_target_refs(state, &parent)?;
+    if inherited_targets.len() != 1 {
+        return Err(RlContractError(
+            "pending spell copy parent must project exactly one historical target".to_string(),
+        ));
+    }
     Ok(PendingSpellCopySemanticV2 {
         parent: visible_card_ref(state, p.resolving_source, acting_player)?,
         player: p.player.into(),
-        inherited_target: target_ref(state, p.inherited_target)?,
+        inherited_target: inherited_targets.remove(0),
         stage: p.stage.into(),
         copy: p
             .copy_source
@@ -5014,11 +5023,7 @@ fn stack_item_public_v1(
         stack_index,
         source: card_ref(state, item.source)?,
         controller: item.controller.into(),
-        targets: item
-            .targets
-            .iter()
-            .map(|&target| target_ref(state, target))
-            .collect::<Result<Vec<_>>>()?,
+        targets: stack_target_refs(state, item)?,
         is_trigger_or_ability: item.kind != StackItemKind::Spell,
         is_flashback: item.is_flashback,
         mode_chosen: item.mode_chosen,
@@ -5053,7 +5058,10 @@ fn stack_item_public_v2(
         stack_index,
         source: card_ref(state, item.source)?,
         controller: item.controller.into(),
-        targets: target_refs_visible(state, &item.targets, acting_player)?,
+        // Announced stack targets are public historical facts. Project the
+        // frozen target contract rather than rebuilding a reference from a
+        // potentially later incarnation currently reusing the same arena id.
+        targets: stack_target_refs(state, item)?,
         stack_item_kind: item.kind.into(),
         is_copy: item.is_copy,
         is_flashback: item.is_flashback,
@@ -5065,6 +5073,68 @@ fn stack_item_public_v2(
         x_value: item.v4.x_value,
         paid_cost_refs: paid_cost_card_refs(&item.v4.paid_cost_refs, acting_player),
     })
+}
+
+fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRefV1>> {
+    crate::engine::validated_stack_item_target_spec(item, state)
+        .map_err(|error| RlContractError(format!("invalid stack target metadata: {error}")))?;
+    if item.targets.len() != item.v4.target_contracts.len() {
+        return Err(RlContractError(
+            "stack target vector/contract length mismatch".to_string(),
+        ));
+    }
+    item.targets
+        .iter()
+        .copied()
+        .zip(item.v4.target_contracts.iter().copied())
+        .map(|(target, contract)| {
+            if contract.target() != target {
+                return Err(RlContractError(
+                    "stack target vector/contract identity mismatch".to_string(),
+                ));
+            }
+            Ok(match contract {
+                crate::state::StackTargetContractV4::Player(player) => TargetRefV1::Player {
+                    player: player.into(),
+                },
+                crate::state::StackTargetContractV4::Object {
+                    object,
+                    card_def,
+                    owner,
+                    controller,
+                    zone,
+                    zone_change_count,
+                } => {
+                    if usize::from(card_def) >= crate::card_def::CARD_DEFS.len() {
+                        return Err(RlContractError(
+                            "stack target contract references an unknown card definition"
+                                .to_string(),
+                        ));
+                    }
+                    let historical = state.objects.try_get(object).ok_or_else(|| {
+                        RlContractError(
+                            "stack target contract references an unknown arena object".to_string(),
+                        )
+                    })?;
+                    if historical.card_def != card_def || historical.owner != owner {
+                        return Err(RlContractError(
+                            "stack target contract changed stable arena identity".to_string(),
+                        ));
+                    }
+                    TargetRefV1::Object {
+                        object: CardStableRefV1 {
+                            arena_id: object.0,
+                            card_db_id: card_def,
+                            owner: owner.into(),
+                            controller: controller.into(),
+                            zone,
+                            zone_change_count,
+                        },
+                    }
+                }
+            })
+        })
+        .collect()
 }
 
 fn target_ref(state: &GameState, target: Target) -> Result<TargetRefV1> {

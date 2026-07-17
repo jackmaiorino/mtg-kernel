@@ -235,6 +235,10 @@ pub enum TargetSpec {
     /// Elemental Blast's destroy mode). Appended for the same identity
     /// reason as `RedSpellOnStack`.
     RedPermanent,
+    /// Exactly 1 target: any nonland permanent on either battlefield
+    /// (Deem Inferior). Appended so every pre-existing target-spec
+    /// discriminant and serialized snapshot identity remains stable.
+    NonlandPermanent,
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -604,9 +608,9 @@ mod tests {
     #[test]
     fn card_db_hash_v5_is_frozen() {
         // Version 5 keeps the complete generated-selector grammar while
-        // adding the symmetric Blast recipes, Mystic capability/subtypes,
-        // and the appended Bird Illusion token definition.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x12da_6075_9e28_97cb);
+        // adding Deem Inferior's nonland target, draw reducer, and generic
+        // owner-library placement recipe.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xa06f_a956_6106_f0ea);
     }
 
     #[test]
@@ -732,7 +736,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 48, "44 deck cards plus four required tokens");
+        assert_eq!(full, 49, "45 deck cards plus four required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

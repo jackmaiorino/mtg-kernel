@@ -819,7 +819,11 @@ mod tests {
             mode_chosen: 0,
             madness_offer: false,
             kicked: false,
-            v4: crate::state::StackStateV4::spell(crate::state::CastMethodV4::Normal),
+            v4: crate::state::StackStateV4 {
+                target_spec: Some(crate::card_def::TargetSpec::AnyTarget),
+                target_contracts: vec![crate::state::StackTargetContractV4::Player(PlayerId::P1)],
+                ..crate::state::StackStateV4::spell(crate::state::CastMethodV4::Normal)
+            },
         });
 
         // The very next suppression recorded must be P0's forced Pass --
@@ -828,7 +832,11 @@ mod tests {
         // Lightning Bolt resolving, P0's genuinely fresh next-round ask
         // with their Mountain untapped again) is unrelated machinery this
         // test isn't pinning.
-        let _second = surface.next_decision(&mut state);
+        let second = surface.next_decision(&mut state);
+        assert!(
+            !matches!(second, SurfaceDecision::Decision(Decision::Halted { .. })),
+            "the claimed resolution cascade must not terminate in an integrity halt: {second:?}"
+        );
         let suppressions = surface.suppressions();
         assert_eq!(
             suppressions[0].reason,

@@ -626,6 +626,7 @@
     },
     {
       "name": "Deem Inferior",
+      "engine_capability": "full",
       "mana_cost": "{3}{U}",
       "mana_value": 4,
       "colors": [

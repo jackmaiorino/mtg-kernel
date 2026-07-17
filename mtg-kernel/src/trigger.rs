@@ -47,6 +47,9 @@ pub enum TriggerCondition {
     /// not a "functions from" zone: by the time `collect_and_process` looks,
     /// the object has already moved there).
     LeftBattlefieldToGraveyard,
+    /// This permanent leaves the battlefield for any destination. Unlike a
+    /// dies trigger, this includes exile, hand, and library moves.
+    LeftBattlefield,
 }
 
 pub struct TriggeredAbilityDef {
@@ -201,7 +204,9 @@ const EXPERIMENTAL_SYNTHESIZER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         effect: experimental_synthesizer_impulse_effect,
     },
     TriggeredAbilityDef {
-        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        condition: TriggerCondition::LeftBattlefield,
+        // Leave-the-battlefield conditions use last-known information and
+        // therefore deliberately ignore this post-event zone gate.
         home_zone: Zone::Graveyard,
         intervening_if_kicked: false,
         effect: experimental_synthesizer_impulse_effect,
@@ -378,15 +383,28 @@ fn triggers_from_events(
             continue;
         }
         for def in triggers_for(obj.card_def) {
-            if obj.zone != def.home_zone {
+            let uses_leave_lki = matches!(
+                def.condition,
+                TriggerCondition::LeftBattlefieldToGraveyard | TriggerCondition::LeftBattlefield
+            );
+            if !uses_leave_lki && obj.zone != def.home_zone {
                 continue;
             }
             for (i, ev) in events.iter().enumerate() {
+                let event_controller = match ev {
+                    CommittedEvent::ZoneChange {
+                        object,
+                        from: Zone::Battlefield,
+                        controller_before,
+                        ..
+                    } if *object == id && uses_leave_lki => *controller_before,
+                    _ => obj.controller,
+                };
                 if trigger_matches(
                     def.condition,
                     ev,
                     id,
-                    obj.controller,
+                    event_controller,
                     state,
                     draws_this_turn_at[i],
                 ) {
@@ -395,7 +413,7 @@ fn triggers_from_events(
                         continue;
                     }
                     new_triggers.push(PendingTrigger {
-                        controller: obj.controller,
+                        controller: event_controller,
                         source: id,
                         effect: (def.effect)(),
                         is_madness_offer: false,
@@ -510,6 +528,15 @@ fn trigger_matches(
                 object,
                 from: Zone::Battlefield,
                 to: Zone::Graveyard,
+                ..
+            },
+        ) => *object == source,
+        (
+            TriggerCondition::LeftBattlefield,
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Battlefield,
+                ..
             },
         ) => *object == source,
         _ => false,
