@@ -3146,7 +3146,11 @@ with OutputLock(root):
             self.assertEqual(bad_after, bad_before)
 
     def test_same_root_concurrent_trainers_exclude_loser_without_second_chain(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_name:
+        # Keep the relative-path alias on the checkout's volume. Windows
+        # runners may place the default temporary directory on C: while the
+        # workspace is on D:, and ntpath.relpath intentionally rejects a
+        # cross-volume relative path before this test reaches the lock logic.
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp_name:
             tmp = Path(tmp_name)
             out = tmp / "run"
             env_marker = tmp / "loser-env-started.marker"
