@@ -1772,7 +1772,7 @@ fn rl_contract_episode_records_use_independent_schema_versions_and_pin_hash_algo
     let policy_seed = derive_policy_seed(9999, 0);
     let run = record_burn_mirror_episode(0, env_seed, policy_seed, 64).unwrap();
 
-    assert_eq!(AUDIT_EPISODE_SCHEMA_VERSION, 5);
+    assert_eq!(AUDIT_EPISODE_SCHEMA_VERSION, 6);
     assert_eq!(MANIFEST_SCHEMA_VERSION, 5);
     assert_eq!(POLICY_EPISODE_SCHEMA_VERSION, 4);
     let audit_header = serde_json::to_value(&run.audit_records[0]).unwrap();
@@ -1865,10 +1865,24 @@ fn rl_contract_audit_reader_fails_closed_on_legacy_missing_or_unknown_hash_contr
         .contains("unsupported diagnostic_state_hash_algorithm"));
 
     values[0]["diagnostic_state_hash_algorithm"] =
-        Value::String(DIAGNOSTIC_STATE_HASH_ALGORITHM.to_string());
+        Value::String("fnv1a64-serde-json-game-state-envelope-v1".to_string());
+    let known_legacy_algorithm = records_to_jsonl(&values);
+    assert!(parse_audit_episode_jsonl(&known_legacy_algorithm)
+        .unwrap_err()
+        .to_string()
+        .contains("unsupported diagnostic_state_hash_algorithm"));
+
     values[0]["schema_version"] = Value::from(AUDIT_EPISODE_SCHEMA_VERSION - 1);
-    let legacy = records_to_jsonl(&values);
-    assert!(parse_audit_episode_jsonl(&legacy)
+    let historical_v5_v1 = records_to_jsonl(&values);
+    assert!(parse_audit_episode_jsonl(&historical_v5_v1)
+        .unwrap_err()
+        .to_string()
+        .contains("unsupported audit schema_version"));
+
+    values[0]["diagnostic_state_hash_algorithm"] =
+        Value::String(DIAGNOSTIC_STATE_HASH_ALGORITHM.to_string());
+    let legacy_schema = records_to_jsonl(&values);
+    assert!(parse_audit_episode_jsonl(&legacy_schema)
         .unwrap_err()
         .to_string()
         .contains("unsupported audit schema_version"));
@@ -2335,6 +2349,14 @@ fn rl_contract_terminal_outcome_accounting_is_explicit() {
     let mut unknown_algorithm = value.clone();
     unknown_algorithm["diagnostic_state_hash_algorithm"] = Value::String("unknown-v99".to_string());
     assert!(parse_run_manifest_json(&unknown_algorithm.to_string())
+        .unwrap_err()
+        .to_string()
+        .contains("unsupported diagnostic_state_hash_algorithm"));
+
+    let mut known_legacy_algorithm = value.clone();
+    known_legacy_algorithm["diagnostic_state_hash_algorithm"] =
+        Value::String("fnv1a64-serde-json-game-state-envelope-v1".to_string());
+    assert!(parse_run_manifest_json(&known_legacy_algorithm.to_string())
         .unwrap_err()
         .to_string()
         .contains("unsupported diagnostic_state_hash_algorithm"));

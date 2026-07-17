@@ -89,8 +89,8 @@ EXPECTED_MAINBOARD_SUPPORT = {
     "Elves": {"full": 17, "partial": 0, "no_effect": 43},
     "Spy": {"full": 8, "partial": 0, "no_effect": 52},
     "Burn": {"full": 60, "partial": 0, "no_effect": 0},
-    "Terror": {"full": 44, "partial": 0, "no_effect": 16},
-    "CawGates": {"full": 13, "partial": 0, "no_effect": 47},
+    "Terror": {"full": 48, "partial": 0, "no_effect": 12},
+    "CawGates": {"full": 16, "partial": 0, "no_effect": 44},
     "Faeries": {"full": 24, "partial": 0, "no_effect": 36},
 }
 

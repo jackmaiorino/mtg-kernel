@@ -92,7 +92,8 @@ pub struct EngineState {
     /// or cost-paid.
     pub pending_cast: Option<PendingCast>,
     /// A non-mana ability that has begun activating but isn't fully
-    /// targeted/cost-paid yet (Masked Meower's, the Blood token's).
+    /// targeted/cost-paid yet (battlefield abilities or hand-zone
+    /// Cycling/typecycling).
     pub pending_activation: Option<PendingActivation>,
     /// A discard obligation -- from a cast/activation's cost, from a
     /// resolving effect (`EffectOp::DiscardCards`), or from cleanup --
@@ -595,11 +596,20 @@ pub struct PendingCast {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PendingActivation {
     pub source: ObjectId,
+    /// Exact CR 400.7 incarnation bound when activation began (or refreshed
+    /// by the trusted interactive-cost payment path after that path moves
+    /// the source). Restored/tampered pending activations fail closed before
+    /// paying mana, moving a card, or pushing a stack item.
+    pub source_zone_change_count: u32,
     pub controller: PlayerId,
     pub ability_index: u8,
     pub target_spec: TargetSpec,
     pub targets_chosen: Vec<Target>,
-    /// Same shape/rationale as `PendingCast::additional_cost_discarded`.
+    /// `None` while an interactive `DiscardCards` component still needs a
+    /// choice. Abilities without one are seeded with `Some([])`. Paid
+    /// interactive activations finalize synchronously in `apply_discard`,
+    /// so an untrusted serialized record can never authenticate payment by
+    /// filling this vector itself.
     pub cost_discard_paid: Option<Vec<ObjectId>>,
 }
 
@@ -611,9 +621,15 @@ pub enum DiscardResume {
     /// Write the discarded cards back into `EngineState::pending_cast`'s
     /// `additional_cost_discarded` and let the cast staging continue.
     FinishCast,
-    /// Same, but for `EngineState::pending_activation`'s
-    /// `cost_discard_paid`.
-    FinishActivation,
+    /// Same, but for `EngineState::pending_activation`'s interactive
+    /// discard cost. The exact activation identity is duplicated here so a
+    /// restored cross-slot mismatch fails before any selected card moves.
+    FinishActivation {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        controller: PlayerId,
+        ability_index: u8,
+    },
     /// A resolving instant/sorcery's own effect discarded as part of its
     /// resolution (Faithless Looting: "draw two, then discard two").
     /// `EffectOp::DiscardCards` stages `pending_discard` and returns
@@ -1303,7 +1319,9 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 tap_count += 1;
                 saw_source_changing_component = true;
             }
-            CostComponent::SacrificeSelf | CostComponent::ExileSelf => {
+            CostComponent::SacrificeSelf
+            | CostComponent::ExileSelf
+            | CostComponent::DiscardSelf => {
                 source_departure_count += 1;
                 saw_source_changing_component = true;
             }
@@ -1416,6 +1434,12 @@ fn can_pay_components(
                 !(obj.tapped || (def.has_type(CardType::Creature) && obj.summoning_sick))
             }
             CostComponent::SacrificeSelf | CostComponent::ExileSelf => true,
+            CostComponent::DiscardSelf => {
+                let object = state.objects.get(source);
+                object.owner == player
+                    && object.zone == Zone::Hand
+                    && state.players[player.index()].hand.contains(&source)
+            }
             CostComponent::DiscardCards(n) => {
                 let hand_other = state.players[player.index()]
                     .hand
@@ -1480,7 +1504,9 @@ fn pay_cost_components(
             && components.iter().any(|component| {
                 matches!(
                     component,
-                    CostComponent::SacrificeSelf | CostComponent::ExileSelf
+                    CostComponent::SacrificeSelf
+                        | CostComponent::ExileSelf
+                        | CostComponent::DiscardSelf
                 )
             });
         if sacrifice_chosen.len() != needed || duplicate || invalid_land || aliases_source_departure
@@ -1521,6 +1547,10 @@ fn pay_cost_components(
             CostComponent::ExileSelf => {
                 event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile))
             }
+            CostComponent::DiscardSelf => event::propose_and_commit(
+                state,
+                ProposedEvent::zone_change(source, Zone::Graveyard),
+            ),
             CostComponent::SacrificeLands(n) => {
                 debug_assert_eq!(
                     sacrifice_chosen.len(),
@@ -1837,19 +1867,32 @@ fn available_mana_abilities(player: PlayerId, state: &GameState) -> Vec<ObjectId
 
 fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(ObjectId, u8)> {
     let mut out = Vec::new();
-    for &id in &state.players[player.index()].battlefield {
-        let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-        if !def.is_executable() {
-            continue;
-        }
-        for (i, ability) in def.activated_abilities.iter().enumerate() {
-            if ability.sorcery_speed_only && !sorcery_speed_timing_ok(player, state) {
+    // Preserve the historical battlefield ordering, then append hand-zone
+    // actions in hand order. A definition's activation zone is checked for
+    // every ability, so mixed-zone cards do not need card-specific routing.
+    for (zone, objects) in [
+        (
+            Zone::Battlefield,
+            &state.players[player.index()].battlefield,
+        ),
+        (Zone::Hand, &state.players[player.index()].hand),
+    ] {
+        for &id in objects {
+            let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+            if !def.is_executable() {
                 continue;
             }
-            if can_pay_activation_components(ability.cost, player, id, state)
-                && target_prefix_can_complete(ability.target_spec, &[], state)
-            {
-                out.push((id, i as u8));
+            for (i, ability) in def.activated_abilities.iter().enumerate() {
+                if ability.activation_zone != zone
+                    || (ability.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
+                {
+                    continue;
+                }
+                if can_pay_activation_components(ability.cost, player, id, state)
+                    && target_prefix_can_complete(ability.target_spec, &[], state)
+                {
+                    out.push((id, i as u8));
+                }
             }
         }
     }
@@ -2231,15 +2274,76 @@ fn collect_and_queue_triggers(state: &mut GameState) {
     state.engine.pending_triggers.extend(triggers);
 }
 
+/// Cross-slot validation for an interactive activation discard. The resume
+/// record duplicates the exact activation identity so a stale or tampered
+/// snapshot cannot redirect a discard to another player/ability or mutate
+/// any card before the activation's complete payment shape is revalidated.
+fn validate_pending_discard_binding(
+    state: &GameState,
+    pending_discard: &PendingDiscard,
+) -> Result<(), (ObjectId, String)> {
+    let DiscardResume::FinishActivation {
+        source,
+        source_zone_change_count,
+        controller,
+        ability_index,
+    } = &pending_discard.resume
+    else {
+        return Ok(());
+    };
+    let (source, source_zone_change_count, controller, ability_index) = (
+        *source,
+        *source_zone_change_count,
+        *controller,
+        *ability_index,
+    );
+
+    let fail = |message: &str| Err((source, message.to_string()));
+    let Some(pending) = state.engine.pending_activation.as_ref() else {
+        return fail("activation discard has no pending activation");
+    };
+    if pending.source != source
+        || pending.source_zone_change_count != source_zone_change_count
+        || pending.controller != controller
+        || pending.ability_index != ability_index
+    {
+        return fail("activation discard binding changed");
+    }
+    validate_pending_activation(state, pending).map_err(|message| (source, message))?;
+    let object = state.objects.get(source);
+    let def = &card_def::CARD_DEFS[object.card_def as usize];
+    let ability = &def.activated_abilities[ability_index as usize];
+    let Some(expected) = discard_count_in(ability.cost) else {
+        return fail("activation discard resumed an ability without an interactive discard cost");
+    };
+    if pending_discard.player != controller || pending_discard.count != u32::from(expected) {
+        return fail("activation discard player or count changed");
+    }
+    if pending.cost_discard_paid.is_some() {
+        return fail("activation discard is already marked resolved");
+    }
+    if pending.targets_chosen.len() != usize::from(target_count(pending.target_spec)) {
+        return fail("activation discard began before targeting completed");
+    }
+    Ok(())
+}
+
 /// If a discard is pending, either auto-resolves it (no real choice: the
 /// legal pool is already <= the required count) or returns
 /// `Decision::Discard`.
 fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
     let pd = state.engine.pending_discard.clone()?;
-    let exclude = if pd.resume == DiscardResume::FinishCast {
-        state.engine.pending_cast.as_ref().map(|p| p.spell)
-    } else {
-        None
+    if let Err((source, _message)) = validate_pending_discard_binding(state, &pd) {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+        return Some(Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        });
+    }
+    let exclude = match &pd.resume {
+        DiscardResume::FinishCast => state.engine.pending_cast.as_ref().map(|p| p.spell),
+        DiscardResume::FinishActivation { source, .. } => Some(*source),
+        _ => None,
     };
     let choices: Vec<ObjectId> = state.players[pd.player.index()]
         .hand
@@ -2250,7 +2354,7 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
 
     if choices.len() <= pd.count as usize {
         state.engine.pending_discard = None;
-        apply_discard(state, choices, pd.resume);
+        apply_discard(state, choices, pd);
         return None;
     }
     Some(Decision::Discard {
@@ -2260,7 +2364,11 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
     })
 }
 
-fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, resume: DiscardResume) {
+fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: PendingDiscard) {
+    if let Err((source, _message)) = validate_pending_discard_binding(state, &pending_discard) {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+        return;
+    }
     for &id in &chosen {
         let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
         if def.is_castable() && def.madness_cost.is_some() {
@@ -2293,14 +2401,14 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, resume: DiscardRe
             event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
         }
     }
-    match resume {
+    match pending_discard.resume {
         DiscardResume::None => collect_and_queue_triggers(state),
         DiscardResume::FinishCast => {
             if let Some(p) = state.engine.pending_cast.as_mut() {
                 p.additional_cost_discarded = Some(chosen);
             }
         }
-        DiscardResume::FinishActivation => {
+        DiscardResume::FinishActivation { .. } => {
             // 602.2b-h: every component of an activation's cost is paid
             // together, as one atomic action, the instant the interactive
             // part (which card(s) to discard) is determined -- not
@@ -2318,39 +2426,35 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, resume: DiscardRe
             // has the same `[..., DiscardCards(1), SacrificeSelf]` shape
             // and would hit the identical ordering bug were it ever
             // exercised this way.
-            if let Some(p) = state.engine.pending_activation.clone() {
-                let def = &card_def::CARD_DEFS[state.objects.get(p.source).card_def as usize];
-                let ability = &def.activated_abilities[p.ability_index as usize];
-                // Keep the state-changing payment outside `debug_assert!`:
-                // the macro (including its argument) is compiled out in
-                // release builds, but costs must be paid in every profile.
-                let paid = pay_cost_components(state, p.controller, p.source, ability.cost, &[]);
-                if !paid {
-                    // Unsupported/restored future cost shapes must never put
-                    // an unpaid ability on the stack. Reachable activations
-                    // are filtered by `activation_payment_shape_supported`.
-                    state.engine.pending_activation = None;
-                    state.engine.priority_passes = [false, false];
-                    state.priority_player = p.controller;
-                    return;
-                }
-                // 111.8/704.5d: paying `SacrificeSelf` here (a token's own
-                // ability, e.g. the Blood Token's) can put a token into the
-                // graveyard well before `finalize_activation` ever runs.
-                // `sba_fixed_point` normally only runs inside
-                // `collect_and_queue_triggers`, which `finalize_activation`
-                // doesn't call until this activation is fully resolved --
-                // too late to make the token cease to exist before the
-                // comparator's `check_state` observes an intervening
-                // decision's graveyard size. Run it right here instead,
-                // same "don't leave a token sitting somewhere it can never
-                // really be" fix `sba_fixed_point`'s own 111.8/704.5d rule
-                // already applies everywhere else.
-                trigger::sba_fixed_point(state);
+            let p = state
+                .engine
+                .pending_activation
+                .clone()
+                .expect("validated activation discard retains its activation");
+            let def = &card_def::CARD_DEFS[state.objects.get(p.source).card_def as usize];
+            let ability = &def.activated_abilities[p.ability_index as usize];
+            // Keep the state-changing payment outside `debug_assert!`: the
+            // macro (including its argument) is compiled out in release
+            // builds, but costs must be paid in every profile. The complete
+            // activation/discard preflight above ran before any chosen card
+            // moved, so this cannot fail for a reachable supported shape.
+            let paid = pay_cost_components(state, p.controller, p.source, ability.cost, &[]);
+            if !paid {
+                state.engine.pending_activation = None;
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, p.source));
+                return;
             }
-            if let Some(p) = state.engine.pending_activation.as_mut() {
-                p.cost_discard_paid = Some(chosen);
-            }
+            // 111.8/704.5d: paying `SacrificeSelf` here (a token's own
+            // ability, e.g. the Blood Token's) can put a token into the
+            // graveyard before the stack item is installed.
+            trigger::sba_fixed_point(state);
+            let p = state
+                .engine
+                .pending_activation
+                .take()
+                .expect("validated activation discard retains its activation");
+            push_paid_activation(state, p, chosen);
         }
         DiscardResume::FinishSpellResolution { source, to_zone } => {
             // See `DiscardResume::FinishSpellResolution`'s doc: this is the
@@ -2795,6 +2899,16 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
 
 fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_activation.clone()?;
+    if validate_pending_activation(state, &pending).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return Some(Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: pending.source,
+        });
+    }
     let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
     let ability = &def.activated_abilities[pending.ability_index as usize];
 
@@ -2819,13 +2933,102 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         state.engine.pending_discard = Some(PendingDiscard {
             player: pending.controller,
             count: n as u32,
-            resume: DiscardResume::FinishActivation,
+            resume: DiscardResume::FinishActivation {
+                source: pending.source,
+                source_zone_change_count: pending.source_zone_change_count,
+                controller: pending.controller,
+                ability_index: pending.ability_index,
+            },
         });
         return None;
     }
 
     finalize_activation(state);
     None
+}
+
+/// Fail-closed validation for a serialized/restored activation staging
+/// record. No priority window normally exists between announcement,
+/// targeting, and payment, but snapshots do; this check prevents a stale or
+/// coherently malformed record from paying against a later object
+/// incarnation or a different zone/ability definition.
+fn validate_pending_activation(
+    state: &GameState,
+    pending: &PendingActivation,
+) -> Result<(), String> {
+    let object = state
+        .objects
+        .try_get(pending.source)
+        .ok_or_else(|| format!("pending activation source {} is missing", pending.source.0))?;
+    if object.zone_change_count != pending.source_zone_change_count {
+        return Err("pending activation source incarnation changed".to_string());
+    }
+    let def = card_def::CARD_DEFS
+        .get(object.card_def as usize)
+        .ok_or_else(|| "pending activation source definition is missing".to_string())?;
+    if !def.is_executable() {
+        return Err("pending activation source is not executable".to_string());
+    }
+    let ability = def
+        .activated_abilities
+        .get(pending.ability_index as usize)
+        .ok_or_else(|| "pending activation ability index changed".to_string())?;
+    if ability.target_spec != pending.target_spec {
+        return Err("pending activation target specification changed".to_string());
+    }
+
+    match (
+        pending.cost_discard_paid.as_deref(),
+        discard_count_in(ability.cost),
+    ) {
+        (Some([]), None) | (None, Some(_)) => {}
+        (None, None) => {
+            return Err("noninteractive activation has an unresolved discard marker".to_string())
+        }
+        (Some(_), None) => {
+            return Err("noninteractive activation carries discard-choice objects".to_string())
+        }
+        (Some(_), Some(_)) => {
+            return Err("interactive activation carries a self-authenticating payment".to_string())
+        }
+    }
+
+    let in_activation_zone = match ability.activation_zone {
+        Zone::Battlefield => {
+            object.controller == pending.controller
+                && object.zone == Zone::Battlefield
+                && state.players[pending.controller.index()]
+                    .battlefield
+                    .contains(&pending.source)
+        }
+        Zone::Hand => {
+            object.owner == pending.controller
+                && object.zone == Zone::Hand
+                && state.players[pending.controller.index()]
+                    .hand
+                    .contains(&pending.source)
+        }
+        _ => false,
+    };
+    if !in_activation_zone {
+        return Err("pending activation source left its activation zone".to_string());
+    }
+    if !can_pay_activation_components(ability.cost, pending.controller, pending.source, state) {
+        return Err("pending activation cost is no longer payable".to_string());
+    }
+
+    let required = usize::from(target_count(pending.target_spec));
+    if pending.targets_chosen.len() > required {
+        return Err("pending activation has too many targets".to_string());
+    }
+    let mut prefix = Vec::new();
+    for &target in &pending.targets_chosen {
+        if !completable_next_targets_for(pending.target_spec, &prefix, state).contains(&target) {
+            return Err("pending activation carries an illegal target prefix".to_string());
+        }
+        prefix.push(target);
+    }
+    Ok(())
 }
 
 /// If there are pending triggers, either auto-places a singleton group (no
@@ -3831,6 +4034,7 @@ fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<
         .pending_discard
         .clone()
         .ok_or("no discard is pending")?;
+    validate_pending_discard_binding(state, &pd).map_err(|(_, message)| message)?;
     if chosen.len() as u32 != pd.count {
         return Err(format!(
             "must discard exactly {} card(s), got {}",
@@ -3844,10 +4048,10 @@ fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<
     if dedup.len() != chosen.len() {
         return Err("duplicate card in discard selection".to_string());
     }
-    let exclude = if pd.resume == DiscardResume::FinishCast {
-        state.engine.pending_cast.as_ref().map(|p| p.spell)
-    } else {
-        None
+    let exclude = match &pd.resume {
+        DiscardResume::FinishCast => state.engine.pending_cast.as_ref().map(|p| p.spell),
+        DiscardResume::FinishActivation { source, .. } => Some(*source),
+        _ => None,
     };
     let hand = &state.players[pd.player.index()].hand;
     if !chosen
@@ -3857,7 +4061,7 @@ fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<
         return Err("illegal discard selection".to_string());
     }
     state.engine.pending_discard = None;
-    apply_discard(state, chosen, pd.resume);
+    apply_discard(state, chosen, pd);
     Ok(())
 }
 
@@ -4387,6 +4591,7 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
     let ability = &def.activated_abilities[ability_index as usize];
     state.engine.pending_activation = Some(PendingActivation {
         source,
+        source_zone_change_count: state.objects.get(source).zone_change_count,
         controller: player,
         ability_index,
         target_spec: ability.target_spec,
@@ -4622,14 +4827,10 @@ fn abort_cast(state: &mut GameState, pending: PendingCast) {
     reset_priority(state);
 }
 
-/// Pushes the ability's `StackItem`. If this ability's cost has a
-/// `DiscardCards` component, the *entire* cost (including this component)
-/// was already paid atomically back when that discard resolved
-/// (`apply_discard`'s `DiscardResume::FinishActivation` arm -- see its doc
-/// for why paying it there, not here, matters) -- paying again here would
-/// double-tap/double-sacrifice. Only an ability with no discard component
-/// at all (none in this pool, but not assumed away) still needs its cost
-/// paid at this point, same as always.
+/// Pays and pushes a noninteractive activated ability. Interactive
+/// `DiscardCards` activations instead pay and call `push_paid_activation`
+/// synchronously from `apply_discard`, so no serialized Boolean or vector
+/// can claim that payment already happened.
 fn finalize_activation(state: &mut GameState) {
     let pending = state
         .engine
@@ -4638,20 +4839,54 @@ fn finalize_activation(state: &mut GameState) {
         .expect("finalize_activation requires a pending activation");
     let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
     let ability = &def.activated_abilities[pending.ability_index as usize];
-    if discard_count_in(ability.cost).is_none() {
-        // Payment is state-changing and therefore must not live inside a
-        // `debug_assert!`, whose argument disappears from release builds.
-        let paid =
-            pay_cost_components(state, pending.controller, pending.source, ability.cost, &[]);
-        if !paid {
-            // Fail closed for a malformed/restored pending activation rather
-            // than granting its effect without collecting the full cost.
-            state.engine.priority_passes = [false, false];
-            state.priority_player = pending.controller;
-            return;
-        }
+    let mut discarded = Vec::new();
+    if ability
+        .cost
+        .iter()
+        .any(|component| matches!(component, CostComponent::DiscardSelf))
+    {
+        discarded.push(pending.source);
     }
+    // Payment is state-changing and therefore must not live inside a
+    // `debug_assert!`, whose argument disappears from release builds.
+    let paid = pay_cost_components(state, pending.controller, pending.source, ability.cost, &[]);
+    if !paid {
+        // Fail closed for a malformed/restored pending activation rather
+        // than granting its effect without collecting the full cost.
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
+    push_paid_activation(state, pending, discarded);
+}
 
+/// Installs an ability whose full cost has just committed. `discarded`
+/// carries only actual discard components for resolution context; the
+/// schema-v4 provenance additionally freezes every zone-changing payment
+/// object, including a sacrificed/exiled source.
+fn push_paid_activation(
+    state: &mut GameState,
+    pending: PendingActivation,
+    discarded: Vec<ObjectId>,
+) {
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
+    let ability = &def.activated_abilities[pending.ability_index as usize];
+    let mut paid_cost_objects = discarded.clone();
+    if ability.cost.iter().any(|component| {
+        matches!(
+            component,
+            CostComponent::SacrificeSelf | CostComponent::ExileSelf | CostComponent::DiscardSelf
+        )
+    }) && !paid_cost_objects.contains(&pending.source)
+    {
+        paid_cost_objects.push(pending.source);
+    }
+    let paid_cost_refs = paid_cost_objects
+        .into_iter()
+        .map(|object| PaidCostRefV4::capture(state, object))
+        .collect();
     let effect = (ability.effect)();
     state.stack.push(StackItem {
         kind: StackItemKind::ActivatedAbility,
@@ -4660,18 +4895,27 @@ fn finalize_activation(state: &mut GameState) {
         targets: pending.targets_chosen,
         is_copy: false,
         inline_effect: Some(effect),
-        discarded: pending.cost_discard_paid.unwrap_or_default(),
+        discarded,
         is_flashback: false,
         mode_chosen: 0,
         madness_offer: false,
         kicked: false, // no activated ability in this pool has Kicker
-        v4: StackStateV4::default(),
+        v4: StackStateV4 {
+            paid_cost_refs,
+            ..StackStateV4::default()
+        },
     });
-    state
-        .objects
-        .get_mut(pending.source)
-        .v4
-        .note_ability_use(AbilityKindV4::Activated, pending.ability_index as u16);
+    // A zone change creates a new object under CR 400.7 and resets its v4
+    // state. Never stamp the old activation onto Lorien's new graveyard
+    // incarnation (or any sacrificed/exiled source); the stack provenance
+    // above owns that historical fact instead.
+    if state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count {
+        state
+            .objects
+            .get_mut(pending.source)
+            .v4
+            .note_ability_use(AbilityKindV4::Activated, pending.ability_index as u16);
+    }
 
     // No ability in this increment's pool triggers off another ability
     // being activated, but see `finalize_cast`'s identical call for why

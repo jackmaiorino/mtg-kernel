@@ -1639,8 +1639,9 @@ fn cast_spell_or_pass_native(
 /// `activated_abilities_for` doc: "both reduce to ... so both share
 /// ability_effect_draw_one"), and `ActivatedAbilityDef::effect` is a bare
 /// function pointer with no text of its own to derive a suffix from
-/// generically -- a real gap if this pool ever grows a second activated-
-/// ability effect, flagged here rather than silently assumed to generalize.
+/// generically. Lorien's keyword ability is handled explicitly below; any
+/// further effect text still needs an oracle-pinned rendering here rather
+/// than a guessed generic suffix.
 ///
 /// Previously this fell back to a kernel-native `"activate:<name>:<idx>"`
 /// placeholder (cross-engine campaign round 1, Pattern C): every window
@@ -1650,6 +1651,12 @@ fn cast_spell_or_pass_native(
 /// wrong sort position relative to Java's real text.
 fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u8) -> String {
     let name = state.objects.get(id).name.as_str();
+    if name == "Lorien Revealed" {
+        // Typecycling's Java ability string is its keyword text, not a
+        // generic rendered cost followed by the search effect text. Keep
+        // the comparator key aligned with the pinned AIRL action.
+        return "Islandcycling {1}".to_string();
+    }
     let def = &CARD_DEFS[state.objects.get(id).card_def as usize];
     let cost = def.activated_abilities[ability_idx as usize].cost;
     let parts: Vec<String> = cost
@@ -1674,6 +1681,7 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             }
             card_def::CostComponent::SacrificeSelf => "Sacrifice {this}".to_string(),
             card_def::CostComponent::ExileSelf => "Exile this".to_string(),
+            card_def::CostComponent::DiscardSelf => "Discard this card".to_string(),
             card_def::CostComponent::DiscardCards(1) => "Discard a card".to_string(),
             card_def::CostComponent::DiscardCards(n) => format!("Discard {n} cards"),
             card_def::CostComponent::SacrificeLands(1) => "Sacrifice a land".to_string(),
@@ -1683,6 +1691,29 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
         })
         .collect();
     format!("{}: Draw a card.", parts.join(", "))
+}
+
+#[cfg(test)]
+mod activated_ability_text_tests {
+    use super::*;
+
+    #[test]
+    fn lorien_typecycling_keeps_the_pinned_xmage_keyword_text() {
+        let lorien = card_def::card_id_by_name("Lorien Revealed").unwrap();
+        let island = card_def::card_id_by_name("Island").unwrap();
+        let state = GameState::new_from_libraries(
+            &[lorien],
+            &[island],
+            |id| CARD_DEFS[id as usize].name.to_string(),
+            0x4c4f_5249_454e_0018,
+        );
+        let source = state.players[PlayerId::P0.index()].library[0];
+
+        assert_eq!(
+            render_activated_ability_text(&state, source, 0),
+            "Islandcycling {1}"
+        );
+    }
 }
 
 /// Uniform decision -> `(action_type, native-order candidate texts)`,

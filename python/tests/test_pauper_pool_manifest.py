@@ -380,9 +380,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 40,
+                "full_cards": 41,
                 "partial_cards": 0,
-                "no_effect_cards": 110,
+                "no_effect_cards": 109,
                 "token_dependencies": 3,
             },
         )
@@ -393,8 +393,8 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Elves", "full": 17, "partial": 0, "no_effect": 43, "total": 60},
             {"deck_id": "Spy", "full": 8, "partial": 0, "no_effect": 52, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Terror", "full": 44, "partial": 0, "no_effect": 16, "total": 60},
-            {"deck_id": "CawGates", "full": 13, "partial": 0, "no_effect": 47, "total": 60},
+            {"deck_id": "Terror", "full": 48, "partial": 0, "no_effect": 12, "total": 60},
+            {"deck_id": "CawGates", "full": 16, "partial": 0, "no_effect": 44, "total": 60},
             {"deck_id": "Faeries", "full": 24, "partial": 0, "no_effect": 36, "total": 60},
         ]
         self.assertEqual(self.support["deck_mainboard_copy_totals"], expected_copy_totals)
@@ -477,6 +477,17 @@ class PauperPoolManifestTest(unittest.TestCase):
         self.assertEqual(deep_analysis["sideboard"], [])
         self.assertEqual(deep_analysis["support_status"], "full")
         self.assertEqual(deep_analysis["blockers"], [])
+        lorien = next(row for row in self.support["cards"] if row["name"] == "Lorien Revealed")
+        self.assertEqual(
+            lorien["mainboard"],
+            [
+                {"deck_id": "Terror", "copies": 4},
+                {"deck_id": "CawGates", "copies": 3},
+            ],
+        )
+        self.assertEqual(lorien["sideboard"], [])
+        self.assertEqual(lorien["support_status"], "full")
+        self.assertEqual(lorien["blockers"], [])
         self.assertEqual(
             self.support["token_dependencies"],
             [

@@ -128,6 +128,10 @@ enum Special {
     /// not a name special: it is derived from Basic + Land + one
     /// `produces_mana` color in `codegen`.
     GreatFurnace,
+    /// A plain "draw N cards" spell. Lorien Revealed is the first consumer;
+    /// keeping the generated recipe parameterized avoids a runtime card-name
+    /// special while leaving room for later draw spells to share it.
+    DrawCards(u8),
     /// Deals `amount` damage to any target (Lightning Bolt, Fiery Temper,
     /// Fireblast, Lava Dart). Fireblast's/Lava Dart's real alt cost /
     /// flashback, and Fiery Temper's Madness, are modeled via the separate
@@ -249,11 +253,112 @@ enum StackSpellFilter {
     Instant,
 }
 
+impl MillPlayer {
+    fn canonical_token(self) -> &'static str {
+        match self {
+            MillPlayer::Controller => "controller",
+            MillPlayer::Target0 => "target0",
+        }
+    }
+}
+
+impl StackSpellFilter {
+    fn canonical_token(self) -> &'static str {
+        match self {
+            StackSpellFilter::Any => "any",
+            StackSpellFilter::Instant => "instant",
+        }
+    }
+}
+
+impl Special {
+    /// Stable semantic token derived from the same recipe enum that drives
+    /// code generation. This deliberately avoids hashing emitted Rust text:
+    /// formatting-only codegen edits must not churn the card-database hash.
+    fn canonical_token(self) -> String {
+        match self {
+            Special::None => "none".to_string(),
+            Special::GreatFurnace => "great_furnace:add_r".to_string(),
+            Special::DrawCards(count) => format!("draw_cards:{count}"),
+            Special::BurnAnyTarget(amount) => format!("burn_any_target:{amount}"),
+            Special::ChainLightning => "chain_lightning".to_string(),
+            Special::TargetPlayerDraw { draw } => format!("target_player_draw:{draw}"),
+            Special::DrawThenDiscard { draw, discard } => {
+                format!("draw_then_discard:{draw}:{discard}")
+            }
+            Special::GrabThePrize => "grab_the_prize".to_string(),
+            Special::HighwayRobbery => "highway_robbery".to_string(),
+            Special::SearingBlaze => "searing_blaze".to_string(),
+            Special::CounterTarget(filter) => {
+                format!("counter_target:{}", filter.canonical_token())
+            }
+            Special::Pyroblast => "pyroblast".to_string(),
+            Special::RedElementalBlast => "red_elemental_blast".to_string(),
+            Special::EndTheFestivities => "end_the_festivities".to_string(),
+            Special::GalvanicBlast => "galvanic_blast".to_string(),
+            Special::RallyAtTheHornburg => "rally_at_the_hornburg".to_string(),
+            Special::RecklessImpulse => "reckless_impulse".to_string(),
+            Special::WindingWay => "winding_way".to_string(),
+            Special::MillThenDraw { player, mill, draw } => {
+                format!("mill_then_draw:{}:{mill}:{draw}", player.canonical_token())
+            }
+            Special::LookReorderMayShuffleThenDraw { look, draw } => {
+                format!("look_reorder_may_shuffle_then_draw:{look}:{draw}")
+            }
+            Special::DrawThenPutHandOnLibraryTop { draw, put } => {
+                format!("draw_then_put_hand_on_library_top:{draw}:{put}")
+            }
+            Special::ScryThenDraw { scry, draw } => {
+                format!("scry_then_draw:{scry}:{draw}")
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AbilityCostRecipe {
+    Mana {
+        colored: Option<&'static str>,
+        generic: u8,
+    },
+    Tap,
+    DiscardCards(u8),
+    DiscardSelf,
+    SacrificeSelf,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AbilityEffectRecipe {
+    DrawCards(u8),
+    CreateToken(&'static str),
+    /// The interpreter currently supports exactly this typecycling search
+    /// contract. Keeping all semantic knobs in the recipe makes codegen fail
+    /// closed if a future caller asks for a different cardinality/reveal/
+    /// shuffle shape without first extending `EffectOp`.
+    SearchLibraryToHand {
+        card_type: &'static str,
+        subtype: &'static str,
+        min_targets: u8,
+        max_targets: u8,
+        reveal_selected: bool,
+        shuffle: bool,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct ActivatedAbilityRecipe {
+    cost: &'static [AbilityCostRecipe],
+    effect: AbilityEffectRecipe,
+    activation_zone: &'static str,
+    sorcery_speed_only: bool,
+}
+
 fn special_for(name: &str) -> Special {
     match name {
         // Great Furnace is intentionally explicit: unlike a basic land, its
         // mana ability is rules text, not intrinsic to a basic land type.
         "Great Furnace" => Special::GreatFurnace,
+        "Lorien Revealed" => Special::DrawCards(3),
         "Lightning Bolt" => Special::BurnAnyTarget(3),
         "Fiery Temper" => Special::BurnAnyTarget(3),
         "Fireblast" => Special::BurnAnyTarget(4),
@@ -318,6 +423,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
             format!("target=None;spell={spell};mana={mana}")
         }
         Special::GreatFurnace => "target=None;spell=None;mana=AddMana(R)".to_string(),
+        Special::DrawCards(count) => {
+            format!("target=None;spell=DrawCards(Controller,{count});mana=None")
+        }
         Special::BurnAnyTarget(amount) => {
             format!("target=AnyTarget;spell=DealDamage({amount});mana=None")
         }
@@ -452,36 +560,188 @@ fn flashback_for(name: &str) -> String {
 /// Sacrifice Experimental Synthesizer: Create a 2/2 white Samurai creature
 /// token with vigilance. Activate only as a sorcery.") is Rally's only
 /// activated ability and the only one so far with `sorcery_speed_only:
-/// true` -- see that field's doc in `card_def.rs`.
-fn activated_abilities_for(name: &str) -> &'static str {
+/// true` -- see that field's doc in `card_def.rs`. Lorien Revealed adds the
+/// hand-zone Islandcycling `{1}` shape: pay mana, discard the exact source,
+/// then resolve the reusable typed library search.
+fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
-        "Masked Meower" => {
-            "&[ActivatedAbilityDef { \
-                cost: &[CostComponent::DiscardCards(1), CostComponent::SacrificeSelf], \
-                target_spec: TargetSpec::None, \
-                effect: ability_effect_draw_one, \
-                sorcery_speed_only: false, \
-            }]"
-        }
-        "Blood Token" => {
-            "&[ActivatedAbilityDef { \
-                cost: &[CostComponent::Mana(Cost { pips: &[], generic: 1, x_count: 0 }), CostComponent::Tap, \
-                        CostComponent::DiscardCards(1), CostComponent::SacrificeSelf], \
-                target_spec: TargetSpec::None, \
-                effect: ability_effect_draw_one, \
-                sorcery_speed_only: false, \
-            }]"
-        }
-        "Experimental Synthesizer" => {
-            "&[ActivatedAbilityDef { \
-                cost: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 2, x_count: 0 }), CostComponent::SacrificeSelf], \
-                target_spec: TargetSpec::None, \
-                effect: ability_effect_create_samurai_token, \
-                sorcery_speed_only: true, \
-            }]"
-        }
-        _ => "&[]",
+        "Masked Meower" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::DiscardCards(1),
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::DrawCards(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+        }],
+        "Blood Token" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::DiscardCards(1),
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::DrawCards(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+        }],
+        "Experimental Synthesizer" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("R"),
+                    generic: 2,
+                },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::CreateToken("Samurai Token"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+        }],
+        "Lorien Revealed" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::DiscardSelf,
+            ],
+            effect: AbilityEffectRecipe::SearchLibraryToHand {
+                card_type: "Land",
+                subtype: "Island",
+                min_targets: 0,
+                max_targets: 1,
+                reveal_selected: true,
+                shuffle: true,
+            },
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+        }],
+        _ => &[],
     }
+}
+
+fn ability_cost_src(cost: AbilityCostRecipe) -> String {
+    match cost {
+        AbilityCostRecipe::Mana { colored, generic } => {
+            let pips = colored
+                .map(|color| format!("Pip::Colored(ManaColor::{color})"))
+                .unwrap_or_default();
+            format!(
+                "CostComponent::Mana(Cost {{ pips: &[{pips}], generic: {generic}, x_count: 0 }})"
+            )
+        }
+        AbilityCostRecipe::Tap => "CostComponent::Tap".to_string(),
+        AbilityCostRecipe::DiscardCards(count) => {
+            format!("CostComponent::DiscardCards({count})")
+        }
+        AbilityCostRecipe::DiscardSelf => "CostComponent::DiscardSelf".to_string(),
+        AbilityCostRecipe::SacrificeSelf => "CostComponent::SacrificeSelf".to_string(),
+    }
+}
+
+fn ability_cost_token(cost: AbilityCostRecipe) -> String {
+    match cost {
+        AbilityCostRecipe::Mana { colored, generic } => {
+            format!("mana:{}:{generic}:0", colored.unwrap_or("-"))
+        }
+        AbilityCostRecipe::Tap => "tap".to_string(),
+        AbilityCostRecipe::DiscardCards(count) => format!("discard_cards:{count}"),
+        AbilityCostRecipe::DiscardSelf => "discard_self".to_string(),
+        AbilityCostRecipe::SacrificeSelf => "sacrifice_self".to_string(),
+    }
+}
+
+fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
+    match effect {
+        AbilityEffectRecipe::DrawCards(count) => format!("draw_cards:{count}"),
+        AbilityEffectRecipe::CreateToken(name) => format!("create_token:{name}"),
+        AbilityEffectRecipe::SearchLibraryToHand {
+            card_type,
+            subtype,
+            min_targets,
+            max_targets,
+            reveal_selected,
+            shuffle,
+        } => format!(
+            "search_library_to_hand:{card_type}:{subtype}:min={min_targets}:max={max_targets}:reveal={reveal_selected}:shuffle={shuffle}"
+        ),
+    }
+}
+
+fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
+    match effect {
+        AbilityEffectRecipe::DrawCards(count) => format!("ability_effect_draw_{count}"),
+        AbilityEffectRecipe::CreateToken("Samurai Token") => {
+            "ability_effect_create_samurai_token".to_string()
+        }
+        AbilityEffectRecipe::CreateToken(name) => {
+            panic!("no generated activated-ability token function for {name:?}")
+        }
+        AbilityEffectRecipe::SearchLibraryToHand {
+            card_type: "Land",
+            subtype: "Island",
+            min_targets: 0,
+            max_targets: 1,
+            reveal_selected: true,
+            shuffle: true,
+        } => "ability_effect_islandcycle".to_string(),
+        AbilityEffectRecipe::SearchLibraryToHand { .. } => panic!(
+            "SearchLibraryToHand currently supports only optional single Land/Island reveal+shuffle"
+        ),
+    }
+}
+
+fn activated_abilities_for(name: &str) -> String {
+    let recipes = activated_ability_recipes_for(name);
+    if recipes.is_empty() {
+        return "&[]".to_string();
+    }
+    let abilities = recipes
+        .iter()
+        .map(|recipe| {
+            let costs = recipe
+                .cost
+                .iter()
+                .copied()
+                .map(ability_cost_src)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let effect = ability_effect_fn_name(recipe.effect);
+            let zone = recipe.activation_zone;
+            let sorcery = recipe.sorcery_speed_only;
+            format!(
+                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::None, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery} }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("&[{abilities}]")
+}
+
+fn activated_abilities_token(name: &str) -> String {
+    activated_ability_recipes_for(name)
+        .iter()
+        .map(|recipe| {
+            let costs = recipe
+                .cost
+                .iter()
+                .copied()
+                .map(ability_cost_token)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "zone={};sorcery={};target=none;cost=[{}];effect={}",
+                recipe.activation_zone.to_ascii_lowercase(),
+                recipe.sorcery_speed_only,
+                costs,
+                ability_effect_token(recipe.effect)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 /// `Some` Plot cost source text (`CardDef::plot_cost`), verified against
@@ -596,6 +856,25 @@ fn codegen(cards: &[CardJson]) -> String {
     .unwrap();
     writeln!(out).unwrap();
 
+    let mut draw_card_counts = Vec::new();
+    for card in cards {
+        if let Special::DrawCards(count) = special_for(&card.name) {
+            if !draw_card_counts.contains(&count) {
+                draw_card_counts.push(count);
+            }
+        }
+    }
+    for count in draw_card_counts {
+        writeln!(out, "fn spell_effect_draw_{count}() -> Option<EffectOp> {{").unwrap();
+        writeln!(
+            out,
+            "    Some(EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {count} }})"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     // Shared/one-off effect-program functions. Function *pointers* (not
     // owned EffectOp values) are what make a `static [CardDef; N]` array
     // possible: EffectOp contains Vec/Box and can't live in a const
@@ -639,31 +918,47 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
-    // Masked Meower's / Blood's activated ability both resolve to "draw a
-    // card" once their (differing) costs are paid.
-    writeln!(out, "fn ability_effect_draw_one() -> EffectOp {{").unwrap();
-    writeln!(
-        out,
-        "    EffectOp::DrawCards {{ player: PlayerRef::Controller, count: 1 }}"
-    )
-    .unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
-
-    if cards.iter().any(|c| c.name == "Experimental Synthesizer") {
-        // Experimental Synthesizer's sac ability: "Create a 2/2 white
-        // Samurai creature token with vigilance."
-        writeln!(
-            out,
-            "fn ability_effect_create_samurai_token() -> EffectOp {{"
-        )
-        .unwrap();
-        writeln!(out, "    let samurai = crate::card_def::card_id_by_name(\"Samurai Token\").expect(\"Samurai Token in CARD_DEFS\");").unwrap();
-        writeln!(
-            out,
-            "    EffectOp::CreateToken {{ token_def: samurai, controller: PlayerRef::Controller }}"
-        )
-        .unwrap();
+    // Emit each structured activated-ability effect once. These are the same
+    // recipes used for CardDef source and the v3 card-database hash tokens,
+    // so a cost/zone/effect change cannot update one surface and leave the
+    // others silently stale.
+    let mut activated_effects = Vec::new();
+    for card in cards {
+        for recipe in activated_ability_recipes_for(&card.name) {
+            if !activated_effects.contains(&recipe.effect) {
+                activated_effects.push(recipe.effect);
+            }
+        }
+    }
+    for effect in activated_effects {
+        let function_name = ability_effect_fn_name(effect);
+        writeln!(out, "fn {function_name}() -> EffectOp {{").unwrap();
+        match effect {
+            AbilityEffectRecipe::DrawCards(count) => {
+                writeln!(
+                    out,
+                    "    EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {count} }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::CreateToken(name) => {
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({name:?}).expect(\"{name} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}").unwrap();
+            }
+            AbilityEffectRecipe::SearchLibraryToHand {
+                card_type: "Land",
+                subtype,
+                min_targets: 0,
+                max_targets: 1,
+                reveal_selected: true,
+                shuffle: true,
+            } => {
+                writeln!(out, "    EffectOp::SearchLibraryToHand {{ player: PlayerRef::Controller, filter: LibraryCardFilter::LandWithSubtype(Subtype::{subtype}) }}").unwrap();
+            }
+            AbilityEffectRecipe::SearchLibraryToHand { .. } => {
+                unreachable!("ability_effect_fn_name rejects unsupported search recipes")
+            }
+        }
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -1295,6 +1590,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "no_effect".to_string(),
                 "mana_ability_add_r".to_string(),
             ),
+            Special::DrawCards(count) => (
+                "TargetSpec::None",
+                format!("spell_effect_draw_{count}"),
+                "no_effect".to_string(),
+            ),
             Special::BurnAnyTarget(amount) => (
                 "TargetSpec::AnyTarget",
                 format!("spell_effect_burn_any_target_{amount}"),
@@ -1507,14 +1807,16 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
-    // ---- content hash --------------------------------------------------
-    // Hashes gameplay-relevant fields only (name/cost/types/subtypes/
-    // supertypes/power/toughness/is_land/produces_mana/colors/is_token/
-    // engine_capability and every generated gameplay selector), in array
-    // order, so
-    // metadata-only regenerations of cards_v1.json (timestamps, java_file
-    // paths, complexity tags) don't churn the constant.
-    let mut canon = String::from("kernel_carddb/v4\n");
+    // ---- content + executable-recipe hash ------------------------------
+    // v5 hashes every generated CardDef selector plus semantic tokens from
+    // the same `Special` and structured activated-ability recipes that emit
+    // executable definitions. Lorien's Draw3, hand activation, generic-one
+    // + exact-source discard cost, and optional Island-land reveal+shuffle
+    // search therefore bind the same complete provenance contract as Deep
+    // Analysis's target-player draw and ordered flashback components.
+    // Metadata-only registry fields (timestamps, java_file paths, complexity
+    // tags) remain intentionally outside the contract.
+    let mut canon = String::from("kernel_carddb/v5\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -1565,7 +1867,7 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str(&flashback_for(&c.name));
         canon.push('|');
-        canon.push_str(activated_abilities_for(&c.name));
+        canon.push_str(&activated_abilities_for(&c.name));
         canon.push('|');
         canon.push_str(&plot_cost_for(&c.name));
         canon.push('|');
@@ -1576,6 +1878,12 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push_str(&effect_recipe_for(c));
         canon.push('|');
         canon.push_str(&c.decks.join(","));
+        canon.push('|');
+        canon.push_str("special=");
+        canon.push_str(&special_for(&c.name).canonical_token());
+        canon.push('|');
+        canon.push_str("activated=");
+        canon.push_str(&activated_abilities_token(&c.name));
         canon.push('\n');
     }
     let hash = fnv1a64(canon.as_bytes());
