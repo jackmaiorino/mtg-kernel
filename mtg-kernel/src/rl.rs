@@ -3632,6 +3632,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::PutHandCardOnLibraryTop {
+                                ..
+                            }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {
@@ -3665,6 +3668,9 @@ fn pending_effect_semantic_v4(
                                 TargetSelectionPurposeV4::CardSelection
                             }
                             crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::PutHandCardOnLibraryTop {
                                 ..
                             } => TargetSelectionPurposeV4::LibraryOrder,
                         },

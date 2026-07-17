@@ -263,6 +263,7 @@
     },
     {
       "name": "Brainstorm",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [

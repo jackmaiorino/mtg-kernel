@@ -214,6 +214,14 @@ enum Special {
         look: u8,
         draw: u8,
     },
+    /// Draw `draw` cards, then put up to `put` cards from the controller's
+    /// hand on top of their library through sequential private choices.
+    /// Brainstorm is the first consumer; the engine owns the generic hand and
+    /// library semantics rather than branching on the printed card name.
+    DrawThenPutHandOnLibraryTop {
+        draw: u8,
+        put: u8,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -265,6 +273,7 @@ fn special_for(name: &str) -> Special {
             draw: 1,
         },
         "Ponder" => Special::LookReorderMayShuffleThenDraw { look: 3, draw: 1 },
+        "Brainstorm" => Special::DrawThenPutHandOnLibraryTop { draw: 3, put: 2 },
         _ => Special::None,
     }
 }
@@ -726,6 +735,37 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    let mut draw_then_put_hand_on_library_top_shapes = Vec::new();
+    for card in cards {
+        if let Special::DrawThenPutHandOnLibraryTop { draw, put } = special_for(&card.name) {
+            let shape = (draw, put);
+            if !draw_then_put_hand_on_library_top_shapes.contains(&shape) {
+                draw_then_put_hand_on_library_top_shapes.push(shape);
+            }
+        }
+    }
+    for (draw, put) in draw_then_put_hand_on_library_top_shapes {
+        writeln!(
+            out,
+            "fn spell_effect_draw_then_put_hand_on_library_top_{draw}_{put}() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::PutCardsFromHandOnLibraryTop {{ player: PlayerRef::Controller, count: {put} }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     let mut mill_then_draw_shapes = Vec::new();
     for card in cards {
         if let Special::MillThenDraw { player, mill, draw } = special_for(&card.name) {
@@ -1168,6 +1208,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::LookReorderMayShuffleThenDraw { look, draw } => (
                 "TargetSpec::None",
                 format!("spell_effect_look_reorder_may_shuffle_then_draw_{look}_{draw}"),
+                "no_effect".to_string(),
+            ),
+            Special::DrawThenPutHandOnLibraryTop { draw, put } => (
+                "TargetSpec::None",
+                format!("spell_effect_draw_then_put_hand_on_library_top_{draw}_{put}"),
                 "no_effect".to_string(),
             ),
             Special::MillThenDraw { player, mill, draw } => {

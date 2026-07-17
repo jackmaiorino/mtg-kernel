@@ -317,6 +317,15 @@ pub enum EffectOp {
     MayShuffleLibrary {
         player: PlayerRef,
     },
+    /// Repeatedly lets `player` choose one card from their current hand and
+    /// puts that card on top of their library, stopping after `count` cards
+    /// or when the hand is empty. Each card is a distinct private choice and
+    /// zone change: the first chosen card is therefore deepest and the last
+    /// chosen card is topmost. Appended to preserve existing hash identities.
+    PutCardsFromHandOnLibraryTop {
+        player: PlayerRef,
+        count: u8,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -363,14 +372,33 @@ pub enum EffectFrame {
         player: PlayerId,
         path: Vec<u16>,
     },
+    /// Coordinates one card at a time for a repeated private hand-to-library
+    /// instruction. `chosen == None` stages the next exact-current-hand
+    /// prompt; `Some` validates that prompt's hand snapshot and commits its
+    /// single zone change before another prompt can be staged.
+    PutCardsFromHandOnLibraryTop {
+        player: PlayerId,
+        /// Redundant copy of the originating op's requested count. Together
+        /// with `remaining` and `prompt_index`, this makes trusted snapshot
+        /// progress self-checking instead of trusting either counter alone.
+        total: u8,
+        remaining: u8,
+        prompt_index: u16,
+        expected_hand: Vec<EffectObjectBinding>,
+        chosen: Option<EffectObjectBinding>,
+        path: Vec<u16>,
+        /// Redundant copy of the originating program path. Coordinator and
+        /// prompt paths must remain mutually consistent with this copy.
+        canonical_path: Vec<u16>,
+    },
 }
 
 /// Binds a physical arena id to the exact incarnation selected when an effect
 /// snapshotted it. Visibility is governed separately: public reveals expose
-/// these bindings to both players, while a mill-order continuation exposes
-/// its otherwise-hidden bindings only to the cards' owner. A restored/stale
-/// continuation must never move a later incarnation that happens to reuse
-/// the same stable `ObjectId`.
+/// these bindings to both players, while private library and hand choices
+/// expose their otherwise-hidden bindings only to the chooser. A
+/// restored/stale continuation must never move a later incarnation that
+/// happens to reuse the same stable `ObjectId`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EffectObjectBinding {
     pub object: ObjectId,
@@ -385,9 +413,9 @@ pub struct EffectTargetCandidate {
 }
 
 /// Internal reason/completion for a generic target-selection continuation.
-/// Public schema-v4 projects this graveyard-ordering use as the already
-/// reserved `TargetSelectionPurposeV4::CardSelection`; no card-specific
-/// state or action identity is introduced.
+/// Public schema-v4 projects these through already-reserved card-selection or
+/// library-order purposes; no card-specific state or action identity is
+/// introduced.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EffectTargetSelectionPurpose {
     OrderIntoGraveyard {
@@ -404,6 +432,19 @@ pub enum EffectTargetSelectionPurpose {
     OrderLookedLibraryTop {
         player: PlayerId,
         original_prefix: Vec<EffectObjectBinding>,
+    },
+    /// One of a repeated series of private, exact-one hand choices. The
+    /// complete hand snapshot prevents a restored continuation from silently
+    /// accepting a changed candidate pool. The next prompt is independent:
+    /// after this choice commits, it snapshots the then-current hand anew.
+    PutHandCardOnLibraryTop {
+        player: PlayerId,
+        original_hand: Vec<EffectObjectBinding>,
+        total: u8,
+        remaining: u8,
+        prompt_index: u16,
+        continuation_path: Vec<u16>,
+        canonical_path: Vec<u16>,
     },
 }
 
@@ -505,8 +546,9 @@ pub struct ExecCtx {
 
 /// Whether this program can yield a policy-visible choice anywhere in its
 /// tree. Existing Burn/Rally programs stay on their frozen synchronous/legacy
-/// continuation paths; explicit `Choice`, public partition ordering, and
-/// multi-card mill ordering enter the v4 interpreter.
+/// continuation paths; explicit `Choice`, public partition ordering,
+/// private library/hand ordering, and multi-card mill ordering enter the v4
+/// interpreter.
 pub fn contains_player_choice(op: &EffectOp) -> bool {
     match op {
         EffectOp::Sequence(ops) => ops.iter().any(contains_player_choice),
@@ -521,7 +563,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         // graveyard batch can yield its owner's ordering choice.
         EffectOp::RevealTopAndPartitionByType { .. } => true,
         EffectOp::MillCards { count, .. } => *count > 1,
-        EffectOp::LookAtLibraryTopAndReorder { .. } | EffectOp::MayShuffleLibrary { .. } => true,
+        EffectOp::LookAtLibraryTopAndReorder { .. }
+        | EffectOp::MayShuffleLibrary { .. }
+        | EffectOp::PutCardsFromHandOnLibraryTop { .. } => true,
         _ => false,
     }
 }
@@ -801,6 +845,46 @@ fn complete_resumable_target_selection(
                 path,
             });
         }
+        EffectTargetSelectionPurpose::PutHandCardOnLibraryTop {
+            player,
+            original_hand,
+            total,
+            remaining,
+            prompt_index,
+            continuation_path,
+            canonical_path,
+        } => {
+            if objects.len() != 1 {
+                return Err("hand-to-library prompt did not select exactly one card".to_string());
+            }
+            validate_hand_to_library_progress(
+                total,
+                remaining,
+                prompt_index,
+                &continuation_path,
+                &canonical_path,
+            )?;
+            if remaining == 0 {
+                return Err("completed hand-to-library progress cannot own a prompt".to_string());
+            }
+            let mut expected_choice_path = canonical_path.clone();
+            expected_choice_path.push(prompt_index);
+            if path != expected_choice_path {
+                return Err("hand-to-library prompt structural path changed".to_string());
+            }
+            continuation
+                .frames
+                .push(EffectFrame::PutCardsFromHandOnLibraryTop {
+                    player,
+                    total,
+                    remaining,
+                    prompt_index,
+                    expected_hand: original_hand,
+                    chosen: objects.pop(),
+                    path: continuation_path,
+                    canonical_path,
+                });
+        }
     }
     Ok(())
 }
@@ -846,10 +930,13 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     match choice {
         PendingEffectChoice::SelectTargets {
             player: chooser,
+            path,
             selected,
             legal,
+            min_targets,
+            max_targets,
+            ordered,
             purpose,
-            ..
         } => {
             for candidate in selected.iter().chain(legal) {
                 validate_effect_target_candidate(state, candidate)?;
@@ -906,6 +993,63 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     original.sort_by_key(|binding| binding.object);
                     if partition != original {
                         return Err("library-order candidates do not partition the bound prefix"
+                            .to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::PutHandCardOnLibraryTop {
+                    player: hand_player,
+                    original_hand,
+                    total,
+                    remaining,
+                    prompt_index,
+                    continuation_path,
+                    canonical_path,
+                } => {
+                    if chooser != hand_player {
+                        return Err(
+                            "hand-to-library choice player does not own the selected hand"
+                                .to_string(),
+                        );
+                    }
+                    validate_hand_to_library_progress(
+                        *total,
+                        *remaining,
+                        *prompt_index,
+                        continuation_path,
+                        canonical_path,
+                    )?;
+                    if *remaining == 0 || original_hand.len() < 2 {
+                        return Err(
+                            "hand-to-library policy prompt has no genuine choice".to_string()
+                        );
+                    }
+                    if *min_targets != 1 || *max_targets != 1 || !*ordered || !selected.is_empty() {
+                        return Err(
+                            "hand-to-library prompt is not an independent exact-one ordering choice"
+                                .to_string(),
+                        );
+                    }
+                    let mut expected_path = canonical_path.clone();
+                    expected_path.push(*prompt_index);
+                    if path != &expected_path {
+                        return Err("hand-to-library prompt structural path changed".to_string());
+                    }
+                    validate_bound_hand_exact(state, *hand_player, original_hand)?;
+                    let mut partition = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "hand-to-library target lacks an object-incarnation binding"
+                                    .to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    let mut original = original_hand.clone();
+                    partition.sort_by_key(|binding| binding.object);
+                    original.sort_by_key(|binding| binding.object);
+                    if partition != original {
+                        return Err("hand-to-library candidates do not partition the bound hand"
                             .to_string());
                     }
                 }
@@ -1063,6 +1207,130 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 EffectFrame::ShuffleLibrary { player, path: _ } => {
                     state.shuffle_library(player);
                 }
+                EffectFrame::PutCardsFromHandOnLibraryTop {
+                    player,
+                    total,
+                    remaining,
+                    prompt_index,
+                    expected_hand,
+                    chosen,
+                    path,
+                    canonical_path,
+                } => {
+                    validate_hand_to_library_progress(
+                        total,
+                        remaining,
+                        prompt_index,
+                        &path,
+                        &canonical_path,
+                    )?;
+                    if remaining == 0 {
+                        if prompt_index != u16::from(total)
+                            || chosen.is_some()
+                            || !expected_hand.is_empty()
+                        {
+                            return Err(
+                                "completed hand-to-library frame has noncanonical progress"
+                                    .to_string(),
+                            );
+                        }
+                        continue;
+                    }
+
+                    if let Some(chosen) = chosen {
+                        if expected_hand.is_empty() {
+                            return Err(
+                                "chosen hand-to-library frame lacks its bound hand snapshot"
+                                    .to_string(),
+                            );
+                        }
+                        validate_bound_hand_exact(state, player, &expected_hand)?;
+                        if !expected_hand.contains(&chosen) {
+                            return Err(
+                                "chosen hand-to-library card is outside the bound hand".to_string()
+                            );
+                        }
+                        let next_remaining = remaining
+                            .checked_sub(1)
+                            .ok_or("active hand-to-library frame has no remaining card count")?;
+                        let next_prompt_index = prompt_index
+                            .checked_add(1)
+                            .ok_or("hand-to-library prompt index overflowed")?;
+                        validate_hand_to_library_progress(
+                            total,
+                            next_remaining,
+                            next_prompt_index,
+                            &path,
+                            &canonical_path,
+                        )?;
+                        let next_frame = EffectFrame::PutCardsFromHandOnLibraryTop {
+                            player,
+                            total,
+                            remaining: next_remaining,
+                            prompt_index: next_prompt_index,
+                            expected_hand: Vec::new(),
+                            chosen: None,
+                            path,
+                            canonical_path,
+                        };
+                        // The private subset choice invalidates every exact
+                        // nonowner hand fact, not only the card that happened
+                        // to be selected. Otherwise a previously known card
+                        // left behind would reveal the hidden choice by
+                        // elimination.
+                        state.clear_nonowner_hand_knowledge(player);
+                        event::propose_and_commit(
+                            state,
+                            event::ProposedEvent::private_top_library_insert(chosen.object),
+                        );
+                        if state.objects.get(chosen.object).zone != Zone::Library
+                            || state.players[player.index()].library.first() != Some(&chosen.object)
+                        {
+                            return Err("private hand-to-library insertion did not commit on top"
+                                .to_string());
+                        }
+                        continuation.frames.push(next_frame);
+                        continue;
+                    }
+
+                    if !expected_hand.is_empty() {
+                        return Err(
+                            "hand-to-library coordinator carries an unchosen hand snapshot"
+                                .to_string(),
+                        );
+                    }
+                    let current_hand = bind_hand(state, player);
+                    if current_hand.is_empty() {
+                        continue;
+                    }
+                    state.clear_nonowner_hand_knowledge(player);
+                    if current_hand.len() == 1 {
+                        continuation
+                            .frames
+                            .push(EffectFrame::PutCardsFromHandOnLibraryTop {
+                                player,
+                                total,
+                                remaining,
+                                prompt_index,
+                                chosen: current_hand.first().copied(),
+                                expected_hand: current_hand,
+                                path,
+                                canonical_path,
+                            });
+                        continue;
+                    }
+                    stage_hand_to_library_choice(
+                        &mut continuation,
+                        player,
+                        total,
+                        remaining,
+                        prompt_index,
+                        canonical_path,
+                        current_hand,
+                    );
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
                 EffectFrame::Program { .. } => unreachable!(),
             }
             continue;
@@ -1173,6 +1441,22 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 });
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::PutCardsFromHandOnLibraryTop { player, count } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let canonical_path = path.clone();
+                continuation
+                    .frames
+                    .push(EffectFrame::PutCardsFromHandOnLibraryTop {
+                        player,
+                        total: count,
+                        remaining: count,
+                        prompt_index: 0,
+                        expected_hand: Vec::new(),
+                        chosen: None,
+                        path,
+                        canonical_path,
+                    });
             }
             leaf => execute(&leaf, &continuation.ctx, state),
         }
@@ -1285,6 +1569,96 @@ fn stage_library_order_choice(
     });
 }
 
+fn stage_hand_to_library_choice(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    total: u8,
+    remaining: u8,
+    prompt_index: u16,
+    canonical_path: Vec<u16>,
+    original_hand: Vec<EffectObjectBinding>,
+) {
+    let continuation_path = canonical_path.clone();
+    debug_assert!(validate_hand_to_library_progress(
+        total,
+        remaining,
+        prompt_index,
+        &continuation_path,
+        &canonical_path,
+    )
+    .is_ok());
+    debug_assert!(remaining > 0);
+    debug_assert!(original_hand.len() >= 2);
+    let mut choice_path = canonical_path.clone();
+    choice_path.push(prompt_index);
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path: choice_path,
+        selected: Vec::new(),
+        legal: original_hand
+            .iter()
+            .copied()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: 1,
+        max_targets: 1,
+        ordered: true,
+        purpose: EffectTargetSelectionPurpose::PutHandCardOnLibraryTop {
+            player,
+            original_hand,
+            total,
+            remaining,
+            prompt_index,
+            continuation_path,
+            canonical_path,
+        },
+    });
+}
+
+/// Validates the redundant progress/path metadata carried by Brainstorm-style
+/// repeated hand-to-library coordinators. The copied total and structural path
+/// catch stale or internally inconsistent trusted snapshots; they do not
+/// authenticate a `GameState` whose related private fields were coherently
+/// rewritten outside the opaque in-process `Snapshot` API.
+fn validate_hand_to_library_progress(
+    total: u8,
+    remaining: u8,
+    prompt_index: u16,
+    path: &[u16],
+    canonical_path: &[u16],
+) -> Result<(), String> {
+    if path != canonical_path {
+        return Err("hand-to-library coordinator path changed from its canonical path".to_string());
+    }
+    if remaining > total {
+        return Err("hand-to-library remaining count exceeds its canonical total".to_string());
+    }
+    if remaining > 0 && total == 0 {
+        return Err("active hand-to-library progress has a zero canonical total".to_string());
+    }
+    let expected_prompt_index = u16::from(total - remaining);
+    if prompt_index != expected_prompt_index {
+        return Err("hand-to-library prompt index disagrees with canonical progress".to_string());
+    }
+    Ok(())
+}
+
+fn bind_hand(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+    state.players[player.index()]
+        .hand
+        .iter()
+        .copied()
+        .map(|object| EffectObjectBinding {
+            object,
+            expected_zone: Zone::Hand,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect()
+}
+
 fn bind_library_top(state: &GameState, player: PlayerId, count: u8) -> Vec<EffectObjectBinding> {
     state.players[player.index()].library
         [..usize::from(count).min(state.players[player.index()].library.len())]
@@ -1296,6 +1670,36 @@ fn bind_library_top(state: &GameState, player: PlayerId, count: u8) -> Vec<Effec
             expected_zone_change_count: state.objects.get(object).zone_change_count,
         })
         .collect()
+}
+
+fn validate_bound_hand_exact(
+    state: &GameState,
+    player: PlayerId,
+    objects: &[EffectObjectBinding],
+) -> Result<(), String> {
+    if objects
+        .iter()
+        .any(|binding| binding.expected_zone != Zone::Hand)
+    {
+        return Err("hand-to-library binding does not expect the hand zone".to_string());
+    }
+    for &binding in objects {
+        validate_effect_object_binding(state, binding)?;
+        if state.objects.get(binding.object).owner != player {
+            return Err("hand-to-library binding has the wrong hand owner".to_string());
+        }
+    }
+    let mut expected = objects
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    let mut current = state.players[player.index()].hand.clone();
+    expected.sort_unstable();
+    current.sort_unstable();
+    if expected != current {
+        return Err("bound hand changed identity or membership".to_string());
+    }
+    Ok(())
 }
 
 /// Validates both object incarnation and membership in the exact current
@@ -1774,7 +2178,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             commit_zone_change_batch(state, &objects, Zone::Graveyard, false)
                 .expect("fresh mill bindings remain valid");
         }
-        EffectOp::LookAtLibraryTopAndReorder { .. } | EffectOp::MayShuffleLibrary { .. } => {
+        EffectOp::LookAtLibraryTopAndReorder { .. }
+        | EffectOp::MayShuffleLibrary { .. }
+        | EffectOp::PutCardsFromHandOnLibraryTop { .. } => {
             panic!("private library choices must use the resumable interpreter")
         }
     }
