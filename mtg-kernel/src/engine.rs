@@ -1411,6 +1411,46 @@ fn sacrificeable_lands(
         .collect()
 }
 
+/// Derives the printed-cost branch used by both cast offers and final
+/// payment. Current consumers (Cryptic Serpent, with Tolarian Terror and
+/// Deem Inferior planned) have no generic additional/alternative cost, so
+/// reducing the printed generic component is the complete CR 601.2f total-
+/// cost calculation for this certified shape. A future reducer paired with
+/// Kicker or another generic additional cost must deliberately extend this
+/// helper across the combined total rather than silently reusing it.
+fn effective_normal_cast_cost(
+    def: &card_def::CardDef,
+    player: PlayerId,
+    state: &GameState,
+) -> Cost {
+    let Some(reducer) = def.generic_cost_reduction else {
+        return def.cost;
+    };
+    let count = match reducer.count {
+        card_def::DynamicCountDef::ControllerGraveyardAnyType(types) => state.players
+            [player.index()]
+        .graveyard
+        .iter()
+        .filter(|&&object| {
+            let graveyard_def = &card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
+            graveyard_def
+                .types
+                .iter()
+                .any(|card_type| types.contains(card_type))
+        })
+        .count() as u32,
+        card_def::DynamicCountDef::ControllerDrawsThisTurn => {
+            state.players[player.index()].draws_this_turn
+        }
+    };
+    let reduction = count.saturating_mul(u32::from(reducer.generic_per_count));
+    let mut cost = def.cost;
+    cost.generic = cost
+        .generic
+        .saturating_sub(reduction.min(u32::from(u8::MAX)) as u8);
+    cost
+}
+
 /// Whether `id` (from hand or graveyard) is castable right now, given
 /// sorcery-speed timing and every cost path (`is_flashback` selects
 /// between the normal cost/alt-cost pair and the flashback cost).
@@ -1455,7 +1495,8 @@ fn is_castable_now(player: PlayerId, id: ObjectId, is_flashback: bool, state: &G
             FlashbackCost::SacrificeLands(n) => count_controlled_lands(player, state) >= n as u32,
         }
     } else {
-        let normal_ok = mana::can_pay(&def.cost, 0, player, state).is_some();
+        let normal_cost = effective_normal_cast_cost(def, player, state);
+        let normal_ok = mana::can_pay(&normal_cost, 0, player, state).is_some();
         let alt_ok = def
             .alt_cost
             .map(|c| can_pay_components(c, player, id, state))
@@ -2383,11 +2424,13 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // any other cast-time cost choice -- only asked when paying the base
     // cost *and* the kicker cost together is currently affordable; every
     // card in this pool with `kicker_cost` has no `alt_cost`, so checking
-    // against `def.cost` (never `def.alt_cost`) is exhaustive here.
+    // against the effective normal cost (never `def.alt_cost`) is exhaustive
+    // here.
     if let Some(kicker_cost) = def.kicker_cost {
         if pending.kicked.is_none() {
+            let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
             let payable =
-                mana::can_pay_combined(&[&def.cost, &kicker_cost], 0, pending.controller, state)
+                mana::can_pay_combined(&[&normal_cost, &kicker_cost], 0, pending.controller, state)
                     .is_some();
             if payable {
                 return Some(Decision::ChooseKicker {
@@ -2452,7 +2495,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         let alt = def
             .alt_cost
             .expect("cast_mode is None only when begin_cast saw an alt_cost");
-        let normal_ok = mana::can_pay(&def.cost, 0, pending.controller, state).is_some();
+        let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
+        let normal_ok = mana::can_pay(&normal_cost, 0, pending.controller, state).is_some();
         let alt_ok = can_pay_components(alt, pending.controller, pending.spell, state);
         if normal_ok && alt_ok {
             return Some(Decision::ChooseCastMode {
@@ -4209,11 +4253,17 @@ fn finalize_cast(state: &mut GameState) {
         {
             CastMode::Normal => {
                 let kicked = pending.kicked == Some(true);
+                let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
                 let plan = if kicked {
                     let kicker_cost = def.kicker_cost.expect("kicked is only true when begin_cast_ex/drain_pending_cast_or_decide saw a kicker_cost");
-                    mana::can_pay_combined(&[&def.cost, &kicker_cost], 0, pending.controller, state)
+                    mana::can_pay_combined(
+                        &[&normal_cost, &kicker_cost],
+                        0,
+                        pending.controller,
+                        state,
+                    )
                 } else {
-                    mana::can_pay(&def.cost, 0, pending.controller, state)
+                    mana::can_pay(&normal_cost, 0, pending.controller, state)
                 };
                 let Some(plan) = plan else {
                     return abort_cast(state, pending);

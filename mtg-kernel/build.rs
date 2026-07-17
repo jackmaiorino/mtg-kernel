@@ -431,6 +431,15 @@ fn cost_src(mana_cost: &str) -> String {
     )
 }
 
+fn generic_cost_reduction_for(name: &str) -> &'static str {
+    match name {
+        "Cryptic Serpent" => {
+            "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerGraveyardAnyType(&[CardType::Instant, CardType::Sorcery]) })"
+        }
+        _ => "None",
+    }
+}
+
 fn intrinsic_basic_mana_color(card: &CardJson) -> Option<&'static str> {
     let is_basic_land = card.is_land
         && card.types.iter().any(|card_type| card_type == "Land")
@@ -1323,6 +1332,12 @@ fn codegen(cards: &[CardJson]) -> String {
             "        cost: Cost {{ pips: &[{pips_src}], generic: {generic}, x_count: {x_count} }},"
         )
         .unwrap();
+        writeln!(
+            out,
+            "        generic_cost_reduction: {},",
+            generic_cost_reduction_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "        types: &[{types_src}],").unwrap();
         writeln!(out, "        subtypes: &[{subtypes_src}],").unwrap();
         writeln!(out, "        supertypes: &[{supertypes_src}],").unwrap();
@@ -1373,10 +1388,10 @@ fn codegen(cards: &[CardJson]) -> String {
     // ---- content hash --------------------------------------------------
     // Hashes gameplay-relevant fields only (name/cost/types/subtypes/
     // supertypes/power/toughness/is_land/produces_mana/colors/is_token/
-    // engine_capability/decks), in array order, so
+    // engine_capability/generated reducer/decks), in array order, so
     // metadata-only regenerations of cards_v1.json (timestamps, java_file
     // paths, complexity tags) don't churn the constant.
-    let mut canon = String::from("kernel_carddb/v2\n");
+    let mut canon = String::from("kernel_carddb/v3\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -1405,6 +1420,13 @@ fn codegen(cards: &[CardJson]) -> String {
             EngineCapabilityJson::Partial => "partial",
             EngineCapabilityJson::Full => "full",
         });
+        canon.push('|');
+        // Reuse the exact source fragment that generates CardDef so a change
+        // to the generated reducer definition necessarily changes the frozen
+        // database identity. Evaluator semantics remain source/version gated.
+        // `None` is included too, preserving positional separation and making
+        // addition/removal equally visible.
+        canon.push_str(generic_cost_reduction_for(&c.name));
         canon.push('|');
         canon.push_str(&c.decks.join(","));
         canon.push('\n');

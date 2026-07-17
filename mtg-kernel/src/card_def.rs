@@ -350,10 +350,34 @@ pub struct ModeDef {
     pub effect: fn() -> EffectOp,
 }
 
+/// A deterministic value sampled while deriving a spell's total generic
+/// mana cost. Kept data-driven and card-name-neutral so the same cast-cost
+/// path can serve graveyard reducers (Cryptic Serpent/Tolarian Terror) and
+/// turn counters (Deem Inferior) without teaching the engine individual
+/// card names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DynamicCountDef {
+    /// Count cards in the caster's graveyard that have any listed type.
+    ControllerGraveyardAnyType(&'static [CardType]),
+    /// Count cards the caster has drawn during the current turn.
+    ControllerDrawsThisTurn,
+}
+
+/// Reduces only the generic portion of a spell's mana cost, flooring at
+/// zero. Colored, hybrid, Phyrexian, and X pips are never removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GenericCostReductionDef {
+    pub generic_per_count: u8,
+    pub count: DynamicCountDef,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
     pub cost: Cost,
+    /// A spell-local generic cost reducer evaluated by the shared cast
+    /// legality/payment pipeline. `None` for cards without this text.
+    pub generic_cost_reduction: Option<GenericCostReductionDef>,
     pub types: &'static [CardType],
     /// This card's creature/land/artifact subtypes (105.1's subtype line),
     /// e.g. `[Subtype::Human, Subtype::Shaman]` for Burning-Tree Emissary --
@@ -550,10 +574,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v2_is_frozen() {
-        // Preordain is the only newly executable definition in this support
-        // slice; Brainstorm was accepted previously.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x56ea_d973_a6bd_8f55);
+    fn card_db_hash_v3_is_frozen() {
+        // Cryptic Serpent is the only newly executable definition in this
+        // support slice; Preordain was accepted previously.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x7389_1427_8a16_8d77);
     }
 
     #[test]
@@ -576,6 +600,63 @@ mod tests {
             );
         }
         assert_eq!(card_id_by_name("Not A Real Card"), None);
+    }
+
+    #[test]
+    fn cryptic_serpent_has_the_generic_graveyard_spell_reducer() {
+        let def = &CARD_DEFS[card_id_by_name("Cryptic Serpent").unwrap() as usize];
+        assert_eq!(def.capability, CardCapability::Full);
+        assert_eq!(def.cost.generic, 5);
+        assert_eq!(
+            def.cost.pips,
+            &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::U)]
+        );
+        assert_eq!(
+            def.generic_cost_reduction,
+            Some(GenericCostReductionDef {
+                generic_per_count: 1,
+                count: DynamicCountDef::ControllerGraveyardAnyType(&[
+                    CardType::Instant,
+                    CardType::Sorcery,
+                ]),
+            })
+        );
+        assert!(def.is_castable());
+    }
+
+    #[test]
+    fn generic_reducers_fail_closed_outside_the_certified_printed_cost_shape() {
+        for def in CARD_DEFS
+            .iter()
+            .filter(|def| def.generic_cost_reduction.is_some())
+        {
+            assert!(def.is_castable(), "{} is not executable", def.name);
+            assert_ne!(
+                def.generic_cost_reduction.unwrap().generic_per_count,
+                0,
+                "{} has a zero reducer",
+                def.name
+            );
+            assert_eq!(
+                def.cost.x_count, 0,
+                "{} has an X cost outside the certified reducer shape",
+                def.name
+            );
+            assert!(
+                def.alt_cost.is_none(),
+                "{} has an alternative cost",
+                def.name
+            );
+            assert!(def.kicker_cost.is_none(), "{} has kicker", def.name);
+            assert!(
+                def.additional_cost.is_none(),
+                "{} has an additional cost",
+                def.name
+            );
+            assert!(def.flashback.is_none(), "{} has flashback", def.name);
+            assert!(def.plot_cost.is_none(), "{} has plot", def.name);
+            assert!(def.madness_cost.is_none(), "{} has madness", def.name);
+        }
     }
 
     #[test]
@@ -622,7 +703,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 41, "38 deck cards plus three required tokens");
+        assert_eq!(full, 42, "39 deck cards plus three required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

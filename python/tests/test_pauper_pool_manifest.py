@@ -380,9 +380,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 38,
+                "full_cards": 39,
                 "partial_cards": 0,
-                "no_effect_cards": 112,
+                "no_effect_cards": 111,
                 "token_dependencies": 3,
             },
         )
@@ -393,7 +393,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Elves", "full": 17, "partial": 0, "no_effect": 43, "total": 60},
             {"deck_id": "Spy", "full": 8, "partial": 0, "no_effect": 52, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Terror", "full": 38, "partial": 0, "no_effect": 22, "total": 60},
+            {"deck_id": "Terror", "full": 42, "partial": 0, "no_effect": 18, "total": 60},
             {"deck_id": "CawGates", "full": 13, "partial": 0, "no_effect": 47, "total": 60},
             {"deck_id": "Faeries", "full": 24, "partial": 0, "no_effect": 36, "total": 60},
         ]
@@ -457,6 +457,16 @@ class PauperPoolManifestTest(unittest.TestCase):
         self.assertEqual(preordain["sideboard"], [])
         self.assertEqual(preordain["support_status"], "full")
         self.assertEqual(preordain["blockers"], [])
+        cryptic_serpent = next(
+            row for row in self.support["cards"] if row["name"] == "Cryptic Serpent"
+        )
+        self.assertEqual(
+            cryptic_serpent["mainboard"],
+            [{"deck_id": "Terror", "copies": 4}],
+        )
+        self.assertEqual(cryptic_serpent["sideboard"], [])
+        self.assertEqual(cryptic_serpent["support_status"], "full")
+        self.assertEqual(cryptic_serpent["blockers"], [])
         self.assertEqual(
             self.support["token_dependencies"],
             [
