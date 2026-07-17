@@ -7,6 +7,7 @@ import copy
 import os
 import random
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -61,6 +62,7 @@ from .determinism import (
 from .features import encode_decision
 from .model import INITIALIZER_TRAINER_SEEDED_V1, KernelPolicyValueNet, ModelConfig, model_config_from_encoded
 from .output_lock import OutputLock
+from .phase_profile import PhaseRecorder, measure_optional
 from .path_safety import (
     atomic_quarantine,
     capture_path_identity,
@@ -108,6 +110,18 @@ DEFAULT_DECK_IDS = ("Burn", "Burn")
 
 # Legacy private trainer names remain bound for ownership audits; definitions live in training_store.
 _PERSISTED_CONTRACT_OWNER_HELPERS = (_validate_latest, _validate_run_manifest, _validate_update_record)
+
+
+def _close_client_preserving_active_exception(client: KernelRlClient) -> None:
+    if not client._kernel_phase_profile:
+        client.close()
+        return
+    active = sys.exception()
+    try:
+        client.close()
+    except Exception:
+        if active is None:
+            raise
 
 
 def _validate_requested_deck_ids(value: Any) -> tuple[str, str]:
@@ -678,10 +692,17 @@ def _bootstrap_fresh(
     max_physical_decisions: int,
     max_policy_steps: int,
     compatibility: dict[str, Any],
+    phase_recorder: PhaseRecorder | None,
+    kernel_phase_profile: bool,
 ) -> tuple[TrainState, KernelRlClient, Decision]:
     require_new_or_empty_dir(out_dir)
     env_sha = sha256_file(env_bin)
-    client = KernelRlClient(env_bin, timeout_s=10.0)
+    client = KernelRlClient(
+        env_bin,
+        timeout_s=10.0,
+        phase_recorder=phase_recorder,
+        kernel_phase_profile=kernel_phase_profile,
+    )
     try:
         first = client.reset(
             episode_id=0,
@@ -694,7 +715,8 @@ def _bootstrap_fresh(
             raise ValueError("fresh trainer reset must return an initial decision")
         if first.deck_ids != deck_ids:
             raise ValueError("environment deck_ids differ from requested deck_ids")
-        encoded = encode_decision(first.observation, first.legal_actions)
+        with measure_optional(phase_recorder, "feature_tensor"):
+            encoded = encode_decision(first.observation, first.legal_actions)
         random.seed(derive_model_init_seed(base_seed))
         torch.manual_seed(derive_model_init_seed(base_seed))
         model = KernelPolicyValueNet(
@@ -723,34 +745,36 @@ def _bootstrap_fresh(
         outcomes = {"p0": {"win": 0, "loss": 0, "draw": 0}, "p1": {"win": 0, "loss": 0, "draw": 0}}
         policy_steps = {"p0": 0, "p1": 0}
         physical_decisions = {"p0": 0, "p1": 0}
-        payload = build_checkpoint_payload(
-            run_digest=run_digest,
-            completed_update=0,
-            optimizer_step_count=0,
-            next_episode=0,
-            outcomes_by_learner_seat=outcomes,
-            learner_policy_steps_by_seat=policy_steps,
-            learner_physical_decisions_by_seat=physical_decisions,
-            model=model,
-            optimizer=optimizer,
-            learning_rate=learning_rate,
-            base_seed=base_seed,
-            seed_derivation=run["seed_derivation"],
-            provenance=first.provenance,
-            compatibility=compatibility,
-        )
+        with measure_optional(phase_recorder, "checkpoint_build"):
+            payload = build_checkpoint_payload(
+                run_digest=run_digest,
+                completed_update=0,
+                optimizer_step_count=0,
+                next_episode=0,
+                outcomes_by_learner_seat=outcomes,
+                learner_policy_steps_by_seat=policy_steps,
+                learner_physical_decisions_by_seat=physical_decisions,
+                model=model,
+                optimizer=optimizer,
+                learning_rate=learning_rate,
+                base_seed=base_seed,
+                seed_derivation=run["seed_derivation"],
+                provenance=first.provenance,
+                compatibility=compatibility,
+            )
         update0 = _update_record_zero(run_digest, logical_state_hash(payload))
-        _head, _payload = _commit_generation(
-            out_dir=out_dir,
-            run=run,
-            payload=payload,
-            update_record=update0,
-            run_digest=run_digest,
-            parent_head=None,
-            previous_payload=None,
-            compatibility=compatibility,
-            learning_rate=learning_rate,
-        )
+        with measure_optional(phase_recorder, "publication"):
+            _head, _payload = _commit_generation(
+                out_dir=out_dir,
+                run=run,
+                payload=payload,
+                update_record=update0,
+                run_digest=run_digest,
+                parent_head=None,
+                previous_payload=None,
+                compatibility=compatibility,
+                learning_rate=learning_rate,
+            )
         reloaded = _load_chain(
             out_dir=out_dir,
             env_sha=env_sha,
@@ -766,7 +790,7 @@ def _bootstrap_fresh(
         )
         return reloaded, client, first
     except Exception:
-        client.close()
+        _close_client_preserving_active_exception(client)
         raise
 
 
@@ -816,6 +840,8 @@ def _bootstrap_incomplete_fresh(
     max_physical_decisions: int,
     max_policy_steps: int,
     compatibility: dict[str, Any],
+    phase_recorder: PhaseRecorder | None,
+    kernel_phase_profile: bool,
 ) -> tuple[TrainState, KernelRlClient, Decision]:
     env_sha = sha256_file(env_bin)
     run_path = out_dir / "run.json"
@@ -840,7 +866,12 @@ def _bootstrap_incomplete_fresh(
         run_digest=run_digest,
         compatibility=compatibility,
     )
-    client = KernelRlClient(env_bin, timeout_s=10.0)
+    client = KernelRlClient(
+        env_bin,
+        timeout_s=10.0,
+        phase_recorder=phase_recorder,
+        kernel_phase_profile=kernel_phase_profile,
+    )
     try:
         first = client.reset(
             episode_id=0,
@@ -865,34 +896,36 @@ def _bootstrap_incomplete_fresh(
         outcomes = {"p0": {"win": 0, "loss": 0, "draw": 0}, "p1": {"win": 0, "loss": 0, "draw": 0}}
         policy_steps = {"p0": 0, "p1": 0}
         physical_decisions = {"p0": 0, "p1": 0}
-        payload = build_checkpoint_payload(
-            run_digest=run_digest,
-            completed_update=0,
-            optimizer_step_count=0,
-            next_episode=0,
-            outcomes_by_learner_seat=outcomes,
-            learner_policy_steps_by_seat=policy_steps,
-            learner_physical_decisions_by_seat=physical_decisions,
-            model=model,
-            optimizer=optimizer,
-            learning_rate=learning_rate,
-            base_seed=base_seed,
-            seed_derivation=run["seed_derivation"],
-            provenance=run["protocol_provenance"],
-            compatibility=compatibility,
-        )
+        with measure_optional(phase_recorder, "checkpoint_build"):
+            payload = build_checkpoint_payload(
+                run_digest=run_digest,
+                completed_update=0,
+                optimizer_step_count=0,
+                next_episode=0,
+                outcomes_by_learner_seat=outcomes,
+                learner_policy_steps_by_seat=policy_steps,
+                learner_physical_decisions_by_seat=physical_decisions,
+                model=model,
+                optimizer=optimizer,
+                learning_rate=learning_rate,
+                base_seed=base_seed,
+                seed_derivation=run["seed_derivation"],
+                provenance=run["protocol_provenance"],
+                compatibility=compatibility,
+            )
         update0 = _update_record_zero(run_digest, logical_state_hash(payload))
-        _commit_generation(
-            out_dir=out_dir,
-            run=run,
-            payload=payload,
-            update_record=update0,
-            run_digest=run_digest,
-            parent_head=None,
-            previous_payload=None,
-            compatibility=compatibility,
-            learning_rate=learning_rate,
-        )
+        with measure_optional(phase_recorder, "publication"):
+            _commit_generation(
+                out_dir=out_dir,
+                run=run,
+                payload=payload,
+                update_record=update0,
+                run_digest=run_digest,
+                parent_head=None,
+                previous_payload=None,
+                compatibility=compatibility,
+                learning_rate=learning_rate,
+            )
         reloaded = _load_chain(
             out_dir=out_dir,
             env_sha=env_sha,
@@ -908,7 +941,7 @@ def _bootstrap_incomplete_fresh(
         )
         return reloaded, client, first
     except Exception:
-        client.close()
+        _close_client_preserving_active_exception(client)
         raise
 
 
@@ -984,6 +1017,7 @@ def _run_episode(
     max_physical_decisions: int,
     max_policy_steps: int,
     first_decision: Decision | None,
+    phase_recorder: PhaseRecorder | None,
 ) -> tuple[dict[str, Any], list[tuple[torch.Tensor, torch.Tensor, int]]]:
     learner = _learner_seat(episode)
     env_seed = _env_seed_for_episode(state.run["trainer"]["base_seed"], episode)
@@ -1020,8 +1054,14 @@ def _run_episode(
             raise RuntimeError("physical-decision cap reached before terminal")
         group_complete = current.substep_index + 1 == current.substep_count
         if current.acting_player == learner:
-            encoded = encode_decision(current.observation, current.legal_actions)
-            logits, value = state.model(encoded)
+            if phase_recorder is None:
+                encoded = encode_decision(current.observation, current.legal_actions)
+                logits, value = state.model(encoded)
+            else:
+                with phase_recorder.measure("feature_tensor"):
+                    encoded = encode_decision(current.observation, current.legal_actions)
+                with phase_recorder.measure("model_forward"):
+                    logits, value = state.model(encoded)
             if logits.device.type != "cpu" or value.device.type != "cpu":
                 raise ValueError("model outputs must remain on CPU")
             if not torch.isfinite(logits).all() or not torch.isfinite(value).all():
@@ -1032,7 +1072,11 @@ def _run_episode(
                 learner_physical_decision_count,
                 current.substep_index,
             )
-            selected, log_prob = _select_learner_action(logits, seed)
+            if phase_recorder is None:
+                selected, log_prob = _select_learner_action(logits, seed)
+            else:
+                with phase_recorder.measure("action_sample"):
+                    selected, log_prob = _select_learner_action(logits, seed)
             if current.substep_index == 0:
                 if active_learner_log_prob is not None:
                     raise ValueError("learner physical decision overlap")
@@ -1043,9 +1087,15 @@ def _run_episode(
                 if active_learner_log_prob is None or active_learner_value is None:
                     raise ValueError("learner physical decision continuation lacks its first substep")
                 active_learner_log_prob = active_learner_log_prob + log_prob
-            active_learner_substep_digests.append(
-                _encoded_policy_digest(encoded, selected)
-            )
+            if phase_recorder is None:
+                active_learner_substep_digests.append(
+                    _encoded_policy_digest(encoded, selected)
+                )
+            else:
+                with phase_recorder.measure("trajectory_hash"):
+                    active_learner_substep_digests.append(
+                        _encoded_policy_digest(encoded, selected)
+                    )
             learner_policy_step_count += 1
         elif current.acting_player == _opponent_seat(learner):
             seed = derive_train_opponent_action_seed(
@@ -1054,7 +1104,11 @@ def _run_episode(
                 opponent_physical_decision_count,
                 current.substep_index,
             )
-            selected = deterministic_index_from_seed(seed, len(current.legal_actions))
+            if phase_recorder is None:
+                selected = deterministic_index_from_seed(seed, len(current.legal_actions))
+            else:
+                with phase_recorder.measure("action_sample"):
+                    selected = deterministic_index_from_seed(seed, len(current.legal_actions))
             opponent_policy_step_count += 1
         else:
             raise ValueError("unknown acting player")
@@ -1070,9 +1124,15 @@ def _run_episode(
                 learner_terms.append(
                     (active_learner_log_prob, active_learner_value, 0)
                 )
-                learner_digests.append(
-                    _physical_decision_digest(active_learner_substep_digests)
-                )
+                if phase_recorder is None:
+                    learner_digests.append(
+                        _physical_decision_digest(active_learner_substep_digests)
+                    )
+                else:
+                    with phase_recorder.measure("trajectory_hash"):
+                        learner_digests.append(
+                            _physical_decision_digest(active_learner_substep_digests)
+                        )
                 learner_physical_decision_count += 1
                 active_learner_log_prob = None
                 active_learner_value = None
@@ -1089,6 +1149,11 @@ def _run_episode(
         raise ValueError("terminal physical_decision_count differs from trainer grouping count")
     terminal_return = _terminal_return(current, learner)
     learner_terms = [(log_prob, value, terminal_return) for log_prob, value, _unused in learner_terms]
+    if phase_recorder is None:
+        trajectory_digest = _episode_digest(learner_digests)
+    else:
+        with phase_recorder.measure("trajectory_hash"):
+            trajectory_digest = _episode_digest(learner_digests)
     summary = {
         "schema": EPISODE_SUMMARY_SCHEMA,
         "episode": episode,
@@ -1105,7 +1170,7 @@ def _run_episode(
         "opponent_policy_step_count": opponent_policy_step_count,
         "learner_physical_decision_count": learner_physical_decision_count,
         "opponent_physical_decision_count": opponent_physical_decision_count,
-        "trajectory_digest": _episode_digest(learner_digests),
+        "trajectory_digest": trajectory_digest,
     }
     return summary, learner_terms
 
@@ -1115,20 +1180,37 @@ def _apply_batch_loss(
     state: TrainState,
     terms: list[tuple[torch.Tensor, torch.Tensor, int]],
     value_coef: float,
+    phase_recorder: PhaseRecorder | None,
 ) -> tuple[bool, dict[str, str | None]]:
     if not terms:
         return False, {"policy_sum_hex": None, "value_sum_hex": None, "loss_hex": None}
-    policy_sum, value_sum, loss = _compute_loss_tensors(terms, value_coef)
-    state.optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    for name, param in state.model.named_parameters():
-        if param.grad is not None and not torch.isfinite(param.grad).all():
-            raise ValueError(f"gradient for {name} is non-finite")
-    state.optimizer.step()
-    for name, tensor in state.model.state_dict().items():
-        if torch.is_floating_point(tensor) and not torch.isfinite(tensor).all():
-            raise ValueError(f"model state {name} became non-finite")
-    export_adam_state(state.optimizer, state.model, state.run["optimizer"]["lr"])
+    if phase_recorder is None:
+        policy_sum, value_sum, loss = _compute_loss_tensors(terms, value_coef)
+        state.optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        for name, param in state.model.named_parameters():
+            if param.grad is not None and not torch.isfinite(param.grad).all():
+                raise ValueError(f"gradient for {name} is non-finite")
+        state.optimizer.step()
+        for name, tensor in state.model.state_dict().items():
+            if torch.is_floating_point(tensor) and not torch.isfinite(tensor).all():
+                raise ValueError(f"model state {name} became non-finite")
+        export_adam_state(state.optimizer, state.model, state.run["optimizer"]["lr"])
+    else:
+        with phase_recorder.measure("loss_build"):
+            policy_sum, value_sum, loss = _compute_loss_tensors(terms, value_coef)
+        with phase_recorder.measure("backward"):
+            state.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            for name, param in state.model.named_parameters():
+                if param.grad is not None and not torch.isfinite(param.grad).all():
+                    raise ValueError(f"gradient for {name} is non-finite")
+        with phase_recorder.measure("optimizer"):
+            state.optimizer.step()
+            for name, tensor in state.model.state_dict().items():
+                if torch.is_floating_point(tensor) and not torch.isfinite(tensor).all():
+                    raise ValueError(f"model state {name} became non-finite")
+            export_adam_state(state.optimizer, state.model, state.run["optimizer"]["lr"])
     return True, {
         "policy_sum_hex": float(policy_sum.detach().item()).hex(),
         "value_sum_hex": float(value_sum.detach().item()).hex(),
@@ -1183,6 +1265,7 @@ def _train_until(
     client: KernelRlClient,
     until_update: int,
     first_decision: Decision | None,
+    phase_recorder: PhaseRecorder | None,
 ) -> TrainState:
     if until_update < state.completed_update:
         raise ValueError("until_update is before committed update")
@@ -1208,11 +1291,17 @@ def _train_until(
                 max_physical_decisions=max_physical_decisions,
                 max_policy_steps=max_policy_steps,
                 first_decision=carried if episode == episode_start else None,
+                phase_recorder=phase_recorder,
             )
             carried = None
             batch_summaries.append(summary)
             terms.extend(episode_terms)
-        optimizer_step, loss_fields = _apply_batch_loss(state=state, terms=terms, value_coef=value_coef)
+        optimizer_step, loss_fields = _apply_batch_loss(
+            state=state,
+            terms=terms,
+            value_coef=value_coef,
+            phase_recorder=phase_recorder,
+        )
         next_update = state.completed_update + 1
         next_episode = episode_start + batch_episodes
         for summary in batch_summaries:
@@ -1221,51 +1310,53 @@ def _train_until(
             state.optimizer_step_count += 1
         state.completed_update = next_update
         state.next_episode = next_episode
-        payload = build_checkpoint_payload(
-            run_digest=state.run_digest,
-            completed_update=state.completed_update,
-            optimizer_step_count=state.optimizer_step_count,
-            next_episode=state.next_episode,
-            outcomes_by_learner_seat=state.outcomes_by_learner_seat,
-            learner_policy_steps_by_seat=state.learner_policy_steps_by_seat,
-            learner_physical_decisions_by_seat=state.learner_physical_decisions_by_seat,
-            model=state.model,
-            optimizer=state.optimizer,
-            learning_rate=state.run["optimizer"]["lr"],
-            base_seed=state.run["trainer"]["base_seed"],
-            seed_derivation=state.run["seed_derivation"],
-            provenance=state.run["protocol_provenance"],
-            compatibility=state.run["compatibility"],
-        )
-        logical = logical_state_hash(payload)
-        record = {
-            "schema": UPDATE_RECORD_SCHEMA,
-            "run_digest": state.run_digest,
-            "update": state.completed_update,
-            "parent_head": state.parent_head,
-            "episode_start": episode_start,
-            "episode_count": batch_episodes,
-            "episode_end_exclusive": next_episode,
-            "optimizer_step": optimizer_step,
-            "learner_policy_step_count": sum(
-                row["learner_policy_step_count"] for row in batch_summaries
-            ),
-            "learner_physical_decision_count": len(terms),
-            "loss": loss_fields,
-            "episode_summaries": batch_summaries,
-            "post_update_logical_sha256": logical,
-        }
-        head, committed_payload = _commit_generation(
-            out_dir=state.out_dir,
-            run=state.run,
-            payload=payload,
-            update_record=record,
-            run_digest=state.run_digest,
-            parent_head=state.parent_head,
-            previous_payload=previous_payload,
-            compatibility=state.run["compatibility"],
-            learning_rate=state.run["optimizer"]["lr"],
-        )
+        with measure_optional(phase_recorder, "checkpoint_build"):
+            payload = build_checkpoint_payload(
+                run_digest=state.run_digest,
+                completed_update=state.completed_update,
+                optimizer_step_count=state.optimizer_step_count,
+                next_episode=state.next_episode,
+                outcomes_by_learner_seat=state.outcomes_by_learner_seat,
+                learner_policy_steps_by_seat=state.learner_policy_steps_by_seat,
+                learner_physical_decisions_by_seat=state.learner_physical_decisions_by_seat,
+                model=state.model,
+                optimizer=state.optimizer,
+                learning_rate=state.run["optimizer"]["lr"],
+                base_seed=state.run["trainer"]["base_seed"],
+                seed_derivation=state.run["seed_derivation"],
+                provenance=state.run["protocol_provenance"],
+                compatibility=state.run["compatibility"],
+            )
+            logical = logical_state_hash(payload)
+            record = {
+                "schema": UPDATE_RECORD_SCHEMA,
+                "run_digest": state.run_digest,
+                "update": state.completed_update,
+                "parent_head": state.parent_head,
+                "episode_start": episode_start,
+                "episode_count": batch_episodes,
+                "episode_end_exclusive": next_episode,
+                "optimizer_step": optimizer_step,
+                "learner_policy_step_count": sum(
+                    row["learner_policy_step_count"] for row in batch_summaries
+                ),
+                "learner_physical_decision_count": len(terms),
+                "loss": loss_fields,
+                "episode_summaries": batch_summaries,
+                "post_update_logical_sha256": logical,
+            }
+        with measure_optional(phase_recorder, "publication"):
+            head, committed_payload = _commit_generation(
+                out_dir=state.out_dir,
+                run=state.run,
+                payload=payload,
+                update_record=record,
+                run_digest=state.run_digest,
+                parent_head=state.parent_head,
+                previous_payload=previous_payload,
+                compatibility=state.run["compatibility"],
+                learning_rate=state.run["optimizer"]["lr"],
+            )
         state.parent_head = head
         state.head_payload = committed_payload
     return state
@@ -1284,7 +1375,11 @@ def train(
     value_coef: float | None = None,
     max_physical_decisions: int | None = None,
     max_policy_steps: int | None = None,
+    phase_recorder: PhaseRecorder | None = None,
+    kernel_phase_profile: bool = False,
 ) -> dict[str, Any]:
+    if kernel_phase_profile and phase_recorder is None:
+        raise ValueError("kernel_phase_profile requires a phase_recorder")
     deck_ids = _validate_requested_deck_ids(deck_ids)
     with OutputLock(out_dir):
         return _train_locked(
@@ -1299,6 +1394,8 @@ def train(
             value_coef=value_coef,
             max_physical_decisions=max_physical_decisions,
             max_policy_steps=max_policy_steps,
+            phase_recorder=phase_recorder,
+            kernel_phase_profile=kernel_phase_profile,
         )
 
 
@@ -1315,6 +1412,8 @@ def _train_locked(
     value_coef: float | None = None,
     max_physical_decisions: int | None = None,
     max_policy_steps: int | None = None,
+    phase_recorder: PhaseRecorder | None = None,
+    kernel_phase_profile: bool = False,
 ) -> dict[str, Any]:
     configure_torch_determinism()
     deck_ids = _validate_requested_deck_ids(deck_ids)
@@ -1369,6 +1468,8 @@ def _train_locked(
                     max_physical_decisions=max_physical_decisions,
                     max_policy_steps=max_policy_steps,
                     compatibility=compatibility,
+                    phase_recorder=phase_recorder,
+                    kernel_phase_profile=kernel_phase_profile,
                 )
             else:
                 _recover_pre_manifest_bootstrap(out_path)
@@ -1383,6 +1484,8 @@ def _train_locked(
                     max_physical_decisions=max_physical_decisions,
                     max_policy_steps=max_policy_steps,
                     compatibility=compatibility,
+                    phase_recorder=phase_recorder,
+                    kernel_phase_profile=kernel_phase_profile,
                 )
         else:
             state, client, first_decision = _bootstrap_fresh(
@@ -1396,11 +1499,19 @@ def _train_locked(
                 max_physical_decisions=max_physical_decisions,
                 max_policy_steps=max_policy_steps,
                 compatibility=compatibility,
+                phase_recorder=phase_recorder,
+                kernel_phase_profile=kernel_phase_profile,
             )
         try:
-            state = _train_until(state=state, client=client, until_update=until_update, first_decision=first_decision)
+            state = _train_until(
+                state=state,
+                client=client,
+                until_update=until_update,
+                first_decision=first_decision,
+                phase_recorder=phase_recorder,
+            )
         finally:
-            client.close()
+            _close_client_preserving_active_exception(client)
         return _result(state)
 
     if not same_lexical_path(Path(resume), latest_path(out_path)):
@@ -1411,7 +1522,12 @@ def _train_locked(
 
     def preflight_environment(run: dict[str, Any], resume_snapshot: Any) -> None:
         nonlocal client, first
-        client = KernelRlClient(env_path, timeout_s=10.0)
+        client = KernelRlClient(
+            env_path,
+            timeout_s=10.0,
+            phase_recorder=phase_recorder,
+            kernel_phase_profile=kernel_phase_profile,
+        )
         try:
             response = client.reset(
                 episode_id=resume_snapshot.next_episode,
@@ -1425,7 +1541,7 @@ def _train_locked(
             _assert_first_decision_matches_run(run, response)
             first = response
         except Exception:
-            client.close()
+            _close_client_preserving_active_exception(client)
             client = None
             raise
 
@@ -1450,10 +1566,16 @@ def _train_locked(
             return _result(state)
         if client is None or first is None:
             raise AssertionError("resume environment preflight did not provide a client and first decision")
-        state = _train_until(state=state, client=client, until_update=until_update, first_decision=first)
+        state = _train_until(
+            state=state,
+            client=client,
+            until_update=until_update,
+            first_decision=first,
+            phase_recorder=phase_recorder,
+        )
     finally:
         if client is not None:
-            client.close()
+            _close_client_preserving_active_exception(client)
     return _result(state)
 
 

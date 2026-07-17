@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from .phase_profile import PhaseRecorder
+
 SCHEMA_VERSION = 5
 PROTOCOL_NAME = "kernel_rl_jsonl"
 PROTOCOL_VERSION = 5
@@ -337,14 +339,23 @@ class KernelRlClient:
         *,
         timeout_s: float = 5.0,
         max_line_bytes: int = MAX_LINE_BYTES,
+        phase_recorder: PhaseRecorder | None = None,
+        kernel_phase_profile: bool = False,
     ) -> None:
         self.env_bin = str(Path(env_bin))
         if not Path(self.env_bin).is_file():
             raise FileNotFoundError(self.env_bin)
         self.timeout_s = timeout_s
         self.max_line_bytes = max_line_bytes
+        if kernel_phase_profile and phase_recorder is None:
+            raise ValueError("kernel_phase_profile requires a phase_recorder")
+        self._phase_recorder = phase_recorder
+        self._kernel_phase_profile = kernel_phase_profile
+        command = [self.env_bin]
+        if kernel_phase_profile:
+            command.append("--phase-profile-v1")
         self._proc = subprocess.Popen(
-            [self.env_bin],
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -397,7 +408,13 @@ class KernelRlClient:
                 proc.stdin.close()
         except OSError:
             pass
-        if proc.poll() is None:
+        if proc.poll() is None and self._kernel_phase_profile:
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2)
+        elif proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=2)
@@ -412,12 +429,36 @@ class KernelRlClient:
                     stream.close()
             except OSError:
                 pass
+        if self._kernel_phase_profile:
+            if proc.returncode != 0:
+                raise EnvProcessError(
+                    f"profiled environment did not exit cleanly: code={proc.returncode}"
+                )
+            assert self._phase_recorder is not None
+            self._phase_recorder.add_kernel_stderr(b"".join(self._stderr_chunks))
 
     def __enter__(self) -> "KernelRlClient":
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        self.close()
+        if not self._kernel_phase_profile:
+            self.close()
+            return
+        try:
+            self.close()
+        except Exception:
+            if exc_type is None:
+                raise
+
+    def _close_before_primary_failure(self) -> None:
+        """Best-effort cleanup that cannot replace an already selected failure."""
+        if not self._kernel_phase_profile:
+            self.close()
+            return
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _next_request_id(self) -> str:
         self._request_counter += 1
@@ -572,20 +613,32 @@ class KernelRlClient:
         if self._proc.poll() is not None:
             raise EnvProcessError(f"environment exited before request: code={self._proc.returncode} stderr={self.stderr_text()!r}")
         assert self._proc.stdin is not None
-        self._proc.stdin.write(strict_json_dumps(request))
-        self._proc.stdin.flush()
-        line = self._read_line()
-        response = strict_json_loads(line.decode("utf-8"))
-        return self._validate_response(response, request)
+        if self._phase_recorder is None:
+            self._proc.stdin.write(strict_json_dumps(request))
+            self._proc.stdin.flush()
+            line = self._read_line()
+            response = strict_json_loads(line.decode("utf-8"))
+            return self._validate_response(response, request)
+        with self._phase_recorder.measure("ipc_encode"):
+            request_line = strict_json_dumps(request)
+        with self._phase_recorder.measure("ipc_write_flush"):
+            self._proc.stdin.write(request_line)
+            self._proc.stdin.flush()
+        with self._phase_recorder.measure("ipc_wait_read"):
+            line = self._read_line()
+        with self._phase_recorder.measure("ipc_decode"):
+            response = strict_json_loads(line.decode("utf-8"))
+        with self._phase_recorder.measure("ipc_validate"):
+            return self._validate_response(response, request)
 
     def _read_line(self) -> bytes:
         try:
             item = self._stdout.get(timeout=self.timeout_s)
         except queue.Empty as exc:
-            self.close()
+            self._close_before_primary_failure()
             raise EnvProcessError(f"timeout waiting for environment stdout; stderr={self.stderr_text()!r}") from exc
         if isinstance(item, BaseException):
-            self.close()
+            self._close_before_primary_failure()
             raise item
         if item == b"":
             code = self._proc.poll()

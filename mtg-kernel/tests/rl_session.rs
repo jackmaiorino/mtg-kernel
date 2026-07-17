@@ -1,3 +1,6 @@
+use mtg_kernel::phase_profile::{
+    RL_PHASE_PROFILE_CLOCK_V1, RL_PHASE_PROFILE_PREFIX_V1, RL_PHASE_PROFILE_SCHEMA_V1,
+};
 use mtg_kernel::rl::{
     burn_deck_hash, derive_env_seed, derive_policy_seed, rally_deck_hash,
     record_burn_mirror_episode,
@@ -1090,4 +1093,166 @@ fn rl_session_kernel_rl_env_process_smoke_is_v5_strict_and_hash_safe() {
         .read_to_string(&mut stderr)
         .unwrap();
     assert!(stderr.trim().is_empty(), "unexpected stderr: {stderr}");
+}
+
+#[test]
+fn rl_session_phase_profile_is_opt_in_strict_and_stdout_identical() {
+    fn run(args: &[&str], input: &str) -> (Vec<u8>, String) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kernel_rl_env"))
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn kernel_rl_env");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        (
+            output.stdout,
+            String::from_utf8(output.stderr).expect("stderr is UTF-8"),
+        )
+    }
+
+    let mut direct = KernelRlJsonlServerV1::new();
+    let reset = reset_line("profile-reset", 16);
+    let first = parse_response(&direct.handle_line(&reset));
+    let step = step_line_from_decision("profile-step", &first, 0);
+    let input = format!("{reset}\n{step}\n");
+
+    let (plain_stdout, plain_stderr) = run(&[], &input);
+    let (profiled_stdout, profiled_stderr) = run(&["--phase-profile-v1"], &input);
+    assert_eq!(profiled_stdout, plain_stdout);
+    assert!(plain_stderr.is_empty());
+
+    let records: Vec<&str> = profiled_stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix(RL_PHASE_PROFILE_PREFIX_V1))
+        .collect();
+    assert_eq!(records.len(), 1, "{profiled_stderr}");
+    assert_eq!(profiled_stderr.lines().count(), 1, "{profiled_stderr}");
+    let profile: Value = serde_json::from_str(records[0]).unwrap();
+    assert_eq!(profile["schema"], RL_PHASE_PROFILE_SCHEMA_V1);
+    assert_eq!(profile["clock"], RL_PHASE_PROFILE_CLOCK_V1);
+    assert_eq!(profile["request_lines"], 2);
+    assert_eq!(profile["response_lines"], 2);
+    assert_eq!(profile["reset_requests"], 1);
+    assert_eq!(profile["step_requests"], 1);
+    let expected_phases = BTreeSet::from([
+        "actions",
+        "advance",
+        "decode",
+        "observe",
+        "parse",
+        "postbind",
+        "reset",
+        "response",
+        "retry",
+        "serialize",
+        "step_apply",
+        "step_integrity",
+        "step_selection",
+        "step_validation",
+        "write_flush",
+    ]);
+    assert_eq!(
+        profile["phases"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        expected_phases
+    );
+    for counter in profile["phases"].as_object().unwrap().values() {
+        assert_eq!(
+            counter
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["count", "max_ns", "total_ns"])
+        );
+        assert!(counter["total_ns"].as_u64().is_some());
+        assert!(counter["max_ns"].as_u64().is_some());
+    }
+    for phase in ["parse", "decode", "retry", "serialize", "write_flush"] {
+        assert_eq!(profile["phases"][phase]["count"], 2, "{phase}");
+    }
+    for phase in [
+        "reset",
+        "step_validation",
+        "step_integrity",
+        "step_selection",
+        "step_apply",
+    ] {
+        assert_eq!(profile["phases"][phase]["count"], 1, "{phase}");
+    }
+}
+
+#[test]
+fn rl_session_phase_profile_counts_errors_and_immediate_retries() {
+    let valid_reset = reset_line("profile-retry", 16);
+    let mut changed: Value = serde_json::from_str(&valid_reset).unwrap();
+    changed["env_seed"] = json!(changed["env_seed"].as_u64().unwrap() + 1);
+    let schema_mismatch = json!({
+        "request_type": "reset",
+        "schema_version": 1,
+        "request_id": "profile-old-schema",
+        "deck_ids": ["Burn", "Burn"],
+        "episode_id": 0,
+        "env_seed": 1,
+        "max_physical_decisions": 16,
+        "max_policy_steps": 2048,
+    });
+    let input = format!(
+        "{{\n{{}}\n{schema_mismatch}\n{valid_reset}\n{valid_reset}\n{}\n",
+        changed
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kernel_rl_env"))
+        .arg("--phase-profile-v1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        output.stdout.iter().filter(|&&byte| byte == b'\n').count(),
+        6
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let lines: Vec<_> = stderr.lines().collect();
+    assert_eq!(lines.len(), 1, "{stderr}");
+    let profile: Value = serde_json::from_str(
+        lines[0]
+            .strip_prefix(RL_PHASE_PROFILE_PREFIX_V1)
+            .expect("profile prefix"),
+    )
+    .unwrap();
+    assert_eq!(profile["request_lines"], 6);
+    assert_eq!(profile["response_lines"], 6);
+    assert_eq!(profile["reset_requests"], 4);
+    assert_eq!(profile["step_requests"], 0);
+    let phases = &profile["phases"];
+    assert_eq!(phases["parse"]["count"], 6);
+    assert_eq!(phases["decode"]["count"], 5);
+    assert_eq!(phases["retry"]["count"], 4);
+    assert_eq!(phases["reset"]["count"], 1);
+    assert_eq!(phases["response"]["count"], 4);
+    assert_eq!(phases["serialize"]["count"], 6);
+    assert_eq!(phases["write_flush"]["count"], 6);
 }
