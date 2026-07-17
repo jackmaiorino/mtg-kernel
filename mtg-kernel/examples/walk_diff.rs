@@ -1837,6 +1837,9 @@ fn decision_texts(
                 .map(|i| format!("effect-option#{i}"))
                 .collect(),
         )),
+        SurfaceDecision::Decision(Decision::ChooseEffectBoolean { .. }) => {
+            Some(("CHOOSE_USE", vec!["No".to_string(), "Yes".to_string()]))
+        }
         SurfaceDecision::Decision(Decision::ChooseEffectTargets {
             legal_targets,
             can_finish,
@@ -2006,6 +2009,12 @@ fn apply_by_indices(
                 SurfaceAction::Action(Action::ChooseEffectOption(i0 as u16)),
             )
             .map_err(|e| format!("engine-step-error:walk:ChooseEffectOption:{e}")),
+        SurfaceDecision::Decision(Decision::ChooseEffectBoolean { .. }) => surface
+            .apply(
+                state,
+                SurfaceAction::Action(Action::ChooseEffectBoolean(i0 == 1)),
+            )
+            .map_err(|e| format!("engine-step-error:walk:ChooseEffectBoolean:{e}")),
         SurfaceDecision::Decision(Decision::ChooseEffectTargets {
             legal_targets,
             can_finish,

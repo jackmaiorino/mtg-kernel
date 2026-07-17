@@ -951,6 +951,15 @@ pub enum Decision {
         mechanic: UnsupportedMechanic,
         source: ObjectId,
     },
+    /// A generic resumable effect yielded a Boolean choice. Appended after
+    /// every pre-existing decision variant for identity stability; schema-v4
+    /// already reserves the corresponding Boolean/Shuffle projection.
+    ChooseEffectBoolean {
+        player: PlayerId,
+        source: ObjectId,
+        default: Option<bool>,
+        purpose: effect::EffectBooleanChoicePurpose,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1016,6 +1025,9 @@ pub enum Action {
     /// `step` below exists only to fail loudly if that interception is ever
     /// bypassed, not as a supported direct-to-engine call.
     ChooseOptionalCostStage(bool),
+    /// Answers `Decision::ChooseEffectBoolean`. Appended to preserve the
+    /// ordering of every pre-existing engine action variant.
+    ChooseEffectBoolean(bool),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -1721,14 +1733,18 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
             return d;
         }
 
+        let had_pending_effect = state.engine.pending_effect.is_some();
         if let Some(d) = drain_pending_effect_or_decide(state) {
             return d;
         }
-        // Resuming one continuation stage can immediately yield a second
-        // generic choice (Winding Way's type choice followed by graveyard
-        // ordering). Restart at the top so that fresh choice is surfaced
-        // before ordinary priority/stack resolution can run again.
-        if state.engine.pending_effect.is_some() {
+        // If a continuation existed, restart regardless of whether this
+        // stage suspended again or completed. Suspension can immediately
+        // yield a second generic choice (Winding Way's type choice followed
+        // by graveyard ordering), while completion just ran the normal
+        // post-resolution SBA/trigger checkpoint. In particular, an empty-
+        // library draw must become GameOver at the top of the loop before
+        // any ordinary priority decision can escape.
+        if had_pending_effect {
             continue;
         }
 
@@ -2219,6 +2235,17 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
                 max_targets: *max_targets,
                 legal_targets: legal.iter().map(|candidate| candidate.target).collect(),
                 can_finish: selected.len() >= usize::from(*min_targets),
+            },
+            effect::PendingEffectChoice::ChooseBoolean {
+                player,
+                default,
+                purpose,
+                ..
+            } => Decision::ChooseEffectBoolean {
+                player: *player,
+                source: pending.resolving_item.source,
+                default: *default,
+                purpose: *purpose,
             },
         });
     }
@@ -3456,6 +3483,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
         Action::ChooseEffectTarget(target) => effect::choose_resumable_target(state, target),
         Action::FinishEffectSelection => effect::finish_resumable_target_selection(state),
+        Action::ChooseEffectBoolean(value) => effect::choose_resumable_boolean(state, value),
         Action::ChooseOptionalCost(choice) => apply_choose_optional_cost(state, choice),
         Action::ChooseSpellCopyPayment(pay) => apply_choose_spell_copy_payment(state, pay),
         Action::ChooseSpellCopyRetarget(change_target) => {

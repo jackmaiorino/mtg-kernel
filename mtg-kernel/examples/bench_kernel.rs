@@ -204,6 +204,7 @@ fn random_action_for_decision(
         Decision::ChooseEffectOption { option_count, .. } => {
             Action::ChooseEffectOption(rng_below(rng, *option_count as usize) as u16)
         }
+        Decision::ChooseEffectBoolean { .. } => Action::ChooseEffectBoolean(rng_chance(rng, 1, 2)),
         Decision::ChooseEffectTargets {
             legal_targets,
             can_finish,

@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "fd0b03718a2eda0b86d9f47b81163d26be2d49bf3987f1d888fc2f8aabccf76e"
+    "registry_raw_sha256": "e01df15a115ee79ba1b2126191c0282f8f8f3a80fa8696b6578c7fe07b2b70af"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 35,
+    "full_cards": 36,
     "partial_cards": 0,
-    "no_effect_cards": 115,
+    "no_effect_cards": 114,
     "token_dependencies": 3
   },
   "deck_mainboard_copy_totals": [
@@ -59,9 +59,9 @@
     },
     {
       "deck_id": "Terror",
-      "full": 30,
+      "full": 34,
       "partial": 0,
-      "no_effect": 30,
+      "no_effect": 26,
       "total": 60
     },
     {
@@ -2459,10 +2459,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Preordain",

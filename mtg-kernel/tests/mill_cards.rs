@@ -707,6 +707,56 @@ fn mill_order_rejects_a_stale_library_incarnation_without_partial_effects() {
 }
 
 #[test]
+fn mill_order_fails_closed_before_observation_on_tampered_chooser() {
+    let (mut state, thought, _) = ready_spell(
+        "Thought Scour",
+        &["Lightning Bolt"],
+        &["Fiery Temper", "Lava Dart", "Highway Robbery"],
+    );
+    thought_target_decision(&mut state, thought);
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Player(PlayerId::P1)),
+    )
+    .unwrap();
+    assert!(matches!(
+        advance_to_mill_order(&mut state, thought),
+        Decision::ChooseEffectTargets {
+            player: PlayerId::P1,
+            ..
+        }
+    ));
+
+    let choice = state
+        .engine
+        .pending_effect
+        .as_mut()
+        .unwrap()
+        .choice
+        .as_mut()
+        .unwrap();
+    let mtg_kernel::effect::PendingEffectChoice::SelectTargets { player, .. } = choice else {
+        panic!("Thought Scour must be waiting for its mill-order target choice")
+    };
+    *player = PlayerId::P0;
+
+    assert!(
+        observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P0, 0).is_err(),
+        "an invalid chooser/library pairing must not expose private mill candidates"
+    );
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        } if source == thought
+    ));
+    assert!(state.players[0].hand.is_empty());
+    assert!(state.players[1].graveyard.is_empty());
+    assert_eq!(state.players[1].library.len(), 3);
+}
+
+#[test]
 fn a_countered_thought_scour_does_not_mill_or_draw() {
     let (mut state, thought, libraries) = ready_spell(
         "Thought Scour",
