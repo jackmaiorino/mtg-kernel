@@ -197,6 +197,21 @@ enum Special {
     /// during resolution, so it is the first real consumer of the generic
     /// resumable `EffectOp::Choice` interpreter.
     WindingWay,
+    /// Mill `mill` cards from `player`'s library, then draw `draw` cards.
+    /// Mental Note mills its controller without targeting; Thought Scour
+    /// mills its chosen player in target slot zero. Both use the same
+    /// generated recipe so the runtime behavior is not card-name-specific.
+    MillThenDraw {
+        player: MillPlayer,
+        mill: u8,
+        draw: u8,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum MillPlayer {
+    Controller,
+    Target0,
 }
 
 #[derive(Clone, Copy)]
@@ -231,6 +246,16 @@ fn special_for(name: &str) -> Special {
         "Rally at the Hornburg" => Special::RallyAtTheHornburg,
         "Reckless Impulse" => Special::RecklessImpulse,
         "Winding Way" => Special::WindingWay,
+        "Mental Note" => Special::MillThenDraw {
+            player: MillPlayer::Controller,
+            mill: 2,
+            draw: 1,
+        },
+        "Thought Scour" => Special::MillThenDraw {
+            player: MillPlayer::Target0,
+            mill: 2,
+            draw: 1,
+        },
         _ => Special::None,
     }
 }
@@ -656,6 +681,41 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    let mut mill_then_draw_shapes = Vec::new();
+    for card in cards {
+        if let Special::MillThenDraw { player, mill, draw } = special_for(&card.name) {
+            let shape = (player, mill, draw);
+            if !mill_then_draw_shapes.contains(&shape) {
+                mill_then_draw_shapes.push(shape);
+            }
+        }
+    }
+    for (player, mill, draw) in mill_then_draw_shapes {
+        let (player_suffix, player_src) = match player {
+            MillPlayer::Controller => ("controller", "PlayerRef::Controller"),
+            MillPlayer::Target0 => ("target_0", "PlayerRef::Target(0)"),
+        };
+        writeln!(
+            out,
+            "fn spell_effect_mill_then_draw_{player_suffix}_{mill}_{draw}() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::MillCards {{ player: {player_src}, count: {mill} }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     let draw_then_discard_shapes: Vec<(i32, i32)> = cards
         .iter()
         .filter_map(|c| match special_for(&c.name) {
@@ -1060,6 +1120,17 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_winding_way".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::MillThenDraw { player, mill, draw } => {
+                let (target_spec, player_suffix) = match player {
+                    MillPlayer::Controller => ("TargetSpec::None", "controller"),
+                    MillPlayer::Target0 => ("TargetSpec::AnyPlayer", "target_0"),
+                };
+                (
+                    target_spec,
+                    format!("spell_effect_mill_then_draw_{player_suffix}_{mill}_{draw}"),
+                    "no_effect".to_string(),
+                )
+            }
         };
 
         let executable = c.engine_capability != EngineCapabilityJson::NoEffect;

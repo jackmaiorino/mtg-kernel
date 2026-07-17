@@ -218,6 +218,10 @@ pub enum TargetSpec {
     /// Exactly 1 target: any *blue* permanent on either battlefield (Red
     /// Elemental Blast's destroy mode).
     BluePermanent,
+    /// Exactly 1 target: either player. Unlike `AnyTarget`, this never
+    /// offers creatures (Mental Note/Thought Scour style mill spells).
+    /// Appended to preserve every existing variant's derived hash identity.
+    AnyPlayer,
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -547,7 +551,9 @@ mod tests {
 
     #[test]
     fn card_db_hash_v2_is_frozen() {
-        assert_eq!(KERNEL_CARDDB_HASH, 0x5fa2_7910_07c2_ae8d);
+        // Mental Note and Thought Scour are the only newly executable
+        // definitions in this support slice.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xbd26_603c_a38a_5d17);
     }
 
     #[test]
@@ -616,7 +622,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 36, "33 deck cards plus three required tokens");
+        assert_eq!(full, 38, "35 deck cards plus three required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

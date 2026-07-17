@@ -1066,6 +1066,7 @@ fn target_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::None => 0,
         TargetSpec::AnyTarget
+        | TargetSpec::AnyPlayer
         | TargetSpec::AnySpellOnStack
         | TargetSpec::InstantSpellOnStack
         | TargetSpec::BlueSpellOnStack
@@ -1099,6 +1100,9 @@ pub fn legal_targets_for(
 ) -> Vec<Target> {
     match spec {
         TargetSpec::None => Vec::new(),
+        TargetSpec::AnyPlayer => {
+            vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)]
+        }
         TargetSpec::AnyTarget => {
             let mut out = vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)];
             for p in [PlayerId::P0, PlayerId::P1] {
