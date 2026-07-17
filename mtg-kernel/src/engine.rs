@@ -39,7 +39,7 @@
 //! (`begin_cast`), before targets/modes/costs, so `finalize_cast` only
 //! fills in the placeholder `begin_cast` already pushed.
 
-use crate::card_def::{self, CardType, CostComponent, FlashbackCost, Keywords, TargetSpec};
+use crate::card_def::{self, CardType, CostComponent, Keywords, TargetSpec};
 use crate::effect::{self, EffectOp, ExecCtx, ObjectRef};
 use crate::event::{self, ActiveReplacement, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
@@ -782,7 +782,7 @@ pub enum Decision {
     /// A cost component whose payment requires choosing WHICH permanents
     /// pay it, not merely how many -- Fireblast's alt cost (sacrifice 2
     /// Mountains, `CostComponent::SacrificeLands`) and Lava Dart's
-    /// flashback cost (sacrifice 1 Mountain, `FlashbackCost::
+    /// flashback cost (sacrifice 1 Mountain, `CostComponent::
     /// SacrificeLands`), this increment. Previously auto-solved silently
     /// by `sacrifice_lowest_id_lands`'s tapped-status heuristic with no
     /// `Decision` at all; the reference logs a real `SELECT_TARGETS`
@@ -1269,6 +1269,128 @@ pub(crate) fn count_controlled_lands(player: PlayerId, state: &GameState) -> u32
         .count() as u32
 }
 
+/// Whether the generic component payer can solve this exact ordered shape.
+/// The current solver deliberately supports one component from each
+/// interactive/resource family and requires mana to precede anything that
+/// could change its available sources. Together with the concrete resource
+/// checks in the offer/payment paths, this covers every generated cost in the
+/// frozen pool, including Deep Analysis's `[Mana, PayLife]`, while failing
+/// closed for a future multi-mana, repeated-discard/sacrifice, or
+/// source-before-mana cost.
+///
+/// Fixed life and Phyrexian mana are also rejected in the same slice. The
+/// mana solver may choose life for a Phyrexian pip, so checking the two
+/// components independently could otherwise offer a cast whose combined life
+/// payment is impossible.
+fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
+    let mut mana = None;
+    let mut saw_source_changing_component = false;
+    let mut discard_count = 0;
+    let mut sacrifice_lands_count = 0;
+    let mut pay_life_count = 0;
+    let mut tap_count = 0;
+    let mut source_departure_count = 0;
+
+    for component in components {
+        match component {
+            CostComponent::Mana(cost) => {
+                if mana.is_some() || saw_source_changing_component {
+                    return false;
+                }
+                mana = Some(cost);
+            }
+            CostComponent::Tap => {
+                tap_count += 1;
+                saw_source_changing_component = true;
+            }
+            CostComponent::SacrificeSelf | CostComponent::ExileSelf => {
+                source_departure_count += 1;
+                saw_source_changing_component = true;
+            }
+            CostComponent::DiscardCards(amount) => {
+                if *amount == 0 {
+                    return false;
+                }
+                discard_count += 1;
+            }
+            CostComponent::SacrificeLands(amount) => {
+                if *amount == 0 {
+                    return false;
+                }
+                sacrifice_lands_count += 1;
+                saw_source_changing_component = true;
+            }
+            CostComponent::PayLife(amount) => {
+                if *amount == 0 {
+                    return false;
+                }
+                pay_life_count += 1;
+            }
+        }
+    }
+
+    if discard_count > 1
+        || sacrifice_lands_count > 1
+        || pay_life_count > 1
+        || tap_count > 1
+        || source_departure_count > 1
+    {
+        return false;
+    }
+
+    !(pay_life_count == 1
+        && mana.is_some_and(|cost| {
+            cost.pips
+                .iter()
+                .any(|pip| matches!(pip, mana::Pip::Phyrexian(_)))
+        }))
+}
+
+/// Activated abilities do not yet have the `ChooseCostTargets` staging used
+/// by casts, so a land-sacrifice component must fail closed in this context
+/// even though the shared payer supports it for flashback/alternative costs.
+fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
+    component_payment_shape_supported(components)
+        && !components
+            .iter()
+            .any(|component| matches!(component, CostComponent::SacrificeLands(_)))
+}
+
+fn can_pay_activation_components(
+    components: &[CostComponent],
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> bool {
+    if !activation_payment_shape_supported(components)
+        || !can_pay_components(components, player, source, state)
+    {
+        return false;
+    }
+
+    // A mana-producing source cannot pay a mana component by tapping itself
+    // and then also pay an explicit `Tap` component. The current deterministic
+    // mana solver has no exclusion/reservation input, so fail closed if its
+    // selected plan overlaps rather than accepting a double-used resource.
+    if components
+        .iter()
+        .any(|component| matches!(component, CostComponent::Tap))
+    {
+        if let Some(cost) = components.iter().find_map(|component| match component {
+            CostComponent::Mana(cost) => Some(cost),
+            _ => None,
+        }) {
+            let Some(plan) = mana::can_pay(cost, 0, player, state) else {
+                return false;
+            };
+            if plan.taps.iter().any(|(id, _)| *id == source) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Whether `player` can currently pay every component of `components`,
 /// where `source` is the spell being cast (still nominally in hand) or
 /// the permanent whose ability is being activated (on the battlefield --
@@ -1279,6 +1401,9 @@ fn can_pay_components(
     source: ObjectId,
     state: &GameState,
 ) -> bool {
+    if !component_payment_shape_supported(components) {
+        return false;
+    }
     for c in components {
         let ok = match c {
             CostComponent::Tap => {
@@ -1301,6 +1426,9 @@ fn can_pay_components(
             }
             CostComponent::SacrificeLands(n) => count_controlled_lands(player, state) >= *n as u32,
             CostComponent::Mana(cost) => mana::can_pay(cost, 0, player, state).is_some(),
+            CostComponent::PayLife(amount) => {
+                state.players[player.index()].life >= i32::from(*amount)
+            }
         };
         if !ok {
             return false;
@@ -1326,7 +1454,63 @@ fn pay_cost_components(
     source: ObjectId,
     components: &[CostComponent],
     sacrifice_chosen: &[ObjectId],
-) {
+) -> bool {
+    if !component_payment_shape_supported(components) {
+        return false;
+    }
+    if components.iter().any(|component| {
+        matches!(component, CostComponent::PayLife(amount) if state.players[player.index()].life < i32::from(*amount))
+    }) {
+        return false;
+    }
+    let sacrifice_needed = components.iter().find_map(|component| match component {
+        CostComponent::SacrificeLands(amount) => Some(*amount as usize),
+        _ => None,
+    });
+    if let Some(needed) = sacrifice_needed {
+        let duplicate = sacrifice_chosen
+            .iter()
+            .enumerate()
+            .any(|(index, id)| sacrifice_chosen[..index].contains(id));
+        let invalid_land = sacrifice_chosen.iter().any(|id| {
+            !state.players[player.index()].battlefield.contains(id)
+                || !card_def::CARD_DEFS[state.objects.get(*id).card_def as usize].is_land
+        });
+        let aliases_source_departure = sacrifice_chosen.contains(&source)
+            && components.iter().any(|component| {
+                matches!(
+                    component,
+                    CostComponent::SacrificeSelf | CostComponent::ExileSelf
+                )
+            });
+        if sacrifice_chosen.len() != needed || duplicate || invalid_land || aliases_source_departure
+        {
+            return false;
+        }
+    }
+
+    // Derive the sole mana plan before applying any state-changing component.
+    // This keeps a restored or forward-generated unaffordable shape from
+    // partially paying life/discard-adjacent components before failing.
+    let mana_cost = components.iter().find_map(|component| match component {
+        CostComponent::Mana(cost) => Some(cost),
+        _ => None,
+    });
+    let mana_plan = mana_cost.map(|cost| mana::can_pay(cost, 0, player, state));
+    if mana_plan.as_ref().is_some_and(Option::is_none) {
+        return false;
+    }
+    let mana_plan = mana_plan.flatten();
+    if components
+        .iter()
+        .any(|component| matches!(component, CostComponent::Tap))
+        && mana_plan
+            .as_ref()
+            .is_some_and(|plan| plan.taps.iter().any(|(id, _)| *id == source))
+    {
+        return false;
+    }
+
     for c in components {
         match c {
             CostComponent::Tap => event::propose_and_commit(state, ProposedEvent::tap(source)),
@@ -1345,14 +1529,21 @@ fn pay_cost_components(
                 );
                 commit_sacrifice(state, sacrifice_chosen);
             }
-            CostComponent::Mana(cost) => {
-                let plan = mana::can_pay(cost, 0, player, state)
-                    .expect("legality already checked by can_pay_components");
-                pay_plan(state, player, &plan);
-            }
+            CostComponent::Mana(_) => pay_plan(
+                state,
+                player,
+                mana_plan
+                    .as_ref()
+                    .expect("a supported component slice has at most one preflighted mana cost"),
+            ),
+            CostComponent::PayLife(amount) => event::propose_and_commit(
+                state,
+                ProposedEvent::life_loss(player, i32::from(*amount)),
+            ),
             CostComponent::DiscardCards(_) => {}
         }
     }
+    true
 }
 
 /// Zone-changes exactly `chosen` to the graveyard -- the actual payment
@@ -1374,10 +1565,16 @@ fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
 /// shape.
 fn sacrifice_lands_needed(pending: &PendingCast, def: &card_def::CardDef) -> u8 {
     if pending.is_flashback {
-        return match def.flashback.as_ref().map(|fb| fb.cost) {
-            Some(FlashbackCost::SacrificeLands(n)) => n,
-            _ => 0,
-        };
+        return def
+            .flashback
+            .as_ref()
+            .and_then(|flashback| {
+                flashback.cost.iter().find_map(|component| match component {
+                    CostComponent::SacrificeLands(amount) => Some(*amount),
+                    _ => None,
+                })
+            })
+            .unwrap_or(0);
     }
     if pending.cast_mode == Some(CastMode::Alternative) {
         if let Some(alt) = def.alt_cost {
@@ -1490,10 +1687,7 @@ fn is_castable_now(player: PlayerId, id: ObjectId, is_flashback: bool, state: &G
             .flashback
             .as_ref()
             .expect("caller only passes is_flashback=true for cards with a flashback cost");
-        match fb.cost {
-            FlashbackCost::Mana(cost) => mana::can_pay(&cost, 0, player, state).is_some(),
-            FlashbackCost::SacrificeLands(n) => count_controlled_lands(player, state) >= n as u32,
-        }
+        can_pay_components(fb.cost, player, id, state)
     } else {
         let normal_cost = effective_normal_cast_cost(def, player, state);
         let normal_ok = mana::can_pay(&normal_cost, 0, player, state).is_some();
@@ -1652,7 +1846,7 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
             if ability.sorcery_speed_only && !sorcery_speed_timing_ok(player, state) {
                 continue;
             }
-            if can_pay_components(ability.cost, player, id, state)
+            if can_pay_activation_components(ability.cost, player, id, state)
                 && target_prefix_can_complete(ability.target_spec, &[], state)
             {
                 out.push((id, i as u8));
@@ -1793,29 +1987,28 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
             return d;
         }
 
+        let had_pending_cast = state.engine.pending_cast.is_some();
         if let Some(d) = drain_pending_cast_or_decide(state) {
             return d;
         }
-        // A cast's additional-cost discard (Grab the Prize) may have just
-        // been staged here (`pending_discard = Some(...); return None`,
-        // per that branch's doc) -- restart from the top so
-        // `drain_pending_discard_or_decide` picks it up *before* anything
-        // below gets a chance to fall through to a priority offer. Without
-        // this, the loop would fall straight through the declare-attackers/
-        // blockers checks and the priority-window return at the bottom of
-        // this same pass, wrongly offering a `CastSpellOrPass` decision
-        // (including the very ability/cast that's still mid-cost-payment)
-        // before the discard the player owes has ever been asked for.
-        if state.engine.pending_discard.is_some() {
+        // Finishing a cast can itself create the next terminal checkpoint:
+        // Deep Analysis may pay its mandatory flashback life cost down to
+        // exactly zero. `collect_and_queue_triggers` performs the SBA pass,
+        // but `check_game_over` is at the top of this loop, so restart before
+        // an ordinary priority decision can escape. The same restart also
+        // lets a newly-staged additional-cost discard run in its normal
+        // ordering position above.
+        if had_pending_cast {
             continue;
         }
-
+        let had_pending_activation = state.engine.pending_activation.is_some();
         if let Some(d) = drain_pending_activation_or_decide(state) {
             return d;
         }
-        // Same reasoning as above, for an activated ability's discard cost
-        // (Masked Meower, the Blood token).
-        if state.engine.pending_discard.is_some() {
+        // Same terminal/checkpoint reasoning as the cast path above. This
+        // also restarts into a freshly staged discard cost (Masked Meower,
+        // the Blood token) before any ordinary priority decision can escape.
+        if had_pending_activation {
             continue;
         }
 
@@ -2128,7 +2321,19 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, resume: DiscardRe
             if let Some(p) = state.engine.pending_activation.clone() {
                 let def = &card_def::CARD_DEFS[state.objects.get(p.source).card_def as usize];
                 let ability = &def.activated_abilities[p.ability_index as usize];
-                pay_cost_components(state, p.controller, p.source, ability.cost, &[]);
+                // Keep the state-changing payment outside `debug_assert!`:
+                // the macro (including its argument) is compiled out in
+                // release builds, but costs must be paid in every profile.
+                let paid = pay_cost_components(state, p.controller, p.source, ability.cost, &[]);
+                if !paid {
+                    // Unsupported/restored future cost shapes must never put
+                    // an unpaid ability on the stack. Reachable activations
+                    // are filtered by `activation_payment_shape_supported`.
+                    state.engine.pending_activation = None;
+                    state.engine.priority_passes = [false, false];
+                    state.priority_player = p.controller;
+                    return;
+                }
                 // 111.8/704.5d: paying `SacrificeSelf` here (a token's own
                 // ability, e.g. the Blood Token's) can put a token into the
                 // graveyard well before `finalize_activation` ever runs.
@@ -4224,27 +4429,18 @@ fn finalize_cast(state: &mut GameState) {
             .flashback
             .as_ref()
             .expect("is_flashback implies CardDef::flashback is Some");
-        match fb.cost {
-            FlashbackCost::Mana(cost) => {
-                // 601.2h: legality (including affordability) is fully
-                // pre-checked by `is_castable_now` before `Action::CastSpell`
-                // is even accepted, and nothing can interleave between
-                // `begin_cast`'s announcement and this payment (no priority
-                // window opens mid-cast), so `can_pay` returning `None` here
-                // is unreachable today. Handled via `abort_cast` (601.2a's
-                // "returns to its prior zone" case), not `.expect()`, so a
-                // future increment that adds cost-modifying replacement
-                // effects or interposed priority doesn't have to rediscover
-                // this shape.
-                let Some(plan) = mana::can_pay(&cost, 0, pending.controller, state) else {
-                    return abort_cast(state, pending);
-                };
-                pay_plan(state, pending.controller, &plan);
-            }
-            FlashbackCost::SacrificeLands(n) => {
-                debug_assert_eq!(pending.sacrifice_chosen.len(), n as usize, "Decision::ChooseCostTargets must have fully resolved this flashback's sacrifice cost by now");
-                commit_sacrifice(state, &pending.sacrifice_chosen);
-            }
+        // 601.2h: offer-time legality checks the same ordered component
+        // slice. No priority window opens mid-cast, but this fallible shared
+        // payment path still fails closed for a restored/forward-generated
+        // unsupported shape rather than completing a free cast.
+        if !pay_cost_components(
+            state,
+            pending.controller,
+            pending.spell,
+            fb.cost,
+            &pending.sacrifice_chosen,
+        ) {
+            return abort_cast(state, pending);
         }
     } else {
         match pending
@@ -4275,18 +4471,22 @@ fn finalize_cast(state: &mut GameState) {
                 let alt = def
                     .alt_cost
                     .expect("Alternative mode only chosen when alt_cost is Some");
-                pay_cost_components(
+                if !pay_cost_components(
                     state,
                     pending.controller,
                     pending.spell,
                     alt,
                     &pending.sacrifice_chosen,
-                );
+                ) {
+                    return abort_cast(state, pending);
+                }
             }
         }
     }
     if let Some(add) = def.additional_cost {
-        pay_cost_components(state, pending.controller, pending.spell, add, &[]);
+        if !pay_cost_components(state, pending.controller, pending.spell, add, &[]) {
+            return abort_cast(state, pending);
+        }
     }
 
     let discarded = pending.additional_cost_discarded.unwrap_or_default();
@@ -4439,7 +4639,17 @@ fn finalize_activation(state: &mut GameState) {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
     let ability = &def.activated_abilities[pending.ability_index as usize];
     if discard_count_in(ability.cost).is_none() {
-        pay_cost_components(state, pending.controller, pending.source, ability.cost, &[]);
+        // Payment is state-changing and therefore must not live inside a
+        // `debug_assert!`, whose argument disappears from release builds.
+        let paid =
+            pay_cost_components(state, pending.controller, pending.source, ability.cost, &[]);
+        if !paid {
+            // Fail closed for a malformed/restored pending activation rather
+            // than granting its effect without collecting the full cost.
+            state.engine.priority_passes = [false, false];
+            state.priority_player = pending.controller;
+            return;
+        }
     }
 
     let effect = (ability.effect)();
@@ -4519,6 +4729,107 @@ mod tests {
 
     fn empty_game() -> GameState {
         GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1)
+    }
+
+    #[test]
+    fn component_payer_accepts_current_composites_and_fails_closed_on_ambiguous_shapes() {
+        let blue = Cost {
+            pips: &[mana::Pip::Colored(ManaColor::U)],
+            generic: 1,
+            x_count: 0,
+        };
+        assert!(component_payment_shape_supported(&[
+            CostComponent::Mana(blue),
+            CostComponent::PayLife(3),
+        ]));
+        assert!(component_payment_shape_supported(&[
+            CostComponent::Mana(Cost {
+                pips: &[],
+                generic: 1,
+                x_count: 0,
+            }),
+            CostComponent::Tap,
+            CostComponent::DiscardCards(1),
+            CostComponent::SacrificeSelf,
+        ]));
+
+        assert!(!component_payment_shape_supported(&[
+            CostComponent::Mana(blue),
+            CostComponent::Mana(blue),
+        ]));
+        assert!(!component_payment_shape_supported(&[
+            CostComponent::SacrificeLands(1),
+            CostComponent::Mana(blue),
+        ]));
+        assert!(!component_payment_shape_supported(&[
+            CostComponent::Mana(Cost {
+                pips: &[mana::Pip::Phyrexian(ManaColor::U)],
+                generic: 0,
+                x_count: 0,
+            }),
+            CostComponent::PayLife(3),
+        ]));
+        assert!(!component_payment_shape_supported(&[
+            CostComponent::PayLife(2),
+            CostComponent::PayLife(1),
+        ]));
+        assert!(!activation_payment_shape_supported(&[
+            CostComponent::SacrificeLands(1),
+        ]));
+    }
+
+    #[test]
+    fn activation_cost_rejects_reusing_its_tap_source_for_mana() {
+        let mut state = ready_game_in_main1(0);
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let components = [
+            CostComponent::Mana(Cost {
+                pips: &[],
+                generic: 1,
+                x_count: 0,
+            }),
+            CostComponent::Tap,
+        ];
+
+        assert!(!can_pay_activation_components(
+            &components,
+            PlayerId::P0,
+            source,
+            &state,
+        ));
+        assert!(!pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[],
+        ));
+        assert!(!state.objects.get(source).tapped);
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+    }
+
+    #[test]
+    fn discard_cost_activation_pays_every_component_in_release_builds() {
+        let mut state = ready_game_in_main1(0);
+        let blood = put_on_battlefield(&mut state, PlayerId::P0, "Blood Token");
+        let discarded = put_in_hand(&mut state, PlayerId::P0, "Lightning Bolt");
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+
+        step(&mut state, Action::ActivateAbility(blood, 0)).unwrap();
+        let decision = advance_until_decision(&mut state);
+
+        assert!(matches!(
+            decision,
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        assert_eq!(state.players[0].mana_pool[ManaColor::R.pool_index()], 0);
+        assert!(!state.players[0].hand.contains(&discarded));
+        assert!(!state.players[0].battlefield.contains(&blood));
+        assert_eq!(state.stack.len(), 1, "the paid ability reaches the stack");
+        assert_eq!(state.stack[0].source, blood);
     }
 
     fn put_on_battlefield(state: &mut GameState, player: PlayerId, card_name: &str) -> ObjectId {
@@ -4879,7 +5190,7 @@ mod tests {
         assert_eq!(state.stack.len(), 1);
     }
 
-    /// Lava Dart's flashback cost (`FlashbackCost::SacrificeLands(1)`) is
+    /// Lava Dart's flashback cost (`CostComponent::SacrificeLands(1)`) is
     /// unconditional (no mana alternative to choose between first, unlike
     /// Fireblast) but still asks a real `Decision::ChooseCostTargets` for
     /// *which* Mountain when more than 1 is controlled.

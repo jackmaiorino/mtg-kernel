@@ -143,6 +143,12 @@ enum Special {
     /// resolution in the engine's dedicated payment/copy/retarget state
     /// machine -- see `effect::EffectOp::OfferAffectedPlayerSpellCopy`.
     ChainLightning,
+    /// Target player draws `draw` cards. Deep Analysis is the first consumer;
+    /// `PlayerRef::Target(0)` keeps self- and opponent-targeting on the same
+    /// generic effect path.
+    TargetPlayerDraw {
+        draw: u8,
+    },
     /// "Draw `draw` cards, then discard `discard` cards" (Faithless
     /// Looting: 2 and 2). The discard is a resolution effect (not a cost),
     /// so it's `EffectOp::DiscardCards`, staged via
@@ -253,6 +259,7 @@ fn special_for(name: &str) -> Special {
         "Fireblast" => Special::BurnAnyTarget(4),
         "Lava Dart" => Special::BurnAnyTarget(1),
         "Chain Lightning" => Special::ChainLightning,
+        "Deep Analysis" => Special::TargetPlayerDraw { draw: 2 },
         "Faithless Looting" => Special::DrawThenDiscard {
             draw: 2,
             discard: 2,
@@ -283,6 +290,82 @@ fn special_for(name: &str) -> Special {
         "Brainstorm" => Special::DrawThenPutHandOnLibraryTop { draw: 3, put: 2 },
         "Preordain" => Special::ScryThenDraw { scry: 2, draw: 1 },
         _ => Special::None,
+    }
+}
+
+/// Stable, gameplay-semantic description of the generated spell target,
+/// effect, and mana-ability recipe selected for a card. The card-database hash
+/// includes this alongside every other generated gameplay selector below.
+/// Runtime implementation changes remain source/version gated; these tokens
+/// bind the per-card program selection that was previously absent from the
+/// data hash.
+fn effect_recipe_for(card: &CardJson) -> String {
+    match special_for(&card.name) {
+        Special::None => {
+            let executable = card.engine_capability != EngineCapabilityJson::NoEffect;
+            let spell = if executable && is_ordinary_permanent(card) {
+                "MoveObject(Battlefield)"
+            } else {
+                "None"
+            };
+            let mana = if executable {
+                intrinsic_basic_mana_color(card)
+                    .map(|color| format!("AddMana({color})"))
+                    .unwrap_or_else(|| "None".to_string())
+            } else {
+                "None".to_string()
+            };
+            format!("target=None;spell={spell};mana={mana}")
+        }
+        Special::GreatFurnace => "target=None;spell=None;mana=AddMana(R)".to_string(),
+        Special::BurnAnyTarget(amount) => {
+            format!("target=AnyTarget;spell=DealDamage({amount});mana=None")
+        }
+        Special::ChainLightning => "target=AnyTarget;spell=ChainLightning;mana=None".to_string(),
+        Special::TargetPlayerDraw { draw } => {
+            format!("target=AnyPlayer;spell=DrawCards(Target0,{draw});mana=None")
+        }
+        Special::DrawThenDiscard { draw, discard } => {
+            format!("target=None;spell=DrawThenDiscard(Controller,{draw},{discard});mana=None")
+        }
+        Special::GrabThePrize => "target=None;spell=GrabThePrize;mana=None".to_string(),
+        Special::HighwayRobbery => "target=None;spell=HighwayRobbery;mana=None".to_string(),
+        Special::SearingBlaze => {
+            "target=PlayerThenTheirCreature;spell=SearingBlaze;mana=None".to_string()
+        }
+        Special::CounterTarget(StackSpellFilter::Any) => {
+            "target=AnySpellOnStack;spell=CounterTarget;mana=None".to_string()
+        }
+        Special::CounterTarget(StackSpellFilter::Instant) => {
+            "target=InstantSpellOnStack;spell=CounterTarget;mana=None".to_string()
+        }
+        Special::Pyroblast => "target=AnySpellOnStack;spell=PyroblastMode1;mana=None".to_string(),
+        Special::RedElementalBlast => {
+            "target=BlueSpellOnStack;spell=RedElementalBlastMode1;mana=None".to_string()
+        }
+        Special::EndTheFestivities => {
+            "target=None;spell=DamageOpponentAndTheirCreatures(1);mana=None".to_string()
+        }
+        Special::GalvanicBlast => "target=AnyTarget;spell=GalvanicBlast;mana=None".to_string(),
+        Special::RallyAtTheHornburg => "target=None;spell=RallyAtTheHornburg;mana=None".to_string(),
+        Special::RecklessImpulse => "target=None;spell=RecklessImpulse;mana=None".to_string(),
+        Special::WindingWay => "target=None;spell=WindingWay;mana=None".to_string(),
+        Special::MillThenDraw { player, mill, draw } => {
+            let (target, player) = match player {
+                MillPlayer::Controller => ("None", "Controller"),
+                MillPlayer::Target0 => ("AnyPlayer", "Target0"),
+            };
+            format!("target={target};spell=MillThenDraw({player},{mill},{draw});mana=None")
+        }
+        Special::LookReorderMayShuffleThenDraw { look, draw } => format!(
+            "target=None;spell=LookReorderMayShuffleThenDraw(Controller,{look},{draw});mana=None"
+        ),
+        Special::DrawThenPutHandOnLibraryTop { draw, put } => format!(
+            "target=None;spell=DrawThenPutHandOnLibraryTop(Controller,{draw},{put});mana=None"
+        ),
+        Special::ScryThenDraw { scry, draw } => {
+            format!("target=None;spell=ScryThenDraw(Controller,{scry},{draw});mana=None")
+        }
     }
 }
 
@@ -333,19 +416,30 @@ fn additional_cost_for(name: &str) -> &'static str {
     }
 }
 
-/// `Some` flashback definition, verified against Java. Faithless Looting
-/// ("Flashback {2}{R}") pays mana; Lava Dart ("Flashback -- Sacrifice a
-/// Mountain.") sacrifices a land instead.
+/// `Some` ordered flashback-cost definition, verified against Java. Faithless
+/// Looting ("Flashback {2}{R}") pays mana; Lava Dart ("Flashback --
+/// Sacrifice a Mountain.") sacrifices a land; Deep Analysis pays `{1}{U}`
+/// followed by 3 life. All three use the same composable `CostComponent`
+/// substrate as alternative, additional, and activated-ability costs.
 fn flashback_for(name: &str) -> String {
     match name {
         "Faithless Looting" => {
             let (pips, generic, x_count) = parse_cost("{2}{R}");
             format!(
-                "Some(FlashbackDef {{ cost: FlashbackCost::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}) }})",
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
                 pips.join(", ")
             )
         }
-        "Lava Dart" => "Some(FlashbackDef { cost: FlashbackCost::SacrificeLands(1) })".to_string(),
+        "Lava Dart" => {
+            "Some(FlashbackDef { cost: &[CostComponent::SacrificeLands(1)] })".to_string()
+        }
+        "Deep Analysis" => {
+            let (pips, generic, x_count) = parse_cost("{1}{U}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::PayLife(3)] }})",
+                pips.join(", ")
+            )
+        }
         _ => "None".to_string(),
     }
 }
@@ -600,6 +694,29 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    let mut target_player_draw_shapes = Vec::new();
+    for card in cards {
+        if let Special::TargetPlayerDraw { draw } = special_for(&card.name) {
+            if !target_player_draw_shapes.contains(&draw) {
+                target_player_draw_shapes.push(draw);
+            }
+        }
+    }
+    for draw in target_player_draw_shapes {
+        writeln!(
+            out,
+            "fn spell_effect_target_player_draw_{draw}() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    Some(EffectOp::DrawCards {{ player: PlayerRef::Target(0), count: {draw} }})"
+        )
+        .unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -1188,6 +1305,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_chain_lightning".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::TargetPlayerDraw { draw } => (
+                "TargetSpec::AnyPlayer",
+                format!("spell_effect_target_player_draw_{draw}"),
+                "no_effect".to_string(),
+            ),
             Special::DrawThenDiscard { draw, discard } => (
                 "TargetSpec::None",
                 format!("spell_effect_draw_then_discard_{draw}_{discard}"),
@@ -1388,10 +1510,11 @@ fn codegen(cards: &[CardJson]) -> String {
     // ---- content hash --------------------------------------------------
     // Hashes gameplay-relevant fields only (name/cost/types/subtypes/
     // supertypes/power/toughness/is_land/produces_mana/colors/is_token/
-    // engine_capability/generated reducer/decks), in array order, so
+    // engine_capability and every generated gameplay selector), in array
+    // order, so
     // metadata-only regenerations of cards_v1.json (timestamps, java_file
     // paths, complexity tags) don't churn the constant.
-    let mut canon = String::from("kernel_carddb/v3\n");
+    let mut canon = String::from("kernel_carddb/v4\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -1427,6 +1550,30 @@ fn codegen(cards: &[CardJson]) -> String {
         // `None` is included too, preserving positional separation and making
         // addition/removal equally visible.
         canon.push_str(generic_cost_reduction_for(&c.name));
+        canon.push('|');
+        // Reuse the exact generated source fragments plus the stable spell
+        // recipe token. This covers every field selected by the generator for
+        // `CardDef`; runtime primitive implementation changes remain pinned
+        // separately by the source revision.
+        canon.push_str(keywords_for(&c.name));
+        canon.push('|');
+        canon.push_str(alt_cost_for(&c.name));
+        canon.push('|');
+        canon.push_str(&kicker_cost_for(&c.name));
+        canon.push('|');
+        canon.push_str(additional_cost_for(&c.name));
+        canon.push('|');
+        canon.push_str(&flashback_for(&c.name));
+        canon.push('|');
+        canon.push_str(activated_abilities_for(&c.name));
+        canon.push('|');
+        canon.push_str(&plot_cost_for(&c.name));
+        canon.push('|');
+        canon.push_str(&madness_cost_for(&c.name));
+        canon.push('|');
+        canon.push_str(mode2_for(&c.name));
+        canon.push('|');
+        canon.push_str(&effect_recipe_for(c));
         canon.push('|');
         canon.push_str(&c.decks.join(","));
         canon.push('\n');

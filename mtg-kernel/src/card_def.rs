@@ -282,7 +282,7 @@ impl std::ops::BitOr for Keywords {
     }
 }
 
-/// One component of a non-mana cost. Composable (a real cost is `&'static
+/// One component of a composite cost. Composable (a real cost is `&'static
 /// [CostComponent]`) rather than card-shaped, matching the `EffectOp`
 /// philosophy in `effect.rs`: "sacrifice 2 Mountains" is
 /// `SacrificeLands(2)`, not a `FireblastCost` variant.
@@ -306,18 +306,19 @@ pub enum CostComponent {
     /// An ordinary mana payment, solved by `mana::solve` same as a spell's
     /// printed cost.
     Mana(Cost),
+    /// Pay a fixed amount of life. Unlike Phyrexian mana this is a mandatory
+    /// non-mana component, so the payer must have at least this much life and
+    /// may legally pay down to exactly zero.
+    PayLife(u8),
 }
 
-/// The cost of casting a card from the graveyard via flashback (702.10),
-/// exiling it instead of returning it to the graveyard on resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FlashbackCost {
-    Mana(Cost),
-    SacrificeLands(u8),
-}
-
+/// The ordered cost of casting a card from the graveyard via flashback
+/// (702.10), exiling it instead of returning it to the graveyard whenever it
+/// would leave the stack. An ordered component slice supports composite costs
+/// such as Deep Analysis's `{1}{U}`, pay 3 life without making flashback a
+/// parallel card-shaped cost system.
 pub struct FlashbackDef {
-    pub cost: FlashbackCost,
+    pub cost: &'static [CostComponent],
 }
 
 /// A non-mana activated ability (605/602 use the stack, unlike a mana
@@ -424,7 +425,7 @@ pub struct CardDef {
     /// its mana cost (Grab the Prize's discard).
     pub additional_cost: Option<&'static [CostComponent]>,
     /// `Some` iff this card can be cast from the graveyard for its
-    /// flashback cost (Faithless Looting, Lava Dart).
+    /// flashback cost (Faithless Looting, Lava Dart, Deep Analysis).
     pub flashback: Option<FlashbackDef>,
     pub activated_abilities: &'static [ActivatedAbilityDef],
     /// `Some` iff this card can be Plotted (`PlotAbility`): exiled from
@@ -574,10 +575,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v3_is_frozen() {
-        // Cryptic Serpent is the only newly executable definition in this
-        // support slice; Preordain was accepted previously.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x7389_1427_8a16_8d77);
+    fn card_db_hash_v4_is_frozen() {
+        // Version 4 binds every generated gameplay selector into the
+        // per-card provenance identity.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xb162_8274_c329_6730);
     }
 
     #[test]
@@ -703,7 +704,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 42, "39 deck cards plus three required tokens");
+        assert_eq!(full, 43, "40 deck cards plus three required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -1000,17 +1001,35 @@ mod tests {
     #[test]
     fn faithless_looting_and_lava_dart_have_flashback() {
         let looting = &CARD_DEFS[card_id_by_name("Faithless Looting").unwrap() as usize];
-        assert!(matches!(
-            looting.flashback,
-            Some(FlashbackDef {
-                cost: FlashbackCost::Mana(_)
-            })
-        ));
+        let looting_cost = looting.flashback.as_ref().unwrap().cost;
+        assert!(matches!(looting_cost, [CostComponent::Mana(_)]));
         let lava_dart = &CARD_DEFS[card_id_by_name("Lava Dart").unwrap() as usize];
+        let lava_dart_cost = lava_dart.flashback.as_ref().unwrap().cost;
+        assert!(matches!(lava_dart_cost, [CostComponent::SacrificeLands(1)]));
+    }
+
+    #[test]
+    fn deep_analysis_composes_targeted_draw_and_ordered_flashback_cost() {
+        let deep = &CARD_DEFS[card_id_by_name("Deep Analysis").unwrap() as usize];
+        assert_eq!(deep.capability, CardCapability::Full);
+        assert_eq!(deep.target_spec, TargetSpec::AnyPlayer);
+        let flashback = deep.flashback.as_ref().expect("Deep Analysis flashback");
         assert!(matches!(
-            lava_dart.flashback,
-            Some(FlashbackDef {
-                cost: FlashbackCost::SacrificeLands(1)
+            flashback.cost,
+            [
+                CostComponent::Mana(Cost {
+                    pips: [Pip::Colored(ManaColor::U)],
+                    generic: 1,
+                    x_count: 0,
+                }),
+                CostComponent::PayLife(3)
+            ]
+        ));
+        assert!(matches!(
+            (deep.spell_effect)(),
+            Some(EffectOp::DrawCards {
+                player: PlayerRef::Target(0),
+                count: 2,
             })
         ));
     }
