@@ -380,9 +380,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 38,
+                "full_cards": 40,
                 "partial_cards": 0,
-                "no_effect_cards": 112,
+                "no_effect_cards": 110,
                 "token_dependencies": 3,
             },
         )
@@ -457,6 +457,43 @@ class PauperPoolManifestTest(unittest.TestCase):
         self.assertEqual(preordain["sideboard"], [])
         self.assertEqual(preordain["support_status"], "full")
         self.assertEqual(preordain["blockers"], [])
+        blue_blasts = {
+            row["name"]: row
+            for row in self.support["cards"]
+            if row["name"] in {"Blue Elemental Blast", "Hydroblast"}
+        }
+        self.assertEqual(set(blue_blasts), {"Blue Elemental Blast", "Hydroblast"})
+        self.assertEqual(blue_blasts["Blue Elemental Blast"]["mainboard"], [])
+        self.assertEqual(
+            blue_blasts["Blue Elemental Blast"]["sideboard"],
+            [
+                {"deck_id": "Affinity", "copies": 2},
+                {"deck_id": "Terror", "copies": 1},
+                {"deck_id": "CawGates", "copies": 3},
+                {"deck_id": "Faeries", "copies": 4},
+            ],
+        )
+        self.assertEqual(blue_blasts["Hydroblast"]["mainboard"], [])
+        self.assertEqual(
+            blue_blasts["Hydroblast"]["sideboard"],
+            [
+                {"deck_id": "Affinity", "copies": 4},
+                {"deck_id": "Terror", "copies": 4},
+                {"deck_id": "CawGates", "copies": 2},
+                {"deck_id": "Faeries", "copies": 2},
+            ],
+        )
+        for name, expected_copies in [
+            ("Blue Elemental Blast", 10),
+            ("Hydroblast", 12),
+        ]:
+            row = blue_blasts[name]
+            self.assertEqual(row["support_status"], "full")
+            self.assertEqual(row["blockers"], [])
+            self.assertEqual(
+                sum(entry["copies"] for entry in row["sideboard"]),
+                expected_copies,
+            )
         self.assertEqual(
             self.support["token_dependencies"],
             [

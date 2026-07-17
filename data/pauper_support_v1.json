@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "e7247bded615fbef4be8de57014e76261faae0970f579655eaf90ef94fed6335"
+    "registry_raw_sha256": "8cd72cd6fa95afb41433b722436e912c694c8b98685981716878c0284900692f"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 38,
+    "full_cards": 40,
     "partial_cards": 0,
-    "no_effect_cards": 112,
+    "no_effect_cards": 110,
     "token_dependencies": 3
   },
   "deck_mainboard_copy_totals": [
@@ -340,10 +340,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Brainstorm",
@@ -1655,10 +1653,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Ichor Wellspring",

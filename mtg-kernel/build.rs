@@ -168,13 +168,14 @@ enum Special {
     /// from the shared generated counter effect. Counterspell accepts any
     /// spell; Dispel accepts only instant spells.
     CounterTarget(StackSpellFilter),
-    /// "Choose one -- Counter target spell if it's blue; or destroy target
-    /// permanent if it's blue." (Pyroblast: unfiltered targeting, checked
-    /// at resolution).
-    Pyroblast,
-    /// "Choose one -- Counter target blue spell; or destroy target blue
-    /// permanent." (Red Elemental Blast: filtered targeting).
-    RedElementalBlast,
+    /// Symmetric Elemental Blast recipe. `checked_color` is the color the
+    /// target must have; `filter_timing` distinguishes the Elemental Blasts'
+    /// targeting restriction from Pyroblast/Hydroblast's resolution-time
+    /// "if it's [color]" check without introducing card-named runtime logic.
+    ColorBlast {
+        checked_color: BlastColor,
+        filter_timing: BlastFilterTiming,
+    },
     /// "Deals 1 damage to each opponent and each creature and planeswalker
     /// they control." (End the Festivities, Rally-only). No planeswalker
     /// card exists in this 132-card pool, so the planeswalker half of the
@@ -243,6 +244,48 @@ enum StackSpellFilter {
     Instant,
 }
 
+#[derive(Clone, Copy)]
+enum BlastColor {
+    Blue,
+    Red,
+}
+
+impl BlastColor {
+    fn mana_variant(self) -> &'static str {
+        match self {
+            BlastColor::Blue => "ManaColor::U",
+            BlastColor::Red => "ManaColor::R",
+        }
+    }
+
+    fn suffix(self) -> &'static str {
+        match self {
+            BlastColor::Blue => "blue",
+            BlastColor::Red => "red",
+        }
+    }
+
+    fn filtered_spell_target_spec(self) -> &'static str {
+        match self {
+            BlastColor::Blue => "TargetSpec::BlueSpellOnStack",
+            BlastColor::Red => "TargetSpec::RedSpellOnStack",
+        }
+    }
+
+    fn filtered_permanent_target_spec(self) -> &'static str {
+        match self {
+            BlastColor::Blue => "TargetSpec::BluePermanent",
+            BlastColor::Red => "TargetSpec::RedPermanent",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BlastFilterTiming {
+    Targeting,
+    Resolution,
+}
+
 fn special_for(name: &str) -> Special {
     match name {
         // Great Furnace is intentionally explicit: unlike a basic land, its
@@ -262,8 +305,22 @@ fn special_for(name: &str) -> Special {
         "Searing Blaze" => Special::SearingBlaze,
         "Counterspell" => Special::CounterTarget(StackSpellFilter::Any),
         "Dispel" => Special::CounterTarget(StackSpellFilter::Instant),
-        "Pyroblast" => Special::Pyroblast,
-        "Red Elemental Blast" => Special::RedElementalBlast,
+        "Blue Elemental Blast" => Special::ColorBlast {
+            checked_color: BlastColor::Red,
+            filter_timing: BlastFilterTiming::Targeting,
+        },
+        "Hydroblast" => Special::ColorBlast {
+            checked_color: BlastColor::Red,
+            filter_timing: BlastFilterTiming::Resolution,
+        },
+        "Pyroblast" => Special::ColorBlast {
+            checked_color: BlastColor::Blue,
+            filter_timing: BlastFilterTiming::Resolution,
+        },
+        "Red Elemental Blast" => Special::ColorBlast {
+            checked_color: BlastColor::Blue,
+            filter_timing: BlastFilterTiming::Targeting,
+        },
         "End the Festivities" => Special::EndTheFestivities,
         "Galvanic Blast" => Special::GalvanicBlast,
         "Rally at the Hornburg" => Special::RallyAtTheHornburg,
@@ -410,13 +467,25 @@ fn madness_cost_for(name: &str) -> String {
     }
 }
 
-/// `Some` second-mode source text (`CardDef::mode2`), verified against
-/// Java. Pyroblast's and Red Elemental Blast's destroy modes.
-fn mode2_for(name: &str) -> &'static str {
-    match name {
-        "Pyroblast" => "Some(ModeDef { target_spec: TargetSpec::AnyPermanent, effect: mode2_effect_pyroblast })",
-        "Red Elemental Blast" => "Some(ModeDef { target_spec: TargetSpec::BluePermanent, effect: mode2_effect_red_elemental_blast })",
-        _ => "None",
+/// `Some` second-mode source text (`CardDef::mode2`) for the symmetric
+/// Elemental Blast/Pyroblast/Hydroblast family.
+fn mode2_for(name: &str) -> String {
+    match special_for(name) {
+        Special::ColorBlast {
+            checked_color,
+            filter_timing: BlastFilterTiming::Targeting,
+        } => format!(
+            "Some(ModeDef {{ target_spec: {}, effect: mode2_effect_destroy_target_permanent }})",
+            checked_color.filtered_permanent_target_spec()
+        ),
+        Special::ColorBlast {
+            checked_color,
+            filter_timing: BlastFilterTiming::Resolution,
+        } => format!(
+            "Some(ModeDef {{ target_spec: TargetSpec::AnyPermanent, effect: mode2_effect_destroy_target_permanent_if_{} }})",
+            checked_color.suffix()
+        ),
+        _ => "None".to_string(),
     }
 }
 
@@ -986,10 +1055,10 @@ fn codegen(cards: &[CardJson]) -> String {
 
     // Reusable "counter target spell" resolution program. Target filters
     // belong to `TargetSpec`; the effect itself is identical for
-    // Counterspell, Dispel, and Red Elemental Blast, and is nested under
-    // Pyroblast's resolution-time blue check. The zone guard makes a stale
-    // target a no-op, while `EffectOp::MoveObject` owns physical-card,
-    // flashback, and virtual-copy departure semantics.
+    // Counterspell, Dispel, and both Elemental Blasts, and is nested under
+    // Pyroblast/Hydroblast's resolution-time color check. The zone guard
+    // makes a stale target a no-op, while `EffectOp::MoveObject` owns
+    // physical-card, flashback, and virtual-copy departure semantics.
     writeln!(out, "fn counter_target_spell_effect() -> EffectOp {{").unwrap();
     writeln!(out, "    EffectOp::Conditional {{").unwrap();
     writeln!(
@@ -1013,70 +1082,52 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
-        .any(|c| matches!(special_for(&c.name), Special::Pyroblast))
+        .any(|c| matches!(special_for(&c.name), Special::ColorBlast { .. }))
     {
-        // Primary mode: counter target spell if it's blue (unfiltered
-        // targeting -- PyroblastCounterTargetEffect checks color at
-        // resolution, not TargetSpell's legality). The shared counter
-        // program handles the stale-stack-target guard and departure.
+        // The "if it's [color]" half used by Pyroblast/Hydroblast. Color is
+        // evaluated during resolution; their TargetSpec remains permissive.
         writeln!(
             out,
-            "fn spell_effect_pyroblast_mode1() -> Option<EffectOp> {{"
+            "fn counter_target_spell_if_color_effect(color: ManaColor) -> EffectOp {{"
         )
         .unwrap();
-        writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
-        writeln!(
-            out,
-            "        cond: EffectCond::TargetIsColor(0, ManaColor::U),"
-        )
-        .unwrap();
+        writeln!(out, "    EffectOp::Conditional {{").unwrap();
+        writeln!(out, "        cond: EffectCond::TargetIsColor(0, color),").unwrap();
         writeln!(
             out,
             "        then: Box::new(counter_target_spell_effect()),"
         )
         .unwrap();
         writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
-        writeln!(out, "    }})").unwrap();
-        writeln!(out, "}}").unwrap();
-        writeln!(out).unwrap();
-        // Mode 2: destroy target permanent if it's blue (same shape, on the
-        // battlefield instead of the stack).
-        writeln!(out, "fn mode2_effect_pyroblast() -> EffectOp {{").unwrap();
-        writeln!(out, "    EffectOp::Conditional {{").unwrap();
-        writeln!(out, "        cond: EffectCond::And(").unwrap();
-        writeln!(
-            out,
-            "            Box::new(EffectCond::TargetInZone(0, Zone::Battlefield)),"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "            Box::new(EffectCond::TargetIsColor(0, ManaColor::U)),"
-        )
-        .unwrap();
-        writeln!(out, "        ),").unwrap();
-        writeln!(out, "        then: Box::new(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Graveyard }}),").unwrap();
-        writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
         writeln!(out, "    }}").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
-    }
 
-    if cards
-        .iter()
-        .any(|c| matches!(special_for(&c.name), Special::RedElementalBlast))
-    {
-        // Primary mode: counter target blue spell (color pre-filtered by
-        // TargetSpec::BlueSpellOnStack at targeting time).
+        for color in [BlastColor::Blue, BlastColor::Red] {
+            writeln!(
+                out,
+                "fn spell_effect_counter_target_if_{}() -> Option<EffectOp> {{",
+                color.suffix()
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "    Some(counter_target_spell_if_color_effect({}))",
+                color.mana_variant()
+            )
+            .unwrap();
+            writeln!(out, "}}").unwrap();
+            writeln!(out).unwrap();
+        }
+
+        // Shared destroy program for the Elemental Blasts, whose color is a
+        // targeting restriction and therefore already revalidated by the
+        // engine before resolution.
         writeln!(
             out,
-            "fn spell_effect_red_elemental_blast_mode1() -> Option<EffectOp> {{"
+            "fn mode2_effect_destroy_target_permanent() -> EffectOp {{"
         )
         .unwrap();
-        writeln!(out, "    spell_effect_counter_target()").unwrap();
-        writeln!(out, "}}").unwrap();
-        writeln!(out).unwrap();
-        writeln!(out, "fn mode2_effect_red_elemental_blast() -> EffectOp {{").unwrap();
         writeln!(out, "    EffectOp::Conditional {{").unwrap();
         writeln!(
             out,
@@ -1088,6 +1139,47 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "    }}").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
+
+        writeln!(
+            out,
+            "fn destroy_target_permanent_if_color_effect(color: ManaColor) -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(out, "    EffectOp::Conditional {{").unwrap();
+        writeln!(out, "        cond: EffectCond::And(").unwrap();
+        writeln!(
+            out,
+            "            Box::new(EffectCond::TargetInZone(0, Zone::Battlefield)),"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "            Box::new(EffectCond::TargetIsColor(0, color)),"
+        )
+        .unwrap();
+        writeln!(out, "        ),").unwrap();
+        writeln!(out, "        then: Box::new(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Graveyard }}),").unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
+        writeln!(out, "    }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        for color in [BlastColor::Blue, BlastColor::Red] {
+            writeln!(
+                out,
+                "fn mode2_effect_destroy_target_permanent_if_{}() -> EffectOp {{",
+                color.suffix()
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "    destroy_target_permanent_if_color_effect({})",
+                color.mana_variant()
+            )
+            .unwrap();
+            writeln!(out, "}}").unwrap();
+            writeln!(out).unwrap();
+        }
     }
 
     let burn_amounts: BTreeSetLike = cards
@@ -1209,14 +1301,20 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_counter_target".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::Pyroblast => (
-                "TargetSpec::AnySpellOnStack",
-                "spell_effect_pyroblast_mode1".to_string(),
+            Special::ColorBlast {
+                checked_color,
+                filter_timing: BlastFilterTiming::Targeting,
+            } => (
+                checked_color.filtered_spell_target_spec(),
+                "spell_effect_counter_target".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::RedElementalBlast => (
-                "TargetSpec::BlueSpellOnStack",
-                "spell_effect_red_elemental_blast_mode1".to_string(),
+            Special::ColorBlast {
+                checked_color,
+                filter_timing: BlastFilterTiming::Resolution,
+            } => (
+                "TargetSpec::AnySpellOnStack",
+                format!("spell_effect_counter_target_if_{}", checked_color.suffix()),
                 "no_effect".to_string(),
             ),
             Special::EndTheFestivities => (

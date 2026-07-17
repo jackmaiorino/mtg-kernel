@@ -396,7 +396,7 @@ pub struct StackItem {
     /// Which mode this cast chose, for a modal spell (`card_def::CardDef::
     /// mode2`): `0` = the card's primary `target_spec`/`spell_effect`, `1`
     /// = `mode2`. Always `0` for a non-modal card (`mode2 == None`), which
-    /// is every card in this pool except Pyroblast/Red Elemental Blast.
+    /// is every card in this pool except the four Blast cards.
     pub mode_chosen: u8,
     /// True iff this item is a Madness triggered-ability offer (`card_def::
     /// CardDef::madness_cost`), not a normal spell/ability -- pushed by

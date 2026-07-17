@@ -11,7 +11,7 @@
 //! Voldaren Epicure, Sneaky Snacker -- keyword abilities/triggers ignored,
 //! they're just a castable body), Faithless Looting, Grab the Prize,
 //! Highway Robbery (+ Plot), Fiery Temper's Madness, Searing Blaze
-//! (landfall + 2 related targets), and Pyroblast/Red Elemental Blast
+//! (landfall + 2 related targets), and the four elemental/hydro/pyro Blasts
 //! (modal, color-checked counter/destroy). Relic of Progenitus is the one
 //! remaining deferred card -- graveyard-card targeting doesn't fit any
 //! existing `TargetSpec` shape and is sideboard-only, so it's lower
@@ -222,6 +222,15 @@ pub enum TargetSpec {
     /// offers creatures (Mental Note/Thought Scour style mill spells).
     /// Appended to preserve every existing variant's derived hash identity.
     AnyPlayer,
+    /// Exactly 1 target: a *red* spell currently on the stack (Blue
+    /// Elemental Blast's counter mode -- color is filtered at targeting).
+    /// Appended so every pre-existing target-spec discriminant remains
+    /// stable in snapshots and diagnostic hashes.
+    RedSpellOnStack,
+    /// Exactly 1 target: any *red* permanent on either battlefield (Blue
+    /// Elemental Blast's destroy mode). Appended for the same identity
+    /// reason as `RedSpellOnStack`.
+    RedPermanent,
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -338,9 +347,9 @@ pub struct ActivatedAbilityDef {
     pub sorcery_speed_only: bool,
 }
 
-/// A spell's alternative mode (Pyroblast's/Red Elemental Blast's "Choose
-/// one --" destroy mode): its own target shape and its own resolution
-/// program, entirely independent of the card's primary
+/// A spell's alternative mode (the four Blast cards' "Choose one --"
+/// destroy mode): its own target shape and its own resolution program,
+/// entirely independent of the card's primary
 /// `CardDef::target_spec`/`CardDef::spell_effect`. `engine::Decision::
 /// ChooseSpellMode` picks between the primary mode (index 0) and this one
 /// (index 1) before targeting begins, for any card with `CardDef::mode2 ==
@@ -368,10 +377,12 @@ pub struct CardDef {
     pub is_land: bool,
     pub produces_mana: &'static [ManaColor],
     /// This card's color identity per 105.1/202.2 (the color of mana
-    /// symbols in its mana cost) -- empty for a colorless card. Only used
-    /// by Pyroblast/Red Elemental Blast's "if it's blue"/"blue spell"/"blue
-    /// permanent" checks this increment (`EffectCond::TargetIsColor`,
-    /// `engine::legal_targets_for`'s `BlueSpellOnStack`/`BluePermanent`).
+    /// symbols in its mana cost) -- empty for a colorless card. The four
+    /// Blast cards inspect this through `EffectCond::TargetIsColor` or the
+    /// color-filtered target specs. This is deliberately bounded to the
+    /// current pool's static colors: XMage's `getColor(game)` also observes
+    /// continuous color-changing effects, which this kernel does not yet
+    /// model.
     pub colors: &'static [ManaColor],
     pub target_spec: TargetSpec,
     pub keywords: Keywords,
@@ -414,8 +425,8 @@ pub struct CardDef {
     /// `engine::PendingMadness`/`Decision::ChooseMadnessCast`. Only Fiery
     /// Temper in this pool.
     pub madness_cost: Option<Cost>,
-    /// `Some` iff this spell is modal with a second mode (Pyroblast's/Red
-    /// Elemental Blast's destroy mode) -- see `ModeDef`'s doc.
+    /// `Some` iff this spell is modal with a second mode (the Blast cards'
+    /// destroy mode) -- see `ModeDef`'s doc.
     pub mode2: Option<ModeDef>,
     /// A permanent token (`cards_v1.json`'s own `is_token`, e.g. Blood),
     /// never itself a deck card -- read by `trigger::sba_fixed_point` for
@@ -551,9 +562,9 @@ mod tests {
 
     #[test]
     fn card_db_hash_v2_is_frozen() {
-        // Preordain is the only newly executable definition in this support
-        // slice; Brainstorm was accepted previously.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x56ea_d973_a6bd_8f55);
+        // Blue Elemental Blast and Hydroblast are the only newly executable
+        // definitions in this support slice.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xcf6c_158e_404f_fb63);
     }
 
     #[test]
@@ -622,7 +633,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 41, "38 deck cards plus three required tokens");
+        assert_eq!(full, 43, "40 deck cards plus three required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -869,22 +880,55 @@ mod tests {
     }
 
     #[test]
-    fn pyroblast_and_red_elemental_blast_are_modal_and_castable() {
-        let pyroblast = &CARD_DEFS[card_id_by_name("Pyroblast").unwrap() as usize];
-        assert!(pyroblast.is_castable());
-        assert_eq!(pyroblast.target_spec, TargetSpec::AnySpellOnStack);
+    fn all_four_blasts_are_modal_with_symmetric_target_timing() {
+        for (name, spell_spec, permanent_spec) in [
+            (
+                "Blue Elemental Blast",
+                TargetSpec::RedSpellOnStack,
+                TargetSpec::RedPermanent,
+            ),
+            (
+                "Hydroblast",
+                TargetSpec::AnySpellOnStack,
+                TargetSpec::AnyPermanent,
+            ),
+            (
+                "Pyroblast",
+                TargetSpec::AnySpellOnStack,
+                TargetSpec::AnyPermanent,
+            ),
+            (
+                "Red Elemental Blast",
+                TargetSpec::BlueSpellOnStack,
+                TargetSpec::BluePermanent,
+            ),
+        ] {
+            let def = &CARD_DEFS[card_id_by_name(name).unwrap() as usize];
+            assert!(def.is_castable(), "{name}");
+            assert_eq!(def.target_spec, spell_spec, "{name}");
+            assert_eq!(
+                def.mode2.as_ref().map(|mode| mode.target_spec),
+                Some(permanent_spec),
+                "{name}"
+            );
+        }
+
+        let beb = &CARD_DEFS[card_id_by_name("Blue Elemental Blast").unwrap() as usize];
+        let reb = &CARD_DEFS[card_id_by_name("Red Elemental Blast").unwrap() as usize];
+        assert_eq!((beb.spell_effect)(), (reb.spell_effect)());
         assert_eq!(
-            pyroblast.mode2.as_ref().map(|m| m.target_spec),
-            Some(TargetSpec::AnyPermanent)
+            (beb.mode2.as_ref().unwrap().effect)(),
+            (reb.mode2.as_ref().unwrap().effect)()
         );
 
-        let reb = &CARD_DEFS[card_id_by_name("Red Elemental Blast").unwrap() as usize];
-        assert!(reb.is_castable());
-        assert_eq!(reb.target_spec, TargetSpec::BlueSpellOnStack);
-        assert_eq!(
-            reb.mode2.as_ref().map(|m| m.target_spec),
-            Some(TargetSpec::BluePermanent)
-        );
+        let hydro = &CARD_DEFS[card_id_by_name("Hydroblast").unwrap() as usize];
+        assert!(matches!(
+            (hydro.spell_effect)(),
+            Some(EffectOp::Conditional {
+                cond: EffectCond::TargetIsColor(0, ManaColor::R),
+                ..
+            })
+        ));
     }
 
     #[test]
