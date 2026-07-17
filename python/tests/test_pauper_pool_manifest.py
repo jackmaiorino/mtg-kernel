@@ -380,9 +380,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 37,
+                "full_cards": 38,
                 "partial_cards": 0,
-                "no_effect_cards": 113,
+                "no_effect_cards": 112,
                 "token_dependencies": 3,
             },
         )
@@ -394,7 +394,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Spy", "full": 8, "partial": 0, "no_effect": 52, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 38, "partial": 0, "no_effect": 22, "total": 60},
-            {"deck_id": "CawGates", "full": 11, "partial": 0, "no_effect": 49, "total": 60},
+            {"deck_id": "CawGates", "full": 13, "partial": 0, "no_effect": 47, "total": 60},
             {"deck_id": "Faeries", "full": 24, "partial": 0, "no_effect": 36, "total": 60},
         ]
         self.assertEqual(self.support["deck_mainboard_copy_totals"], expected_copy_totals)
@@ -449,6 +449,14 @@ class PauperPoolManifestTest(unittest.TestCase):
         self.assertEqual(brainstorm["sideboard"], [])
         self.assertEqual(brainstorm["support_status"], "full")
         self.assertEqual(brainstorm["blockers"], [])
+        preordain = next(row for row in self.support["cards"] if row["name"] == "Preordain")
+        self.assertEqual(
+            preordain["mainboard"],
+            [{"deck_id": "CawGates", "copies": 2}],
+        )
+        self.assertEqual(preordain["sideboard"], [])
+        self.assertEqual(preordain["support_status"], "full")
+        self.assertEqual(preordain["blockers"], [])
         self.assertEqual(
             self.support["token_dependencies"],
             [

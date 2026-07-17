@@ -836,6 +836,154 @@ impl GameState {
         Ok(())
     }
 
+    /// Atomically applies one private scry result to an exact, incarnation-
+    /// bound library prefix. `retained_top` is top-to-bottom and
+    /// `ordered_bottom` is shallow-to-deep (the last element becomes the
+    /// physical bottom card). The untouched tail retains its order.
+    ///
+    /// Every validation runs before either the library or perspective-scoped
+    /// knowledge changes. The owner learns the exact resulting retained top
+    /// and ordered bottom. Other observers lose facts about an ambiguous
+    /// multi-card private prefix while facts in the untouched tail shift up
+    /// by the number of cards moved to the bottom. A one-card scry is
+    /// deterministic once its public keep/bottom branch is known, so an
+    /// observer's pre-existing exact fact for that card is preserved at its
+    /// new position.
+    ///
+    /// This primitive intentionally emits no SCRY, SCRY_TO_BOTTOM, or SCRIED
+    /// event. Full replacement/trigger event hooks remain deferred until a
+    /// supported replacement or trigger observes them; callers must not
+    /// synthesize a partial public event sequence around this private atomic
+    /// transition. Higher-count scry also requires XMage-order bottom
+    /// commitment before any retained-top ordering.
+    pub(crate) fn apply_scry_result(
+        &mut self,
+        owner: PlayerId,
+        expected_prefix: &[ObjectLinkV4],
+        retained_top: &[ObjectId],
+        ordered_bottom: &[ObjectId],
+    ) -> Result<(), String> {
+        let library = &self.players[owner.index()].library;
+        let prefix_len = expected_prefix.len();
+        if prefix_len > library.len() {
+            return Err(format!(
+                "scry prefix of {prefix_len} exceeds live library length {}",
+                library.len()
+            ));
+        }
+        for (position, expected) in expected_prefix.iter().enumerate() {
+            if library[position] != expected.object {
+                return Err("scry-bound library prefix changed order or identity".to_string());
+            }
+            let object = self.objects.try_get(expected.object).ok_or_else(|| {
+                format!("scry-bound object {} no longer exists", expected.object.0)
+            })?;
+            if object.owner != owner
+                || object.zone != Zone::Library
+                || object.zone_change_count != expected.zone_change_count
+            {
+                return Err(format!(
+                    "scry-bound object {} changed owner, zone, or incarnation",
+                    expected.object.0
+                ));
+            }
+        }
+
+        let mut expected_objects = expected_prefix
+            .iter()
+            .map(|binding| binding.object)
+            .collect::<Vec<_>>();
+        let mut result_objects = retained_top
+            .iter()
+            .chain(ordered_bottom)
+            .copied()
+            .collect::<Vec<_>>();
+        expected_objects.sort_unstable();
+        result_objects.sort_unstable();
+        if result_objects != expected_objects {
+            return Err(
+                "scry retained-top and ordered-bottom groups do not partition the bound prefix"
+                    .to_string(),
+            );
+        }
+
+        let library_len = library.len();
+        let bottom_count = ordered_bottom.len();
+        let untouched_tail = library[prefix_len..].to_vec();
+        let mut result_library = Vec::with_capacity(library_len);
+        result_library.extend_from_slice(retained_top);
+        result_library.extend_from_slice(&untouched_tail);
+        result_library.extend_from_slice(ordered_bottom);
+        debug_assert_eq!(result_library.len(), library_len);
+
+        let mut result_knowledge: [Vec<LibraryKnowledgeEntry>; 2] =
+            std::array::from_fn(|_| Vec::new());
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            let old = &self.library_knowledge[observer.index()][owner.index()];
+            let updated = &mut result_knowledge[observer.index()];
+
+            // Untouched-tail facts remain exact and simply move shallower by
+            // one slot for every bound-prefix card moved to the bottom.
+            updated.extend(old.iter().filter_map(|entry| {
+                if entry.position as usize >= prefix_len {
+                    Some(LibraryKnowledgeEntry {
+                        position: entry.position - bottom_count as u32,
+                        object: entry.object,
+                        zone_change_count: entry.zone_change_count,
+                    })
+                } else {
+                    None
+                }
+            }));
+
+            if observer == owner {
+                for (position, &object) in retained_top.iter().enumerate() {
+                    updated.push(LibraryKnowledgeEntry {
+                        position: position as u32,
+                        object,
+                        zone_change_count: self.objects.get(object).zone_change_count,
+                    });
+                }
+                let bottom_start = library_len - bottom_count;
+                for (offset, &object) in ordered_bottom.iter().enumerate() {
+                    updated.push(LibraryKnowledgeEntry {
+                        position: (bottom_start + offset) as u32,
+                        object,
+                        zone_change_count: self.objects.get(object).zone_change_count,
+                    });
+                }
+            } else if prefix_len == 1 {
+                // With one bound card, the public keep-vs-bottom branch fixes
+                // its resulting position. Preserve the fact only if this
+                // observer actually knew that exact original incarnation.
+                let expected = expected_prefix[0];
+                if old.iter().any(|entry| {
+                    entry.position == 0
+                        && entry.object == expected.object
+                        && entry.zone_change_count == expected.zone_change_count
+                }) {
+                    updated.push(LibraryKnowledgeEntry {
+                        position: if bottom_count == 1 {
+                            (library_len - 1) as u32
+                        } else {
+                            0
+                        },
+                        object: expected.object,
+                        zone_change_count: expected.zone_change_count,
+                    });
+                }
+            }
+            updated.sort_by_key(|entry| entry.position);
+        }
+
+        self.players[owner.index()].library = result_library;
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            self.library_knowledge[observer.index()][owner.index()] =
+                std::mem::take(&mut result_knowledge[observer.index()]);
+        }
+        Ok(())
+    }
+
     /// Deterministically shuffles one library with the game RNG and clears
     /// every observer's facts about it before any later effect reveals a new
     /// prefix.

@@ -551,9 +551,9 @@ mod tests {
 
     #[test]
     fn card_db_hash_v2_is_frozen() {
-        // Brainstorm is the only newly executable definition in this support
-        // slice; Ponder was accepted previously.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x8c2e_11c8_cbba_8039);
+        // Preordain is the only newly executable definition in this support
+        // slice; Brainstorm was accepted previously.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x56ea_d973_a6bd_8f55);
     }
 
     #[test]
@@ -622,7 +622,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 40, "37 deck cards plus three required tokens");
+        assert_eq!(full, 41, "38 deck cards plus three required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -693,6 +693,27 @@ mod tests {
                     },
                 ],
             })
+        );
+    }
+
+    #[test]
+    fn preordain_program_is_generated_as_scry_two_then_draw_one() {
+        let preordain = &CARD_DEFS[card_id_by_name("Preordain").unwrap() as usize];
+        assert_eq!(preordain.capability, CardCapability::Full);
+        assert_eq!(preordain.target_spec, TargetSpec::None);
+        assert!(preordain.is_castable());
+        assert_eq!(
+            (preordain.spell_effect)(),
+            Some(EffectOp::Sequence(vec![
+                EffectOp::Scry {
+                    player: PlayerRef::Controller,
+                    count: 2,
+                },
+                EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: 1,
+                },
+            ]))
         );
     }
 
