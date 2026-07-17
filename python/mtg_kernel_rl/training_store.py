@@ -804,6 +804,8 @@ def _validate_deck_ids(value: Any, context: str = "deck_ids") -> tuple[str, str]
         raise ValueError(f"{context} must be an exact two-item list")
     if any(type(item) is not str or not item for item in value):
         raise ValueError(f"{context} entries must be nonempty strings")
+    if value[0] != value[1]:
+        raise ValueError(f"{context} must identify one exact mirror pairing")
     return value[0], value[1]
 
 

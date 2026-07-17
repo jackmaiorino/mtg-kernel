@@ -612,9 +612,11 @@ fn section2_step_throughput() {
 // ------------------------------------------------- section 3: self-play threading
 
 fn section3_selfplay_threading() {
-    println!("--- Section 3 (HEADLINE): self-play throughput via HarnessSurfaceV2, N threads (PERFORMANCE-ONLY) ---");
-    println!("Compare against Java's ~3 eps/sec (24-core box, 48 runners, FULL training stack incl. NN inference+training --");
-    println!("this section is ENGINE+SURFACE ONLY, no NN, so this is an upper bound on what the engine alone could feed a learner.");
+    println!("--- Section 3: self-play throughput via HarnessSurfaceV2, N threads (PERFORMANCE-ONLY) ---");
+    println!("Engine+surface only: excludes Python, NN inference, optimization, artifact persistence, and orchestration.");
+    println!(
+        "Do not compare these measurements directly with end-to-end XMage trainer throughput."
+    );
     println!(
         "{:>8} {:>14} {:>18} {:>18}",
         "threads", "games/sec", "H-visible dec/sec", "games/sec/thread"

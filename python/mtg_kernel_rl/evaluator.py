@@ -109,6 +109,8 @@ def _validate_request(
         raise TypeError("deck_ids must be an exact two-item tuple")
     if any(type(deck_id) is not str or not deck_id for deck_id in deck_ids):
         raise ValueError("deck_ids entries must be nonempty strings")
+    if deck_ids[0] != deck_ids[1]:
+        raise ValueError("deck_ids must identify one exact mirror pairing")
     return (
         expected_head,
         pairs,

@@ -278,6 +278,40 @@ def _assert_hard_kill_fired(
 
 
 class TrainerTest(unittest.TestCase):
+    def test_training_admits_exact_mirrors_and_rejects_mixed_pairs_before_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            with (
+                mock.patch.object(trainer_mod, "OutputLock") as output_lock,
+                mock.patch.object(trainer_mod, "_train_locked", return_value={"ok": True}) as train_locked,
+            ):
+                result = train(
+                    env_bin=tmp / "unused-env",
+                    out_dir=tmp / "rally",
+                    until_update=0,
+                    deck_ids=("Rally", "Rally"),
+                )
+                self.assertEqual(result, {"ok": True})
+                output_lock.assert_called_once_with(tmp / "rally")
+                self.assertEqual(train_locked.call_args.kwargs["deck_ids"], ("Rally", "Rally"))
+
+            for deck_ids in (("Burn", "Rally"), ("Rally", "Burn")):
+                with self.subTest(deck_ids=deck_ids):
+                    with (
+                        mock.patch.object(trainer_mod, "OutputLock") as output_lock,
+                        mock.patch.object(trainer_mod, "_train_locked") as train_locked,
+                    ):
+                        with self.assertRaisesRegex(ValueError, "one exact mirror pairing"):
+                            train(
+                                env_bin=tmp / "unused-env",
+                                out_dir=tmp / "mixed",
+                                until_update=0,
+                                deck_ids=deck_ids,
+                            )
+                        output_lock.assert_not_called()
+                        train_locked.assert_not_called()
+                        self.assertFalse((tmp / "mixed").exists())
+
     def test_fresh_deck_identity_failure_persists_no_run_or_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
             tmp = Path(tmp_name)
@@ -1067,9 +1101,9 @@ class TrainerTest(unittest.TestCase):
                 (4, 2),
             )
             expected_loss = {
-                "loss_hex": "0x1.9835d60000000p+1",
-                "policy_sum_hex": "0x1.136d940000000p+2",
-                "value_sum_hex": "0x1.0990840000000p+2",
+                "loss_hex": "0x1.9618780000000p+1",
+                "policy_sum_hex": "0x1.11ef340000000p+2",
+                "value_sum_hex": "0x1.0852860000000p+2",
             }
             self.assertEqual(set(record["loss"]), set(expected_loss))
 

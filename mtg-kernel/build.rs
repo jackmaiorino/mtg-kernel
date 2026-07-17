@@ -70,13 +70,66 @@ struct CardsFile {
     cards: Vec<CardJson>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeDeckCatalogJson {
+    schema: String,
+    protocol: String,
+    source_hash_normalization: String,
+    materialization: RuntimeDeckMaterializationJson,
+    card_ids: RuntimeDeckCardIdsJson,
+    decks: Vec<RuntimeDeckJson>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeDeckMaterializationJson {
+    order: String,
+    source_row_ordinal_base: u32,
+    copy_ordinal_base: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeDeckCardIdsJson {
+    assignment: String,
+    deck_hash_algorithm: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeDeckJson {
+    canonical_pool_order: u32,
+    id: String,
+    source_path: String,
+    source_sha256: String,
+    mainboard_copy_count: usize,
+    unique_mainboard_cards: usize,
+    runtime_deck_hash: String,
+    materialized_mainboard: Vec<RuntimeDeckCopyJson>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeDeckCopyJson {
+    source_row_ordinal: u32,
+    copy_ordinal: u32,
+    name: String,
+    card_id: u16,
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let json_path = Path::new(&manifest_dir)
         .join("..")
         .join("data")
         .join("cards_v1.json");
+    let runtime_decks_path = Path::new(&manifest_dir)
+        .join("..")
+        .join("data")
+        .join("runtime_decks_v1.json");
     println!("cargo:rerun-if-changed={}", json_path.display());
+    println!("cargo:rerun-if-changed={}", runtime_decks_path.display());
     println!("cargo:rerun-if-changed=build.rs");
 
     let text = fs::read_to_string(&json_path)
@@ -108,11 +161,313 @@ fn main() {
         }
     }
 
+    let runtime_decks_text = fs::read_to_string(&runtime_decks_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", runtime_decks_path.display()));
+    let runtime_decks: RuntimeDeckCatalogJson = serde_json::from_str(&runtime_decks_text)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", runtime_decks_path.display()));
+
     let out = codegen(&data.cards);
+    let runtime_decks_out = runtime_decks_codegen(&runtime_decks, &data.cards);
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let dest = Path::new(&out_dir).join("card_defs.rs");
     fs::write(&dest, out).unwrap_or_else(|e| panic!("failed to write {}: {e}", dest.display()));
+    let runtime_decks_dest = Path::new(&out_dir).join("runtime_decks.rs");
+    fs::write(&runtime_decks_dest, runtime_decks_out)
+        .unwrap_or_else(|e| panic!("failed to write {}: {e}", runtime_decks_dest.display()));
+}
+
+fn runtime_decks_codegen(catalog: &RuntimeDeckCatalogJson, cards: &[CardJson]) -> String {
+    const EXPECTED_SCHEMA: &str = "kernel_runtime_decks/v1";
+    const EXPECTED_PROTOCOL: &str = "canonical-mainboard-bo1/v1";
+    const EXPECTED_SOURCE_HASH_NORMALIZATION: &str = "utf8_text_crlf_v1";
+    const EXPECTED_MATERIALIZATION: &str = "xmage_xml_row_then_copy_ordinal/v1";
+    const EXPECTED_CARD_ID_ASSIGNMENT: &str = "zero_based_data_cards_v1_json_cards_array_index/v1";
+    const EXPECTED_DECK_HASH_ALGORITHM: &str = "fnv1a64-serde-json-u16-array/v1";
+    const EXPECTED_DECKS: [(&str, u32, &str, &str, u64); 2] = [
+        (
+            "Rally",
+            2,
+            "oracle/xmage/decks/Pauper/Deck - Mono Red Rally.dek",
+            "4b5019bd08f9387aeabebdca0d90aaa10dfd75fc75ed3a87c95a2fabf4dba834",
+            0x0c9f01c2544412bf,
+        ),
+        (
+            "Burn",
+            6,
+            "oracle/xmage/decks/Pauper/Deck - Mono-Red Burn.dek",
+            "4ebba6b42bb27a0ea55001cee133aada81f0dffd8661b46b012fc5026675aa32",
+            0x5fdb7b92986b6fc1,
+        ),
+    ];
+
+    if catalog.schema != EXPECTED_SCHEMA {
+        panic!(
+            "runtime_decks_v1.json: schema mismatch: expected {EXPECTED_SCHEMA:?}, got {:?}",
+            catalog.schema
+        );
+    }
+    if catalog.protocol != EXPECTED_PROTOCOL {
+        panic!(
+            "runtime_decks_v1.json: protocol mismatch: expected {EXPECTED_PROTOCOL:?}, got {:?}",
+            catalog.protocol
+        );
+    }
+    if catalog.source_hash_normalization != EXPECTED_SOURCE_HASH_NORMALIZATION {
+        panic!(
+            "runtime_decks_v1.json: source hash normalization mismatch: expected {EXPECTED_SOURCE_HASH_NORMALIZATION:?}, got {:?}",
+            catalog.source_hash_normalization
+        );
+    }
+    if catalog.materialization.order != EXPECTED_MATERIALIZATION
+        || catalog.materialization.source_row_ordinal_base != 1
+        || catalog.materialization.copy_ordinal_base != 1
+    {
+        panic!(
+            "runtime_decks_v1.json: unsupported materialization contract {:?} with row/copy bases {}/{}",
+            catalog.materialization.order,
+            catalog.materialization.source_row_ordinal_base,
+            catalog.materialization.copy_ordinal_base
+        );
+    }
+    if catalog.card_ids.assignment != EXPECTED_CARD_ID_ASSIGNMENT
+        || catalog.card_ids.deck_hash_algorithm != EXPECTED_DECK_HASH_ALGORITHM
+    {
+        panic!(
+            "runtime_decks_v1.json: unsupported card-id/hash contract {:?} / {:?}",
+            catalog.card_ids.assignment, catalog.card_ids.deck_hash_algorithm
+        );
+    }
+    if catalog.decks.len() != EXPECTED_DECKS.len() {
+        panic!(
+            "runtime_decks_v1.json: expected exactly {} runnable decks, got {}",
+            EXPECTED_DECKS.len(),
+            catalog.decks.len()
+        );
+    }
+
+    let mut generated_decks = Vec::with_capacity(catalog.decks.len());
+    let mut seen_ids = HashSet::new();
+    for (deck, &(expected_id, expected_pool_order, expected_path, expected_sha, expected_hash)) in
+        catalog.decks.iter().zip(EXPECTED_DECKS.iter())
+    {
+        if !seen_ids.insert(deck.id.as_str()) {
+            panic!("runtime_decks_v1.json: duplicate deck id {:?}", deck.id);
+        }
+        if deck.id != expected_id
+            || deck.canonical_pool_order != expected_pool_order
+            || deck.source_path != expected_path
+            || deck.source_sha256 != expected_sha
+        {
+            panic!(
+                "runtime_decks_v1.json: deck slot for {expected_id:?} does not match its frozen id/order/source provenance"
+            );
+        }
+        if deck.source_sha256.len() != 64
+            || !deck
+                .source_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            panic!(
+                "runtime_decks_v1.json: deck {:?} source_sha256 is not 64 lowercase hexadecimal characters",
+                deck.id
+            );
+        }
+        if deck.mainboard_copy_count != 60
+            || deck.materialized_mainboard.len() != deck.mainboard_copy_count
+        {
+            panic!(
+                "runtime_decks_v1.json: deck {:?} must materialize exactly 60 mainboard copies, declared {}, found {}",
+                deck.id,
+                deck.mainboard_copy_count,
+                deck.materialized_mainboard.len()
+            );
+        }
+
+        let mut last_row = 0u32;
+        let mut expected_copy_ordinal = 0u32;
+        let mut current_row_identity: Option<(&str, u16)> = None;
+        let mut unique_names = HashSet::new();
+        let mut card_ids = Vec::with_capacity(deck.mainboard_copy_count);
+        for (materialized_index, copy) in deck.materialized_mainboard.iter().enumerate() {
+            if copy.source_row_ordinal == 0 || copy.copy_ordinal == 0 {
+                panic!(
+                    "runtime_decks_v1.json: deck {:?} materialized copy {materialized_index} uses a zero ordinal",
+                    deck.id
+                );
+            }
+            if copy.source_row_ordinal == last_row {
+                expected_copy_ordinal += 1;
+                let (row_name, row_card_id) = current_row_identity
+                    .expect("a repeated materialized row has a first copy identity");
+                if copy.name != row_name || copy.card_id != row_card_id {
+                    panic!(
+                        "runtime_decks_v1.json: deck {:?} row {} changes card identity from {:?}/{} to {:?}/{}",
+                        deck.id,
+                        copy.source_row_ordinal,
+                        row_name,
+                        row_card_id,
+                        copy.name,
+                        copy.card_id
+                    );
+                }
+            } else {
+                if copy.source_row_ordinal <= last_row {
+                    panic!(
+                        "runtime_decks_v1.json: deck {:?} materialized rows are not strictly ordered at copy {materialized_index}",
+                        deck.id
+                    );
+                }
+                last_row = copy.source_row_ordinal;
+                expected_copy_ordinal = 1;
+                current_row_identity = Some((copy.name.as_str(), copy.card_id));
+            }
+            if copy.copy_ordinal != expected_copy_ordinal {
+                panic!(
+                    "runtime_decks_v1.json: deck {:?} row {} copy ordinal {}, expected {}",
+                    deck.id, copy.source_row_ordinal, copy.copy_ordinal, expected_copy_ordinal
+                );
+            }
+
+            let card_index = usize::from(copy.card_id);
+            let Some(card) = cards.get(card_index) else {
+                panic!(
+                    "runtime_decks_v1.json: deck {:?} materialized copy {materialized_index} references unknown card id {}",
+                    deck.id, copy.card_id
+                );
+            };
+            if card.name != copy.name {
+                panic!(
+                    "runtime_decks_v1.json: deck {:?} materialized copy {materialized_index} card id {} resolves to {:?}, not {:?}",
+                    deck.id, copy.card_id, card.name, copy.name
+                );
+            }
+            if card.is_token || card.engine_capability != EngineCapabilityJson::Full {
+                panic!(
+                    "runtime_decks_v1.json: deck {:?} materialized copy {materialized_index} ({:?}) is not a full, non-token card definition",
+                    deck.id, copy.name
+                );
+            }
+            unique_names.insert(copy.name.as_str());
+            card_ids.push(copy.card_id);
+        }
+        if unique_names.len() != deck.unique_mainboard_cards {
+            panic!(
+                "runtime_decks_v1.json: deck {:?} declares {} unique mainboard cards, materialization has {}",
+                deck.id,
+                deck.unique_mainboard_cards,
+                unique_names.len()
+            );
+        }
+
+        let declared_hash = parse_runtime_deck_hash(&deck.id, &deck.runtime_deck_hash);
+        let serialized_ids = serde_json::to_vec(&card_ids)
+            .expect("runtime deck card-id sequence serializes as JSON");
+        let computed_hash = fnv1a64(&serialized_ids);
+        if declared_hash != expected_hash || computed_hash != expected_hash {
+            panic!(
+                "runtime_decks_v1.json: deck {:?} hash mismatch: declared {declared_hash:#018x}, computed {computed_hash:#018x}, expected {expected_hash:#018x}",
+                deck.id
+            );
+        }
+        generated_decks.push((deck, card_ids, declared_hash));
+    }
+
+    let mut out = String::new();
+    writeln!(
+        out,
+        "// GENERATED by build.rs from data/runtime_decks_v1.json. Do not edit by hand."
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    for (name, value) in [
+        ("RUNTIME_DECK_CATALOG_SCHEMA", catalog.schema.as_str()),
+        ("RUNTIME_DECK_PROTOCOL", catalog.protocol.as_str()),
+        (
+            "RUNTIME_DECK_SOURCE_HASH_NORMALIZATION",
+            catalog.source_hash_normalization.as_str(),
+        ),
+        (
+            "RUNTIME_DECK_MATERIALIZATION_PROTOCOL",
+            catalog.materialization.order.as_str(),
+        ),
+        (
+            "RUNTIME_CARD_ID_ASSIGNMENT",
+            catalog.card_ids.assignment.as_str(),
+        ),
+        (
+            "RUNTIME_DECK_HASH_ALGORITHM",
+            catalog.card_ids.deck_hash_algorithm.as_str(),
+        ),
+    ] {
+        writeln!(out, "pub const {name}: &str = {value:?};").unwrap();
+    }
+    writeln!(
+        out,
+        "pub const RUNTIME_DECK_SOURCE_ROW_ORDINAL_BASE: u32 = {};",
+        catalog.materialization.source_row_ordinal_base
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "pub const RUNTIME_DECK_COPY_ORDINAL_BASE: u32 = {};",
+        catalog.materialization.copy_ordinal_base
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "pub static RUNTIME_DECKS: &[RuntimeDeckDefinition] = &["
+    )
+    .unwrap();
+    for (deck, card_ids, runtime_deck_hash) in generated_decks {
+        writeln!(out, "    RuntimeDeckDefinition {{").unwrap();
+        writeln!(
+            out,
+            "        canonical_pool_order: {},",
+            deck.canonical_pool_order
+        )
+        .unwrap();
+        writeln!(out, "        id: {:?},", deck.id).unwrap();
+        writeln!(out, "        source_path: {:?},", deck.source_path).unwrap();
+        writeln!(out, "        source_sha256: {:?},", deck.source_sha256).unwrap();
+        writeln!(
+            out,
+            "        mainboard_count: {},",
+            deck.mainboard_copy_count
+        )
+        .unwrap();
+        writeln!(out, "        runtime_deck_hash: {runtime_deck_hash:#018x},").unwrap();
+        write!(out, "        card_ids: &[").unwrap();
+        for (index, card_id) in card_ids.iter().enumerate() {
+            if index != 0 {
+                write!(out, ", ").unwrap();
+            }
+            write!(out, "{card_id}u16").unwrap();
+        }
+        writeln!(out, "],").unwrap();
+        writeln!(out, "    }},").unwrap();
+    }
+    writeln!(out, "];").unwrap();
+    out
+}
+
+fn parse_runtime_deck_hash(deck_id: &str, value: &str) -> u64 {
+    let Some(digits) = value.strip_prefix("0x") else {
+        panic!("runtime_decks_v1.json: deck {deck_id:?} hash must start with 0x");
+    };
+    if digits.len() != 16
+        || !digits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        panic!(
+            "runtime_decks_v1.json: deck {deck_id:?} hash must contain exactly 16 lowercase hexadecimal digits"
+        );
+    }
+    u64::from_str_radix(digits, 16)
+        .unwrap_or_else(|_| panic!("runtime_decks_v1.json: deck {deck_id:?} hash is invalid"))
 }
 
 /// The Mono-Red Burn cards that get a real effect program. Relic of

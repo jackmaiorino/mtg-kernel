@@ -3,9 +3,9 @@
 //! This module owns the reset/step state machine used by both the JSONL
 //! process wrapper and the batch rollout recorder, so action validation and
 //! terminal classification cannot drift between interactive and offline use.
-//! Schema v5 reserves ordered physical-seat deck identity on the wire. The
-//! only executable pair in this increment remains canonical `Burn`/`Burn`;
-//! every other id fails before an active session is created or replaced.
+//! Schema v5 carries ordered physical-seat deck identity on the wire. Exact
+//! canonical `Burn` and `Rally` ids may be combined in any ordered pair; every
+//! other id fails before an active session is created or replaced.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::engine::Decision;
@@ -14,11 +14,12 @@ use crate::policy_surface_v5::{
     PolicyDecisionV5, PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM, POLICY_SURFACE_VERSION,
 };
 use crate::rl::{
-    build_burn_mirror_state, burn_deck_hash, legal_action_candidates_v5, observe_policy_v5,
-    parse_strict_json_value, EpisodeTerminalSummaryV1, LegalActionV5, ObservationV5, PlayerSeatV1,
+    build_deck_pair_state, legal_action_candidates_v5, observe_policy_v5, parse_strict_json_value,
+    EpisodeTerminalSummaryV1, LegalActionV5, ObservationV5, PlayerSeatV1,
     PolicyLegalActionCandidateV5, RlContractError, TerminalClassificationV1, TerminalOutcomeV1,
     TerminalSafeCodeV2,
 };
+use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition};
 use crate::surface_v2::{SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,7 @@ pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_NAME: &str = "kernel_rl_jsonl";
 pub const CANONICAL_BURN_DECK_ID: &str = "Burn";
+pub const CANONICAL_RALLY_DECK_ID: &str = "Rally";
 
 pub type SessionDeckIdsV1 = [String; 2];
 pub type SessionDeckHashesV1 = [u64; 2];
@@ -223,14 +225,26 @@ impl RlEpisodeSessionV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
     ) -> Result<Self, RlSessionError> {
-        let deck_hashes = resolve_deck_hashes(&deck_ids)?;
+        let resolved_decks = resolve_runtime_decks(&deck_ids)?;
+        let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
+        let state = build_deck_pair_state(
+            env_seed,
+            resolved_decks[0].card_ids,
+            resolved_decks[1].card_ids,
+        )
+        .map_err(|_| {
+            session_error(
+                RlSessionErrorCode::UnsupportedDeck,
+                "runtime deck catalog failed full-support preflight",
+            )
+        })?;
         let mut session = RlEpisodeSessionV1 {
             deck_ids,
             deck_hashes,
             episode_id,
             max_physical_decisions,
             max_policy_steps,
-            state: build_burn_mirror_state(env_seed),
+            state,
             surface: PolicySurfaceV5::new(),
             policy_step_count: 0,
             physical_decision_count: 0,
@@ -923,19 +937,25 @@ fn canonical_burn_mirror_deck_ids() -> SessionDeckIdsV1 {
     ]
 }
 
-fn resolve_deck_hashes(deck_ids: &SessionDeckIdsV1) -> Result<SessionDeckHashesV1, RlSessionError> {
+fn resolve_runtime_decks(
+    deck_ids: &SessionDeckIdsV1,
+) -> Result<[&'static RuntimeDeckDefinition; 2], RlSessionError> {
+    let mut resolved = [None, None];
     for (seat, deck_id) in deck_ids.iter().enumerate() {
-        if deck_id != CANONICAL_BURN_DECK_ID {
+        let Some(deck) = runtime_deck_by_id(deck_id) else {
             return Err(session_error(
                 RlSessionErrorCode::UnsupportedDeck,
                 &format!(
-                    "unsupported deck_id for seat {seat}: {deck_id:?}; only exact canonical id {CANONICAL_BURN_DECK_ID:?} is currently available"
+                    "unsupported deck_id for seat {seat}; supported exact canonical ids are {CANONICAL_BURN_DECK_ID:?} and {CANONICAL_RALLY_DECK_ID:?}"
                 ),
             ));
-        }
+        };
+        resolved[seat] = Some(deck);
     }
-    let hash = burn_deck_hash();
-    Ok([hash, hash])
+    Ok([
+        resolved[0].expect("both deck seats resolve"),
+        resolved[1].expect("both deck seats resolve"),
+    ])
 }
 
 fn terminal_from_winner(

@@ -1,23 +1,25 @@
 # MTG Kernel
 
-`mtg-kernel` is an experimental, deterministic Magic: The Gathering rules kernel and a reproducible reinforcement-learning runner, trainer, and evaluator. The Rust process exposes a strict JSONL environment; the Python package supplies the client, schema-v5 feature encoder, policy/value model, crash-consistent training store, and paired evaluators.
+`mtg-kernel` is an experimental, deterministic Magic: The Gathering rules kernel and an integrity-checked reinforcement-learning runner, trainer, and evaluator designed for reproducible experiments. The Rust process exposes a strict JSONL environment; the Python package supplies the client, schema-v5 feature encoder, policy/value model, crash-consistent training store, and paired evaluators.
 
 This repository is the independent extraction of the kernel work formerly developed inside the Mage/XMage tree. Building or running it does not require Java, Maven, or a parent Mage checkout.
 
 ## Current status
 
-The deterministic engine, schema-v5 Rust/Python policy boundary, artifact integrity layer, Burn-mirror runner/trainer/evaluator, and a substantial regression suite are implemented. Policy schema v5 layers canonical binary attacker/blocker scans and grouped physical-decision accounting over the preserved schema-v4 engine semantics and H2 surface, so wide combat has two legal actions per policy substep instead of an exponential subset list. Burn and Rally have complete mainboard card coverage, and reusable mechanics for cards in the remaining decks are landing incrementally. The public RL environment still admits only the exact canonical `Burn`/`Burn` pairing.
+The deterministic engine, schema-v5 Rust/Python policy boundary, artifact integrity layer, and a substantial regression suite are implemented. A build-time-validated catalog freezes the exact canonical Burn and Rally 60-card mainboards. The runner admits all four ordered Burn/Rally seat pairings. Training and both paired-evaluation lanes have bounded mirror smoke coverage for `Burn`/`Burn` and `Rally`/`Rally`; training, greedy evaluation, and sampled evaluation deliberately reject mixed-deck pairings until the separately versioned multi-deck seat-swap and seed contract exists. Policy schema v5 layers canonical binary attacker/blocker scans and grouped physical-decision accounting over the preserved schema-v4 engine semantics and H2 surface, so wide combat has two legal actions per policy substep instead of an exponential subset list.
+
+These admission and smoke results are engineering evidence, not completion of the roadmap's 32-pair mirror gate, cross-deck gate, full-pool protocol, or science-release gate.
 
 This is **not yet science-ready**. Seven canonical Pauper decks remain incomplete, the full-pool training protocol and sampled-primary 9x9 matrix have not been run, and the clean-clone artifact-reproduction release gate remains open. [ROADMAP.md](ROADMAP.md) is the authoritative definition of completion and records the pinned nine-deck scope.
 
 ## Requirements
 
 - Rust `1.94.1` through `rustup` (selected automatically by `rust-toolchain.toml`)
-- Python `3.13.14` for the reproducible development/test environment (`pyproject.toml` supports Python 3.11 or newer)
-- `uv 0.11.29` for the cross-platform locked Python environment
+- Python `3.13.14` for the pinned development/test environment (`pyproject.toml` supports Python 3.11 or newer)
+- `uv 0.11.29` for the cross-platform Python dependency lock
 - Bash for the one-command verification script; Git Bash works on Windows
 
-PyTorch is the Python runtime's main external dependency and is a large download. `uv.lock` pins the complete cross-platform CPU reference environment, including NumPy for a process-state regression test, while `pyproject.toml` records the package's supported dependency ranges. Accelerator-specific training environments will be pinned separately with the hardware record for the full-pool science run; they do not silently replace this CI/reference lock.
+PyTorch is the Python runtime's main external dependency and is a large download. `uv.lock` pins dependency resolution for the CPU reference environment across supported platforms, including NumPy for a process-state regression test, while `pyproject.toml` records the package's supported dependency ranges. Cross-platform locking means that supported platforms resolve the intended package versions; it does not promise bit-identical PyTorch results or training, checkpoint, or evaluation artifact bytes across operating systems or hardware. With source/protocol inputs and the environment binary held fixed, exact Torch-derived and artifact reproduction is scoped to the recorded runtime compatibility tuple on designated hardware. The current tuple records Python and Torch runtime details, OS/release, machine/architecture, device/dtype, deterministic mode, and thread counts, but it is not a complete hardware fingerprint, so a separate versioned hardware record is required before a science-ready run. Accelerator-specific training environments will be pinned separately with that hardware record for the full-pool science run; they do not silently replace this CI/reference lock.
 
 ## Quick start
 
@@ -51,6 +53,10 @@ mtg-kernel-rl run \
 ```
 
 On Windows, use `target/release/kernel_rl_env.exe` for `--env-bin`. Run `mtg-kernel-rl --help` to see the `run`, `train`, `evaluate`, and `evaluate-sampled` interfaces.
+
+## Performance evidence
+
+`bench_kernel` measures the Rust engine and policy surface only. It excludes Python orchestration, neural-network inference, optimization, and artifact persistence, so it must not be compared directly with end-to-end XMage trainer throughput. An end-to-end training speedup over XMage has not yet been established; designated-hardware trainer throughput remains an open roadmap gate.
 
 ## Reference replay corpora
 
@@ -96,17 +102,18 @@ $env:MTG_KERNEL_RL_ENV_BIN = (Resolve-Path "target/release/kernel_rl_env.exe")
 uv run --no-sync python -m unittest discover -s python/tests -v
 ```
 
-GitHub Actions runs the same substantive checks on Linux and Windows. The Windows environment binary has the `.exe` suffix.
+GitHub Actions runs the same substantive checks in independent Linux and Windows jobs. Each job validates platform-local behavior; CI does not compare cross-OS training, checkpoint, or evaluation artifact bytes. The Windows environment binary has the `.exe` suffix.
 
 ## Repository layout
 
 - `mtg-kernel/`: Rust rules kernel, JSONL environment, tests, and diagnostic examples
 - `python/mtg_kernel_rl/`: Python client, model, trainer, runner, evaluators, and artifact stores
 - `python/tests/`: unit, failure-boundary, determinism, and real-environment tests
-- `data/`: generated card registry and canonical Pauper pool/support manifests
+- `data/`: generated card registry, canonical Pauper pool/support manifests, and the build-time-validated Burn/Rally runtime catalog
 - `corpus_archives_v1.json`: release-asset byte locks and content-lock linkage
 - `uv.lock`: exact CPU reference-environment dependency resolution
 - `ROADMAP.md`: science-readiness gates and ordered deck implementation plan
+- `RUNTIME_DECKS_V1_VALIDATION.md`: bounded Burn/Rally runtime, reproducibility, and throughput evidence
 - `CORPUS_CONTENT_LOCKS.md`: replay-corpus integrity contract
 - `EXTRACTION_PROVENANCE.md`: exact parent/standalone cutover mapping
 

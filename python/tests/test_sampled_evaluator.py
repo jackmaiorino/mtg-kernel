@@ -572,6 +572,62 @@ class SampledV3FreezeTest(unittest.TestCase):
             importlib.reload(sampled_store_mod)
 
 
+class SampledRequestBoundaryTest(unittest.TestCase):
+    def test_mirror_deck_guard_precedes_store_launch_lock_and_output(self) -> None:
+        class ReachedPreflight(RuntimeError):
+            pass
+
+        def call(root: Path, deck_ids: tuple[str, str]) -> EvaluationResult:
+            return evaluate_sampled(
+                training_store=root / "missing-store",
+                expected_candidate_head="a" * 64,
+                env_bin=root / "missing-env",
+                out_dir=root / "sampled-evaluation",
+                pairs=1,
+                base_seed=0,
+                bootstrap_replicates=1_000,
+                max_physical_decisions=1,
+                max_policy_steps=1,
+                timeout_ms=1,
+                deck_ids=deck_ids,
+            )
+
+        for deck_ids in (("Burn", "Burn"), ("Rally", "Rally")):
+            with self.subTest(allowed=deck_ids), tempfile.TemporaryDirectory() as tmp_name:
+                root = Path(tmp_name)
+                with (
+                    mock.patch.object(
+                        sampled_mod,
+                        "_preflight_store",
+                        side_effect=ReachedPreflight("store preflight reached"),
+                    ) as preflight,
+                    mock.patch.object(sampled_mod, "OutputLock") as output_lock,
+                    mock.patch.object(sampled_mod, "KernelRlClient") as client,
+                ):
+                    with self.assertRaisesRegex(ReachedPreflight, "store preflight reached"):
+                        call(root, deck_ids)
+                preflight.assert_called_once()
+                self.assertEqual(preflight.call_args.kwargs["deck_ids"], deck_ids)
+                output_lock.assert_not_called()
+                client.assert_not_called()
+                self.assertFalse((root / "sampled-evaluation").exists())
+
+        for deck_ids in (("Burn", "Rally"), ("Rally", "Burn")):
+            with self.subTest(rejected=deck_ids), tempfile.TemporaryDirectory() as tmp_name:
+                root = Path(tmp_name)
+                with (
+                    mock.patch.object(sampled_mod, "_preflight_store") as preflight,
+                    mock.patch.object(sampled_mod, "OutputLock") as output_lock,
+                    mock.patch.object(sampled_mod, "KernelRlClient") as client,
+                ):
+                    with self.assertRaisesRegex(ValueError, "mirror pairing"):
+                        call(root, deck_ids)
+                preflight.assert_not_called()
+                output_lock.assert_not_called()
+                client.assert_not_called()
+                self.assertFalse((root / "sampled-evaluation").exists())
+
+
 class SampledEndToEndTest(unittest.TestCase):
     def test_aa_is_neutral_deterministic_strict_and_rng_free(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:

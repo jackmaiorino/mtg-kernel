@@ -1,21 +1,23 @@
 use mtg_kernel::card_def::{card_id_by_name, CardType, TargetSpec, CARD_DEFS};
+use mtg_kernel::effect::EffectOp;
 use mtg_kernel::engine::{
     self, Action, CastMode, DiscardResume, EffectDuration, Layers, PendingCast, PendingDiscard,
-    PendingSpellCopy, PlayOrCast, PlayPermission, PlayPermissionExpiry, SpellCopyStage,
-    UntilEndOfTurnEffect,
+    PendingOptionalCost, PendingOptionalCostSacrifice, PendingSpellCopy, PlayOrCast,
+    PlayPermission, PlayPermissionExpiry, SpellCopyStage, UntilEndOfTurnEffect,
 };
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::rl::{
-    build_run_manifest, burn_deck_hash, card_name, derive_env_seed, derive_policy_seed,
-    legal_action_candidates_v1, make_legal_action_v1, observe_v2, parse_audit_episode_jsonl,
-    parse_policy_episode_jsonl, parse_run_manifest_json, record_burn_mirror_episode,
-    validate_policy_episode_records, validate_rollout_artifact_bundle, write_rollout_artifacts,
-    ActionSemanticV1, EngineDecisionStageV2, EpisodeTerminalSummaryV1, GitDirtyFlagV1,
-    GitMetadataV1, LegalActionV1, ObservationV2, PlayerSeatV1, PolicyEpisodeRecordV2,
-    SpellCopyStageV2, TerminalClassificationV1, TerminalOutcomeV1, AUDIT_EPISODE_JSONL_FILENAME,
-    AUDIT_EPISODE_SCHEMA_VERSION, LEGAL_ACTION_SCHEMA_VERSION, LEGAL_ACTION_SCHEMA_VERSION_V5,
-    MANIFEST_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION_V5,
-    POLICY_EPISODE_JSONL_FILENAME, POLICY_EPISODE_SCHEMA_VERSION,
+    build_deck_pair_state, build_run_manifest, burn_deck_hash, burn_deck_ids, card_name,
+    derive_env_seed, derive_policy_seed, legal_action_candidates_v1, make_legal_action_v1,
+    observe_v2, parse_audit_episode_jsonl, parse_policy_episode_jsonl, parse_run_manifest_json,
+    rally_deck_hash, rally_deck_ids, record_burn_mirror_episode, validate_policy_episode_records,
+    validate_rollout_artifact_bundle, write_rollout_artifacts, ActionSemanticV1,
+    EngineDecisionStageV2, EpisodeTerminalSummaryV1, GitDirtyFlagV1, GitMetadataV1, LegalActionV1,
+    ObservationV2, PlayerSeatV1, PolicyEpisodeRecordV2, SpellCopyStageV2, TerminalClassificationV1,
+    TerminalOutcomeV1, AUDIT_EPISODE_JSONL_FILENAME, AUDIT_EPISODE_SCHEMA_VERSION,
+    LEGAL_ACTION_SCHEMA_VERSION, LEGAL_ACTION_SCHEMA_VERSION_V5, MANIFEST_SCHEMA_VERSION,
+    OBSERVATION_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION_V5, POLICY_EPISODE_JSONL_FILENAME,
+    POLICY_EPISODE_SCHEMA_VERSION,
 };
 use mtg_kernel::state::{
     Counters, GameObject, GameState, StackItem, StackItemKind, Step, Target, Zone,
@@ -117,6 +119,25 @@ fn records_to_jsonl<T: Serialize>(records: &[T]) -> String {
     out
 }
 
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn player_library_and_hand_defs(state: &GameState, player: PlayerId) -> Vec<u16> {
+    let player_state = &state.players[player.index()];
+    player_state
+        .library
+        .iter()
+        .chain(player_state.hand.iter())
+        .map(|&object_id| state.objects.get(object_id).card_def)
+        .collect()
+}
+
 fn contains_key(value: &Value, key: &str) -> bool {
     match value {
         Value::Object(map) => {
@@ -171,6 +192,416 @@ fn rl_contract_serde_roundtrip_and_schema_versions() {
         serde_json::from_str(&serde_json::to_string(&action).unwrap()).unwrap();
     assert_eq!(action_roundtrip, action);
     assert_ne!(burn_deck_hash(), 0);
+}
+
+#[test]
+fn runtime_deck_hashes_and_ordered_pair_construction_are_frozen() {
+    let burn = burn_deck_ids();
+    let rally = rally_deck_ids();
+    assert_eq!(burn.len(), 60);
+    assert_eq!(rally.len(), 60);
+    assert_eq!(
+        fnv1a64(&serde_json::to_vec(&burn).unwrap()),
+        burn_deck_hash()
+    );
+    assert_eq!(
+        fnv1a64(&serde_json::to_vec(&rally).unwrap()),
+        rally_deck_hash()
+    );
+    assert_eq!(burn_deck_hash(), 0x5fdb_7b92_986b_6fc1);
+    assert_eq!(rally_deck_hash(), 0x0c9f_01c2_5444_12bf);
+
+    for (p0, p1) in [
+        (&burn, &burn),
+        (&burn, &rally),
+        (&rally, &burn),
+        (&rally, &rally),
+    ] {
+        let first = build_deck_pair_state(0x5151, p0, p1).unwrap();
+        let second = build_deck_pair_state(0x5151, p0, p1).unwrap();
+        assert_eq!(
+            first.diagnostic_state_hash(),
+            second.diagnostic_state_hash()
+        );
+        assert_eq!(first.players[0].hand.len(), 7);
+        assert_eq!(first.players[1].hand.len(), 7);
+        assert_eq!(first.players[0].library.len(), 53);
+        assert_eq!(first.players[1].library.len(), 53);
+
+        let mut actual_p0 = player_library_and_hand_defs(&first, PlayerId::P0);
+        let mut actual_p1 = player_library_and_hand_defs(&first, PlayerId::P1);
+        let mut expected_p0 = p0.to_vec();
+        let mut expected_p1 = p1.to_vec();
+        actual_p0.sort_unstable();
+        actual_p1.sort_unstable();
+        expected_p0.sort_unstable();
+        expected_p1.sort_unstable();
+        assert_eq!(actual_p0, expected_p0);
+        assert_eq!(actual_p1, expected_p1);
+    }
+}
+
+#[test]
+fn rl_contract_combat_projection_omits_tokens_that_ceased_to_exist() {
+    let mut state = empty_state();
+    let attacker = make_object(
+        &mut state,
+        PlayerId::P0,
+        "Human Soldier Token",
+        Zone::Battlefield,
+    );
+    let blocker = make_object(&mut state, PlayerId::P1, "Samurai Token", Zone::Battlefield);
+    state.step = Step::Main2;
+    state.engine.combat.attackers_declared = true;
+    state.engine.combat.blockers_declared = true;
+    state.engine.combat.attackers = vec![attacker];
+    state.engine.combat.blocked_by = vec![(attacker, vec![blocker])];
+    assert!(mtg_kernel::event::cease_to_exist(&mut state, attacker));
+
+    let observation = observe_for_test(&state, PlayerId::P0, 0);
+    assert!(observation.projection.combat.ordered_attackers.is_empty());
+    assert!(observation
+        .projection
+        .combat
+        .attacker_to_ordered_blockers
+        .is_empty());
+}
+
+#[test]
+fn rl_contract_keeps_public_provenance_for_a_detached_resolving_spell() {
+    let mut state = empty_state();
+    let source = make_object(&mut state, PlayerId::P0, "Faithless Looting", Zone::Stack);
+    state.engine.pending_discard = Some(PendingDiscard {
+        player: PlayerId::P0,
+        count: 2,
+        resume: DiscardResume::FinishSpellResolution {
+            source,
+            to_zone: Zone::Graveyard,
+        },
+    });
+
+    let observation = observe_for_test(&state, PlayerId::P0, 0);
+    let pending = observation
+        .projection
+        .engine_context
+        .pending_discard
+        .expect("the resolving discard remains public");
+    let resume_source = pending
+        .resume_source
+        .expect("the detached resolving spell remains public provenance");
+    assert_eq!(resume_source.arena_id, source.0);
+    assert_eq!(resume_source.zone, Zone::Stack);
+}
+
+#[test]
+fn rl_contract_keeps_both_optional_cost_refs_for_a_detached_resolving_spell() {
+    let mut state = empty_state();
+    let source = make_object(&mut state, PlayerId::P0, "Highway Robbery", Zone::Stack);
+    state.engine.pending_optional_cost = Some(PendingOptionalCost {
+        player: PlayerId::P0,
+        source,
+        discard: 1,
+        sacrifice_lands: 1,
+        discard_payable: true,
+        sacrifice_payable: false,
+        then: EffectOp::Sequence(Vec::new()),
+        spell_resume: Some((source, Zone::Graveyard)),
+    });
+
+    let observation = observe_for_test(&state, PlayerId::P0, 0);
+    let pending = observation
+        .projection
+        .engine_context
+        .pending_optional_cost
+        .expect("the optional-cost decision remains public");
+    assert_eq!(pending.source.expect("public source").arena_id, source.0);
+    assert_eq!(
+        pending
+            .spell_resume_source
+            .expect("public spell-resume source")
+            .arena_id,
+        source.0
+    );
+    assert_eq!(pending.spell_resume_zone, Some(Zone::Graveyard));
+}
+
+#[test]
+fn rl_contract_nonresolving_optional_cost_sources_keep_normal_visibility() {
+    let mut state = empty_state();
+    let hidden = make_object(&mut state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
+    state.engine.pending_optional_cost = Some(PendingOptionalCost {
+        player: PlayerId::P1,
+        source: hidden,
+        discard: 1,
+        sacrifice_lands: 0,
+        discard_payable: true,
+        sacrifice_payable: false,
+        then: EffectOp::Sequence(Vec::new()),
+        spell_resume: None,
+    });
+    let optional = observe_for_test(&state, PlayerId::P0, 0)
+        .projection
+        .engine_context
+        .pending_optional_cost
+        .expect("optional-cost context");
+    assert!(optional.source.is_none());
+    assert!(optional.spell_resume_source.is_none());
+
+    state.engine.pending_optional_cost = None;
+    state.engine.pending_optional_cost_sacrifice = Some(PendingOptionalCostSacrifice {
+        player: PlayerId::P1,
+        source: hidden,
+        remaining: 1,
+        chosen: Vec::new(),
+        then: EffectOp::Sequence(Vec::new()),
+        spell_resume: None,
+    });
+    let sacrifice = observe_for_test(&state, PlayerId::P0, 1)
+        .projection
+        .engine_context
+        .pending_optional_cost_sacrifice
+        .expect("optional-cost sacrifice context");
+    assert!(sacrifice.source.is_none());
+    assert!(sacrifice.spell_resume_source.is_none());
+
+    state.engine.pending_optional_cost_sacrifice = None;
+    state.engine.pending_discard = Some(PendingDiscard {
+        player: PlayerId::P1,
+        count: 1,
+        resume: DiscardResume::FinishOptionalCost {
+            source: hidden,
+            controller: PlayerId::P1,
+            then: Box::new(EffectOp::Sequence(Vec::new())),
+            spell_resume: None,
+        },
+    });
+    let discard = observe_for_test(&state, PlayerId::P0, 2)
+        .projection
+        .engine_context
+        .pending_discard
+        .expect("optional-cost discard context");
+    assert!(discard.resume_source.is_none());
+}
+
+#[test]
+fn rl_contract_detached_source_declassification_requires_exact_stack_binding() {
+    let mut state = empty_state();
+    let hidden = make_object(&mut state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
+    let other = make_object(&mut state, PlayerId::P1, "Highway Robbery", Zone::Stack);
+
+    state.engine.pending_optional_cost = Some(PendingOptionalCost {
+        player: PlayerId::P1,
+        source: hidden,
+        discard: 1,
+        sacrifice_lands: 0,
+        discard_payable: true,
+        sacrifice_payable: false,
+        then: EffectOp::Sequence(Vec::new()),
+        spell_resume: Some((other, Zone::Graveyard)),
+    });
+    let mismatch = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P0, 0)
+        .unwrap_err()
+        .to_string();
+    assert!(mismatch.contains("source binding mismatch"));
+
+    state
+        .engine
+        .pending_optional_cost
+        .as_mut()
+        .unwrap()
+        .spell_resume = Some((hidden, Zone::Graveyard));
+    let wrong_zone = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P0, 1)
+        .unwrap_err()
+        .to_string();
+    assert!(wrong_zone.contains("public Stack zone marker"));
+
+    state.engine.pending_optional_cost = None;
+    state.engine.pending_optional_cost_sacrifice = Some(PendingOptionalCostSacrifice {
+        player: PlayerId::P1,
+        source: hidden,
+        remaining: 1,
+        chosen: Vec::new(),
+        then: EffectOp::Sequence(Vec::new()),
+        spell_resume: Some((other, Zone::Graveyard)),
+    });
+    let sacrifice_mismatch = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P0, 2)
+        .unwrap_err()
+        .to_string();
+    assert!(sacrifice_mismatch.contains("source binding mismatch"));
+
+    state.engine.pending_optional_cost_sacrifice = None;
+    state.engine.pending_discard = Some(PendingDiscard {
+        player: PlayerId::P1,
+        count: 1,
+        resume: DiscardResume::FinishOptionalCost {
+            source: hidden,
+            controller: PlayerId::P1,
+            then: Box::new(EffectOp::Sequence(Vec::new())),
+            spell_resume: Some((other, Zone::Graveyard)),
+        },
+    });
+    let discard_mismatch = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P0, 3)
+        .unwrap_err()
+        .to_string();
+    assert!(discard_mismatch.contains("source binding mismatch"));
+
+    state.engine.pending_discard = Some(PendingDiscard {
+        player: PlayerId::P1,
+        count: 1,
+        resume: DiscardResume::FinishSpellResolution {
+            source: hidden,
+            to_zone: Zone::Graveyard,
+        },
+    });
+    let spell_wrong_zone = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P0, 4)
+        .unwrap_err()
+        .to_string();
+    assert!(spell_wrong_zone.contains("public Stack zone marker"));
+}
+
+#[test]
+fn rl_contract_combat_projection_preserves_indexed_non_token_history() {
+    let mut state = empty_state();
+    let attacker = make_object(
+        &mut state,
+        PlayerId::P0,
+        "Goblin Tomb Raider",
+        Zone::Battlefield,
+    );
+    let blocker = make_object(
+        &mut state,
+        PlayerId::P1,
+        "Voldaren Epicure",
+        Zone::Battlefield,
+    );
+    state.step = Step::Main2;
+    state.engine.combat.attackers_declared = true;
+    state.engine.combat.blockers_declared = true;
+    state.engine.combat.attackers = vec![attacker];
+    state.engine.combat.blocked_by = vec![(attacker, vec![blocker])];
+
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(blocker, Zone::Graveyard),
+    );
+    let historical_blocker = observe_for_test(&state, PlayerId::P0, 0);
+    assert_eq!(
+        historical_blocker.projection.combat.ordered_attackers.len(),
+        1
+    );
+    assert_eq!(
+        historical_blocker
+            .projection
+            .combat
+            .attacker_to_ordered_blockers
+            .len(),
+        1
+    );
+    assert_eq!(
+        historical_blocker
+            .projection
+            .combat
+            .attacker_to_ordered_blockers[0]
+            .1[0]
+            .zone,
+        Zone::Graveyard
+    );
+
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(attacker, Zone::Graveyard),
+    );
+    let historical_pair = observe_for_test(&state, PlayerId::P0, 1);
+    assert_eq!(historical_pair.projection.combat.ordered_attackers.len(), 1);
+    assert_eq!(
+        historical_pair.projection.combat.ordered_attackers[0].zone,
+        Zone::Graveyard
+    );
+    assert_eq!(
+        historical_pair
+            .projection
+            .combat
+            .attacker_to_ordered_blockers
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn rl_contract_combat_projection_filters_a_ceased_token_blocker() {
+    let mut state = empty_state();
+    let attacker = make_object(
+        &mut state,
+        PlayerId::P0,
+        "Goblin Tomb Raider",
+        Zone::Battlefield,
+    );
+    let blocker = make_object(&mut state, PlayerId::P1, "Samurai Token", Zone::Battlefield);
+    state.step = Step::Main2;
+    state.engine.combat.attackers_declared = true;
+    state.engine.combat.blockers_declared = true;
+    state.engine.combat.attackers = vec![attacker];
+    state.engine.combat.blocked_by = vec![(attacker, vec![blocker])];
+    assert!(mtg_kernel::event::cease_to_exist(&mut state, blocker));
+
+    let observation = observe_for_test(&state, PlayerId::P0, 0);
+    assert_eq!(observation.projection.combat.ordered_attackers.len(), 1);
+    assert_eq!(
+        observation
+            .projection
+            .combat
+            .attacker_to_ordered_blockers
+            .len(),
+        1
+    );
+    assert!(
+        observation.projection.combat.attacker_to_ordered_blockers[0]
+            .1
+            .is_empty()
+    );
+}
+
+#[test]
+fn rl_contract_ceased_objects_do_not_reappear_as_live_effects_or_targets() {
+    let mut state = empty_state();
+    let token = make_object(
+        &mut state,
+        PlayerId::P1,
+        "Human Soldier Token",
+        Zone::Battlefield,
+    );
+    state
+        .engine
+        .until_end_of_turn
+        .push(UntilEndOfTurnEffect::ResolvedSetEffect {
+            object_ids: vec![token],
+            layer: Layers::POWER_TOUGHNESS,
+            timestamp: 1,
+            duration: EffectDuration::EndOfTurn,
+            power: 1,
+            toughness: 0,
+            grant_haste: false,
+        });
+    let source = make_object(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Stack);
+    state.stack.push(StackItem {
+        kind: StackItemKind::Spell,
+        source,
+        controller: PlayerId::P0,
+        targets: vec![Target::Object(token)],
+        is_copy: false,
+        inline_effect: None,
+        discarded: Vec::new(),
+        is_flashback: false,
+        mode_chosen: 0,
+        madness_offer: false,
+        kicked: false,
+        v4: mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal),
+    });
+    assert!(mtg_kernel::event::cease_to_exist(&mut state, token));
+
+    let observation = observe_for_test(&state, PlayerId::P0, 0);
+    assert!(observation.projection.continuous_effects.is_empty());
+    assert!(observation.projection.stack[0].targets.is_empty());
 }
 
 #[test]
