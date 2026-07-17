@@ -45,12 +45,15 @@ from .path_safety import (
 )
 
 
-RUN_SCHEMA = "kernel_rl_paired_evaluation/v2"
-GAME_SCHEMA = "kernel_rl_paired_evaluation_game/v2"
-PAIR_SCHEMA = "kernel_rl_paired_evaluation_pair/v2"
+RUN_SCHEMA = "kernel_rl_paired_evaluation/v3"
+GAME_SCHEMA = "kernel_rl_paired_evaluation_game/v3"
+PAIR_SCHEMA = "kernel_rl_paired_evaluation_pair/v3"
 V1_RUN_SCHEMA = "kernel_rl_paired_evaluation/v1"
 V1_GAME_SCHEMA = "kernel_rl_paired_evaluation_game/v1"
 V1_PAIR_SCHEMA = "kernel_rl_paired_evaluation_pair/v1"
+V2_RUN_SCHEMA = "kernel_rl_paired_evaluation/v2"
+V2_GAME_SCHEMA = "kernel_rl_paired_evaluation_game/v2"
+V2_PAIR_SCHEMA = "kernel_rl_paired_evaluation_pair/v2"
 RUN_FILE_NAME = "run.json"
 GAMES_FILE_NAME = "games.jsonl"
 PAIRS_FILE_NAME = "pairs.jsonl"
@@ -58,7 +61,8 @@ MAX_PAIR_COUNT = 50_000
 MIN_BOOTSTRAP_REPLICATES = 1_000
 MAX_BOOTSTRAP_REPLICATES = 100_000
 MAX_BOOTSTRAP_DRAWS = 50_000_000
-MAX_DECISIONS = 10_000_000
+MAX_PHYSICAL_DECISIONS = 10_000_000
+MAX_POLICY_STEPS = 10_000_000
 MAX_TIMEOUT_MS = 3_600_000
 MAX_RUN_BYTES = 2 * 1024 * 1024
 MAX_GAME_ROW_BYTES = 64 * 1024
@@ -66,8 +70,8 @@ MAX_PAIR_ROW_BYTES = 16 * 1024
 MAX_GAMES_BYTES = 128 * 1024 * 1024
 MAX_PAIRS_BYTES = 64 * 1024 * 1024
 EXACT_FRACTION_ENCODING = "unsigned-lowercase-hex-magnitude/v1"
-SOURCE_RUN_SCHEMA = "kernel_rl_train_run/v13"
-V1_SOURCE_RUN_SCHEMA = "kernel_rl_train_run/v12"
+SOURCE_RUN_SCHEMA = "kernel_rl_train_run/v14"
+V1_SOURCE_RUN_SCHEMA = "kernel_rl_train_run/v13"
 ALGORITHM_CONTRACT = {
     "descriptive_intervals": "fixed 95% Wilson over game-level outcomes",
     "name": "greedy_head_vs_update_zero_paired/v1",
@@ -296,7 +300,7 @@ def _publish_evaluation(
     is_verified_output_lock_entry(root, initial_entries[0])
     configuration = _require_keys(
         manifest_without_files.get("configuration"),
-        {"base_seed", "bootstrap_replicates", "deck_ids", "game_count", "max_decisions", "pair_count", "timeout_ms"},
+        {"base_seed", "bootstrap_replicates", "deck_ids", "game_count", "max_physical_decisions", "max_policy_steps", "pair_count", "timeout_ms"},
         "configuration",
     )
     _deck_ids(configuration["deck_ids"], "configuration.deck_ids")
@@ -396,15 +400,20 @@ def _parse_jsonl(
 def _validate_provenance(value: Any, context: str) -> dict[str, Any]:
     value = _require_keys(
         value,
-        {"protocol", "protocol_version", "schema_version", "kernel_version", "surface_version", "card_db_hash"},
+        {"protocol", "protocol_version", "schema_version", "kernel_version", "surface_version", "policy_surface_version", "card_db_hash"},
         context,
     )
     if value["protocol"] != "kernel_rl_jsonl":
         raise ValueError(f"{context}.protocol mismatch")
-    _int(value["protocol_version"], f"{context}.protocol_version", maximum=(1 << 32) - 1)
-    _int(value["schema_version"], f"{context}.schema_version", maximum=(1 << 32) - 1)
+    if _int(value["protocol_version"], f"{context}.protocol_version", maximum=(1 << 32) - 1) != 5:
+        raise ValueError(f"{context}.protocol_version mismatch")
+    if _int(value["schema_version"], f"{context}.schema_version", maximum=(1 << 32) - 1) != 5:
+        raise ValueError(f"{context}.schema_version mismatch")
     _str(value["kernel_version"], f"{context}.kernel_version")
-    _int(value["surface_version"], f"{context}.surface_version", maximum=(1 << 32) - 1)
+    if _int(value["surface_version"], f"{context}.surface_version", maximum=(1 << 32) - 1) != 2:
+        raise ValueError(f"{context}.surface_version mismatch")
+    if _int(value["policy_surface_version"], f"{context}.policy_surface_version", maximum=(1 << 32) - 1) != 5:
+        raise ValueError(f"{context}.policy_surface_version mismatch")
     _int(value["card_db_hash"], f"{context}.card_db_hash", maximum=(1 << 64) - 1)
     return value
 
@@ -510,7 +519,8 @@ def _validate_manifest(
             "feature_contract",
             "model_contract",
             "runtime_compatibility",
-            "trainer_max_decisions",
+            "trainer_max_physical_decisions",
+            "trainer_max_policy_steps",
         },
         "source_training",
     )
@@ -598,7 +608,18 @@ def _validate_manifest(
         compatibility,
         "evaluator runtime compatibility",
     )
-    trainer_max_decisions = _int(source["trainer_max_decisions"], "trainer_max_decisions", minimum=1, maximum=MAX_DECISIONS)
+    trainer_max_physical_decisions = _int(
+        source["trainer_max_physical_decisions"],
+        "trainer_max_physical_decisions",
+        minimum=1,
+        maximum=MAX_PHYSICAL_DECISIONS,
+    )
+    trainer_max_policy_steps = _int(
+        source["trainer_max_policy_steps"],
+        "trainer_max_policy_steps",
+        minimum=1,
+        maximum=MAX_POLICY_STEPS,
+    )
 
     snapshots = manifest["snapshots"]
     if type(snapshots) is not list or len(snapshots) != 2:
@@ -614,7 +635,7 @@ def _validate_manifest(
 
     config = _require_keys(
         manifest["configuration"],
-        {"base_seed", "bootstrap_replicates", "deck_ids", "game_count", "max_decisions", "pair_count", "timeout_ms"},
+        {"base_seed", "bootstrap_replicates", "deck_ids", "game_count", "max_physical_decisions", "max_policy_steps", "pair_count", "timeout_ms"},
         "configuration",
     )
     if _deck_ids(config["deck_ids"], "configuration.deck_ids") != deck_ids:
@@ -631,9 +652,22 @@ def _validate_manifest(
     )
     if pair_count * bootstrap_replicates > MAX_BOOTSTRAP_DRAWS:
         raise ValueError("pair_count * bootstrap_replicates exceeds limit")
-    max_decisions = _int(config["max_decisions"], "max_decisions", minimum=1, maximum=MAX_DECISIONS)
-    if max_decisions != trainer_max_decisions:
-        raise ValueError("evaluation max_decisions differs from source training contract")
+    max_physical_decisions = _int(
+        config["max_physical_decisions"],
+        "max_physical_decisions",
+        minimum=1,
+        maximum=MAX_PHYSICAL_DECISIONS,
+    )
+    max_policy_steps = _int(
+        config["max_policy_steps"],
+        "max_policy_steps",
+        minimum=1,
+        maximum=MAX_POLICY_STEPS,
+    )
+    if max_physical_decisions != trainer_max_physical_decisions:
+        raise ValueError("evaluation max_physical_decisions differs from source training contract")
+    if max_policy_steps != trainer_max_policy_steps:
+        raise ValueError("evaluation max_policy_steps differs from source training contract")
     _int(config["timeout_ms"], "timeout_ms", minimum=1, maximum=MAX_TIMEOUT_MS)
 
     seed_derivation = dataclasses.asdict(EvaluatorSeedDerivation())
@@ -674,8 +708,8 @@ def _validate_manifest(
         pair_count,
         base_seed,
         bootstrap_replicates,
-        max_decisions,
-        trainer_max_decisions,
+        max_physical_decisions,
+        max_policy_steps,
         candidate["head"],
         baseline["head"],
         deck_ids,
@@ -689,7 +723,8 @@ def _game_points_from_row(
     pair_index: int,
     game_in_pair: int,
     base_seed: int,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     deck_ids: tuple[str, str],
     deck_hashes: tuple[int, int],
 ) -> int:
@@ -710,9 +745,12 @@ def _game_points_from_row(
         "winner",
         "candidate_result",
         "candidate_half_points",
-        "decision_count",
-        "candidate_decisions",
-        "baseline_decisions",
+        "policy_step_count",
+        "physical_decision_count",
+        "candidate_policy_steps",
+        "baseline_policy_steps",
+        "candidate_physical_decisions",
+        "baseline_physical_decisions",
     }
     _require_keys(row, expected_keys, "game row")
     if row["schema"] != GAME_SCHEMA:
@@ -765,11 +803,44 @@ def _game_points_from_row(
         raise ValueError("candidate result mismatch")
     if _int(row["candidate_half_points"], "candidate_half_points", maximum=2) != points:
         raise ValueError("candidate half-points mismatch")
-    decisions = _int(row["decision_count"], "decision_count", minimum=1, maximum=max_decisions)
-    candidate_decisions = _int(row["candidate_decisions"], "candidate_decisions", maximum=max_decisions)
-    baseline_decisions = _int(row["baseline_decisions"], "baseline_decisions", maximum=max_decisions)
-    if candidate_decisions + baseline_decisions != decisions:
-        raise ValueError("policy decision counts do not sum to terminal decision_count")
+    policy_steps = _int(
+        row["policy_step_count"],
+        "policy_step_count",
+        minimum=1,
+        maximum=max_policy_steps,
+    )
+    physical_decisions = _int(
+        row["physical_decision_count"],
+        "physical_decision_count",
+        minimum=1,
+        maximum=max_physical_decisions,
+    )
+    candidate_policy_steps = _int(
+        row["candidate_policy_steps"],
+        "candidate_policy_steps",
+        maximum=max_policy_steps,
+    )
+    baseline_policy_steps = _int(
+        row["baseline_policy_steps"],
+        "baseline_policy_steps",
+        maximum=max_policy_steps,
+    )
+    candidate_physical_decisions = _int(
+        row["candidate_physical_decisions"],
+        "candidate_physical_decisions",
+        maximum=max_physical_decisions,
+    )
+    baseline_physical_decisions = _int(
+        row["baseline_physical_decisions"],
+        "baseline_physical_decisions",
+        maximum=max_physical_decisions,
+    )
+    if candidate_policy_steps + baseline_policy_steps != policy_steps:
+        raise ValueError("policy role counts do not sum to terminal policy_step_count")
+    if candidate_physical_decisions + baseline_physical_decisions != physical_decisions:
+        raise ValueError("physical role counts do not sum to terminal physical_decision_count")
+    if candidate_policy_steps < candidate_physical_decisions or baseline_policy_steps < baseline_physical_decisions:
+        raise ValueError("role policy steps cannot be fewer than physical decisions")
     return points
 
 
@@ -814,8 +885,8 @@ def _validate_captured_payload(
         pair_count,
         base_seed,
         bootstrap_replicates,
-        max_decisions,
-        _trainer_cap,
+        max_physical_decisions,
+        max_policy_steps,
         candidate_head,
         baseline_head,
         deck_ids,
@@ -843,7 +914,8 @@ def _validate_captured_payload(
             pair_index=pair_index,
             game_in_pair=0,
             base_seed=base_seed,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             deck_ids=deck_ids,
             deck_hashes=deck_hashes,
         )
@@ -852,7 +924,8 @@ def _validate_captured_payload(
             pair_index=pair_index,
             game_in_pair=1,
             base_seed=base_seed,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             deck_ids=deck_ids,
             deck_hashes=deck_hashes,
         )
@@ -937,6 +1010,9 @@ __all__ = [
     "V1_PAIR_SCHEMA",
     "V1_RUN_SCHEMA",
     "V1_SOURCE_RUN_SCHEMA",
+    "V2_GAME_SCHEMA",
+    "V2_PAIR_SCHEMA",
+    "V2_RUN_SCHEMA",
     "ValidatedEvaluation",
     "statistics_payload",
     "validate_evaluation",

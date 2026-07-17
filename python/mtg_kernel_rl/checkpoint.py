@@ -12,7 +12,11 @@ from typing import Any
 import torch
 
 from .artifacts import canonical_json_bytes, inject_fault, sha256_bytes
-from .artifact_io import validate_training_json_privacy, walk_checkpoint_scalar_metadata
+from .artifact_io import (
+    FORBIDDEN_TRAINING_JSON_KEYS,
+    validate_training_json_privacy,
+    walk_checkpoint_scalar_metadata,
+)
 from .checkpoint_io import (
     LoadedCheckpoint,
     MAX_CHECKPOINT_FILE_BYTES,
@@ -23,9 +27,9 @@ from .determinism import TrainerSeedDerivation, validate_uint63
 from .model import KernelPolicyValueNet, ModelConfig
 from .path_safety import mkdir_no_follow
 
-CHECKPOINT_SCHEMA = "kernel_rl_train_checkpoint/v3"
+CHECKPOINT_SCHEMA = "kernel_rl_train_checkpoint/v4"
 SIDECAR_SCHEMA = "kernel_rl_train_checkpoint_sidecar/v2"
-UPDATE_RECORD_SCHEMA = "kernel_rl_train_update_record/v3"
+UPDATE_RECORD_SCHEMA = "kernel_rl_train_update_record/v4"
 LATEST_SCHEMA = "kernel_rl_train_latest/v2"
 ADAM_ALGORITHM = "adam/torch-cpu-canonical-v1"
 ADAM_SETTINGS = {
@@ -481,7 +485,8 @@ def build_checkpoint_payload(
     optimizer_step_count: int,
     next_episode: int,
     outcomes_by_learner_seat: dict[str, dict[str, int]],
-    learner_decisions_by_seat: dict[str, int],
+    learner_policy_steps_by_seat: dict[str, int],
+    learner_physical_decisions_by_seat: dict[str, int],
     model: KernelPolicyValueNet,
     optimizer: torch.optim.Adam,
     learning_rate: float,
@@ -497,7 +502,10 @@ def build_checkpoint_payload(
         "optimizer_step_count": optimizer_step_count,
         "next_episode": next_episode,
         "outcomes_by_learner_seat": copy.deepcopy(outcomes_by_learner_seat),
-        "learner_decisions_by_seat": copy.deepcopy(learner_decisions_by_seat),
+        "learner_policy_steps_by_seat": copy.deepcopy(learner_policy_steps_by_seat),
+        "learner_physical_decisions_by_seat": copy.deepcopy(
+            learner_physical_decisions_by_seat
+        ),
         "model_config": model.config.to_dict(),
         "model_state": export_model_state(model),
         "optimizer_state": export_adam_state(optimizer, model, learning_rate),
@@ -520,7 +528,8 @@ def validate_checkpoint_payload(payload: Any, *, run_digest: str, compatibility:
         "optimizer_step_count",
         "next_episode",
         "outcomes_by_learner_seat",
-        "learner_decisions_by_seat",
+        "learner_policy_steps_by_seat",
+        "learner_physical_decisions_by_seat",
         "model_config",
         "model_state",
         "optimizer_state",
@@ -547,7 +556,11 @@ def validate_checkpoint_payload(payload: Any, *, run_digest: str, compatibility:
         raise ValueError("trained checkpoint must advance next_episode")
     ModelConfig.from_dict(payload["model_config"])
     _validate_counter_map(payload["outcomes_by_learner_seat"], {"win", "loss", "draw"})
-    _validate_counter_map(payload["learner_decisions_by_seat"], None)
+    _validate_counter_map(payload["learner_policy_steps_by_seat"], None)
+    _validate_counter_map(payload["learner_physical_decisions_by_seat"], None)
+    for seat in ("p0", "p1"):
+        if payload["learner_policy_steps_by_seat"][seat] < payload["learner_physical_decisions_by_seat"][seat]:
+            raise ValueError("checkpoint learner policy steps cannot be fewer than physical decisions")
     _validate_seed_derivation(payload["seed_derivation"])
     _validate_provenance(payload["provenance"])
     _validate_adam_state_metadata(
@@ -563,6 +576,8 @@ def validate_checkpoint_payload(payload: Any, *, run_digest: str, compatibility:
 
 def validate_checkpoint_metadata_privacy(payload: Any) -> None:
     def visitor(value: str, context: str) -> None:
+        if context.endswith(".<key>") and value in FORBIDDEN_TRAINING_JSON_KEYS:
+            raise ValueError(f"forbidden training artifact field {value!r} at {context}")
         validate_training_json_privacy(value, context)
 
     walk_checkpoint_scalar_metadata(payload, visitor)
@@ -580,7 +595,15 @@ def _validate_seed_derivation(value: Any) -> None:
 
 
 def _validate_provenance(value: Any) -> None:
-    required = {"protocol", "protocol_version", "schema_version", "kernel_version", "surface_version", "card_db_hash"}
+    required = {
+        "protocol",
+        "protocol_version",
+        "schema_version",
+        "kernel_version",
+        "surface_version",
+        "policy_surface_version",
+        "card_db_hash",
+    }
     if not isinstance(value, dict) or set(value) != required:
         raise ValueError("checkpoint provenance keys mismatch")
     if value["protocol"] != PROTOCOL_NAME:
@@ -589,8 +612,10 @@ def _validate_provenance(value: Any) -> None:
         raise ValueError("checkpoint provenance protocol_version mismatch")
     if value["schema_version"] != SCHEMA_VERSION:
         raise ValueError("checkpoint provenance schema_version mismatch")
-    if type(value["surface_version"]) is not int or value["surface_version"] < 0:
-        raise ValueError("checkpoint provenance surface_version must be a nonnegative int")
+    if value["surface_version"] != 2:
+        raise ValueError("checkpoint provenance surface_version mismatch")
+    if value["policy_surface_version"] != 5:
+        raise ValueError("checkpoint provenance policy_surface_version mismatch")
     if type(value["kernel_version"]) is not str or not value["kernel_version"]:
         raise ValueError("checkpoint provenance kernel_version must be nonempty")
     if type(value["card_db_hash"]) is not int or value["card_db_hash"] < 0 or value["card_db_hash"] > 0xFFFF_FFFF_FFFF_FFFF:

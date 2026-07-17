@@ -85,6 +85,13 @@ def _generated_file_uri_rejections() -> list[str]:
 
 
 class ArtifactTest(unittest.TestCase):
+    def test_privileged_environment_hash_metadata_keys_are_forbidden(self) -> None:
+        for key in ("environment_hash", "environment_hash_algorithm"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                validate_training_json_privacy({"metadata": {key: "forbidden"}})
+            with self.subTest(checkpoint_key=key), self.assertRaises(ValueError):
+                validate_checkpoint_metadata_privacy({"metadata": {key: "forbidden"}})
+
     def test_canonical_json_atomic_roundtrip_and_strict_parse(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
             tmp = Path(tmp_name)
@@ -114,7 +121,7 @@ class ArtifactTest(unittest.TestCase):
             tmp = Path(tmp_name)
             records = [
                 {
-                    "schema": "kernel_rl_train_update_record/v3",
+                    "schema": "kernel_rl_train_update_record/v4",
                     "run_digest": "r",
                     "update": 0,
                     "parent_head": None,
@@ -122,13 +129,14 @@ class ArtifactTest(unittest.TestCase):
                     "episode_count": 0,
                     "episode_end_exclusive": 0,
                     "optimizer_step": False,
-                    "learner_decision_count": 0,
+                    "learner_policy_step_count": 0,
+                    "learner_physical_decision_count": 0,
                     "loss": {"policy_sum_hex": None, "value_sum_hex": None, "loss_hex": None},
                     "episode_summaries": [],
                     "post_update_logical_sha256": "h0",
                 },
                 {
-                    "schema": "kernel_rl_train_update_record/v3",
+                    "schema": "kernel_rl_train_update_record/v4",
                     "run_digest": "r",
                     "update": 1,
                     "parent_head": "h0",
@@ -136,20 +144,24 @@ class ArtifactTest(unittest.TestCase):
                     "episode_count": 1,
                     "episode_end_exclusive": 1,
                     "optimizer_step": True,
-                    "learner_decision_count": 2,
+                    "learner_policy_step_count": 2,
+                    "learner_physical_decision_count": 2,
                     "loss": {"policy_sum_hex": "0x1.0p+0", "value_sum_hex": "0x1.0p+0", "loss_hex": "0x1.0p+0"},
                     "episode_summaries": [
                         {
-                            "schema": "kernel_rl_train_episode_summary/v3",
+                            "schema": "kernel_rl_train_episode_summary/v4",
                             "episode": 0,
                             "env_seed": 1,
                             "learner_seat": "p0",
                             "terminal_outcome": "p0_win",
                             "winner": "p0",
                             "learner_return": 1,
-                            "decision_count": 2,
-                            "learner_decision_count": 2,
-                            "opponent_decision_count": 0,
+                            "policy_step_count": 2,
+                            "physical_decision_count": 2,
+                            "learner_policy_step_count": 2,
+                            "opponent_policy_step_count": 0,
+                            "learner_physical_decision_count": 2,
+                            "opponent_physical_decision_count": 0,
                             "trajectory_digest": "d",
                         }
                     ],

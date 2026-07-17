@@ -95,7 +95,7 @@ fn two_islands_pay_uu_exactly() {
 
 #[test]
 fn island_snapshot_restore_preserves_schema_v4_and_stable_action_identity() {
-    assert_eq!(RL_SESSION_SCHEMA_VERSION, 4);
+    assert_eq!(RL_SESSION_SCHEMA_VERSION, 5);
     let mut state = ready_main1();
     let island = put_on_battlefield(&mut state, "Island");
     preflight_fully_supported_deck(&[state.objects.get(island).card_def]).unwrap();

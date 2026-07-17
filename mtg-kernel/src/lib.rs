@@ -20,6 +20,7 @@ pub mod engine;
 pub mod event;
 pub mod ids;
 pub mod mana;
+pub mod policy_surface_v5;
 pub mod rl;
 pub mod rl_session;
 pub mod snapshot;

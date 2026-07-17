@@ -30,41 +30,46 @@ class TrainerDeterminismTest(unittest.TestCase):
     def test_sha256_evaluator_action_seed_goldens_and_separation(self) -> None:
         self.assertEqual(
             EVALUATOR_ACTION_SEED_DERIVATION_VERSION,
-            "kernel-python-rl-evaluator-action-sha256-v1",
+            "kernel-python-rl-evaluator-action-sha256-v2",
         )
         vectors = (
-            ((71_501, 0, "p0", 0), 0x5505_712D_47A9_47E7),
-            ((71_501, 0, "p1", 0), 0x21AD_2902_4A1D_0C9F),
-            ((71_501, 0, "p0", 1), 0x6A83_203A_4BF4_D3BC),
-            ((71_501, 1, "p0", 0), 0x4DAC_7809_C822_4C5E),
-            ((0, 0, "p0", 0), 0x3677_ACD7_8C36_6E48),
-            (((1 << 63) - 1, (1 << 63) - 1, "p1", (1 << 63) - 1), 0x6C67_B41B_B570_51A6),
+            ((71_501, 0, "p0", 0, 0), 0x25F1_DB21_FAA0_5C9C),
+            ((71_501, 0, "p1", 0, 0), 0x66D1_90AE_9083_6DF9),
+            ((71_501, 0, "p0", 1, 0), 0x2D8A_C6AB_C582_27C9),
+            ((71_501, 0, "p0", 0, 1), 0x7549_9CDD_5D95_E8BB),
+            ((71_501, 1, "p0", 0, 0), 0x708D_F9E8_8868_9E0B),
+            ((0, 0, "p0", 0, 0), 0x2824_03F5_A3AC_1C4D),
+            (((1 << 63) - 1, (1 << 63) - 1, "p1", (1 << 63) - 1, (1 << 32) - 1), 0x1B7F_46B3_EB34_F726),
         )
         for args, expected in vectors:
             with self.subTest(args=args):
                 self.assertEqual(derive_evaluation_action_seed(*args), expected)
         self.assertEqual(len({derive_evaluation_action_seed(*args) for args, _expected in vectors}), len(vectors))
         self.assertNotEqual(
-            derive_evaluation_action_seed(71_501, 0, "p0", 0),
+            derive_evaluation_action_seed(71_501, 0, "p0", 0, 0),
             derive_evaluation_env_seed(71_501, 0),
         )
         for bad in (True, -1, 2**63):
             with self.subTest(base_seed=bad), self.assertRaises((TypeError, ValueError)):
-                derive_evaluation_action_seed(bad, 0, "p0", 0)  # type: ignore[arg-type]
+                derive_evaluation_action_seed(bad, 0, "p0", 0, 0)  # type: ignore[arg-type]
             with self.subTest(pair_index=bad), self.assertRaises((TypeError, ValueError)):
-                derive_evaluation_action_seed(0, bad, "p0", 0)  # type: ignore[arg-type]
+                derive_evaluation_action_seed(0, bad, "p0", 0, 0)  # type: ignore[arg-type]
             with self.subTest(local_decision_index=bad), self.assertRaises((TypeError, ValueError)):
-                derive_evaluation_action_seed(0, 0, "p0", bad)  # type: ignore[arg-type]
+                derive_evaluation_action_seed(0, 0, "p0", bad, 0)  # type: ignore[arg-type]
+            with self.subTest(substep_index=bad), self.assertRaises((TypeError, ValueError)):
+                derive_evaluation_action_seed(0, 0, "p0", 0, bad)  # type: ignore[arg-type]
         for bad_seat in ("P0", "candidate", "", 0, True, None):
             with self.subTest(physical_seat=bad_seat), self.assertRaises((TypeError, ValueError)):
-                derive_evaluation_action_seed(0, 0, bad_seat, 0)  # type: ignore[arg-type]
+                derive_evaluation_action_seed(0, 0, bad_seat, 0, 0)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            derive_evaluation_action_seed(0, 0, "p0", 0, 2**32)
 
     def test_sha256_evaluator_seed_known_vectors_and_frozen_contract(self) -> None:
-        self.assertEqual(EVALUATOR_SEED_DERIVATION_VERSION, "kernel-python-rl-evaluator-sha256-v1")
-        self.assertEqual(derive_evaluation_bootstrap_seed(71501), 0x4389_D43A_6139_A202)
-        self.assertEqual(derive_evaluation_env_seed(71501, 0), 0x37E6_5017_E207_5B88)
-        self.assertEqual(derive_evaluation_env_seed(71501, 1), 0x5792_DDBA_A6C5_5F43)
-        self.assertEqual(derive_evaluation_env_seed(71501, 32), 0x5139_F8A6_C14F_1136)
+        self.assertEqual(EVALUATOR_SEED_DERIVATION_VERSION, "kernel-python-rl-evaluator-sha256-v2")
+        self.assertEqual(derive_evaluation_bootstrap_seed(71501), 0x42AE_257C_63EA_6815)
+        self.assertEqual(derive_evaluation_env_seed(71501, 0), 0x0E60_BEC6_8DE0_ED27)
+        self.assertEqual(derive_evaluation_env_seed(71501, 1), 0x5A6F_945C_7A2D_532E)
+        self.assertEqual(derive_evaluation_env_seed(71501, 32), 0x6A30_D51A_55C8_59A5)
         self.assertEqual(
             EvaluatorSeedDerivation().namespaces,
             (
@@ -72,14 +77,14 @@ class TrainerDeterminismTest(unittest.TestCase):
                 "evaluation-env/base_seed/pair_index",
             ),
         )
-        self.assertEqual(TRAINER_SEED_DERIVATION_VERSION, "kernel-python-rl-trainer-sha256-v1")
+        self.assertEqual(TRAINER_SEED_DERIVATION_VERSION, "kernel-python-rl-trainer-sha256-v2")
         self.assertEqual(
             TrainerSeedDerivation().namespaces,
             (
                 "model-init/base_seed",
                 "train-env/base_seed/pair_index",
-                "train-learner-action/base_seed/episode_index/learner_decision_index",
-                "train-opponent-action/base_seed/episode_index/opponent_decision_index",
+                "train-learner-action-group/base_seed/episode_index/learner_physical_decision_index -> train-learner-action-substep/group_seed/substep_index",
+                "train-opponent-action-group/base_seed/episode_index/opponent_physical_decision_index -> train-opponent-action-substep/group_seed/substep_index",
             ),
         )
         self.assertNotEqual(derive_evaluation_env_seed(71501, 0), derive_train_env_seed(71501, 0))
@@ -90,18 +95,22 @@ class TrainerDeterminismTest(unittest.TestCase):
                 derive_evaluation_env_seed(71501, bad)  # type: ignore[arg-type]
 
     def test_sha256_trainer_seed_known_vectors_and_separation(self) -> None:
-        self.assertEqual(derive_model_init_seed(71501), 9076772781811365075)
-        self.assertEqual(derive_train_env_seed(71501, 0), 7253935443031715823)
-        self.assertEqual(derive_train_env_seed(71501, 1), 7044699237811831443)
-        self.assertEqual(derive_train_learner_action_seed(71501, 2, 3), 7877844131612960500)
-        self.assertEqual(derive_train_opponent_action_seed(71501, 2, 3), 2429204417625999091)
+        self.assertEqual(derive_model_init_seed(71501), 4755442154187158375)
+        self.assertEqual(derive_train_env_seed(71501, 0), 5293664275683392565)
+        self.assertEqual(derive_train_env_seed(71501, 1), 7386941714276895345)
+        self.assertEqual(derive_train_learner_action_seed(71501, 2, 3, 0), 730580081334587889)
+        self.assertEqual(derive_train_learner_action_seed(71501, 2, 3, 1), 6181545364031931902)
+        self.assertEqual(derive_train_opponent_action_seed(71501, 2, 3, 0), 871712426949739466)
         self.assertEqual(derive_train_env_seed(71501, 0), derive_train_env_seed(71501, 0))
         self.assertNotEqual(derive_train_env_seed(71501, 0), derive_train_env_seed(71501, 1))
-        self.assertNotEqual(derive_train_env_seed(71501, 3), derive_train_learner_action_seed(71501, 3, 0))
+        self.assertNotEqual(derive_train_env_seed(71501, 3), derive_train_learner_action_seed(71501, 3, 0, 0))
         self.assertNotEqual(derive_train_env_seed(1, 256), derive_train_env_seed(256, 1))
         for bad in (True, -1, 2**63):
             with self.subTest(bad=bad), self.assertRaises((TypeError, ValueError)):
                 derive_model_init_seed(bad)  # type: ignore[arg-type]
+        for derive in (derive_train_learner_action_seed, derive_train_opponent_action_seed):
+            with self.subTest(derive=derive.__name__), self.assertRaises(ValueError):
+                derive(0, 0, 0, 2**32)
 
     def test_paired_env_seeds_and_actor_local_action_counters(self) -> None:
         seeds = [derive_train_env_seed(71501, episode // 2) for episode in range(6)]
@@ -110,12 +119,12 @@ class TrainerDeterminismTest(unittest.TestCase):
         self.assertEqual(seeds[4], seeds[5])
         self.assertNotEqual(seeds[1], seeds[2])
         self.assertEqual(
-            derive_train_learner_action_seed(71501, 4, 0),
-            derive_train_learner_action_seed(71501, 4, 0),
+            derive_train_learner_action_seed(71501, 4, 0, 0),
+            derive_train_learner_action_seed(71501, 4, 0, 0),
         )
         self.assertNotEqual(
-            derive_train_learner_action_seed(71501, 4, 0),
-            derive_train_learner_action_seed(71501, 4, 1),
+            derive_train_learner_action_seed(71501, 4, 0, 0),
+            derive_train_learner_action_seed(71501, 4, 0, 1),
         )
 
     def test_seeded_model_init_repeats_differs_and_ignores_global_rng(self) -> None:

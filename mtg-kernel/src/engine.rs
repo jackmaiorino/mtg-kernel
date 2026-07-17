@@ -6677,8 +6677,8 @@ mod tests {
     }
 
     #[test]
-    fn counter_target_rl_identity_and_snapshot_restore_remain_schema_v4_stable() {
-        assert_eq!(crate::rl_session::RL_SESSION_SCHEMA_VERSION, 4);
+    fn counter_target_rl_identity_and_snapshot_restore_remain_schema_v5_stable() {
+        assert_eq!(crate::rl_session::RL_SESSION_SCHEMA_VERSION, 5);
         let mut state = ready_game_in_main1(0);
         put_on_battlefield(&mut state, PlayerId::P0, "Island");
         put_on_battlefield(&mut state, PlayerId::P0, "Island");

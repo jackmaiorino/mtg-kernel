@@ -1,4 +1,4 @@
-"""Path-aware v4 feature contract and actor-relative encoder."""
+"""Path-aware v5 feature contract and actor-relative encoder."""
 
 from __future__ import annotations
 
@@ -15,9 +15,10 @@ OPERATIONAL_ONLY = "operational_only"
 FORBIDDEN = "forbidden"
 CLASSIFICATIONS = (MODEL_INPUT, OPERATIONAL_ONLY, FORBIDDEN)
 
-FEATURE_SCHEMA_VERSION = "actor-relative-v4-python-3"
-FEATURE_REGISTRY_VERSION = "rust-observation-v4-action-v4-registry-3"
-ENCODING_CONTRACT_VERSION = "actor-relative-node-graph-9"
+FEATURE_SCHEMA_VERSION = "actor-relative-v5-python-4"
+FEATURE_REGISTRY_VERSION = "rust-observation-v5-action-v5-registry-4"
+ENCODING_CONTRACT_VERSION = "actor-relative-node-graph-10"
+MODEL_CONTRACT_VERSION = "kernel-policy-value-net-6"
 
 STATE_HASH_DIM = 96
 ACTION_HASH_DIM = 96
@@ -51,6 +52,7 @@ ENGINE_STAGES = [
     "halted",
 ]
 SURFACE_STAGES = ["priority", "declare_blockers_for_attacker", "discard_pick", "optional_cost_use", "optional_cost_which"]
+POLICY_SURFACE_STAGES = ["surface", "attacker_inclusion", "blocker_inclusion"]
 STACK_KINDS = ["spell", "activated_ability", "triggered_ability", "madness_offer"]
 CAST_METHODS = ["normal", "alternative", "flashback", "madness", "plotted", "escape", "bestow", "omen"]
 MANA_COLORS = ["W", "U", "B", "R", "G", "C"]
@@ -79,8 +81,8 @@ ACTION_KINDS = [
     "choose_spell_copy_retarget",
     "choose_madness_cast",
     "discard",
-    "declare_attackers",
-    "declare_blockers_for_attacker",
+    "choose_attacker_inclusion",
+    "choose_blocker_inclusion",
     "order_triggers",
 ]
 CAST_MODES = ["Normal", "Alternative"]
@@ -159,6 +161,7 @@ ACTION_REF_ROLES = [
     "candidate",
     "card",
     "attacker",
+    "blocker",
     "target_object",
     "cards",
     "attackers",
@@ -211,6 +214,8 @@ STATE_FEATURE_DIM = (
     + len(SURFACE_STAGES)
     + 2
     + 10
+    + len(POLICY_SURFACE_STAGES)
+    + 5
     + STATE_HASH_DIM
 )
 CARD_TOKEN_VOCAB_SIZE = 65_537
@@ -278,6 +283,10 @@ PRIVATE_CONTEXT_SUBROLES = [
     ("private_blockers", "remaining", "[]", "1", "[]"),
     ("private_discard", "chosen", "[]"),
     ("private_discard", "remaining_choices", "[]"),
+    ("private_combat_selection", "attacker"),
+    ("private_combat_selection", "selected", "[]"),
+    ("private_combat_selection", "current_candidate"),
+    ("private_combat_selection", "remaining_after_current", "[]"),
 ]
 CONTEXT_SUBROLE_IDS = {path: i for i, path in enumerate(PENDING_CONTEXT_SUBROLES + PRIVATE_CONTEXT_SUBROLES)}
 DETACHED_CONTEXT_REF_ALLOWLIST = {
@@ -980,6 +989,25 @@ PRIVATE_CONTEXT_ROOTS = (
     ("private_discard", PRIVATE_DISCARD, ("private_discard",)),
     ("private_optional_cost", PRIVATE_OPTIONAL_COST, ("private_optional_cost",)),
 )
+PRIVATE_COMBAT_SELECTION = ObjectSpec(
+    {
+        "attacker": Opt(CARD_STABLE_REF),
+        "candidate_index": I(MODEL_INPUT, maximum=U32),
+        "candidate_count": I(MODEL_INPUT, maximum=U32),
+        "selected": ListSpec(CARD_STABLE_REF),
+        "current_candidate": CARD_STABLE_REF,
+        "remaining_after_current": ListSpec(CARD_STABLE_REF),
+    }
+)
+POLICY_SURFACE_CONTEXT = ObjectSpec(
+    {
+        "current_stage": E(POLICY_SURFACE_STAGES),
+        "private_combat_selection": Opt(PRIVATE_COMBAT_SELECTION),
+    }
+)
+POLICY_PRIVATE_CONTEXT_ROOTS = (
+    ("private_combat_selection", PRIVATE_COMBAT_SELECTION, ("private_combat_selection",)),
+)
 PROJECTION = ObjectSpec(
     {
         "turn": I(OPERATIONAL_ONLY, maximum=U32),
@@ -1002,6 +1030,7 @@ PROJECTION = ObjectSpec(
         "exile_play_permissions": ListSpec(PERMISSION),
         "engine_context": ENGINE_CONTEXT,
         "surface_context": SURFACE_CONTEXT,
+        "policy_surface_context": POLICY_SURFACE_CONTEXT,
     }
 )
 KNOWN_LIBRARY_CARD = ObjectSpec(
@@ -1015,9 +1044,13 @@ OBSERVATION_SPEC = ObjectSpec(
         "schema_version": I(OPERATIONAL_ONLY, maximum=U32),
         "kernel_version": S(OPERATIONAL_ONLY),
         "surface_version": I(OPERATIONAL_ONLY, maximum=U32),
+        "policy_surface_version": I(OPERATIONAL_ONLY, maximum=U32),
         "card_db_hash": I(OPERATIONAL_ONLY, maximum=U64),
         "acting_player": Seat(),
         "step_index": I(OPERATIONAL_ONLY, maximum=U64),
+        "physical_decision_id": I(OPERATIONAL_ONLY, maximum=U64),
+        "substep_index": I(OPERATIONAL_ONLY, maximum=U32),
+        "substep_count": I(OPERATIONAL_ONLY, minimum=1, maximum=U32),
         "projection": PROJECTION,
         "own_hand": ListSpec(CARD_PRIVATE),
         "known_library_cards": ListSpec(ListSpec(KNOWN_LIBRARY_CARD), length=2),
@@ -1051,8 +1084,8 @@ ACTION_VARIANTS = {
     "choose_spell_copy_retarget": ObjectSpec({"action_kind": E(["choose_spell_copy_retarget"]), "actor": Seat(), "source": CARD_STABLE_REF, "change_target": B(MODEL_INPUT)}),
     "choose_madness_cast": ObjectSpec({"action_kind": E(["choose_madness_cast"]), "actor": Seat(), "card": CARD_STABLE_REF, "cast_it": B(MODEL_INPUT)}),
     "discard": ObjectSpec({"action_kind": E(["discard"]), "actor": Seat(), "cards": ListSpec(CARD_STABLE_REF)}),
-    "declare_attackers": ObjectSpec({"action_kind": E(["declare_attackers"]), "actor": Seat(), "attackers": ListSpec(CARD_STABLE_REF)}),
-    "declare_blockers_for_attacker": ObjectSpec({"action_kind": E(["declare_blockers_for_attacker"]), "actor": Seat(), "attacker": CARD_STABLE_REF, "blockers": ListSpec(CARD_STABLE_REF)}),
+    "choose_attacker_inclusion": ObjectSpec({"action_kind": E(["choose_attacker_inclusion"]), "actor": Seat(), "attacker": CARD_STABLE_REF, "include": B(MODEL_INPUT)}),
+    "choose_blocker_inclusion": ObjectSpec({"action_kind": E(["choose_blocker_inclusion"]), "actor": Seat(), "attacker": CARD_STABLE_REF, "blocker": CARD_STABLE_REF, "include": B(MODEL_INPUT)}),
     "order_triggers": ObjectSpec({"action_kind": E(["order_triggers"]), "actor": Seat(), "pending_sources": ListSpec(CARD_STABLE_REF), "order": ListSpec(I(MODEL_INPUT, maximum=U64))}),
 }
 ACTION_SEMANTIC = VariantSpec("action_kind", ACTION_VARIANTS, MODEL_INPUT)
@@ -1129,7 +1162,9 @@ def encoding_contract_fingerprint() -> str:
 
 
 def model_contract_fingerprint(schema: FeatureSchema) -> str:
-    return _sha256_json({"model_contract_version": "kernel-policy-value-net-5", "feature_schema": schema.__dict__})
+    return _sha256_json(
+        {"model_contract_version": MODEL_CONTRACT_VERSION, "feature_schema": schema.__dict__}
+    )
 
 
 def classification_registry() -> dict[str, str]:
@@ -1591,6 +1626,16 @@ def _state_features(obs: dict[str, Any]) -> list[float]:
         1.0 if surface["private_discard"] else 0.0,
         1.0 if surface["private_optional_cost"] else 0.0,
     ]
+    policy_surface = p["policy_surface_context"]
+    state += _one_hot(policy_surface["current_stage"], POLICY_SURFACE_STAGES)
+    private_combat = policy_surface["private_combat_selection"]
+    state += [
+        1.0 if private_combat is not None else 0.0,
+        _number(private_combat["candidate_index"] if private_combat is not None else 0, 32.0),
+        _number(private_combat["candidate_count"] if private_combat is not None else 0, 32.0),
+        _number(len(private_combat["selected"]) if private_combat is not None else 0, 32.0),
+        _number(len(private_combat["remaining_after_current"]) if private_combat is not None else 0, 32.0),
+    ]
     canonical = _canonical_model_value(obs, OBSERVATION_SPEC, ("observation",), _CanonicalContext(actor, obs))
     state += _digest_features("observation-state", canonical, STATE_HASH_DIM)
     return state
@@ -1943,6 +1988,20 @@ def _objects(obs: dict[str, Any]) -> tuple[_NodeRegistry, list[list[float]], lis
     for key, spec, path in PRIVATE_CONTEXT_ROOTS:
         if surface[key] is not None:
             _context_ref_edges(registry, edge_rows, edge_sources, edge_targets, surface[key], spec, path, "private_context", private_order)
+    policy_surface = p["policy_surface_context"]
+    for key, spec, path in POLICY_PRIVATE_CONTEXT_ROOTS:
+        if policy_surface[key] is not None:
+            _context_ref_edges(
+                registry,
+                edge_rows,
+                edge_sources,
+                edge_targets,
+                policy_surface[key],
+                spec,
+                path,
+                "private_context",
+                private_order,
+            )
     return registry, registry.rows, registry.tokens, registry.groups, registry.node_ids, edge_rows, edge_sources, edge_targets
 
 
@@ -1960,7 +2019,7 @@ def _semantic_actor(action: dict[str, Any]) -> str:
 
 def _action_card_refs(semantic: dict[str, Any], registry: _NodeRegistry) -> list[tuple[str, int, dict[str, Any], int, int]]:
     refs: list[tuple[str, int, dict[str, Any], int, int]] = []
-    for role in ("source", "candidate", "card", "attacker"):
+    for role in ("source", "candidate", "card", "attacker", "blocker"):
         if role in semantic:
             refs.append((role, 0, semantic[role], 0, registry.resolve(semantic[role])))
     if "target" in semantic and semantic["target"]["target_kind"] == "object":
@@ -2595,12 +2654,12 @@ def validate_legal_actions_contract(actions: Any, acting_player: str | None = No
     seen_stable: set[str] = set()
     for i, action in enumerate(actions):
         assert_action_classified(action)
-        if action["schema_version"] != 4:
+        if action["schema_version"] != 5:
             raise FeatureSchemaError("legal action schema mismatch")
         if action["selected_index"] != i:
             raise FeatureSchemaError("legal action selected_index is not contiguous")
-        if not action["stable_id"].startswith("legal-action-v4:"):
-            raise FeatureSchemaError("legal action stable_id must use the legal-action-v4 prefix")
+        if not action["stable_id"].startswith("legal-action-v5:"):
+            raise FeatureSchemaError("legal action stable_id must use the legal-action-v5 prefix")
         if action["stable_id"] in seen_stable:
             raise FeatureSchemaError("duplicate legal action stable_id")
         seen_stable.add(action["stable_id"])
@@ -2747,13 +2806,94 @@ def _validate_pending_effect_legal_actions(
         )
 
 
-def encode_decision(observation: dict[str, Any], legal_actions: list[dict[str, Any]]) -> EncodedDecision:
-    assert_observation_classified(observation)
-    if observation["schema_version"] != 4:
-        raise FeatureSchemaError("observation schema mismatch")
+def _validate_policy_surface_legal_actions(
+    observation: dict[str, Any], actions: list[dict[str, Any]]
+) -> None:
+    context = observation["projection"]["policy_surface_context"]
+    stage = context["current_stage"]
+    private = context["private_combat_selection"]
+    if stage == "surface":
+        if private is not None:
+            raise FeatureSchemaError("surface policy stage cannot expose private combat selection")
+        if any(
+            action["semantic"]["action_kind"]
+            in {"choose_attacker_inclusion", "choose_blocker_inclusion"}
+            for action in actions
+        ):
+            raise FeatureSchemaError("combat inclusion actions require a combat policy stage")
+        if observation["substep_index"] != 0 or observation["substep_count"] != 1:
+            raise FeatureSchemaError("surface policy decisions must be one-substep physical decisions")
+        return
+
+    if private is None:
+        raise FeatureSchemaError("combat policy stage requires private_combat_selection")
+    candidate_index = private["candidate_index"]
+    candidate_count = private["candidate_count"]
+    if candidate_count <= 0 or candidate_index >= candidate_count:
+        raise FeatureSchemaError("combat candidate index/count are invalid")
+    if observation["substep_index"] != candidate_index or observation["substep_count"] != candidate_count:
+        raise FeatureSchemaError("combat candidate position must match physical-decision substep metadata")
+    if len(private["selected"]) > candidate_index:
+        raise FeatureSchemaError("combat selected prefix is longer than completed candidate prefix")
+    if len(private["remaining_after_current"]) != candidate_count - candidate_index - 1:
+        raise FeatureSchemaError("combat remaining suffix length does not match candidate position")
+    all_candidates = [*private["selected"], private["current_candidate"], *private["remaining_after_current"]]
+    stable_keys = [_stable_key(ref) for ref in all_candidates]
+    if len(stable_keys) != len(set(stable_keys)):
+        raise FeatureSchemaError("combat policy candidates must be distinct physical objects")
+    actor = observation["acting_player"]
+    if stage == "attacker_inclusion":
+        if private["attacker"] is not None:
+            raise FeatureSchemaError("attacker inclusion context cannot carry a fixed attacker")
+        expected_kind = "choose_attacker_inclusion"
+        expected_ref_fields = {"attacker": private["current_candidate"]}
+        candidate_refs = all_candidates
+        if any(ref["controller"] != actor or ref["zone"] != "Battlefield" for ref in candidate_refs):
+            raise FeatureSchemaError("attacker inclusion candidates must be actor-controlled battlefield objects")
+    elif stage == "blocker_inclusion":
+        attacker = private["attacker"]
+        if attacker is None:
+            raise FeatureSchemaError("blocker inclusion context requires its fixed attacker")
+        if attacker["controller"] == actor or attacker["zone"] != "Battlefield":
+            raise FeatureSchemaError("blocker inclusion attacker must be an opposing battlefield object")
+        expected_kind = "choose_blocker_inclusion"
+        expected_ref_fields = {
+            "attacker": attacker,
+            "blocker": private["current_candidate"],
+        }
+        candidate_refs = all_candidates
+        if any(ref["controller"] != actor or ref["zone"] != "Battlefield" for ref in candidate_refs):
+            raise FeatureSchemaError("blocker inclusion candidates must be actor-controlled battlefield objects")
+    else:
+        raise FeatureSchemaError(f"unknown policy surface stage {stage!r}")
+
+    if len(actions) != 2:
+        raise FeatureSchemaError("combat inclusion decisions require exactly two legal actions")
+    for index, (action, include) in enumerate(zip(actions, (False, True))):
+        semantic = action["semantic"]
+        if action["selected_index"] != index or semantic["action_kind"] != expected_kind:
+            raise FeatureSchemaError("combat inclusion actions must be ordered exclude then include")
+        if semantic["actor"] != actor or semantic["include"] is not include:
+            raise FeatureSchemaError("combat inclusion action actor/boolean does not match its policy context")
+        for field, expected_ref in expected_ref_fields.items():
+            if semantic[field] != expected_ref:
+                raise FeatureSchemaError(f"combat inclusion action {field} does not match policy context")
+
+
+def validate_decision_contract(
+    observation: dict[str, Any], legal_actions: list[dict[str, Any]]
+) -> None:
     validate_legal_actions_contract(legal_actions, observation["acting_player"])
     _validate_spell_copy_legal_actions(observation, legal_actions)
     _validate_pending_effect_legal_actions(observation, legal_actions)
+    _validate_policy_surface_legal_actions(observation, legal_actions)
+
+
+def encode_decision(observation: dict[str, Any], legal_actions: list[dict[str, Any]]) -> EncodedDecision:
+    assert_observation_classified(observation)
+    if observation["schema_version"] != 5:
+        raise FeatureSchemaError("observation schema mismatch")
+    validate_decision_contract(observation, legal_actions)
     actor = observation["acting_player"]
     state = _state_features(observation)
     registry, object_rows, object_tokens, object_groups, object_node_ids, edge_rows, edge_sources, edge_targets = _objects(observation)
@@ -2828,7 +2968,7 @@ def every_action_variant_fixture(base_ref: dict[str, Any], target_ref: dict[str,
         second_ref = {**base_ref, "arena_id": base_ref["arena_id"] + 2, "card_db_id": base_ref["card_db_id"] + 2}
     target_object = {"target_kind": "object", "object": target_ref}
     return [
-        {"schema_version": 4, "selected_index": i, "stable_id": f"legal-action-v4:fixture-{i}", "display_text": f"text-{i}", "semantic": semantic}
+        {"schema_version": 5, "selected_index": i, "stable_id": f"legal-action-v5:fixture-{i}", "display_text": f"text-{i}", "semantic": semantic}
         for i, semantic in enumerate(
             [
                 {"action_kind": "pass", "actor": "p0"},
@@ -2856,8 +2996,8 @@ def every_action_variant_fixture(base_ref: dict[str, Any], target_ref: dict[str,
                 {"action_kind": "choose_spell_copy_retarget", "actor": "p0", "source": base_ref, "change_target": True},
                 {"action_kind": "choose_madness_cast", "actor": "p0", "card": base_ref, "cast_it": True},
                 {"action_kind": "discard", "actor": "p0", "cards": [base_ref, second_ref]},
-                {"action_kind": "declare_attackers", "actor": "p0", "attackers": [base_ref, second_ref]},
-                {"action_kind": "declare_blockers_for_attacker", "actor": "p0", "attacker": base_ref, "blockers": [second_ref]},
+                {"action_kind": "choose_attacker_inclusion", "actor": "p0", "attacker": base_ref, "include": True},
+                {"action_kind": "choose_blocker_inclusion", "actor": "p0", "attacker": base_ref, "blocker": second_ref, "include": True},
                 {"action_kind": "order_triggers", "actor": "p0", "pending_sources": [base_ref, second_ref], "order": [1, 0]},
             ]
         )

@@ -1,6 +1,6 @@
 """Python client, feature encoder, model, and runner for the kernel RL process."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from .evaluation_stats import (
     BootstrapSummary,

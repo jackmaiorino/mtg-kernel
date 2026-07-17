@@ -10,10 +10,11 @@ from typing import Any
 
 PROVENANCE = {
     "protocol": "kernel_rl_jsonl",
-    "protocol_version": 4,
-    "schema_version": 4,
+    "protocol_version": 5,
+    "schema_version": 5,
     "kernel_version": "0.0.3-spike",
     "surface_version": 2,
+    "policy_surface_version": 5,
     "card_db_hash": 13755609902749199750,
 }
 DECK_IDS = ("Burn", "Burn")
@@ -99,7 +100,7 @@ def complete_observation() -> dict[str, Any]:
     p0_land = p["battlefield"][0][1]
     p1_creature = p["battlefield"][1][0]
     p1_land = p["battlefield"][1][1]
-    # The live v4 contract intentionally preserves payment-time incarnation
+    # The live v5 contract intentionally preserves payment-time incarnation
     # provenance even after the object has changed zones/incarnations.
     p0_land["stable"]["zone_change_count"] = 1
     historical_paid_land = stable_ref(
@@ -238,12 +239,16 @@ def observation() -> dict[str, Any]:
     p1_land = public_card(5, 11, "p1")
     exile_card = public_card(9, 40, "p0", "Exile")
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "kernel_version": PROVENANCE["kernel_version"],
         "surface_version": PROVENANCE["surface_version"],
+        "policy_surface_version": PROVENANCE["policy_surface_version"],
         "card_db_hash": PROVENANCE["card_db_hash"],
         "acting_player": "p0",
         "step_index": 0,
+        "physical_decision_id": 0,
+        "substep_index": 0,
+        "substep_count": 1,
         "projection": {
             "turn": 1,
             "phase": "main1",
@@ -354,6 +359,10 @@ def observation() -> dict[str, Any]:
                 "private_discard": None,
                 "private_optional_cost": None,
             },
+            "policy_surface_context": {
+                "current_stage": "surface",
+                "private_combat_selection": None,
+            },
         },
         "own_hand": [self_hand, second_hand],
         "known_library_cards": [[], []],
@@ -366,9 +375,9 @@ def legal_actions(actor: str = "p0") -> list[dict[str, Any]]:
     src = stable_ref(1 if actor == "p0" else 101, 30, actor, "Hand")
     opponent = "p1" if actor == "p0" else "p0"
     return [
-        {"schema_version": 4, "selected_index": 0, "stable_id": f"legal-action-v4:{actor}:a", "semantic": {"action_kind": "pass", "actor": actor}, "display_text": "Pass"},
-        {"schema_version": 4, "selected_index": 1, "stable_id": f"legal-action-v4:{actor}:b", "semantic": {"action_kind": "cast_spell", "actor": actor, "source": src}, "display_text": "Cast Lightning Bolt"},
-        {"schema_version": 4, "selected_index": 2, "stable_id": f"legal-action-v4:{actor}:c", "semantic": {"action_kind": "choose_target", "actor": actor, "source": src, "remaining": 1, "target": {"target_kind": "player", "player": opponent}}, "display_text": "Target opponent"},
+        {"schema_version": 5, "selected_index": 0, "stable_id": f"legal-action-v5:{actor}:a", "semantic": {"action_kind": "pass", "actor": actor}, "display_text": "Pass"},
+        {"schema_version": 5, "selected_index": 1, "stable_id": f"legal-action-v5:{actor}:b", "semantic": {"action_kind": "cast_spell", "actor": actor, "source": src}, "display_text": "Cast Lightning Bolt"},
+        {"schema_version": 5, "selected_index": 2, "stable_id": f"legal-action-v5:{actor}:c", "semantic": {"action_kind": "choose_target", "actor": actor, "source": src, "remaining": 1, "target": {"target_kind": "player", "player": opponent}}, "display_text": "Target opponent"},
     ]
 
 
@@ -377,11 +386,11 @@ def complete_legal_actions() -> list[dict[str, Any]]:
     second = stable_ref(12, 31, "p0", "Hand")
     blocker = stable_ref(4, 21, "p1", "Battlefield")
     return [
-        {"schema_version": 4, "selected_index": 0, "stable_id": "legal-action-v4:a0", "semantic": {"action_kind": "pass", "actor": "p0"}, "display_text": "Pass"},
-        {"schema_version": 4, "selected_index": 1, "stable_id": "legal-action-v4:a1", "semantic": {"action_kind": "choose_target", "actor": "p0", "source": base, "remaining": 1, "target": {"target_kind": "object", "object": blocker}}, "display_text": "Target creature"},
-        {"schema_version": 4, "selected_index": 2, "stable_id": "legal-action-v4:a2", "semantic": {"action_kind": "declare_blockers_for_attacker", "actor": "p0", "attacker": base, "blockers": [blocker]}, "display_text": "Block"},
-        {"schema_version": 4, "selected_index": 3, "stable_id": "legal-action-v4:a3", "semantic": {"action_kind": "discard", "actor": "p0", "cards": [base, second]}, "display_text": "Discard two"},
-        {"schema_version": 4, "selected_index": 4, "stable_id": "legal-action-v4:a4", "semantic": {"action_kind": "order_triggers", "actor": "p0", "pending_sources": [base, second], "order": [1, 0]}, "display_text": "Order triggers"},
+        {"schema_version": 5, "selected_index": 0, "stable_id": "legal-action-v5:a0", "semantic": {"action_kind": "pass", "actor": "p0"}, "display_text": "Pass"},
+        {"schema_version": 5, "selected_index": 1, "stable_id": "legal-action-v5:a1", "semantic": {"action_kind": "choose_target", "actor": "p0", "source": base, "remaining": 1, "target": {"target_kind": "object", "object": blocker}}, "display_text": "Target creature"},
+        {"schema_version": 5, "selected_index": 2, "stable_id": "legal-action-v5:a2", "semantic": {"action_kind": "choose_kicker", "actor": "p0", "source": base, "pay": True}, "display_text": "Pay kicker"},
+        {"schema_version": 5, "selected_index": 3, "stable_id": "legal-action-v5:a3", "semantic": {"action_kind": "discard", "actor": "p0", "cards": [base, second]}, "display_text": "Discard two"},
+        {"schema_version": 5, "selected_index": 4, "stable_id": "legal-action-v5:a4", "semantic": {"action_kind": "order_triggers", "actor": "p0", "pending_sources": [base, second], "order": [1, 0]}, "display_text": "Order triggers"},
     ]
 
 
@@ -389,6 +398,7 @@ def actor_observation(actor: str, step: int = 0) -> dict[str, Any]:
     obs = observation()
     obs["acting_player"] = actor
     obs["step_index"] = step
+    obs["physical_decision_id"] = step
     obs["projection"]["priority_player"] = actor
     obs["own_hand"] = [
         {"stable": stable_ref(1 if actor == "p0" else 101, 30, actor, "Hand"), "card_name": "Lightning Bolt"},
@@ -397,17 +407,33 @@ def actor_observation(actor: str, step: int = 0) -> dict[str, Any]:
     return obs
 
 
-def decision_response(request_id: str = "r0", episode_id: int = 0, step: int = 0, actor: str = "p0") -> dict[str, Any]:
+def decision_response(
+    request_id: str = "r0",
+    episode_id: int = 0,
+    step: int = 0,
+    actor: str = "p0",
+    *,
+    physical_decision_id: int | None = None,
+    substep_index: int = 0,
+    substep_count: int = 1,
+) -> dict[str, Any]:
     obs = actor_observation(actor, step)
+    physical_decision_id = step if physical_decision_id is None else physical_decision_id
+    obs["physical_decision_id"] = physical_decision_id
+    obs["substep_index"] = substep_index
+    obs["substep_count"] = substep_count
     return {
         "response_type": "decision",
-        "schema_version": 4,
+        "schema_version": 5,
         "request_id": request_id,
         "provenance": copy.deepcopy(PROVENANCE),
         "deck_ids": list(DECK_IDS),
         "deck_hashes": list(DECK_HASHES),
         "episode_id": episode_id,
         "step": step,
+        "physical_decision_id": physical_decision_id,
+        "substep_index": substep_index,
+        "substep_count": substep_count,
         "acting_player": actor,
         "observation": obs,
         "legal_actions": legal_actions(actor),
@@ -415,7 +441,103 @@ def decision_response(request_id: str = "r0", episode_id: int = 0, step: int = 0
     }
 
 
-def terminal_response(request_id: str = "r1", episode_id: int = 0, decisions: int = 1, outcome: str = "p0_win") -> dict[str, Any]:
+def combat_decision_response(
+    request_id: str,
+    episode_id: int,
+    step: int,
+    candidate_index: int,
+    *,
+    actor: str = "p0",
+    physical_decision_id: int = 0,
+    stage: str = "attacker_inclusion",
+    candidates: list[dict[str, Any]] | None = None,
+    selected_indices: tuple[int, ...] = (),
+    attacker: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    candidates = candidates or [
+        stable_ref(201, 21, actor, "Battlefield"),
+        stable_ref(202, 22, actor, "Battlefield"),
+        stable_ref(203, 23, actor, "Battlefield"),
+    ]
+    candidate_count = len(candidates)
+    response = decision_response(
+        request_id,
+        episode_id,
+        step,
+        actor,
+        physical_decision_id=physical_decision_id,
+        substep_index=candidate_index,
+        substep_count=candidate_count,
+    )
+    if stage == "attacker_inclusion":
+        attacker = None
+        action_kind = "choose_attacker_inclusion"
+    elif stage == "blocker_inclusion":
+        if attacker is None:
+            opponent = "p1" if actor == "p0" else "p0"
+            attacker = stable_ref(901, 31, opponent, "Battlefield")
+        action_kind = "choose_blocker_inclusion"
+    else:
+        raise ValueError(stage)
+    private = {
+        "attacker": copy.deepcopy(attacker),
+        "candidate_index": candidate_index,
+        "candidate_count": candidate_count,
+        "selected": [copy.deepcopy(candidates[index]) for index in selected_indices],
+        "current_candidate": copy.deepcopy(candidates[candidate_index]),
+        "remaining_after_current": copy.deepcopy(candidates[candidate_index + 1 :]),
+    }
+    response["observation"]["projection"]["policy_surface_context"] = {
+        "current_stage": stage,
+        "private_combat_selection": private,
+    }
+    for ref in [*candidates, *([] if attacker is None else [attacker])]:
+        seat_index = 0 if ref["controller"] == "p0" else 1
+        visible = public_card(
+            ref["arena_id"],
+            ref["card_db_id"],
+            ref["controller"],
+            ref["zone"],
+        )
+        visible["stable"] = copy.deepcopy(ref)
+        response["observation"]["projection"]["battlefield"][seat_index].append(visible)
+    current = candidates[candidate_index]
+    actions = []
+    for selected_index, include in enumerate((False, True)):
+        semantic: dict[str, Any] = {
+            "action_kind": action_kind,
+            "actor": actor,
+            "include": include,
+        }
+        if stage == "attacker_inclusion":
+            semantic["attacker"] = copy.deepcopy(current)
+        else:
+            semantic["attacker"] = copy.deepcopy(attacker)
+            semantic["blocker"] = copy.deepcopy(current)
+        actions.append(
+            {
+                "schema_version": 5,
+                "selected_index": selected_index,
+                "stable_id": (
+                    f"legal-action-v5:{stage}:{physical_decision_id}:"
+                    f"{candidate_index}:{selected_index}"
+                ),
+                "semantic": semantic,
+                "display_text": "Include" if include else "Exclude",
+            }
+        )
+    response["legal_actions"] = actions
+    return response
+
+
+def terminal_response(
+    request_id: str = "r1",
+    episode_id: int = 0,
+    policy_steps: int = 1,
+    outcome: str = "p0_win",
+    *,
+    physical_decisions: int | None = None,
+) -> dict[str, Any]:
     if outcome == "p0_win":
         winner: str | None = "p0"
         reward = [1, -1]
@@ -429,7 +551,7 @@ def terminal_response(request_id: str = "r1", episode_id: int = 0, decisions: in
         raise ValueError(outcome)
     return {
         "response_type": "terminal",
-        "schema_version": 4,
+        "schema_version": 5,
         "request_id": request_id,
         "provenance": copy.deepcopy(PROVENANCE),
         "deck_ids": list(DECK_IDS),
@@ -441,7 +563,8 @@ def terminal_response(request_id: str = "r1", episode_id: int = 0, decisions: in
         "winner": winner,
         "terminal_reward": reward,
         "terminal_reason": "game_over",
-        "decision_count": decisions,
+        "policy_step_count": policy_steps,
+        "physical_decision_count": policy_steps if physical_decisions is None else physical_decisions,
     }
 
 

@@ -23,7 +23,7 @@ from .path_safety import is_verified_output_lock_entry, mkdir_no_follow, scandir
 
 FaultInjector = Callable[[str, Path | None], None]
 _FAULT_INJECTOR: FaultInjector | None = None
-SUMMARY_SCHEMA = "kernel_rl_train_summary/v2"
+SUMMARY_SCHEMA = "kernel_rl_train_summary/v3"
 
 
 @dataclass(frozen=True)
@@ -265,7 +265,8 @@ def _incremental_summary(*, latest: dict[str, Any], checkpoint_payload: dict[str
     episodes = int(checkpoint_payload["next_episode"])
     if episodes != learner_wins + learner_losses + draws:
         raise ValueError("checkpoint episode aggregate mismatch")
-    learner_decisions = int(checkpoint_payload["learner_decisions_by_seat"]["p0"]) + int(checkpoint_payload["learner_decisions_by_seat"]["p1"])
+    learner_policy_steps = int(checkpoint_payload["learner_policy_steps_by_seat"]["p0"]) + int(checkpoint_payload["learner_policy_steps_by_seat"]["p1"])
+    learner_physical_decisions = int(checkpoint_payload["learner_physical_decisions_by_seat"]["p0"]) + int(checkpoint_payload["learner_physical_decisions_by_seat"]["p1"])
     summary = {
         "schema": SUMMARY_SCHEMA,
         "run_digest": latest["run_digest"],
@@ -277,7 +278,8 @@ def _incremental_summary(*, latest: dict[str, Any], checkpoint_payload: dict[str
         "learner_wins": learner_wins,
         "learner_losses": learner_losses,
         "draws": draws,
-        "learner_decisions": learner_decisions,
+        "learner_policy_steps": learner_policy_steps,
+        "learner_physical_decisions": learner_physical_decisions,
         "optimizer_steps": int(checkpoint_payload["optimizer_step_count"]),
     }
     validate_training_json_privacy(summary)
@@ -367,7 +369,8 @@ def rebuild_derived_caches(out_dir: str | Path, records: list[dict[str, Any]], l
         "learner_wins": 0,
         "learner_losses": 0,
         "draws": 0,
-        "learner_decisions": 0,
+        "learner_policy_steps": 0,
+        "learner_physical_decisions": 0,
         "optimizer_steps": 0,
     }
     for record in records:
@@ -375,7 +378,10 @@ def rebuild_derived_caches(out_dir: str | Path, records: list[dict[str, Any]], l
         summary["generations"] += 1
         if record.get("optimizer_step") is True:
             summary["optimizer_steps"] += 1
-        summary["learner_decisions"] += int(record.get("learner_decision_count", 0))
+        summary["learner_policy_steps"] += int(record["learner_policy_step_count"])
+        summary["learner_physical_decisions"] += int(
+            record["learner_physical_decision_count"]
+        )
         for row in record.get("episode_summaries", []):
             episode_rows.append(row)
             summary["episodes"] += 1

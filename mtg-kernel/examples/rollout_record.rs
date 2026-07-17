@@ -5,8 +5,9 @@
 //!   --matchup burn_mirror --games 4 --seed 5151 --out local-training/kernel_rl/smoke_v2
 
 use mtg_kernel::rl::{
-    build_rollout_records, build_run_manifest, git_metadata, write_rollout_artifacts,
-    BURN_MIRROR_MATCHUP, DEFAULT_MAX_DECISIONS,
+    build_rollout_records_with_limits, build_run_manifest_with_limits, git_metadata,
+    write_rollout_artifacts, BURN_MIRROR_MATCHUP, DEFAULT_MAX_PHYSICAL_DECISIONS,
+    DEFAULT_MAX_POLICY_STEPS,
 };
 use std::path::PathBuf;
 
@@ -15,6 +16,8 @@ struct Args {
     games: u64,
     seed: u64,
     out: PathBuf,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
     raw: Vec<String>,
 }
 
@@ -24,7 +27,7 @@ fn main() {
         Err(err) => {
             eprintln!("{err}");
             eprintln!(
-                "usage: rollout_record --matchup burn_mirror --games <n> --seed <u64> --out <dir>"
+                "usage: rollout_record --matchup burn_mirror --games <n> --seed <u64> --out <dir> [--max-physical-decisions <u64>] [--max-policy-steps <u64>]"
             );
             std::process::exit(2);
         }
@@ -37,18 +40,23 @@ fn main() {
         std::process::exit(2);
     }
 
-    let (audit_records, policy_records, summaries) =
-        match build_rollout_records(args.games, args.seed, DEFAULT_MAX_DECISIONS) {
-            Ok(result) => result,
-            Err(err) => {
-                eprintln!("rollout failed: {err}");
-                std::process::exit(1);
-            }
-        };
-    let manifest = match build_run_manifest(
+    let (audit_records, policy_records, summaries) = match build_rollout_records_with_limits(
         args.games,
         args.seed,
-        DEFAULT_MAX_DECISIONS,
+        args.max_physical_decisions,
+        args.max_policy_steps,
+    ) {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!("rollout failed: {err}");
+            std::process::exit(1);
+        }
+    };
+    let manifest = match build_run_manifest_with_limits(
+        args.games,
+        args.seed,
+        args.max_physical_decisions,
+        args.max_policy_steps,
         args.raw.clone(),
         &args.out,
         &summaries,
@@ -67,7 +75,7 @@ fn main() {
     }
 
     println!(
-        "wrote {} policy records and {} audit records for {} games to {} (p0_wins={} p1_wins={} draws={} truncated={} halted={} decisions={})",
+        "wrote {} policy records and {} audit records for {} games to {} (p0_wins={} p1_wins={} draws={} truncated={} halted={} policy_steps={} physical_decisions={})",
         policy_records.len(),
         audit_records.len(),
         args.games,
@@ -77,7 +85,8 @@ fn main() {
         manifest.aggregate.draws,
         manifest.aggregate.truncated,
         manifest.aggregate.halted,
-        manifest.aggregate.total_decisions
+        manifest.aggregate.total_policy_steps,
+        manifest.aggregate.total_physical_decisions
     );
 }
 
@@ -86,6 +95,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, String> {
     let mut games = None;
     let mut seed = None;
     let mut out = None;
+    let mut max_physical_decisions = DEFAULT_MAX_PHYSICAL_DECISIONS;
+    let mut max_policy_steps = DEFAULT_MAX_POLICY_STEPS;
     let mut i = 0;
     while i < raw.len() {
         let flag = raw[i].as_str();
@@ -110,6 +121,16 @@ fn parse_args(raw: Vec<String>) -> Result<Args, String> {
                 )
             }
             "--out" => out = Some(PathBuf::from(value)),
+            "--max-physical-decisions" => {
+                max_physical_decisions = value
+                    .parse::<u64>()
+                    .map_err(|e| format!("invalid --max-physical-decisions value {value:?}: {e}"))?
+            }
+            "--max-policy-steps" => {
+                max_policy_steps = value
+                    .parse::<u64>()
+                    .map_err(|e| format!("invalid --max-policy-steps value {value:?}: {e}"))?
+            }
             other => return Err(format!("unknown argument {other:?}")),
         }
         i += 2;
@@ -124,6 +145,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, String> {
         games,
         seed: seed.ok_or("missing --seed")?,
         out: out.ok_or("missing --out")?,
+        max_physical_decisions,
+        max_policy_steps,
         raw,
     })
 }

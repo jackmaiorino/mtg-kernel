@@ -9,14 +9,16 @@ from typing import Any
 MASK64 = 0xFFFF_FFFF_FFFF_FFFF
 GOLDEN_RATIO_64 = 0x9E37_79B9_7F4A_7C15
 UINT63_MAX = (1 << 63) - 1
+UINT32_MAX = (1 << 32) - 1
 
-SEED_DERIVATION_VERSION = "kernel-python-rl-seed-v1"
-ENV_SEED_DOMAIN = 0x4556_5F52_4C5F_7631
-UNIFORM_POLICY_DOMAIN = 0x5059_5F55_4E49_7631
-SAMPLED_POLICY_DOMAIN = 0x5059_5F53414D_7631
-TRAINER_SEED_DERIVATION_VERSION = "kernel-python-rl-trainer-sha256-v1"
-EVALUATOR_SEED_DERIVATION_VERSION = "kernel-python-rl-evaluator-sha256-v1"
-EVALUATOR_ACTION_SEED_DERIVATION_VERSION = "kernel-python-rl-evaluator-action-sha256-v1"
+SEED_DERIVATION_VERSION = "kernel-python-rl-seed-v2"
+ENV_SEED_DOMAIN = 0x4556_5F52_4C5F_7632
+UNIFORM_POLICY_DOMAIN = 0x5059_5F55_4E49_7632
+SAMPLED_POLICY_DOMAIN = 0x5059_5F53414D_7632
+POLICY_SUBSTEP_DOMAIN = 0x5355_4253_5445_5032
+TRAINER_SEED_DERIVATION_VERSION = "kernel-python-rl-trainer-sha256-v2"
+EVALUATOR_SEED_DERIVATION_VERSION = "kernel-python-rl-evaluator-sha256-v2"
+EVALUATOR_ACTION_SEED_DERIVATION_VERSION = "kernel-python-rl-evaluator-action-sha256-v2"
 
 _TORCH_CONFIGURED = False
 
@@ -33,14 +35,31 @@ class SplitMix64:
         return (z ^ (z >> 31)) & MASK64
 
 
-def _derive(base_seed: int, episode: int, step: int, seat: str, domain: int) -> int:
+def _derive(base_seed: int, episode: int, physical_decision: int, seat: str, domain: int) -> int:
     seat_tag = 0x5030 if seat == "p0" else 0x5031
     mixed = (
         int(base_seed)
         ^ domain
         ^ ((int(episode) * GOLDEN_RATIO_64) & MASK64)
-        ^ ((int(step) * 0xD1B5_4A32_D192_ED03) & MASK64)
+        ^ ((int(physical_decision) * 0xD1B5_4A32_D192_ED03) & MASK64)
         ^ seat_tag
+    ) & MASK64
+    return SplitMix64(mixed).next()
+
+
+def _derive_policy_substep(
+    base_seed: int,
+    episode: int,
+    physical_decision: int,
+    substep_index: int,
+    seat: str,
+    domain: int,
+) -> int:
+    group_seed = _derive(base_seed, episode, physical_decision, seat, domain)
+    mixed = (
+        group_seed
+        ^ POLICY_SUBSTEP_DOMAIN
+        ^ ((int(substep_index) * 0x94D0_49BB_1331_11EB) & MASK64)
     ) & MASK64
     return SplitMix64(mixed).next()
 
@@ -51,14 +70,43 @@ def derive_env_seed(base_seed: int, episode: int) -> int:
     return _derive(base_seed, episode, 0, "p0", ENV_SEED_DOMAIN)
 
 
-def derive_uniform_index(base_seed: int, episode: int, step: int, seat: str, legal_count: int) -> int:
+def derive_uniform_index(
+    base_seed: int,
+    episode: int,
+    physical_decision: int,
+    substep_index: int,
+    seat: str,
+    legal_count: int,
+) -> int:
     if legal_count <= 0:
         raise ValueError("legal_count must be positive")
-    return _derive(base_seed, episode, step, seat, UNIFORM_POLICY_DOMAIN) % legal_count
+    substep_index = validate_uint32(substep_index, "substep_index")
+    return _derive_policy_substep(
+        base_seed,
+        episode,
+        physical_decision,
+        substep_index,
+        seat,
+        UNIFORM_POLICY_DOMAIN,
+    ) % legal_count
 
 
-def derive_sample_seed(base_seed: int, episode: int, step: int, seat: str) -> int:
-    return _derive(base_seed, episode, step, seat, SAMPLED_POLICY_DOMAIN) & 0x7FFF_FFFF
+def derive_sample_seed(
+    base_seed: int,
+    episode: int,
+    physical_decision: int,
+    substep_index: int,
+    seat: str,
+) -> int:
+    substep_index = validate_uint32(substep_index, "substep_index")
+    return _derive_policy_substep(
+        base_seed,
+        episode,
+        physical_decision,
+        substep_index,
+        seat,
+        SAMPLED_POLICY_DOMAIN,
+    ) & 0x7FFF_FFFF
 
 
 def configure_torch_determinism() -> None:
@@ -90,6 +138,14 @@ def validate_uint63(value: Any, name: str) -> int:
         raise TypeError(f"{name} must be an integer and not bool")
     if value < 0 or value > UINT63_MAX:
         raise ValueError(f"{name} must be in [0, 2**63 - 1]")
+    return value
+
+
+def validate_uint32(value: Any, name: str) -> int:
+    if type(value) is not int:
+        raise TypeError(f"{name} must be an integer and not bool")
+    if value < 0 or value > UINT32_MAX:
+        raise ValueError(f"{name} must be in [0, 2**32 - 1]")
     return value
 
 
@@ -171,9 +227,10 @@ def derive_evaluation_action_seed(
     base_seed: int,
     pair_index: int,
     physical_seat: str,
-    local_decision_index: int,
+    local_physical_decision_index: int,
+    substep_index: int,
 ) -> int:
-    """Derive one sampled-evaluator action seed from a physical-seat stream."""
+    """Derive one hierarchical sampled-evaluator substep seed."""
 
     if type(physical_seat) is not str:
         raise TypeError("physical_seat must be p0 or p1")
@@ -181,15 +238,35 @@ def derive_evaluation_action_seed(
         seat_encoding = {"p0": 0, "p1": 1}[physical_seat]
     except KeyError as exc:
         raise ValueError("physical_seat must be p0 or p1") from exc
+    group_seed = _evaluator_action_seed(
+        "evaluation-action-group",
+        [
+            ("base_seed", validate_uint63(base_seed, "base_seed")),
+            ("pair_index", validate_uint63(pair_index, "pair_index")),
+            ("physical_seat", seat_encoding),
+            (
+                "local_physical_decision_index",
+                validate_uint63(
+                    local_physical_decision_index,
+                    "local_physical_decision_index",
+                ),
+            ),
+        ],
+    )
+    return _evaluator_action_seed(
+        "evaluation-action-substep",
+        [
+            ("group_seed", group_seed),
+            ("substep_index", validate_uint32(substep_index, "substep_index")),
+        ],
+    )
+
+
+def _evaluator_action_seed(namespace: str, fields: list[tuple[str, int]]) -> int:
     hasher = hashlib.sha256()
     _atom(hasher, "version", EVALUATOR_ACTION_SEED_DERIVATION_VERSION.encode("utf-8"))
-    _atom(hasher, "namespace", b"evaluation-action")
-    for name, value in (
-        ("base_seed", validate_uint63(base_seed, "base_seed")),
-        ("pair_index", validate_uint63(pair_index, "pair_index")),
-        ("physical_seat", seat_encoding),
-        ("local_decision_index", validate_uint63(local_decision_index, "local_decision_index")),
-    ):
+    _atom(hasher, "namespace", namespace.encode("utf-8"))
+    for name, value in fields:
         _atom(hasher, "field-name", name.encode("utf-8"))
         _atom(hasher, "u63", value.to_bytes(8, "big"))
     return int.from_bytes(hasher.digest()[:8], "big") & UINT63_MAX
@@ -205,24 +282,60 @@ def derive_train_env_seed(base_seed: int, pair_index: int) -> int:
     )
 
 
-def derive_train_learner_action_seed(base_seed: int, episode_index: int, learner_decision_index: int) -> int:
-    return _trainer_seed(
-        "train-learner-action",
+def derive_train_learner_action_seed(
+    base_seed: int,
+    episode_index: int,
+    learner_physical_decision_index: int,
+    substep_index: int,
+) -> int:
+    group_seed = _trainer_seed(
+        "train-learner-action-group",
         [
             ("base_seed", validate_uint63(base_seed, "base_seed")),
             ("episode_index", validate_uint63(episode_index, "episode_index")),
-            ("learner_decision_index", validate_uint63(learner_decision_index, "learner_decision_index")),
+            (
+                "learner_physical_decision_index",
+                validate_uint63(
+                    learner_physical_decision_index,
+                    "learner_physical_decision_index",
+                ),
+            ),
+        ],
+    )
+    return _trainer_seed(
+        "train-learner-action-substep",
+        [
+            ("group_seed", group_seed),
+            ("substep_index", validate_uint32(substep_index, "substep_index")),
         ],
     )
 
 
-def derive_train_opponent_action_seed(base_seed: int, episode_index: int, opponent_decision_index: int) -> int:
-    return _trainer_seed(
-        "train-opponent-action",
+def derive_train_opponent_action_seed(
+    base_seed: int,
+    episode_index: int,
+    opponent_physical_decision_index: int,
+    substep_index: int,
+) -> int:
+    group_seed = _trainer_seed(
+        "train-opponent-action-group",
         [
             ("base_seed", validate_uint63(base_seed, "base_seed")),
             ("episode_index", validate_uint63(episode_index, "episode_index")),
-            ("opponent_decision_index", validate_uint63(opponent_decision_index, "opponent_decision_index")),
+            (
+                "opponent_physical_decision_index",
+                validate_uint63(
+                    opponent_physical_decision_index,
+                    "opponent_physical_decision_index",
+                ),
+            ),
+        ],
+    )
+    return _trainer_seed(
+        "train-opponent-action-substep",
+        [
+            ("group_seed", group_seed),
+            ("substep_index", validate_uint32(substep_index, "substep_index")),
         ],
     )
 
@@ -240,7 +353,8 @@ class SeedDerivation:
     env_domain: str = f"0x{ENV_SEED_DOMAIN:016x}"
     uniform_policy_domain: str = f"0x{UNIFORM_POLICY_DOMAIN:016x}"
     sampled_policy_domain: str = f"0x{SAMPLED_POLICY_DOMAIN:016x}"
-    algorithm: str = "splitmix64(base_seed, episode, step, actor_seat, domain)"
+    policy_substep_domain: str = f"0x{POLICY_SUBSTEP_DOMAIN:016x}"
+    algorithm: str = "hierarchical SplitMix64 v2: group(base_seed, episode, physical_decision, actor_seat, policy_domain), then leaf(group_seed, substep_index, policy_substep_domain)"
 
 
 @dataclass(frozen=True)
@@ -250,8 +364,8 @@ class TrainerSeedDerivation:
     namespaces: tuple[str, ...] = (
         "model-init/base_seed",
         "train-env/base_seed/pair_index",
-        "train-learner-action/base_seed/episode_index/learner_decision_index",
-        "train-opponent-action/base_seed/episode_index/opponent_decision_index",
+        "train-learner-action-group/base_seed/episode_index/learner_physical_decision_index -> train-learner-action-substep/group_seed/substep_index",
+        "train-opponent-action-group/base_seed/episode_index/opponent_physical_decision_index -> train-opponent-action-substep/group_seed/substep_index",
     )
 
 

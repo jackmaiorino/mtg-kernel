@@ -53,12 +53,13 @@ from .model import INITIALIZER_TRAINER_SEEDED_V1, KernelPolicyValueNet, ModelCon
 from .path_safety import ensure_real_child_dir, ensure_real_file
 
 
-RUN_SCHEMA = "kernel_rl_train_run/v13"
-ALGORITHM_NAME = "terminal_reinforce_value/v2"
+RUN_SCHEMA = "kernel_rl_train_run/v14"
+ALGORITHM_NAME = "terminal_reinforce_value/v3"
 MAX_UPDATES = 1_000_000
 MAX_BATCH_EPISODES = 10_000
-MAX_DECISIONS = 10_000_000
-EPISODE_SUMMARY_SCHEMA = "kernel_rl_train_episode_summary/v3"
+MAX_PHYSICAL_DECISIONS = 10_000_000
+MAX_POLICY_STEPS = 10_000_000
+EPISODE_SUMMARY_SCHEMA = "kernel_rl_train_episode_summary/v4"
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -119,7 +120,8 @@ class ResumeSnapshot:
     optimizer_step_count: int
     next_episode: int
     outcomes_by_learner_seat: dict[str, dict[str, int]]
-    learner_decisions_by_seat: dict[str, int]
+    learner_policy_steps_by_seat: dict[str, int]
+    learner_physical_decisions_by_seat: dict[str, int]
     python_rng_state: dict[str, Any]
     torch_cpu_rng_state: torch.Tensor
     checkpoint_payload: dict[str, Any]
@@ -185,7 +187,12 @@ class ValidatedChain:
             optimizer_step_count=payload["optimizer_step_count"],
             next_episode=payload["next_episode"],
             outcomes_by_learner_seat=_clone_value(payload["outcomes_by_learner_seat"]),
-            learner_decisions_by_seat=_clone_value(payload["learner_decisions_by_seat"]),
+            learner_policy_steps_by_seat=_clone_value(
+                payload["learner_policy_steps_by_seat"]
+            ),
+            learner_physical_decisions_by_seat=_clone_value(
+                payload["learner_physical_decisions_by_seat"]
+            ),
             python_rng_state=_clone_value(payload["python_rng_state"]),
             torch_cpu_rng_state=payload["torch_cpu_rng_state"].detach().contiguous().clone(),
             checkpoint_payload=_clone_value(payload),
@@ -491,8 +498,16 @@ def _validate_until_update(value: Any) -> int:
     return value
 
 
-def _validate_max_decisions(value: Any) -> int:
-    return validate_positive_int(value, "max_decisions", maximum=MAX_DECISIONS)
+def _validate_max_physical_decisions(value: Any) -> int:
+    return validate_positive_int(
+        value,
+        "max_physical_decisions",
+        maximum=MAX_PHYSICAL_DECISIONS,
+    )
+
+
+def _validate_max_policy_steps(value: Any) -> int:
+    return validate_positive_int(value, "max_policy_steps", maximum=MAX_POLICY_STEPS)
 
 
 def _learner_seat(episode: int) -> str:
@@ -561,7 +576,7 @@ def _artifact_boundary_contract() -> dict[str, Any]:
     from . import checkpoint_io as zip_contract
 
     return {
-        "schema": "kernel_rl_artifact_boundary/v9",
+        "schema": "kernel_rl_artifact_boundary/v10",
         "format": {
             "checkpoint_container": "torch-zip",
             "checkpoint_zip_root": zip_contract.TORCH_ZIP_ROOT,
@@ -662,7 +677,8 @@ def _run_manifest_from_config(
     batch_episodes: int,
     learning_rate: float,
     value_coef: float,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     compatibility: dict[str, Any],
 ) -> dict[str, Any]:
     cfg = ModelConfig.from_dict(model_config)
@@ -674,7 +690,9 @@ def _run_manifest_from_config(
             "name": ALGORITHM_NAME,
             "loss": (
                 "loss = (sum(-log_prob(selected) * (terminal_return - value.detach())) "
-                "+ value_coef * sum((value - terminal_return)^2)) divided by learner_decision_count"
+                "+ value_coef * sum((value - terminal_return)^2)) divided by "
+                "learner_physical_decision_count; each physical decision contributes one "
+                "joint log probability equal to the sum of its policy-substep log probabilities"
             ),
             "discount": None,
             "entropy_bonus": None,
@@ -707,14 +725,15 @@ def _run_manifest_from_config(
         "samplers": {
             "learner": {
                 "action_selection": _trainer_action_selection_contract(),
-                "seed_namespace": "train-learner-action/base_seed/episode_index/learner_decision_index",
+                "seed_namespace": "train-learner-action-group/base_seed/episode_index/learner_physical_decision_index -> train-learner-action-substep/group_seed/substep_index",
+                "grouping": "one joint policy term per physical decision; log probabilities sum over contiguous substeps and value is read from substep zero",
                 "global_python_rng": "unused",
                 "global_torch_rng": "unused",
             },
             "opponent": {
                 "algorithm": "uniform-index = train-opponent-action-seed % legal_action_count",
-                "seed_namespace": "train-opponent-action/base_seed/episode_index/opponent_decision_index",
-                "counter_scope": "actor-local opponent decisions within episode",
+                "seed_namespace": "train-opponent-action-group/base_seed/episode_index/opponent_physical_decision_index -> train-opponent-action-substep/group_seed/substep_index",
+                "counter_scope": "actor-local opponent physical decisions within episode with a substep leaf",
             },
         },
         "schedule": {
@@ -725,7 +744,8 @@ def _run_manifest_from_config(
         "trainer": {
             "base_seed": base_seed,
             "value_coef": value_coef,
-            "max_decisions": max_decisions,
+            "max_physical_decisions": max_physical_decisions,
+            "max_policy_steps": max_policy_steps,
             "terminal_returns": {"learner_win": 1, "draw": 0, "learner_loss": -1},
         },
         "seed_derivation": _seed_derivation_dict(),
@@ -749,7 +769,8 @@ def _run_manifest(
     batch_episodes: int,
     learning_rate: float,
     value_coef: float,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     compatibility: dict[str, Any],
 ) -> dict[str, Any]:
     return _run_manifest_from_config(
@@ -762,7 +783,8 @@ def _run_manifest(
         batch_episodes=batch_episodes,
         learning_rate=learning_rate,
         value_coef=value_coef,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         compatibility=compatibility,
     )
 
@@ -794,7 +816,15 @@ def _validate_deck_hashes(value: Any, context: str = "deck_hashes") -> tuple[int
 
 
 def _validate_provenance(value: Any) -> None:
-    required = {"protocol", "protocol_version", "schema_version", "kernel_version", "surface_version", "card_db_hash"}
+    required = {
+        "protocol",
+        "protocol_version",
+        "schema_version",
+        "kernel_version",
+        "surface_version",
+        "policy_surface_version",
+        "card_db_hash",
+    }
     if not isinstance(value, dict) or set(value) != required:
         raise ValueError("run provenance keys mismatch")
     if value["protocol"] != PROTOCOL_NAME:
@@ -803,8 +833,10 @@ def _validate_provenance(value: Any) -> None:
         raise ValueError("run provenance protocol_version mismatch")
     if value["schema_version"] != SCHEMA_VERSION:
         raise ValueError("run provenance schema_version mismatch")
-    if type(value["surface_version"]) is not int or value["surface_version"] < 0:
-        raise ValueError("run provenance surface_version must be a nonnegative int")
+    if value["surface_version"] != 2:
+        raise ValueError("run provenance surface_version mismatch")
+    if value["policy_surface_version"] != 5:
+        raise ValueError("run provenance policy_surface_version mismatch")
     if type(value["kernel_version"]) is not str or not value["kernel_version"]:
         raise ValueError("run provenance kernel_version must be nonempty")
     if type(value["card_db_hash"]) is not int or value["card_db_hash"] < 0 or value["card_db_hash"] > 0xFFFF_FFFF_FFFF_FFFF:
@@ -861,7 +893,12 @@ def _validate_run_manifest(
     batch_episodes = _validate_batch_episodes(run.get("schedule", {}).get("batch_episodes"))
     learning_rate = _finite_positive_float(run.get("optimizer", {}).get("lr"), "learning_rate")
     value_coef = _finite_positive_float(run.get("trainer", {}).get("value_coef"), "value_coef")
-    max_decisions = _validate_max_decisions(run.get("trainer", {}).get("max_decisions"))
+    max_physical_decisions = _validate_max_physical_decisions(
+        run.get("trainer", {}).get("max_physical_decisions")
+    )
+    max_policy_steps = _validate_max_policy_steps(
+        run.get("trainer", {}).get("max_policy_steps")
+    )
     expected = _run_manifest_from_config(
         env_sha=committed_env_sha,
         deck_ids=deck_ids,
@@ -872,7 +909,8 @@ def _validate_run_manifest(
         batch_episodes=batch_episodes,
         learning_rate=learning_rate,
         value_coef=value_coef,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         compatibility=run["compatibility"],
     )
     if run != expected:
@@ -886,14 +924,25 @@ def _validate_resume_overrides(
     batch_episodes: int | None,
     learning_rate: float | None,
     value_coef: float | None,
-    max_decisions: int | None,
-) -> tuple[int | None, int | None, float | None, float | None, int | None]:
+    max_physical_decisions: int | None,
+    max_policy_steps: int | None,
+) -> tuple[
+    int | None,
+    int | None,
+    float | None,
+    float | None,
+    int | None,
+    int | None,
+]:
     return (
         None if base_seed is None else validate_uint63(base_seed, "base_seed"),
         None if batch_episodes is None else _validate_batch_episodes(batch_episodes),
         None if learning_rate is None else _finite_positive_float(learning_rate, "learning_rate"),
         None if value_coef is None else _finite_positive_float(value_coef, "value_coef"),
-        None if max_decisions is None else _validate_max_decisions(max_decisions),
+        None
+        if max_physical_decisions is None
+        else _validate_max_physical_decisions(max_physical_decisions),
+        None if max_policy_steps is None else _validate_max_policy_steps(max_policy_steps),
     )
 
 
@@ -906,7 +955,8 @@ def _assert_run_matches_options(
     batch_episodes: int | None,
     learning_rate: float | None,
     value_coef: float | None,
-    max_decisions: int | None,
+    max_physical_decisions: int | None,
+    max_policy_steps: int | None,
     compatibility: dict[str, Any],
 ) -> None:
     _validate_run_manifest(run, env_sha=env_sha, compatibility=compatibility)
@@ -916,7 +966,11 @@ def _assert_run_matches_options(
         "batch_episodes": (batch_episodes, run["schedule"]["batch_episodes"]),
         "learning_rate": (learning_rate, run["optimizer"]["lr"]),
         "value_coef": (value_coef, run["trainer"]["value_coef"]),
-        "max_decisions": (max_decisions, run["trainer"]["max_decisions"]),
+        "max_physical_decisions": (
+            max_physical_decisions,
+            run["trainer"]["max_physical_decisions"],
+        ),
+        "max_policy_steps": (max_policy_steps, run["trainer"]["max_policy_steps"]),
     }
     for name, (explicit, committed) in checks.items():
         if explicit is not None and explicit != committed:
@@ -993,9 +1047,12 @@ def _validate_episode_summary(
         "terminal_outcome",
         "winner",
         "learner_return",
-        "decision_count",
-        "learner_decision_count",
-        "opponent_decision_count",
+        "policy_step_count",
+        "physical_decision_count",
+        "learner_policy_step_count",
+        "opponent_policy_step_count",
+        "learner_physical_decision_count",
+        "opponent_physical_decision_count",
         "trajectory_digest",
     }
     if not isinstance(summary, dict) or set(summary) != required:
@@ -1032,11 +1089,22 @@ def _validate_episode_summary(
         raise ValueError("episode terminal outcome must be natural win/draw")
     if summary["learner_return"] != derived_return:
         raise ValueError("episode learner return mismatch")
-    for key in ("decision_count", "learner_decision_count", "opponent_decision_count"):
+    for key in (
+        "policy_step_count",
+        "physical_decision_count",
+        "learner_policy_step_count",
+        "opponent_policy_step_count",
+        "learner_physical_decision_count",
+        "opponent_physical_decision_count",
+    ):
         if type(summary[key]) is not int or summary[key] < 0:
             raise ValueError(f"episode {key} must be a nonnegative int")
-    if summary["decision_count"] != summary["learner_decision_count"] + summary["opponent_decision_count"]:
-        raise ValueError("episode decision count mismatch")
+    if summary["policy_step_count"] != summary["learner_policy_step_count"] + summary["opponent_policy_step_count"]:
+        raise ValueError("episode policy step count mismatch")
+    if summary["physical_decision_count"] != summary["learner_physical_decision_count"] + summary["opponent_physical_decision_count"]:
+        raise ValueError("episode physical decision count mismatch")
+    if summary["learner_policy_step_count"] < summary["learner_physical_decision_count"] or summary["opponent_policy_step_count"] < summary["opponent_physical_decision_count"]:
+        raise ValueError("episode policy steps cannot be fewer than physical decisions")
     _validate_hash(summary["trajectory_digest"], "episode trajectory_digest")
     return summary
 
@@ -1061,7 +1129,8 @@ def _validate_update_record(
         "episode_count",
         "episode_end_exclusive",
         "optimizer_step",
-        "learner_decision_count",
+        "learner_policy_step_count",
+        "learner_physical_decision_count",
         "loss",
         "episode_summaries",
         "post_update_logical_sha256",
@@ -1081,8 +1150,11 @@ def _validate_update_record(
         raise ValueError("update record logical digest mismatch")
     if type(record["optimizer_step"]) is not bool:
         raise ValueError("optimizer_step must be bool")
-    if type(record["learner_decision_count"]) is not int or record["learner_decision_count"] < 0:
-        raise ValueError("learner_decision_count must be a nonnegative int")
+    for key in ("learner_policy_step_count", "learner_physical_decision_count"):
+        if type(record[key]) is not int or record[key] < 0:
+            raise ValueError(f"{key} must be a nonnegative int")
+    if record["learner_policy_step_count"] < record["learner_physical_decision_count"]:
+        raise ValueError("update learner policy steps cannot be fewer than physical decisions")
     if not isinstance(record["episode_summaries"], list):
         raise ValueError("episode summaries must be a list")
 
@@ -1091,7 +1163,12 @@ def _validate_update_record(
             raise ValueError("update 0 must not have a previous payload")
         if record["parent_head"] is not None or record["episode_start"] != 0 or record["episode_count"] != 0:
             raise ValueError("update 0 record range mismatch")
-        if record["episode_end_exclusive"] != 0 or record["optimizer_step"] or record["learner_decision_count"] != 0:
+        if (
+            record["episode_end_exclusive"] != 0
+            or record["optimizer_step"]
+            or record["learner_policy_step_count"] != 0
+            or record["learner_physical_decision_count"] != 0
+        ):
             raise ValueError("update 0 record counters mismatch")
         if record["episode_summaries"]:
             raise ValueError("update 0 must not contain episodes")
@@ -1099,7 +1176,11 @@ def _validate_update_record(
         if payload["completed_update"] != 0 or payload["optimizer_step_count"] != 0 or payload["next_episode"] != 0:
             raise ValueError("update 0 checkpoint counters mismatch")
         expected_outcomes = {"p0": {"win": 0, "loss": 0, "draw": 0}, "p1": {"win": 0, "loss": 0, "draw": 0}}
-        if payload["outcomes_by_learner_seat"] != expected_outcomes or payload["learner_decisions_by_seat"] != {"p0": 0, "p1": 0}:
+        if (
+            payload["outcomes_by_learner_seat"] != expected_outcomes
+            or payload["learner_policy_steps_by_seat"] != {"p0": 0, "p1": 0}
+            or payload["learner_physical_decisions_by_seat"] != {"p0": 0, "p1": 0}
+        ):
             raise ValueError("update 0 checkpoint aggregates mismatch")
         return record
 
@@ -1124,8 +1205,12 @@ def _validate_update_record(
         "p0": dict(previous_payload["outcomes_by_learner_seat"]["p0"]),
         "p1": dict(previous_payload["outcomes_by_learner_seat"]["p1"]),
     }
-    expected_decisions = dict(previous_payload["learner_decisions_by_seat"])
-    learner_decision_total = 0
+    expected_policy_steps = dict(previous_payload["learner_policy_steps_by_seat"])
+    expected_physical_decisions = dict(
+        previous_payload["learner_physical_decisions_by_seat"]
+    )
+    learner_policy_step_total = 0
+    learner_physical_decision_total = 0
     for offset, summary in enumerate(record["episode_summaries"]):
         row = _validate_episode_summary(
             summary,
@@ -1134,7 +1219,8 @@ def _validate_update_record(
             deck_ids=tuple(run["environment"]["deck_ids"]),
             deck_hashes=tuple(run["environment"]["deck_hashes"]),
         )
-        learner_decision_total += row["learner_decision_count"]
+        learner_policy_step_total += row["learner_policy_step_count"]
+        learner_physical_decision_total += row["learner_physical_decision_count"]
         seat = row["learner_seat"]
         if row["learner_return"] == 1:
             expected_outcomes[seat]["win"] += 1
@@ -1142,10 +1228,13 @@ def _validate_update_record(
             expected_outcomes[seat]["loss"] += 1
         elif row["learner_return"] == 0:
             expected_outcomes[seat]["draw"] += 1
-        expected_decisions[seat] += row["learner_decision_count"]
-    if learner_decision_total != record["learner_decision_count"]:
-        raise ValueError("learner decision total mismatch")
-    if record["optimizer_step"] != (learner_decision_total > 0):
+        expected_policy_steps[seat] += row["learner_policy_step_count"]
+        expected_physical_decisions[seat] += row["learner_physical_decision_count"]
+    if learner_policy_step_total != record["learner_policy_step_count"]:
+        raise ValueError("learner policy step total mismatch")
+    if learner_physical_decision_total != record["learner_physical_decision_count"]:
+        raise ValueError("learner physical decision total mismatch")
+    if record["optimizer_step"] != (learner_physical_decision_total > 0):
         raise ValueError("optimizer step flag mismatch")
     _validate_loss_fields(record["loss"], optimizer_step=record["optimizer_step"])
     expected_step_count = previous_payload["optimizer_step_count"] + (1 if record["optimizer_step"] else 0)
@@ -1153,8 +1242,10 @@ def _validate_update_record(
         raise ValueError("checkpoint optimizer_step_count mismatch")
     if payload["outcomes_by_learner_seat"] != expected_outcomes:
         raise ValueError("checkpoint outcome aggregates mismatch")
-    if payload["learner_decisions_by_seat"] != expected_decisions:
-        raise ValueError("checkpoint learner decision aggregates mismatch")
+    if payload["learner_policy_steps_by_seat"] != expected_policy_steps:
+        raise ValueError("checkpoint learner policy-step aggregates mismatch")
+    if payload["learner_physical_decisions_by_seat"] != expected_physical_decisions:
+        raise ValueError("checkpoint learner physical-decision aggregates mismatch")
     return record
 
 
@@ -1187,7 +1278,8 @@ def _update_record_zero(run_digest: str, logical_hash: str) -> dict[str, Any]:
         "episode_count": 0,
         "episode_end_exclusive": 0,
         "optimizer_step": False,
-        "learner_decision_count": 0,
+        "learner_policy_step_count": 0,
+        "learner_physical_decision_count": 0,
         "loss": {"policy_sum_hex": None, "value_sum_hex": None, "loss_hex": None},
         "episode_summaries": [],
         "post_update_logical_sha256": logical_hash,

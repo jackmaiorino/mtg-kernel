@@ -19,11 +19,16 @@ class RealEnvTest(unittest.TestCase):
             self.skipTest("MTG_KERNEL_RL_ENV_BIN not set")
         self.assertTrue(Path(env_bin).is_file())
         with KernelRlClient(env_bin, timeout_s=5.0) as client:
-            decision = client.reset(episode_id=0, env_seed=derive_env_seed(71501, 0), max_decisions=64)
+            decision = client.reset(
+                episode_id=0,
+                env_seed=derive_env_seed(71501, 0),
+                max_physical_decisions=64,
+                max_policy_steps=8_192,
+            )
             self.assertEqual(decision.provenance["protocol"], "kernel_rl_jsonl")
-            self.assertEqual(decision.provenance["protocol_version"], 4)
-            self.assertEqual(decision.provenance["schema_version"], 4)
-            self.assertEqual(decision.observation["schema_version"], 4)
+            self.assertEqual(decision.provenance["protocol_version"], 5)
+            self.assertEqual(decision.provenance["schema_version"], 5)
+            self.assertEqual(decision.observation["schema_version"], 5)
             assert_observation_classified(decision.observation)
             for action in decision.legal_actions:
                 assert_action_classified(action)
@@ -38,7 +43,12 @@ class RealEnvTest(unittest.TestCase):
             action = decision.legal_actions[selected]
             next_response = client.step(action["selected_index"], action["stable_id"])
             self.assertIn(type(next_response).__name__, {"Decision", "Terminal"})
-            reset2 = client.reset(episode_id=1, env_seed=derive_env_seed(71501, 1), max_decisions=64)
+            reset2 = client.reset(
+                episode_id=1,
+                env_seed=derive_env_seed(71501, 1),
+                max_physical_decisions=64,
+                max_policy_steps=8_192,
+            )
             self.assertEqual(reset2.episode_id, 1)
             self.assertEqual(reset2.step, 0)
 
@@ -49,10 +59,16 @@ class RealEnvTest(unittest.TestCase):
         self.assertTrue(Path(env_bin).is_file())
         model = None
         decisions = 0
+        physical_decisions = 0
         stage_tuples = set()
         edge_roles = set()
         with KernelRlClient(env_bin, timeout_s=10.0) as client:
-            current = client.reset(episode_id=7, env_seed=derive_env_seed(71501, 7), max_decisions=5000)
+            current = client.reset(
+                episode_id=7,
+                env_seed=derive_env_seed(71501, 7),
+                max_physical_decisions=5_000,
+                max_policy_steps=640_000,
+            )
             while isinstance(current, Decision):
                 assert_observation_classified(current.observation)
                 for action in current.legal_actions:
@@ -70,8 +86,17 @@ class RealEnvTest(unittest.TestCase):
                     role_index = int(torch.argmax(row[: len(EDGE_ROLES)]).item())
                     if float(row[role_index].item()) == 1.0:
                         edge_roles.add(EDGE_ROLES[role_index])
-                selected = derive_uniform_index(71501, 7, current.step, current.acting_player, len(current.legal_actions))
+                selected = derive_uniform_index(
+                    71501,
+                    7,
+                    current.physical_decision_id,
+                    current.substep_index,
+                    current.acting_player,
+                    len(current.legal_actions),
+                )
                 action = current.legal_actions[selected]
+                if current.substep_index + 1 == current.substep_count:
+                    physical_decisions += 1
                 current = client.step(action["selected_index"], action["stable_id"])
                 decisions += 1
         self.assertIsNotNone(model)
@@ -79,7 +104,8 @@ class RealEnvTest(unittest.TestCase):
         self.assertEqual(current.terminal_classification, "natural")
         self.assertEqual(current.terminal_code, "natural_game_over")
         self.assertNotIn(current.terminal_outcome, {"halted", "truncated"})
-        self.assertEqual(current.decision_count, decisions)
+        self.assertEqual(current.policy_step_count, decisions)
+        self.assertEqual(current.physical_decision_count, physical_decisions)
         self.assertIn(("priority", "priority"), stage_tuples)
         self.assertGreaterEqual(len(edge_roles), 1)
 

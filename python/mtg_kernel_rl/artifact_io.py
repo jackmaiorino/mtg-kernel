@@ -57,6 +57,8 @@ FORBIDDEN_TRAINING_JSON_KEYS = {
     "card_name",
     "created_at",
     "display_text",
+    "environment_hash",
+    "environment_hash_algorithm",
     "host",
     "hostname",
     "legal_actions",

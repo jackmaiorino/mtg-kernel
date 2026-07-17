@@ -29,6 +29,9 @@ from mtg_kernel_rl.evaluation_store import (
     V1_GAME_SCHEMA,
     V1_PAIR_SCHEMA,
     V1_RUN_SCHEMA,
+    V2_GAME_SCHEMA,
+    V2_PAIR_SCHEMA,
+    V2_RUN_SCHEMA,
     validate_evaluation,
 )
 from mtg_kernel_rl.evaluator import EvaluationResult, _select_greedy_action, _validate_request, evaluate
@@ -48,7 +51,8 @@ def _train_fixture(
     *,
     scenario: str = "valid",
     until_update: int = 0,
-    max_decisions: int = 8,
+    max_physical_decisions: int = 8,
+    max_policy_steps: int = 16,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[Path, Path, str]:
     launcher = fake_launcher(root, scenario, extra_env)
@@ -61,7 +65,8 @@ def _train_fixture(
         batch_episodes=2,
         learning_rate=0.001,
         value_coef=0.5,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
     )
     head = TrainingStore(store).validate_latest().head.head
     return launcher, store, head
@@ -104,7 +109,8 @@ def _evaluate_fixture(root: Path, launcher: Path, store: Path, head: str, *, out
         pairs=1,
         base_seed=4,
         bootstrap_replicates=1_000,
-        max_decisions=8,
+        max_physical_decisions=8,
+                max_policy_steps=16,
         timeout_ms=5_000,
     )
     return out
@@ -162,7 +168,8 @@ evaluate(
     pairs=1,
     base_seed=4,
     bootstrap_replicates=1000,
-    max_decisions=8,
+    max_physical_decisions=8,
+                max_policy_steps=16,
     timeout_ms=5000,
 )
 raise SystemExit(92)
@@ -188,7 +195,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                 pairs=3,
                 base_seed=42,
                 bootstrap_replicates=1_000,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 timeout_ms=5_000,
             )
             second = evaluate(
@@ -199,7 +207,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                 pairs=3,
                 base_seed=42,
                 bootstrap_replicates=1_000,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 timeout_ms=5_000,
             )
             self.assertEqual(first, second)
@@ -252,7 +261,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                 pairs=3,
                 base_seed=91,
                 bootstrap_replicates=1_000,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 timeout_ms=5_000,
             )
             requests = _jsonl(request_log)
@@ -260,11 +270,20 @@ class EvaluatorEndToEndTest(unittest.TestCase):
             self.assertEqual([row["episode_id"] for row in resets], list(range(6)))
             expected_seeds = [derive_evaluation_env_seed(91, pair) for pair in range(3) for _ in range(2)]
             self.assertEqual([row["env_seed"] for row in resets], expected_seeds)
-            self.assertEqual([row["max_decisions"] for row in resets], [8] * 6)
+            self.assertEqual([row["max_physical_decisions"] for row in resets], [8] * 6)
+            self.assertEqual([row["max_policy_steps"] for row in resets], [16] * 6)
             self.assertEqual([tuple(row["deck_ids"]) for row in resets], [DECK_IDS] * 6)
             games = _jsonl(root / "evaluation" / "games.jsonl")
             self.assertEqual([row["candidate_seat"] for row in games], ["p0", "p1"] * 3)
-            self.assertTrue(all(row["candidate_decisions"] == 1 and row["baseline_decisions"] == 1 for row in games))
+            self.assertTrue(
+                all(
+                    row["candidate_policy_steps"] == 1
+                    and row["baseline_policy_steps"] == 1
+                    and row["candidate_physical_decisions"] == 1
+                    and row["baseline_physical_decisions"] == 1
+                    for row in games
+                )
+            )
             self.assertEqual([row["total_half_points"] for row in _jsonl(root / "evaluation" / "pairs.jsonl")], [4, 1, 1])
             self.assertEqual((result.total_half_points, result.estimate), (6, 0.5))
 
@@ -288,7 +307,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                     pairs=1,
                     base_seed=1,
                     bootstrap_replicates=1_000,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                     timeout_ms=5_000,
                 )
             self.assertFalse(marker.exists())
@@ -302,7 +322,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                     pairs=1,
                     base_seed=1,
                     bootstrap_replicates=1_000,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                     timeout_ms=5_000,
                     deck_ids=("Burn", "Rally"),
                 )
@@ -317,7 +338,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                     pairs=1,
                     base_seed=1,
                     bootstrap_replicates=1_000,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                     timeout_ms=5_000,
                 )
             self.assertFalse(marker.exists())
@@ -333,7 +355,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                     pairs=1,
                     base_seed=1,
                     bootstrap_replicates=1_000,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                     timeout_ms=5_000,
                 )
             self.assertFalse(marker.exists())
@@ -350,7 +373,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                     pairs=1,
                     base_seed=1,
                     bootstrap_replicates=1_000,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                     timeout_ms=5_000,
                 )
             self.assertEqual(counting.validate_latest.call_count, 1)
@@ -379,7 +403,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                     pairs=1,
                     base_seed=3,
                     bootstrap_replicates=1_000,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                     timeout_ms=5_000,
                 )
             self.assertEqual({path.name for path in out.iterdir()}, {OUTPUT_LOCK_FILE_NAME})
@@ -392,7 +417,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                 pairs=1,
                 base_seed=3,
                 bootstrap_replicates=1_000,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 timeout_ms=5_000,
             )
             self.assertEqual(result.estimate, 0.5)
@@ -401,7 +427,11 @@ class EvaluatorEndToEndTest(unittest.TestCase):
     def test_local_cap_rejects_continuation_and_accepts_terminal_exactly_at_cap(self) -> None:
         with tempfile.TemporaryDirectory() as valid_name, tempfile.TemporaryDirectory() as long_name:
             valid_root = Path(valid_name)
-            launcher, store, head = _train_fixture(valid_root, max_decisions=1)
+            launcher, store, head = _train_fixture(
+                valid_root,
+                max_physical_decisions=1,
+                max_policy_steps=1,
+            )
             result = evaluate(
                 training_store=store,
                 expected_candidate_head=head,
@@ -410,13 +440,19 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                 pairs=1,
                 base_seed=9,
                 bootstrap_replicates=1_000,
-                max_decisions=1,
+                max_physical_decisions=1,
+                max_policy_steps=1,
                 timeout_ms=5_000,
             )
             self.assertEqual(result.game_count, 2)
 
             long_root = Path(long_name)
-            launcher, store, head = _train_fixture(long_root, scenario="train_pair", max_decisions=1)
+            launcher, store, head = _train_fixture(
+                long_root,
+                scenario="train_pair",
+                max_physical_decisions=1,
+                max_policy_steps=1,
+            )
             out = long_root / "evaluation"
             with self.assertRaises(RuntimeError):
                 evaluate(
@@ -427,7 +463,8 @@ class EvaluatorEndToEndTest(unittest.TestCase):
                     pairs=1,
                     base_seed=9,
                     bootstrap_replicates=1_000,
-                    max_decisions=1,
+                    max_physical_decisions=1,
+                max_policy_steps=1,
                     timeout_ms=5_000,
                 )
             self.assertEqual({path.name for path in out.iterdir()}, {OUTPUT_LOCK_FILE_NAME})
@@ -677,7 +714,8 @@ class EvaluationConcurrencyAndFailureProofTest(unittest.TestCase):
                             pairs=1,
                             base_seed=4,
                             bootstrap_replicates=1_000,
-                            max_decisions=8,
+                            max_physical_decisions=8,
+                max_policy_steps=16,
                             timeout_ms=timeout_ms,
                         )
                     self.assertEqual({path.name for path in out.iterdir()}, {OUTPUT_LOCK_FILE_NAME})
@@ -692,6 +730,9 @@ class EvaluatorUnitTest(unittest.TestCase):
         return Decision(
             0,
             0,
+            0,
+            0,
+            1,
             "p0",
             actor_observation("p0"),
             legal_actions("p0"),
@@ -738,19 +779,22 @@ class EvaluatorUnitTest(unittest.TestCase):
             pairs=1,
             base_seed=0,
             bootstrap_replicates=1_000,
-            max_decisions=1,
+            max_physical_decisions=1,
+                max_policy_steps=1,
             timeout_ms=1,
         )
         for key, value in (
             ("pairs", True),
             ("base_seed", True),
             ("bootstrap_replicates", True),
-            ("max_decisions", True),
+            ("max_physical_decisions", True),
+            ("max_policy_steps", True),
             ("timeout_ms", True),
             ("timeout_ms", 0),
             ("pairs", 50_001),
             ("bootstrap_replicates", 999),
-            ("max_decisions", 10_000_001),
+            ("max_physical_decisions", 10_000_001),
+            ("max_policy_steps", 10_000_001),
         ):
             args = {**valid, key: value}
             with self.subTest(key=key, value=value), self.assertRaises((TypeError, ValueError)):
@@ -778,8 +822,10 @@ class EvaluatorUnitTest(unittest.TestCase):
             "3",
             "--bootstrap-replicates",
             "1000",
-            "--max-decisions",
+            "--max-physical-decisions",
             "8",
+            "--max-policy-steps",
+            "16",
             "--timeout-ms",
             "5000",
             "--deck-ids",
@@ -817,7 +863,8 @@ class EvaluationVerifierCorruptionTest(unittest.TestCase):
                 pairs=1,
                 base_seed=4,
                 bootstrap_replicates=1_000,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 timeout_ms=5_000,
             )
             validate_evaluation(pristine)
@@ -887,6 +934,24 @@ class EvaluationVerifierCorruptionTest(unittest.TestCase):
             target = clone("legacy-v1-artifact-schemas")
             manifest = read_json_file(target / "run.json")
             manifest["artifact_schemas"] = {"game": V1_GAME_SCHEMA, "pair": V1_PAIR_SCHEMA, "run": V1_RUN_SCHEMA}
+            (target / "run.json").write_bytes(canonical_json_bytes(manifest))
+            with self.assertRaises(ValueError):
+                validate_evaluation(target)
+
+            target = clone("immediate-old-v2-run-schema")
+            manifest = read_json_file(target / "run.json")
+            manifest["schema"] = V2_RUN_SCHEMA
+            (target / "run.json").write_bytes(canonical_json_bytes(manifest))
+            with self.assertRaises(ValueError):
+                validate_evaluation(target)
+
+            target = clone("immediate-old-v2-artifact-schemas")
+            manifest = read_json_file(target / "run.json")
+            manifest["artifact_schemas"] = {
+                "game": V2_GAME_SCHEMA,
+                "pair": V2_PAIR_SCHEMA,
+                "run": V2_RUN_SCHEMA,
+            }
             (target / "run.json").write_bytes(canonical_json_bytes(manifest))
             with self.assertRaises(ValueError):
                 validate_evaluation(target)
@@ -1127,7 +1192,8 @@ class EvaluationRealEnvironmentTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=5_000,
+                max_physical_decisions=5_000,
+                max_policy_steps=20_000,
             )
             chain = TrainingStore(store).validate_latest()
             self.assertEqual(chain.head.update, 0)
@@ -1140,7 +1206,8 @@ class EvaluationRealEnvironmentTest(unittest.TestCase):
                 pairs=1,
                 base_seed=71_501,
                 bootstrap_replicates=1_000,
-                max_decisions=5_000,
+                max_physical_decisions=5_000,
+                max_policy_steps=20_000,
                 timeout_ms=60_000,
             )
             self.assertEqual(_tree_bytes(store), before)

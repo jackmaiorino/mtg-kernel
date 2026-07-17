@@ -30,7 +30,8 @@ from .evaluation_store import (
     RUN_SCHEMA,
     MAX_BOOTSTRAP_DRAWS,
     MAX_BOOTSTRAP_REPLICATES,
-    MAX_DECISIONS,
+    MAX_PHYSICAL_DECISIONS,
+    MAX_POLICY_STEPS,
     MAX_PAIR_COUNT,
     MAX_TIMEOUT_MS,
     MIN_BOOTSTRAP_REPLICATES,
@@ -74,10 +75,11 @@ def _validate_request(
     pairs: Any,
     base_seed: Any,
     bootstrap_replicates: Any,
-    max_decisions: Any,
+    max_physical_decisions: Any,
+    max_policy_steps: Any,
     timeout_ms: Any,
     deck_ids: Any = DEFAULT_DECK_IDS,
-) -> tuple[str, int, int, int, int, int, tuple[str, str]]:
+) -> tuple[str, int, int, int, int, int, int, tuple[str, str]]:
     expected_head = _validate_exact_head(expected_candidate_head)
     base_seed = validate_uint63(base_seed, "base_seed")
     pairs = validate_positive_int(pairs, "pairs", maximum=MAX_PAIR_COUNT)
@@ -89,7 +91,16 @@ def _validate_request(
         )
     if pairs * bootstrap_replicates > MAX_BOOTSTRAP_DRAWS:
         raise ValueError(f"pairs * bootstrap_replicates must be at most {MAX_BOOTSTRAP_DRAWS}")
-    max_decisions = validate_positive_int(max_decisions, "max_decisions", maximum=MAX_DECISIONS)
+    max_physical_decisions = validate_positive_int(
+        max_physical_decisions,
+        "max_physical_decisions",
+        maximum=MAX_PHYSICAL_DECISIONS,
+    )
+    max_policy_steps = validate_positive_int(
+        max_policy_steps,
+        "max_policy_steps",
+        maximum=MAX_POLICY_STEPS,
+    )
     if type(timeout_ms) is not int:
         raise TypeError("timeout_ms must be an integer and not bool")
     if timeout_ms <= 0 or timeout_ms > MAX_TIMEOUT_MS:
@@ -98,7 +109,16 @@ def _validate_request(
         raise TypeError("deck_ids must be an exact two-item tuple")
     if any(type(deck_id) is not str or not deck_id for deck_id in deck_ids):
         raise ValueError("deck_ids entries must be nonempty strings")
-    return expected_head, pairs, base_seed, bootstrap_replicates, max_decisions, timeout_ms, deck_ids
+    return (
+        expected_head,
+        pairs,
+        base_seed,
+        bootstrap_replicates,
+        max_physical_decisions,
+        max_policy_steps,
+        timeout_ms,
+        deck_ids,
+    )
 
 
 def _normalized_real(path: str | Path) -> str:
@@ -212,7 +232,8 @@ def _run_game(
     pair_index: int,
     game_in_pair: int,
     env_seed: int,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     candidate_model: KernelPolicyValueNet,
     baseline_model: KernelPolicyValueNet,
     expected_provenance: dict[str, Any],
@@ -225,7 +246,8 @@ def _run_game(
     current: Decision | Terminal = client.reset(
         episode_id=episode_id,
         env_seed=env_seed,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         deck_ids=deck_ids,
     )
     _assert_deck_identity(
@@ -236,13 +258,19 @@ def _run_game(
     )
     if not json_values_equal_strict(current.provenance, expected_provenance):
         raise ValueError("evaluation environment protocol provenance differs from source training run")
-    decisions = 0
-    candidate_decisions = 0
-    baseline_decisions = 0
+    policy_steps = 0
+    candidate_policy_steps = 0
+    baseline_policy_steps = 0
+    physical_decisions = 0
+    candidate_physical_decisions = 0
+    baseline_physical_decisions = 0
     while isinstance(current, Decision):
-        if decisions >= max_decisions:
-            raise RuntimeError("evaluation exceeded the local max_decisions guard before a natural terminal")
+        if policy_steps >= max_policy_steps:
+            raise RuntimeError("evaluation exceeded the local max_policy_steps guard before a natural terminal")
+        if current.physical_decision_id >= max_physical_decisions:
+            raise RuntimeError("evaluation exceeded the local max_physical_decisions guard before a natural terminal")
         is_candidate = current.acting_player == candidate_seat
+        group_complete = current.substep_index + 1 == current.substep_count
         model = candidate_model if is_candidate else baseline_model
         selected_position = _select_greedy_action(model, current)
         if selected_position < 0 or selected_position >= len(current.legal_actions):
@@ -255,26 +283,37 @@ def _run_game(
             deck_hashes=deck_hashes,
             context="evaluation environment",
         )
-        decisions += 1
+        policy_steps += 1
         if is_candidate:
-            candidate_decisions += 1
+            candidate_policy_steps += 1
         else:
-            baseline_decisions += 1
+            baseline_policy_steps += 1
+        if group_complete:
+            physical_decisions += 1
+            if is_candidate:
+                candidate_physical_decisions += 1
+            else:
+                baseline_physical_decisions += 1
         if not json_values_equal_strict(current.provenance, expected_provenance):
             raise ValueError("evaluation environment protocol provenance drift")
     if not isinstance(current, Terminal):
         raise TypeError("evaluation client returned an unsupported response")
-    if current.decision_count != decisions:
-        raise ValueError("terminal decision_count differs from evaluator routing count")
+    if current.policy_step_count != policy_steps:
+        raise ValueError("terminal policy_step_count differs from evaluator routing count")
+    if current.physical_decision_count != physical_decisions:
+        raise ValueError("terminal physical_decision_count differs from evaluator grouping count")
     result, points = _candidate_result(current, candidate_seat)
     return {
-        "baseline_decisions": baseline_decisions,
+        "baseline_policy_steps": baseline_policy_steps,
+        "baseline_physical_decisions": baseline_physical_decisions,
         "baseline_seat": baseline_seat,
-        "candidate_decisions": candidate_decisions,
+        "candidate_policy_steps": candidate_policy_steps,
+        "candidate_physical_decisions": candidate_physical_decisions,
         "candidate_half_points": points,
         "candidate_result": result,
         "candidate_seat": candidate_seat,
-        "decision_count": current.decision_count,
+        "policy_step_count": current.policy_step_count,
+        "physical_decision_count": current.physical_decision_count,
         "env_seed": env_seed,
         "deck_ids": list(current.deck_ids),
         "deck_hashes": list(current.deck_hashes),
@@ -336,7 +375,8 @@ def _manifest_without_files(
     pair_count: int,
     base_seed: int,
     bootstrap_replicates: int,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     timeout_ms: int,
     statistics: dict[str, Any],
 ) -> dict[str, Any]:
@@ -358,7 +398,8 @@ def _manifest_without_files(
             "bootstrap_replicates": bootstrap_replicates,
             "deck_ids": list(deck_ids),
             "game_count": 2 * pair_count,
-            "max_decisions": max_decisions,
+            "max_physical_decisions": max_physical_decisions,
+            "max_policy_steps": max_policy_steps,
             "pair_count": pair_count,
             "timeout_ms": timeout_ms,
         },
@@ -390,7 +431,8 @@ def _manifest_without_files(
             "protocol_provenance": source["protocol_provenance"],
             "run": {"schema": source["schema"], "sha256": candidate_ref.run_digest},
             "runtime_compatibility": source["compatibility"],
-            "trainer_max_decisions": source["trainer"]["max_decisions"],
+            "trainer_max_physical_decisions": source["trainer"]["max_physical_decisions"],
+            "trainer_max_policy_steps": source["trainer"]["max_policy_steps"],
         },
         "statistics": statistics,
     }
@@ -402,7 +444,8 @@ def _preflight_store(
     expected_candidate_head: str,
     env_bin: str | Path,
     out_dir: str | Path,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     deck_ids: tuple[str, str],
 ) -> tuple[ValidatedChain, SnapshotRef, SnapshotRef, KernelPolicyValueNet, KernelPolicyValueNet, str]:
     chain = TrainingStore(training_store).validate_latest()
@@ -415,8 +458,10 @@ def _preflight_store(
     source = chain.run_record
     if tuple(source["environment"]["deck_ids"]) != deck_ids:
         raise ValueError("deck_ids must exactly match the validated training run contract")
-    if max_decisions != source["trainer"]["max_decisions"]:
-        raise ValueError("max_decisions must exactly match the validated training run contract")
+    if max_physical_decisions != source["trainer"]["max_physical_decisions"]:
+        raise ValueError("max_physical_decisions must exactly match the validated training run contract")
+    if max_policy_steps != source["trainer"]["max_policy_steps"]:
+        raise ValueError("max_policy_steps must exactly match the validated training run contract")
     current_compatibility = runtime_compatibility()
     if not json_values_equal_strict(current_compatibility, source["compatibility"]):
         raise ValueError("current runtime compatibility differs from the validated training run")
@@ -447,18 +492,29 @@ def evaluate(
     pairs: int,
     base_seed: int,
     bootstrap_replicates: int,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     timeout_ms: int,
     deck_ids: tuple[str, str] = DEFAULT_DECK_IDS,
 ) -> EvaluationResult:
     """Evaluate the validated head against update zero with fixed greedy pairs."""
 
-    expected_head, pairs, base_seed, bootstrap_replicates, max_decisions, timeout_ms, deck_ids = _validate_request(
+    (
+        expected_head,
+        pairs,
+        base_seed,
+        bootstrap_replicates,
+        max_physical_decisions,
+        max_policy_steps,
+        timeout_ms,
+        deck_ids,
+    ) = _validate_request(
         expected_candidate_head=expected_candidate_head,
         pairs=pairs,
         base_seed=base_seed,
         bootstrap_replicates=bootstrap_replicates,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         timeout_ms=timeout_ms,
         deck_ids=deck_ids,
     )
@@ -467,7 +523,8 @@ def evaluate(
         expected_candidate_head=expected_head,
         env_bin=env_bin,
         out_dir=out_dir,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         deck_ids=deck_ids,
     )
     expected_provenance = chain.run_record["protocol_provenance"]
@@ -489,7 +546,8 @@ def evaluate(
                     pair_index=pair_index,
                     game_in_pair=0,
                     env_seed=env_seed,
-                    max_decisions=max_decisions,
+                    max_physical_decisions=max_physical_decisions,
+                    max_policy_steps=max_policy_steps,
                     candidate_model=candidate_model,
                     baseline_model=baseline_model,
                     expected_provenance=expected_provenance,
@@ -501,7 +559,8 @@ def evaluate(
                     pair_index=pair_index,
                     game_in_pair=1,
                     env_seed=env_seed,
-                    max_decisions=max_decisions,
+                    max_physical_decisions=max_physical_decisions,
+                    max_policy_steps=max_policy_steps,
                     candidate_model=candidate_model,
                     baseline_model=baseline_model,
                     expected_provenance=expected_provenance,
@@ -550,7 +609,8 @@ def evaluate(
             pair_count=pairs,
             base_seed=base_seed,
             bootstrap_replicates=bootstrap_replicates,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             timeout_ms=timeout_ms,
             statistics=statistics,
         )
