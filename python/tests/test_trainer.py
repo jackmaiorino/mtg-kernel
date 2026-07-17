@@ -2621,6 +2621,7 @@ class TrainerTest(unittest.TestCase):
             self.assertEqual(read_json_file(out / "latest.json")["update"], 0)
             self.assertFalse((out / "updates" / "update-00000001.json").exists())
 
+    @unittest.skipUnless(os.name == "nt", "Windows replace retry regression")
     def test_windows_replace_error_retries_twice_then_succeeds(self) -> None:
         import mtg_kernel_rl.artifacts as artifacts
 
