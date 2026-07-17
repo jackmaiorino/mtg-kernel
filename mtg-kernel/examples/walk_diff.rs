@@ -85,7 +85,7 @@
 //!
 //! Usage: cargo run --release --example walk_diff -- <corpus_dir> <walk_spec.json>
 
-use mtg_kernel::card_def::{self, FlashbackCost, CARD_DEFS};
+use mtg_kernel::card_def::{self, CostComponent, CARD_DEFS};
 use mtg_kernel::engine::{Action, CastMode, Decision, OptionalCostChoice};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{Cost, ManaColor, Pip};
@@ -1294,18 +1294,25 @@ fn render_cost(cost: &Cost) -> String {
     s
 }
 
-/// `FlashbackCost::SacrificeLands(1)` -> `"sacrifice a Mountain"` is
+/// `CostComponent::SacrificeLands(1)` -> `"sacrifice a Mountain"` is
 /// confirmed against real evidence (Lava Dart's flashback candidate text,
 /// same `summary_offset1.csv` sample: `"Flashback sacrifice a Mountain"`).
-/// `SacrificeLands(n > 1)` never occurs in this pool (only Lava Dart has a
-/// non-mana flashback cost, always 1) -- the plural rendering below is
-/// UNVERIFIED best-effort, flagged for the Java-side agent if a future
-/// card ever needs it.
-fn render_flashback_cost(fb: FlashbackCost) -> String {
-    match fb {
-        FlashbackCost::Mana(cost) => render_cost(&cost),
-        FlashbackCost::SacrificeLands(1) => "sacrifice a Mountain".to_string(),
-        FlashbackCost::SacrificeLands(n) => format!("sacrifice {n} lands"),
+/// When the ordered cost begins with mana, XMage's AIRL display uses the
+/// `FlashbackAbility` constructor's base mana text and omits later costs added
+/// with `ability.addCost(...)`. That card-name-neutral rule is observable for
+/// Deep Analysis: `[Mana({1}{U}), PayLife(3)]` renders exactly
+/// `"Flashback {1}{U}"`, not a life-cost suffix. `SacrificeLands(n > 1)`
+/// never occurs in this pool; the plural rendering is UNVERIFIED best-effort.
+fn render_flashback_cost(components: &[CostComponent]) -> String {
+    if let Some(CostComponent::Mana(cost)) = components.first() {
+        return render_cost(cost);
+    }
+    match components {
+        [CostComponent::SacrificeLands(1)] => "sacrifice a Mountain".to_string(),
+        [CostComponent::SacrificeLands(n)] => format!("sacrifice {n} lands"),
+        [CostComponent::PayLife(1)] => "pay 1 life".to_string(),
+        [CostComponent::PayLife(n)] => format!("pay {n} life"),
+        _ => "unsupported cost".to_string(),
     }
 }
 
@@ -1578,11 +1585,7 @@ fn cast_spell_or_pass_native(
         let text = match state.objects.get(id).zone {
             Zone::Graveyard => {
                 let cd = &CARD_DEFS[state.objects.get(id).card_def as usize];
-                let fb = cd
-                    .flashback
-                    .as_ref()
-                    .map(|f| f.cost)
-                    .unwrap_or(FlashbackCost::SacrificeLands(0));
+                let fb = cd.flashback.as_ref().map(|f| f.cost).unwrap_or(&[]);
                 format!("Flashback {}", render_flashback_cost(fb))
             }
             Zone::Exile => format!("Cast {name} using Plot"),
@@ -1675,6 +1678,8 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             card_def::CostComponent::DiscardCards(n) => format!("Discard {n} cards"),
             card_def::CostComponent::SacrificeLands(1) => "Sacrifice a land".to_string(),
             card_def::CostComponent::SacrificeLands(n) => format!("Sacrifice {n} lands"),
+            card_def::CostComponent::PayLife(1) => "Pay 1 life".to_string(),
+            card_def::CostComponent::PayLife(n) => format!("Pay {n} life"),
         })
         .collect();
     format!("{}: Draw a card.", parts.join(", "))
@@ -2459,5 +2464,27 @@ fn finish(
         alt_index: spec.alt_index,
         max_steps: spec.max_steps,
         steps,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flashback_candidate_costs_preserve_xmage_display_contract() {
+        for (name, expected) in [
+            ("Faithless Looting", "{2}{R}"),
+            ("Lava Dart", "sacrifice a Mountain"),
+            // PayLife(3) is a real later component but XMage's ability name
+            // retains only the constructor's base mana text.
+            ("Deep Analysis", "{1}{U}"),
+        ] {
+            let def = &CARD_DEFS[card_def::card_id_by_name(name).unwrap() as usize];
+            assert_eq!(
+                render_flashback_cost(def.flashback.as_ref().unwrap().cost),
+                expected
+            );
+        }
     }
 }
