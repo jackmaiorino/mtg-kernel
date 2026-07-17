@@ -4066,6 +4066,7 @@ mod tests {
             controller: PlayerId::P0,
             target_spec: mtg_kernel::card_def::TargetSpec::None,
             targets_chosen: Vec::new(),
+            target_contracts: Vec::new(),
             is_flashback: false,
             cast_mode: None,
             additional_cost_discarded: None,

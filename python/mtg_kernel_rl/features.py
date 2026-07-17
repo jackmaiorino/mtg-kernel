@@ -17,8 +17,8 @@ CLASSIFICATIONS = (MODEL_INPUT, OPERATIONAL_ONLY, FORBIDDEN)
 
 FEATURE_SCHEMA_VERSION = "actor-relative-v5-python-4"
 FEATURE_REGISTRY_VERSION = "rust-observation-v5-action-v5-registry-4"
-ENCODING_CONTRACT_VERSION = "actor-relative-node-graph-11"
-MODEL_CONTRACT_VERSION = "kernel-policy-value-net-7"
+ENCODING_CONTRACT_VERSION = "actor-relative-node-graph-12"
+MODEL_CONTRACT_VERSION = "kernel-policy-value-net-8"
 
 STATE_HASH_DIM = 96
 ACTION_HASH_DIM = 96
@@ -1662,6 +1662,13 @@ def _stable_identity(ref: dict[str, Any]) -> tuple[int, str, str, str]:
     return (ref["card_db_id"], ref["owner"], ref["controller"], ref["zone"])
 
 
+def _historical_stack_target_identity(ref: dict[str, Any]) -> tuple[int, str, str]:
+    # Controller can change without a zone change. Announcement-time stack
+    # target provenance therefore binds the immutable identity fields only;
+    # every other repeated stable reference remains controller-exact.
+    return (ref["card_db_id"], ref["owner"], ref["zone"])
+
+
 @dataclass
 class _NodeRegistry:
     actor: str
@@ -1675,6 +1682,7 @@ class _NodeRegistry:
         self._node_by_key: dict[tuple[int, int], int] = {}
         self._identity_by_key: dict[tuple[int, int], tuple[int, str, str, str]] = {}
         self._node_by_arena: dict[int, int] = {}
+        self._historical_stack_target_node_by_ref: dict[int, int] = {}
 
     def validate_ref(self, ref: dict[str, Any]) -> tuple[int, int]:
         key = _stable_key(ref)
@@ -1707,6 +1715,40 @@ class _NodeRegistry:
             self.current_turn,
         )
         return self._add_node(key, features, token, "paid_cost", register_arena=False)
+
+    def add_historical_stack_target_node(self, ref: dict[str, Any], order: int) -> int:
+        """Register announcement-time target provenance without replacing the live incarnation."""
+        key = _stable_key(ref)
+        identity = _stable_identity(ref)
+        previous = self._identity_by_key.get(key)
+        if previous is not None and (
+            previous[0],
+            previous[1],
+            previous[3],
+        ) != _historical_stack_target_identity(ref):
+            raise FeatureSchemaError(
+                "inconsistent historical stack target reference for same incarnation"
+            )
+        if previous is None:
+            self._identity_by_key[key] = identity
+        features, token = _card_public_features(
+            _blank_public_from_ref(ref, "target"),
+            self.actor,
+            order,
+            "target",
+            self.current_turn,
+        )
+        node = self._add_node(key, features, token, "stack_target", register_arena=False)
+        self._historical_stack_target_node_by_ref[id(ref)] = node
+        return node
+
+    def resolve_historical_stack_target_node(self, ref: dict[str, Any]) -> int:
+        try:
+            return self._historical_stack_target_node_by_ref[id(ref)]
+        except KeyError as exc:
+            raise FeatureSchemaError(
+                "historical stack target was not registered before edge construction"
+            ) from exc
 
     def resolve_context_ref_node(self, ref: dict[str, Any], group: str, order: int, source_kind: str, path: tuple[str, ...]) -> int:
         key = self.validate_ref(ref)
@@ -1889,6 +1931,12 @@ def _objects(obs: dict[str, Any]) -> tuple[_NodeRegistry, list[list[float]], lis
         registry.add_card(card, "exile", i)
     for i, item in enumerate(p["stack"]):
         registry.add_ref_node(item["source"], "stack", i, "stack")
+    historical_target_order = 0
+    for item in p["stack"]:
+        for target in item["targets"]:
+            if target["target_kind"] == "object":
+                registry.add_historical_stack_target_node(target["object"], historical_target_order)
+                historical_target_order += 1
     historical_paid_order = 0
     for item in p["stack"]:
         for paid_ref in item["paid_cost_refs"]:
@@ -1922,7 +1970,7 @@ def _objects(obs: dict[str, Any]) -> tuple[_NodeRegistry, list[list[float]], lis
         source = registry.resolve(item["source"])
         for target_index, target in enumerate(item["targets"]):
             if target["target_kind"] == "object":
-                target_node = registry.resolve(target["object"])
+                target_node = registry.resolve_historical_stack_target_node(target["object"])
                 _append_edge(edge_rows, edge_sources, edge_targets, source, target_node, "stack_target", i, target_index)
         for paid_order, paid_ref in enumerate(item["paid_cost_refs"]):
             paid_node = registry.resolve(paid_ref)
@@ -2469,14 +2517,36 @@ def _validate_observation_semantics(observation: dict[str, Any]) -> None:
         for owner_entries in observation["known_hand_cards"]
         for card in owner_entries
     )
+    historical_stack_target_refs = [
+        target["object"]
+        for item in p["stack"]
+        for target in item["targets"]
+        if target["target_kind"] == "object"
+    ]
+    historical_stack_target_ids = {id(ref) for ref in historical_stack_target_refs}
     identity_by_key: dict[tuple[int, int], tuple[int, str, str, str]] = {}
     for ref in _iter_card_refs_by_schema(observation, OBSERVATION_SPEC):
+        if id(ref) in historical_stack_target_ids:
+            continue
         key = _stable_key(ref)
         identity = _stable_identity(ref)
         previous = identity_by_key.get(key)
         if previous is not None and previous != identity:
             raise FeatureSchemaError("inconsistent repeated stable reference for same incarnation")
         identity_by_key[key] = identity
+    for ref in historical_stack_target_refs:
+        key = _stable_key(ref)
+        previous = identity_by_key.get(key)
+        if previous is not None and (
+            previous[0],
+            previous[1],
+            previous[3],
+        ) != _historical_stack_target_identity(ref):
+            raise FeatureSchemaError(
+                "inconsistent historical stack target reference for same incarnation"
+            )
+        if previous is None:
+            identity_by_key[key] = _stable_identity(ref)
     for card in public_cards:
         characteristics = card["characteristics"]
         keywords = characteristics["effective_keywords"]
@@ -2543,6 +2613,14 @@ def _validate_observation_semantics(observation: dict[str, Any]) -> None:
         paid_keys = [_stable_key(ref) for ref in item["paid_cost_refs"]]
         if len(paid_keys) != len(set(paid_keys)):
             raise FeatureSchemaError("paid_cost_refs must not repeat an object incarnation")
+        for target in item["targets"]:
+            if (
+                target["target_kind"] == "object"
+                and target["object"]["zone"] not in {"Battlefield", "Stack"}
+            ):
+                raise FeatureSchemaError(
+                    "historical object stack targets must have Battlefield or Stack provenance"
+                )
     combat = p["combat"]
     attacker_keys = [_stable_key(ref) for ref in combat["ordered_attackers"]]
     if len(attacker_keys) != len(set(attacker_keys)):

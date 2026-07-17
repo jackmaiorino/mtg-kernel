@@ -255,6 +255,7 @@ fn activation_stages_then_pays_mana_discards_source_and_uses_the_stack() {
                 object: lorien,
                 from: Zone::Hand,
                 to: Zone::Graveyard,
+                controller_before: PlayerId::P0,
             },
         ]
     );
@@ -644,6 +645,7 @@ fn choose_moves_then_reveals_then_deterministically_shuffles_remaining_library()
             object,
             from: Zone::Library,
             to: Zone::Hand,
+            ..
         } if *object == selected
     )));
 

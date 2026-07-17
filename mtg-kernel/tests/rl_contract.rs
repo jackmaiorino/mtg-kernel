@@ -562,7 +562,7 @@ fn rl_contract_combat_projection_filters_a_ceased_token_blocker() {
 }
 
 #[test]
-fn rl_contract_ceased_objects_do_not_reappear_as_live_effects_or_targets() {
+fn rl_contract_ceased_objects_leave_live_effects_but_remain_historical_stack_targets() {
     let mut state = empty_state();
     let token = make_object(
         &mut state,
@@ -595,13 +595,32 @@ fn rl_contract_ceased_objects_do_not_reappear_as_live_effects_or_targets() {
         mode_chosen: 0,
         madness_offer: false,
         kicked: false,
-        v4: mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal),
+        v4: {
+            let mut v4 =
+                mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal);
+            v4.target_spec = Some(TargetSpec::AnyTarget);
+            v4.target_contracts = vec![mtg_kernel::state::StackTargetContractV4::capture(
+                &state,
+                Target::Object(token),
+            )];
+            v4
+        },
     });
     assert!(mtg_kernel::event::cease_to_exist(&mut state, token));
 
     let observation = observe_for_test(&state, PlayerId::P0, 0);
     assert!(observation.projection.continuous_effects.is_empty());
-    assert!(observation.projection.stack[0].targets.is_empty());
+    assert_eq!(observation.projection.stack[0].targets.len(), 1);
+    assert!(matches!(
+        &observation.projection.stack[0].targets[0],
+        mtg_kernel::rl::TargetRefV1::Object { object }
+            if object.arena_id == token.0
+                && object.card_db_id == card_id_by_name("Human Soldier Token").unwrap()
+                && object.owner == PlayerSeatV1::P1
+                && object.controller == PlayerSeatV1::P1
+                && object.zone == Zone::Battlefield
+                && object.zone_change_count == 0
+    ));
 }
 
 #[test]
@@ -1233,7 +1252,7 @@ fn rl_contract_active_exile_permission_holder_and_expiry_are_public() {
 #[test]
 fn rl_contract_stack_items_expose_explicit_public_kind() {
     let mut state = empty_state();
-    let spell = make_object(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Stack);
+    let spell = make_object(&mut state, PlayerId::P0, "Cryptic Serpent", Zone::Stack);
     let activated = make_object(&mut state, PlayerId::P0, "Blood Token", Zone::Battlefield);
     let triggered = make_object(
         &mut state,
@@ -1258,23 +1277,40 @@ fn rl_contract_stack_items_expose_explicit_public_kind() {
         ),
         (StackItemKind::MadnessOffer, madness, PlayerId::P0, true),
     ] {
+        let (inline_effect, v4) = match kind {
+            StackItemKind::Spell => {
+                let mut v4 =
+                    mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal);
+                v4.target_spec = Some(TargetSpec::None);
+                (None, v4)
+            }
+            StackItemKind::ActivatedAbility => {
+                let def = &CARD_DEFS[state.objects.get(source).card_def as usize];
+                let ability = &def.activated_abilities[0];
+                let v4 = mtg_kernel::state::StackStateV4 {
+                    target_spec: Some(ability.target_spec),
+                    activated_ability_index: Some(0),
+                    ..Default::default()
+                };
+                (Some((ability.effect)()), v4)
+            }
+            StackItemKind::TriggeredAbility | StackItemKind::MadnessOffer => {
+                (None, mtg_kernel::state::StackStateV4::default())
+            }
+        };
         state.stack.push(StackItem {
             kind,
             source,
             controller,
             targets: Vec::new(),
             is_copy: false,
-            inline_effect: None,
+            inline_effect,
             discarded: Vec::new(),
             is_flashback: false,
             mode_chosen: 0,
             madness_offer,
             kicked: false,
-            v4: if kind == StackItemKind::Spell {
-                mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal)
-            } else {
-                mtg_kernel::state::StackStateV4::default()
-            },
+            v4,
         });
     }
 
@@ -1308,12 +1344,24 @@ fn rl_contract_spell_copy_state_and_binary_actions_are_explicit() {
         mode_chosen: 0,
         madness_offer: false,
         kicked: false,
-        v4: mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal),
+        v4: {
+            let mut v4 =
+                mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal);
+            v4.target_spec = Some(TargetSpec::AnyTarget);
+            v4.target_contracts = vec![mtg_kernel::state::StackTargetContractV4::Player(
+                PlayerId::P1,
+            )];
+            v4
+        },
     });
     state.engine.pending_spell_copy = Some(PendingSpellCopy {
         resolving_source: parent,
+        resolving_source_zone_change_count: state.objects.get(parent).zone_change_count,
         player: PlayerId::P1,
         inherited_target: Target::Player(PlayerId::P1),
+        inherited_target_contract: Some(mtg_kernel::state::StackTargetContractV4::Player(
+            PlayerId::P1,
+        )),
         stage: SpellCopyStage::Payment,
         copy_source: None,
     });
@@ -1408,6 +1456,100 @@ fn rl_contract_spell_copy_state_and_binary_actions_are_explicit() {
             .unwrap()
             .stage,
         SpellCopyStageV2::Target
+    );
+}
+
+#[test]
+fn rl_contract_chain_copy_keeps_historical_target_through_same_generation_control_change() {
+    let mut state = empty_state();
+    state.active_player = PlayerId::P0;
+    state.priority_player = PlayerId::P0;
+    state.step = Step::Main1;
+    make_object(&mut state, PlayerId::P0, "Great Furnace", Zone::Battlefield);
+    make_object(&mut state, PlayerId::P0, "Great Furnace", Zone::Battlefield);
+    let target = make_object(
+        &mut state,
+        PlayerId::P1,
+        "Cryptic Serpent",
+        Zone::Battlefield,
+    );
+    let parent = make_object(&mut state, PlayerId::P0, "Chain Lightning", Zone::Stack);
+    let contract =
+        mtg_kernel::state::StackTargetContractV4::capture(&state, Target::Object(target));
+    let mut parent_v4 =
+        mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal);
+    parent_v4.target_spec = Some(TargetSpec::AnyTarget);
+    parent_v4.target_contracts = vec![contract];
+    state.stack.push(StackItem {
+        kind: StackItemKind::Spell,
+        source: parent,
+        controller: PlayerId::P0,
+        targets: vec![Target::Object(target)],
+        is_copy: false,
+        inline_effect: None,
+        discarded: Vec::new(),
+        is_flashback: false,
+        mode_chosen: 0,
+        madness_offer: false,
+        kicked: false,
+        v4: parent_v4,
+    });
+
+    state.players[PlayerId::P1.index()]
+        .battlefield
+        .retain(|&object| object != target);
+    state.players[PlayerId::P0.index()].battlefield.push(target);
+    state.objects.get_mut(target).controller = PlayerId::P0;
+    state.engine.pending_spell_copy = Some(PendingSpellCopy {
+        resolving_source: parent,
+        resolving_source_zone_change_count: state.objects.get(parent).zone_change_count,
+        player: PlayerId::P0,
+        inherited_target: Target::Object(target),
+        inherited_target_contract: Some(contract),
+        stage: SpellCopyStage::Payment,
+        copy_source: None,
+    });
+
+    let payment = observe_for_test(&state, PlayerId::P0, 0);
+    let historical_parent_target = payment.projection.stack[0].targets[0].clone();
+    assert_eq!(
+        payment
+            .projection
+            .engine_context
+            .pending_spell_copy
+            .as_ref()
+            .unwrap()
+            .inherited_target,
+        historical_parent_target
+    );
+    assert!(matches!(
+        &historical_parent_target,
+        mtg_kernel::rl::TargetRefV1::Object { object }
+            if object.controller == PlayerSeatV1::P1
+                && object.zone_change_count == 0
+    ));
+    assert_eq!(state.objects.get(target).controller, PlayerId::P0);
+
+    engine::step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+    let retarget = observe_for_test(&state, PlayerId::P0, 1);
+    assert_eq!(retarget.projection.stack.len(), 2);
+    assert_eq!(
+        retarget.projection.stack[0].targets[0],
+        historical_parent_target
+    );
+    assert_eq!(
+        retarget.projection.stack[1].targets[0],
+        historical_parent_target
+    );
+    assert_eq!(
+        retarget
+            .projection
+            .engine_context
+            .pending_spell_copy
+            .as_ref()
+            .unwrap()
+            .inherited_target,
+        historical_parent_target
     );
 }
 
@@ -1565,6 +1707,9 @@ fn rl_contract_engine_pending_cast_context_changes_hash() {
         controller: PlayerId::P0,
         target_spec: TargetSpec::AnyTarget,
         targets_chosen: vec![Target::Player(PlayerId::P1)],
+        target_contracts: vec![mtg_kernel::state::StackTargetContractV4::Player(
+            PlayerId::P1,
+        )],
         is_flashback: false,
         cast_mode: Some(CastMode::Normal),
         additional_cost_discarded: Some(Vec::new()),
@@ -1576,6 +1721,10 @@ fn rl_contract_engine_pending_cast_context_changes_hash() {
     });
     let mut b = a.clone();
     b.engine.pending_cast.as_mut().unwrap().targets_chosen = vec![Target::Player(PlayerId::P0)];
+    b.engine.pending_cast.as_mut().unwrap().target_contracts =
+        vec![mtg_kernel::state::StackTargetContractV4::Player(
+            PlayerId::P0,
+        )];
 
     let obs_a = observe_for_test(&a, PlayerId::P0, 20);
     let obs_b = observe_for_test(&b, PlayerId::P0, 20);
@@ -2066,6 +2215,7 @@ fn rl_contract_pending_effect_reuses_the_public_resolving_stack_source() {
             },
         ],
     };
+    state.stack.push(resolving_item.clone());
     assert_eq!(
         mtg_kernel::effect::begin_resumable_resolution(
             &effect,
@@ -2204,8 +2354,8 @@ fn rl_contract_episode_records_use_independent_schema_versions_and_pin_hash_algo
     let policy_seed = derive_policy_seed(9999, 0);
     let run = record_burn_mirror_episode(0, env_seed, policy_seed, 64).unwrap();
 
-    assert_eq!(AUDIT_EPISODE_SCHEMA_VERSION, 8);
-    assert_eq!(MANIFEST_SCHEMA_VERSION, 6);
+    assert_eq!(AUDIT_EPISODE_SCHEMA_VERSION, 9);
+    assert_eq!(MANIFEST_SCHEMA_VERSION, 7);
     assert_eq!(POLICY_EPISODE_SCHEMA_VERSION, 5);
     let audit_header = serde_json::to_value(&run.audit_records[0]).unwrap();
     assert_eq!(audit_header["schema_version"], AUDIT_EPISODE_SCHEMA_VERSION);

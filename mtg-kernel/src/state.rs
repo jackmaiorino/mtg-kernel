@@ -3,6 +3,7 @@
 //! states built from the same inputs serialize and hash identically (see
 //! `state_hash` and the determinism test below).
 
+use crate::card_def::TargetSpec;
 use crate::ids::{Arena, ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use serde::{Deserialize, Serialize};
@@ -12,13 +13,13 @@ pub const STARTING_LIFE: i32 = 20;
 
 /// Exact diagnostic full-state hash contract written into privileged audit
 /// artifacts. The algorithm is FNV-1a-64 over the compact UTF-8 JSON bytes of
-/// `DiagnosticStateHashEnvelopeV3` below.
+/// `DiagnosticStateHashEnvelopeV4` below.
 ///
 /// Changing the envelope, JSON representation, or digest algorithm requires a
 /// new constant value and an audit-artifact schema bump. Policy artifacts do
 /// not contain this privileged full-state diagnostic.
-pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v3";
-pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 3;
+pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v4";
+pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
@@ -344,6 +345,124 @@ pub struct PaidCostRefV4 {
     pub visible_to_mask: u8,
 }
 
+/// Historical contract for one announced stack target. Unlike the live
+/// `Target` convenience vector, an object target freezes every field needed
+/// to identify the exact CR 400.7 incarnation even if that arena id later
+/// leaves and re-enters a zone before resolution. Stack observations project
+/// this record, never the potentially newer live object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StackTargetContractV4 {
+    Player(PlayerId),
+    Object {
+        object: ObjectId,
+        card_def: u16,
+        owner: PlayerId,
+        controller: PlayerId,
+        zone: Zone,
+        zone_change_count: u32,
+    },
+}
+
+impl StackTargetContractV4 {
+    pub fn capture(state: &GameState, target: Target) -> StackTargetContractV4 {
+        match target {
+            Target::Player(player) => StackTargetContractV4::Player(player),
+            Target::Object(object) => {
+                let live = state.objects.get(object);
+                StackTargetContractV4::Object {
+                    object,
+                    card_def: live.card_def,
+                    owner: live.owner,
+                    controller: live.controller,
+                    zone: live.zone,
+                    zone_change_count: live.zone_change_count,
+                }
+            }
+        }
+    }
+
+    pub const fn target(self) -> Target {
+        match self {
+            StackTargetContractV4::Player(player) => Target::Player(player),
+            StackTargetContractV4::Object { object, .. } => Target::Object(object),
+        }
+    }
+}
+
+/// Validates immutable target provenance without asking whether the target is
+/// still legal now. A later incarnation is an ordinary stale target and may
+/// fizzle; a contract from the future, an impossible announcement zone, or a
+/// same-incarnation zone disagreement is malformed state and must fail closed.
+/// Controller is deliberately historical only: control can change without a
+/// zone change, so comparing it with the live object would reject valid games.
+pub fn stack_target_contract_is_structurally_valid(
+    state: &GameState,
+    spec: TargetSpec,
+    target_index: usize,
+    target: Target,
+    contract: StackTargetContractV4,
+) -> bool {
+    if contract.target() != target {
+        return false;
+    }
+    let shape_is_valid = matches!(
+        (spec, target_index, contract),
+        (
+            TargetSpec::AnyPlayer | TargetSpec::AnyTarget | TargetSpec::PlayerThenTheirCreature,
+            0,
+            StackTargetContractV4::Player(_),
+        ) | (
+            TargetSpec::PlayerThenTheirCreature,
+            1,
+            StackTargetContractV4::Object {
+                zone: Zone::Battlefield,
+                ..
+            },
+        ) | (
+            TargetSpec::AnyTarget
+                | TargetSpec::AnyPermanent
+                | TargetSpec::BluePermanent
+                | TargetSpec::RedPermanent
+                | TargetSpec::NonlandPermanent,
+            0,
+            StackTargetContractV4::Object {
+                zone: Zone::Battlefield,
+                ..
+            },
+        ) | (
+            TargetSpec::AnySpellOnStack
+                | TargetSpec::InstantSpellOnStack
+                | TargetSpec::BlueSpellOnStack
+                | TargetSpec::RedSpellOnStack,
+            0,
+            StackTargetContractV4::Object {
+                zone: Zone::Stack,
+                ..
+            },
+        )
+    );
+    if !shape_is_valid {
+        return false;
+    }
+    let StackTargetContractV4::Object {
+        object,
+        card_def,
+        owner,
+        zone,
+        zone_change_count,
+        ..
+    } = contract
+    else {
+        return true;
+    };
+    state.objects.try_get(object).is_some_and(|live| {
+        live.card_def == card_def
+            && live.owner == owner
+            && zone_change_count <= live.zone_change_count
+            && (zone_change_count != live.zone_change_count || zone == live.zone)
+    })
+}
+
 /// Cast/payment provenance that belongs to the stack incarnation, not the
 /// underlying card object. Abilities use `cast_method: None`; spells always
 /// carry an explicit method (ordinary casts are `Some(Normal)`).
@@ -353,6 +472,20 @@ pub struct StackStateV4 {
     pub face_index: u8,
     pub x_value: u16,
     pub paid_cost_refs: Vec<PaidCostRefV4>,
+    /// Target specification selected for this stack item (mode-aware for a
+    /// spell, definition-owned for an activation). `None` only for untargeted
+    /// abilities/triggers and the transient cast placeholder before 601.2c.
+    #[serde(default)]
+    pub target_spec: Option<crate::card_def::TargetSpec>,
+    /// Announced targets in printed order with full historical identities.
+    /// Kept internal to full state/snapshots; public wire shapes are unchanged.
+    #[serde(default)]
+    pub target_contracts: Vec<StackTargetContractV4>,
+    /// Definition-owned index for an activated ability stack item. This is
+    /// internal provenance used to validate its target specification at
+    /// resolution; public stack/action schemas remain unchanged.
+    #[serde(default)]
+    pub activated_ability_index: Option<u8>,
 }
 
 impl StackStateV4 {
@@ -791,6 +924,33 @@ impl GameState {
         self.library_knowledge[observer.index()][owner.index()] = entries;
     }
 
+    /// Records one exact, publicly determined library position without
+    /// revealing any identities above or below it. The caller must already
+    /// have applied any insertion/removal position shifts.
+    pub(crate) fn reveal_library_position(
+        &mut self,
+        observer: PlayerId,
+        owner: PlayerId,
+        position: usize,
+    ) {
+        let object = *self.players[owner.index()]
+            .library
+            .get(position)
+            .expect("revealed library position must exist");
+        let zone_change_count = self.objects.get(object).zone_change_count;
+        let entries = &mut self.library_knowledge[observer.index()][owner.index()];
+        entries.retain(|entry| {
+            entry.position as usize != position
+                && !(entry.object == object && entry.zone_change_count == zone_change_count)
+        });
+        entries.push(LibraryKnowledgeEntry {
+            position: position as u32,
+            object,
+            zone_change_count,
+        });
+        entries.sort_by_key(|entry| entry.position);
+    }
+
     /// Reorders exactly the top `ordered.len()` cards. The supplied ids must
     /// be a permutation of the current prefix. Observers in `revealed_to`
     /// learn the resulting order; everyone else loses facts inside the
@@ -1104,13 +1264,13 @@ impl Hasher for Fnv1a64 {
 }
 
 #[derive(Serialize)]
-struct DiagnosticStateHashEnvelopeV3<'a> {
+struct DiagnosticStateHashEnvelopeV4<'a> {
     schema_version: u32,
     state: &'a GameState,
 }
 
 fn diagnostic_state_hash_bytes(state: &GameState) -> Vec<u8> {
-    serde_json::to_vec(&DiagnosticStateHashEnvelopeV3 {
+    serde_json::to_vec(&DiagnosticStateHashEnvelopeV4 {
         schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION,
         state,
     })
@@ -1301,13 +1461,13 @@ mod tests {
 
         assert_eq!(
             DIAGNOSTIC_STATE_HASH_ALGORITHM,
-            "fnv1a64-serde-json-game-state-envelope-v3"
+            "fnv1a64-serde-json-game-state-envelope-v4"
         );
-        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 3);
+        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 4);
         assert!(
-            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":3,\"state\":{")
+            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":4,\"state\":{")
         );
-        assert_eq!(state.diagnostic_state_hash(), 0xa127_b021_904e_613b);
+        assert_eq!(state.diagnostic_state_hash(), 0xae77_b6e1_81d5_1596);
     }
 
     /// Draws to different players don't interact, so interleaving order
@@ -1363,6 +1523,7 @@ mod tests {
             controller: PlayerId::P0,
             target_spec: crate::card_def::TargetSpec::None,
             targets_chosen: Vec::new(),
+            target_contracts: Vec::new(),
             is_flashback: false,
             cast_mode: Some(crate::engine::CastMode::Normal),
             additional_cost_discarded: Some(Vec::new()),

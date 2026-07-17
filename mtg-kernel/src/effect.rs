@@ -19,7 +19,7 @@ use crate::card_def::{CardType, Subtype};
 use crate::event;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
-use crate::state::{GameState, StackItem, Target, Zone};
+use crate::state::{GameState, StackItem, StackTargetContractV4, Target, Zone};
 use serde::{Deserialize, Serialize};
 
 /// Which of a controller's creatures a team-wide pump/keyword effect
@@ -380,6 +380,22 @@ pub enum EffectOp {
         player: PlayerRef,
         filter: LibraryCardFilter,
     },
+    /// Binds one currently-live object and lets that object's owner choose
+    /// whether it enters their library second from the top or on the bottom.
+    /// The binding is captured before the choice, so a restored/stale
+    /// continuation cannot redirect the selected branch to a later
+    /// incarnation. Deem Inferior is the first generated consumer.
+    PutObjectInOwnersLibrarySecondOrBottom {
+        object: ObjectRef,
+    },
+    /// Interpreter-owned selected branch for
+    /// `PutObjectInOwnersLibrarySecondOrBottom`. Generated card programs may
+    /// not contain this dynamic form directly.
+    PutBoundObjectInOwnersLibrary {
+        object: EffectObjectBinding,
+        owner: PlayerId,
+        placement: event::LibraryPlacement,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -444,6 +460,19 @@ pub enum EffectFrame {
         /// Redundant copy of the originating program path. Coordinator and
         /// prompt paths must remain mutually consistent with this copy.
         canonical_path: Vec<u16>,
+    },
+    /// Authenticated post-answer frame for Deem Inferior's owner choice.
+    /// The exact pre-answer remainder and redundant option/path metadata
+    /// prevent a restored answered snapshot from redirecting the move or
+    /// inserting another effect before it commits.
+    OwnerLibraryPlacement {
+        object: EffectObjectBinding,
+        owner: PlayerId,
+        placement: event::LibraryPlacement,
+        option_index: u16,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
     },
     /// Resumes one private scry after a completed policy stage. All original
     /// prefix bindings, requested-count metadata, and canonical structural
@@ -600,6 +629,21 @@ pub enum EffectBooleanChoicePurpose {
     ShuffleLibrary { player: PlayerId },
 }
 
+/// Internal completion contract for an option choice. Public schema-v4
+/// intentionally continues to expose only the generic option count/order;
+/// the typed purpose makes trusted-snapshot validation independent of the
+/// mutable option payloads themselves.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EffectOptionChoicePurpose {
+    Generic,
+    OwnerLibrarySecondOrBottom {
+        object: EffectObjectBinding,
+        owner: PlayerId,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
+}
+
 /// A policy-visible choice yielded by the generic effect interpreter. This is
 /// intentionally typed and extensible: later library ordering, subset, Ward,
 /// and Escape choices add variants here instead of adding card-specific
@@ -610,6 +654,7 @@ pub enum PendingEffectChoice {
         player: PlayerId,
         path: Vec<u16>,
         options: Vec<EffectOp>,
+        purpose: EffectOptionChoicePurpose,
     },
     SelectTargets {
         player: PlayerId,
@@ -657,6 +702,13 @@ pub struct EffectContinuation {
     pub ctx: ExecCtx,
     pub frames: Vec<EffectFrame>,
     pub choice: Option<PendingEffectChoice>,
+    #[serde(default)]
+    pub answered_choice_guard: Option<EffectAnsweredChoiceGuard>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EffectAnsweredChoiceGuard {
+    OwnerLibrarySecondOrBottom { frame: Box<EffectFrame> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -673,6 +725,11 @@ pub struct ExecCtx {
     pub source: ObjectId,
     pub controller: PlayerId,
     pub targets: Vec<Target>,
+    /// Cast/activation-time incarnation bindings parallel to `targets`.
+    /// Player slots use `StackTargetContractV4::Player`; object slots must match before any
+    /// individually guarded multi-target leaf may act on that object.
+    #[serde(default)]
+    pub target_contracts: Vec<StackTargetContractV4>,
     /// Cards discarded to pay this cast's mandatory additional cost (Grab
     /// the Prize), if any. Empty for everything else. Read by
     /// `EffectCond::DiscardedNonLandForCost`.
@@ -711,7 +768,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::MayShuffleLibrary { .. }
         | EffectOp::PutCardsFromHandOnLibraryTop { .. }
         | EffectOp::Scry { .. }
-        | EffectOp::SearchLibraryToHand { .. } => true,
+        | EffectOp::SearchLibraryToHand { .. }
+        | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. } => true,
         _ => false,
     }
 }
@@ -738,6 +796,7 @@ pub fn begin_resumable_resolution(
             path: Vec::new(),
         }],
         choice: None,
+        answered_choice_guard: None,
     });
     drive_resumable(state)
 }
@@ -754,6 +813,7 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 /// owns resumption, preserving the usual step/advance separation and making a
 /// snapshot taken immediately after the action deterministic too.
 pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Result<(), String> {
+    validate_pending_effect_choice(state)?;
     let continuation = state
         .engine
         .pending_effect
@@ -768,6 +828,7 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
             player,
             mut path,
             options,
+            purpose,
         } => {
             let index = option_index as usize;
             let Some(selected) = options.get(index).cloned() else {
@@ -775,15 +836,50 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                     player,
                     path,
                     options,
+                    purpose,
                 });
                 return Err(format!(
                     "effect option {option_index} is outside the available range"
                 ));
             };
-            path.push(option_index);
-            continuation
-                .frames
-                .push(EffectFrame::Program { op: selected, path });
+            match purpose {
+                EffectOptionChoicePurpose::Generic => {
+                    path.push(option_index);
+                    continuation
+                        .frames
+                        .push(EffectFrame::Program { op: selected, path });
+                }
+                EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
+                    object,
+                    owner,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    let placement = match selected {
+                        EffectOp::PutBoundObjectInOwnersLibrary { placement, .. } => placement,
+                        _ => {
+                            return Err(
+                                "validated owner-library option lost its bound move".to_string()
+                            );
+                        }
+                    };
+                    path.push(option_index);
+                    let frame = EffectFrame::OwnerLibraryPlacement {
+                        object,
+                        owner,
+                        placement,
+                        option_index,
+                        path,
+                        canonical_path,
+                        expected_remaining_frames,
+                    };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::OwnerLibrarySecondOrBottom {
+                            frame: Box::new(frame.clone()),
+                        });
+                    continuation.frames.push(frame);
+                }
+            }
             Ok(())
         }
         PendingEffectChoice::SelectTargets { .. } | PendingEffectChoice::ChooseBoolean { .. } => {
@@ -1158,13 +1254,160 @@ fn validate_effect_target_candidate(
     Ok(())
 }
 
-pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
-    let Some(choice) = state
-        .engine
-        .pending_effect
-        .as_ref()
-        .and_then(|pending| pending.choice.as_ref())
+fn validate_owner_library_target_binding(
+    state: &GameState,
+    pending: &EffectContinuation,
+    object: EffectObjectBinding,
+    owner: PlayerId,
+) -> Result<(), String> {
+    if pending.resolving_item.v4.target_spec != Some(crate::card_def::TargetSpec::NonlandPermanent)
+        || pending.ctx.targets.as_slice() != [Target::Object(object.object)]
+    {
+        return Err("owner-library choice no longer matches the resolving target".to_string());
+    }
+    let [StackTargetContractV4::Object {
+        object: contract_object,
+        card_def,
+        owner: contract_owner,
+        zone,
+        zone_change_count,
+        ..
+    }] = pending.ctx.target_contracts.as_slice()
     else {
+        return Err("owner-library choice lost its object target contract".to_string());
+    };
+    if *contract_object != object.object
+        || *contract_owner != owner
+        || *zone != Zone::Battlefield
+        || *zone_change_count != object.expected_zone_change_count
+        || object.expected_zone != Zone::Battlefield
+    {
+        return Err("owner-library choice changed its cast-time target binding".to_string());
+    }
+    validate_effect_object_binding(state, object)?;
+    let live = state.objects.get(object.object);
+    if live.owner != owner
+        || live.card_def != *card_def
+        || crate::card_def::CARD_DEFS[live.card_def as usize]
+            .has_type(crate::card_def::CardType::Land)
+    {
+        return Err("owner-library choice changed its target owner or definition".to_string());
+    }
+    let indexed_count = [PlayerId::P0, PlayerId::P1]
+        .into_iter()
+        .flat_map(|player| state.players[player.index()].battlefield.iter())
+        .filter(|&&candidate| candidate == object.object)
+        .count();
+    if indexed_count != 1
+        || !state.players[live.controller.index()]
+            .battlefield
+            .contains(&object.object)
+    {
+        return Err(
+            "owner-library target is not indexed once under its live controller".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_owner_library_placement_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::OwnerLibraryPlacement {
+        object,
+        owner,
+        placement,
+        option_index,
+        path,
+        canonical_path,
+        expected_remaining_frames,
+    } = frame
+    else {
+        return Err("owner-library answer guard does not contain its typed frame".to_string());
+    };
+    let expected_placement = match option_index {
+        0 => event::LibraryPlacement::SecondFromTop,
+        1 => event::LibraryPlacement::Bottom,
+        _ => return Err("owner-library answered option index is outside 0..2".to_string()),
+    };
+    if *placement != expected_placement {
+        return Err("owner-library answered option index/placement changed".to_string());
+    }
+    let mut expected_path = canonical_path.clone();
+    expected_path.push(*option_index);
+    if !canonical_path.is_empty() || !expected_remaining_frames.is_empty() || path != &expected_path
+    {
+        return Err("owner-library answered option path changed".to_string());
+    }
+    validate_owner_library_target_binding(state, pending, *object, *owner)
+}
+
+fn validate_answered_choice_guard(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    for frame in &pending.frames {
+        if let EffectFrame::Program { op, .. } = frame {
+            validate_resumable_program(op)?;
+        }
+    }
+    match &pending.answered_choice_guard {
+        None => {
+            if pending
+                .frames
+                .iter()
+                .any(|frame| matches!(frame, EffectFrame::OwnerLibraryPlacement { .. }))
+            {
+                return Err("typed owner-library answer frame has no matching guard".to_string());
+            }
+        }
+        Some(EffectAnsweredChoiceGuard::OwnerLibrarySecondOrBottom { frame }) => {
+            if pending.choice.is_some() {
+                return Err("answered owner-library guard still carries a live choice".to_string());
+            }
+            let EffectFrame::OwnerLibraryPlacement {
+                expected_remaining_frames,
+                ..
+            } = frame.as_ref()
+            else {
+                return Err("owner-library answer guard changed frame kind".to_string());
+            };
+            let mut expected = expected_remaining_frames.clone();
+            expected.push((**frame).clone());
+            if pending.frames != expected {
+                return Err("owner-library answered continuation frame stack changed".to_string());
+            }
+            validate_owner_library_placement_frame(state, pending, frame)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    let Some(pending) = state.engine.pending_effect.as_ref() else {
+        return Ok(());
+    };
+    if pending.ctx.source != pending.resolving_item.source
+        || pending.ctx.controller != pending.resolving_item.controller
+        || pending.ctx.targets != pending.resolving_item.targets
+        || pending.ctx.target_contracts != pending.resolving_item.v4.target_contracts
+        || pending.ctx.discarded != pending.resolving_item.discarded
+        || pending.ctx.kicked != pending.resolving_item.kicked
+    {
+        return Err(
+            "effect continuation context no longer mirrors its resolving stack item".to_string(),
+        );
+    }
+    if state.stack.last() != Some(&pending.resolving_item) {
+        return Err(
+            "effect continuation resolving item no longer exactly matches the public stack top"
+                .to_string(),
+        );
+    }
+    validate_answered_choice_guard(state, pending)?;
+    let Some(choice) = pending.choice.as_ref() else {
         return Ok(());
     };
     match choice {
@@ -1463,7 +1706,63 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 return Err("shuffle choice player/library mismatch".to_string());
             }
         }
-        PendingEffectChoice::ChooseOption { .. } => {}
+        PendingEffectChoice::ChooseOption {
+            player,
+            options,
+            purpose,
+            path,
+        } => match purpose {
+            EffectOptionChoicePurpose::Generic => {
+                for option in options {
+                    validate_resumable_program(option)?;
+                }
+            }
+            EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
+                object,
+                owner,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                if !path.is_empty() || !canonical_path.is_empty() {
+                    return Err(
+                        "owner-library placement choice is not the generated root path".to_string(),
+                    );
+                }
+                if !pending.frames.is_empty() || !expected_remaining_frames.is_empty() {
+                    return Err(
+                        "owner-library placement choice has a nonempty generated remainder"
+                            .to_string(),
+                    );
+                }
+                let [EffectOp::PutBoundObjectInOwnersLibrary {
+                    object: second_object,
+                    owner: second_owner,
+                    placement: event::LibraryPlacement::SecondFromTop,
+                }, EffectOp::PutBoundObjectInOwnersLibrary {
+                    object: bottom_object,
+                    owner: bottom_owner,
+                    placement: event::LibraryPlacement::Bottom,
+                }] = options.as_slice()
+                else {
+                    return Err(
+                        "owner-library placement choice changed its exact two-option payload"
+                            .to_string(),
+                    );
+                };
+                if second_object != object
+                    || bottom_object != object
+                    || second_owner != owner
+                    || bottom_owner != owner
+                    || player != owner
+                {
+                    return Err(
+                        "owner-library placement choice changed its bound object, owner, or printed option order"
+                        .to_string(),
+                    );
+                }
+                validate_owner_library_target_binding(state, pending, *object, *owner)?;
+            }
+        },
     }
     Ok(())
 }
@@ -1490,6 +1789,11 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
             return Err(
                 "choice-bearing programs cannot yet mix legacy-suspending effect leaves"
                     .to_string(),
+            );
+        }
+        EffectOp::PutBoundObjectInOwnersLibrary { .. } => {
+            return Err(
+                "generated programs cannot contain an already-bound owner-library move".to_string(),
             );
         }
         _ => {}
@@ -1917,6 +2221,43 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     }
                     state.shuffle_library(player);
                 }
+                EffectFrame::OwnerLibraryPlacement {
+                    object,
+                    owner,
+                    placement,
+                    option_index,
+                    path,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    let answered_frame = EffectFrame::OwnerLibraryPlacement {
+                        object,
+                        owner,
+                        placement,
+                        option_index,
+                        path,
+                        canonical_path,
+                        expected_remaining_frames: expected_remaining_frames.clone(),
+                    };
+                    if continuation.frames != expected_remaining_frames {
+                        return Err(
+                            "owner-library answered continuation remainder changed".to_string()
+                        );
+                    }
+                    if continuation.answered_choice_guard.as_ref()
+                        != Some(&EffectAnsweredChoiceGuard::OwnerLibrarySecondOrBottom {
+                            frame: Box::new(answered_frame.clone()),
+                        })
+                    {
+                        return Err("owner-library answered frame/guard mismatch".to_string());
+                    }
+                    validate_owner_library_placement_frame(state, &continuation, &answered_frame)?;
+                    continuation.answered_choice_guard = None;
+                    event::propose_and_commit(
+                        state,
+                        event::ProposedEvent::public_library_insert(object.object, placement),
+                    );
+                }
                 EffectFrame::Program { .. } => unreachable!(),
             }
             continue;
@@ -1964,6 +2305,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         player,
                         path,
                         options,
+                        purpose: EffectOptionChoicePurpose::Generic,
                     });
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
@@ -2096,10 +2438,82 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::PutObjectInOwnersLibrarySecondOrBottom { object } => {
+                let object = continuation.ctx.resolve_object(object);
+                let live = state
+                    .objects
+                    .try_get(object)
+                    .ok_or_else(|| format!("owner-library object {} no longer exists", object.0))?;
+                if live.zone != Zone::Battlefield {
+                    return Err(
+                        "owner-library placement object is no longer on the battlefield"
+                            .to_string(),
+                    );
+                }
+                let binding = EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: live.zone_change_count,
+                };
+                let owner = live.owner;
+                let canonical_path = path.clone();
+                let expected_remaining_frames = continuation.frames.clone();
+                continuation.choice = Some(PendingEffectChoice::ChooseOption {
+                    player: owner,
+                    path,
+                    options: vec![
+                        EffectOp::PutBoundObjectInOwnersLibrary {
+                            object: binding,
+                            owner,
+                            placement: event::LibraryPlacement::SecondFromTop,
+                        },
+                        EffectOp::PutBoundObjectInOwnersLibrary {
+                            object: binding,
+                            owner,
+                            placement: event::LibraryPlacement::Bottom,
+                        },
+                    ],
+                    purpose: EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
+                        object: binding,
+                        owner,
+                        canonical_path,
+                        expected_remaining_frames,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::PutBoundObjectInOwnersLibrary {
+                object,
+                owner,
+                placement,
+            } => {
+                validate_effect_object_binding(state, object)?;
+                let live = state.objects.get(object.object);
+                if object.expected_zone != Zone::Battlefield || live.owner != owner {
+                    return Err(
+                        "bound owner-library object changed its battlefield binding or owner"
+                            .to_string(),
+                    );
+                }
+                if !matches!(
+                    placement,
+                    event::LibraryPlacement::SecondFromTop | event::LibraryPlacement::Bottom
+                ) {
+                    return Err("bound owner-library placement is not a printed option".to_string());
+                }
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::public_library_insert(object.object, placement),
+                );
+            }
             leaf => execute(&leaf, &continuation.ctx, state),
         }
     }
 
+    if continuation.answered_choice_guard.is_some() {
+        return Err("effect completed with an unconsumed answered-choice guard".to_string());
+    }
     Ok(ResumableProgress::Complete(continuation.resolving_item))
 }
 
@@ -2109,6 +2523,7 @@ impl ExecCtx {
             source,
             controller,
             targets: Vec::new(),
+            target_contracts: Vec::new(),
             discarded: Vec::new(),
             kicked: false,
         }
@@ -2129,6 +2544,32 @@ impl ExecCtx {
             TargetRef::ThisSource => Target::Object(self.source),
             TargetRef::Target(i) => self.targets[i as usize],
             TargetRef::Opponent => Target::Player(self.controller.opponent()),
+        }
+    }
+
+    fn target_incarnation_matches(&self, index: usize, state: &GameState) -> bool {
+        match (self.targets.get(index), self.target_contracts.get(index)) {
+            (Some(Target::Player(player)), Some(StackTargetContractV4::Player(bound))) => {
+                player == bound
+            }
+            (
+                Some(Target::Object(object)),
+                Some(StackTargetContractV4::Object {
+                    object: bound,
+                    card_def,
+                    owner,
+                    zone_change_count,
+                    ..
+                }),
+            ) => {
+                bound == object
+                    && state.objects.try_get(*object).is_some_and(|live| {
+                        live.card_def == *card_def
+                            && live.owner == *owner
+                            && live.zone_change_count == *zone_change_count
+                    })
+            }
+            _ => false,
         }
     }
 
@@ -3235,8 +3676,14 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             };
             state.engine.pending_spell_copy = Some(crate::engine::PendingSpellCopy {
                 resolving_source: ctx.source,
+                resolving_source_zone_change_count: state.objects.get(ctx.source).zone_change_count,
                 player: decider,
                 inherited_target: target,
+                inherited_target_contract: ctx
+                    .targets
+                    .iter()
+                    .position(|candidate| *candidate == target)
+                    .and_then(|index| ctx.target_contracts.get(index).copied()),
                 stage: crate::engine::SpellCopyStage::Payment,
                 copy_source: None,
             });
@@ -3255,7 +3702,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::MayShuffleLibrary { .. }
         | EffectOp::PutCardsFromHandOnLibraryTop { .. }
         | EffectOp::Scry { .. }
-        | EffectOp::SearchLibraryToHand { .. } => {
+        | EffectOp::SearchLibraryToHand { .. }
+        | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
+        | EffectOp::PutBoundObjectInOwnersLibrary { .. } => {
             panic!("private library choices must use the resumable interpreter")
         }
     }
@@ -3272,6 +3721,11 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
         EffectCond::LandfallThisTurn => {
             state.players[ctx.controller.index()].lands_played_this_turn > 0
         }
+        EffectCond::TargetInZone(idx, zone)
+            if !ctx.target_incarnation_matches(*idx as usize, state) =>
+        {
+            false
+        }
         EffectCond::TargetInZone(idx, zone) => match ctx.targets.get(*idx as usize) {
             Some(Target::Object(id)) if *zone == Zone::Stack => {
                 state.stack.iter().any(|item| item.source == *id)
@@ -3279,6 +3733,11 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             Some(Target::Object(id)) => state.objects.get(*id).zone == *zone,
             _ => false,
         },
+        EffectCond::TargetIsColor(idx, _)
+            if !ctx.target_incarnation_matches(*idx as usize, state) =>
+        {
+            false
+        }
         EffectCond::TargetIsColor(idx, color) => match ctx.targets.get(*idx as usize) {
             Some(Target::Object(id)) => {
                 let def_idx = state.objects.get(*id).card_def;
@@ -3369,6 +3828,7 @@ mod tests {
             source: ObjectId(0),
             controller: PlayerId::P0,
             targets: vec![Target::Player(PlayerId::P1)],
+            target_contracts: vec![StackTargetContractV4::Player(PlayerId::P1)],
             discarded: Vec::new(),
             kicked: false,
         };
@@ -3392,6 +3852,14 @@ mod tests {
             source: ObjectId(0),
             controller: PlayerId::P0,
             targets: vec![Target::Object(creature)],
+            target_contracts: vec![StackTargetContractV4::Object {
+                object: creature,
+                card_def: state.objects.get(creature).card_def,
+                owner: state.objects.get(creature).owner,
+                controller: state.objects.get(creature).controller,
+                zone: state.objects.get(creature).zone,
+                zone_change_count: state.objects.get(creature).zone_change_count,
+            }],
             discarded: Vec::new(),
             kicked: false,
         };

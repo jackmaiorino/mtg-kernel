@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "e2e3ae6013f036b84e52163b6902f08410a515b2d6edbdf2a90a1b07de92efb1"
+    "registry_raw_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 44,
+    "full_cards": 45,
     "partial_cards": 0,
-    "no_effect_cards": 106,
+    "no_effect_cards": 105,
     "token_dependencies": 4
   },
   "deck_mainboard_copy_totals": [
@@ -59,9 +59,9 @@
     },
     {
       "deck_id": "Terror",
-      "full": 50,
+      "full": 54,
       "partial": 0,
-      "no_effect": 10,
+      "no_effect": 6,
       "total": 60
     },
     {
@@ -648,10 +648,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Deep Analysis",

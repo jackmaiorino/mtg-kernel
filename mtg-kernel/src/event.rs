@@ -15,6 +15,27 @@ use serde::{Deserialize, Serialize};
 
 pub type ReplacementId = u32;
 
+/// Deterministic placement within the destination library for a zone-change
+/// proposal. Ordinary library moves retain `Top`; effects such as Deem
+/// Inferior select one of the appended positional variants without bypassing
+/// the replace/commit/event-log pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LibraryPlacement {
+    Top,
+    SecondFromTop,
+    Bottom,
+}
+
+/// Which observers learn the identity of a card inserted into a library at
+/// a publicly determined position. Position shifts are always public and
+/// exact; this flag controls only whether the inserted identity is learned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryInsertVisibility {
+    Hidden,
+    Owner,
+    Public,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReplacementEffectKind {
     /// Prevent the next `remaining` damage that would be dealt to `target`.
@@ -45,6 +66,9 @@ pub struct DamageProposed {
 pub struct ZoneChangeProposed {
     pub object: ObjectId,
     pub to_zone: Zone,
+    /// Meaningful only when `to_zone == Library`; other destinations retain
+    /// the constructor-default `Top` marker.
+    pub library_placement: LibraryPlacement,
     /// Preserve an already-known library identity if this move puts the
     /// card into a hidden zone. Ordinary library-to-hand moves remain
     /// secret; public reveal effects opt in after populating the existing
@@ -53,7 +77,7 @@ pub struct ZoneChangeProposed {
     /// This is a private top-of-library insertion whose owner knows the
     /// inserted identity. Other observers learn no new identity, while their
     /// still-valid prior library position facts shift through the insertion.
-    pub reveal_library_insert_to_owner: bool,
+    pub library_insert_visibility: LibraryInsertVisibility,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -122,8 +146,9 @@ impl ProposedEvent {
         ProposedEvent::ZoneChange(ZoneChangeProposed {
             object,
             to_zone,
+            library_placement: LibraryPlacement::Top,
             preserve_known_identity: false,
-            reveal_library_insert_to_owner: false,
+            library_insert_visibility: LibraryInsertVisibility::Hidden,
             touched_by: Vec::new(),
         })
     }
@@ -131,8 +156,9 @@ impl ProposedEvent {
         ProposedEvent::ZoneChange(ZoneChangeProposed {
             object,
             to_zone,
+            library_placement: LibraryPlacement::Top,
             preserve_known_identity: true,
-            reveal_library_insert_to_owner: false,
+            library_insert_visibility: LibraryInsertVisibility::Hidden,
             touched_by: Vec::new(),
         })
     }
@@ -143,8 +169,23 @@ impl ProposedEvent {
         ProposedEvent::ZoneChange(ZoneChangeProposed {
             object,
             to_zone: Zone::Library,
+            library_placement: LibraryPlacement::Top,
             preserve_known_identity: false,
-            reveal_library_insert_to_owner: true,
+            library_insert_visibility: LibraryInsertVisibility::Owner,
+            touched_by: Vec::new(),
+        })
+    }
+    /// Moves one publicly identified object to an exact position in its
+    /// owner's library. Both observers retain that public identity at its
+    /// new incarnation while every pre-existing known position shifts
+    /// exactly around the insertion.
+    pub fn public_library_insert(object: ObjectId, placement: LibraryPlacement) -> ProposedEvent {
+        ProposedEvent::ZoneChange(ZoneChangeProposed {
+            object,
+            to_zone: Zone::Library,
+            library_placement: placement,
+            preserve_known_identity: false,
+            library_insert_visibility: LibraryInsertVisibility::Public,
             touched_by: Vec::new(),
         })
     }
@@ -230,6 +271,10 @@ pub enum CommittedEvent {
         object: ObjectId,
         from: Zone,
         to: Zone,
+        /// Last-known controller immediately before the move. Zone-change
+        /// bookkeeping resets control to the owner, but leave/dies triggers
+        /// remain controlled by the player who controlled the permanent.
+        controller_before: PlayerId,
     },
     LifeLoss {
         player: PlayerId,
@@ -384,17 +429,20 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
         }
         ProposedEvent::ZoneChange(z) => {
             let from = state.objects.get(z.object).zone;
+            let controller_before = state.objects.get(z.object).controller;
             commit_zone_change(
                 state,
                 z.object,
                 z.to_zone,
+                z.library_placement,
                 z.preserve_known_identity,
-                z.reveal_library_insert_to_owner,
+                z.library_insert_visibility,
             );
             CommittedEvent::ZoneChange {
                 object: z.object,
                 from,
                 to: z.to_zone,
+                controller_before,
             }
         }
         ProposedEvent::LifeLoss(l) => {
@@ -522,8 +570,9 @@ fn commit_zone_change(
     state: &mut GameState,
     id: ObjectId,
     to_zone: Zone,
+    library_placement: LibraryPlacement,
     preserve_known_identity: bool,
-    reveal_library_insert_to_owner: bool,
+    library_insert_visibility: LibraryInsertVisibility,
 ) {
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
@@ -559,12 +608,18 @@ fn commit_zone_change(
 
     match to_zone {
         Zone::Library => {
+            let library_len = state.players[owner.index()].library.len();
+            let position = match library_placement {
+                LibraryPlacement::Top => 0,
+                LibraryPlacement::SecondFromTop => 1.min(library_len),
+                LibraryPlacement::Bottom => library_len,
+            };
             // The insertion position is public even when the inserted
             // identity is not. Preserve every still-valid older fact by
-            // shifting it deeper; a visibility-aware constructor may reveal
-            // the new top card to its owner after the incarnation advances.
-            state.note_library_insertion(owner, 0);
-            state.players[owner.index()].library.insert(0, id);
+            // shifting it deeper; visibility is installed only after the
+            // inserted object's new incarnation exists below.
+            state.note_library_insertion(owner, position);
+            state.players[owner.index()].library.insert(position, id);
         }
         Zone::Hand => state.players[owner.index()].hand.push(id),
         Zone::Battlefield => state.players[owner.index()].battlefield.push(id),
@@ -578,6 +633,10 @@ fn commit_zone_change(
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
+        // A zone change creates a new object with no carried-over control
+        // effect. Moves to Stack are engine actions and never enter this
+        // helper, so every destination handled here begins owner-controlled.
+        obj.controller = owner;
         // CR 400.7's zone-change identity: bumped on *every* zone change,
         // regardless of which zones, so `engine::PlayPermission::
         // zone_change_generation` can tell "still sitting where it was granted"
@@ -593,8 +652,23 @@ fn commit_zone_change(
             obj.attachments.clear();
         }
     }
-    if to_zone == Zone::Library && reveal_library_insert_to_owner {
-        state.reveal_library_top(owner, owner, 1);
+    if to_zone == Zone::Library {
+        let position = state.players[owner.index()]
+            .library
+            .iter()
+            .position(|&candidate| candidate == id)
+            .expect("just-inserted library object remains indexed");
+        match library_insert_visibility {
+            LibraryInsertVisibility::Hidden => {}
+            LibraryInsertVisibility::Owner => {
+                state.reveal_library_position(owner, owner, position);
+            }
+            LibraryInsertVisibility::Public => {
+                for observer in [PlayerId::P0, PlayerId::P1] {
+                    state.reveal_library_position(observer, owner, position);
+                }
+            }
+        }
     }
     if to_zone == Zone::Hand && from_zone != Zone::Library {
         // Returning a publicly identified card to hand does not make that
@@ -677,7 +751,14 @@ fn remove_from_zone(state: &mut GameState, owner: PlayerId, id: ObjectId, zone: 
             removed
         }
         Zone::Hand => drop_from(&mut state.players[owner.index()].hand, id),
-        Zone::Battlefield => drop_from(&mut state.players[owner.index()].battlefield, id),
+        Zone::Battlefield => {
+            // Battlefield membership is controller-keyed, unlike every
+            // owner-keyed hidden/public card zone. A stolen permanent must
+            // leave its current controller's battlefield before the same
+            // physical card enters its owner's destination zone.
+            let controller = state.objects.get(id).controller;
+            drop_from(&mut state.players[controller.index()].battlefield, id)
+        }
         Zone::Graveyard => drop_from(&mut state.players[owner.index()].graveyard, id),
         Zone::Exile => drop_from(&mut state.exile, id),
         Zone::Command => drop_from(&mut state.command, id),

@@ -553,9 +553,9 @@ fn masked_meower_zone_history_is_stack_battlefield_graveyard() {
         .event_history
         .iter()
         .filter_map(|e| match e {
-            CommittedEvent::ZoneChange { object, from, to } if *object == meower_id => {
-                Some((*from, *to))
-            }
+            CommittedEvent::ZoneChange {
+                object, from, to, ..
+            } if *object == meower_id => Some((*from, *to)),
             _ => None,
         })
         .collect();

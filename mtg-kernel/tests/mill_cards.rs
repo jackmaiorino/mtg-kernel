@@ -401,11 +401,13 @@ fn thought_scour_opponent_mill_is_owner_private_then_public_and_precedes_draw() 
                 object: milled[1],
                 from: Zone::Library,
                 to: Zone::Graveyard,
+                controller_before: PlayerId::P1,
             },
             CommittedEvent::ZoneChange {
                 object: milled[0],
                 from: Zone::Library,
                 to: Zone::Graveyard,
+                controller_before: PlayerId::P1,
             },
             CommittedEvent::Draw {
                 player: PlayerId::P0,
@@ -415,6 +417,7 @@ fn thought_scour_opponent_mill_is_owner_private_then_public_and_precedes_draw() 
                 object: thought,
                 from: Zone::Stack,
                 to: Zone::Graveyard,
+                controller_before: PlayerId::P0,
             },
         ],
         "the mill batch commits in owner order before the controller draws"

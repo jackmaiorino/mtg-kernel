@@ -219,7 +219,7 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     );
     let first_snapshot = state.snapshot();
     let first_hash = state.state_hash();
-    assert_eq!(first_hash, 0xbc50_2a80_19ab_b693);
+    assert_eq!(first_hash, 0xdc52_2840_583c_3885);
 
     answer_hand_choice(&mut state, *a);
     assert_eq!(
@@ -253,7 +253,7 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     ));
     let answered_snapshot = state.snapshot();
     let answered_hash = state.state_hash();
-    assert_eq!(answered_hash, 0xc095_c0c7_5bb5_96df);
+    assert_eq!(answered_hash, 0x1517_5867_dbc5_cd9d);
     let answered = state.clone();
     assert!(engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(*a))).is_err());
     assert_eq!(state, answered, "an answered action is immediately stale");
@@ -275,7 +275,7 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     );
     let second_snapshot = state.snapshot();
     let second_hash = state.state_hash();
-    assert_eq!(second_hash, 0x2479_61fc_c0b6_3a7a);
+    assert_eq!(second_hash, 0x0a2b_8c1f_9371_0c12);
 
     answer_hand_choice(&mut state, *c);
     assert_eq!(state.players[0].library, vec![*a, *d]);
@@ -309,23 +309,26 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
                 object: *a,
                 from: Zone::Hand,
                 to: Zone::Library,
+                controller_before: PlayerId::P0,
             },
             CommittedEvent::ZoneChange {
                 object: *c,
                 from: Zone::Hand,
                 to: Zone::Library,
+                controller_before: PlayerId::P0,
             },
             CommittedEvent::ZoneChange {
                 object: brainstorm,
                 from: Zone::Stack,
                 to: Zone::Graveyard,
+                controller_before: PlayerId::P0,
             },
         ],
         "draw and both private puts are one uninterrupted resolution"
     );
     let expected = state.clone();
     let expected_hash = state.state_hash();
-    assert_eq!(expected_hash, 0xe6a7_e888_9eb3_8ea3);
+    assert_eq!(expected_hash, 0xf5db_8aef_e3d4_bb59);
 
     state.restore(&second_snapshot);
     assert_eq!(state.state_hash(), second_hash);
@@ -994,6 +997,7 @@ fn brainstorm_answered_frame_is_snapshot_stable_and_rejects_stale_incarnation() 
                     object,
                     from: Zone::Hand,
                     to: Zone::Library,
+                    ..
                 } if *object == library[0]
             )
         }));
