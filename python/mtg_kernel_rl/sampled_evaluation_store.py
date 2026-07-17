@@ -1,4 +1,4 @@
-"""Fresh-only sampled paired-evaluation artifacts and strict V4 validation."""
+"""Fresh-only sampled paired-evaluation artifacts and strict V5 validation."""
 
 from __future__ import annotations
 
@@ -34,9 +34,9 @@ from .path_safety import (
 )
 
 
-RUN_SCHEMA = "kernel_rl_paired_evaluation/v4"
-GAME_SCHEMA = "kernel_rl_paired_evaluation_game/v4"
-PAIR_SCHEMA = "kernel_rl_paired_evaluation_pair/v4"
+RUN_SCHEMA = "kernel_rl_paired_evaluation/v5"
+GAME_SCHEMA = "kernel_rl_paired_evaluation_game/v5"
+PAIR_SCHEMA = "kernel_rl_paired_evaluation_pair/v5"
 RUN_FILE_NAME = v1.RUN_FILE_NAME
 GAMES_FILE_NAME = v1.GAMES_FILE_NAME
 PAIRS_FILE_NAME = v1.PAIRS_FILE_NAME
@@ -45,7 +45,8 @@ MAX_PAIR_COUNT = v1.MAX_PAIR_COUNT
 MIN_BOOTSTRAP_REPLICATES = v1.MIN_BOOTSTRAP_REPLICATES
 MAX_BOOTSTRAP_REPLICATES = v1.MAX_BOOTSTRAP_REPLICATES
 MAX_BOOTSTRAP_DRAWS = v1.MAX_BOOTSTRAP_DRAWS
-MAX_DECISIONS = v1.MAX_DECISIONS
+MAX_PHYSICAL_DECISIONS = v1.MAX_PHYSICAL_DECISIONS
+MAX_POLICY_STEPS = v1.MAX_POLICY_STEPS
 MAX_TIMEOUT_MS = v1.MAX_TIMEOUT_MS
 MAX_RUN_BYTES = v1.MAX_RUN_BYTES
 MAX_GAME_ROW_BYTES = v1.MAX_GAME_ROW_BYTES
@@ -55,11 +56,13 @@ MAX_PAIRS_BYTES = v1.MAX_PAIRS_BYTES
 
 ALGORITHM_CONTRACT = {
     **v1.ALGORITHM_CONTRACT,
-    "name": "sampled_head_vs_update_zero_paired/v2",
+    "name": "sampled_head_vs_update_zero_paired/v3",
 }
 ACTION_SEED_DERIVATION_CONTRACT = {
     "algorithm": "sha256(type-tagged big-endian length-prefixed fields)[:8] & 0x7fff_ffff_ffff_ffff",
-    "namespaces": ["evaluation-action/base_seed/pair_index/physical_seat/local_decision_index"],
+    "namespaces": [
+        "evaluation-action-group/base_seed/pair_index/physical_seat/local_physical_decision_index -> evaluation-action-substep/group_seed/substep_index"
+    ],
     "physical_seat_encoding": {"p0": 0, "p1": 1},
     "version": EVALUATOR_ACTION_SEED_DERIVATION_VERSION,
 }
@@ -71,7 +74,7 @@ ACTION_SELECTION_CONTRACT = {
     "temperature_hex": "0x1.0000000000000p+0",
 }
 
-# V2 and V3 are intentionally frozen rather than reinterpreted as the V4
+# V2, V3, and V4 are intentionally frozen rather than reinterpreted as the V5
 # selector/protocol boundary. These identities make both release boundaries
 # explicit and support corruption tests.
 V2_RUN_SCHEMA = "kernel_rl_paired_evaluation/v2"
@@ -133,12 +136,28 @@ V3_ACTION_SELECTION_CONTRACT = {
     "replacement": False,
     "temperature_hex": "0x1.0000000000000p+0",
 }
+V4_RUN_SCHEMA = "kernel_rl_paired_evaluation/v4"
+V4_GAME_SCHEMA = "kernel_rl_paired_evaluation_game/v4"
+V4_PAIR_SCHEMA = "kernel_rl_paired_evaluation_pair/v4"
+V4_ALGORITHM_CONTRACT = {
+    **v1.V1_ALGORITHM_CONTRACT,
+    "name": "sampled_head_vs_update_zero_paired/v2",
+}
+V4_ACTION_SEED_DERIVATION_CONTRACT = {
+    "algorithm": "sha256(type-tagged big-endian length-prefixed fields)[:8] & 0x7fff_ffff_ffff_ffff",
+    "namespaces": [
+        "evaluation-action/base_seed/pair_index/physical_seat/local_decision_index"
+    ],
+    "physical_seat_encoding": {"p0": 0, "p1": 1},
+    "version": "kernel-python-rl-evaluator-action-sha256-v1",
+}
+V4_ACTION_SELECTION_CONTRACT = V3_ACTION_SELECTION_CONTRACT
 SEAT_SCHEDULE_CONTRACT = {
     "candidate_as_p0": "episode 2k",
     "candidate_as_p1": "episode 2k+1",
     "deck_order": "deck_ids[0] is physical p0 and deck_ids[1] is physical p1 in both games; only candidate/baseline policies swap seats",
     "paired_environment_seed": "both games use evaluation-env/base_seed/pair_index",
-    "paired_physical_action_streams": "both games use evaluation-action/base_seed/pair_index/physical_seat/local_decision_index",
+    "paired_physical_action_streams": "both games use hierarchical evaluation-action group/substep seeds keyed by base_seed/pair_index/physical_seat/local_physical_decision_index/substep_index",
 }
 
 _V1_ACTION_SELECTION_CONTRACT = {
@@ -252,7 +271,8 @@ def _game_points_from_row(
     pair_index: int,
     game_in_pair: int,
     base_seed: int,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     deck_ids: tuple[str, str],
     deck_hashes: tuple[int, int],
 ) -> int:
@@ -273,9 +293,12 @@ def _game_points_from_row(
         "winner",
         "candidate_result",
         "candidate_half_points",
-        "decision_count",
-        "candidate_decisions",
-        "baseline_decisions",
+        "policy_step_count",
+        "physical_decision_count",
+        "candidate_policy_steps",
+        "baseline_policy_steps",
+        "candidate_physical_decisions",
+        "baseline_physical_decisions",
     }
     v1._require_keys(row, expected_keys, "sampled game row")
     if row["schema"] != GAME_SCHEMA:
@@ -286,7 +309,8 @@ def _game_points_from_row(
         pair_index=pair_index,
         game_in_pair=game_in_pair,
         base_seed=base_seed,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         deck_ids=deck_ids,
         deck_hashes=deck_hashes,
     )
@@ -322,12 +346,14 @@ def _validate_aa_pair(
             candidate_as_p1[field],
             f"sampled A/A physical terminal {field}",
         )
-    if candidate_as_p0["decision_count"] != candidate_as_p1["decision_count"]:
-        raise ValueError("sampled A/A legs must have identical decision_count")
-    if candidate_as_p0["candidate_decisions"] != candidate_as_p1["baseline_decisions"]:
-        raise ValueError("sampled A/A p0 physical decision counts differ across legs")
-    if candidate_as_p0["baseline_decisions"] != candidate_as_p1["candidate_decisions"]:
-        raise ValueError("sampled A/A p1 physical decision counts differ across legs")
+    for field in ("policy_step_count", "physical_decision_count"):
+        if candidate_as_p0[field] != candidate_as_p1[field]:
+            raise ValueError(f"sampled A/A legs must have identical {field}")
+    for suffix in ("policy_steps", "physical_decisions"):
+        if candidate_as_p0[f"candidate_{suffix}"] != candidate_as_p1[f"baseline_{suffix}"]:
+            raise ValueError(f"sampled A/A p0 {suffix} counts differ across legs")
+        if candidate_as_p0[f"baseline_{suffix}"] != candidate_as_p1[f"candidate_{suffix}"]:
+            raise ValueError(f"sampled A/A p1 {suffix} counts differ across legs")
     if points.total_half_points != 2:
         raise ValueError("sampled A/A pair must total exactly two half-points")
 
@@ -342,8 +368,8 @@ def _validate_captured_payload(
         pair_count,
         base_seed,
         bootstrap_replicates,
-        max_decisions,
-        _trainer_cap,
+        max_physical_decisions,
+        max_policy_steps,
         candidate_head,
         baseline_head,
         deck_ids,
@@ -373,7 +399,8 @@ def _validate_captured_payload(
             pair_index=pair_index,
             game_in_pair=0,
             base_seed=base_seed,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             deck_ids=deck_ids,
             deck_hashes=deck_hashes,
         )
@@ -382,7 +409,8 @@ def _validate_captured_payload(
             pair_index=pair_index,
             game_in_pair=1,
             base_seed=base_seed,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             deck_ids=deck_ids,
             deck_hashes=deck_hashes,
         )
@@ -437,7 +465,7 @@ def _publish_sampled_evaluation(
     pairs: list[dict[str, Any]],
     manifest_without_files: dict[str, Any],
 ) -> ValidatedEvaluation:
-    """Atomically publish V2 data files and the authoritative manifest last."""
+    """Atomically publish V5 data files and the authoritative manifest last."""
 
     root = ensure_real_dir(root)
     initial_entries = scandir_no_follow(root)
@@ -446,7 +474,7 @@ def _publish_sampled_evaluation(
     is_verified_output_lock_entry(root, initial_entries[0])
     configuration = v1._require_keys(
         manifest_without_files.get("configuration"),
-        {"base_seed", "bootstrap_replicates", "deck_ids", "game_count", "max_decisions", "pair_count", "timeout_ms"},
+        {"base_seed", "bootstrap_replicates", "deck_ids", "game_count", "max_physical_decisions", "max_policy_steps", "pair_count", "timeout_ms"},
         "sampled configuration",
     )
     v1._deck_ids(configuration["deck_ids"], "sampled configuration.deck_ids")
@@ -519,7 +547,7 @@ def _publish_sampled_evaluation(
 
 
 def validate_sampled_evaluation(root: str | Path) -> ValidatedEvaluation:
-    """Validate one complete sampled V4 evaluation without side effects."""
+    """Validate one complete sampled V5 evaluation without side effects."""
 
     root = ensure_real_dir(root)
     entries = scandir_no_follow(root)
@@ -572,6 +600,12 @@ __all__ = [
     "V3_GAME_SCHEMA",
     "V3_PAIR_SCHEMA",
     "V3_RUN_SCHEMA",
+    "V4_ACTION_SEED_DERIVATION_CONTRACT",
+    "V4_ACTION_SELECTION_CONTRACT",
+    "V4_ALGORITHM_CONTRACT",
+    "V4_GAME_SCHEMA",
+    "V4_PAIR_SCHEMA",
+    "V4_RUN_SCHEMA",
     "ValidatedEvaluation",
     "validate_sampled_evaluation",
 ]

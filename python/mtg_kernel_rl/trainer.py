@@ -138,7 +138,8 @@ class TrainState:
     optimizer_step_count: int
     next_episode: int
     outcomes_by_learner_seat: dict[str, dict[str, int]]
-    learner_decisions_by_seat: dict[str, int]
+    learner_policy_steps_by_seat: dict[str, int]
+    learner_physical_decisions_by_seat: dict[str, int]
     parent_head: str | None
     head_payload: dict[str, Any]
 
@@ -590,7 +591,8 @@ def _load_chain(
     batch_episodes: int | None,
     learning_rate: float | None,
     value_coef: float | None,
-    max_decisions: int | None,
+    max_physical_decisions: int | None,
+    max_policy_steps: int | None,
     compatibility: dict[str, Any],
     before_mutation: Callable[[dict[str, Any], Any], None] | None = None,
 ) -> TrainState:
@@ -602,13 +604,15 @@ def _load_chain(
         batch_episodes,
         learning_rate,
         value_coef,
-        max_decisions,
+        max_physical_decisions,
+        max_policy_steps,
     ) = _validate_resume_overrides(
         base_seed=base_seed,
         batch_episodes=batch_episodes,
         learning_rate=learning_rate,
         value_coef=value_coef,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
     )
     _assert_run_matches_options(
         run,
@@ -618,7 +622,8 @@ def _load_chain(
         batch_episodes=batch_episodes,
         learning_rate=learning_rate,
         value_coef=value_coef,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         compatibility=compatibility,
     )
     if until_update < chain.head.update:
@@ -648,7 +653,12 @@ def _load_chain(
         optimizer_step_count=resume_snapshot.optimizer_step_count,
         next_episode=resume_snapshot.next_episode,
         outcomes_by_learner_seat=copy.deepcopy(resume_snapshot.outcomes_by_learner_seat),
-        learner_decisions_by_seat=copy.deepcopy(resume_snapshot.learner_decisions_by_seat),
+        learner_policy_steps_by_seat=copy.deepcopy(
+            resume_snapshot.learner_policy_steps_by_seat
+        ),
+        learner_physical_decisions_by_seat=copy.deepcopy(
+            resume_snapshot.learner_physical_decisions_by_seat
+        ),
         parent_head=chain.head.head,
         head_payload=resume_snapshot.checkpoint_payload,
     )
@@ -663,7 +673,8 @@ def _bootstrap_fresh(
     batch_episodes: int,
     learning_rate: float,
     value_coef: float,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     compatibility: dict[str, Any],
 ) -> tuple[TrainState, KernelRlClient, Decision]:
     require_new_or_empty_dir(out_dir)
@@ -673,7 +684,8 @@ def _bootstrap_fresh(
         first = client.reset(
             episode_id=0,
             env_seed=_env_seed_for_episode(base_seed, 0),
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             deck_ids=deck_ids,
         )
         if not isinstance(first, Decision):
@@ -699,21 +711,24 @@ def _bootstrap_fresh(
             batch_episodes=batch_episodes,
             learning_rate=learning_rate,
             value_coef=value_coef,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             compatibility=compatibility,
         )
         run_digest = _write_run_json(out_dir, run)
         if run_digest != sha256_file(out_dir / "run.json", max_bytes=256 * 1024, allow_empty=False):
             raise ValueError("run.json digest mismatch")
         outcomes = {"p0": {"win": 0, "loss": 0, "draw": 0}, "p1": {"win": 0, "loss": 0, "draw": 0}}
-        decisions = {"p0": 0, "p1": 0}
+        policy_steps = {"p0": 0, "p1": 0}
+        physical_decisions = {"p0": 0, "p1": 0}
         payload = build_checkpoint_payload(
             run_digest=run_digest,
             completed_update=0,
             optimizer_step_count=0,
             next_episode=0,
             outcomes_by_learner_seat=outcomes,
-            learner_decisions_by_seat=decisions,
+            learner_policy_steps_by_seat=policy_steps,
+            learner_physical_decisions_by_seat=physical_decisions,
             model=model,
             optimizer=optimizer,
             learning_rate=learning_rate,
@@ -743,7 +758,8 @@ def _bootstrap_fresh(
             batch_episodes=batch_episodes,
             learning_rate=learning_rate,
             value_coef=value_coef,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             compatibility=compatibility,
         )
         return reloaded, client, first
@@ -795,7 +811,8 @@ def _bootstrap_incomplete_fresh(
     batch_episodes: int,
     learning_rate: float,
     value_coef: float,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     compatibility: dict[str, Any],
 ) -> tuple[TrainState, KernelRlClient, Decision]:
     env_sha = sha256_file(env_bin)
@@ -811,7 +828,8 @@ def _bootstrap_incomplete_fresh(
         batch_episodes=batch_episodes,
         learning_rate=learning_rate,
         value_coef=value_coef,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         compatibility=compatibility,
     )
     recovery_plan = _plan_uncommitted_artifact_recovery(
@@ -825,7 +843,8 @@ def _bootstrap_incomplete_fresh(
         first = client.reset(
             episode_id=0,
             env_seed=_env_seed_for_episode(base_seed, 0),
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             deck_ids=deck_ids,
         )
         if not isinstance(first, Decision):
@@ -842,14 +861,16 @@ def _bootstrap_incomplete_fresh(
         )
         optimizer = create_adam(model, learning_rate)
         outcomes = {"p0": {"win": 0, "loss": 0, "draw": 0}, "p1": {"win": 0, "loss": 0, "draw": 0}}
-        decisions = {"p0": 0, "p1": 0}
+        policy_steps = {"p0": 0, "p1": 0}
+        physical_decisions = {"p0": 0, "p1": 0}
         payload = build_checkpoint_payload(
             run_digest=run_digest,
             completed_update=0,
             optimizer_step_count=0,
             next_episode=0,
             outcomes_by_learner_seat=outcomes,
-            learner_decisions_by_seat=decisions,
+            learner_policy_steps_by_seat=policy_steps,
+            learner_physical_decisions_by_seat=physical_decisions,
             model=model,
             optimizer=optimizer,
             learning_rate=learning_rate,
@@ -879,7 +900,8 @@ def _bootstrap_incomplete_fresh(
             batch_episodes=batch_episodes,
             learning_rate=learning_rate,
             value_coef=value_coef,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             compatibility=compatibility,
         )
         return reloaded, client, first
@@ -936,8 +958,20 @@ def _encoded_policy_digest(encoded: Any, selected_index: int) -> str:
     )
 
 
-def _episode_digest(decision_digests: list[str]) -> str:
-    return sha256_bytes(canonical_json_bytes({"learner_decision_digests": decision_digests}))
+def _physical_decision_digest(substep_digests: list[str]) -> str:
+    if not substep_digests:
+        raise ValueError("physical decision digest requires at least one policy substep")
+    return sha256_bytes(
+        canonical_json_bytes({"policy_substep_digests": substep_digests})
+    )
+
+
+def _episode_digest(physical_decision_digests: list[str]) -> str:
+    return sha256_bytes(
+        canonical_json_bytes(
+            {"learner_physical_decision_digests": physical_decision_digests}
+        )
+    )
 
 
 def _run_episode(
@@ -945,7 +979,8 @@ def _run_episode(
     client: KernelRlClient,
     state: TrainState,
     episode: int,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     first_decision: Decision | None,
 ) -> tuple[dict[str, Any], list[tuple[torch.Tensor, torch.Tensor, int]]]:
     learner = _learner_seat(episode)
@@ -959,20 +994,29 @@ def _run_episode(
         current = client.reset(
             episode_id=episode,
             env_seed=env_seed,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             deck_ids=tuple(state.run["environment"]["deck_ids"]),
         )
     if not isinstance(current, Decision):
         raise ValueError("trainer reset must return an initial decision")
     _assert_first_decision_matches_run(state.run, current)
-    learner_decision_index = 0
-    opponent_decision_index = 0
+    learner_policy_step_count = 0
+    opponent_policy_step_count = 0
+    learner_physical_decision_count = 0
+    opponent_physical_decision_count = 0
     learner_digests: list[str] = []
     learner_terms: list[tuple[torch.Tensor, torch.Tensor, int]] = []
-    total_decisions = 0
+    active_learner_log_prob: torch.Tensor | None = None
+    active_learner_value: torch.Tensor | None = None
+    active_learner_substep_digests: list[str] = []
+    total_policy_steps = 0
     while isinstance(current, Decision):
-        if total_decisions >= max_decisions:
-            raise RuntimeError("decision cap reached before terminal")
+        if total_policy_steps >= max_policy_steps:
+            raise RuntimeError("policy-step cap reached before terminal")
+        if current.physical_decision_id >= max_physical_decisions:
+            raise RuntimeError("physical-decision cap reached before terminal")
+        group_complete = current.substep_index + 1 == current.substep_count
         if current.acting_player == learner:
             encoded = encode_decision(current.observation, current.legal_actions)
             logits, value = state.model(encoded)
@@ -983,26 +1027,64 @@ def _run_episode(
             seed = derive_train_learner_action_seed(
                 state.run["trainer"]["base_seed"],
                 episode,
-                learner_decision_index,
+                learner_physical_decision_count,
+                current.substep_index,
             )
             selected, log_prob = _select_learner_action(logits, seed)
-            learner_terms.append((log_prob, value, 0))
-            learner_digests.append(_encoded_policy_digest(encoded, selected))
-            learner_decision_index += 1
+            if current.substep_index == 0:
+                if active_learner_log_prob is not None:
+                    raise ValueError("learner physical decision overlap")
+                active_learner_log_prob = log_prob
+                active_learner_value = value
+                active_learner_substep_digests = []
+            else:
+                if active_learner_log_prob is None or active_learner_value is None:
+                    raise ValueError("learner physical decision continuation lacks its first substep")
+                active_learner_log_prob = active_learner_log_prob + log_prob
+            active_learner_substep_digests.append(
+                _encoded_policy_digest(encoded, selected)
+            )
+            learner_policy_step_count += 1
         elif current.acting_player == _opponent_seat(learner):
             seed = derive_train_opponent_action_seed(
                 state.run["trainer"]["base_seed"],
                 episode,
-                opponent_decision_index,
+                opponent_physical_decision_count,
+                current.substep_index,
             )
             selected = deterministic_index_from_seed(seed, len(current.legal_actions))
-            opponent_decision_index += 1
+            opponent_policy_step_count += 1
         else:
             raise ValueError("unknown acting player")
+        acting_player = current.acting_player
         action = current.legal_actions[selected]
         current = client.step(action["selected_index"], action["stable_id"])
         _assert_response_deck_identity(state.run, current)
-        total_decisions += 1
+        total_policy_steps += 1
+        if group_complete:
+            if acting_player == learner:
+                if active_learner_log_prob is None or active_learner_value is None:
+                    raise ValueError("completed learner physical decision lacks joint tensors")
+                learner_terms.append(
+                    (active_learner_log_prob, active_learner_value, 0)
+                )
+                learner_digests.append(
+                    _physical_decision_digest(active_learner_substep_digests)
+                )
+                learner_physical_decision_count += 1
+                active_learner_log_prob = None
+                active_learner_value = None
+                active_learner_substep_digests = []
+            else:
+                opponent_physical_decision_count += 1
+    if active_learner_log_prob is not None or active_learner_value is not None:
+        raise ValueError("terminal interrupted learner physical decision")
+    if current.policy_step_count != total_policy_steps:
+        raise ValueError("terminal policy_step_count differs from trainer routing count")
+    if current.physical_decision_count != (
+        learner_physical_decision_count + opponent_physical_decision_count
+    ):
+        raise ValueError("terminal physical_decision_count differs from trainer grouping count")
     terminal_return = _terminal_return(current, learner)
     learner_terms = [(log_prob, value, terminal_return) for log_prob, value, _unused in learner_terms]
     summary = {
@@ -1015,9 +1097,12 @@ def _run_episode(
         "terminal_outcome": current.terminal_outcome,
         "winner": current.winner,
         "learner_return": terminal_return,
-        "decision_count": current.decision_count,
-        "learner_decision_count": learner_decision_index,
-        "opponent_decision_count": opponent_decision_index,
+        "policy_step_count": current.policy_step_count,
+        "physical_decision_count": current.physical_decision_count,
+        "learner_policy_step_count": learner_policy_step_count,
+        "opponent_policy_step_count": opponent_policy_step_count,
+        "learner_physical_decision_count": learner_physical_decision_count,
+        "opponent_physical_decision_count": opponent_physical_decision_count,
         "trajectory_digest": _episode_digest(learner_digests),
     }
     return summary, learner_terms
@@ -1082,7 +1167,12 @@ def _record_outcome(state: TrainState, episode_summary: dict[str, Any]) -> None:
         state.outcomes_by_learner_seat[seat]["draw"] += 1
     else:
         raise ValueError("invalid learner return")
-    state.learner_decisions_by_seat[seat] += episode_summary["learner_decision_count"]
+    state.learner_policy_steps_by_seat[seat] += episode_summary[
+        "learner_policy_step_count"
+    ]
+    state.learner_physical_decisions_by_seat[seat] += episode_summary[
+        "learner_physical_decision_count"
+    ]
 
 
 def _train_until(
@@ -1097,7 +1187,8 @@ def _train_until(
     if until_update == state.completed_update:
         return state
     batch_episodes = state.run["schedule"]["batch_episodes"]
-    max_decisions = state.run["trainer"]["max_decisions"]
+    max_physical_decisions = state.run["trainer"]["max_physical_decisions"]
+    max_policy_steps = state.run["trainer"]["max_policy_steps"]
     value_coef = state.run["trainer"]["value_coef"]
     carried = first_decision
     while state.completed_update < until_update:
@@ -1112,7 +1203,8 @@ def _train_until(
                 client=client,
                 state=state,
                 episode=episode,
-                max_decisions=max_decisions,
+                max_physical_decisions=max_physical_decisions,
+                max_policy_steps=max_policy_steps,
                 first_decision=carried if episode == episode_start else None,
             )
             carried = None
@@ -1133,7 +1225,8 @@ def _train_until(
             optimizer_step_count=state.optimizer_step_count,
             next_episode=state.next_episode,
             outcomes_by_learner_seat=state.outcomes_by_learner_seat,
-            learner_decisions_by_seat=state.learner_decisions_by_seat,
+            learner_policy_steps_by_seat=state.learner_policy_steps_by_seat,
+            learner_physical_decisions_by_seat=state.learner_physical_decisions_by_seat,
             model=state.model,
             optimizer=state.optimizer,
             learning_rate=state.run["optimizer"]["lr"],
@@ -1152,7 +1245,10 @@ def _train_until(
             "episode_count": batch_episodes,
             "episode_end_exclusive": next_episode,
             "optimizer_step": optimizer_step,
-            "learner_decision_count": len(terms),
+            "learner_policy_step_count": sum(
+                row["learner_policy_step_count"] for row in batch_summaries
+            ),
+            "learner_physical_decision_count": len(terms),
             "loss": loss_fields,
             "episode_summaries": batch_summaries,
             "post_update_logical_sha256": logical,
@@ -1184,7 +1280,8 @@ def train(
     batch_episodes: int | None = None,
     learning_rate: float | None = None,
     value_coef: float | None = None,
-    max_decisions: int | None = None,
+    max_physical_decisions: int | None = None,
+    max_policy_steps: int | None = None,
 ) -> dict[str, Any]:
     deck_ids = _validate_requested_deck_ids(deck_ids)
     with OutputLock(out_dir):
@@ -1198,7 +1295,8 @@ def train(
             batch_episodes=batch_episodes,
             learning_rate=learning_rate,
             value_coef=value_coef,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
         )
 
 
@@ -1213,7 +1311,8 @@ def _train_locked(
     batch_episodes: int | None = None,
     learning_rate: float | None = None,
     value_coef: float | None = None,
-    max_decisions: int | None = None,
+    max_physical_decisions: int | None = None,
+    max_policy_steps: int | None = None,
 ) -> dict[str, Any]:
     configure_torch_determinism()
     deck_ids = _validate_requested_deck_ids(deck_ids)
@@ -1225,14 +1324,32 @@ def _train_locked(
     compatibility = _compatibility_tuple()
     env_sha = sha256_file(env_path)
     if resume is None:
-        if None in (base_seed, batch_episodes, learning_rate, value_coef, max_decisions):
-            raise ValueError("fresh train requires base_seed, batch_episodes, learning_rate, value_coef, and max_decisions")
-        base_seed, batch_episodes, learning_rate, value_coef, max_decisions = _validate_resume_overrides(
+        if None in (
+            base_seed,
+            batch_episodes,
+            learning_rate,
+            value_coef,
+            max_physical_decisions,
+            max_policy_steps,
+        ):
+            raise ValueError(
+                "fresh train requires base_seed, batch_episodes, learning_rate, "
+                "value_coef, max_physical_decisions, and max_policy_steps"
+            )
+        (
+            base_seed,
+            batch_episodes,
+            learning_rate,
+            value_coef,
+            max_physical_decisions,
+            max_policy_steps,
+        ) = _validate_resume_overrides(
             base_seed=base_seed,
             batch_episodes=batch_episodes,
             learning_rate=learning_rate,
             value_coef=value_coef,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
         )
         if out_path.exists() and (out_path.is_symlink() or not out_path.is_dir()):
             require_new_or_empty_dir(out_path)
@@ -1247,7 +1364,8 @@ def _train_locked(
                     batch_episodes=batch_episodes,
                     learning_rate=learning_rate,
                     value_coef=value_coef,
-                    max_decisions=max_decisions,
+                    max_physical_decisions=max_physical_decisions,
+                    max_policy_steps=max_policy_steps,
                     compatibility=compatibility,
                 )
             else:
@@ -1260,7 +1378,8 @@ def _train_locked(
                     batch_episodes=batch_episodes,
                     learning_rate=learning_rate,
                     value_coef=value_coef,
-                    max_decisions=max_decisions,
+                    max_physical_decisions=max_physical_decisions,
+                    max_policy_steps=max_policy_steps,
                     compatibility=compatibility,
                 )
         else:
@@ -1272,7 +1391,8 @@ def _train_locked(
                 batch_episodes=batch_episodes,
                 learning_rate=learning_rate,
                 value_coef=value_coef,
-                max_decisions=max_decisions,
+                max_physical_decisions=max_physical_decisions,
+                max_policy_steps=max_policy_steps,
                 compatibility=compatibility,
             )
         try:
@@ -1294,7 +1414,8 @@ def _train_locked(
             response = client.reset(
                 episode_id=resume_snapshot.next_episode,
                 env_seed=_env_seed_for_episode(run["trainer"]["base_seed"], resume_snapshot.next_episode),
-                max_decisions=run["trainer"]["max_decisions"],
+                max_physical_decisions=run["trainer"]["max_physical_decisions"],
+                max_policy_steps=run["trainer"]["max_policy_steps"],
                 deck_ids=deck_ids,
             )
             if not isinstance(response, Decision):
@@ -1316,7 +1437,8 @@ def _train_locked(
             batch_episodes=batch_episodes,
             learning_rate=learning_rate,
             value_coef=value_coef,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             compatibility=compatibility,
             before_mutation=preflight_environment,
         )
@@ -1347,7 +1469,8 @@ def _result(state: TrainState) -> dict[str, Any]:
                 optimizer_step_count=state.optimizer_step_count,
                 next_episode=state.next_episode,
                 outcomes_by_learner_seat=state.outcomes_by_learner_seat,
-                learner_decisions_by_seat=state.learner_decisions_by_seat,
+                learner_policy_steps_by_seat=state.learner_policy_steps_by_seat,
+                learner_physical_decisions_by_seat=state.learner_physical_decisions_by_seat,
                 model=state.model,
                 optimizer=state.optimizer,
                 learning_rate=state.run["optimizer"]["lr"],

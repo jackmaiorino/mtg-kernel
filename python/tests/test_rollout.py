@@ -6,9 +6,11 @@ import random
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import torch
 
+import mtg_kernel_rl.rollout as rollout_mod
 from mtg_kernel_rl.action_sampling import fixed_categorical_sampler_contract
 from mtg_kernel_rl.client import Decision
 from mtg_kernel_rl.rollout import (
@@ -22,7 +24,7 @@ from mtg_kernel_rl.rollout import (
 from mtg_kernel_rl.sampled_evaluation_store import ACTION_SELECTION_CONTRACT as EVALUATOR_ACTION_SELECTION_CONTRACT
 from mtg_kernel_rl.training_store import TRAINER_ACTION_SELECTION_CONTRACT
 
-from fixtures import DECK_HASHES, DECK_IDS, PROVENANCE, actor_observation, fake_launcher, legal_actions
+from fixtures import DECK_HASHES, DECK_IDS, PROVENANCE, actor_observation, combat_decision_response, fake_launcher, legal_actions
 
 
 class _FixedModelPolicy:
@@ -30,7 +32,66 @@ class _FixedModelPolicy:
         return torch.tensor([0.0, 1.0, 2.0], dtype=torch.float32), torch.tensor(0.0, dtype=torch.float32)
 
 
+class _BinaryFixedModelPolicy:
+    def logits_value(self, _encoded):  # type: ignore[no-untyped-def]
+        return torch.tensor([0.0, 1.0], dtype=torch.float32), torch.tensor(0.0, dtype=torch.float32)
+
+
 class RolloutTest(unittest.TestCase):
+    def test_runner_policy_seeds_use_physical_group_then_substep_leaf(self) -> None:
+        responses = [
+            combat_decision_response("r0", 0, substep, substep)
+            for substep in (0, 1)
+        ]
+        decisions = [
+            Decision(
+                response["episode_id"],
+                response["step"],
+                response["physical_decision_id"],
+                response["substep_index"],
+                response["substep_count"],
+                response["acting_player"],
+                response["observation"],
+                response["legal_actions"],
+                response["provenance"],
+                tuple(response["deck_ids"]),
+                tuple(response["deck_hashes"]),
+            )
+            for response in responses
+        ]
+        sampled_seeds: list[int] = []
+
+        def capture_seed(_logits: torch.Tensor, seed: int) -> int:
+            sampled_seeds.append(seed)
+            return 0
+
+        with mock.patch.object(rollout_mod, "sample_fixed_categorical", side_effect=capture_seed):
+            for decision in decisions:
+                self.assertEqual(
+                    select_action(
+                        decision,
+                        policy="sampled",
+                        base_seed=71_501,
+                        episode=0,
+                        model_policy=_BinaryFixedModelPolicy(),  # type: ignore[arg-type]
+                    ),
+                    0,
+                )
+        self.assertEqual(sampled_seeds, [826_393_902, 1_701_545_383])
+        self.assertEqual(
+            [
+                select_action(
+                    decision,
+                    policy="uniform",
+                    base_seed=2,
+                    episode=0,
+                    model_policy=_BinaryFixedModelPolicy(),  # type: ignore[arg-type]
+                )
+                for decision in decisions
+            ],
+            [0, 1],
+        )
+
     def test_deck_identity_failures_publish_no_runner_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
             tmp = Path(tmp_name)
@@ -43,7 +104,8 @@ class RolloutTest(unittest.TestCase):
                             out_dir=out,
                             episodes=1,
                             base_seed=71_501,
-                            max_decisions=8,
+                            max_physical_decisions=8,
+                            max_policy_steps=16,
                             p0="uniform",
                             p1="uniform",
                         )
@@ -65,6 +127,9 @@ class RolloutTest(unittest.TestCase):
             decision = Decision(
                 episode,
                 step,
+                step,
+                0,
+                1,
                 actor,
                 actor_observation(actor, step),
                 legal_actions(actor),
@@ -81,7 +146,7 @@ class RolloutTest(unittest.TestCase):
                     model_policy=_FixedModelPolicy(),  # type: ignore[arg-type]
                 )
             )
-        self.assertEqual(selected, [2, 2, 0, 2])
+        self.assertEqual(selected, [2, 2, 2, 2])
         self.assertEqual(random.getstate(), python_state)
         self.assertTrue(torch.equal(torch.get_rng_state(), torch_state))
 
@@ -110,8 +175,8 @@ class RolloutTest(unittest.TestCase):
             launcher = fake_launcher(tmp, "valid")
             out_a = tmp / "a"
             out_b = tmp / "b"
-            run_episodes(env_bin=launcher, out_dir=out_a, episodes=2, base_seed=71501, max_decisions=8, p0="uniform", p1="uniform")
-            run_episodes(env_bin=launcher, out_dir=out_b, episodes=2, base_seed=71501, max_decisions=8, p0="uniform", p1="uniform")
+            run_episodes(env_bin=launcher, out_dir=out_a, episodes=2, base_seed=71501, max_physical_decisions=8, max_policy_steps=16, p0="uniform", p1="uniform")
+            run_episodes(env_bin=launcher, out_dir=out_b, episodes=2, base_seed=71501, max_physical_decisions=8, max_policy_steps=16, p0="uniform", p1="uniform")
             self.assertTrue(filecmp.cmp(out_a / "run.json", out_b / "run.json", shallow=False))
             self.assertTrue(filecmp.cmp(out_a / "episodes.jsonl", out_b / "episodes.jsonl", shallow=False))
             run_text = (out_a / "run.json").read_text(encoding="utf-8")
@@ -124,6 +189,28 @@ class RolloutTest(unittest.TestCase):
             self.assertIn('"terminal_outcome"', episodes_text)
             manifest_a = json.loads(run_text)
             episode_rows = [json.loads(line) for line in episodes_text.splitlines()]
+
+            def recursive_keys(value: object) -> set[str]:
+                if isinstance(value, dict):
+                    return set(value) | {
+                        key
+                        for child in value.values()
+                        for key in recursive_keys(child)
+                    }
+                if isinstance(value, list):
+                    return {
+                        key
+                        for child in value
+                        for key in recursive_keys(child)
+                    }
+                return set()
+
+            for artifact in [manifest_a, *episode_rows]:
+                self.assertTrue(
+                    {"environment_hash", "environment_hash_algorithm"}.isdisjoint(
+                        recursive_keys(artifact)
+                    )
+                )
             self.assertEqual(tuple(manifest_a["environment"]["deck_ids"]), DECK_IDS)
             self.assertEqual(tuple(manifest_a["environment"]["deck_hashes"]), DECK_HASHES)
             self.assertTrue(all(tuple(row["deck_ids"]) == DECK_IDS for row in episode_rows))
@@ -133,7 +220,8 @@ class RolloutTest(unittest.TestCase):
                 out_dir=tmp / "mixed",
                 episodes=2,
                 base_seed=71_502,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 p0="uniform",
                 p1="greedy",
             )
@@ -145,7 +233,7 @@ class RolloutTest(unittest.TestCase):
                 },
             )
 
-    def test_sampled_rollout_v3_contract_is_repeatable_and_legacy_versions_remain_distinct(self) -> None:
+    def test_sampled_rollout_v4_contract_is_repeatable_and_legacy_versions_remain_distinct(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
             tmp = Path(tmp_name)
             launcher = fake_launcher(tmp, "valid")
@@ -156,7 +244,8 @@ class RolloutTest(unittest.TestCase):
                 out_dir=out_a,
                 episodes=4,
                 base_seed=71_501,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 p0="sampled",
                 p1="sampled",
             )
@@ -165,7 +254,8 @@ class RolloutTest(unittest.TestCase):
                 out_dir=out_b,
                 episodes=4,
                 base_seed=71_501,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 p0="sampled",
                 p1="sampled",
             )
@@ -173,7 +263,7 @@ class RolloutTest(unittest.TestCase):
             self.assertTrue(filecmp.cmp(out_a / "run.json", out_b / "run.json", shallow=False))
             self.assertTrue(filecmp.cmp(out_a / "episodes.jsonl", out_b / "episodes.jsonl", shallow=False))
             self.assertEqual(manifest_a["artifact_schema_version"], RUNNER_ARTIFACT_SCHEMA_VERSION)
-            self.assertEqual(RUNNER_ARTIFACT_SCHEMA_VERSION, 3)
+            self.assertEqual(RUNNER_ARTIFACT_SCHEMA_VERSION, 4)
             self.assertEqual(
                 manifest_a["action_selection"],
                 {
@@ -185,6 +275,7 @@ class RolloutTest(unittest.TestCase):
             self.assertEqual(V1_RUNNER_ARTIFACT_SCHEMA_VERSION, 1)
             self.assertNotEqual(manifest_a["artifact_schema_version"], V1_RUNNER_ARTIFACT_SCHEMA_VERSION)
             self.assertNotEqual(manifest_a["artifact_schema_version"], 2)
+            self.assertNotEqual(manifest_a["artifact_schema_version"], 3)
 
 
 if __name__ == "__main__":

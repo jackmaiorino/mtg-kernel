@@ -102,7 +102,7 @@ class EvaluationStatsTest(unittest.TestCase):
         self.assertEqual(result.upper.hex(), "0x1.999999999999ap-1")
         self.assertEqual(
             result.replicate_sums_sha256,
-            "4c5dc351d474c2628a247e23861cf2959aa22775bf699aa5ee52b7114b7af9c9",
+            "441d1ae2b864ca2c918e008eec75e1eb860b8642c53755006d7da9a5c31c0b54",
         )
 
     def test_bootstrap_ignores_and_preserves_global_random_state(self) -> None:
@@ -275,7 +275,7 @@ class EvaluationStatsTest(unittest.TestCase):
         self.assertEqual(result.bootstrap.upper.hex(), "0x1.ddddddddddddep-1")
         self.assertEqual(
             result.bootstrap.replicate_sums_sha256,
-            "6249ec465c9412cba617614d9508fdd37c931814b68d2b75cbf71f4d87121b1b",
+            "ce81d8abdab62a2caaf618118b195fa3fd546da7ef1fa447193a321b7805ec4d",
         )
 
     def test_pair_and_bootstrap_bounds_reject_bool(self) -> None:

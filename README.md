@@ -1,12 +1,12 @@
 # MTG Kernel
 
-`mtg-kernel` is an experimental, deterministic Magic: The Gathering rules kernel and a reproducible reinforcement-learning runner, trainer, and evaluator. The Rust process exposes a strict JSONL environment; the Python package supplies the client, schema-v4 feature encoder, policy/value model, crash-consistent training store, and paired evaluators.
+`mtg-kernel` is an experimental, deterministic Magic: The Gathering rules kernel and a reproducible reinforcement-learning runner, trainer, and evaluator. The Rust process exposes a strict JSONL environment; the Python package supplies the client, schema-v5 feature encoder, policy/value model, crash-consistent training store, and paired evaluators.
 
 This repository is the independent extraction of the kernel work formerly developed inside the Mage/XMage tree. Building or running it does not require Java, Maven, or a parent Mage checkout.
 
 ## Current status
 
-The deterministic engine, schema-v4 Rust/Python boundary, artifact integrity layer, Burn-mirror runner/trainer/evaluator, and a substantial regression suite are implemented. Burn and Rally have complete mainboard card coverage, and reusable mechanics for cards in the remaining decks are landing incrementally. The public RL environment still admits only the exact canonical `Burn`/`Burn` pairing.
+The deterministic engine, schema-v5 Rust/Python policy boundary, artifact integrity layer, Burn-mirror runner/trainer/evaluator, and a substantial regression suite are implemented. Policy schema v5 layers canonical binary attacker/blocker scans and grouped physical-decision accounting over the preserved schema-v4 engine semantics and H2 surface, so wide combat has two legal actions per policy substep instead of an exponential subset list. Burn and Rally have complete mainboard card coverage, and reusable mechanics for cards in the remaining decks are landing incrementally. The public RL environment still admits only the exact canonical `Burn`/`Burn` pairing.
 
 This is **not yet science-ready**. Seven canonical Pauper decks remain incomplete, the full-pool training protocol and sampled-primary 9x9 matrix have not been run, and the clean-clone artifact-reproduction release gate remains open. [ROADMAP.md](ROADMAP.md) is the authoritative definition of completion and records the pinned nine-deck scope.
 
@@ -43,7 +43,8 @@ mtg-kernel-rl run \
   --out-dir runs/smoke \
   --episodes 2 \
   --base-seed 71501 \
-  --max-decisions 5000 \
+  --max-physical-decisions 5000 \
+  --max-policy-steps 640000 \
   --p0 uniform \
   --p1 uniform \
   --deck-ids Burn Burn

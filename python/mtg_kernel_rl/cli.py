@@ -30,7 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--out-dir", required=True, type=Path)
     run.add_argument("--episodes", required=True, type=int)
     run.add_argument("--base-seed", required=True, type=int)
-    run.add_argument("--max-decisions", required=True, type=int)
+    run.add_argument("--max-physical-decisions", required=True, type=int)
+    run.add_argument("--max-policy-steps", required=True, type=int)
     run.add_argument("--p0", required=True, choices=sorted(POLICIES))
     run.add_argument("--p1", required=True, choices=sorted(POLICIES))
     _add_deck_ids_argument(run)
@@ -43,7 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--batch-episodes", default=None, type=int)
     train_parser.add_argument("--learning-rate", default=None, type=float)
     train_parser.add_argument("--value-coef", default=None, type=float)
-    train_parser.add_argument("--max-decisions", default=None, type=int)
+    train_parser.add_argument("--max-physical-decisions", default=None, type=int)
+    train_parser.add_argument("--max-policy-steps", default=None, type=int)
     _add_deck_ids_argument(train_parser)
     evaluate_parser = sub.add_parser("evaluate")
     evaluate_parser.add_argument("--training-store", required=True, type=Path)
@@ -53,7 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_parser.add_argument("--pairs", required=True, type=int)
     evaluate_parser.add_argument("--base-seed", required=True, type=int)
     evaluate_parser.add_argument("--bootstrap-replicates", required=True, type=int)
-    evaluate_parser.add_argument("--max-decisions", required=True, type=int)
+    evaluate_parser.add_argument("--max-physical-decisions", required=True, type=int)
+    evaluate_parser.add_argument("--max-policy-steps", required=True, type=int)
     evaluate_parser.add_argument("--timeout-ms", required=True, type=int)
     _add_deck_ids_argument(evaluate_parser)
     sampled_parser = sub.add_parser("evaluate-sampled")
@@ -64,7 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
     sampled_parser.add_argument("--pairs", required=True, type=int)
     sampled_parser.add_argument("--base-seed", required=True, type=int)
     sampled_parser.add_argument("--bootstrap-replicates", required=True, type=int)
-    sampled_parser.add_argument("--max-decisions", required=True, type=int)
+    sampled_parser.add_argument("--max-physical-decisions", required=True, type=int)
+    sampled_parser.add_argument("--max-policy-steps", required=True, type=int)
     sampled_parser.add_argument("--timeout-ms", required=True, type=int)
     _add_deck_ids_argument(sampled_parser)
     return parser
@@ -79,7 +83,8 @@ def main(argv: list[str] | None = None) -> int:
             out_dir=args.out_dir,
             episodes=args.episodes,
             base_seed=args.base_seed,
-            max_decisions=args.max_decisions,
+            max_physical_decisions=args.max_physical_decisions,
+            max_policy_steps=args.max_policy_steps,
             p0=args.p0,
             p1=args.p1,
             deck_ids=tuple(args.deck_ids),
@@ -95,7 +100,8 @@ def main(argv: list[str] | None = None) -> int:
             batch_episodes=args.batch_episodes,
             learning_rate=args.learning_rate,
             value_coef=args.value_coef,
-            max_decisions=args.max_decisions,
+            max_physical_decisions=args.max_physical_decisions,
+            max_policy_steps=args.max_policy_steps,
             deck_ids=tuple(args.deck_ids),
         )
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
@@ -109,7 +115,8 @@ def main(argv: list[str] | None = None) -> int:
             pairs=args.pairs,
             base_seed=args.base_seed,
             bootstrap_replicates=args.bootstrap_replicates,
-            max_decisions=args.max_decisions,
+            max_physical_decisions=args.max_physical_decisions,
+            max_policy_steps=args.max_policy_steps,
             timeout_ms=args.timeout_ms,
             deck_ids=tuple(args.deck_ids),
         )
@@ -133,7 +140,8 @@ def main(argv: list[str] | None = None) -> int:
             pairs=args.pairs,
             base_seed=args.base_seed,
             bootstrap_replicates=args.bootstrap_replicates,
-            max_decisions=args.max_decisions,
+            max_physical_decisions=args.max_physical_decisions,
+            max_policy_steps=args.max_policy_steps,
             timeout_ms=args.timeout_ms,
             deck_ids=tuple(args.deck_ids),
         )

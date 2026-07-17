@@ -10,6 +10,7 @@ import json
 import random
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -244,7 +245,8 @@ train(
     batch_episodes=2,
     learning_rate=0.001,
     value_coef=0.5,
-    max_decisions=8,
+    max_physical_decisions=8,
+                max_policy_steps=16,
 )
 """,
         encoding="utf-8",
@@ -291,7 +293,8 @@ class TrainerTest(unittest.TestCase):
                             batch_episodes=2,
                             learning_rate=0.001,
                             value_coef=0.5,
-                            max_decisions=8,
+                            max_physical_decisions=8,
+                max_policy_steps=16,
                         )
                     self.assertFalse((out / "run.json").exists())
                     self.assertFalse((out / "latest.json").exists())
@@ -310,7 +313,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             marker.unlink()
             before = _snapshot_tree(out)
@@ -344,7 +348,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             (out / "episodes.jsonl").unlink()
             scenario_file.write_text("deck_id_drift", encoding="utf-8")
@@ -373,7 +378,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             self.assertEqual(result["completed_update"], 1)
             self.assertEqual(read_json_file(out / "updates" / "update-00000000.json")["update"], 0)
@@ -382,7 +388,7 @@ class TrainerTest(unittest.TestCase):
             self.assertEqual(run["schema"], RUN_SCHEMA)
             self.assertEqual(run["algorithm"]["name"], ALGORITHM_NAME)
             self.assertEqual(run["samplers"]["learner"]["action_selection"], TRAINER_ACTION_SELECTION_CONTRACT)
-            self.assertEqual(run["artifact_boundary"]["schema"], "kernel_rl_artifact_boundary/v9")
+            self.assertEqual(run["artifact_boundary"]["schema"], "kernel_rl_artifact_boundary/v10")
             self.assertEqual(tuple(run["environment"]["deck_ids"]), DECK_IDS)
             self.assertEqual(tuple(run["environment"]["deck_hashes"]), DECK_HASHES)
 
@@ -401,7 +407,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             with self.assertRaises(Exception):
                 train(
@@ -412,7 +419,8 @@ class TrainerTest(unittest.TestCase):
                     batch_episodes=2,
                     learning_rate=0.001,
                     value_coef=0.5,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                 )
             recovered = train(
                 env_bin=launcher,
@@ -422,7 +430,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             self.assertEqual(recovered, control_result)
             _assert_generation_equal(self, out, control, 2)
@@ -439,7 +448,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             self.assertEqual(result["completed_update"], 0)
 
@@ -458,7 +468,8 @@ class TrainerTest(unittest.TestCase):
                     batch_episodes=2,
                     learning_rate=0.001,
                     value_coef=0.5,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                 )
             self.assertTrue((unknown / "unexpected.txt").exists())
             after = known.stat()
@@ -485,7 +496,8 @@ class TrainerTest(unittest.TestCase):
                     batch_episodes=2,
                     learning_rate=0.001,
                     value_coef=0.5,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                 )
             self.assertEqual(_snapshot_tree(premanifest), before)
 
@@ -498,7 +510,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             for name in (".latest.json.evil.1.2.tmp", ".update.json.evil.1.2.tmp"):
                 target = tmp / f"case_{name.replace('.', '_')}"
@@ -547,7 +560,8 @@ class TrainerTest(unittest.TestCase):
                             batch_episodes=2,
                             learning_rate=0.001,
                             value_coef=0.5,
-                            max_decisions=8,
+                            max_physical_decisions=8,
+                max_policy_steps=16,
                         )
                     self.assertEqual(_snapshot_tree(out), before)
 
@@ -560,7 +574,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             for name, pid, nonce in invalid_components:
                 with self.subTest(location="committed", name=name):
@@ -605,7 +620,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             if env_marker.exists():
                 env_marker.unlink()
@@ -650,7 +666,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             first = out / ".latest.json.1.2.tmp"
             second = out / ".summary.json.1.3.tmp"
@@ -742,7 +759,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             for index, (boundary, target) in enumerate(cases):
                 with self.subTest(boundary=boundary, target=target):
@@ -760,7 +778,8 @@ class TrainerTest(unittest.TestCase):
                             batch_episodes=2,
                             learning_rate=0.001,
                             value_coef=0.5,
-                            max_decisions=8,
+                            max_physical_decisions=8,
+                max_policy_steps=16,
                         )
                     self.assertEqual(recovered["completed_update"], 2)
                     _assert_generation_logical_equal(self, out, control, 0)
@@ -824,7 +843,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             control = tmp / "control2"
             train(
@@ -835,7 +855,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             for index, (boundary, target, latest_exists) in enumerate(cases):
                 with self.subTest(boundary=boundary, target=target):
@@ -854,7 +875,8 @@ class TrainerTest(unittest.TestCase):
                             batch_episodes=2,
                             learning_rate=0.001,
                             value_coef=0.5,
-                            max_decisions=8,
+                            max_physical_decisions=8,
+                max_policy_steps=16,
                         )
                     self.assertEqual(recovered0["completed_update"], 0)
                     self.assertEqual(read_json_file(out / "latest.json")["update"], 0)
@@ -901,7 +923,16 @@ class TrainerTest(unittest.TestCase):
 
     def test_learner_selector_has_fixed_goldens_preserves_global_rng_and_keeps_log_prob_differentiable(self) -> None:
         logits = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, requires_grad=True)
-        seeds = [derive_train_learner_action_seed(71_501, episode, 0) for episode in range(4)]
+        seeds = [derive_train_learner_action_seed(71_501, episode, 0, 0) for episode in range(4)]
+        self.assertEqual(
+            seeds,
+            [
+                0x7DC9_EF5F_54A6_584F,
+                0x6BE3_D105_73EA_2DCC,
+                0x3B80_443F_C0E5_AF4D,
+                0x1858_94B6_740A_5511,
+            ],
+        )
         random.seed(567_890)
         torch.manual_seed(678_901)
         python_state = random.getstate()
@@ -909,7 +940,7 @@ class TrainerTest(unittest.TestCase):
 
         selections_and_log_probs = [trainer_mod._select_learner_action(logits, seed) for seed in seeds]
 
-        self.assertEqual([selected for selected, _log_prob in selections_and_log_probs], [1, 1, 0, 1])
+        self.assertEqual([selected for selected, _log_prob in selections_and_log_probs], [1, 0, 1, 0])
         self.assertEqual(random.getstate(), python_state)
         self.assertTrue(torch.equal(torch.get_rng_state(), torch_state))
         expected = torch.log_softmax(logits, dim=0)
@@ -949,7 +980,8 @@ class TrainerTest(unittest.TestCase):
                     batch_episodes=2,
                     learning_rate=0.001,
                     value_coef=0.5,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                 )
             finally:
                 KernelPolicyValueNet.forward = original  # type: ignore[method-assign]
@@ -961,9 +993,137 @@ class TrainerTest(unittest.TestCase):
             record = read_json_file(out / "updates" / "update-00000001.json")
             self.assertTrue(record["optimizer_step"])
             self.assertEqual([row["learner_seat"] for row in record["episode_summaries"]], ["p0", "p1"])
-            self.assertEqual([row["learner_decision_count"] for row in record["episode_summaries"]], [1, 1])
+            self.assertEqual([row["learner_policy_step_count"] for row in record["episode_summaries"]], [1, 1])
+            self.assertEqual([row["learner_physical_decision_count"] for row in record["episode_summaries"]], [1, 1])
             self.assertTrue(all(tuple(row["deck_ids"]) == DECK_IDS for row in record["episode_summaries"]))
             self.assertTrue(all(tuple(row["deck_hashes"]) == DECK_HASHES for row in record["episode_summaries"]))
+
+    def test_combat_substeps_form_one_joint_training_term_with_hierarchical_seeds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            launcher = fake_launcher(tmp, "combat_then_surface")
+            out = tmp / "run"
+            learner_seed_args: list[tuple[int, int, int, int]] = []
+            opponent_seed_args: list[tuple[int, int, int, int]] = []
+            term_counts: list[int] = []
+            original_learner_seed = trainer_mod.derive_train_learner_action_seed
+            original_opponent_seed = trainer_mod.derive_train_opponent_action_seed
+            original_compute_loss = trainer_mod._compute_loss_tensors
+
+            def learner_seed(*args: int) -> int:
+                learner_seed_args.append(args)  # type: ignore[arg-type]
+                return original_learner_seed(*args)
+
+            def opponent_seed(*args: int) -> int:
+                opponent_seed_args.append(args)  # type: ignore[arg-type]
+                return original_opponent_seed(*args)
+
+            def compute_loss(terms, value_coef):  # type: ignore[no-untyped-def]
+                term_counts.append(len(terms))
+                return original_compute_loss(terms, value_coef)
+
+            trainer_mod.derive_train_learner_action_seed = learner_seed
+            trainer_mod.derive_train_opponent_action_seed = opponent_seed
+            trainer_mod._compute_loss_tensors = compute_loss
+            try:
+                train(
+                    env_bin=launcher,
+                    out_dir=out,
+                    base_seed=71_501,
+                    until_update=1,
+                    batch_episodes=2,
+                    learning_rate=0.001,
+                    value_coef=0.5,
+                    max_physical_decisions=8,
+                    max_policy_steps=16,
+                )
+            finally:
+                trainer_mod.derive_train_learner_action_seed = original_learner_seed
+                trainer_mod.derive_train_opponent_action_seed = original_opponent_seed
+                trainer_mod._compute_loss_tensors = original_compute_loss
+
+            self.assertEqual(
+                learner_seed_args,
+                [
+                    (71_501, 0, 0, 0),
+                    (71_501, 0, 0, 1),
+                    (71_501, 0, 0, 2),
+                    (71_501, 0, 1, 0),
+                ],
+            )
+            self.assertEqual(
+                opponent_seed_args,
+                [
+                    (71_501, 1, 0, 0),
+                    (71_501, 1, 0, 1),
+                    (71_501, 1, 0, 2),
+                    (71_501, 1, 1, 0),
+                ],
+            )
+            self.assertEqual(term_counts, [2])
+            record = read_json_file(out / "updates" / "update-00000001.json")
+            self.assertEqual(
+                (record["learner_policy_step_count"], record["learner_physical_decision_count"]),
+                (4, 2),
+            )
+            expected_loss = {
+                "loss_hex": "0x1.9835d60000000p+1",
+                "policy_sum_hex": "0x1.136d940000000p+2",
+                "value_sum_hex": "0x1.0990840000000p+2",
+            }
+            self.assertEqual(set(record["loss"]), set(expected_loss))
+
+            def positive_float32_bits(value_hex: str) -> int:
+                value = float.fromhex(value_hex)
+                self.assertTrue(math.isfinite(value))
+                self.assertGreaterEqual(value, 0.0)
+                return struct.unpack(">I", struct.pack(">f", value))[0]
+
+            # Runtime compatibility deliberately fingerprints the OS,
+            # architecture, and Torch build. Hosted CPU builds may round
+            # log_softmax by one binary32 ULP, so retain a tight portable
+            # numeric golden rather than falsely claiming cross-runtime
+            # checkpoint bit identity.
+            for field, reference_hex in expected_loss.items():
+                actual_hex = record["loss"][field]
+                self.assertIsInstance(actual_hex, str)
+                self.assertLessEqual(
+                    abs(
+                        positive_float32_bits(actual_hex)
+                        - positive_float32_bits(reference_hex)
+                    ),
+                    2,
+                    field,
+                )
+
+            policy_sum = torch.tensor(
+                float.fromhex(record["loss"]["policy_sum_hex"]),
+                dtype=torch.float32,
+            )
+            value_sum = torch.tensor(
+                float.fromhex(record["loss"]["value_sum_hex"]),
+                dtype=torch.float32,
+            )
+            recomputed_loss_hex = float(
+                ((policy_sum + 0.5 * value_sum) / 2).item()
+            ).hex()
+            self.assertEqual(record["loss"]["loss_hex"], recomputed_loss_hex)
+            summaries = record["episode_summaries"]
+            self.assertEqual(
+                [
+                    (
+                        row["learner_policy_step_count"],
+                        row["learner_physical_decision_count"],
+                        row["opponent_policy_step_count"],
+                        row["opponent_physical_decision_count"],
+                    )
+                    for row in summaries
+                ],
+                [(4, 2, 0, 0), (0, 0, 4, 2)],
+            )
+            payload = _state(out, 1)
+            self.assertEqual(payload["learner_policy_steps_by_seat"], {"p0": 4, "p1": 0})
+            self.assertEqual(payload["learner_physical_decisions_by_seat"], {"p0": 2, "p1": 0})
 
     def test_zero_decision_batch_commits_without_model_or_optimizer_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
@@ -978,7 +1138,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             self.assertEqual(result["completed_update"], 1)
             update0 = _state(out, 0)
@@ -987,7 +1148,8 @@ class TrainerTest(unittest.TestCase):
             self.assertEqual(update0["optimizer_state"], update1["optimizer_state"])
             record = read_json_file(out / "updates" / "update-00000001.json")
             self.assertFalse(record["optimizer_step"])
-            self.assertEqual(record["learner_decision_count"], 0)
+            self.assertEqual(record["learner_policy_step_count"], 0)
+            self.assertEqual(record["learner_physical_decision_count"], 0)
             self.assertEqual(record["loss"], {"policy_sum_hex": None, "value_sum_hex": None, "loss_hex": None})
             _assert_derived_caches_match_clean_rebuild(self, out)
 
@@ -1004,7 +1166,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             _assert_derived_caches_match_clean_rebuild(self, out)
             for update in (1, 2, 3):
@@ -1033,7 +1196,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             measurements: dict[int, dict[str, Any]] = {}
             self.assertFalse(hasattr(trainer_mod, "_records_through"))
@@ -1591,7 +1755,8 @@ class TrainerTest(unittest.TestCase):
                     batch_episodes=2,
                     learning_rate=0.001,
                     value_coef=0.5,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                 )
             self.assertEqual(read_json_file(out / "latest.json")["update"], 0)
             self.assertEqual((out / "episodes.jsonl").read_text(encoding="utf-8"), "")
@@ -1611,7 +1776,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             train(
                 env_bin=launcher,
@@ -1621,7 +1787,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             result_split = train(env_bin=launcher, out_dir=split, resume=split / "latest.json", until_update=4)
             self.assertEqual(result_fresh, result_split)
@@ -1645,7 +1812,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             (out / "episodes.jsonl").unlink()
             result = train(env_bin=launcher, out_dir=out, resume=out / "latest.json", until_update=1)
@@ -1669,7 +1837,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             clean_cache = _cache_bytes(clean)
             mutations = {
@@ -1716,7 +1885,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             for boundary in boundaries:
                 with self.subTest(boundary=boundary):
@@ -1729,7 +1899,8 @@ class TrainerTest(unittest.TestCase):
                         batch_episodes=2,
                         learning_rate=0.001,
                         value_coef=0.5,
-                        max_decisions=8,
+                        max_physical_decisions=8,
+                max_policy_steps=16,
                     )
                     fired = {"value": False}
 
@@ -1763,7 +1934,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             fired = {"value": False}
 
@@ -1924,7 +2096,8 @@ class TrainerTest(unittest.TestCase):
                         batch_episodes=2,
                         learning_rate=0.001,
                         value_coef=0.5,
-                        max_decisions=8,
+                        max_physical_decisions=8,
+                max_policy_steps=16,
                     )
                     before = (out / cache_name).read_bytes()
                     original_write = artifacts_mod.os.write
@@ -1972,7 +2145,8 @@ class TrainerTest(unittest.TestCase):
                         batch_episodes=2,
                         learning_rate=0.001,
                         value_coef=0.5,
-                        max_decisions=8,
+                        max_physical_decisions=8,
+                max_policy_steps=16,
                     )
                     out = tmp / "run"
                     train(
@@ -1983,7 +2157,8 @@ class TrainerTest(unittest.TestCase):
                         batch_episodes=2,
                         learning_rate=0.001,
                         value_coef=0.5,
-                        max_decisions=8,
+                        max_physical_decisions=8,
+                max_policy_steps=16,
                     )
                     before = (out / cache_name).read_bytes()
                     original_write = artifacts_mod.os.write
@@ -2037,7 +2212,8 @@ class TrainerTest(unittest.TestCase):
                         batch_episodes=2,
                         learning_rate=0.001,
                         value_coef=0.5,
-                        max_decisions=8,
+                        max_physical_decisions=8,
+                max_policy_steps=16,
                     )
                     control_result = train(env_bin=launcher, out_dir=control, resume=control / "latest.json", until_update=1)
                     out = tmp / "run"
@@ -2049,7 +2225,8 @@ class TrainerTest(unittest.TestCase):
                         batch_episodes=2,
                         learning_rate=0.001,
                         value_coef=0.5,
-                        max_decisions=8,
+                        max_physical_decisions=8,
+                max_policy_steps=16,
                     )
                     before = _cache_bytes(out)
                     original_write = artifacts_mod.os.write
@@ -2096,7 +2273,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             train(
                 env_bin=launcher,
@@ -2106,7 +2284,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             child, marker = _run_hard_kill_child(tmp, out, launcher, "latest_replace_after")
             _assert_hard_kill_fired(self, child, marker, "latest_replace_after")
@@ -2185,7 +2364,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             for index, (boundary, target, expected_head) in enumerate(cases):
                 with self.subTest(boundary=boundary, target=target):
@@ -2198,7 +2378,8 @@ class TrainerTest(unittest.TestCase):
                         batch_episodes=2,
                         learning_rate=0.001,
                         value_coef=0.5,
-                        max_decisions=8,
+                        max_physical_decisions=8,
+                max_policy_steps=16,
                     )
                     child, marker = _run_hard_kill_child(tmp, out, launcher, boundary, target)
                     _assert_hard_kill_fired(self, child, marker, boundary, target)
@@ -2230,7 +2411,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             tx_root = source / ".transactions"
             reachable_tx = tx_root / "update-00000001-1.2"
@@ -2297,7 +2479,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             if env_marker.exists():
                 env_marker.unlink()
@@ -2332,7 +2515,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
 
             def run_case(name: str, mutator) -> None:  # type: ignore[no-untyped-def]
@@ -2416,7 +2600,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             if env_marker.exists():
                 env_marker.unlink()
@@ -2499,7 +2684,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             out = tmp / "run"
             train(
@@ -2510,7 +2696,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             outside = tmp / "outside"
             outside.mkdir()
@@ -2556,7 +2743,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             if env_marker.exists():
                 env_marker.unlink()
@@ -2614,7 +2802,8 @@ class TrainerTest(unittest.TestCase):
                         batch_episodes=2,
                         learning_rate=0.001,
                         value_coef=0.5,
-                        max_decisions=8,
+                        max_physical_decisions=8,
+                max_policy_steps=16,
                     )
             finally:
                 trainer_mod.build_checkpoint_payload = original  # type: ignore[assignment]
@@ -2650,7 +2839,8 @@ class TrainerTest(unittest.TestCase):
                     batch_episodes=2,
                     learning_rate=0.001,
                     value_coef=0.5,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                 )
             finally:
                 artifacts.os.replace = original  # type: ignore[assignment]
@@ -2670,7 +2860,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
 
             def case(name: str, mutator) -> None:  # type: ignore[no-untyped-def]
@@ -2706,7 +2897,7 @@ class TrainerTest(unittest.TestCase):
             )
             case("missing_reachable_generation", lambda p: (p / "updates" / "update-00000000.json").unlink())
             case("unknown_generation_name", lambda p: (p / "updates" / "update-1.json").write_text("{}", encoding="utf-8"))
-            for version in range(1, 12):
+            for version in range(1, 14):
                 case(
                     f"old_v{version}_run_schema_rejected",
                     lambda p, version=version: write_json_atomic(
@@ -2714,7 +2905,7 @@ class TrainerTest(unittest.TestCase):
                         {**read_json_file(p / "run.json"), "schema": f"kernel_rl_train_run/v{version}"},
                     ),
                 )
-            for version in range(1, 9):
+            for version in range(1, 10):
                 case(
                     f"old_v{version}_artifact_boundary_rejected",
                     lambda p, version=version: write_json_atomic(
@@ -2752,7 +2943,8 @@ class TrainerTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             if env_marker.exists():
                 env_marker.unlink()
@@ -2823,7 +3015,7 @@ class TrainerTest(unittest.TestCase):
                         "forbidden training artifact field",
                     )
                 )
-            for version in range(1, 12):
+            for version in range(1, 14):
                 cases.append(
                     (
                         f"old_v{version}_run_schema",
@@ -2831,7 +3023,7 @@ class TrainerTest(unittest.TestCase):
                         "schema mismatch",
                     )
                 )
-            for version in range(1, 9):
+            for version in range(1, 10):
                 cases.append(
                     (
                         f"old_v{version}_artifact_boundary",
@@ -2912,7 +3104,8 @@ for line in sys.stdin:
                         batch_episodes=2,
                         learning_rate=0.001,
                         value_coef=0.5,
-                        max_decisions=8,
+                        max_physical_decisions=8,
+                max_policy_steps=16,
                     )
             finally:
                 if old_version is None:
@@ -2955,8 +3148,10 @@ for line in sys.stdin:
                 "0.001",
                 "--value-coef",
                 "0.5",
-                "--max-decisions",
+                "--max-physical-decisions",
                 "8",
+                "--max-policy-steps",
+                "16",
             ]
             run_train(["--out-dir", str(fresh), "--until-update", "4", *common])
             run_train(["--out-dir", str(split), "--until-update", "2", *common])
@@ -2990,7 +3185,8 @@ for line in sys.stdin:
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             random.seed(999)
             for _ in range(100):
@@ -3005,7 +3201,8 @@ for line in sys.stdin:
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             self.assertEqual(clean_result, noisy_result)
             self.assertEqual((clean / "updates.jsonl").read_text(encoding="utf-8"), (noisy / "updates.jsonl").read_text(encoding="utf-8"))
@@ -3208,7 +3405,8 @@ try:
         batch_episodes=2,
         learning_rate=0.001,
         value_coef=0.5,
-        max_decisions=8,
+        max_physical_decisions=8,
+                max_policy_steps=16,
     )
 except OutputLockError:
     sys.exit(73)
@@ -3248,7 +3446,8 @@ sys.exit(0)
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             self.assertEqual(read_json_file(out / "latest.json")["update"], 0)
 
@@ -3268,7 +3467,8 @@ sys.exit(0)
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             if env_marker.exists():
                 env_marker.unlink()
@@ -3413,7 +3613,8 @@ sys.exit(75)
                     batch_episodes=2,
                     learning_rate=0.001,
                     value_coef=0.5,
-                    max_decisions=8,
+                    max_physical_decisions=8,
+                max_policy_steps=16,
                 )
             self.assertEqual(sentinel.read_bytes(), b"unchanged")
 

@@ -19,7 +19,7 @@ from .features import EncodedDecision, encode_decision
 from .model import KernelPolicyValueNet, greedy_action
 
 POLICIES = {"uniform", "greedy", "sampled"}
-RUNNER_ARTIFACT_SCHEMA_VERSION = 3
+RUNNER_ARTIFACT_SCHEMA_VERSION = 4
 V1_RUNNER_ARTIFACT_SCHEMA_VERSION = 1
 DEFAULT_DECK_IDS = ("Burn", "Burn")
 
@@ -113,12 +113,27 @@ def select_action(
     if policy not in POLICIES:
         raise ValueError(f"unsupported policy {policy}")
     if policy == "uniform":
-        return int(derive_uniform_index(base_seed, episode, decision.step, decision.acting_player, len(decision.legal_actions)))
+        return int(
+            derive_uniform_index(
+                base_seed,
+                episode,
+                decision.physical_decision_id,
+                decision.substep_index,
+                decision.acting_player,
+                len(decision.legal_actions),
+            )
+        )
     encoded = encode_decision(decision.observation, decision.legal_actions)
     logits, _value = model_policy.logits_value(encoded)
     if policy == "greedy":
         return greedy_action(logits)
-    seed = derive_sample_seed(base_seed, episode, decision.step, decision.acting_player)
+    seed = derive_sample_seed(
+        base_seed,
+        episode,
+        decision.physical_decision_id,
+        decision.substep_index,
+        decision.acting_player,
+    )
     return sample_fixed_categorical(logits, seed)
 
 
@@ -133,7 +148,8 @@ def _episode_record(episode: int, env_seed: int, terminal: Terminal, p0_policy: 
         "terminal_code": terminal.terminal_code,
         "winner": terminal.winner,
         "terminal_reward": terminal.terminal_reward,
-        "decision_count": terminal.decision_count,
+        "policy_step_count": terminal.policy_step_count,
+        "physical_decision_count": terminal.physical_decision_count,
         "p0_policy": p0_policy,
         "p1_policy": p1_policy,
     }
@@ -179,7 +195,8 @@ def run_episodes(
     out_dir: str | Path,
     episodes: int,
     base_seed: int,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     p0: str,
     p1: str,
     deck_ids: tuple[str, str] = DEFAULT_DECK_IDS,
@@ -206,7 +223,8 @@ def run_episodes(
             current: Decision | Terminal = client.reset(
                 episode_id=episode,
                 env_seed=env_seed,
-                max_decisions=max_decisions,
+                max_physical_decisions=max_physical_decisions,
+                max_policy_steps=max_policy_steps,
                 deck_ids=deck_ids,
             )
             if current.deck_ids != deck_ids:
@@ -245,7 +263,8 @@ def run_episodes(
         "config": {
             "episodes": episodes,
             "base_seed": base_seed,
-            "max_decisions": max_decisions,
+            "max_physical_decisions": max_physical_decisions,
+            "max_policy_steps": max_policy_steps,
             "p0_policy": p0,
             "p1_policy": p1,
             "deck_ids": list(deck_ids),

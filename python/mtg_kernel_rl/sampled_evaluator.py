@@ -87,7 +87,8 @@ def _run_sampled_game(
     game_in_pair: int,
     env_seed: int,
     base_seed: int,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     candidate_model: KernelPolicyValueNet,
     baseline_model: KernelPolicyValueNet,
     expected_provenance: dict[str, Any],
@@ -100,7 +101,8 @@ def _run_sampled_game(
     current: Decision | Terminal = client.reset(
         episode_id=episode_id,
         env_seed=env_seed,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         deck_ids=deck_ids,
     )
     _assert_deck_identity(
@@ -111,22 +113,33 @@ def _run_sampled_game(
     )
     if not json_values_equal_strict(current.provenance, expected_provenance):
         raise ValueError("sampled evaluation environment protocol provenance differs from source training run")
-    decisions = 0
-    candidate_decisions = 0
-    baseline_decisions = 0
+    policy_steps = 0
+    candidate_policy_steps = 0
+    baseline_policy_steps = 0
+    physical_decisions = 0
+    candidate_physical_decisions = 0
+    baseline_physical_decisions = 0
     physical_decision_counts = {"p0": 0, "p1": 0}
     while isinstance(current, Decision):
-        if decisions >= max_decisions:
-            raise RuntimeError("sampled evaluation exceeded the local max_decisions guard before a natural terminal")
+        if policy_steps >= max_policy_steps:
+            raise RuntimeError("sampled evaluation exceeded the local max_policy_steps guard before a natural terminal")
+        if current.physical_decision_id >= max_physical_decisions:
+            raise RuntimeError("sampled evaluation exceeded the local max_physical_decisions guard before a natural terminal")
         actor = current.acting_player
         if actor not in physical_decision_counts:
             raise ValueError("sampled evaluation decision actor must be p0 or p1")
         is_candidate = actor == candidate_seat
         model = candidate_model if is_candidate else baseline_model
-        local_decision_index = physical_decision_counts[actor]
-        action_seed = derive_evaluation_action_seed(base_seed, pair_index, actor, local_decision_index)
+        local_physical_decision_index = physical_decision_counts[actor]
+        action_seed = derive_evaluation_action_seed(
+            base_seed,
+            pair_index,
+            actor,
+            local_physical_decision_index,
+            current.substep_index,
+        )
         selected_position = _select_sampled_action(model, current, action_seed)
-        physical_decision_counts[actor] += 1
+        group_complete = current.substep_index + 1 == current.substep_count
         selected_action = current.legal_actions[selected_position]
         current = client.step(selected_action["selected_index"], selected_action["stable_id"])
         _assert_deck_identity(
@@ -135,26 +148,38 @@ def _run_sampled_game(
             deck_hashes=deck_hashes,
             context="sampled evaluation environment",
         )
-        decisions += 1
+        policy_steps += 1
         if is_candidate:
-            candidate_decisions += 1
+            candidate_policy_steps += 1
         else:
-            baseline_decisions += 1
+            baseline_policy_steps += 1
+        if group_complete:
+            physical_decision_counts[actor] += 1
+            physical_decisions += 1
+            if is_candidate:
+                candidate_physical_decisions += 1
+            else:
+                baseline_physical_decisions += 1
         if not json_values_equal_strict(current.provenance, expected_provenance):
             raise ValueError("sampled evaluation environment protocol provenance drift")
     if not isinstance(current, Terminal):
         raise TypeError("sampled evaluation client returned an unsupported response")
-    if current.decision_count != decisions:
-        raise ValueError("sampled terminal decision_count differs from evaluator routing count")
+    if current.policy_step_count != policy_steps:
+        raise ValueError("sampled terminal policy_step_count differs from evaluator routing count")
+    if current.physical_decision_count != physical_decisions:
+        raise ValueError("sampled terminal physical_decision_count differs from evaluator grouping count")
     result, points = _candidate_result(current, candidate_seat)
     return {
-        "baseline_decisions": baseline_decisions,
+        "baseline_policy_steps": baseline_policy_steps,
+        "baseline_physical_decisions": baseline_physical_decisions,
         "baseline_seat": baseline_seat,
-        "candidate_decisions": candidate_decisions,
+        "candidate_policy_steps": candidate_policy_steps,
+        "candidate_physical_decisions": candidate_physical_decisions,
         "candidate_half_points": points,
         "candidate_result": result,
         "candidate_seat": candidate_seat,
-        "decision_count": current.decision_count,
+        "policy_step_count": current.policy_step_count,
+        "physical_decision_count": current.physical_decision_count,
         "env_seed": env_seed,
         "deck_ids": list(current.deck_ids),
         "deck_hashes": list(current.deck_hashes),
@@ -202,7 +227,8 @@ def _sampled_manifest_without_files(
     pair_count: int,
     base_seed: int,
     bootstrap_replicates: int,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     timeout_ms: int,
     statistics: dict[str, Any],
 ) -> dict[str, Any]:
@@ -216,7 +242,8 @@ def _sampled_manifest_without_files(
         pair_count=pair_count,
         base_seed=base_seed,
         bootstrap_replicates=bootstrap_replicates,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         timeout_ms=timeout_ms,
         statistics=statistics,
     )
@@ -238,18 +265,29 @@ def evaluate_sampled(
     pairs: int,
     base_seed: int,
     bootstrap_replicates: int,
-    max_decisions: int,
+    max_physical_decisions: int,
+    max_policy_steps: int,
     timeout_ms: int,
     deck_ids: tuple[str, str] = DEFAULT_DECK_IDS,
 ) -> EvaluationResult:
     """Evaluate the validated head against update zero with sampled CRN pairs."""
 
-    expected_head, pairs, base_seed, bootstrap_replicates, max_decisions, timeout_ms, deck_ids = _validate_request(
+    (
+        expected_head,
+        pairs,
+        base_seed,
+        bootstrap_replicates,
+        max_physical_decisions,
+        max_policy_steps,
+        timeout_ms,
+        deck_ids,
+    ) = _validate_request(
         expected_candidate_head=expected_candidate_head,
         pairs=pairs,
         base_seed=base_seed,
         bootstrap_replicates=bootstrap_replicates,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         timeout_ms=timeout_ms,
         deck_ids=deck_ids,
     )
@@ -258,7 +296,8 @@ def evaluate_sampled(
         expected_candidate_head=expected_head,
         env_bin=env_bin,
         out_dir=out_dir,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         deck_ids=deck_ids,
     )
     expected_provenance = chain.run_record["protocol_provenance"]
@@ -278,7 +317,8 @@ def evaluate_sampled(
                     game_in_pair=0,
                     env_seed=env_seed,
                     base_seed=base_seed,
-                    max_decisions=max_decisions,
+                    max_physical_decisions=max_physical_decisions,
+                    max_policy_steps=max_policy_steps,
                     candidate_model=candidate_model,
                     baseline_model=baseline_model,
                     expected_provenance=expected_provenance,
@@ -291,7 +331,8 @@ def evaluate_sampled(
                     game_in_pair=1,
                     env_seed=env_seed,
                     base_seed=base_seed,
-                    max_decisions=max_decisions,
+                    max_physical_decisions=max_physical_decisions,
+                    max_policy_steps=max_policy_steps,
                     candidate_model=candidate_model,
                     baseline_model=baseline_model,
                     expected_provenance=expected_provenance,
@@ -338,7 +379,8 @@ def evaluate_sampled(
             pair_count=pairs,
             base_seed=base_seed,
             bootstrap_replicates=bootstrap_replicates,
-            max_decisions=max_decisions,
+            max_physical_decisions=max_physical_decisions,
+            max_policy_steps=max_policy_steps,
             timeout_ms=timeout_ms,
             statistics=statistics,
         )

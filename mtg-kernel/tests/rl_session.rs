@@ -40,7 +40,8 @@ fn reset_line_for_decks(
         "deck_ids": deck_ids,
         "episode_id": episode_id,
         "env_seed": derive_env_seed(5151, episode_id),
-        "max_decisions": max_decisions,
+        "max_physical_decisions": max_decisions,
+        "max_policy_steps": max_decisions.saturating_mul(128).max(1),
     })
     .to_string()
 }
@@ -103,7 +104,7 @@ fn action_ids(response: &RlSessionResponseV1) -> Vec<String> {
 fn decision_step(response: &RlSessionResponseV1) -> u64 {
     match response {
         RlSessionResponseV1::Decision(decision) => decision.step,
-        RlSessionResponseV1::Terminal(terminal) => terminal.decision_count,
+        RlSessionResponseV1::Terminal(terminal) => terminal.policy_step_count,
     }
 }
 
@@ -111,7 +112,7 @@ fn current_snapshot(session: &RlEpisodeSessionV1) -> (String, u64, u64) {
     (
         serde_json::to_string(&session.current_response()).unwrap(),
         session.diagnostic_state_hash(),
-        session.decision_count(),
+        session.policy_step_count(),
     )
 }
 
@@ -133,6 +134,8 @@ fn rl_session_decision_response_has_no_full_state_diagnostic_hash() {
         "diagnostic_state_hash_includes_hidden_state"
     ));
     assert!(!contains_key(&value, "state_hash"));
+    assert!(!contains_key(&value, "environment_hash"));
+    assert!(!contains_key(&value, "environment_hash_algorithm"));
     assert!(!value["legal_actions"].as_array().unwrap().is_empty());
 }
 
@@ -171,6 +174,8 @@ fn rl_session_terminal_response_has_provenance_and_no_diagnostic_hash() {
         "diagnostic_state_hash_includes_hidden_state"
     ));
     assert!(!contains_key(&value, "state_hash"));
+    assert!(!contains_key(&value, "environment_hash"));
+    assert!(!contains_key(&value, "environment_hash_algorithm"));
 }
 
 #[test]
@@ -221,7 +226,8 @@ fn rl_session_reset_requires_exact_deck_id_shape_before_session_creation() {
             "request_id": request_id,
             "episode_id": 0,
             "env_seed": derive_env_seed(5151, 0),
-            "max_decisions": 16,
+            "max_physical_decisions": 16,
+            "max_policy_steps": 2048,
         });
         if let Some(deck_ids) = deck_ids {
             request["deck_ids"] = deck_ids;
@@ -325,7 +331,8 @@ fn rl_session_deterministic_action_sequence_reaches_same_terminal() {
     assert_eq!(terminal["terminal_classification"], "truncated");
     assert_eq!(terminal["terminal_code"], "decision_cap");
     assert_eq!(terminal["terminal_reward"], json!([0, 0]));
-    assert_eq!(terminal["decision_count"], 8);
+    assert_eq!(terminal["policy_step_count"], 8);
+    assert_eq!(terminal["physical_decision_count"], 8);
 }
 
 #[test]
@@ -602,6 +609,71 @@ fn rl_session_step_before_reset_and_malformed_input_recover_cleanly() {
 }
 
 #[test]
+fn rl_session_duplicate_object_keys_are_rejected_recursively_without_mutation() {
+    let mut server = KernelRlJsonlServerV1::new();
+
+    let reset_with_duplicate_schema = reset_line("duplicate-schema-secret", 16);
+    let schema_needle = format!("\"schema_version\":{RL_SESSION_SCHEMA_VERSION}");
+    let reset_with_duplicate_schema = reset_with_duplicate_schema.replacen(
+        &schema_needle,
+        &format!("{schema_needle},\"schema_version\":1"),
+        1,
+    );
+    let duplicate_schema_response = server.handle_line(&reset_with_duplicate_schema);
+    let duplicate_schema_value = parse_response(&duplicate_schema_response);
+    assert_eq!(duplicate_schema_value["response_type"], "error");
+    assert_eq!(duplicate_schema_value["error"]["code"], "malformed_request");
+    assert_eq!(
+        duplicate_schema_value["error"]["message"],
+        "request does not match the v5 protocol schema"
+    );
+    assert!(duplicate_schema_value["request_id"].is_null());
+    assert!(!duplicate_schema_response.contains("duplicate-schema-secret"));
+
+    let mut reset_with_nested_duplicate = reset_line("nested-duplicate-secret", 16);
+    assert_eq!(reset_with_nested_duplicate.pop(), Some('}'));
+    reset_with_nested_duplicate.push_str(
+        r#","future":[{"environment_hash":"nested-secret-a","environment_hash":"nested-secret-b"}]}"#,
+    );
+    let nested_duplicate_response = server.handle_line(&reset_with_nested_duplicate);
+    let nested_duplicate_value = parse_response(&nested_duplicate_response);
+    assert_eq!(nested_duplicate_value["response_type"], "error");
+    assert_eq!(nested_duplicate_value["error"]["code"], "malformed_request");
+    assert!(nested_duplicate_value["request_id"].is_null());
+    for forbidden in [
+        "nested-duplicate-secret",
+        "environment_hash",
+        "nested-secret-a",
+        "nested-secret-b",
+    ] {
+        assert!(!nested_duplicate_response.contains(forbidden));
+    }
+
+    let reset = parse_response(&server.handle_line(&reset_line("valid-array-reset", 16)));
+    assert_eq!(reset["response_type"], "decision");
+    assert_eq!(reset["deck_ids"], json!(["Burn", "Burn"]));
+
+    let valid_step = step_line_from_decision("valid-after-duplicate-step", &reset, 0);
+    let expected_step_needle = format!("\"expected_step\":{}", reset["step"]);
+    let duplicate_step = valid_step.replacen(
+        &expected_step_needle,
+        &format!("{expected_step_needle},\"expected_step\":999"),
+        1,
+    );
+    let duplicate_step_response = parse_response(&server.handle_line(&duplicate_step));
+    assert_eq!(duplicate_step_response["response_type"], "error");
+    assert_eq!(
+        duplicate_step_response["error"]["code"],
+        "malformed_request"
+    );
+    assert!(duplicate_step_response["request_id"].is_null());
+
+    let valid_step_response = parse_response(&server.handle_line(&valid_step));
+    assert_ne!(valid_step_response["response_type"], "error");
+    assert_eq!(valid_step_response["step"], 1);
+}
+
+#[test]
 fn rl_session_schema_one_requests_fail_before_session_mutation() {
     let mut server = KernelRlJsonlServerV1::new();
     let schema_one_reset = json!({
@@ -611,7 +683,8 @@ fn rl_session_schema_one_requests_fail_before_session_mutation() {
         "deck_ids": ["Burn", "Burn"],
         "episode_id": 0,
         "env_seed": derive_env_seed(5151, 0),
-        "max_decisions": 16,
+        "max_physical_decisions": 16,
+        "max_policy_steps": 2048,
     })
     .to_string();
     let rejected_reset = parse_response(&server.handle_line(&schema_one_reset));
@@ -628,10 +701,10 @@ fn rl_session_schema_one_requests_fail_before_session_mutation() {
     assert_eq!(still_no_session["response_type"], "error");
     assert_eq!(still_no_session["error"]["code"], "step_before_reset");
 
-    let reset = parse_response(&server.handle_line(&reset_line("schema-four-reset", 16)));
+    let reset = parse_response(&server.handle_line(&reset_line("schema-five-reset", 16)));
     assert_eq!(reset["response_type"], "decision");
     assert_eq!(reset["schema_version"], RL_SESSION_SCHEMA_VERSION);
-    assert_eq!(reset["observation"]["schema_version"], 4);
+    assert_eq!(reset["observation"]["schema_version"], 5);
 
     let action = &reset["legal_actions"].as_array().unwrap()[0];
     let schema_one_step = json!({
@@ -667,7 +740,8 @@ fn rl_session_unknown_request_fields_are_rejected_without_mutation() {
         "deck_ids": ["Burn", "Burn"],
         "episode_id": 99,
         "env_seed": derive_env_seed(5151, 99),
-        "max_decisions": 16,
+        "max_physical_decisions": 16,
+        "max_policy_steps": 2048,
         "misspelled_future_safety_field": true,
     })
     .to_string();
@@ -676,7 +750,7 @@ fn rl_session_unknown_request_fields_are_rejected_without_mutation() {
     assert_eq!(rejected_reset["error"]["code"], "malformed_request");
     assert_eq!(
         rejected_reset["error"]["message"],
-        "request does not match the v4 protocol schema"
+        "request does not match the v5 protocol schema"
     );
 
     let reset = server.handle_line(&reset_line("strict-reset", 16));
@@ -777,7 +851,7 @@ fn rl_session_sequential_reset_rejects_stale_steps_and_retry_cache_after_reset()
 }
 
 #[test]
-fn rl_session_kernel_rl_env_process_smoke_is_v4_strict_and_hash_safe() {
+fn rl_session_kernel_rl_env_process_smoke_is_v5_strict_and_hash_safe() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_kernel_rl_env"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -795,7 +869,8 @@ fn rl_session_kernel_rl_env_process_smoke_is_v4_strict_and_hash_safe() {
         "deck_ids": ["Burn", "Burn"],
         "episode_id": 0,
         "env_seed": derive_env_seed(5151, 0),
-        "max_decisions": 16,
+        "max_physical_decisions": 16,
+        "max_policy_steps": 2048,
     })
     .to_string();
     writeln!(stdin, "{schema_one_reset}").unwrap();
@@ -822,7 +897,7 @@ fn rl_session_kernel_rl_env_process_smoke_is_v4_strict_and_hash_safe() {
         first["provenance"]["schema_version"],
         RL_SESSION_SCHEMA_VERSION
     );
-    assert_eq!(first["observation"]["schema_version"], 4);
+    assert_eq!(first["observation"]["schema_version"], 5);
     assert_eq!(
         first["legal_actions"][0]["schema_version"],
         RL_SESSION_SCHEMA_VERSION
@@ -834,8 +909,13 @@ fn rl_session_kernel_rl_env_process_smoke_is_v4_strict_and_hash_safe() {
     assert!(first["observation"]["projection"]
         .get("surface_context")
         .is_some());
+    assert!(first["observation"]["projection"]
+        .get("policy_surface_context")
+        .is_some());
     assert!(!contains_key(&first, "diagnostic_state_hash"));
     assert!(!contains_key(&first, "state_hash"));
+    assert!(!contains_key(&first, "environment_hash"));
+    assert!(!contains_key(&first, "environment_hash_algorithm"));
 
     let action = &first["legal_actions"].as_array().unwrap()[0];
     let unknown_step = json!({
@@ -866,6 +946,8 @@ fn rl_session_kernel_rl_env_process_smoke_is_v4_strict_and_hash_safe() {
     assert_ne!(valid["response_type"], "error");
     assert!(!contains_key(&valid, "diagnostic_state_hash"));
     assert!(!contains_key(&valid, "state_hash"));
+    assert!(!contains_key(&valid, "environment_hash"));
+    assert!(!contains_key(&valid, "environment_hash_algorithm"));
 
     writeln!(
         stdin,
@@ -916,6 +998,8 @@ fn rl_session_kernel_rl_env_process_smoke_is_v4_strict_and_hash_safe() {
     assert_eq!(terminal["terminal_classification"], "truncated");
     assert_eq!(terminal["terminal_code"], "decision_cap");
     assert!(!contains_key(&terminal, "diagnostic_state_hash"));
+    assert!(!contains_key(&terminal, "environment_hash"));
+    assert!(!contains_key(&terminal, "environment_hash_algorithm"));
 
     drop(stdin);
     let status = child.wait().unwrap();

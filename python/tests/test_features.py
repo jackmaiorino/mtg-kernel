@@ -217,9 +217,9 @@ def pending_effect_target_decision(can_finish: bool = True) -> tuple[dict, list[
     selected_count = len(selected_targets)
     actions = [
         {
-            "schema_version": 4,
+            "schema_version": 5,
             "selected_index": i,
-            "stable_id": f"legal-action-v4:pending-target-{i}",
+            "stable_id": f"legal-action-v5:pending-target-{i}",
             "semantic": {
                 "action_kind": "choose_effect_target",
                 "actor": "p0",
@@ -236,9 +236,9 @@ def pending_effect_target_decision(can_finish: bool = True) -> tuple[dict, list[
     if can_finish:
         actions.append(
             {
-                "schema_version": 4,
+                "schema_version": 5,
                 "selected_index": len(actions),
-                "stable_id": "legal-action-v4:pending-finish",
+                "stable_id": "legal-action-v5:pending-finish",
                 "semantic": {
                     "action_kind": "finish_effect_selection",
                     "actor": "p0",
@@ -272,9 +272,9 @@ def pending_effect_option_decision(option_count: int = 2) -> tuple[dict, list[di
     )
     actions = [
         {
-            "schema_version": 4,
+            "schema_version": 5,
             "selected_index": option_index,
-            "stable_id": f"legal-action-v4:pending-option-{option_index}",
+            "stable_id": f"legal-action-v5:pending-option-{option_index}",
             "semantic": {
                 "action_kind": "choose_effect_option",
                 "actor": "p0",
@@ -306,9 +306,17 @@ class FeatureEncodingTest(unittest.TestCase):
         legacy_v3[0]["stable_id"] = "legal-action-v3:legacy"
         with self.assertRaises(FeatureSchemaError):
             validate_legal_actions_contract(legacy_v3, "p0")
-        encoded = encode_decision(obs, actions)
-        self.assertEqual(encoded.action_features.shape[0], len(actions))
-        self.assertGreater(encoded.action_ref_features.shape[0], len(actions))
+        noncombat_actions = [
+            action
+            for action in actions
+            if action["semantic"]["action_kind"]
+            not in {"choose_attacker_inclusion", "choose_blocker_inclusion"}
+        ]
+        for index, action in enumerate(noncombat_actions):
+            action["selected_index"] = index
+        encoded = encode_decision(obs, noncombat_actions)
+        self.assertEqual(encoded.action_features.shape[0], len(noncombat_actions))
+        self.assertGreater(encoded.action_ref_features.shape[0], len(noncombat_actions))
         self.assertEqual(len(feature_contract_fingerprint()), 64)
         self.assertEqual(len(encoding_contract_fingerprint()), 64)
         self.assertIn("observation.projection.stack.[].controller", classification_registry())
@@ -318,7 +326,7 @@ class FeatureEncodingTest(unittest.TestCase):
         obs["projection"]["unknown_leaf"] = 1
         with self.assertRaises(FeatureSchemaError):
             encode_decision(obs, legal_actions())
-        ambiguous = {"schema_version": 4, "selected_index": 0, "stable_id": "legal-action-v4:ambiguous", "display_text": None, "semantic": {"action_kind": "ambiguous", "reason": "text"}}
+        ambiguous = {"schema_version": 5, "selected_index": 0, "stable_id": "legal-action-v5:ambiguous", "display_text": None, "semantic": {"action_kind": "ambiguous", "reason": "text"}}
         with self.assertRaises(FeatureSchemaError):
             encode_decision(observation(), [ambiguous])
 
@@ -373,18 +381,18 @@ class FeatureEncodingTest(unittest.TestCase):
         for _path, classification in obs_leaves + action_leaves:
             self.assertIn(classification, {"model_input", "operational_only", "forbidden"})
 
-    def test_comprehensive_v4_contract_identity_and_dimensions_are_reserved(self) -> None:
+    def test_comprehensive_v5_contract_identity_and_dimensions_are_reserved(self) -> None:
         encoded = encode_decision(complete_observation(), complete_legal_actions())
-        self.assertEqual(encoded.schema.version, "actor-relative-v4-python-3")
-        self.assertEqual(encoded.schema.registry_version, "rust-observation-v4-action-v4-registry-3")
-        self.assertEqual(encoded.schema.state_dim, 211)
+        self.assertEqual(encoded.schema.version, "actor-relative-v5-python-4")
+        self.assertEqual(encoded.schema.registry_version, "rust-observation-v5-action-v5-registry-4")
+        self.assertEqual(encoded.schema.state_dim, 219)
         self.assertEqual(encoded.schema.object_feature_dim, 98)
         self.assertEqual(encoded.schema.edge_feature_dim, 41)
         self.assertEqual(encoded.schema.action_feature_dim, 195)
         self.assertEqual(encoded.schema.object_group_count, 20)
-        self.assertEqual(encoded.schema.action_ref_feature_dim, 24)
-        self.assertEqual(encoded.schema.contract_digest, "697174215cd8c8b04ede32e7a8bf8ef3f8fcd47ad2b4fc024cd0b6646bcbca01")
-        self.assertEqual(encoded.schema.encoding_digest, "fa4e3db3845f2386cae233bf5538e43cf2b21c3cbdc3ca1f0d93b426ae22dab1")
+        self.assertEqual(encoded.schema.action_ref_feature_dim, 25)
+        self.assertEqual(encoded.schema.contract_digest, "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396")
+        self.assertEqual(encoded.schema.encoding_digest, "d2dc48d5aa806c02a2d5a3881d53f3a5b68a38fc2321eb9a3b1e31f760ac5d70")
 
     def test_detached_historical_paid_cost_refs_get_dedicated_nodes(self) -> None:
         obs = complete_observation()
@@ -537,9 +545,9 @@ class FeatureEncodingTest(unittest.TestCase):
             if choice["choice_kind"] == "options":
                 choice_actions = [
                     {
-                        "schema_version": 4,
+                        "schema_version": 5,
                         "selected_index": option_index,
-                        "stable_id": f"legal-action-v4:typed-option-{option_index}",
+                        "stable_id": f"legal-action-v5:typed-option-{option_index}",
                         "semantic": {
                             "action_kind": "choose_effect_option",
                             "actor": "p0",
@@ -555,9 +563,9 @@ class FeatureEncodingTest(unittest.TestCase):
                 selected_count = len(choice["selected_targets"])
                 choice_actions = [
                     {
-                        "schema_version": 4,
+                        "schema_version": 5,
                         "selected_index": index,
-                        "stable_id": f"legal-action-v4:typed-target-{index}",
+                        "stable_id": f"legal-action-v5:typed-target-{index}",
                         "semantic": {
                             "action_kind": "choose_effect_target",
                             "actor": "p0",
@@ -574,9 +582,9 @@ class FeatureEncodingTest(unittest.TestCase):
                 if choice["can_finish"]:
                     choice_actions.append(
                         {
-                            "schema_version": 4,
+                            "schema_version": 5,
                             "selected_index": len(choice_actions),
-                            "stable_id": "legal-action-v4:typed-finish",
+                            "stable_id": "legal-action-v5:typed-finish",
                             "semantic": {
                                 "action_kind": "finish_effect_selection",
                                 "actor": "p0",
@@ -591,6 +599,14 @@ class FeatureEncodingTest(unittest.TestCase):
 
         actions = every_action_variant_fixture(base["own_hand"][0]["stable"], target, base["own_hand"][1]["stable"])
         self.assertEqual(set(ACTION_KINDS), {action["semantic"]["action_kind"] for action in actions})
+        actions = [
+            action
+            for action in actions
+            if action["semantic"]["action_kind"]
+            not in {"choose_attacker_inclusion", "choose_blocker_inclusion"}
+        ]
+        for index, action in enumerate(actions):
+            action["selected_index"] = index
         encoded = encode_decision(base, actions)
         representations = [action_representation(encoded, i) for i in range(len(actions))]
         self.assertEqual(len(representations), len(set(representations)))
@@ -605,7 +621,7 @@ class FeatureEncodingTest(unittest.TestCase):
             for cost in COST_KINDS
         ]
         for i, semantic in enumerate(semantics):
-            reserved.append({"schema_version": 4, "selected_index": i, "stable_id": f"legal-action-v4:reserved-{i}", "semantic": semantic, "display_text": None})
+            reserved.append({"schema_version": 5, "selected_index": i, "stable_id": f"legal-action-v5:reserved-{i}", "semantic": semantic, "display_text": None})
         encoded_reserved = encode_decision(base, reserved)
         reserved_representations = [action_representation(encoded_reserved, i) for i in range(len(reserved))]
         self.assertEqual(len(reserved_representations), len(set(reserved_representations)))
@@ -680,7 +696,7 @@ class FeatureEncodingTest(unittest.TestCase):
         missing_target[0]["selected_index"] = 0
         duplicate_target = deep_copy(actions)
         duplicate = deep_copy(duplicate_target[0])
-        duplicate["stable_id"] = "legal-action-v4:pending-target-duplicate"
+        duplicate["stable_id"] = "legal-action-v5:pending-target-duplicate"
         duplicate_target.insert(1, duplicate)
         for index, action in enumerate(duplicate_target):
             action["selected_index"] = index
@@ -976,9 +992,9 @@ class FeatureEncodingTest(unittest.TestCase):
         payment, parent, _ = spell_copy_observation("payment")
         payment_actions = [
             {
-                "schema_version": 4,
+                "schema_version": 5,
                 "selected_index": i,
-                "stable_id": f"legal-action-v4:copy-pay-{i}",
+                "stable_id": f"legal-action-v5:copy-pay-{i}",
                 "semantic": {"action_kind": "choose_spell_copy_payment", "actor": "p1", "source": parent, "pay": pay},
                 "display_text": None,
             }
@@ -992,9 +1008,9 @@ class FeatureEncodingTest(unittest.TestCase):
         assert copy_ref is not None
         retarget_actions = [
             {
-                "schema_version": 4,
+                "schema_version": 5,
                 "selected_index": i,
-                "stable_id": f"legal-action-v4:copy-retarget-{i}",
+                "stable_id": f"legal-action-v5:copy-retarget-{i}",
                 "semantic": {
                     "action_kind": "choose_spell_copy_retarget",
                     "actor": "p1",
@@ -1025,9 +1041,9 @@ class FeatureEncodingTest(unittest.TestCase):
         assert target_copy is not None
         target_actions = [
             {
-                "schema_version": 4,
+                "schema_version": 5,
                 "selected_index": i,
-                "stable_id": f"legal-action-v4:copy-target-{i}",
+                "stable_id": f"legal-action-v5:copy-target-{i}",
                 "semantic": {
                     "action_kind": "choose_target",
                     "actor": "p1",
@@ -1442,7 +1458,7 @@ class FeatureEncodingTest(unittest.TestCase):
         mutated_obs["own_hand"][0]["card_name"] = "Different"
         mutated_obs["projection"]["battlefield"][0][0]["card_name"] = "Renamed"
         mutated_obs["projection"]["continuous_effects"][0]["timestamp"] = 777
-        mutated_actions[0]["stable_id"] = "legal-action-v4:changed"
+        mutated_actions[0]["stable_id"] = "legal-action-v5:changed"
         mutated_actions[1]["display_text"] = "Changed text"
         a = encode_decision(obs, actions)
         b = encode_decision(mutated_obs, mutated_actions)
@@ -1536,8 +1552,8 @@ class FeatureEncodingTest(unittest.TestCase):
         obs["projection"]["combat"]["attacker_to_ordered_blockers"] = [[obs["projection"]["battlefield"][0][0]["stable"], [first["stable"]]]]
         src = obs["own_hand"][0]["stable"]
         actions = [
-            {"schema_version": 4, "selected_index": 0, "stable_id": "legal-action-v4:t0", "semantic": {"action_kind": "choose_target", "actor": "p0", "source": src, "remaining": 1, "target": {"target_kind": "object", "object": first["stable"]}}, "display_text": None},
-            {"schema_version": 4, "selected_index": 1, "stable_id": "legal-action-v4:t1", "semantic": {"action_kind": "choose_target", "actor": "p0", "source": src, "remaining": 1, "target": {"target_kind": "object", "object": second["stable"]}}, "display_text": None},
+            {"schema_version": 5, "selected_index": 0, "stable_id": "legal-action-v5:t0", "semantic": {"action_kind": "choose_target", "actor": "p0", "source": src, "remaining": 1, "target": {"target_kind": "object", "object": first["stable"]}}, "display_text": None},
+            {"schema_version": 5, "selected_index": 1, "stable_id": "legal-action-v5:t1", "semantic": {"action_kind": "choose_target", "actor": "p0", "source": src, "remaining": 1, "target": {"target_kind": "object", "object": second["stable"]}}, "display_text": None},
         ]
         encoded = encode_decision(obs, actions)
         self.assertNotEqual(action_representation(encoded, 0), action_representation(encoded, 1))
@@ -1770,6 +1786,14 @@ class FeatureEncodingTest(unittest.TestCase):
     def test_distinct_action_semantics_do_not_collide(self) -> None:
         obs = complete_observation()
         actions = every_action_variant_fixture(obs["own_hand"][0]["stable"], obs["projection"]["battlefield"][1][0]["stable"], obs["own_hand"][1]["stable"])
+        actions = [
+            action
+            for action in actions
+            if action["semantic"]["action_kind"]
+            not in {"choose_attacker_inclusion", "choose_blocker_inclusion"}
+        ]
+        for index, action in enumerate(actions):
+            action["selected_index"] = index
         encoded = encode_decision(obs, actions)
         reps = [action_representation(encoded, i) for i in range(len(actions))]
         self.assertEqual(len(reps), len(set(reps)))
@@ -1778,7 +1802,7 @@ class FeatureEncodingTest(unittest.TestCase):
         obs = complete_observation()
         src = stable_ref(1, 30, "p0", "Hand")
         other = stable_ref(12, 31, "p0", "Hand")
-        base = {"schema_version": 4, "selected_index": 0, "stable_id": "legal-action-v4:x", "display_text": None}
+        base = {"schema_version": 5, "selected_index": 0, "stable_id": "legal-action-v5:x", "display_text": None}
         pairs = [
             (
                 {**base, "semantic": {"action_kind": "order_triggers", "actor": "p0", "pending_sources": [src, other], "order": [0, 1]}},
@@ -1789,8 +1813,8 @@ class FeatureEncodingTest(unittest.TestCase):
                 {**base, "semantic": {"action_kind": "choose_target", "actor": "p0", "source": src, "remaining": 1, "target": {"target_kind": "object", "object": other}}},
             ),
             (
-                {**base, "semantic": {"action_kind": "declare_blockers_for_attacker", "actor": "p0", "attacker": src, "blockers": [other]}},
-                {**base, "semantic": {"action_kind": "declare_blockers_for_attacker", "actor": "p0", "attacker": other, "blockers": [src]}},
+                {**base, "semantic": {"action_kind": "choose_kicker", "actor": "p0", "source": src, "pay": True}},
+                {**base, "semantic": {"action_kind": "choose_kicker", "actor": "p0", "source": other, "pay": True}},
             ),
         ]
         for left, right in pairs:

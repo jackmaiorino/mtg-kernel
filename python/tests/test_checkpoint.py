@@ -61,7 +61,8 @@ class CheckpointTest(unittest.TestCase):
             optimizer_step_count=1,
             next_episode=2,
             outcomes_by_learner_seat={"p0": {"win": 1, "loss": 0, "draw": 0}, "p1": {"win": 0, "loss": 1, "draw": 0}},
-            learner_decisions_by_seat={"p0": 1, "p1": 1},
+            learner_policy_steps_by_seat={"p0": 1, "p1": 1},
+            learner_physical_decisions_by_seat={"p0": 1, "p1": 1},
             model=model,
             optimizer=optimizer,
             learning_rate=0.001,
@@ -70,18 +71,24 @@ class CheckpointTest(unittest.TestCase):
                 **dataclasses.asdict(TrainerSeedDerivation()),
                 "namespaces": list(TrainerSeedDerivation().namespaces),
             },
-            provenance={"protocol": "kernel_rl_jsonl", "protocol_version": 4, "schema_version": 4, "kernel_version": "0.0.2-spike", "surface_version": 2, "card_db_hash": 1},
+            provenance={"protocol": "kernel_rl_jsonl", "protocol_version": 5, "schema_version": 5, "kernel_version": "0.0.2-spike", "surface_version": 2, "policy_surface_version": 5, "card_db_hash": 1},
             compatibility=compatibility,
         )
         return payload, model, optimizer, compatibility
 
-    def test_checkpoint_rejects_legacy_v3_protocol_and_schema_provenance(self) -> None:
+    def test_checkpoint_rejects_legacy_v4_protocol_and_schema_provenance(self) -> None:
         payload, _model, _optimizer, compatibility = self.make_payload()
         for key in ("protocol_version", "schema_version"):
             legacy = copy.deepcopy(payload)
-            legacy["provenance"][key] = 3
+            legacy["provenance"][key] = 4
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, rf"{key} mismatch"):
                 validate_checkpoint_payload(legacy, run_digest="r" * 64, compatibility=compatibility)
+
+    def test_checkpoint_rejects_immediate_old_v3_schema(self) -> None:
+        payload, _model, _optimizer, compatibility = self.make_payload()
+        payload["schema"] = "kernel_rl_train_checkpoint/v3"
+        with self.assertRaisesRegex(ValueError, "schema mismatch"):
+            validate_checkpoint_payload(payload, run_digest="r" * 64, compatibility=compatibility)
 
     def assert_payload_equal(self, left: object, right: object, context: str = "$") -> None:
         if isinstance(left, torch.Tensor) or isinstance(right, torch.Tensor):

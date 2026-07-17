@@ -3,27 +3,30 @@
 //! This module owns the reset/step state machine used by both the JSONL
 //! process wrapper and the batch rollout recorder, so action validation and
 //! terminal classification cannot drift between interactive and offline use.
-//! Schema v4 reserves ordered physical-seat deck identity on the wire. The
+//! Schema v5 reserves ordered physical-seat deck identity on the wire. The
 //! only executable pair in this increment remains canonical `Burn`/`Burn`;
 //! every other id fails before an active session is created or replaced.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::engine::Decision;
 use crate::ids::PlayerId;
-use crate::rl::{
-    acting_player_for_surface_decision, build_burn_mirror_state, burn_deck_hash,
-    legal_action_candidates_v1, observe_v2, validate_selected_action, EpisodeTerminalSummaryV1,
-    LegalActionCandidateV1, LegalActionV1, ObservationV2, PlayerSeatV1, RlContractError,
-    TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2,
+use crate::policy_surface_v5::{
+    PolicyDecisionV5, PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM, POLICY_SURFACE_VERSION,
 };
-use crate::surface_v2::{HarnessSurfaceV2, SurfaceDecision, H2_PREDICATE_VERSION};
+use crate::rl::{
+    build_burn_mirror_state, burn_deck_hash, legal_action_candidates_v5, observe_policy_v5,
+    parse_strict_json_value, EpisodeTerminalSummaryV1, LegalActionV5, ObservationV5, PlayerSeatV1,
+    PolicyLegalActionCandidateV5, RlContractError, TerminalClassificationV1, TerminalOutcomeV1,
+    TerminalSafeCodeV2,
+};
+use crate::surface_v2::{SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
 
-pub const RL_SESSION_SCHEMA_VERSION: u32 = 4;
-pub const RL_SESSION_PROTOCOL_VERSION: u32 = 4;
+pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
+pub const RL_SESSION_PROTOCOL_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_NAME: &str = "kernel_rl_jsonl";
 pub const CANONICAL_BURN_DECK_ID: &str = "Burn";
 
@@ -37,6 +40,7 @@ pub struct RlSessionProvenanceV1 {
     pub schema_version: u32,
     pub kernel_version: String,
     pub surface_version: u32,
+    pub policy_surface_version: u32,
     pub card_db_hash: u64,
 }
 
@@ -48,6 +52,7 @@ impl RlSessionProvenanceV1 {
             schema_version: RL_SESSION_SCHEMA_VERSION,
             kernel_version: KERNEL_VERSION.to_string(),
             surface_version: H2_PREDICATE_VERSION,
+            policy_surface_version: POLICY_SURFACE_VERSION,
             card_db_hash: KERNEL_CARDDB_HASH,
         }
     }
@@ -60,9 +65,12 @@ pub struct RlSessionDecisionV1 {
     pub deck_hashes: SessionDeckHashesV1,
     pub episode_id: u64,
     pub step: u64,
+    pub physical_decision_id: u64,
+    pub substep_index: u32,
+    pub substep_count: u32,
     pub acting_player: PlayerSeatV1,
-    pub observation: Box<ObservationV2>,
-    pub legal_actions: Vec<LegalActionV1>,
+    pub observation: Box<ObservationV5>,
+    pub legal_actions: Vec<LegalActionV5>,
     pub reward: [i32; 2],
 }
 
@@ -78,7 +86,8 @@ pub struct RlSessionTerminalV1 {
     pub winner: Option<PlayerSeatV1>,
     pub terminal_reward: [i32; 2],
     pub terminal_reason: String,
-    pub decision_count: u64,
+    pub policy_step_count: u64,
+    pub physical_decision_count: u64,
 }
 
 impl From<RlSessionTerminalV1> for EpisodeTerminalSummaryV1 {
@@ -90,7 +99,8 @@ impl From<RlSessionTerminalV1> for EpisodeTerminalSummaryV1 {
             winner: value.winner,
             terminal_reward: value.terminal_reward,
             terminal_reason: value.terminal_reason,
-            decision_count: value.decision_count,
+            policy_step_count: value.policy_step_count,
+            physical_decision_count: value.physical_decision_count,
         }
     }
 }
@@ -110,6 +120,7 @@ pub enum RlSessionErrorCode {
     SelectedIndexOutOfRange,
     SelectedActionIdMismatch,
     SelectedActionIdUnknown,
+    StaleEnvironmentBinding,
     UnsupportedDeck,
 }
 
@@ -136,28 +147,54 @@ impl From<RlSessionError> for RlContractError {
 #[derive(Debug, Clone)]
 struct CurrentDecisionV1 {
     actor: PlayerId,
-    observation: ObservationV2,
-    candidates: Vec<LegalActionCandidateV1>,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+    observation: ObservationV5,
+    candidates: Vec<PolicyLegalActionCandidateV5>,
+    environment_hash: u64,
 }
 
+#[derive(Clone)]
 pub struct RlEpisodeSessionV1 {
     deck_ids: SessionDeckIdsV1,
     deck_hashes: SessionDeckHashesV1,
     episode_id: u64,
-    max_decisions: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
     state: crate::state::GameState,
-    surface: HarnessSurfaceV2,
-    decision_count: u64,
+    surface: PolicySurfaceV5,
+    policy_step_count: u64,
+    physical_decision_count: u64,
     current: Option<CurrentDecisionV1>,
     terminal: Option<RlSessionTerminalV1>,
 }
 
+#[derive(Clone)]
+pub struct RlEpisodeSessionSnapshotV5(RlEpisodeSessionV1);
+
 impl RlEpisodeSessionV1 {
-    pub fn reset(episode_id: u64, env_seed: u64, max_decisions: u64) -> Self {
-        Self::reset_with_decks(
+    pub fn reset(episode_id: u64, env_seed: u64, max_physical_decisions: u64) -> Self {
+        let max_policy_steps = max_physical_decisions.saturating_mul(128).max(1);
+        Self::reset_with_limits(
             episode_id,
             env_seed,
-            max_decisions,
+            max_physical_decisions,
+            max_policy_steps,
+        )
+    }
+
+    pub fn reset_with_limits(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+    ) -> Self {
+        Self::reset_with_decks_and_limits(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
             canonical_burn_mirror_deck_ids(),
         )
         .expect("the built-in Burn/Burn deck pair is supported")
@@ -166,7 +203,24 @@ impl RlEpisodeSessionV1 {
     pub fn reset_with_decks(
         episode_id: u64,
         env_seed: u64,
-        max_decisions: u64,
+        max_physical_decisions: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        let max_policy_steps = max_physical_decisions.saturating_mul(128).max(1);
+        Self::reset_with_decks_and_limits(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+        )
+    }
+
+    pub fn reset_with_decks_and_limits(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
     ) -> Result<Self, RlSessionError> {
         let deck_hashes = resolve_deck_hashes(&deck_ids)?;
@@ -174,10 +228,12 @@ impl RlEpisodeSessionV1 {
             deck_ids,
             deck_hashes,
             episode_id,
-            max_decisions,
+            max_physical_decisions,
+            max_policy_steps,
             state: build_burn_mirror_state(env_seed),
-            surface: HarnessSurfaceV2::new(),
-            decision_count: 0,
+            surface: PolicySurfaceV5::new(),
+            policy_step_count: 0,
+            physical_decision_count: 0,
             current: None,
             terminal: None,
         };
@@ -198,7 +254,10 @@ impl RlEpisodeSessionV1 {
             deck_ids: self.deck_ids.clone(),
             deck_hashes: self.deck_hashes,
             episode_id: self.episode_id,
-            step: self.decision_count,
+            step: self.policy_step_count,
+            physical_decision_id: current.physical_decision_id,
+            substep_index: current.substep_index,
+            substep_count: current.substep_count,
             acting_player: current.actor.into(),
             observation: Box::new(current.observation.clone()),
             legal_actions: current
@@ -210,12 +269,29 @@ impl RlEpisodeSessionV1 {
         })
     }
 
-    pub fn decision_count(&self) -> u64 {
-        self.decision_count
+    pub fn policy_step_count(&self) -> u64 {
+        self.policy_step_count
+    }
+
+    pub fn physical_decision_count(&self) -> u64 {
+        self.physical_decision_count
     }
 
     pub fn diagnostic_state_hash(&self) -> u64 {
         self.state.diagnostic_state_hash()
+    }
+
+    pub fn privileged_environment_hash(&self) -> u64 {
+        self.compute_environment_hash(self.current.as_ref())
+            .expect("session environment serializes")
+    }
+
+    pub fn snapshot_v5(&self) -> RlEpisodeSessionSnapshotV5 {
+        RlEpisodeSessionSnapshotV5(self.clone())
+    }
+
+    pub fn restore_v5(&mut self, snapshot: &RlEpisodeSessionSnapshotV5) {
+        *self = snapshot.0.clone();
     }
 
     pub fn step(
@@ -231,7 +307,7 @@ impl RlEpisodeSessionV1 {
                 "step request episode_id does not match the active episode",
             ));
         }
-        if expected_step != self.decision_count {
+        if expected_step != self.policy_step_count {
             return Err(session_error(
                 RlSessionErrorCode::ExpectedStepMismatch,
                 "step request expected_step does not match the active decision step",
@@ -247,6 +323,18 @@ impl RlEpisodeSessionV1 {
             .current
             .as_ref()
             .expect("nonterminal session has current decision");
+        let rebound = self.compute_environment_hash(Some(current)).map_err(|_| {
+            session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "active decision integrity validation failed",
+            )
+        })?;
+        if rebound != current.environment_hash {
+            return Err(session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "active decision no longer matches its privileged environment binding",
+            ));
+        }
         let selected_index_usize = selected_index as usize;
         let Some(selected) = current.candidates.get(selected_index_usize) else {
             return Err(session_error(
@@ -269,83 +357,121 @@ impl RlEpisodeSessionV1 {
                 "selected_index and selected_action_id do not identify the same current action",
             ));
         }
-        validate_selected_action(
-            &current.candidates,
-            selected_index_usize,
-            selected_action_id,
-        )
-        .map_err(|_| {
-            session_error(
-                RlSessionErrorCode::SelectedActionIdMismatch,
-                "selected action failed current-action validation",
-            )
-        })?;
-        let surface_action = selected.surface_action.clone();
+        let policy_action = selected.policy_action.clone();
+        let completes_physical = current.substep_index + 1 == current.substep_count;
+        self.surface
+            .apply(&mut self.state, policy_action)
+            .map_err(|_| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "selected action no longer matches the active policy environment",
+                )
+            })?;
         self.current = None;
-        if let Err(err) = self.surface.apply(&mut self.state, surface_action) {
-            self.decision_count += 1;
-            self.terminal = Some(halted_terminal(
-                &self.deck_ids,
-                self.deck_hashes,
-                self.episode_id,
-                format!("fail_closed:surface_apply:{err}"),
-                self.decision_count,
-            ));
-            return Ok(self.current_response());
+        self.policy_step_count += 1;
+        if completes_physical {
+            self.physical_decision_count += 1;
         }
-        self.decision_count += 1;
         self.advance_to_decision_or_terminal();
         Ok(self.current_response())
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
         self.current = None;
-        let surfaced = self.surface.next_decision(&mut self.state);
+        let surfaced = match self.surface.next_decision(&mut self.state) {
+            Ok(decision) => decision,
+            Err(_) => {
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    "fail_closed:policy_surface_environment".to_string(),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        };
         match &surfaced {
-            SurfaceDecision::Decision(Decision::GameOver { winner }) => {
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::GameOver { winner })) => {
                 self.terminal = Some(terminal_from_winner(
                     &self.deck_ids,
                     self.deck_hashes,
                     self.episode_id,
                     *winner,
                     "game_over".to_string(),
-                    self.decision_count,
+                    self.policy_step_count,
+                    self.physical_decision_count,
                 ));
                 return;
             }
-            SurfaceDecision::Decision(Decision::Halted { mechanic, source }) => {
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::Halted {
+                mechanic,
+                source,
+            })) => {
                 self.terminal = Some(halted_terminal(
                     &self.deck_ids,
                     self.deck_hashes,
                     self.episode_id,
                     format!("engine_halted:{mechanic:?}:source:{}", source.0),
-                    self.decision_count,
+                    self.policy_step_count,
+                    self.physical_decision_count,
                 ));
                 return;
             }
             _ => {}
         }
-        if self.decision_count >= self.max_decisions {
+        let (substep_index, substep_count) = surfaced.substep();
+        if substep_index == 0 && self.physical_decision_count >= self.max_physical_decisions {
+            let _ = self.surface.discard_unanswered_scan();
             self.terminal = Some(truncated_terminal(
                 &self.deck_ids,
                 self.deck_hashes,
                 self.episode_id,
-                format!("decision_cap_reached:{}", self.max_decisions),
-                self.decision_count,
+                format!(
+                    "physical_decision_cap_reached:{}",
+                    self.max_physical_decisions
+                ),
+                self.policy_step_count,
+                self.physical_decision_count,
             ));
             return;
         }
-        let Some(actor) = acting_player_for_surface_decision(&surfaced, &self.state) else {
+        let remaining_group_steps = u64::from(substep_count - substep_index);
+        if self.policy_step_count.saturating_add(remaining_group_steps) > self.max_policy_steps {
+            if substep_index == 0 {
+                let _ = self.surface.discard_unanswered_scan();
+            }
+            self.terminal = Some(truncated_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                format!("policy_step_cap_reached:{}", self.max_policy_steps),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        let Some(actor) = surfaced.actor(&self.state) else {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
                 self.deck_hashes,
                 self.episode_id,
                 "fail_closed:nonterminal decision without acting player".to_string(),
-                self.decision_count,
+                self.policy_step_count,
+                self.physical_decision_count,
             ));
             return;
         };
-        let observation = match observe_v2(&self.state, &self.surface, actor, self.decision_count) {
+        let observation = match observe_policy_v5(
+            &self.state,
+            &self.surface,
+            actor,
+            self.policy_step_count,
+            self.physical_decision_count,
+            substep_index,
+            substep_count,
+        ) {
             Ok(observation) => observation,
             Err(err) => {
                 self.terminal = Some(halted_terminal(
@@ -353,12 +479,13 @@ impl RlEpisodeSessionV1 {
                     self.deck_hashes,
                     self.episode_id,
                     format!("fail_closed:observation:{err}"),
-                    self.decision_count,
+                    self.policy_step_count,
+                    self.physical_decision_count,
                 ));
                 return;
             }
         };
-        let candidates = match legal_action_candidates_v1(&surfaced, &self.state) {
+        let candidates = match legal_action_candidates_v5(&surfaced, &self.state) {
             Ok(candidates) => candidates,
             Err(err) => {
                 self.terminal = Some(halted_terminal(
@@ -366,7 +493,8 @@ impl RlEpisodeSessionV1 {
                     self.deck_hashes,
                     self.episode_id,
                     format!("fail_closed:{err}"),
-                    self.decision_count,
+                    self.policy_step_count,
+                    self.physical_decision_count,
                 ));
                 return;
             }
@@ -377,16 +505,93 @@ impl RlEpisodeSessionV1 {
                 self.deck_hashes,
                 self.episode_id,
                 "fail_closed:nonterminal decision produced zero legal actions".to_string(),
-                self.decision_count,
+                self.policy_step_count,
+                self.physical_decision_count,
             ));
             return;
         }
-        self.current = Some(CurrentDecisionV1 {
+        let mut current = CurrentDecisionV1 {
             actor,
+            physical_decision_id: self.physical_decision_count,
+            substep_index,
+            substep_count,
             observation,
             candidates,
-        });
+            environment_hash: 0,
+        };
+        current.environment_hash = match self.compute_environment_hash(Some(&current)) {
+            Ok(hash) => hash,
+            Err(_) => {
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    "fail_closed:session_integrity".to_string(),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        };
+        self.current = Some(current);
     }
+
+    fn compute_environment_hash(&self, current: Option<&CurrentDecisionV1>) -> Result<u64, String> {
+        #[derive(Serialize)]
+        struct PolicyEnvironmentEnvelopeV1 {
+            schema_version: u32,
+            hash_algorithm: &'static str,
+            diagnostic_state_hash_algorithm: &'static str,
+            diagnostic_state_hash: u64,
+            harness_surface_context: crate::surface_v2::HarnessSurfacePublicContextV2,
+            policy_surface_context: crate::policy_surface_v5::PolicySurfaceContextIdsV5,
+            policy_step_count: u64,
+            physical_decision_count: u64,
+            current_actor: Option<PlayerId>,
+            physical_decision_id: Option<u64>,
+            substep_index: Option<u32>,
+            substep_count: Option<u32>,
+            observation_projection_hash: Option<u64>,
+            legal_action_ids: Vec<String>,
+        }
+
+        let envelope = PolicyEnvironmentEnvelopeV1 {
+            schema_version: 1,
+            hash_algorithm: POLICY_ENVIRONMENT_HASH_ALGORITHM,
+            diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+            diagnostic_state_hash: self.state.diagnostic_state_hash(),
+            harness_surface_context: self.surface.harness_public_context(),
+            policy_surface_context: self.surface.privileged_scan_context()?,
+            policy_step_count: self.policy_step_count,
+            physical_decision_count: self.physical_decision_count,
+            current_actor: current.map(|decision| decision.actor),
+            physical_decision_id: current.map(|decision| decision.physical_decision_id),
+            substep_index: current.map(|decision| decision.substep_index),
+            substep_count: current.map(|decision| decision.substep_count),
+            observation_projection_hash: current
+                .map(|decision| decision.observation.visible_projection_hash),
+            legal_action_ids: current
+                .map(|decision| {
+                    decision
+                        .candidates
+                        .iter()
+                        .map(|candidate| candidate.record.stable_id.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
+        Ok(fnv1a64(&bytes))
+    }
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -398,7 +603,8 @@ pub enum KernelRlRequestV1 {
         deck_ids: SessionDeckIdsV1,
         episode_id: u64,
         env_seed: u64,
-        max_decisions: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
     },
     Step {
         schema_version: u32,
@@ -443,9 +649,12 @@ pub enum KernelRlResponseV1 {
         deck_hashes: SessionDeckHashesV1,
         episode_id: u64,
         step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
         acting_player: PlayerSeatV1,
-        observation: Box<ObservationV2>,
-        legal_actions: Vec<LegalActionV1>,
+        observation: Box<ObservationV5>,
+        legal_actions: Vec<LegalActionV5>,
         reward: [i32; 2],
     },
     Terminal {
@@ -461,7 +670,8 @@ pub enum KernelRlResponseV1 {
         winner: Option<PlayerSeatV1>,
         terminal_reward: [i32; 2],
         terminal_reason: String,
-        decision_count: u64,
+        policy_step_count: u64,
+        physical_decision_count: u64,
     },
     Error {
         schema_version: u32,
@@ -492,9 +702,16 @@ impl KernelRlJsonlServerV1 {
     }
 
     pub fn handle_line(&mut self, line: &str) -> String {
-        let value = match serde_json::from_str::<Value>(line) {
+        let value = match parse_strict_json_value(line) {
             Ok(value) => value,
             Err(_) => {
+                if serde_json::from_str::<serde::de::IgnoredAny>(line).is_ok() {
+                    return serialize_response(error_response(
+                        None,
+                        "malformed_request",
+                        "request does not match the v5 protocol schema",
+                    ));
+                }
                 return serialize_response(error_response(
                     None,
                     "malformed_json",
@@ -509,7 +726,7 @@ impl KernelRlJsonlServerV1 {
                 return serialize_response(error_response(
                     request_id,
                     "malformed_request",
-                    "request does not match the v4 protocol schema",
+                    "request does not match the v5 protocol schema",
                 ));
             }
         };
@@ -547,7 +764,8 @@ impl KernelRlJsonlServerV1 {
                 deck_ids,
                 episode_id,
                 env_seed,
-                max_decisions,
+                max_physical_decisions,
+                max_policy_steps,
             } => {
                 if schema_version != RL_SESSION_SCHEMA_VERSION {
                     return error_response(
@@ -556,10 +774,11 @@ impl KernelRlJsonlServerV1 {
                         "unsupported request schema_version",
                     );
                 }
-                let session = match RlEpisodeSessionV1::reset_with_decks(
+                let session = match RlEpisodeSessionV1::reset_with_decks_and_limits(
                     episode_id,
                     env_seed,
-                    max_decisions,
+                    max_physical_decisions,
+                    max_policy_steps,
                     deck_ids,
                 ) {
                     Ok(session) => session,
@@ -628,6 +847,9 @@ fn session_response_to_protocol(
             deck_hashes: decision.deck_hashes,
             episode_id: decision.episode_id,
             step: decision.step,
+            physical_decision_id: decision.physical_decision_id,
+            substep_index: decision.substep_index,
+            substep_count: decision.substep_count,
             acting_player: decision.acting_player,
             observation: decision.observation,
             legal_actions: decision.legal_actions,
@@ -646,7 +868,8 @@ fn session_response_to_protocol(
             winner: terminal.winner,
             terminal_reward: terminal.terminal_reward,
             terminal_reason: terminal.terminal_reason,
-            decision_count: terminal.decision_count,
+            policy_step_count: terminal.policy_step_count,
+            physical_decision_count: terminal.physical_decision_count,
         },
     }
 }
@@ -688,6 +911,7 @@ fn session_error_code(code: &RlSessionErrorCode) -> &'static str {
         RlSessionErrorCode::SelectedIndexOutOfRange => "selected_index_out_of_range",
         RlSessionErrorCode::SelectedActionIdMismatch => "selected_action_id_mismatch",
         RlSessionErrorCode::SelectedActionIdUnknown => "selected_action_id_unknown",
+        RlSessionErrorCode::StaleEnvironmentBinding => "stale_environment_binding",
         RlSessionErrorCode::UnsupportedDeck => "unsupported_deck",
     }
 }
@@ -720,7 +944,8 @@ fn terminal_from_winner(
     episode_id: u64,
     winner: Option<PlayerId>,
     terminal_reason: String,
-    decision_count: u64,
+    policy_step_count: u64,
+    physical_decision_count: u64,
 ) -> RlSessionTerminalV1 {
     let (terminal_outcome, terminal_reward) = match winner {
         Some(PlayerId::P0) => (TerminalOutcomeV1::P0Win, [1, -1]),
@@ -739,7 +964,8 @@ fn terminal_from_winner(
         winner: winner.map(Into::into),
         terminal_reward,
         terminal_reason,
-        decision_count,
+        policy_step_count,
+        physical_decision_count,
     }
 }
 
@@ -748,7 +974,8 @@ fn halted_terminal(
     deck_hashes: SessionDeckHashesV1,
     episode_id: u64,
     terminal_reason: String,
-    decision_count: u64,
+    policy_step_count: u64,
+    physical_decision_count: u64,
 ) -> RlSessionTerminalV1 {
     RlSessionTerminalV1 {
         schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -761,7 +988,8 @@ fn halted_terminal(
         winner: None,
         terminal_reward: [0, 0],
         terminal_reason,
-        decision_count,
+        policy_step_count,
+        physical_decision_count,
     }
 }
 
@@ -770,7 +998,8 @@ fn truncated_terminal(
     deck_hashes: SessionDeckHashesV1,
     episode_id: u64,
     terminal_reason: String,
-    decision_count: u64,
+    policy_step_count: u64,
+    physical_decision_count: u64,
 ) -> RlSessionTerminalV1 {
     RlSessionTerminalV1 {
         schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -783,6 +1012,225 @@ fn truncated_terminal(
         winner: None,
         terminal_reward: [0, 0],
         terminal_reason,
-        decision_count,
+        policy_step_count,
+        physical_decision_count,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card_def::card_id_by_name;
+    use crate::rl::card_name;
+    use crate::state::{Counters, GameObject, GameState, ObjectStateV4, Step, Zone};
+
+    fn attacker_state(count: usize) -> GameState {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 91);
+        state.step = Step::DeclareAttackers;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.engine.combat.attackers_declared = false;
+        let card_def = card_id_by_name("Voldaren Epicure").unwrap();
+        for _ in 0..count {
+            let id = state.objects.push(GameObject {
+                card_def,
+                name: "Voldaren Epicure".to_string(),
+                owner: PlayerId::P0,
+                controller: PlayerId::P0,
+                zone: Zone::Battlefield,
+                tapped: false,
+                summoning_sick: false,
+                damage: 0,
+                counters: Counters::default(),
+                attachments: Vec::new(),
+                v4: ObjectStateV4::from_card_def(card_def),
+                plotted_turn: None,
+                zone_change_count: 0,
+            });
+            state.players[0].battlefield.push(id);
+        }
+        state
+    }
+
+    fn attacker_session(
+        count: usize,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+    ) -> RlEpisodeSessionV1 {
+        let mut session =
+            RlEpisodeSessionV1::reset_with_limits(23, 91, max_physical_decisions, max_policy_steps);
+        session.state = attacker_state(count);
+        session.surface = PolicySurfaceV5::new();
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        session
+    }
+
+    fn action_at(response: &RlSessionResponseV1, action_index: usize) -> (u64, u32, String) {
+        let RlSessionResponseV1::Decision(decision) = response else {
+            panic!("expected decision");
+        };
+        let action = &decision.legal_actions[action_index];
+        (
+            decision.step,
+            action.selected_index,
+            action.stable_id.clone(),
+        )
+    }
+
+    fn first_action(response: &RlSessionResponseV1) -> (u64, u32, String) {
+        action_at(response, 0)
+    }
+
+    #[test]
+    fn policy_cap_preflights_the_whole_combat_group_and_exact_fit_admits_it() {
+        let below_group = attacker_session(3, 8, 2);
+        assert_eq!(below_group.policy_step_count(), 0);
+        assert_eq!(below_group.physical_decision_count(), 0);
+        assert!(below_group.current.is_none());
+        assert!(!below_group.surface.scan_active());
+        let RlSessionResponseV1::Terminal(terminal) = below_group.current_response() else {
+            panic!("policy cap below the group must truncate before exposing it");
+        };
+        assert_eq!(terminal.policy_step_count, 0);
+        assert_eq!(terminal.physical_decision_count, 0);
+        assert_eq!(terminal.terminal_code, TerminalSafeCodeV2::DecisionCap);
+        assert_eq!(terminal.terminal_reason, "policy_step_cap_reached:2");
+
+        let mut exact_fit = attacker_session(3, 8, 3);
+        assert!(exact_fit.surface.scan_active());
+        for expected_substep in 0..3 {
+            let response = exact_fit.current_response();
+            let RlSessionResponseV1::Decision(decision) = &response else {
+                panic!("exact-fit cap must admit every combat substep");
+            };
+            assert_eq!(decision.step, u64::from(expected_substep));
+            assert_eq!(decision.physical_decision_id, 0);
+            assert_eq!(decision.substep_index, expected_substep);
+            assert_eq!(decision.substep_count, 3);
+            assert_eq!(decision.legal_actions.len(), 2);
+            let (step, index, id) = first_action(&response);
+            exact_fit.step(23, step, index, &id).unwrap();
+        }
+        assert_eq!(exact_fit.policy_step_count(), 3);
+        assert_eq!(exact_fit.physical_decision_count(), 1);
+        assert!(!exact_fit.surface.scan_active());
+        let RlSessionResponseV1::Terminal(terminal) = exact_fit.current_response() else {
+            panic!("the empty-library combat fixture must terminate after the admitted group");
+        };
+        assert_eq!(terminal.policy_step_count, 3);
+        assert_eq!(terminal.physical_decision_count, 1);
+        assert_eq!(terminal.terminal_code, TerminalSafeCodeV2::NaturalGameOver);
+        assert_eq!(terminal.terminal_reason, "game_over");
+    }
+
+    #[test]
+    fn mid_combat_snapshot_restores_binding_response_and_next_group_transition() {
+        let mut session = attacker_session(3, 8, 8);
+        let start = session.current_response();
+        let RlSessionResponseV1::Decision(start_decision) = &start else {
+            panic!("expected first attacker inclusion");
+        };
+        assert_eq!(start_decision.physical_decision_id, 0);
+        assert_eq!(start_decision.substep_index, 0);
+        assert_eq!(start_decision.substep_count, 3);
+        let (step, index, id) = action_at(&start, 1);
+        session.step(23, step, index, &id).unwrap();
+
+        let snapshot = session.snapshot_v5();
+        let response_before = serde_json::to_vec(&session.current_response()).unwrap();
+        let environment_before = session.privileged_environment_hash();
+        assert_eq!(session.policy_step_count(), 1);
+        assert_eq!(session.physical_decision_count(), 0);
+        let RlSessionResponseV1::Decision(mid_decision) = session.current_response() else {
+            panic!("snapshot must be mid-combat");
+        };
+        assert_eq!(mid_decision.step, 1);
+        assert_eq!(mid_decision.physical_decision_id, 0);
+        assert_eq!(mid_decision.substep_index, 1);
+        assert_eq!(mid_decision.substep_count, 3);
+        let (step, index, id) = first_action(&RlSessionResponseV1::Decision(mid_decision));
+
+        let advanced = session.step(23, step, index, &id).unwrap();
+        let advanced_bytes = serde_json::to_vec(&advanced).unwrap();
+        let advanced_environment = session.privileged_environment_hash();
+        let RlSessionResponseV1::Decision(advanced_decision) = &advanced else {
+            panic!("second answer must advance within the same combat group");
+        };
+        assert_eq!(advanced_decision.step, 2);
+        assert_eq!(advanced_decision.physical_decision_id, 0);
+        assert_eq!(advanced_decision.substep_index, 2);
+        assert_eq!(advanced_decision.substep_count, 3);
+        assert_ne!(advanced_environment, environment_before);
+
+        session.restore_v5(&snapshot);
+        assert_eq!(
+            serde_json::to_vec(&session.current_response()).unwrap(),
+            response_before
+        );
+        assert_eq!(session.privileged_environment_hash(), environment_before);
+        assert_eq!(session.policy_step_count(), 1);
+        assert_eq!(session.physical_decision_count(), 0);
+        assert!(session.surface.scan_active());
+
+        let replayed = session.step(23, step, index, &id).unwrap();
+        assert_eq!(serde_json::to_vec(&replayed).unwrap(), advanced_bytes);
+        assert_eq!(session.privileged_environment_hash(), advanced_environment);
+    }
+
+    #[test]
+    fn session_snapshot_restore_reproduces_response_hash_and_next_transition() {
+        let mut session = RlEpisodeSessionV1::reset(17, 991, 64);
+        let snapshot = session.snapshot_v5();
+        let response_before = serde_json::to_vec(&session.current_response()).unwrap();
+        let environment_before = session.privileged_environment_hash();
+        let (step, index, id) = first_action(&session.current_response());
+
+        let first_result =
+            serde_json::to_vec(&session.step(17, step, index, &id).unwrap()).unwrap();
+        assert_ne!(session.privileged_environment_hash(), environment_before);
+
+        session.restore_v5(&snapshot);
+        assert_eq!(
+            serde_json::to_vec(&session.current_response()).unwrap(),
+            response_before
+        );
+        assert_eq!(session.privileged_environment_hash(), environment_before);
+        assert_eq!(
+            serde_json::to_vec(&session.step(17, step, index, &id).unwrap()).unwrap(),
+            first_result
+        );
+    }
+
+    #[test]
+    fn privileged_binding_rejects_state_surface_and_counter_drift_then_restores() {
+        let mut session = RlEpisodeSessionV1::reset(5, 1234, 64);
+        let snapshot = session.snapshot_v5();
+        let (step, index, id) = first_action(&session.current_response());
+
+        session.state.players[0].life -= 1;
+        let err = session.step(5, step, index, &id).unwrap_err();
+        assert_eq!(err.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        assert_eq!(
+            err.message,
+            "active decision no longer matches its privileged environment binding"
+        );
+        assert!(!err.message.contains("0x"));
+
+        session.restore_v5(&snapshot);
+        session.policy_step_count += 1;
+        let err = session.step(5, step + 1, index, &id).unwrap_err();
+        assert_eq!(err.code, RlSessionErrorCode::StaleEnvironmentBinding);
+
+        session.restore_v5(&snapshot);
+        session.surface.reset_harness_context_for_test();
+        let err = session.step(5, step, index, &id).unwrap_err();
+        assert_eq!(err.code, RlSessionErrorCode::StaleEnvironmentBinding);
+
+        session.restore_v5(&snapshot);
+        assert!(session.step(5, step, index, &id).is_ok());
     }
 }

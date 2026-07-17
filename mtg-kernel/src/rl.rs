@@ -16,6 +16,10 @@ use crate::engine::{
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
+use crate::policy_surface_v5::{
+    PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5, PolicySurfaceStageV5,
+    PolicySurfaceV5, POLICY_SURFACE_VERSION,
+};
 use crate::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
 use crate::state::{
     CastMethodV4, DungeonStateV4, GameObject, GameState, PaidCostRefV4, SplitMix64, StackItem,
@@ -34,10 +38,13 @@ use std::path::{Path, PathBuf};
 pub const OBSERVATION_SCHEMA_VERSION_V1: u32 = 1;
 pub const OBSERVATION_SCHEMA_VERSION: u32 = 4;
 pub const LEGAL_ACTION_SCHEMA_VERSION: u32 = 4;
-pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 7;
-pub const POLICY_EPISODE_SCHEMA_VERSION: u32 = 4;
-pub const MANIFEST_SCHEMA_VERSION: u32 = 5;
-pub const DEFAULT_MAX_DECISIONS: u64 = 200_000;
+pub const OBSERVATION_SCHEMA_VERSION_V5: u32 = 5;
+pub const LEGAL_ACTION_SCHEMA_VERSION_V5: u32 = 5;
+pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 8;
+pub const POLICY_EPISODE_SCHEMA_VERSION: u32 = 5;
+pub const MANIFEST_SCHEMA_VERSION: u32 = 6;
+pub const DEFAULT_MAX_PHYSICAL_DECISIONS: u64 = 200_000;
+pub const DEFAULT_MAX_POLICY_STEPS: u64 = 25_600_000;
 pub const BURN_MIRROR_MATCHUP: &str = "burn_mirror";
 pub const AUDIT_EPISODE_JSONL_FILENAME: &str = "audit_episodes.jsonl";
 pub const POLICY_EPISODE_JSONL_FILENAME: &str = "policy_episodes.jsonl";
@@ -148,9 +155,7 @@ impl<'de> Deserialize<'de> for StrictJsonValue {
                 let mut values = serde_json::Map::new();
                 while let Some(key) = map.next_key::<String>()? {
                     if values.contains_key(&key) {
-                        return Err(<A::Error as de::Error>::custom(format!(
-                            "duplicate JSON object key `{key}`"
-                        )));
+                        return Err(<A::Error as de::Error>::custom("duplicate JSON object key"));
                     }
                     let value = map.next_value::<StrictJsonValue>()?;
                     values.insert(key, value.0);
@@ -161,6 +166,10 @@ impl<'de> Deserialize<'de> for StrictJsonValue {
 
         deserializer.deserialize_any(StrictJsonValueVisitor)
     }
+}
+
+pub(crate) fn parse_strict_json_value(input: &str) -> serde_json::Result<serde_json::Value> {
+    serde_json::from_str::<StrictJsonValue>(input).map(|value| value.0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -810,6 +819,48 @@ pub struct ObservationV2 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PrivateCombatSelectionV5 {
+    pub attacker: Option<CardStableRefV1>,
+    pub candidate_index: u32,
+    pub candidate_count: u32,
+    pub selected: Vec<CardStableRefV1>,
+    pub current_candidate: CardStableRefV1,
+    pub remaining_after_current: Vec<CardStableRefV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PolicySurfaceContextV5 {
+    pub current_stage: PolicySurfaceStageV5,
+    pub private_combat_selection: Option<PrivateCombatSelectionV5>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicObservationProjectionV5 {
+    #[serde(flatten)]
+    pub surface: PublicObservationProjectionV2,
+    pub policy_surface_context: PolicySurfaceContextV5,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationV5 {
+    pub schema_version: u32,
+    pub kernel_version: String,
+    pub surface_version: u32,
+    pub policy_surface_version: u32,
+    pub card_db_hash: u64,
+    pub acting_player: PlayerSeatV1,
+    pub step_index: u64,
+    pub physical_decision_id: u64,
+    pub substep_index: u32,
+    pub substep_count: u32,
+    pub projection: PublicObservationProjectionV5,
+    pub own_hand: Vec<CardPrivateV1>,
+    pub known_library_cards: [Vec<KnownLibraryCardV4>; 2],
+    pub known_hand_cards: [Vec<CardPrivateV1>; 2],
+    pub visible_projection_hash: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "action_kind", rename_all = "snake_case")]
 pub enum ActionSemanticV1 {
     Pass {
@@ -943,6 +994,17 @@ pub enum ActionSemanticV1 {
         attacker: CardStableRefV1,
         blockers: Vec<CardStableRefV1>,
     },
+    ChooseAttackerInclusion {
+        actor: PlayerSeatV1,
+        attacker: CardStableRefV1,
+        include: bool,
+    },
+    ChooseBlockerInclusion {
+        actor: PlayerSeatV1,
+        attacker: CardStableRefV1,
+        blocker: CardStableRefV1,
+        include: bool,
+    },
     OrderTriggers {
         actor: PlayerSeatV1,
         pending_sources: Vec<CardStableRefV1>,
@@ -969,6 +1031,21 @@ pub struct LegalActionV1 {
 pub struct LegalActionCandidateV1 {
     pub record: LegalActionV1,
     pub surface_action: SurfaceAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegalActionV5 {
+    pub schema_version: u32,
+    pub selected_index: u32,
+    pub stable_id: String,
+    pub semantic: ActionSemanticV1,
+    pub display_text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolicyLegalActionCandidateV5 {
+    pub record: LegalActionV5,
+    pub policy_action: PolicyActionV5,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1008,6 +1085,7 @@ pub enum TerminalSafeCodeV2 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "record_type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum EpisodeRecordV1 {
     Header {
         schema_version: u32,
@@ -1015,6 +1093,8 @@ pub enum EpisodeRecordV1 {
         stream_safety: String,
         kernel_version: String,
         surface_version: u32,
+        policy_surface_version: u32,
+        environment_hash_algorithm: String,
         card_db_hash: u64,
         matchup: String,
         episode_id: u64,
@@ -1028,11 +1108,15 @@ pub enum EpisodeRecordV1 {
         schema_version: u32,
         episode_id: u64,
         step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
         acting_player: PlayerSeatV1,
-        observation: Box<ObservationV2>,
+        observation: Box<ObservationV5>,
         observation_projection_hash: u64,
         diagnostic_state_hash: u64,
-        legal_actions: Vec<LegalActionV1>,
+        environment_hash: u64,
+        legal_actions: Vec<LegalActionV5>,
         selected_index: u32,
         selected_action_id: String,
         reward: [i32; 2],
@@ -1045,8 +1129,10 @@ pub enum EpisodeRecordV1 {
         winner: Option<PlayerSeatV1>,
         terminal_reward: [i32; 2],
         terminal_reason: String,
-        decision_count: u64,
+        policy_step_count: u64,
+        physical_decision_count: u64,
         diagnostic_state_hash: u64,
+        environment_hash: u64,
     },
 }
 
@@ -1058,6 +1144,7 @@ pub enum PolicyEpisodeRecordV2 {
         stream_safety: String,
         kernel_version: String,
         surface_version: u32,
+        policy_surface_version: u32,
         card_db_hash: u64,
         matchup: String,
         episode_id: u64,
@@ -1068,9 +1155,12 @@ pub enum PolicyEpisodeRecordV2 {
         schema_version: u32,
         episode_id: u64,
         step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
         acting_player: PlayerSeatV1,
-        observation: Box<ObservationV2>,
-        legal_actions: Vec<LegalActionV1>,
+        observation: Box<ObservationV5>,
+        legal_actions: Vec<LegalActionV5>,
         selected_index: u32,
         selected_action_id: String,
         reward: [i32; 2],
@@ -1083,7 +1173,8 @@ pub enum PolicyEpisodeRecordV2 {
         terminal_code: TerminalSafeCodeV2,
         winner: Option<PlayerSeatV1>,
         terminal_reward: [i32; 2],
-        decision_count: u64,
+        policy_step_count: u64,
+        physical_decision_count: u64,
     },
 }
 
@@ -1095,7 +1186,8 @@ pub struct EpisodeTerminalSummaryV1 {
     pub winner: Option<PlayerSeatV1>,
     pub terminal_reward: [i32; 2],
     pub terminal_reason: String,
-    pub decision_count: u64,
+    pub policy_step_count: u64,
+    pub physical_decision_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1106,6 +1198,7 @@ pub struct EpisodeRunV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SeedManifestV1 {
     pub base_seed: u64,
     pub derivation: String,
@@ -1115,6 +1208,7 @@ pub struct SeedManifestV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OutputFilesV1 {
     pub policy_episode_jsonl: String,
     pub audit_episode_jsonl: String,
@@ -1122,6 +1216,7 @@ pub struct OutputFilesV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeckManifestV1 {
     pub deck_identifiers: [String; 2],
     pub deck_hashes: [u64; 2],
@@ -1138,22 +1233,26 @@ pub enum GitDirtyFlagV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GitMetadataV1 {
     pub commit: String,
     pub dirty: GitDirtyFlagV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunAggregateV1 {
     pub p0_wins: u64,
     pub p1_wins: u64,
     pub draws: u64,
     pub truncated: u64,
     pub halted: u64,
-    pub total_decisions: u64,
+    pub total_policy_steps: u64,
+    pub total_physical_decisions: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StreamManifestV1 {
     pub filename: String,
     pub policy_safe: bool,
@@ -1162,20 +1261,24 @@ pub struct StreamManifestV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VariableMetadataV1 {
     pub out_dir: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunManifestV1 {
     pub schema_version: u32,
     pub diagnostic_state_hash_algorithm: String,
     pub kernel_version: String,
     pub surface_version: u32,
+    pub policy_surface_version: u32,
     pub card_db_hash: u64,
     pub matchup: String,
     pub game_count: u64,
-    pub max_decisions: u64,
+    pub max_physical_decisions: u64,
+    pub max_policy_steps: u64,
     pub cli_args: Vec<String>,
     pub seed: SeedManifestV1,
     pub output_files: OutputFilesV1,
@@ -1373,6 +1476,82 @@ pub fn observe_v2(
     Ok(obs)
 }
 
+pub fn observe_policy_v5(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<ObservationV5> {
+    if substep_count == 0 || substep_index >= substep_count {
+        return Err(RlContractError(format!(
+            "invalid physical decision substep {substep_index}/{substep_count}"
+        )));
+    }
+    let base = observe_v2(state, surface.harness_surface(), acting_player, step_index)?;
+    let policy_surface_context = policy_surface_context_v5(
+        state,
+        surface
+            .scan_context_for(acting_player)
+            .map_err(RlContractError)?,
+    )?;
+    let mut observation = ObservationV5 {
+        schema_version: OBSERVATION_SCHEMA_VERSION_V5,
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: POLICY_SURFACE_VERSION,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+        projection: PublicObservationProjectionV5 {
+            surface: base.projection,
+            policy_surface_context,
+        },
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        visible_projection_hash: 0,
+    };
+    observation.visible_projection_hash = visible_projection_hash_v5(&observation)?;
+    Ok(observation)
+}
+
+fn policy_surface_context_v5(
+    state: &GameState,
+    context: PolicySurfaceContextIdsV5,
+) -> Result<PolicySurfaceContextV5> {
+    let private_combat_selection = context
+        .private_combat_selection
+        .map(|private| {
+            Ok::<PrivateCombatSelectionV5, RlContractError>(PrivateCombatSelectionV5 {
+                attacker: private.attacker.map(|id| card_ref(state, id)).transpose()?,
+                candidate_index: private.candidate_index,
+                candidate_count: private.candidate_count,
+                selected: private
+                    .selected
+                    .into_iter()
+                    .map(|id| card_ref(state, id))
+                    .collect::<Result<Vec<_>>>()?,
+                current_candidate: card_ref(state, private.current_candidate)?,
+                remaining_after_current: private
+                    .remaining_after_current
+                    .into_iter()
+                    .map(|id| card_ref(state, id))
+                    .collect::<Result<Vec<_>>>()?,
+            })
+        })
+        .transpose()?;
+    Ok(PolicySurfaceContextV5 {
+        current_stage: context.current_stage,
+        private_combat_selection,
+    })
+}
+
 pub fn make_legal_action_v1(
     selected_index: u32,
     semantic: ActionSemanticV1,
@@ -1391,6 +1570,119 @@ pub fn make_legal_action_v1(
         semantic,
         display_text,
     })
+}
+
+pub fn make_legal_action_v5(
+    selected_index: u32,
+    semantic: ActionSemanticV1,
+    display_text: Option<String>,
+) -> Result<LegalActionV5> {
+    if let ActionSemanticV1::Ambiguous { reason } = &semantic {
+        return Err(RlContractError(format!(
+            "ambiguous legal action representation refused: {reason}"
+        )));
+    }
+    if matches!(
+        semantic,
+        ActionSemanticV1::DeclareAttackers { .. }
+            | ActionSemanticV1::DeclareBlockersForAttacker { .. }
+    ) {
+        return Err(RlContractError(
+            "legacy aggregate combat semantic is forbidden on policy surface v5".to_string(),
+        ));
+    }
+    let hash = stable_hash_json(&semantic)?;
+    Ok(LegalActionV5 {
+        schema_version: LEGAL_ACTION_SCHEMA_VERSION_V5,
+        selected_index,
+        stable_id: format!("legal-action-v5:{hash:016x}"),
+        semantic,
+        display_text,
+    })
+}
+
+pub fn legal_action_candidates_v5(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<PolicyLegalActionCandidateV5>> {
+    let mut out = match decision {
+        PolicyDecisionV5::Surface(surface_decision) => {
+            legal_action_candidates_v1(surface_decision, state)?
+                .into_iter()
+                .map(|candidate| {
+                    Ok(PolicyLegalActionCandidateV5 {
+                        record: make_legal_action_v5(
+                            candidate.record.selected_index,
+                            candidate.record.semantic,
+                            candidate.record.display_text,
+                        )?,
+                        policy_action: PolicyActionV5::Surface(candidate.surface_action),
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
+        }
+        PolicyDecisionV5::AttackerInclusion {
+            player, attacker, ..
+        } => {
+            let actor = (*player).into();
+            let attacker_ref = card_ref(state, *attacker)?;
+            [false, true]
+                .into_iter()
+                .enumerate()
+                .map(|(selected_index, include)| {
+                    let semantic = ActionSemanticV1::ChooseAttackerInclusion {
+                        actor,
+                        attacker: attacker_ref.clone(),
+                        include,
+                    };
+                    Ok(PolicyLegalActionCandidateV5 {
+                        record: make_legal_action_v5(selected_index as u32, semantic, None)?,
+                        policy_action: PolicyActionV5::ChooseAttackerInclusion {
+                            actor: *player,
+                            attacker: *attacker,
+                            include,
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
+        }
+        PolicyDecisionV5::BlockerInclusion {
+            player,
+            attacker,
+            blocker,
+            ..
+        } => {
+            let actor = (*player).into();
+            let attacker_ref = card_ref(state, *attacker)?;
+            let blocker_ref = card_ref(state, *blocker)?;
+            [false, true]
+                .into_iter()
+                .enumerate()
+                .map(|(selected_index, include)| {
+                    let semantic = ActionSemanticV1::ChooseBlockerInclusion {
+                        actor,
+                        attacker: attacker_ref.clone(),
+                        blocker: blocker_ref.clone(),
+                        include,
+                    };
+                    Ok(PolicyLegalActionCandidateV5 {
+                        record: make_legal_action_v5(selected_index as u32, semantic, None)?,
+                        policy_action: PolicyActionV5::ChooseBlockerInclusion {
+                            actor: *player,
+                            attacker: *attacker,
+                            blocker: *blocker,
+                            include,
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
+        }
+    };
+    for (index, candidate) in out.iter_mut().enumerate() {
+        candidate.record.selected_index = index as u32;
+    }
+    ensure_unique_policy_action_ids(&out)?;
+    Ok(out)
 }
 
 pub fn legal_action_candidates_v1(
@@ -1855,9 +2147,30 @@ pub fn record_burn_mirror_episode(
     episode_id: u64,
     env_seed: u64,
     policy_seed: u64,
-    max_decisions: u64,
+    max_physical_decisions: u64,
 ) -> Result<EpisodeRunV1> {
-    let mut session = RlEpisodeSessionV1::reset(episode_id, env_seed, max_decisions);
+    record_burn_mirror_episode_with_limits(
+        episode_id,
+        env_seed,
+        policy_seed,
+        max_physical_decisions,
+        max_physical_decisions.saturating_mul(128).max(1),
+    )
+}
+
+pub fn record_burn_mirror_episode_with_limits(
+    episode_id: u64,
+    env_seed: u64,
+    policy_seed: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+) -> Result<EpisodeRunV1> {
+    let mut session = RlEpisodeSessionV1::reset_with_limits(
+        episode_id,
+        env_seed,
+        max_physical_decisions,
+        max_policy_steps,
+    );
     let mut policy_rng = SplitMix64::seed(policy_seed);
     let deck_hash = burn_deck_hash();
     let game_id =
@@ -1868,6 +2181,9 @@ pub fn record_burn_mirror_episode(
         stream_safety: "privileged_audit_contains_hidden_state_diagnostics".to_string(),
         kernel_version: KERNEL_VERSION.to_string(),
         surface_version: H2_PREDICATE_VERSION,
+        policy_surface_version: POLICY_SURFACE_VERSION,
+        environment_hash_algorithm: crate::policy_surface_v5::POLICY_ENVIRONMENT_HASH_ALGORITHM
+            .to_string(),
         card_db_hash: KERNEL_CARDDB_HASH,
         matchup: BURN_MIRROR_MATCHUP.to_string(),
         episode_id,
@@ -1885,9 +2201,10 @@ pub fn record_burn_mirror_episode(
     }];
     let mut policy_records = vec![PolicyEpisodeRecordV2::Header {
         schema_version: POLICY_EPISODE_SCHEMA_VERSION,
-        stream_safety: "policy_safe_model_visible_v4".to_string(),
+        stream_safety: "policy_safe_model_visible_v5".to_string(),
         kernel_version: KERNEL_VERSION.to_string(),
         surface_version: H2_PREDICATE_VERSION,
+        policy_surface_version: POLICY_SURFACE_VERSION,
         card_db_hash: KERNEL_CARDDB_HASH,
         matchup: BURN_MIRROR_MATCHUP.to_string(),
         episode_id,
@@ -1905,9 +2222,13 @@ pub fn record_burn_mirror_episode(
                     schema_version: AUDIT_EPISODE_SCHEMA_VERSION,
                     episode_id,
                     step: decision.step,
+                    physical_decision_id: decision.physical_decision_id,
+                    substep_index: decision.substep_index,
+                    substep_count: decision.substep_count,
                     acting_player: decision.acting_player,
                     observation_projection_hash: observation.visible_projection_hash,
                     diagnostic_state_hash: session.diagnostic_state_hash(),
+                    environment_hash: session.privileged_environment_hash(),
                     observation: Box::new(observation.clone()),
                     legal_actions: legal_actions.clone(),
                     selected_index: selected_index as u32,
@@ -1918,6 +2239,9 @@ pub fn record_burn_mirror_episode(
                     schema_version: POLICY_EPISODE_SCHEMA_VERSION,
                     episode_id,
                     step: decision.step,
+                    physical_decision_id: decision.physical_decision_id,
+                    substep_index: decision.substep_index,
+                    substep_count: decision.substep_count,
                     acting_player: decision.acting_player,
                     observation: Box::new(observation),
                     legal_actions,
@@ -1938,6 +2262,7 @@ pub fn record_burn_mirror_episode(
                     &mut audit_records,
                     &summary,
                     session.diagnostic_state_hash(),
+                    session.privileged_environment_hash(),
                 );
                 push_policy_terminal(&mut policy_records, &summary);
                 return Ok(EpisodeRunV1 {
@@ -1953,7 +2278,25 @@ pub fn record_burn_mirror_episode(
 pub fn build_rollout_records(
     games: u64,
     base_seed: u64,
-    max_decisions: u64,
+    max_physical_decisions: u64,
+) -> Result<(
+    Vec<EpisodeRecordV1>,
+    Vec<PolicyEpisodeRecordV2>,
+    Vec<EpisodeTerminalSummaryV1>,
+)> {
+    build_rollout_records_with_limits(
+        games,
+        base_seed,
+        max_physical_decisions,
+        max_physical_decisions.saturating_mul(128).max(1),
+    )
+}
+
+pub fn build_rollout_records_with_limits(
+    games: u64,
+    base_seed: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
 ) -> Result<(
     Vec<EpisodeRecordV1>,
     Vec<PolicyEpisodeRecordV2>,
@@ -1965,7 +2308,13 @@ pub fn build_rollout_records(
     for episode_id in 0..games {
         let env_seed = derive_env_seed(base_seed, episode_id);
         let policy_seed = derive_policy_seed(base_seed, episode_id);
-        let run = record_burn_mirror_episode(episode_id, env_seed, policy_seed, max_decisions)?;
+        let run = record_burn_mirror_episode_with_limits(
+            episode_id,
+            env_seed,
+            policy_seed,
+            max_physical_decisions,
+            max_policy_steps,
+        )?;
         audit_records.extend(run.audit_records);
         policy_records.extend(run.policy_records);
         summaries.push(run.terminal);
@@ -1976,23 +2325,56 @@ pub fn build_rollout_records(
 pub fn build_run_manifest(
     games: u64,
     base_seed: u64,
-    max_decisions: u64,
+    max_physical_decisions: u64,
+    cli_args: Vec<String>,
+    out_dir: &Path,
+    summaries: &[EpisodeTerminalSummaryV1],
+    git: GitMetadataV1,
+) -> Result<RunManifestV1> {
+    build_run_manifest_with_limits(
+        games,
+        base_seed,
+        max_physical_decisions,
+        max_physical_decisions.saturating_mul(128).max(1),
+        cli_args,
+        out_dir,
+        summaries,
+        git,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_run_manifest_with_limits(
+    games: u64,
+    base_seed: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
     cli_args: Vec<String>,
     out_dir: &Path,
     summaries: &[EpisodeTerminalSummaryV1],
     git: GitMetadataV1,
 ) -> Result<RunManifestV1> {
     validate_manifest_inputs(games, summaries)?;
+    if summaries.iter().any(|summary| {
+        summary.policy_step_count > max_policy_steps
+            || summary.physical_decision_count > max_physical_decisions
+    }) {
+        return Err(RlContractError(
+            "terminal summary exceeds the requested policy/physical decision caps".to_string(),
+        ));
+    }
     let deck_hash = burn_deck_hash();
     Ok(RunManifestV1 {
         schema_version: MANIFEST_SCHEMA_VERSION,
         diagnostic_state_hash_algorithm: DIAGNOSTIC_STATE_HASH_ALGORITHM.to_string(),
         kernel_version: KERNEL_VERSION.to_string(),
         surface_version: H2_PREDICATE_VERSION,
+        policy_surface_version: POLICY_SURFACE_VERSION,
         card_db_hash: KERNEL_CARDDB_HASH,
         matchup: BURN_MIRROR_MATCHUP.to_string(),
         game_count: games,
-        max_decisions,
+        max_physical_decisions,
+        max_policy_steps,
         cli_args,
         seed: SeedManifestV1 {
             base_seed,
@@ -2074,12 +2456,30 @@ pub fn parse_audit_episode_jsonl(input: &str) -> Result<Vec<EpisodeRecordV1>> {
                 line_index + 1
             )));
         }
-        let record = serde_json::from_str(line).map_err(|error| {
+        let raw = parse_strict_json_value(line).map_err(|_| {
             RlContractError(format!(
-                "invalid audit JSONL record on line {}: {error}",
+                "invalid audit JSONL record on line {}",
                 line_index + 1
             ))
         })?;
+        let record: EpisodeRecordV1 = serde_json::from_value(raw.clone()).map_err(|_| {
+            RlContractError(format!(
+                "audit JSONL record on line {} does not exactly match the audit schema",
+                line_index + 1
+            ))
+        })?;
+        let canonical = serde_json::to_value(&record).map_err(|_| {
+            RlContractError(format!(
+                "could not canonicalize audit JSONL record on line {}",
+                line_index + 1
+            ))
+        })?;
+        if raw != canonical {
+            return Err(RlContractError(format!(
+                "audit JSONL record on line {} does not exactly match the audit schema",
+                line_index + 1
+            )));
+        }
         records.push(record);
     }
     validate_audit_episode_records(&records)?;
@@ -2096,17 +2496,247 @@ pub fn read_audit_episode_jsonl(path: &Path) -> Result<Vec<EpisodeRecordV1>> {
     parse_audit_episode_jsonl(&input)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OpenPhysicalGroupV5 {
+    physical_decision_id: u64,
+    next_substep_index: u32,
+    substep_count: u32,
+    actor: PlayerSeatV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FrozenCombatScanKindV5 {
+    Attackers,
+    Blockers { attacker: CardStableRefV1 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FrozenCombatScanV5 {
+    kind: FrozenCombatScanKindV5,
+    ordered_candidates: Vec<CardStableRefV1>,
+    selected: Vec<CardStableRefV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EpisodeValidationCursorV5 {
+    episode_id: u64,
+    kernel_version: String,
+    card_db_hash: u64,
+    next_step: u64,
+    next_physical_decision_id: u64,
+    open_group: Option<OpenPhysicalGroupV5>,
+    combat_scan: Option<FrozenCombatScanV5>,
+}
+
+impl EpisodeValidationCursorV5 {
+    fn new(episode_id: u64, kernel_version: String, card_db_hash: u64) -> Self {
+        Self {
+            episode_id,
+            kernel_version,
+            card_db_hash,
+            next_step: 0,
+            next_physical_decision_id: 0,
+            open_group: None,
+            combat_scan: None,
+        }
+    }
+
+    fn validate_observation_provenance(
+        &self,
+        context: &str,
+        observation: &ObservationV5,
+    ) -> Result<()> {
+        if observation.kernel_version != self.kernel_version
+            || observation.card_db_hash != self.card_db_hash
+        {
+            return Err(RlContractError(format!(
+                "{context} observation kernel/card-db provenance differs from its episode header"
+            )));
+        }
+        Ok(())
+    }
+
+    fn accept_policy_payload(
+        &mut self,
+        context: &str,
+        observation: &ObservationV5,
+        legal_actions: &[LegalActionV5],
+        selected_index: u32,
+    ) -> Result<()> {
+        let policy = &observation.projection.policy_surface_context;
+        if policy.current_stage == PolicySurfaceStageV5::Surface {
+            if self.combat_scan.is_some() {
+                return Err(RlContractError(format!(
+                    "{context} changed from a combat scan to surface stage mid-group"
+                )));
+            }
+            return Ok(());
+        }
+        let private = policy.private_combat_selection.as_ref().ok_or_else(|| {
+            RlContractError(format!("{context} combat scan is missing private context"))
+        })?;
+        let kind = match policy.current_stage {
+            PolicySurfaceStageV5::AttackerInclusion => FrozenCombatScanKindV5::Attackers,
+            PolicySurfaceStageV5::BlockerInclusion => FrozenCombatScanKindV5::Blockers {
+                attacker: private.attacker.clone().ok_or_else(|| {
+                    RlContractError(format!("{context} blocker scan lacks fixed attacker"))
+                })?,
+            },
+            PolicySurfaceStageV5::Surface => unreachable!(),
+        };
+        let mut ordered = Vec::with_capacity(1 + private.remaining_after_current.len());
+        ordered.push(private.current_candidate.clone());
+        ordered.extend(private.remaining_after_current.iter().cloned());
+
+        if private.candidate_index == 0 {
+            if !private.selected.is_empty() || self.combat_scan.is_some() {
+                return Err(RlContractError(format!(
+                    "{context} combat scan must start with an empty selected prefix"
+                )));
+            }
+            self.combat_scan = Some(FrozenCombatScanV5 {
+                kind: kind.clone(),
+                ordered_candidates: ordered.clone(),
+                selected: Vec::new(),
+            });
+        }
+        let frozen = self.combat_scan.as_mut().ok_or_else(|| {
+            RlContractError(format!("{context} continues without a frozen combat scan"))
+        })?;
+        let index = private.candidate_index as usize;
+        if frozen.kind != kind
+            || private.selected != frozen.selected
+            || frozen.ordered_candidates.get(index) != Some(&private.current_candidate)
+            || frozen.ordered_candidates[(index + 1)..] != private.remaining_after_current
+            || frozen.ordered_candidates.len() != private.candidate_count as usize
+        {
+            return Err(RlContractError(format!(
+                "{context} combat scan stage, fixed attacker, candidate suffix, or selected history drifted"
+            )));
+        }
+        let selected_action = legal_actions
+            .get(selected_index as usize)
+            .ok_or_else(|| RlContractError(format!("{context} selected action is out of range")))?;
+        let include = match &selected_action.semantic {
+            ActionSemanticV1::ChooseAttackerInclusion { include, .. }
+            | ActionSemanticV1::ChooseBlockerInclusion { include, .. } => *include,
+            _ => {
+                return Err(RlContractError(format!(
+                    "{context} combat scan selected a non-inclusion action"
+                )));
+            }
+        };
+        if include {
+            frozen.selected.push(private.current_candidate.clone());
+        }
+        if private.candidate_index + 1 == private.candidate_count {
+            self.combat_scan = None;
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn accept_decision(
+        &mut self,
+        context: &str,
+        episode_id: u64,
+        step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        actor: PlayerSeatV1,
+    ) -> Result<()> {
+        if episode_id != self.episode_id || step != self.next_step {
+            return Err(RlContractError(format!(
+                "{context} has out-of-order episode_id/step ({episode_id}, {step})"
+            )));
+        }
+        if substep_count == 0 || substep_index >= substep_count {
+            return Err(RlContractError(format!(
+                "{context} has invalid substep {substep_index}/{substep_count}"
+            )));
+        }
+        match self.open_group {
+            Some(group)
+                if physical_decision_id == group.physical_decision_id
+                    && substep_index == group.next_substep_index
+                    && substep_count == group.substep_count
+                    && actor == group.actor => {}
+            Some(_) => {
+                return Err(RlContractError(format!(
+                    "{context} drifts actor, physical id, substep index, or frozen substep count within an open group"
+                )));
+            }
+            None if physical_decision_id == self.next_physical_decision_id
+                && substep_index == 0 => {}
+            None => {
+                return Err(RlContractError(format!(
+                    "{context} must start physical decision {} at substep 0",
+                    self.next_physical_decision_id
+                )));
+            }
+        }
+        self.next_step += 1;
+        if substep_index + 1 == substep_count {
+            self.next_physical_decision_id += 1;
+            self.open_group = None;
+        } else {
+            self.open_group = Some(OpenPhysicalGroupV5 {
+                physical_decision_id,
+                next_substep_index: substep_index + 1,
+                substep_count,
+                actor,
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_terminal(
+        &self,
+        context: &str,
+        episode_id: u64,
+        policy_step_count: u64,
+        physical_decision_count: u64,
+    ) -> Result<()> {
+        if self.open_group.is_some() {
+            return Err(RlContractError(format!(
+                "{context} cannot terminate during a partial physical decision"
+            )));
+        }
+        if self.combat_scan.is_some() {
+            return Err(RlContractError(format!(
+                "{context} cannot terminate with incomplete combat scan context"
+            )));
+        }
+        if episode_id != self.episode_id
+            || policy_step_count != self.next_step
+            || physical_decision_count != self.next_physical_decision_id
+        {
+            return Err(RlContractError(format!(
+                "{context} terminal policy/physical counts do not match the validated stream"
+            )));
+        }
+        Ok(())
+    }
+}
+
 pub fn validate_audit_episode_records(records: &[EpisodeRecordV1]) -> Result<()> {
     if records.is_empty() {
         return Err(RlContractError("audit stream is empty".to_string()));
     }
-    let mut current_episode: Option<(u64, u64)> = None;
+    let mut current_episode: Option<EpisodeValidationCursorV5> = None;
     let mut seen_episode_ids = BTreeSet::new();
     for (record_index, record) in records.iter().enumerate() {
         match record {
             EpisodeRecordV1::Header {
                 schema_version,
                 diagnostic_state_hash_algorithm,
+                environment_hash_algorithm,
+                surface_version,
+                policy_surface_version,
+                stream_safety,
+                kernel_version,
+                card_db_hash,
                 episode_id,
                 ..
             } => {
@@ -2118,7 +2748,17 @@ pub fn validate_audit_episode_records(records: &[EpisodeRecordV1]) -> Result<()>
                 validate_audit_schema_version(*schema_version, record_index)?;
                 if diagnostic_state_hash_algorithm != DIAGNOSTIC_STATE_HASH_ALGORITHM {
                     return Err(RlContractError(format!(
-                        "unsupported diagnostic_state_hash_algorithm at audit record {record_index}: {diagnostic_state_hash_algorithm:?}; expected {DIAGNOSTIC_STATE_HASH_ALGORITHM:?}"
+                        "unsupported diagnostic_state_hash_algorithm at audit record {record_index}"
+                    )));
+                }
+                if environment_hash_algorithm
+                    != crate::policy_surface_v5::POLICY_ENVIRONMENT_HASH_ALGORITHM
+                    || *surface_version != H2_PREDICATE_VERSION
+                    || *policy_surface_version != POLICY_SURFACE_VERSION
+                    || stream_safety != "privileged_audit_contains_hidden_state_diagnostics"
+                {
+                    return Err(RlContractError(format!(
+                        "audit header provenance mismatch at record {record_index}"
                     )));
                 }
                 if !seen_episode_ids.insert(*episode_id) {
@@ -2126,12 +2766,19 @@ pub fn validate_audit_episode_records(records: &[EpisodeRecordV1]) -> Result<()>
                         "duplicate audit episode_id {episode_id} at record {record_index}"
                     )));
                 }
-                current_episode = Some((*episode_id, 0));
+                current_episode = Some(EpisodeValidationCursorV5::new(
+                    *episode_id,
+                    kernel_version.clone(),
+                    *card_db_hash,
+                ));
             }
             EpisodeRecordV1::Decision {
                 schema_version,
                 episode_id,
                 step,
+                physical_decision_id,
+                substep_index,
+                substep_count,
                 acting_player,
                 observation,
                 observation_projection_hash,
@@ -2141,12 +2788,34 @@ pub fn validate_audit_episode_records(records: &[EpisodeRecordV1]) -> Result<()>
                 ..
             } => {
                 validate_audit_schema_version(*schema_version, record_index)?;
-                if current_episode != Some((*episode_id, *step)) {
+                let context = format!("audit record {record_index}");
+                if observation.physical_decision_id != *physical_decision_id
+                    || observation.substep_index != *substep_index
+                    || observation.substep_count != *substep_count
+                {
                     return Err(RlContractError(format!(
-                        "audit decision at record {record_index} has out-of-order episode_id/step ({episode_id}, {step})"
+                        "{context} outer grouping fields do not match the observation"
                     )));
                 }
-                let context = format!("audit record {record_index}");
+                if let Some(cursor) = current_episode.as_ref() {
+                    cursor.validate_observation_provenance(&context, observation)?;
+                }
+                current_episode
+                    .as_mut()
+                    .ok_or_else(|| {
+                        RlContractError(format!(
+                            "audit decision at record {record_index} appears before a header"
+                        ))
+                    })?
+                    .accept_decision(
+                        &context,
+                        *episode_id,
+                        *step,
+                        *physical_decision_id,
+                        *substep_index,
+                        *substep_count,
+                        *acting_player,
+                    )?;
                 validate_episode_decision_payload(
                     &context,
                     *step,
@@ -2156,12 +2825,15 @@ pub fn validate_audit_episode_records(records: &[EpisodeRecordV1]) -> Result<()>
                     *selected_index,
                     selected_action_id,
                 )?;
+                current_episode
+                    .as_mut()
+                    .expect("audit decision header was validated above")
+                    .accept_policy_payload(&context, observation, legal_actions, *selected_index)?;
                 if *observation_projection_hash != observation.visible_projection_hash {
                     return Err(RlContractError(format!(
                         "audit observation_projection_hash mismatch at record {record_index}"
                     )));
                 }
-                current_episode = Some((*episode_id, step + 1));
             }
             EpisodeRecordV1::Terminal {
                 schema_version,
@@ -2170,15 +2842,24 @@ pub fn validate_audit_episode_records(records: &[EpisodeRecordV1]) -> Result<()>
                 terminal_classification,
                 winner,
                 terminal_reward,
-                decision_count,
+                policy_step_count,
+                physical_decision_count,
                 ..
             } => {
                 validate_audit_schema_version(*schema_version, record_index)?;
-                if current_episode != Some((*episode_id, *decision_count)) {
-                    return Err(RlContractError(format!(
-                        "audit terminal at record {record_index} has mismatched episode_id/decision_count ({episode_id}, {decision_count})"
-                    )));
-                }
+                current_episode
+                    .as_ref()
+                    .ok_or_else(|| {
+                        RlContractError(format!(
+                            "audit terminal at record {record_index} appears before a header"
+                        ))
+                    })?
+                    .validate_terminal(
+                        &format!("audit record {record_index}"),
+                        *episode_id,
+                        *policy_step_count,
+                        *physical_decision_count,
+                    )?;
                 validate_terminal_tuple(
                     *episode_id,
                     *terminal_outcome,
@@ -2190,9 +2871,10 @@ pub fn validate_audit_episode_records(records: &[EpisodeRecordV1]) -> Result<()>
             }
         }
     }
-    if let Some((episode_id, _)) = current_episode {
+    if let Some(cursor) = current_episode {
         return Err(RlContractError(format!(
-            "audit episode {episode_id} is missing its terminal record"
+            "audit episode {} is missing its terminal record",
+            cursor.episode_id
         )));
     }
     Ok(())
@@ -2201,7 +2883,7 @@ pub fn validate_audit_episode_records(records: &[EpisodeRecordV1]) -> Result<()>
 fn validate_audit_schema_version(schema_version: u32, record_index: usize) -> Result<()> {
     if schema_version != AUDIT_EPISODE_SCHEMA_VERSION {
         return Err(RlContractError(format!(
-            "unsupported audit schema_version {schema_version} at record {record_index}; expected {AUDIT_EPISODE_SCHEMA_VERSION}"
+            "unsupported audit schema_version at record {record_index}"
         )));
     }
     Ok(())
@@ -2261,12 +2943,17 @@ pub fn validate_policy_episode_records(records: &[PolicyEpisodeRecordV2]) -> Res
     if records.is_empty() {
         return Err(RlContractError("policy stream is empty".to_string()));
     }
-    let mut current_episode: Option<(u64, u64)> = None;
+    let mut current_episode: Option<EpisodeValidationCursorV5> = None;
     let mut seen_episode_ids = BTreeSet::new();
     for (record_index, record) in records.iter().enumerate() {
         match record {
             PolicyEpisodeRecordV2::Header {
                 schema_version,
+                surface_version,
+                policy_surface_version,
+                stream_safety,
+                kernel_version,
+                card_db_hash,
                 episode_id,
                 ..
             } => {
@@ -2276,17 +2963,32 @@ pub fn validate_policy_episode_records(records: &[PolicyEpisodeRecordV2]) -> Res
                     )));
                 }
                 validate_policy_schema_version(*schema_version, record_index)?;
+                if *surface_version != H2_PREDICATE_VERSION
+                    || *policy_surface_version != POLICY_SURFACE_VERSION
+                    || stream_safety != "policy_safe_model_visible_v5"
+                {
+                    return Err(RlContractError(format!(
+                        "policy header provenance mismatch at record {record_index}"
+                    )));
+                }
                 if !seen_episode_ids.insert(*episode_id) {
                     return Err(RlContractError(format!(
                         "duplicate policy episode_id {episode_id} at record {record_index}"
                     )));
                 }
-                current_episode = Some((*episode_id, 0));
+                current_episode = Some(EpisodeValidationCursorV5::new(
+                    *episode_id,
+                    kernel_version.clone(),
+                    *card_db_hash,
+                ));
             }
             PolicyEpisodeRecordV2::Decision {
                 schema_version,
                 episode_id,
                 step,
+                physical_decision_id,
+                substep_index,
+                substep_count,
                 acting_player,
                 observation,
                 legal_actions,
@@ -2295,12 +2997,34 @@ pub fn validate_policy_episode_records(records: &[PolicyEpisodeRecordV2]) -> Res
                 ..
             } => {
                 validate_policy_schema_version(*schema_version, record_index)?;
-                if current_episode != Some((*episode_id, *step)) {
+                let context = format!("policy record {record_index}");
+                if observation.physical_decision_id != *physical_decision_id
+                    || observation.substep_index != *substep_index
+                    || observation.substep_count != *substep_count
+                {
                     return Err(RlContractError(format!(
-                        "policy decision at record {record_index} has out-of-order episode_id/step ({episode_id}, {step})"
+                        "{context} outer grouping fields do not match the observation"
                     )));
                 }
-                let context = format!("policy record {record_index}");
+                if let Some(cursor) = current_episode.as_ref() {
+                    cursor.validate_observation_provenance(&context, observation)?;
+                }
+                current_episode
+                    .as_mut()
+                    .ok_or_else(|| {
+                        RlContractError(format!(
+                            "policy decision at record {record_index} appears before a header"
+                        ))
+                    })?
+                    .accept_decision(
+                        &context,
+                        *episode_id,
+                        *step,
+                        *physical_decision_id,
+                        *substep_index,
+                        *substep_count,
+                        *acting_player,
+                    )?;
                 validate_episode_decision_payload(
                     &context,
                     *step,
@@ -2310,7 +3034,10 @@ pub fn validate_policy_episode_records(records: &[PolicyEpisodeRecordV2]) -> Res
                     *selected_index,
                     selected_action_id,
                 )?;
-                current_episode = Some((*episode_id, step + 1));
+                current_episode
+                    .as_mut()
+                    .expect("policy decision header was validated above")
+                    .accept_policy_payload(&context, observation, legal_actions, *selected_index)?;
             }
             PolicyEpisodeRecordV2::Terminal {
                 schema_version,
@@ -2320,14 +3047,23 @@ pub fn validate_policy_episode_records(records: &[PolicyEpisodeRecordV2]) -> Res
                 terminal_code,
                 winner,
                 terminal_reward,
-                decision_count,
+                policy_step_count,
+                physical_decision_count,
             } => {
                 validate_policy_schema_version(*schema_version, record_index)?;
-                if current_episode != Some((*episode_id, *decision_count)) {
-                    return Err(RlContractError(format!(
-                        "policy terminal at record {record_index} has mismatched episode_id/decision_count ({episode_id}, {decision_count})"
-                    )));
-                }
+                current_episode
+                    .as_ref()
+                    .ok_or_else(|| {
+                        RlContractError(format!(
+                            "policy terminal at record {record_index} appears before a header"
+                        ))
+                    })?
+                    .validate_terminal(
+                        &format!("policy record {record_index}"),
+                        *episode_id,
+                        *policy_step_count,
+                        *physical_decision_count,
+                    )?;
                 validate_terminal_tuple(
                     *episode_id,
                     *terminal_outcome,
@@ -2345,9 +3081,10 @@ pub fn validate_policy_episode_records(records: &[PolicyEpisodeRecordV2]) -> Res
             }
         }
     }
-    if let Some((episode_id, _)) = current_episode {
+    if let Some(cursor) = current_episode {
         return Err(RlContractError(format!(
-            "policy episode {episode_id} is missing its terminal record"
+            "policy episode {} is missing its terminal record",
+            cursor.episode_id
         )));
     }
     Ok(())
@@ -2366,34 +3103,155 @@ fn validate_episode_decision_payload(
     context: &str,
     step: u64,
     acting_player: PlayerSeatV1,
-    observation: &ObservationV2,
-    legal_actions: &[LegalActionV1],
+    observation: &ObservationV5,
+    legal_actions: &[LegalActionV5],
     selected_index: u32,
     selected_action_id: &str,
 ) -> Result<()> {
-    if observation.schema_version != OBSERVATION_SCHEMA_VERSION
+    if observation.schema_version != OBSERVATION_SCHEMA_VERSION_V5
         || observation.step_index != step
         || observation.acting_player != acting_player
+        || observation.surface_version != H2_PREDICATE_VERSION
+        || observation.policy_surface_version != POLICY_SURFACE_VERSION
+        || observation.substep_count == 0
+        || observation.substep_index >= observation.substep_count
     {
         return Err(RlContractError(format!(
             "{context} observation metadata mismatch"
         )));
     }
-    if observation.visible_projection_hash != visible_projection_hash_v2(observation)? {
+    if observation.visible_projection_hash != visible_projection_hash_v5(observation)? {
         return Err(RlContractError(format!(
             "{context} observation visible_projection_hash mismatch"
         )));
     }
+    let policy_context = &observation.projection.policy_surface_context;
+    let private = policy_context.private_combat_selection.as_ref();
+    match policy_context.current_stage {
+        PolicySurfaceStageV5::Surface => {
+            if private.is_some()
+                || observation.substep_index != 0
+                || observation.substep_count != 1
+                || legal_actions.iter().any(|action| {
+                    matches!(
+                        action.semantic,
+                        ActionSemanticV1::ChooseAttackerInclusion { .. }
+                            | ActionSemanticV1::ChooseBlockerInclusion { .. }
+                            | ActionSemanticV1::DeclareAttackers { .. }
+                            | ActionSemanticV1::DeclareBlockersForAttacker { .. }
+                    )
+                })
+            {
+                return Err(RlContractError(format!(
+                    "{context} surface-stage decision contains combat-scan payload"
+                )));
+            }
+        }
+        PolicySurfaceStageV5::AttackerInclusion | PolicySurfaceStageV5::BlockerInclusion => {
+            let private = private.ok_or_else(|| {
+                RlContractError(format!(
+                    "{context} combat-scan stage is missing private selection context"
+                ))
+            })?;
+            if private.candidate_index != observation.substep_index
+                || private.candidate_count != observation.substep_count
+                || private.remaining_after_current.len()
+                    != (private.candidate_count - private.candidate_index - 1) as usize
+                || private.selected.len() > private.candidate_index as usize
+            {
+                return Err(RlContractError(format!(
+                    "{context} combat-scan context does not partition the frozen candidate sequence"
+                )));
+            }
+            let mut refs = BTreeSet::new();
+            for reference in private
+                .selected
+                .iter()
+                .chain(std::iter::once(&private.current_candidate))
+                .chain(private.remaining_after_current.iter())
+            {
+                let key = serde_json::to_string(reference)?;
+                if !refs.insert(key) {
+                    return Err(RlContractError(format!(
+                        "{context} combat-scan context contains duplicate stable references"
+                    )));
+                }
+            }
+            if legal_actions.len() != 2 {
+                return Err(RlContractError(format!(
+                    "{context} combat scan must expose exactly two Boolean actions"
+                )));
+            }
+            let expected_actor = acting_player;
+            let valid_pair = match policy_context.current_stage {
+                PolicySurfaceStageV5::AttackerInclusion => {
+                    private.attacker.is_none()
+                        && matches!(
+                            &legal_actions[0].semantic,
+                            ActionSemanticV1::ChooseAttackerInclusion {
+                                actor,
+                                attacker,
+                                include: false,
+                            } if *actor == expected_actor
+                                && attacker == &private.current_candidate
+                        )
+                        && matches!(
+                            &legal_actions[1].semantic,
+                            ActionSemanticV1::ChooseAttackerInclusion {
+                                actor,
+                                attacker,
+                                include: true,
+                            } if *actor == expected_actor
+                                && attacker == &private.current_candidate
+                        )
+                }
+                PolicySurfaceStageV5::BlockerInclusion => {
+                    let Some(fixed_attacker) = private.attacker.as_ref() else {
+                        return Err(RlContractError(format!(
+                            "{context} blocker scan is missing its fixed attacker"
+                        )));
+                    };
+                    matches!(
+                        &legal_actions[0].semantic,
+                        ActionSemanticV1::ChooseBlockerInclusion {
+                            actor,
+                            attacker,
+                            blocker,
+                            include: false,
+                        } if *actor == expected_actor
+                            && attacker == fixed_attacker
+                            && blocker == &private.current_candidate
+                    ) && matches!(
+                        &legal_actions[1].semantic,
+                        ActionSemanticV1::ChooseBlockerInclusion {
+                            actor,
+                            attacker,
+                            blocker,
+                            include: true,
+                        } if *actor == expected_actor
+                            && attacker == fixed_attacker
+                            && blocker == &private.current_candidate
+                    )
+                }
+                PolicySurfaceStageV5::Surface => unreachable!(),
+            };
+            if !valid_pair {
+                return Err(RlContractError(format!(
+                    "{context} combat scan actions must be the exact [include:false, include:true] pair bound to the current candidate"
+                )));
+            }
+        }
+    }
     let mut stable_ids = BTreeSet::new();
     for (index, action) in legal_actions.iter().enumerate() {
-        if action.schema_version != LEGAL_ACTION_SCHEMA_VERSION
+        if action.schema_version != LEGAL_ACTION_SCHEMA_VERSION_V5
             || action.selected_index as usize != index
         {
             return Err(RlContractError(format!(
                 "{context} legal action metadata mismatch at action {index}"
             )));
         }
-        let expected = make_legal_action_v1(
+        let expected = make_legal_action_v5(
             action.selected_index,
             action.semantic.clone(),
             action.display_text.clone(),
@@ -2473,8 +3331,18 @@ fn terminal_safe_code_for_classification(
 }
 
 pub fn parse_run_manifest_json(input: &str) -> Result<RunManifestV1> {
-    let manifest: RunManifestV1 = serde_json::from_str(input)
-        .map_err(|error| RlContractError(format!("invalid run manifest: {error}")))?;
+    let raw = parse_strict_json_value(input)
+        .map_err(|_| RlContractError("invalid run manifest JSON".to_string()))?;
+    let manifest: RunManifestV1 = serde_json::from_value(raw.clone()).map_err(|_| {
+        RlContractError("run manifest does not exactly match the manifest schema".to_string())
+    })?;
+    let canonical = serde_json::to_value(&manifest)
+        .map_err(|_| RlContractError("could not canonicalize run manifest".to_string()))?;
+    if raw != canonical {
+        return Err(RlContractError(
+            "run manifest does not exactly match the manifest schema".to_string(),
+        ));
+    }
     validate_run_manifest(&manifest)?;
     Ok(manifest)
 }
@@ -2490,16 +3358,21 @@ pub fn read_run_manifest(path: &Path) -> Result<RunManifestV1> {
 
 pub fn validate_run_manifest(manifest: &RunManifestV1) -> Result<()> {
     if manifest.schema_version != MANIFEST_SCHEMA_VERSION {
-        return Err(RlContractError(format!(
-            "unsupported manifest schema_version {}; expected {MANIFEST_SCHEMA_VERSION}",
-            manifest.schema_version
-        )));
+        return Err(RlContractError(
+            "unsupported manifest schema_version".to_string(),
+        ));
     }
     if manifest.diagnostic_state_hash_algorithm != DIAGNOSTIC_STATE_HASH_ALGORITHM {
-        return Err(RlContractError(format!(
-            "unsupported diagnostic_state_hash_algorithm in manifest: {:?}; expected {:?}",
-            manifest.diagnostic_state_hash_algorithm, DIAGNOSTIC_STATE_HASH_ALGORITHM
-        )));
+        return Err(RlContractError(
+            "unsupported diagnostic_state_hash_algorithm in manifest".to_string(),
+        ));
+    }
+    if manifest.surface_version != H2_PREDICATE_VERSION
+        || manifest.policy_surface_version != POLICY_SURFACE_VERSION
+    {
+        return Err(RlContractError(
+            "manifest surface provenance does not match H2/policy-v5".to_string(),
+        ));
     }
     Ok(())
 }
@@ -2529,7 +3402,8 @@ pub fn validate_rollout_artifact_bundle(
         draws: 0,
         truncated: 0,
         halted: 0,
-        total_decisions: 0,
+        total_policy_steps: 0,
+        total_physical_decisions: 0,
     };
     for (record_index, (audit, policy)) in
         audit_records.iter().zip(policy_records.iter()).enumerate()
@@ -2540,6 +3414,8 @@ pub fn validate_rollout_artifact_bundle(
                     stream_safety: audit_safety,
                     kernel_version: audit_kernel,
                     surface_version: audit_surface,
+                    policy_surface_version: audit_policy_surface,
+                    environment_hash_algorithm,
                     card_db_hash: audit_card_db,
                     matchup: audit_matchup,
                     episode_id: audit_episode,
@@ -2554,6 +3430,7 @@ pub fn validate_rollout_artifact_bundle(
                     stream_safety: policy_safety,
                     kernel_version: policy_kernel,
                     surface_version: policy_surface,
+                    policy_surface_version,
                     card_db_hash: policy_card_db,
                     matchup: policy_matchup,
                     episode_id: policy_episode,
@@ -2563,7 +3440,9 @@ pub fn validate_rollout_artifact_bundle(
                 },
             ) => {
                 if audit_safety != "privileged_audit_contains_hidden_state_diagnostics"
-                    || policy_safety != "policy_safe_model_visible_v4"
+                    || policy_safety != "policy_safe_model_visible_v5"
+                    || environment_hash_algorithm
+                        != crate::policy_surface_v5::POLICY_ENVIRONMENT_HASH_ALGORITHM
                 {
                     return Err(RlContractError(format!(
                         "stream_safety mismatch at paired header record {record_index}"
@@ -2571,6 +3450,7 @@ pub fn validate_rollout_artifact_bundle(
                 }
                 if audit_kernel != policy_kernel
                     || audit_surface != policy_surface
+                    || audit_policy_surface != policy_surface_version
                     || audit_card_db != policy_card_db
                     || audit_matchup != policy_matchup
                     || audit_episode != policy_episode
@@ -2582,6 +3462,7 @@ pub fn validate_rollout_artifact_bundle(
                 }
                 if audit_kernel != &manifest.kernel_version
                     || audit_surface != &manifest.surface_version
+                    || audit_policy_surface != &manifest.policy_surface_version
                     || audit_card_db != &manifest.card_db_hash
                     || audit_matchup != &manifest.matchup
                     || audit_decks != &manifest.deck.deck_identifiers
@@ -2610,6 +3491,9 @@ pub fn validate_rollout_artifact_bundle(
                 EpisodeRecordV1::Decision {
                     episode_id: audit_episode,
                     step: audit_step,
+                    physical_decision_id: audit_physical_id,
+                    substep_index: audit_substep_index,
+                    substep_count: audit_substep_count,
                     acting_player: audit_actor,
                     observation: audit_observation,
                     legal_actions: audit_actions,
@@ -2621,6 +3505,9 @@ pub fn validate_rollout_artifact_bundle(
                 PolicyEpisodeRecordV2::Decision {
                     episode_id: policy_episode,
                     step: policy_step,
+                    physical_decision_id: policy_physical_id,
+                    substep_index: policy_substep_index,
+                    substep_count: policy_substep_count,
                     acting_player: policy_actor,
                     observation: policy_observation,
                     legal_actions: policy_actions,
@@ -2632,6 +3519,9 @@ pub fn validate_rollout_artifact_bundle(
             ) => {
                 if audit_episode != policy_episode
                     || audit_step != policy_step
+                    || audit_physical_id != policy_physical_id
+                    || audit_substep_index != policy_substep_index
+                    || audit_substep_count != policy_substep_count
                     || audit_actor != policy_actor
                     || audit_observation != policy_observation
                     || audit_actions != policy_actions
@@ -2645,6 +3535,7 @@ pub fn validate_rollout_artifact_bundle(
                 }
                 if audit_observation.kernel_version != manifest.kernel_version
                     || audit_observation.surface_version != manifest.surface_version
+                    || audit_observation.policy_surface_version != manifest.policy_surface_version
                     || audit_observation.card_db_hash != manifest.card_db_hash
                 {
                     return Err(RlContractError(format!(
@@ -2659,7 +3550,8 @@ pub fn validate_rollout_artifact_bundle(
                     terminal_classification: audit_classification,
                     winner: audit_winner,
                     terminal_reward: audit_reward,
-                    decision_count: audit_decisions,
+                    policy_step_count: audit_policy_steps,
+                    physical_decision_count: audit_physical_decisions,
                     ..
                 },
                 PolicyEpisodeRecordV2::Terminal {
@@ -2668,7 +3560,8 @@ pub fn validate_rollout_artifact_bundle(
                     terminal_classification: policy_classification,
                     winner: policy_winner,
                     terminal_reward: policy_reward,
-                    decision_count: policy_decisions,
+                    policy_step_count: policy_steps,
+                    physical_decision_count: policy_physical_decisions,
                     ..
                 },
             ) => {
@@ -2677,19 +3570,22 @@ pub fn validate_rollout_artifact_bundle(
                     || audit_classification != policy_classification
                     || audit_winner != policy_winner
                     || audit_reward != policy_reward
-                    || audit_decisions != policy_decisions
+                    || audit_policy_steps != policy_steps
+                    || audit_physical_decisions != policy_physical_decisions
                 {
                     return Err(RlContractError(format!(
                         "audit/policy terminal mismatch at paired record {record_index}"
                     )));
                 }
-                if *audit_decisions > manifest.max_decisions {
+                if *audit_policy_steps > manifest.max_policy_steps
+                    || *audit_physical_decisions > manifest.max_physical_decisions
+                {
                     return Err(RlContractError(format!(
-                        "episode {audit_episode} decision_count {audit_decisions} exceeds manifest max_decisions {}",
-                        manifest.max_decisions
+                        "episode {audit_episode} policy/physical counts exceed manifest caps"
                     )));
                 }
-                aggregate.total_decisions += audit_decisions;
+                aggregate.total_policy_steps += audit_policy_steps;
+                aggregate.total_physical_decisions += audit_physical_decisions;
                 match audit_outcome {
                     TerminalOutcomeV1::P0Win => aggregate.p0_wins += 1,
                     TerminalOutcomeV1::P1Win => aggregate.p1_wins += 1,
@@ -2917,10 +3813,12 @@ fn aggregate_summaries(summaries: &[EpisodeTerminalSummaryV1]) -> RunAggregateV1
         draws: 0,
         truncated: 0,
         halted: 0,
-        total_decisions: 0,
+        total_policy_steps: 0,
+        total_physical_decisions: 0,
     };
     for summary in summaries {
-        aggregate.total_decisions += summary.decision_count;
+        aggregate.total_policy_steps += summary.policy_step_count;
+        aggregate.total_physical_decisions += summary.physical_decision_count;
         match summary.outcome {
             TerminalOutcomeV1::P0Win => aggregate.p0_wins += 1,
             TerminalOutcomeV1::P1Win => aggregate.p1_wins += 1,
@@ -2944,6 +3842,7 @@ fn push_terminal(
     records: &mut Vec<EpisodeRecordV1>,
     summary: &EpisodeTerminalSummaryV1,
     diagnostic_state_hash: u64,
+    environment_hash: u64,
 ) {
     records.push(EpisodeRecordV1::Terminal {
         schema_version: AUDIT_EPISODE_SCHEMA_VERSION,
@@ -2953,8 +3852,10 @@ fn push_terminal(
         winner: summary.winner,
         terminal_reward: summary.terminal_reward,
         terminal_reason: summary.terminal_reason.clone(),
-        decision_count: summary.decision_count,
+        policy_step_count: summary.policy_step_count,
+        physical_decision_count: summary.physical_decision_count,
         diagnostic_state_hash,
+        environment_hash,
     });
 }
 
@@ -2970,7 +3871,8 @@ fn push_policy_terminal(
         terminal_code: terminal_safe_code(summary),
         winner: summary.winner,
         terminal_reward: summary.terminal_reward,
-        decision_count: summary.decision_count,
+        policy_step_count: summary.policy_step_count,
+        physical_decision_count: summary.physical_decision_count,
     });
 }
 
@@ -4120,6 +5022,43 @@ fn visible_projection_hash_v2(observation: &ObservationV2) -> Result<u64> {
     })
 }
 
+fn visible_projection_hash_v5(observation: &ObservationV5) -> Result<u64> {
+    #[derive(Serialize)]
+    struct ObservationHashInput<'a> {
+        schema_version: u32,
+        kernel_version: &'a str,
+        surface_version: u32,
+        policy_surface_version: u32,
+        card_db_hash: u64,
+        acting_player: PlayerSeatV1,
+        step_index: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        projection: &'a PublicObservationProjectionV5,
+        own_hand: &'a [CardPrivateV1],
+        known_library_cards: &'a [Vec<KnownLibraryCardV4>; 2],
+        known_hand_cards: &'a [Vec<CardPrivateV1>; 2],
+    }
+
+    stable_hash_json(&ObservationHashInput {
+        schema_version: observation.schema_version,
+        kernel_version: &observation.kernel_version,
+        surface_version: observation.surface_version,
+        policy_surface_version: observation.policy_surface_version,
+        card_db_hash: observation.card_db_hash,
+        acting_player: observation.acting_player,
+        step_index: observation.step_index,
+        physical_decision_id: observation.physical_decision_id,
+        substep_index: observation.substep_index,
+        substep_count: observation.substep_count,
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+    })
+}
+
 fn push_action(
     out: &mut Vec<LegalActionCandidateV1>,
     semantic: ActionSemanticV1,
@@ -4139,6 +5078,19 @@ fn ensure_unique_action_ids(actions: &[LegalActionCandidateV1]) -> Result<()> {
         if !seen.insert(action.record.stable_id.clone()) {
             return Err(RlContractError(format!(
                 "duplicate stable legal action id within one decision: {}",
+                action.record.stable_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_unique_policy_action_ids(actions: &[PolicyLegalActionCandidateV5]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for action in actions {
+        if !seen.insert(action.record.stable_id.clone()) {
+            return Err(RlContractError(format!(
+                "duplicate stable legal action id within one policy decision: {}",
                 action.record.stable_id
             )));
         }
@@ -4259,3 +5211,246 @@ fn tmp_path(path: &Path) -> PathBuf {
 
 #[allow(dead_code)]
 fn _assert_game_object_is_visible_data(_: &GameObject) {}
+
+#[cfg(test)]
+mod policy_v5_artifact_tests {
+    use super::*;
+    use crate::policy_surface_v5::PolicySurfaceV5;
+    use crate::state::{Counters, ObjectStateV4, Step};
+
+    fn scan_records() -> Vec<PolicyEpisodeRecordV2> {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 77);
+        state.step = Step::DeclareAttackers;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let card_def = card_id_by_name("Voldaren Epicure").unwrap();
+        for _ in 0..3 {
+            let id = state.objects.push(GameObject {
+                card_def,
+                name: "Voldaren Epicure".to_string(),
+                owner: PlayerId::P0,
+                controller: PlayerId::P0,
+                zone: Zone::Battlefield,
+                tapped: false,
+                summoning_sick: false,
+                damage: 0,
+                counters: Counters::default(),
+                attachments: Vec::new(),
+                v4: ObjectStateV4::from_card_def(card_def),
+                plotted_turn: None,
+                zone_change_count: 0,
+            });
+            state.players[0].battlefield.push(id);
+        }
+        let mut surface = PolicySurfaceV5::new();
+        let mut records = vec![PolicyEpisodeRecordV2::Header {
+            schema_version: POLICY_EPISODE_SCHEMA_VERSION,
+            stream_safety: "policy_safe_model_visible_v5".to_string(),
+            kernel_version: KERNEL_VERSION.to_string(),
+            surface_version: H2_PREDICATE_VERSION,
+            policy_surface_version: POLICY_SURFACE_VERSION,
+            card_db_hash: KERNEL_CARDDB_HASH,
+            matchup: "test".to_string(),
+            episode_id: 0,
+            episode_key: "test-0".to_string(),
+            deck_identifiers: ["Burn".to_string(), "Burn".to_string()],
+        }];
+        for (step, selected_index) in [1usize, 0, 1].into_iter().enumerate() {
+            let decision = surface.next_decision(&mut state).unwrap();
+            let (substep_index, substep_count) = decision.substep();
+            let observation = observe_policy_v5(
+                &state,
+                &surface,
+                PlayerId::P0,
+                step as u64,
+                0,
+                substep_index,
+                substep_count,
+            )
+            .unwrap();
+            let actions = legal_action_candidates_v5(&decision, &state).unwrap();
+            let selected_action_id = actions[selected_index].record.stable_id.clone();
+            records.push(PolicyEpisodeRecordV2::Decision {
+                schema_version: POLICY_EPISODE_SCHEMA_VERSION,
+                episode_id: 0,
+                step: step as u64,
+                physical_decision_id: 0,
+                substep_index,
+                substep_count,
+                acting_player: PlayerSeatV1::P0,
+                observation: Box::new(observation),
+                legal_actions: actions.iter().map(|action| action.record.clone()).collect(),
+                selected_index: selected_index as u32,
+                selected_action_id,
+                reward: [0, 0],
+            });
+            surface
+                .apply(&mut state, actions[selected_index].policy_action.clone())
+                .unwrap();
+        }
+        records.push(PolicyEpisodeRecordV2::Terminal {
+            schema_version: POLICY_EPISODE_SCHEMA_VERSION,
+            episode_id: 0,
+            terminal_outcome: TerminalOutcomeV1::Truncated,
+            terminal_classification: TerminalClassificationV1::Truncated,
+            terminal_code: TerminalSafeCodeV2::DecisionCap,
+            winner: None,
+            terminal_reward: [0, 0],
+            policy_step_count: 3,
+            physical_decision_count: 1,
+        });
+        records
+    }
+
+    #[test]
+    fn artifact_grouping_fsm_rejects_outer_actor_count_history_and_partial_terminal_drift() {
+        let valid = scan_records();
+        validate_policy_episode_records(&valid).unwrap();
+
+        let mut outer = valid.clone();
+        let PolicyEpisodeRecordV2::Decision {
+            physical_decision_id,
+            ..
+        } = &mut outer[1]
+        else {
+            unreachable!()
+        };
+        *physical_decision_id = 1;
+        assert!(validate_policy_episode_records(&outer)
+            .unwrap_err()
+            .to_string()
+            .contains("outer grouping fields"));
+
+        let mut actor = valid.clone();
+        let PolicyEpisodeRecordV2::Decision {
+            acting_player,
+            observation,
+            ..
+        } = &mut actor[2]
+        else {
+            unreachable!()
+        };
+        *acting_player = PlayerSeatV1::P1;
+        observation.acting_player = PlayerSeatV1::P1;
+        assert!(validate_policy_episode_records(&actor)
+            .unwrap_err()
+            .to_string()
+            .contains("drifts actor"));
+
+        let mut count = valid.clone();
+        let PolicyEpisodeRecordV2::Decision {
+            substep_count,
+            observation,
+            ..
+        } = &mut count[2]
+        else {
+            unreachable!()
+        };
+        *substep_count = 4;
+        observation.substep_count = 4;
+        assert!(validate_policy_episode_records(&count)
+            .unwrap_err()
+            .to_string()
+            .contains("frozen substep count"));
+
+        let mut history = valid.clone();
+        let PolicyEpisodeRecordV2::Decision { observation, .. } = &mut history[2] else {
+            unreachable!()
+        };
+        observation
+            .projection
+            .policy_surface_context
+            .private_combat_selection
+            .as_mut()
+            .unwrap()
+            .selected
+            .clear();
+        observation.visible_projection_hash = visible_projection_hash_v5(observation).unwrap();
+        assert!(validate_policy_episode_records(&history)
+            .unwrap_err()
+            .to_string()
+            .contains("selected history drifted"));
+
+        let partial = vec![valid[0].clone(), valid[1].clone(), valid[4].clone()];
+        assert!(validate_policy_episode_records(&partial)
+            .unwrap_err()
+            .to_string()
+            .contains("partial physical decision"));
+
+        let mut wrong_header = valid.clone();
+        let PolicyEpisodeRecordV2::Header {
+            policy_surface_version,
+            ..
+        } = &mut wrong_header[0]
+        else {
+            unreachable!()
+        };
+        *policy_surface_version = 4;
+        assert!(validate_policy_episode_records(&wrong_header)
+            .unwrap_err()
+            .to_string()
+            .contains("header provenance mismatch"));
+
+        let mut wrong_stage = valid.clone();
+        let PolicyEpisodeRecordV2::Decision { observation, .. } = &mut wrong_stage[1] else {
+            unreachable!()
+        };
+        observation.projection.policy_surface_context.current_stage = PolicySurfaceStageV5::Surface;
+        observation
+            .projection
+            .policy_surface_context
+            .private_combat_selection = None;
+        observation.visible_projection_hash = visible_projection_hash_v5(observation).unwrap();
+        assert!(validate_policy_episode_records(&wrong_stage)
+            .unwrap_err()
+            .to_string()
+            .contains("surface-stage decision contains combat-scan payload"));
+
+        let mut reversed = valid.clone();
+        let PolicyEpisodeRecordV2::Decision {
+            legal_actions,
+            selected_index,
+            selected_action_id,
+            ..
+        } = &mut reversed[1]
+        else {
+            unreachable!()
+        };
+        legal_actions.swap(0, 1);
+        legal_actions[0].selected_index = 0;
+        legal_actions[1].selected_index = 1;
+        *selected_index = 0;
+        *selected_action_id = legal_actions[0].stable_id.clone();
+        assert!(validate_policy_episode_records(&reversed)
+            .unwrap_err()
+            .to_string()
+            .contains("exact [include:false, include:true] pair"));
+    }
+
+    #[test]
+    fn v5_constructor_rejects_legacy_aggregate_combat_semantics() {
+        let records = scan_records();
+        let PolicyEpisodeRecordV2::Decision { observation, .. } = &records[1] else {
+            unreachable!()
+        };
+        let current = observation
+            .projection
+            .policy_surface_context
+            .private_combat_selection
+            .as_ref()
+            .unwrap()
+            .current_candidate
+            .clone();
+        assert!(make_legal_action_v5(
+            0,
+            ActionSemanticV1::DeclareAttackers {
+                actor: PlayerSeatV1::P0,
+                attackers: vec![current],
+            },
+            None,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("legacy aggregate combat semantic"));
+    }
+}

@@ -13,8 +13,9 @@ use mtg_kernel::rl::{
     ActionSemanticV1, EngineDecisionStageV2, EpisodeTerminalSummaryV1, GitDirtyFlagV1,
     GitMetadataV1, LegalActionV1, ObservationV2, PlayerSeatV1, PolicyEpisodeRecordV2,
     SpellCopyStageV2, TerminalClassificationV1, TerminalOutcomeV1, AUDIT_EPISODE_JSONL_FILENAME,
-    AUDIT_EPISODE_SCHEMA_VERSION, LEGAL_ACTION_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION,
-    OBSERVATION_SCHEMA_VERSION, POLICY_EPISODE_JSONL_FILENAME, POLICY_EPISODE_SCHEMA_VERSION,
+    AUDIT_EPISODE_SCHEMA_VERSION, LEGAL_ACTION_SCHEMA_VERSION, LEGAL_ACTION_SCHEMA_VERSION_V5,
+    MANIFEST_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION_V5,
+    POLICY_EPISODE_JSONL_FILENAME, POLICY_EPISODE_SCHEMA_VERSION,
 };
 use mtg_kernel::state::{
     Counters, GameObject, GameState, StackItem, StackItemKind, Step, Target, Zone,
@@ -1772,9 +1773,9 @@ fn rl_contract_episode_records_use_independent_schema_versions_and_pin_hash_algo
     let policy_seed = derive_policy_seed(9999, 0);
     let run = record_burn_mirror_episode(0, env_seed, policy_seed, 64).unwrap();
 
-    assert_eq!(AUDIT_EPISODE_SCHEMA_VERSION, 7);
-    assert_eq!(MANIFEST_SCHEMA_VERSION, 5);
-    assert_eq!(POLICY_EPISODE_SCHEMA_VERSION, 4);
+    assert_eq!(AUDIT_EPISODE_SCHEMA_VERSION, 8);
+    assert_eq!(MANIFEST_SCHEMA_VERSION, 6);
+    assert_eq!(POLICY_EPISODE_SCHEMA_VERSION, 5);
     let audit_header = serde_json::to_value(&run.audit_records[0]).unwrap();
     assert_eq!(audit_header["schema_version"], AUDIT_EPISODE_SCHEMA_VERSION);
     assert_eq!(
@@ -1815,11 +1816,11 @@ fn rl_contract_episode_records_use_independent_schema_versions_and_pin_hash_algo
     );
     assert_eq!(
         policy_decision["observation"]["schema_version"],
-        OBSERVATION_SCHEMA_VERSION
+        OBSERVATION_SCHEMA_VERSION_V5
     );
     assert_eq!(
         policy_decision["legal_actions"][0]["schema_version"],
-        LEGAL_ACTION_SCHEMA_VERSION
+        LEGAL_ACTION_SCHEMA_VERSION_V5
     );
 
     let policy_terminal = run
@@ -1906,7 +1907,7 @@ fn rl_contract_audit_reader_fails_closed_on_legacy_missing_or_unknown_hash_contr
     assert!(parse_audit_episode_jsonl(&missing)
         .unwrap_err()
         .to_string()
-        .contains("missing field `diagnostic_state_hash_algorithm`"));
+        .contains("does not exactly match the audit schema"));
 
     let mut mixed = run
         .audit_records
@@ -1923,7 +1924,68 @@ fn rl_contract_audit_reader_fails_closed_on_legacy_missing_or_unknown_hash_contr
     assert!(parse_audit_episode_jsonl(&records_to_jsonl(&mixed[1..]))
         .unwrap_err()
         .to_string()
-        .contains("out-of-order episode_id/step"));
+        .contains("appears before a header"));
+}
+
+#[test]
+fn rl_contract_audit_reader_rejects_unknown_and_duplicate_fields_recursively() {
+    let run =
+        record_burn_mirror_episode(0, derive_env_seed(9999, 0), derive_policy_seed(9999, 0), 16)
+            .unwrap();
+    let values = run
+        .audit_records
+        .iter()
+        .map(|record| serde_json::to_value(record).unwrap())
+        .collect::<Vec<_>>();
+    let decision_index = values
+        .iter()
+        .position(|value| value["record_type"] == "decision")
+        .expect("test episode must contain an audit decision");
+
+    let mut unknown_root = values.clone();
+    unknown_root[decision_index]["environment_hash_algorithm"] =
+        Value::String("audit-root-secret".to_string());
+    let root_error = parse_audit_episode_jsonl(&records_to_jsonl(&unknown_root))
+        .unwrap_err()
+        .to_string();
+    assert!(root_error.contains("does not exactly match the audit schema"));
+    assert!(!root_error.contains("environment_hash_algorithm"));
+    assert!(!root_error.contains("audit-root-secret"));
+
+    let mut unknown_nested = values.clone();
+    unknown_nested[decision_index]["observation"]["projection"]["policy_surface_context"]
+        ["environment_hash"] = Value::String("audit-nested-secret".to_string());
+    let nested_error = parse_audit_episode_jsonl(&records_to_jsonl(&unknown_nested))
+        .unwrap_err()
+        .to_string();
+    assert!(nested_error.contains("does not exactly match the audit schema"));
+    assert!(!nested_error.contains("environment_hash"));
+    assert!(!nested_error.contains("audit-nested-secret"));
+
+    let decision_line = serde_json::to_string(&run.audit_records[decision_index]).unwrap();
+    let duplicate_root = decision_line.replacen(
+        '{',
+        &format!("{{\"schema_version\":{AUDIT_EPISODE_SCHEMA_VERSION},"),
+        1,
+    );
+    assert_ne!(duplicate_root, decision_line);
+    let duplicate_root_error = parse_audit_episode_jsonl(&(duplicate_root + "\n"))
+        .unwrap_err()
+        .to_string();
+    assert!(duplicate_root_error.contains("invalid audit JSONL record"));
+    assert!(!duplicate_root_error.contains("schema_version"));
+
+    let duplicate_nested = decision_line.replacen(
+        "\"observation\":{",
+        &format!("\"observation\":{{\"schema_version\":{OBSERVATION_SCHEMA_VERSION_V5},"),
+        1,
+    );
+    assert_ne!(duplicate_nested, decision_line);
+    let duplicate_nested_error = parse_audit_episode_jsonl(&(duplicate_nested + "\n"))
+        .unwrap_err()
+        .to_string();
+    assert!(duplicate_nested_error.contains("invalid audit JSONL record"));
+    assert!(!duplicate_nested_error.contains("schema_version"));
 }
 
 #[test]
@@ -1963,7 +2025,7 @@ fn rl_contract_policy_reader_rejects_empty_legacy_mixed_and_headerless_streams()
     assert!(parse_policy_episode_jsonl(&records_to_jsonl(&values[1..]))
         .unwrap_err()
         .to_string()
-        .contains("out-of-order episode_id/step"));
+        .contains("appears before a header"));
 }
 
 #[test]
@@ -1986,7 +2048,13 @@ fn rl_contract_policy_reader_rejects_unknown_fields_and_duplicate_keys_recursive
         .is_empty());
 
     for location in ["record", "observation", "action"] {
-        for key in ["diagnostic_state_hash", "env_seed", "unknown_field"] {
+        for key in [
+            "diagnostic_state_hash",
+            "environment_hash",
+            "environment_hash_algorithm",
+            "env_seed",
+            "unknown_field",
+        ] {
             let mut corrupted = values.clone();
             let target = match location {
                 "record" => &mut corrupted[decision_index],
@@ -2113,13 +2181,10 @@ fn rl_contract_bundle_validation_is_one_to_one_and_precedes_writes() {
         panic!("first policy record must be a header");
     };
     kernel_version.push_str("-corrupt");
-    validate_policy_episode_records(&header_corruption).unwrap();
-    assert!(
-        validate_rollout_artifact_bundle(&run.audit_records, &header_corruption, &manifest)
-            .unwrap_err()
-            .to_string()
-            .contains("shared header mismatch")
-    );
+    assert!(validate_policy_episode_records(&header_corruption)
+        .unwrap_err()
+        .to_string()
+        .contains("provenance differs from its episode header"));
 
     let mut terminal_corruption = run.policy_records.clone();
     let terminal = terminal_corruption.last_mut().unwrap();
@@ -2188,6 +2253,8 @@ fn rl_contract_policy_stream_is_safe_and_audit_stream_is_privileged() {
         for forbidden in [
             "diagnostic_state_hash",
             "diagnostic_state_hash_algorithm",
+            "environment_hash",
+            "environment_hash_algorithm",
             "state_hash",
             "env_seed",
             "policy_seed",
@@ -2273,7 +2340,8 @@ fn rl_contract_terminal_outcome_accounting_is_explicit() {
             winner: Some(PlayerSeatV1::P0),
             terminal_reward: [1, -1],
             terminal_reason: "game_over".to_string(),
-            decision_count: 10,
+            policy_step_count: 10,
+            physical_decision_count: 10,
         },
         EpisodeTerminalSummaryV1 {
             episode_id: 1,
@@ -2282,7 +2350,8 @@ fn rl_contract_terminal_outcome_accounting_is_explicit() {
             winner: Some(PlayerSeatV1::P1),
             terminal_reward: [-1, 1],
             terminal_reason: "game_over".to_string(),
-            decision_count: 11,
+            policy_step_count: 11,
+            physical_decision_count: 11,
         },
         EpisodeTerminalSummaryV1 {
             episode_id: 2,
@@ -2291,7 +2360,8 @@ fn rl_contract_terminal_outcome_accounting_is_explicit() {
             winner: None,
             terminal_reward: [0, 0],
             terminal_reason: "game_over".to_string(),
-            decision_count: 12,
+            policy_step_count: 12,
+            physical_decision_count: 12,
         },
         EpisodeTerminalSummaryV1 {
             episode_id: 3,
@@ -2300,7 +2370,8 @@ fn rl_contract_terminal_outcome_accounting_is_explicit() {
             winner: None,
             terminal_reward: [0, 0],
             terminal_reason: "decision_cap_reached:12".to_string(),
-            decision_count: 12,
+            policy_step_count: 12,
+            physical_decision_count: 12,
         },
         EpisodeTerminalSummaryV1 {
             episode_id: 4,
@@ -2309,7 +2380,8 @@ fn rl_contract_terminal_outcome_accounting_is_explicit() {
             winner: None,
             terminal_reward: [0, 0],
             terminal_reason: "fail_closed:test".to_string(),
-            decision_count: 12,
+            policy_step_count: 12,
+            physical_decision_count: 12,
         },
     ];
     let manifest = build_run_manifest(
@@ -2330,7 +2402,8 @@ fn rl_contract_terminal_outcome_accounting_is_explicit() {
     assert_eq!(manifest.aggregate.draws, 1);
     assert_eq!(manifest.aggregate.truncated, 1);
     assert_eq!(manifest.aggregate.halted, 1);
-    assert_eq!(manifest.aggregate.total_decisions, 57);
+    assert_eq!(manifest.aggregate.total_policy_steps, 57);
+    assert_eq!(manifest.aggregate.total_physical_decisions, 57);
 
     let value = serde_json::to_value(&manifest).unwrap();
     assert_eq!(value["schema_version"], MANIFEST_SCHEMA_VERSION);
@@ -2393,7 +2466,73 @@ fn rl_contract_terminal_outcome_accounting_is_explicit() {
     assert!(parse_run_manifest_json(&missing_algorithm.to_string())
         .unwrap_err()
         .to_string()
-        .contains("missing field `diagnostic_state_hash_algorithm`"));
+        .contains("does not exactly match the manifest schema"));
+}
+
+#[test]
+fn rl_contract_manifest_reader_rejects_unknown_and_duplicate_fields_recursively() {
+    let summaries = [EpisodeTerminalSummaryV1 {
+        episode_id: 0,
+        outcome: TerminalOutcomeV1::P0Win,
+        classification: TerminalClassificationV1::Natural,
+        winner: Some(PlayerSeatV1::P0),
+        terminal_reward: [1, -1],
+        terminal_reason: "game_over".to_string(),
+        policy_step_count: 1,
+        physical_decision_count: 1,
+    }];
+    let manifest = build_run_manifest(
+        1,
+        5151,
+        8,
+        vec!["rollout-record".to_string()],
+        Path::new("local-training/kernel_rl/strict-manifest"),
+        &summaries,
+        GitMetadataV1 {
+            commit: "test".to_string(),
+            dirty: GitDirtyFlagV1::Clean,
+        },
+    )
+    .unwrap();
+    let valid_json = serde_json::to_string(&manifest).unwrap();
+    assert_eq!(parse_run_manifest_json(&valid_json).unwrap(), manifest);
+
+    let mut unknown_root = serde_json::to_value(&manifest).unwrap();
+    unknown_root["environment_hash"] = Value::String("manifest-root-secret".to_string());
+    let root_error = parse_run_manifest_json(&unknown_root.to_string())
+        .unwrap_err()
+        .to_string();
+    assert!(root_error.contains("does not exactly match the manifest schema"));
+    assert!(!root_error.contains("environment_hash"));
+    assert!(!root_error.contains("manifest-root-secret"));
+
+    let mut unknown_nested = serde_json::to_value(&manifest).unwrap();
+    unknown_nested["seed"]["environment_hash_algorithm"] =
+        Value::String("manifest-nested-secret".to_string());
+    let nested_error = parse_run_manifest_json(&unknown_nested.to_string())
+        .unwrap_err()
+        .to_string();
+    assert!(nested_error.contains("does not exactly match the manifest schema"));
+    assert!(!nested_error.contains("environment_hash_algorithm"));
+    assert!(!nested_error.contains("manifest-nested-secret"));
+
+    let duplicate_root = valid_json.replacen(
+        '{',
+        &format!("{{\"schema_version\":{MANIFEST_SCHEMA_VERSION},"),
+        1,
+    );
+    assert_ne!(duplicate_root, valid_json);
+    let duplicate_root_error = parse_run_manifest_json(&duplicate_root)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(duplicate_root_error, "invalid run manifest JSON");
+
+    let duplicate_nested = valid_json.replacen("\"seed\":{", "\"seed\":{\"base_seed\":999,", 1);
+    assert_ne!(duplicate_nested, valid_json);
+    let duplicate_nested_error = parse_run_manifest_json(&duplicate_nested)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(duplicate_nested_error, "invalid run manifest JSON");
 }
 
 #[test]
@@ -2405,7 +2544,8 @@ fn rl_contract_manifest_rejects_inconsistent_terminal_tuples() {
         winner: Some(PlayerSeatV1::P0),
         terminal_reward: [1, -1],
         terminal_reason: "game_over".to_string(),
-        decision_count: 10,
+        policy_step_count: 10,
+        physical_decision_count: 10,
     };
     let err = build_run_manifest(
         2,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -12,9 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 PROTOCOL_NAME = "kernel_rl_jsonl"
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
+SURFACE_VERSION = 2
+POLICY_SURFACE_VERSION = 5
 MAX_LINE_BYTES = 8 * 1024 * 1024
 U32 = 4_294_967_295
 U64 = 18_446_744_073_709_551_615
@@ -38,6 +41,9 @@ class EnvProcessError(KernelRlError):
 class Decision:
     episode_id: int
     step: int
+    physical_decision_id: int
+    substep_index: int
+    substep_count: int
     acting_player: str
     observation: dict[str, Any]
     legal_actions: list[dict[str, Any]]
@@ -54,7 +60,8 @@ class Terminal:
     terminal_code: str
     winner: str | None
     terminal_reward: list[int]
-    decision_count: int
+    policy_step_count: int
+    physical_decision_count: int
     provenance: dict[str, Any]
     deck_ids: tuple[str, str]
     deck_hashes: tuple[int, int]
@@ -177,7 +184,19 @@ def _seat(value: Any, context: str) -> str:
 def _validate_provenance(value: Any, expected: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ProtocolError("provenance must be an object")
-    _keys(value, ["protocol", "protocol_version", "schema_version", "kernel_version", "surface_version", "card_db_hash"], "provenance")
+    _keys(
+        value,
+        [
+            "protocol",
+            "protocol_version",
+            "schema_version",
+            "kernel_version",
+            "surface_version",
+            "policy_surface_version",
+            "card_db_hash",
+        ],
+        "provenance",
+    )
     if value["protocol"] != PROTOCOL_NAME:
         raise ProtocolError("unexpected protocol name")
     if _int(value["protocol_version"], "provenance.protocol_version", minimum=0, maximum=U32) != PROTOCOL_VERSION:
@@ -185,7 +204,10 @@ def _validate_provenance(value: Any, expected: dict[str, Any] | None) -> dict[st
     if _int(value["schema_version"], "provenance.schema_version", minimum=0, maximum=U32) != SCHEMA_VERSION:
         raise ProtocolError("unexpected provenance schema version")
     _str(value["kernel_version"], "provenance.kernel_version")
-    _int(value["surface_version"], "provenance.surface_version", minimum=0, maximum=U32)
+    if _int(value["surface_version"], "provenance.surface_version", minimum=0, maximum=U32) != SURFACE_VERSION:
+        raise ProtocolError("unexpected surface version")
+    if _int(value["policy_surface_version"], "provenance.policy_surface_version", minimum=0, maximum=U32) != POLICY_SURFACE_VERSION:
+        raise ProtocolError("unexpected policy surface version")
     _int(value["card_db_hash"], "provenance.card_db_hash", minimum=0, maximum=U64)
     if expected is not None and value != expected:
         raise ProtocolError("provenance drifted within process")
@@ -210,9 +232,13 @@ def _validate_observation(value: Any, response: dict[str, Any], provenance: dict
             "schema_version",
             "kernel_version",
             "surface_version",
+            "policy_surface_version",
             "card_db_hash",
             "acting_player",
             "step_index",
+            "physical_decision_id",
+            "substep_index",
+            "substep_count",
             "projection",
             "own_hand",
             "known_library_cards",
@@ -227,12 +253,24 @@ def _validate_observation(value: Any, response: dict[str, Any], provenance: dict
         raise ProtocolError("observation kernel_version drift")
     if _int(value["surface_version"], "observation.surface_version", minimum=0, maximum=U32) != provenance["surface_version"]:
         raise ProtocolError("observation surface_version drift")
+    if _int(value["policy_surface_version"], "observation.policy_surface_version", minimum=0, maximum=U32) != provenance["policy_surface_version"]:
+        raise ProtocolError("observation policy_surface_version drift")
     if _int(value["card_db_hash"], "observation.card_db_hash", minimum=0, maximum=U64) != provenance["card_db_hash"]:
         raise ProtocolError("observation card_db_hash drift")
     if _seat(value["acting_player"], "observation.acting_player") != response["acting_player"]:
         raise ProtocolError("observation acting_player mismatch")
     if _int(value["step_index"], "observation.step_index", minimum=0, maximum=U64) != response["step"]:
         raise ProtocolError("observation step_index mismatch")
+    if _int(
+        value["physical_decision_id"],
+        "observation.physical_decision_id",
+        minimum=0,
+        maximum=U64,
+    ) != response["physical_decision_id"]:
+        raise ProtocolError("observation physical_decision_id mismatch")
+    for field in ("substep_index", "substep_count"):
+        if _int(value[field], f"observation.{field}", minimum=0, maximum=U32) != response[field]:
+            raise ProtocolError(f"observation {field} mismatch")
     _int(value["visible_projection_hash"], "observation.visible_projection_hash", minimum=0, maximum=U64)
     from .features import assert_observation_classified
     from .features import FeatureSchemaError
@@ -335,6 +373,15 @@ class KernelRlClient:
         self._deck_hashes: tuple[int, int] | None = None
         self._episode_id: int | None = None
         self._expected_step: int | None = None
+        self._physical_decision_id: int | None = None
+        self._substep_index: int | None = None
+        self._substep_count: int | None = None
+        self._group_actor: str | None = None
+        self._group_stage: str | None = None
+        self._group_attacker: dict[str, Any] | None = None
+        self._group_candidates: list[dict[str, Any]] | None = None
+        self._group_selected: list[dict[str, Any]] | None = None
+        self._current_legal_actions: list[dict[str, Any]] | None = None
         self._closed = False
 
     def stderr_text(self) -> str:
@@ -381,7 +428,8 @@ class KernelRlClient:
         *,
         episode_id: int,
         env_seed: int,
-        max_decisions: int,
+        max_physical_decisions: int,
+        max_policy_steps: int,
         deck_ids: tuple[str, str] = ("Burn", "Burn"),
     ) -> Decision:
         validated_episode_id = _int(episode_id, "episode_id", minimum=0, maximum=U64)
@@ -399,7 +447,18 @@ class KernelRlClient:
             "deck_ids": list(requested_deck_ids),
             "episode_id": validated_episode_id,
             "env_seed": _int(env_seed, "env_seed", minimum=0, maximum=U64),
-            "max_decisions": _int(max_decisions, "max_decisions", minimum=0, maximum=U64),
+            "max_physical_decisions": _int(
+                max_physical_decisions,
+                "max_physical_decisions",
+                minimum=0,
+                maximum=U64,
+            ),
+            "max_policy_steps": _int(
+                max_policy_steps,
+                "max_policy_steps",
+                minimum=0,
+                maximum=U64,
+            ),
         }
         response = self._exchange(request)
         if not isinstance(response, Decision):
@@ -409,16 +468,103 @@ class KernelRlClient:
     def step(self, selected_index: int, selected_action_id: str) -> Decision | Terminal:
         if self._episode_id is None or self._expected_step is None:
             raise ProtocolError("step before reset")
+        selected_index = _int(selected_index, "selected_index", minimum=0, maximum=U32)
+        selected_action_id = _str(selected_action_id, "selected_action_id")
+        if self._current_legal_actions is None:
+            raise ProtocolError("step without a validated current legal-action set")
+        if selected_index >= len(self._current_legal_actions):
+            raise ProtocolError("selected_index is outside the current legal-action set")
+        if self._current_legal_actions[selected_index]["stable_id"] != selected_action_id:
+            raise ProtocolError("selected_action_id does not match selected_index")
         request = {
             "request_type": "step",
             "schema_version": SCHEMA_VERSION,
             "request_id": self._next_request_id(),
             "episode_id": self._episode_id,
             "expected_step": self._expected_step,
-            "selected_index": _int(selected_index, "selected_index", minimum=0, maximum=U32),
-            "selected_action_id": _str(selected_action_id, "selected_action_id"),
+            "selected_index": selected_index,
+            "selected_action_id": selected_action_id,
         }
         return self._exchange(request)
+
+    def _next_group_transcript(
+        self,
+        *,
+        observation: dict[str, Any],
+        request: dict[str, Any],
+        substep_index: int,
+        substep_count: int,
+    ) -> tuple[
+        str | None,
+        dict[str, Any] | None,
+        list[dict[str, Any]] | None,
+        list[dict[str, Any]] | None,
+    ]:
+        context = observation["projection"]["policy_surface_context"]
+        stage = context["current_stage"]
+        private = context["private_combat_selection"]
+        starts_group = request["request_type"] == "reset" or (
+            self._substep_index is not None
+            and self._substep_count is not None
+            and self._substep_index + 1 == self._substep_count
+        )
+        if starts_group:
+            if stage == "surface":
+                return None, None, None, None
+            if private is None or substep_index != 0 or private["selected"] != []:
+                raise ProtocolError(
+                    "combat physical decision must begin at candidate 0 with empty selected history"
+                )
+            candidates = [
+                copy.deepcopy(private["current_candidate"]),
+                *copy.deepcopy(private["remaining_after_current"]),
+            ]
+            if len(candidates) != substep_count:
+                raise ProtocolError("combat physical decision candidate sequence length mismatch")
+            return (
+                stage,
+                copy.deepcopy(private["attacker"]),
+                candidates,
+                [],
+            )
+
+        if (
+            private is None
+            or self._group_stage is None
+            or self._group_candidates is None
+            or self._group_selected is None
+            or self._current_legal_actions is None
+            or self._substep_index is None
+        ):
+            raise ProtocolError("missing frozen combat physical-decision transcript")
+        action = self._current_legal_actions[request["selected_index"]]
+        semantic = action["semantic"]
+        include = semantic.get("include")
+        if type(include) is not bool:
+            raise ProtocolError("combat substep action must carry an exact include boolean")
+        expected_selected = copy.deepcopy(self._group_selected)
+        if include:
+            expected_selected.append(copy.deepcopy(self._group_candidates[self._substep_index]))
+        expected_current = self._group_candidates[substep_index]
+        expected_remaining = self._group_candidates[substep_index + 1 :]
+        if stage != self._group_stage:
+            raise ProtocolError("combat physical decision stage drift")
+        if private["attacker"] != self._group_attacker:
+            raise ProtocolError("combat physical decision fixed attacker drift")
+        if private["candidate_count"] != len(self._group_candidates):
+            raise ProtocolError("combat physical decision candidate count drift")
+        if private["current_candidate"] != expected_current:
+            raise ProtocolError("combat physical decision current candidate drift")
+        if private["remaining_after_current"] != expected_remaining:
+            raise ProtocolError("combat physical decision remaining candidate suffix drift")
+        if private["selected"] != expected_selected:
+            raise ProtocolError("combat physical decision selected history drift")
+        return (
+            self._group_stage,
+            copy.deepcopy(self._group_attacker),
+            copy.deepcopy(self._group_candidates),
+            expected_selected,
+        )
 
     def _exchange(self, request: dict[str, Any]) -> Decision | Terminal:
         if self._closed:
@@ -463,7 +609,27 @@ class KernelRlClient:
             sanitized = " ".join(message.split())[:240]
             raise ProtocolError(f"environment error {code}: {sanitized}")
         if response_type == "decision":
-            _keys(response, ["response_type", "schema_version", "request_id", "provenance", "deck_ids", "deck_hashes", "episode_id", "step", "acting_player", "observation", "legal_actions", "reward"], "decision response")
+            _keys(
+                response,
+                [
+                    "response_type",
+                    "schema_version",
+                    "request_id",
+                    "provenance",
+                    "deck_ids",
+                    "deck_hashes",
+                    "episode_id",
+                    "step",
+                    "physical_decision_id",
+                    "substep_index",
+                    "substep_count",
+                    "acting_player",
+                    "observation",
+                    "legal_actions",
+                    "reward",
+                ],
+                "decision response",
+            )
             if _int(response["schema_version"], "decision.schema_version", minimum=0, maximum=U32) != SCHEMA_VERSION:
                 raise ProtocolError("decision schema mismatch")
             if _str(response["request_id"], "decision.request_id") != request["request_id"]:
@@ -496,21 +662,79 @@ class KernelRlClient:
             if step != expected_step:
                 raise ProtocolError(f"decision step drift: expected {expected_step}, got {step}")
             acting = _seat(response["acting_player"], "decision.acting_player")
+            physical_decision_id = _int(
+                response["physical_decision_id"],
+                "decision.physical_decision_id",
+                minimum=0,
+                maximum=U64,
+            )
+            substep_index = _int(
+                response["substep_index"],
+                "decision.substep_index",
+                minimum=0,
+                maximum=U32,
+            )
+            substep_count = _int(
+                response["substep_count"],
+                "decision.substep_count",
+                minimum=1,
+                maximum=U32,
+            )
+            if substep_index >= substep_count:
+                raise ProtocolError("decision substep_index must be < substep_count")
+            if request["request_type"] == "reset":
+                if (physical_decision_id, substep_index) != (0, 0):
+                    raise ProtocolError("initial decision must begin physical decision 0 at substep 0")
+            elif self._physical_decision_id is None or self._substep_index is None or self._substep_count is None:
+                raise ProtocolError("missing prior physical decision state")
+            elif self._substep_index + 1 < self._substep_count:
+                if (
+                    physical_decision_id != self._physical_decision_id
+                    or substep_index != self._substep_index + 1
+                    or substep_count != self._substep_count
+                    or acting != self._group_actor
+                ):
+                    raise ProtocolError("physical decision substeps are not contiguous and stable")
+            elif (
+                physical_decision_id != self._physical_decision_id + 1
+                or substep_index != 0
+            ):
+                raise ProtocolError("physical decision ids must advance exactly once after a completed group")
             observation = _validate_observation(response["observation"], response, provenance)
             legal_actions = _validate_legal_actions(response["legal_actions"])
-            from .features import FeatureSchemaError, validate_legal_actions_contract
+            from .features import FeatureSchemaError, validate_decision_contract
 
             try:
-                legal_actions = validate_legal_actions_contract(legal_actions, acting)
+                validate_decision_contract(observation, legal_actions)
             except FeatureSchemaError as exc:
                 raise ProtocolError(str(exc)) from exc
+            group_stage, group_attacker, group_candidates, group_selected = (
+                self._next_group_transcript(
+                    observation=observation,
+                    request=request,
+                    substep_index=substep_index,
+                    substep_count=substep_count,
+                )
+            )
             if _validate_reward(response["reward"], "decision.reward") != [0, 0]:
                 raise ProtocolError("intermediate decision reward must be [0, 0]")
             self._episode_id = episode_id
             self._expected_step = step
+            self._physical_decision_id = physical_decision_id
+            self._substep_index = substep_index
+            self._substep_count = substep_count
+            self._group_actor = acting
+            self._group_stage = group_stage
+            self._group_attacker = group_attacker
+            self._group_candidates = group_candidates
+            self._group_selected = group_selected
+            self._current_legal_actions = copy.deepcopy(legal_actions)
             return Decision(
                 episode_id,
                 step,
+                physical_decision_id,
+                substep_index,
+                substep_count,
                 acting,
                 observation,
                 legal_actions,
@@ -521,7 +745,7 @@ class KernelRlClient:
         if response_type == "terminal":
             _keys(
                 response,
-                ["response_type", "schema_version", "request_id", "provenance", "deck_ids", "deck_hashes", "episode_id", "terminal_outcome", "terminal_classification", "terminal_code", "winner", "terminal_reward", "terminal_reason", "decision_count"],
+                ["response_type", "schema_version", "request_id", "provenance", "deck_ids", "deck_hashes", "episode_id", "terminal_outcome", "terminal_classification", "terminal_code", "winner", "terminal_reward", "terminal_reason", "policy_step_count", "physical_decision_count"],
                 "terminal response",
             )
             if _int(response["schema_version"], "terminal.schema_version", minimum=0, maximum=U32) != SCHEMA_VERSION:
@@ -551,10 +775,34 @@ class KernelRlClient:
             episode_id = _int(response["episode_id"], "terminal.episode_id", minimum=0, maximum=U64)
             if episode_id != request["episode_id"]:
                 raise ProtocolError("terminal episode_id mismatch")
-            decision_count = _int(response["decision_count"], "terminal.decision_count", minimum=0, maximum=U64)
-            expected_count = 0 if request["request_type"] == "reset" else request["expected_step"] + 1
-            if decision_count != expected_count:
-                raise ProtocolError(f"terminal decision_count mismatch: expected {expected_count}, got {decision_count}")
+            policy_step_count = _int(response["policy_step_count"], "terminal.policy_step_count", minimum=0, maximum=U64)
+            expected_policy_count = 0 if request["request_type"] == "reset" else request["expected_step"] + 1
+            if policy_step_count != expected_policy_count:
+                raise ProtocolError(
+                    f"terminal policy_step_count mismatch: expected {expected_policy_count}, got {policy_step_count}"
+                )
+            physical_decision_count = _int(
+                response["physical_decision_count"],
+                "terminal.physical_decision_count",
+                minimum=0,
+                maximum=U64,
+            )
+            if request["request_type"] == "reset":
+                expected_physical_count = 0
+            else:
+                if (
+                    self._physical_decision_id is None
+                    or self._substep_index is None
+                    or self._substep_count is None
+                ):
+                    raise ProtocolError("missing prior physical decision state at terminal")
+                if self._substep_index + 1 != self._substep_count:
+                    raise ProtocolError("terminal response interrupted an incomplete physical decision")
+                expected_physical_count = self._physical_decision_id + 1
+            if physical_decision_count != expected_physical_count:
+                raise ProtocolError(
+                    "terminal physical_decision_count does not match completed groups"
+                )
             outcome = _str(response["terminal_outcome"], "terminal.terminal_outcome")
             classification = _str(response["terminal_classification"], "terminal.terminal_classification")
             code = _str(response["terminal_code"], "terminal.terminal_code")
@@ -563,6 +811,15 @@ class KernelRlClient:
             _str(response["terminal_reason"], "terminal.terminal_reason")
             self._validate_terminal_tuple(outcome, classification, code, winner, reward)
             self._expected_step = None
+            self._physical_decision_id = None
+            self._substep_index = None
+            self._substep_count = None
+            self._group_actor = None
+            self._group_stage = None
+            self._group_attacker = None
+            self._group_candidates = None
+            self._group_selected = None
+            self._current_legal_actions = None
             return Terminal(
                 episode_id,
                 outcome,
@@ -570,7 +827,8 @@ class KernelRlClient:
                 code,
                 winner,
                 reward,
-                decision_count,
+                policy_step_count,
+                physical_decision_count,
                 provenance,
                 deck_ids,
                 deck_hashes,

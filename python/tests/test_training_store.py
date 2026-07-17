@@ -51,7 +51,8 @@ def _train_fixture(root: Path, *, until_update: int = 4, base_seed: int = 71501)
         batch_episodes=2,
         learning_rate=0.001,
         value_coef=0.5,
-        max_decisions=8,
+        max_physical_decisions=8,
+        max_policy_steps=16,
     )
     return out
 
@@ -125,13 +126,13 @@ class TrainingStoreTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
-    def test_run_manifest_rejects_legacy_v3_protocol_and_schema_provenance(self) -> None:
+    def test_run_manifest_rejects_legacy_v4_protocol_and_schema_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
             out = _train_fixture(Path(tmp_name), until_update=0)
             run = read_json_file(out / "run.json")
             for key in ("protocol_version", "schema_version"):
                 legacy = copy.deepcopy(run)
-                legacy["protocol_provenance"][key] = 3
+                legacy["protocol_provenance"][key] = 4
                 with self.subTest(key=key), self.assertRaisesRegex(ValueError, rf"{key} mismatch"):
                     store_mod._validate_run_manifest(legacy)
 
@@ -187,7 +188,7 @@ class TrainingStoreTest(unittest.TestCase):
                 if kind == "run" and not raced["done"]:
                     raced["done"] = True
                     bad = copy.deepcopy(captured.value)
-                    bad["schema"] = "kernel_rl_train_run/v10"
+                    bad["schema"] = "kernel_rl_train_run/v13"
                     write_json_atomic(path, bad)
                 return captured
 
@@ -452,7 +453,8 @@ assert_same(before, "tampered_load")
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
 
             def replace_update(root: Path) -> None:
@@ -518,7 +520,8 @@ assert_same(before, "tampered_load")
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             (out / "episodes.jsonl").write_text("stale cache\n", encoding="utf-8")
             (out / "updates.jsonl").write_text("stale cache\n", encoding="utf-8")
@@ -560,7 +563,8 @@ assert_same(before, "tampered_load")
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
             )
             for name in ("episodes.jsonl", "updates.jsonl", "summary.json"):
                 (out / name).unlink()
@@ -632,7 +636,8 @@ assert_same(before, "tampered_load")
             self.assertEqual(random.getstate(), py_state)
             self.assertTrue(torch.equal(torch.random.get_rng_state(), torch_state))
             resume_a.outcomes_by_learner_seat["p0"]["win"] = 999
-            resume_a.learner_decisions_by_seat["p0"] = 999
+            resume_a.learner_policy_steps_by_seat["p0"] = 999
+            resume_a.learner_physical_decisions_by_seat["p0"] = 999
             resume_a.torch_cpu_rng_state[0] ^= 1
             first_payload_key = next(iter(resume_a.checkpoint_payload["model_state"]))
             resume_a.checkpoint_payload["model_state"][first_payload_key].reshape(-1)[0] += 1
@@ -686,7 +691,8 @@ assert_same(before, "tampered_load")
             self.assertTrue(payload_ptrs_a.isdisjoint(model_ptrs_a))
             self.assertTrue(payload_ptrs_a.isdisjoint(optimizer_ptrs_a))
             self.assertNotEqual(resume_b.outcomes_by_learner_seat["p0"]["win"], 999)
-            self.assertNotEqual(resume_b.learner_decisions_by_seat["p0"], 999)
+            self.assertNotEqual(resume_b.learner_policy_steps_by_seat["p0"], 999)
+            self.assertNotEqual(resume_b.learner_physical_decisions_by_seat["p0"], 999)
             self.assertFalse(torch.equal(resume_a.torch_cpu_rng_state, resume_b.torch_cpu_rng_state))
             self.assertFalse(
                 torch.equal(
@@ -731,7 +737,7 @@ assert_same(before, "tampered_load")
                         TrainingStore(target).validate_latest()
                     self.assertEqual(_tree_snapshot(target), before)
 
-            case("old_run_schema", lambda p: write_json_atomic(p / "run.json", {**read_json_file(p / "run.json"), "schema": "kernel_rl_train_run/v10"}))
+            case("old_run_schema", lambda p: write_json_atomic(p / "run.json", {**read_json_file(p / "run.json"), "schema": "kernel_rl_train_run/v13"}))
             case(
                 "run_deck_id_drift",
                 lambda p: (
@@ -758,7 +764,7 @@ assert_same(before, "tampered_load")
                         **read_json_file(p / "run.json"),
                         "artifact_boundary": {
                             **read_json_file(p / "run.json")["artifact_boundary"],
-                            "schema": "kernel_rl_artifact_boundary/v8",
+                            "schema": "kernel_rl_artifact_boundary/v9",
                         },
                     },
                 ),

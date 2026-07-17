@@ -48,6 +48,12 @@ from mtg_kernel_rl.sampled_evaluation_store import (
     V3_GAME_SCHEMA,
     V3_PAIR_SCHEMA,
     V3_RUN_SCHEMA,
+    V4_ACTION_SEED_DERIVATION_CONTRACT,
+    V4_ACTION_SELECTION_CONTRACT,
+    V4_ALGORITHM_CONTRACT,
+    V4_GAME_SCHEMA,
+    V4_PAIR_SCHEMA,
+    V4_RUN_SCHEMA,
     validate_sampled_evaluation,
 )
 from mtg_kernel_rl.sampled_evaluator import _run_sampled_game, _select_sampled_action, evaluate_sampled
@@ -100,7 +106,8 @@ def _train_fixture(
     *,
     scenario: str = "valid",
     until_update: int = 0,
-    max_decisions: int = 8,
+    max_physical_decisions: int = 8,
+    max_policy_steps: int = 16,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[Path, Path, str]:
     launcher = fake_launcher(root, scenario, extra_env)
@@ -113,7 +120,8 @@ def _train_fixture(
         batch_episodes=2,
         learning_rate=0.001,
         value_coef=0.5,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
     )
     head = TrainingStore(store).validate_latest().head.head
     return launcher, store, head
@@ -127,7 +135,8 @@ def _evaluate_fixture(
     *,
     pairs: int = 2,
     base_seed: int = 4,
-    max_decisions: int = 8,
+    max_physical_decisions: int = 8,
+    max_policy_steps: int = 16,
     timeout_ms: int = 5_000,
 ) -> EvaluationResult:
     return evaluate_sampled(
@@ -138,7 +147,8 @@ def _evaluate_fixture(
         pairs=pairs,
         base_seed=base_seed,
         bootstrap_replicates=1_000,
-        max_decisions=max_decisions,
+        max_physical_decisions=max_physical_decisions,
+        max_policy_steps=max_policy_steps,
         timeout_ms=timeout_ms,
     )
 
@@ -224,7 +234,8 @@ evaluate_sampled(
     pairs=1,
     base_seed=4,
     bootstrap_replicates=1000,
-    max_decisions=8,
+    max_physical_decisions=8,
+                max_policy_steps=16,
     timeout_ms=5000,
 )
 raise SystemExit(92)
@@ -236,6 +247,9 @@ class SampledSelectorTest(unittest.TestCase):
         return Decision(
             0,
             0,
+            0,
+            0,
+            1,
             "p0",
             actor_observation("p0"),
             legal_actions("p0"),
@@ -252,19 +266,19 @@ class SampledSelectorTest(unittest.TestCase):
                 return torch.tensor([0.0, 1.0, 2.0], dtype=torch.float32), torch.tensor(0.0)
 
         seeds = (
-            derive_evaluation_action_seed(71_501, 0, "p0", 0),
-            derive_evaluation_action_seed(71_501, 0, "p1", 0),
-            derive_evaluation_action_seed(71_501, 0, "p0", 1),
-            derive_evaluation_action_seed(71_501, 1, "p0", 0),
-            derive_evaluation_action_seed(0, 0, "p0", 0),
-            derive_evaluation_action_seed((1 << 63) - 1, (1 << 63) - 1, "p1", (1 << 63) - 1),
+            derive_evaluation_action_seed(71_501, 0, "p0", 0, 0),
+            derive_evaluation_action_seed(71_501, 0, "p1", 0, 0),
+            derive_evaluation_action_seed(71_501, 0, "p0", 1, 0),
+            derive_evaluation_action_seed(71_501, 1, "p0", 0, 0),
+            derive_evaluation_action_seed(0, 0, "p0", 0, 0),
+            derive_evaluation_action_seed((1 << 63) - 1, (1 << 63) - 1, "p1", (1 << 63) - 1, (1 << 32) - 1),
         )
         random.seed(81)
         torch.manual_seed(82)
         python_state = random.getstate()
         torch_state = torch.get_rng_state().clone()
         selected = [_select_sampled_action(FixedModel(), decision, seed) for seed in seeds]
-        self.assertEqual(selected, [1, 2, 1, 1, 2, 2])
+        self.assertEqual(selected, [2, 2, 2, 1, 2, 2])
         self.assertEqual(_select_sampled_action(FixedModel(), decision, seeds[0]), selected[0])
         self.assertGreater(len(set(selected)), 1)
         self.assertEqual(random.getstate(), python_state)
@@ -399,7 +413,13 @@ print(",".join(str(value) for value in fixed_softmax_mass(torch.tensor([0.0, 1.0
 
 class SampledCrnRoutingTest(unittest.TestCase):
     def test_role_swap_preserves_physical_action_seed_streams(self) -> None:
-        actors = ("p0", "p1", "p0")
+        decisions = (
+            ("p0", 0, 0, 3),
+            ("p0", 0, 1, 3),
+            ("p0", 0, 2, 3),
+            ("p1", 1, 0, 1),
+            ("p0", 2, 0, 1),
+        )
 
         class ScriptedClient:
             def __init__(self) -> None:
@@ -407,12 +427,19 @@ class SampledCrnRoutingTest(unittest.TestCase):
                 self.episode_id = 0
 
             def _decision(self) -> Decision:
-                actor = actors[self.index]
+                actor, physical_decision_id, substep_index, substep_count = decisions[self.index]
+                obs = actor_observation(actor, self.index)
+                obs["physical_decision_id"] = physical_decision_id
+                obs["substep_index"] = substep_index
+                obs["substep_count"] = substep_count
                 return Decision(
                     self.episode_id,
                     self.index,
+                    physical_decision_id,
+                    substep_index,
+                    substep_count,
                     actor,
-                    actor_observation(actor, self.index),
+                    obs,
                     legal_actions(actor),
                     dict(PROVENANCE),
                     DECK_IDS,
@@ -424,7 +451,8 @@ class SampledCrnRoutingTest(unittest.TestCase):
                 *,
                 episode_id: int,
                 env_seed: int,
-                max_decisions: int,
+                max_physical_decisions: int,
+                max_policy_steps: int,
                 deck_ids: tuple[str, str],
             ):  # type: ignore[no-untyped-def]
                 if deck_ids != DECK_IDS:
@@ -435,7 +463,7 @@ class SampledCrnRoutingTest(unittest.TestCase):
 
             def step(self, _selected_index: int, _stable_id: str):  # type: ignore[no-untyped-def]
                 self.index += 1
-                if self.index < len(actors):
+                if self.index < len(decisions):
                     return self._decision()
                 return Terminal(
                     self.episode_id,
@@ -444,7 +472,8 @@ class SampledCrnRoutingTest(unittest.TestCase):
                     "natural_game_over",
                     "p0",
                     [1, -1],
-                    len(actors),
+                    len(decisions),
+                    3,
                     dict(PROVENANCE),
                     DECK_IDS,
                     DECK_HASHES,
@@ -467,7 +496,8 @@ class SampledCrnRoutingTest(unittest.TestCase):
                 game_in_pair=0,
                 env_seed=123,
                 base_seed=71_501,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 candidate_model=candidate,  # type: ignore[arg-type]
                 baseline_model=baseline,  # type: ignore[arg-type]
                 expected_provenance=PROVENANCE,
@@ -481,7 +511,8 @@ class SampledCrnRoutingTest(unittest.TestCase):
                 game_in_pair=1,
                 env_seed=123,
                 base_seed=71_501,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 candidate_model=candidate,  # type: ignore[arg-type]
                 baseline_model=baseline,  # type: ignore[arg-type]
                 expected_provenance=PROVENANCE,
@@ -489,22 +520,31 @@ class SampledCrnRoutingTest(unittest.TestCase):
                 deck_hashes=DECK_HASHES,
             )
 
-        first_events = events[: len(actors)]
-        second_events = events[len(actors) :]
+        first_events = events[: len(decisions)]
+        second_events = events[len(decisions) :]
         self.assertEqual(
             [(seat, seed) for _leg, seat, _model, seed in first_events],
             [(seat, seed) for _leg, seat, _model, seed in second_events],
         )
         expected_stream = [
-            ("p0", derive_evaluation_action_seed(71_501, 7, "p0", 0)),
-            ("p1", derive_evaluation_action_seed(71_501, 7, "p1", 0)),
-            ("p0", derive_evaluation_action_seed(71_501, 7, "p0", 1)),
+            ("p0", derive_evaluation_action_seed(71_501, 7, "p0", 0, 0)),
+            ("p0", derive_evaluation_action_seed(71_501, 7, "p0", 0, 1)),
+            ("p0", derive_evaluation_action_seed(71_501, 7, "p0", 0, 2)),
+            ("p1", derive_evaluation_action_seed(71_501, 7, "p1", 0, 0)),
+            ("p0", derive_evaluation_action_seed(71_501, 7, "p0", 1, 0)),
         ]
         self.assertEqual([(seat, seed) for _leg, seat, _model, seed in first_events], expected_stream)
-        self.assertEqual([model for _leg, _seat, model, _seed in first_events], [candidate, baseline, candidate])
-        self.assertEqual([model for _leg, _seat, model, _seed in second_events], [baseline, candidate, baseline])
-        self.assertEqual(first["candidate_decisions"], second["baseline_decisions"])
-        self.assertEqual(first["baseline_decisions"], second["candidate_decisions"])
+        self.assertEqual(
+            [model for _leg, _seat, model, _seed in first_events],
+            [candidate, candidate, candidate, baseline, candidate],
+        )
+        self.assertEqual(
+            [model for _leg, _seat, model, _seed in second_events],
+            [baseline, baseline, baseline, candidate, baseline],
+        )
+        for suffix in ("policy_steps", "physical_decisions"):
+            self.assertEqual(first[f"candidate_{suffix}"], second[f"baseline_{suffix}"])
+            self.assertEqual(first[f"baseline_{suffix}"], second[f"candidate_{suffix}"])
 
 
 class SampledV3FreezeTest(unittest.TestCase):
@@ -557,23 +597,27 @@ class SampledEndToEndTest(unittest.TestCase):
             self.assertEqual(manifest["schema"], RUN_SCHEMA)
             self.assertEqual(manifest["algorithm"], ALGORITHM_CONTRACT)
             self.assertEqual(manifest["artifact_schemas"], {"game": GAME_SCHEMA, "pair": PAIR_SCHEMA, "run": RUN_SCHEMA})
-            self.assertEqual(V3_ALGORITHM_CONTRACT, ALGORITHM_CONTRACT)
+            self.assertNotEqual(V3_ALGORITHM_CONTRACT, ALGORITHM_CONTRACT)
+            self.assertNotEqual(V4_ALGORITHM_CONTRACT, ALGORITHM_CONTRACT)
             self.assertEqual(V3_ACTION_SELECTION_CONTRACT, V3_ACTION_SELECTION_GOLDEN)
+            self.assertEqual(V4_ACTION_SELECTION_CONTRACT, V3_ACTION_SELECTION_GOLDEN)
             self.assertEqual(manifest["action_seed_derivation"], ACTION_SEED_DERIVATION_CONTRACT)
             self.assertEqual(manifest["action_selection"], ACTION_SELECTION_CONTRACT)
             self.assertEqual(manifest["seat_schedule"], SEAT_SCHEDULE_CONTRACT)
             games = _jsonl(root / "sampled-a" / "games.jsonl")
             pairs = _jsonl(root / "sampled-a" / "pairs.jsonl")
-            self.assertTrue(all(len(row) == 19 and row["schema"] == GAME_SCHEMA for row in games))
+            self.assertTrue(all(len(row) == 22 and row["schema"] == GAME_SCHEMA for row in games))
             self.assertTrue(all(len(row) == 10 and row["schema"] == PAIR_SCHEMA for row in pairs))
             self.assertTrue(all(tuple(row["deck_ids"]) == DECK_IDS for row in games + pairs))
             self.assertTrue(all(tuple(row["deck_hashes"]) == DECK_HASHES for row in games + pairs))
             for pair_index, pair in enumerate(pairs):
                 first, second = games[2 * pair_index : 2 * pair_index + 2]
                 self.assertEqual(pair["total_half_points"], 2)
-                self.assertEqual(first["decision_count"], second["decision_count"])
-                self.assertEqual(first["candidate_decisions"], second["baseline_decisions"])
-                self.assertEqual(first["baseline_decisions"], second["candidate_decisions"])
+                self.assertEqual(first["policy_step_count"], second["policy_step_count"])
+                self.assertEqual(first["physical_decision_count"], second["physical_decision_count"])
+                for suffix in ("policy_steps", "physical_decisions"):
+                    self.assertEqual(first[f"candidate_{suffix}"], second[f"baseline_{suffix}"])
+                    self.assertEqual(first[f"baseline_{suffix}"], second[f"candidate_{suffix}"])
                 for key in ("terminal_outcome", "terminal_classification", "terminal_code", "terminal_reward", "winner"):
                     self.assertEqual(first[key], second[key])
             with self.assertRaises(ValueError):
@@ -592,7 +636,8 @@ class SampledEndToEndTest(unittest.TestCase):
                 pairs=1,
                 base_seed=4,
                 bootstrap_replicates=1_000,
-                max_decisions=8,
+                max_physical_decisions=8,
+                max_policy_steps=16,
                 timeout_ms=5_000,
             )
             before = _tree_bytes(v1_root)
@@ -634,8 +679,10 @@ class SampledEndToEndTest(unittest.TestCase):
             "3",
             "--bootstrap-replicates",
             "1000",
-            "--max-decisions",
+            "--max-physical-decisions",
             "8",
+            "--max-policy-steps",
+            "16",
             "--timeout-ms",
             "5000",
             "--deck-ids",
@@ -856,6 +903,7 @@ class SampledVerifierCorruptionTest(unittest.TestCase):
                 ("legacy-v1-run-schema", lambda value: value.__setitem__("schema", "kernel_rl_paired_evaluation/v1")),
                 ("legacy-v2-run-schema", lambda value: value.__setitem__("schema", V2_RUN_SCHEMA)),
                 ("legacy-v3-run-schema", lambda value: value.__setitem__("schema", V3_RUN_SCHEMA)),
+                ("immediate-old-v4-run-schema", lambda value: value.__setitem__("schema", V4_RUN_SCHEMA)),
                 (
                     "legacy-v2-artifact-schemas",
                     lambda value: value.__setitem__(
@@ -870,7 +918,22 @@ class SampledVerifierCorruptionTest(unittest.TestCase):
                         {"game": V3_GAME_SCHEMA, "pair": V3_PAIR_SCHEMA, "run": V3_RUN_SCHEMA},
                     ),
                 ),
+                (
+                    "immediate-old-v4-artifact-schemas",
+                    lambda value: value.__setitem__(
+                        "artifact_schemas",
+                        {"game": V4_GAME_SCHEMA, "pair": V4_PAIR_SCHEMA, "run": V4_RUN_SCHEMA},
+                    ),
+                ),
                 ("legacy-v2-algorithm", lambda value: value.__setitem__("algorithm", V2_ALGORITHM_CONTRACT)),
+                ("immediate-old-v4-algorithm", lambda value: value.__setitem__("algorithm", V4_ALGORITHM_CONTRACT)),
+                (
+                    "immediate-old-v4-action-seed",
+                    lambda value: value.__setitem__(
+                        "action_seed_derivation",
+                        V4_ACTION_SEED_DERIVATION_CONTRACT,
+                    ),
+                ),
                 (
                     "legacy-v2-action-selection",
                     lambda value: value.__setitem__("action_selection", V2_ACTION_SELECTION_CONTRACT),
@@ -937,8 +1000,10 @@ class SampledVerifierCorruptionTest(unittest.TestCase):
                 ("winner", lambda row: row.__setitem__("winner", "p1")),
                 ("result", lambda row: row.__setitem__("candidate_result", "loss")),
                 ("points", lambda row: row.__setitem__("candidate_half_points", 0)),
-                ("decision-count", lambda row: row.__setitem__("decision_count", 0)),
-                ("decision-routing", lambda row: row.__setitem__("candidate_decisions", 0)),
+                ("policy-step-count", lambda row: row.__setitem__("policy_step_count", 0)),
+                ("physical-decision-count", lambda row: row.__setitem__("physical_decision_count", 0)),
+                ("policy-routing", lambda row: row.__setitem__("candidate_policy_steps", 0)),
+                ("physical-routing", lambda row: row.__setitem__("candidate_physical_decisions", 0)),
             )
             for name, mutate in game_mutations:
                 target = clone(f"game-{name}")
@@ -991,12 +1056,12 @@ class SampledVerifierCorruptionTest(unittest.TestCase):
             shutil.copytree(pristine, target)
             manifest = read_json_file(target / "run.json")
             games = _jsonl(target / "games.jsonl")
-            games[1]["candidate_decisions"] = 1
-            games[1]["baseline_decisions"] = 0
+            games[1]["candidate_physical_decisions"] = 1
+            games[1]["baseline_physical_decisions"] = 0
             _write_jsonl(target / "games.jsonl", games)
             _refresh_file_metadata(target, manifest, "games.jsonl")
             (target / "run.json").write_bytes(canonical_json_bytes(manifest))
-            with self.assertRaisesRegex(ValueError, "physical decision counts"):
+            with self.assertRaisesRegex(ValueError, "policy steps|physical decision counts"):
                 validate_sampled_evaluation(target)
 
             target = root / "forged-terminal"
@@ -1233,7 +1298,8 @@ class SampledRealEnvironmentTest(unittest.TestCase):
                 batch_episodes=2,
                 learning_rate=0.001,
                 value_coef=0.5,
-                max_decisions=5_000,
+                max_physical_decisions=5_000,
+                max_policy_steps=20_000,
             )
             update_zero = TrainingStore(store).validate_latest().head.head
             before_aa = _tree_bytes(store)
@@ -1243,7 +1309,8 @@ class SampledRealEnvironmentTest(unittest.TestCase):
                 update_zero,
                 root / "aa",
                 pairs=1,
-                max_decisions=5_000,
+                max_physical_decisions=5_000,
+                max_policy_steps=20_000,
                 timeout_ms=60_000,
             )
             self.assertEqual((aa.total_half_points, aa.estimate), (2, 0.5))
@@ -1260,7 +1327,8 @@ class SampledRealEnvironmentTest(unittest.TestCase):
                 update_one,
                 root / "ab",
                 pairs=1,
-                max_decisions=5_000,
+                max_physical_decisions=5_000,
+                max_policy_steps=20_000,
                 timeout_ms=60_000,
             )
             self.assertEqual(ab.candidate_head, update_one)
