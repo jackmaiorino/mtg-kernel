@@ -34,6 +34,10 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+#[path = "bench_kernel/three_lane_ceiling.rs"]
+mod three_lane_ceiling;
+use three_lane_ceiling::{run_three_lane_ceiling_json_v1, ThreeLaneConfigV1};
+
 // ------------------------------------------------------------- tuning knobs
 
 const SNAPSHOT_WARMUP_ITERS: u64 = 1_000;
@@ -55,6 +59,19 @@ const BLOCK_CHANCE: (u64, u64) = (35, 100);
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--three-lane-ceiling-json-v1") {
+        match ThreeLaneConfigV1::parse(&args[1..]) {
+            Ok(config) => run_three_lane_ceiling_json_v1(config),
+            Err(message) => {
+                eprintln!("{message}");
+                eprintln!(
+                    "usage: bench_kernel --three-lane-ceiling-json-v1 --git-commit HEX40 [--deck Burn|Rally] [--actors 1,4,8,16] [--warmup-ms N] [--measure-ms N] [--seed N]"
+                );
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if args.first().map(String::as_str) == Some("--ceiling-json-v1") {
         match CeilingConfigV1::parse(&args[1..]) {
             Ok(config) => run_ceiling_json_v1(config),
@@ -69,7 +86,7 @@ fn main() {
         return;
     }
     if !args.is_empty() {
-        eprintln!("usage: bench_kernel [--ceiling-json-v1 ...]");
+        eprintln!("usage: bench_kernel [--ceiling-json-v1 ... | --three-lane-ceiling-json-v1 ...]");
         std::process::exit(2);
     }
     println!("=== mtg-kernel PERFORMANCE-ONLY benchmark suite (Sol #93 scope) ===");
