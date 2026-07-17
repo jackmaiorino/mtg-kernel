@@ -46,8 +46,9 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::mana::{self, Cost};
 use crate::state::{
     stack_target_contract_is_structurally_valid, AbilityKindV4, CastMethodV4, GameState,
-    ObjectStateV4, PaidCostRefV4, StackItem, StackItemKind, StackStateV4, StackTargetContractV4,
-    Step, Target, Zone,
+    MadnessOfferSourceContractV4, ObjectStateV4, PaidCostRefV4, SpellCastOriginV4,
+    SpellCastRouteV4, SpellCopyOriginV4, StackItem, StackItemKind, StackSourceContractV4,
+    StackStateV4, StackTargetContractV4, Step, Target, Zone,
 };
 use crate::trigger::{self, PendingTrigger};
 use serde::{Deserialize, Serialize};
@@ -532,6 +533,10 @@ pub enum CostKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PendingCast {
     pub spell: ObjectId,
+    /// Exact physical source incarnation and stack provenance captured after
+    /// 601.2a moved the announced card. This must exactly equal the untouched
+    /// top placeholder's own source contract throughout staging.
+    pub source_contract: StackSourceContractV4,
     pub controller: PlayerId,
     pub target_spec: TargetSpec,
     pub targets_chosen: Vec<Target>,
@@ -555,16 +560,6 @@ pub struct PendingCast {
     /// discarded to pay it (Grab the Prize), read by
     /// `EffectCond::DiscardedNonLandForCost` via `ExecCtx::discarded`.
     pub additional_cost_discarded: Option<Vec<ObjectId>>,
-    /// `Some(cost)` overrides the normal/alt-cost/flashback payment branch
-    /// in `finalize_cast` entirely, paying exactly `cost` instead: `Cost::
-    /// zero()` for casting a Plotted card for free (`begin_cast`, `zone ==
-    /// Exile`), or a card's `madness_cost` for a Madness cast
-    /// (`apply_choose_madness_cast`). `None` for every ordinary cast.
-    /// Serialized so the canonical diagnostic full-state hash includes it.
-    /// Deserialization still defaults this transient field to `None` because
-    /// `mana::Cost` contains a registry-owned `&'static [Pip]`.
-    #[serde(skip_deserializing)]
-    pub cost_override: Option<Cost>,
     /// `None` until resolved, only meaningful for a modal card
     /// (`CardDef::mode2.is_some()`) -- pre-seeded to `Some(0)` at
     /// `begin_cast` for every non-modal card, so the "which mode" decision
@@ -627,7 +622,10 @@ pub enum DiscardResume {
     None,
     /// Write the discarded cards back into `EngineState::pending_cast`'s
     /// `additional_cost_discarded` and let the cast staging continue.
-    FinishCast,
+    FinishCast {
+        source_contract: StackSourceContractV4,
+        controller: PlayerId,
+    },
     /// Same, but for `EngineState::pending_activation`'s interactive
     /// discard cost. The exact activation identity is duplicated here so a
     /// restored cross-slot mismatch fails before any selected card moves.
@@ -1145,12 +1143,14 @@ fn target_contract_matches_live(
             owner,
             zone,
             zone_change_count,
+            spell_copy_origin,
             ..
         } => state.objects.try_get(object).is_some_and(|live| {
             live.card_def == card_def
                 && live.owner == owner
                 && live.zone == zone
                 && live.zone_change_count == zone_change_count
+                && live.spell_copy_origin == spell_copy_origin
         }),
     }
 }
@@ -1178,15 +1178,309 @@ fn target_contracts_are_structurally_valid(
                         controller,
                         zone,
                         zone_change_count,
+                        spell_copy_origin,
                     } => state.objects.try_get(object).is_some_and(|live| {
                         live.card_def == card_def
                             && live.owner == owner
                             && live.controller == controller
                             && live.zone == zone
                             && live.zone_change_count == zone_change_count
+                            && live.spell_copy_origin == spell_copy_origin
                     }),
                 }
             })
+}
+
+/// Validates the immutable source fields of a spell stack item. This helper
+/// deliberately does not require current stack-vector membership: departure
+/// planning also runs after a resolver has popped the item but before its
+/// source leaves `Zone::Stack`. [`validate_spell_stack_source`] adds the live
+/// unique-membership requirement at every external stack/RL boundary.
+fn validate_spell_copy_origin_chain(
+    state: &GameState,
+    child: ObjectId,
+    child_card_def: u16,
+    origin: SpellCopyOriginV4,
+) -> Result<(), String> {
+    if origin.parent == child || origin.parent.0 >= child.0 {
+        return Err("spell copy origin does not name an earlier distinct arena object".to_string());
+    }
+    let parent = state
+        .objects
+        .try_get(origin.parent)
+        .ok_or("spell copy parent object no longer exists")?;
+    if child_card_def != origin.parent_card_def
+        || parent.card_def != origin.parent_card_def
+        || parent.owner != origin.parent_owner
+        || origin.parent_was_copy != parent.spell_copy_origin.is_some()
+        || if origin.parent_was_copy {
+            parent.zone_change_count != origin.parent_stack_zone_change_count
+                || parent.zone != Zone::Stack
+                || parent.controller != origin.parent_controller
+        } else {
+            parent.zone_change_count < origin.parent_stack_zone_change_count
+                || (parent.zone_change_count == origin.parent_stack_zone_change_count
+                    && (parent.zone != Zone::Stack
+                        || parent.controller != origin.parent_controller))
+        }
+    {
+        return Err("spell copy origin no longer identifies its exact parent ancestry".to_string());
+    }
+    if let Some(parent_origin) = parent.spell_copy_origin {
+        validate_spell_copy_origin_chain(state, origin.parent, parent.card_def, parent_origin)?;
+    }
+    Ok(())
+}
+
+/// Binds a physical spell's mutable stack metadata to independently frozen
+/// evidence on the source object's current Stack incarnation. The route is
+/// captured before 601.2a moves the card, while `finalized_method` is only
+/// stamped after the selected definition-owned cost has actually committed.
+fn validate_physical_spell_cast_origin(
+    state: &GameState,
+    item: &StackItem,
+    contract: StackSourceContractV4,
+    cast_method: CastMethodV4,
+) -> Result<(), String> {
+    let source = state.objects.get(item.source);
+    let origin = source
+        .v4
+        .spell_cast_origin
+        .ok_or("physical spell lost its independently frozen cast origin")?;
+    if contract.spell_cast_origin != Some(origin)
+        || origin
+            .origin_zone_change_count
+            .checked_add(1)
+            .is_none_or(|stack_generation| stack_generation != source.zone_change_count)
+    {
+        return Err(
+            "physical spell cast origin no longer identifies its stack incarnation".to_string(),
+        );
+    }
+    let is_pending_placeholder = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .is_some_and(|pending| pending.spell == item.source);
+    if if is_pending_placeholder {
+        origin.finalized_method.is_some()
+    } else {
+        origin.finalized_method != Some(cast_method)
+    } {
+        return Err("spell cast method disagrees with its paid cast-origin evidence".to_string());
+    }
+
+    let def = card_def::CARD_DEFS
+        .get(source.card_def as usize)
+        .ok_or("spell cast-origin definition is missing")?;
+    let route_supports_method = match origin.route {
+        SpellCastRouteV4::Hand => {
+            origin.origin_zone == Zone::Hand
+                && source.owner == item.controller
+                && matches!(
+                    cast_method,
+                    CastMethodV4::Normal | CastMethodV4::Alternative
+                )
+        }
+        SpellCastRouteV4::GraveyardFlashback => {
+            origin.origin_zone == Zone::Graveyard
+                && source.owner == item.controller
+                && cast_method == CastMethodV4::Flashback
+                && def.flashback.is_some()
+        }
+        SpellCastRouteV4::ExilePermission {
+            holder,
+            permission_zone_change_count,
+        } => {
+            origin.origin_zone == Zone::Exile
+                && holder == item.controller
+                && permission_zone_change_count == origin.origin_zone_change_count
+                && matches!(
+                    cast_method,
+                    CastMethodV4::Normal | CastMethodV4::Alternative
+                )
+                && state
+                    .engine
+                    .exile_play_permissions
+                    .iter()
+                    .any(|permission| {
+                        permission.object == item.source
+                            && permission.holder == holder
+                            && permission.zone_change_generation == permission_zone_change_count
+                            && permission.play_or_cast == PlayOrCast::Cast
+                    })
+        }
+        SpellCastRouteV4::Plotted { plotted_turn } => {
+            origin.origin_zone == Zone::Exile
+                && source.owner == item.controller
+                && cast_method == CastMethodV4::Plotted
+                && def.plot_cost.is_some()
+                && source.plotted_turn == Some(plotted_turn)
+                && plotted_turn < state.turn
+        }
+        SpellCastRouteV4::Madness => {
+            origin.origin_zone == Zone::Exile
+                && source.owner == item.controller
+                && cast_method == CastMethodV4::Madness
+                && def.madness_cost.is_some()
+        }
+    };
+    if !route_supports_method {
+        return Err("spell cast method is incompatible with its exact pre-stack route".to_string());
+    }
+    Ok(())
+}
+
+fn validate_spell_source_contract_fields(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<(), String> {
+    if item.kind != StackItemKind::Spell {
+        if item.v4.source_contract.is_some()
+            || item.v4.cast_method.is_some()
+            || item.is_copy
+            || item.is_flashback
+        {
+            return Err("nonspell stack item carries spell source provenance".to_string());
+        }
+        let source = state
+            .objects
+            .try_get(item.source)
+            .ok_or("nonspell stack source object no longer exists")?;
+        // No currently supported ability is sourced by a live object that
+        // remains in Zone::Stack. Failing closed here prevents a physical
+        // spell from being retyped into a definition-shaped activation or
+        // trigger and resolving without its spell departure. A future
+        // spell-sourced trigger must introduce and validate explicit producer
+        // provenance rather than weakening this boundary.
+        if source.zone == Zone::Stack
+            || source.spell_copy_origin.is_some()
+            || source.v4.spell_cast_origin.is_some()
+        {
+            return Err("nonspell stack item is sourced by a live spell incarnation".to_string());
+        }
+        return Ok(());
+    }
+    if item.v4.madness_source_contract.is_some() {
+        return Err("spell stack item carries Madness-offer source provenance".to_string());
+    }
+    let contract = item
+        .v4
+        .source_contract
+        .ok_or("spell stack item lost its source contract")?;
+    let source = state
+        .objects
+        .try_get(item.source)
+        .ok_or("spell stack source object no longer exists")?;
+    if contract.source != item.source
+        || contract.card_def != source.card_def
+        || contract.owner != source.owner
+        || contract.controller != source.controller
+        || contract.controller != item.controller
+        || contract.zone != Zone::Stack
+        || contract.zone != source.zone
+        || contract.zone_change_count != source.zone_change_count
+        || contract.spell_copy_origin != source.spell_copy_origin
+        || contract.spell_cast_origin != source.v4.spell_cast_origin
+        || contract.cast_method != item.v4.cast_method.unwrap_or_default()
+    {
+        return Err(
+            "spell stack source contract no longer matches its exact incarnation".to_string(),
+        );
+    }
+    let is_virtual_copy = source.spell_copy_origin.is_some();
+    if item.is_copy != is_virtual_copy {
+        return Err("spell copy flag disagrees with immutable source origin".to_string());
+    }
+    let cast_method = item
+        .v4
+        .cast_method
+        .ok_or("spell stack item lost its cast method")?;
+    let def = card_def::CARD_DEFS
+        .get(source.card_def as usize)
+        .ok_or("spell stack source definition is missing")?;
+    if !def.is_executable() || !def.is_castable() {
+        return Err("spell stack source is not an executable spell".to_string());
+    }
+    match cast_method {
+        CastMethodV4::Normal => {}
+        CastMethodV4::Alternative if def.alt_cost.is_some() => {}
+        CastMethodV4::Flashback if def.flashback.is_some() => {}
+        CastMethodV4::Madness if def.madness_cost.is_some() => {}
+        CastMethodV4::Plotted
+            if def.plot_cost.is_some()
+                && source
+                    .plotted_turn
+                    .is_some_and(|plotted_turn| plotted_turn < state.turn) => {}
+        CastMethodV4::Alternative
+        | CastMethodV4::Flashback
+        | CastMethodV4::Madness
+        | CastMethodV4::Plotted => {
+            return Err("spell cast method is unsupported by its source definition".to_string())
+        }
+        CastMethodV4::Escape | CastMethodV4::Bestow | CastMethodV4::Omen => {
+            return Err("spell stack item uses an unsupported cast method".to_string())
+        }
+    }
+    if is_virtual_copy {
+        if item.is_flashback
+            || cast_method != CastMethodV4::Normal
+            || source.v4.spell_cast_origin.is_some()
+        {
+            return Err(
+                "a supported virtual spell copy must carry normal, non-flashback provenance"
+                    .to_string(),
+            );
+        }
+        let origin = source
+            .spell_copy_origin
+            .expect("checked virtual-copy origin above");
+        validate_spell_copy_origin_chain(state, item.source, source.card_def, origin)?;
+    } else {
+        if item.is_flashback != (cast_method == CastMethodV4::Flashback) {
+            return Err("physical spell flashback flag disagrees with its cast method".to_string());
+        }
+        validate_physical_spell_cast_origin(state, item, contract, cast_method)?;
+    }
+    Ok(())
+}
+
+/// Validates a spell source at a live stack/RL boundary, including exact and
+/// unique stack membership. Passing a detached clone, duplicate source, or a
+/// source whose redundant flags were altered is malformed state.
+pub(crate) fn validate_spell_stack_source(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<(), String> {
+    validate_spell_source_contract_fields(state, item)?;
+    if item.kind != StackItemKind::Spell {
+        return Ok(());
+    }
+    let appears_outside_stack = [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
+        let zones = &state.players[player.index()];
+        zones.library.contains(&item.source)
+            || zones.hand.contains(&item.source)
+            || zones.battlefield.contains(&item.source)
+            || zones.graveyard.contains(&item.source)
+    }) || state.exile.contains(&item.source)
+        || state.command.contains(&item.source);
+    if appears_outside_stack {
+        return Err("spell source is also indexed in an ordinary zone".to_string());
+    }
+    let mut matches = state
+        .stack
+        .iter()
+        .filter(|candidate| candidate.source == item.source);
+    let live = matches
+        .next()
+        .ok_or("spell source has no live stack membership")?;
+    if matches.next().is_some() {
+        return Err("spell source has duplicate stack membership".to_string());
+    }
+    if live != item {
+        return Err("spell source contract belongs to a different stack item".to_string());
+    }
+    Ok(())
 }
 
 fn battlefield_objects(state: &GameState) -> impl Iterator<Item = ObjectId> + '_ {
@@ -1853,10 +2147,7 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         }
     }
     for &id in &state.exile {
-        if state.objects.get(id).owner != player {
-            continue;
-        }
-        if is_plotted_castable_now(player, id, state) {
+        if state.objects.get(id).owner == player && is_plotted_castable_now(player, id, state) {
             out.push(id);
             continue;
         }
@@ -1924,11 +2215,11 @@ fn is_plotted_castable_now(player: PlayerId, id: ObjectId, state: &GameState) ->
     let Some(plotted_turn) = obj.plotted_turn else {
         return false;
     };
-    if plotted_turn == state.turn {
-        return false;
-    }
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
-    def.is_castable()
+    obj.owner == player
+        && def.plot_cost.is_some()
+        && plotted_turn < state.turn
+        && def.is_castable()
         && !viable_spell_modes(def, state).is_empty()
         && sorcery_speed_timing_ok(player, state)
 }
@@ -2332,11 +2623,21 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
                 // Fireblast in response to its own still-pending Blood
                 // Token draw, which this model's silent immediate-resolve
                 // never gave a chance to happen).
-                if top.madness_offer {
-                    return Decision::ChooseMadnessCast {
-                        player: top.controller,
-                        card: top.source,
-                    };
+                if top.madness_offer || top.kind == StackItemKind::MadnessOffer {
+                    let source = top.source;
+                    match validate_madness_decision_preflight(state) {
+                        Ok((card, player)) => {
+                            return Decision::ChooseMadnessCast { player, card };
+                        }
+                        Err(_) => {
+                            state.engine.halted =
+                                Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+                            return Decision::Halted {
+                                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                                source,
+                            };
+                        }
+                    }
                 }
                 if resolve_top_of_stack(state) == ResolutionProgress::Complete {
                     collect_and_queue_triggers(state);
@@ -2376,58 +2677,144 @@ fn collect_and_queue_triggers(state: &mut GameState) {
     state.engine.pending_triggers.extend(triggers);
 }
 
+fn remaining_cast_payment_is_payable(
+    state: &GameState,
+    pending: &PendingCast,
+    staged_method: CastMethodV4,
+) -> bool {
+    let cast_method = finalized_cast_method(pending, staged_method);
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let base_payable = match cast_method {
+        CastMethodV4::Normal => {
+            let normal = effective_normal_cast_cost(def, pending.controller, state);
+            if pending.kicked == Some(true) {
+                def.kicker_cost.is_some_and(|kicker| {
+                    mana::can_pay_combined(&[&normal, &kicker], 0, pending.controller, state)
+                        .is_some()
+                })
+            } else {
+                mana::can_pay(&normal, 0, pending.controller, state).is_some()
+            }
+        }
+        CastMethodV4::Alternative => def.alt_cost.is_some_and(|components| {
+            can_pay_components(components, pending.controller, pending.spell, state)
+        }),
+        CastMethodV4::Flashback => def.flashback.as_ref().is_some_and(|flashback| {
+            can_pay_components(flashback.cost, pending.controller, pending.spell, state)
+        }),
+        CastMethodV4::Madness => def
+            .madness_cost
+            .is_some_and(|cost| mana::can_pay(&cost, 0, pending.controller, state).is_some()),
+        CastMethodV4::Plotted => true,
+        CastMethodV4::Escape | CastMethodV4::Bestow | CastMethodV4::Omen => false,
+    };
+    base_payable
+        && def.additional_cost.is_none_or(|components| {
+            can_pay_components(components, pending.controller, pending.spell, state)
+        })
+}
+
+fn finalized_cast_method(pending: &PendingCast, staged_method: CastMethodV4) -> CastMethodV4 {
+    if staged_method == CastMethodV4::Normal && pending.cast_mode == Some(CastMode::Alternative) {
+        CastMethodV4::Alternative
+    } else {
+        staged_method
+    }
+}
+
 /// Cross-slot validation for an interactive activation discard. The resume
 /// record duplicates the exact activation identity so a stale or tampered
 /// snapshot cannot redirect a discard to another player/ability or mutate
 /// any card before the activation's complete payment shape is revalidated.
-fn validate_pending_discard_binding(
+pub(crate) fn validate_pending_discard_binding(
     state: &GameState,
     pending_discard: &PendingDiscard,
 ) -> Result<(), (ObjectId, String)> {
-    let DiscardResume::FinishActivation {
-        source,
-        source_zone_change_count,
-        controller,
-        ability_index,
-    } = &pending_discard.resume
-    else {
-        return Ok(());
-    };
-    let (source, source_zone_change_count, controller, ability_index) = (
-        *source,
-        *source_zone_change_count,
-        *controller,
-        *ability_index,
-    );
-
-    let fail = |message: &str| Err((source, message.to_string()));
-    let Some(pending) = state.engine.pending_activation.as_ref() else {
-        return fail("activation discard has no pending activation");
-    };
-    if pending.source != source
-        || pending.source_zone_change_count != source_zone_change_count
-        || pending.controller != controller
-        || pending.ability_index != ability_index
-    {
-        return fail("activation discard binding changed");
+    match &pending_discard.resume {
+        DiscardResume::FinishCast {
+            source_contract,
+            controller,
+        } => {
+            let source = source_contract.source;
+            let fail = |message: &str| Err((source, message.to_string()));
+            let Some(pending) = state.engine.pending_cast.as_ref() else {
+                return fail("cast discard has no pending cast");
+            };
+            if pending.source_contract != *source_contract || pending.controller != *controller {
+                return fail("cast discard binding changed");
+            }
+            validate_pending_cast(state, pending).map_err(|message| (source, message))?;
+            let method = state
+                .stack
+                .last()
+                .and_then(|item| item.v4.cast_method)
+                .ok_or_else(|| {
+                    (
+                        source,
+                        "cast discard lost its placeholder method".to_string(),
+                    )
+                })?;
+            if !remaining_cast_payment_is_payable(state, pending, method) {
+                return fail("cast discard's remaining payment is no longer payable");
+            }
+            let available = state.players[pending.controller.index()]
+                .hand
+                .iter()
+                .filter(|&&object| object != pending.spell)
+                .count();
+            if available < pending_discard.count as usize {
+                return fail("cast discard has fewer eligible cards than its exact cost");
+            }
+            Ok(())
+        }
+        DiscardResume::FinishActivation {
+            source,
+            source_zone_change_count,
+            controller,
+            ability_index,
+        } => {
+            let (source, source_zone_change_count, controller, ability_index) = (
+                *source,
+                *source_zone_change_count,
+                *controller,
+                *ability_index,
+            );
+            let fail = |message: &str| Err((source, message.to_string()));
+            let Some(pending) = state.engine.pending_activation.as_ref() else {
+                return fail("activation discard has no pending activation");
+            };
+            if pending.source != source
+                || pending.source_zone_change_count != source_zone_change_count
+                || pending.controller != controller
+                || pending.ability_index != ability_index
+            {
+                return fail("activation discard binding changed");
+            }
+            validate_pending_activation(state, pending).map_err(|message| (source, message))?;
+            let object = state.objects.get(source);
+            let def = &card_def::CARD_DEFS[object.card_def as usize];
+            let ability = &def.activated_abilities[ability_index as usize];
+            let Some(expected) = discard_count_in(ability.cost) else {
+                return fail(
+                    "activation discard resumed an ability without an interactive discard cost",
+                );
+            };
+            if pending_discard.player != controller || pending_discard.count != u32::from(expected)
+            {
+                return fail("activation discard player or count changed");
+            }
+            if pending.cost_discard_paid.is_some() {
+                return fail("activation discard is already marked resolved");
+            }
+            if pending.targets_chosen.len() != usize::from(target_count(pending.target_spec)) {
+                return fail("activation discard began before targeting completed");
+            }
+            Ok(())
+        }
+        DiscardResume::None
+        | DiscardResume::FinishSpellResolution { .. }
+        | DiscardResume::FinishOptionalCost { .. } => Ok(()),
     }
-    validate_pending_activation(state, pending).map_err(|message| (source, message))?;
-    let object = state.objects.get(source);
-    let def = &card_def::CARD_DEFS[object.card_def as usize];
-    let ability = &def.activated_abilities[ability_index as usize];
-    let Some(expected) = discard_count_in(ability.cost) else {
-        return fail("activation discard resumed an ability without an interactive discard cost");
-    };
-    if pending_discard.player != controller || pending_discard.count != u32::from(expected) {
-        return fail("activation discard player or count changed");
-    }
-    if pending.cost_discard_paid.is_some() {
-        return fail("activation discard is already marked resolved");
-    }
-    if pending.targets_chosen.len() != usize::from(target_count(pending.target_spec)) {
-        return fail("activation discard began before targeting completed");
-    }
-    Ok(())
 }
 
 /// If a discard is pending, either auto-resolves it (no real choice: the
@@ -2443,7 +2830,7 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
         });
     }
     let exclude = match &pd.resume {
-        DiscardResume::FinishCast => state.engine.pending_cast.as_ref().map(|p| p.spell),
+        DiscardResume::FinishCast { .. } => state.engine.pending_cast.as_ref().map(|p| p.spell),
         DiscardResume::FinishActivation { source, .. } => Some(*source),
         _ => None,
     };
@@ -2455,7 +2842,6 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
         .collect();
 
     if choices.len() <= pd.count as usize {
-        state.engine.pending_discard = None;
         apply_discard(state, choices, pd);
         return None;
     }
@@ -2471,6 +2857,50 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         return;
     }
+    let cost_source = match &pending_discard.resume {
+        DiscardResume::FinishCast {
+            source_contract, ..
+        } => Some(source_contract.source),
+        DiscardResume::FinishActivation { source, .. } => Some(*source),
+        _ => None,
+    };
+    if let Some(source) = cost_source {
+        let mut unique = chosen.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        let exclude = match &pending_discard.resume {
+            DiscardResume::FinishCast { .. } => Some(source),
+            DiscardResume::FinishActivation { source, .. } => Some(*source),
+            _ => None,
+        };
+        let hand = &state.players[pending_discard.player.index()].hand;
+        if chosen.len() as u32 != pending_discard.count
+            || unique.len() != chosen.len()
+            || !chosen
+                .iter()
+                .all(|object| hand.contains(object) && Some(*object) != exclude)
+        {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+            return;
+        }
+    }
+    let owned_cast = if matches!(pending_discard.resume, DiscardResume::FinishCast { .. }) {
+        let staged_method = state
+            .stack
+            .last()
+            .and_then(|item| item.v4.cast_method)
+            .expect("validated FinishCast retains its exact top placeholder method");
+        let pending = state
+            .engine
+            .pending_cast
+            .take()
+            .expect("validated FinishCast retains its pending cast");
+        let cast_method = finalized_cast_method(&pending, staged_method);
+        Some((pending, cast_method))
+    } else {
+        None
+    };
+    state.engine.pending_discard = None;
     for &id in &chosen {
         let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
         if def.is_castable() && def.madness_cost.is_some() {
@@ -2505,9 +2935,13 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
     }
     match pending_discard.resume {
         DiscardResume::None => collect_and_queue_triggers(state),
-        DiscardResume::FinishCast => {
-            if let Some(p) = state.engine.pending_cast.as_mut() {
-                p.additional_cost_discarded = Some(chosen);
+        DiscardResume::FinishCast { .. } => {
+            let (pending, cast_method) =
+                owned_cast.expect("validated FinishCast owns its removed pending cast");
+            let source = pending.spell;
+            if finalize_owned_cast(state, pending, cast_method, chosen).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, source));
             }
         }
         DiscardResume::FinishActivation { .. } => {
@@ -2731,12 +3165,16 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
 
     match effect::resume_resumable_resolution(state) {
         Ok(effect::ResumableProgress::Complete(completed)) => {
-            if completed != item {
+            if *completed != item {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return None;
             }
-            finish_resolved_stack_item(state, &completed);
+            if finish_resolved_stack_item(state, completed.as_ref()).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return None;
+            }
             collect_and_queue_triggers(state);
             reset_priority(state);
         }
@@ -2764,6 +3202,16 @@ fn drain_pending_optional_cost_sacrifice_or_decide(state: &mut GameState) -> Opt
     if (pending.chosen.len() as u8) < pending.remaining {
         let candidates = sacrificeable_lands(pending.player, state, &pending.chosen);
         let remaining = pending.remaining - pending.chosen.len() as u8;
+        if candidates.len() < usize::from(remaining) {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return Some(Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source: pending.source,
+            });
+        }
         if candidates.len() <= 1 {
             state
                 .engine
@@ -2818,33 +3266,377 @@ fn drain_pending_optional_cost_sacrifice_or_decide(state: &mut GameState) -> Opt
 /// makes progress `continue`s the outer loop instead of looping here, so
 /// `pending_discard`/triggers/etc. staged along the way always get
 /// checked first).
-fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
-    let pending = state.engine.pending_cast.clone()?;
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+pub(crate) fn validate_pending_cast(
+    state: &GameState,
+    pending: &PendingCast,
+) -> Result<(), String> {
+    let source = state
+        .objects
+        .try_get(pending.spell)
+        .ok_or("pending cast source object is missing")?;
+    let def = card_def::CARD_DEFS
+        .get(source.card_def as usize)
+        .ok_or("pending cast source definition is missing")?;
+    if !def.is_executable() || !def.is_castable() {
+        return Err("pending cast source is not an executable spell".to_string());
+    }
+    if source.spell_copy_origin.is_some() {
+        return Err("a virtual spell copy cannot be staged as a cast".to_string());
+    }
+    if source.zone != Zone::Stack
+        || source.controller != pending.controller
+        || pending.source_contract.spell_copy_origin.is_some()
+    {
+        return Err("pending cast source contract changed".to_string());
+    }
+    let mut stack_matches = state
+        .stack
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.source == pending.spell);
+    let (placeholder_index, placeholder) = stack_matches
+        .next()
+        .ok_or("pending cast source has no stack placeholder")?;
+    if stack_matches.next().is_some() || placeholder_index + 1 != state.stack.len() {
+        return Err("pending cast placeholder is not the unique stack top".to_string());
+    }
+    if placeholder.kind != StackItemKind::Spell
+        || placeholder.source != pending.spell
+        || placeholder.controller != pending.controller
+        || placeholder.is_copy
+        || placeholder.inline_effect.is_some()
+        || !placeholder.targets.is_empty()
+        || !placeholder.discarded.is_empty()
+        || placeholder.madness_offer
+        || placeholder.mode_chosen != 0
+        || placeholder.kicked
+        || placeholder.v4.source_contract != Some(pending.source_contract)
+        || placeholder.v4.face_index != 0
+        || placeholder.v4.x_value != 0
+        || !placeholder.v4.paid_cost_refs.is_empty()
+        || placeholder.v4.target_spec.is_some()
+        || !placeholder.v4.target_contracts.is_empty()
+        || placeholder.v4.activated_ability_index.is_some()
+    {
+        return Err(
+            "pending cast placeholder carries finalized or incompatible metadata".to_string(),
+        );
+    }
+    validate_spell_stack_source(state, placeholder)?;
+    let method = placeholder
+        .v4
+        .cast_method
+        .ok_or("pending cast placeholder lost its cast method")?;
+    if pending.source_contract != StackSourceContractV4::capture(state, pending.spell, method) {
+        return Err("pending cast source contract changed".to_string());
+    }
+    if pending.is_flashback != (method == CastMethodV4::Flashback)
+        || placeholder.is_flashback != pending.is_flashback
+    {
+        return Err("pending cast flashback metadata disagrees with its cast method".to_string());
+    }
 
+    let appears_outside_stack = [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
+        let zones = &state.players[player.index()];
+        zones.library.contains(&pending.spell)
+            || zones.hand.contains(&pending.spell)
+            || zones.battlefield.contains(&pending.spell)
+            || zones.graveyard.contains(&pending.spell)
+    }) || state.exile.contains(&pending.spell)
+        || state.command.contains(&pending.spell);
+    if appears_outside_stack {
+        return Err("pending cast source is still indexed in an ordinary zone".to_string());
+    }
+
+    let has_prior_exile_permission = || {
+        pending
+            .source_contract
+            .zone_change_count
+            .checked_sub(1)
+            .is_some_and(|generation| {
+                state
+                    .engine
+                    .exile_play_permissions
+                    .iter()
+                    .any(|permission| {
+                        permission.object == pending.spell
+                            && permission.holder == pending.controller
+                            && permission.zone_change_generation == generation
+                            && permission.play_or_cast == PlayOrCast::Cast
+                    })
+            })
+    };
+    match method {
+        CastMethodV4::Normal => {
+            if pending.origin_zone != Zone::Hand
+                && !(pending.origin_zone == Zone::Exile && has_prior_exile_permission())
+            {
+                return Err(
+                    "normal cast has an invalid origin zone or exile permission".to_string()
+                );
+            }
+            if pending.origin_zone == Zone::Hand && source.owner != pending.controller {
+                return Err(
+                    "a normal hand cast must be controlled by its physical owner".to_string(),
+                );
+            }
+            if def.alt_cost.is_none() {
+                if pending.cast_mode != Some(CastMode::Normal) {
+                    return Err("fixed normal cast has a noncanonical cast mode".to_string());
+                }
+            } else if !matches!(
+                pending.cast_mode,
+                None | Some(CastMode::Normal) | Some(CastMode::Alternative)
+            ) {
+                return Err("normal cast method disagrees with its staged cast mode".to_string());
+            }
+        }
+        CastMethodV4::Alternative => {
+            return Err(
+                "pending cast stamped its alternative method before finalization".to_string(),
+            );
+        }
+        CastMethodV4::Flashback => {
+            if pending.origin_zone != Zone::Graveyard
+                || source.owner != pending.controller
+                || def.flashback.is_none()
+                || pending.cast_mode != Some(CastMode::Normal)
+            {
+                return Err("flashback cast has a noncanonical origin or definition".to_string());
+            }
+        }
+        CastMethodV4::Plotted => {
+            if pending.origin_zone != Zone::Exile
+                || source.owner != pending.controller
+                || def.plot_cost.is_none()
+                || source
+                    .plotted_turn
+                    .is_none_or(|plotted_turn| plotted_turn >= state.turn)
+                || pending.cast_mode != Some(CastMode::Normal)
+            {
+                return Err("Plotted cast has a noncanonical origin or marker".to_string());
+            }
+        }
+        CastMethodV4::Madness => {
+            if pending.origin_zone != Zone::Exile
+                || source.owner != pending.controller
+                || def.madness_cost.is_none()
+                || pending.cast_mode != Some(CastMode::Normal)
+            {
+                return Err("Madness cast has a noncanonical origin or definition".to_string());
+            }
+        }
+        CastMethodV4::Escape | CastMethodV4::Bestow | CastMethodV4::Omen => {
+            return Err("pending cast uses an unsupported cast method".to_string())
+        }
+    }
+
+    if pending.target_spec != def.target_spec {
+        return Err("pending cast target specification changed".to_string());
+    }
     let mode_shape_valid = matches!(
         (def.mode2.is_some(), pending.mode_chosen),
         (false, Some(0)) | (true, None | Some(0) | Some(1))
     );
-    if pending.target_spec != def.target_spec || !mode_shape_valid {
-        state.engine.halted = Some((
-            UnsupportedMechanic::InvalidEffectContinuation,
-            pending.spell,
-        ));
-        return None;
+    if !mode_shape_valid {
+        return Err("pending cast mode selection is noncanonical".to_string());
+    }
+    if pending.mode_chosen.is_none() && !pending.targets_chosen.is_empty() {
+        return Err("pending cast chose targets before choosing its spell mode".to_string());
+    }
+    let active_spec = match pending.mode_chosen {
+        Some(0) => Some(def.target_spec),
+        Some(1) => Some(
+            def.mode2
+                .as_ref()
+                .ok_or("pending cast selected a nonexistent second mode")?
+                .target_spec,
+        ),
+        None => None,
+        Some(_) => return Err("pending cast selected an unknown spell mode".to_string()),
+    };
+    let required_targets = active_spec.map_or(0, |spec| usize::from(target_count(spec)));
+    if pending.targets_chosen.len() > required_targets
+        || !target_contracts_are_structurally_valid(
+            state,
+            &pending.targets_chosen,
+            &pending.target_contracts,
+        )
+    {
+        return Err("pending cast target prefix or contracts are malformed".to_string());
+    }
+    if let Some(spec) = active_spec {
+        let mut prefix = Vec::new();
+        for &target in &pending.targets_chosen {
+            if !completable_next_targets_for(spec, &prefix, state).contains(&target) {
+                return Err("pending cast carries an illegal target prefix".to_string());
+            }
+            prefix.push(target);
+        }
+    }
+    if def.kicker_cost.is_none() {
+        if pending.kicked != Some(false) {
+            return Err("non-kicker spell carries a noncanonical kicker stage".to_string());
+        }
+    } else if !matches!(pending.kicked, None | Some(false) | Some(true)) {
+        return Err("pending cast kicker stage is malformed".to_string());
     }
 
-    if !target_contracts_are_structurally_valid(
-        state,
-        &pending.targets_chosen,
-        &pending.target_contracts,
+    let sacrifice_needed = sacrifice_lands_needed(pending, def);
+    if pending.sacrifice_chosen.len() > usize::from(sacrifice_needed) {
+        return Err("pending cast chose too many sacrifice-cost lands".to_string());
+    }
+    let mut sacrifice_dedup = pending.sacrifice_chosen.clone();
+    sacrifice_dedup.sort_unstable();
+    sacrifice_dedup.dedup();
+    if sacrifice_dedup.len() != pending.sacrifice_chosen.len()
+        || pending.sacrifice_chosen.iter().any(|&land| {
+            land == pending.spell
+                || !state.players[pending.controller.index()]
+                    .battlefield
+                    .contains(&land)
+                || !card_def::CARD_DEFS[state.objects.get(land).card_def as usize].is_land
+        })
+    {
+        return Err("pending cast sacrifice prefix is not unique controlled lands".to_string());
+    }
+    if !pending.sacrifice_chosen.is_empty()
+        && (pending.cast_mode.is_none()
+            || pending.targets_chosen.len() != required_targets
+            || pending.kicked.is_none())
+    {
+        return Err("pending cast chose sacrifice costs before prior stages completed".to_string());
+    }
+
+    let interactive_discard = def.additional_cost.and_then(discard_count_in);
+    let seeded_mode = if def.mode2.is_none() { Some(0) } else { None };
+    let seeded_cast_mode = if method == CastMethodV4::Normal && def.alt_cost.is_some() {
+        None
+    } else {
+        Some(CastMode::Normal)
+    };
+    let additional_is_at_seed = if def.additional_cost.is_none() {
+        pending.additional_cost_discarded.as_deref() == Some(&[])
+    } else {
+        pending.additional_cost_discarded.is_none()
+    };
+    let later_fields_are_seeded = |require_seeded_cast_mode: bool| {
+        (!require_seeded_cast_mode || pending.cast_mode == seeded_cast_mode)
+            && pending.sacrifice_chosen.is_empty()
+            && additional_is_at_seed
+            && state.engine.pending_discard.is_none()
+    };
+    if pending.kicked.is_none()
+        && (pending.mode_chosen != seeded_mode
+            || !pending.targets_chosen.is_empty()
+            || !later_fields_are_seeded(true))
+    {
+        return Err("pending cast advanced past an unresolved kicker choice".to_string());
+    }
+    if def.mode2.is_some()
+        && pending.mode_chosen.is_none()
+        && (!pending.targets_chosen.is_empty() || !later_fields_are_seeded(true))
+    {
+        return Err("pending cast advanced past an unresolved spell-mode choice".to_string());
+    }
+    if pending.mode_chosen.is_some()
+        && pending.targets_chosen.len() < required_targets
+        && !later_fields_are_seeded(true)
+    {
+        return Err("pending cast advanced past incomplete targeting".to_string());
+    }
+    if method == CastMethodV4::Normal
+        && def.alt_cost.is_some()
+        && pending.cast_mode.is_some()
+        && (pending.kicked.is_none()
+            || pending.mode_chosen.is_none()
+            || pending.targets_chosen.len() != required_targets)
+    {
+        return Err("pending cast chose a cast mode before prior stages completed".to_string());
+    }
+    if pending.cast_mode.is_none()
+        && (!pending.sacrifice_chosen.is_empty()
+            || !additional_is_at_seed
+            || state.engine.pending_discard.is_some())
+    {
+        return Err("pending cast advanced past an unresolved cast-mode choice".to_string());
+    }
+    if pending.sacrifice_chosen.len() < usize::from(sacrifice_needed)
+        && (!additional_is_at_seed || state.engine.pending_discard.is_some())
+    {
+        return Err("pending cast advanced past an incomplete sacrifice cost".to_string());
+    }
+    match (
+        def.additional_cost,
+        interactive_discard,
+        pending.additional_cost_discarded.as_deref(),
     ) {
+        (None, None, Some([])) => {}
+        (Some(_), Some(_), None) => {}
+        (Some(_), None, None | Some([])) => {}
+        (None, _, _) => {
+            return Err(
+                "cast without an additional cost has noncanonical discard state".to_string(),
+            )
+        }
+        (Some(_), Some(_), Some(_)) => {
+            return Err("interactive cast discard cannot self-authenticate payment".to_string())
+        }
+        (Some(_), None, Some(_)) => {
+            return Err("noninteractive additional cost carries discard objects".to_string())
+        }
+    }
+
+    if state.engine.pending_activation.is_some()
+        || state.engine.pending_effect.is_some()
+        || state.engine.pending_optional_cost.is_some()
+        || state.engine.pending_optional_cost_sacrifice.is_some()
+        || state.engine.pending_spell_copy.is_some()
+        || !state.engine.pending_triggers.is_empty()
+        || state.engine.pending_kicked_source.is_some()
+    {
+        return Err("pending cast coexists with another staged engine context".to_string());
+    }
+    if let Some(discard) = state.engine.pending_discard.as_ref() {
+        let DiscardResume::FinishCast {
+            source_contract,
+            controller,
+        } = discard.resume
+        else {
+            return Err("pending cast coexists with a non-cast discard".to_string());
+        };
+        let expected_count = interactive_discard
+            .ok_or("pending cast discard has no definition-owned interactive cost")?;
+        if source_contract != pending.source_contract
+            || controller != pending.controller
+            || discard.player != pending.controller
+            || discard.count != u32::from(expected_count)
+            || pending.targets_chosen.len() != required_targets
+            || pending.cast_mode.is_none()
+            || pending.kicked.is_none()
+            || pending.sacrifice_chosen.len() != usize::from(sacrifice_needed)
+        {
+            return Err("pending cast discard binding or stage changed".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
+    let pending = state.engine.pending_cast.clone()?;
+    if validate_pending_cast(state, &pending).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             pending.spell,
         ));
         return None;
     }
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let staged_method = state
+        .stack
+        .last()
+        .and_then(|item| item.v4.cast_method)
+        .expect("validated pending cast retains its placeholder method");
 
     // Ordinary, Flashback, and Plotted casts are pre-filtered before they
     // reach `begin_cast`, but Madness intentionally bypasses that offer-time
@@ -2861,8 +3653,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         None => !viable_spell_modes(def, state).is_empty(),
     };
     if !targeting_can_complete {
+        let cast_method = finalized_cast_method(&pending, staged_method);
         let pending = state.engine.pending_cast.take().unwrap();
-        abort_cast(state, pending);
+        abort_cast(state, pending, cast_method);
         return None;
     }
 
@@ -2899,8 +3692,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         if viable_modes.is_empty() {
             // Defensive against a state mutation between the general gate
             // above and this mode stage (none exists in today's pipeline).
+            let cast_method = finalized_cast_method(&pending, staged_method);
             let pending = state.engine.pending_cast.take().unwrap();
-            abort_cast(state, pending);
+            abort_cast(state, pending, cast_method);
             return None;
         }
         if viable_modes.len() == 1 {
@@ -2952,6 +3746,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 options: vec![CastMode::Normal, CastMode::Alternative],
             });
         }
+        if !normal_ok && !alt_ok {
+            let cast_method = finalized_cast_method(&pending, staged_method);
+            let pending = state.engine.pending_cast.take().unwrap();
+            abort_cast(state, pending, cast_method);
+            return None;
+        }
         state.engine.pending_cast.as_mut().unwrap().cast_mode = Some(if normal_ok {
             CastMode::Normal
         } else {
@@ -2964,6 +3764,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     if (pending.sacrifice_chosen.len() as u8) < sacrifice_needed {
         let candidates = sacrificeable_lands(pending.controller, state, &pending.sacrifice_chosen);
         let remaining = sacrifice_needed - pending.sacrifice_chosen.len() as u8;
+        if candidates.len() < usize::from(remaining) {
+            let cast_method = finalized_cast_method(&pending, staged_method);
+            let pending = state.engine.pending_cast.take().unwrap();
+            abort_cast(state, pending, cast_method);
+            return None;
+        }
         if candidates.len() <= 1 {
             // No real choice for *this single pick* (0 or 1 legal
             // candidate) -- auto-resolve just this one and let the next
@@ -3015,7 +3821,10 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 state.engine.pending_discard = Some(PendingDiscard {
                     player: pending.controller,
                     count: n as u32,
-                    resume: DiscardResume::FinishCast,
+                    resume: DiscardResume::FinishCast {
+                        source_contract: pending.source_contract,
+                        controller: pending.controller,
+                    },
                 });
                 return None; // let the caller's next loop pass see pending_discard
             }
@@ -3031,7 +3840,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    finalize_cast(state);
+    if finalize_cast(state, Vec::new()).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.spell,
+        ));
+    }
     None
 }
 
@@ -3090,7 +3904,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
 /// targeting, and payment, but snapshots do; this check prevents a stale or
 /// coherently malformed record from paying against a later object
 /// incarnation or a different zone/ability definition.
-fn validate_pending_activation(
+pub(crate) fn validate_pending_activation(
     state: &GameState,
     pending: &PendingActivation,
 ) -> Result<(), String> {
@@ -3173,6 +3987,41 @@ fn validate_pending_activation(
         }
         prefix.push(target);
     }
+    if !target_prefix_can_complete(pending.target_spec, &pending.targets_chosen, state) {
+        return Err("pending activation target prefix cannot complete".to_string());
+    }
+    if state.engine.pending_cast.is_some()
+        || state.engine.pending_effect.is_some()
+        || state.engine.pending_optional_cost.is_some()
+        || state.engine.pending_optional_cost_sacrifice.is_some()
+        || state.engine.pending_spell_copy.is_some()
+        || !state.engine.pending_triggers.is_empty()
+        || state.engine.pending_kicked_source.is_some()
+    {
+        return Err("pending activation coexists with another staged engine context".to_string());
+    }
+    if let Some(discard) = state.engine.pending_discard.as_ref() {
+        let DiscardResume::FinishActivation {
+            source,
+            source_zone_change_count,
+            controller,
+            ability_index,
+        } = discard.resume
+        else {
+            return Err("pending activation coexists with a non-activation discard".to_string());
+        };
+        if source != pending.source
+            || source_zone_change_count != pending.source_zone_change_count
+            || controller != pending.controller
+            || ability_index != pending.ability_index
+            || discard.player != pending.controller
+            || discard_count_in(ability.cost).map(u32::from) != Some(discard.count)
+            || pending.cost_discard_paid.is_some()
+            || pending.targets_chosen.len() != required
+        {
+            return Err("pending activation discard binding or stage changed".to_string());
+        }
+    }
     Ok(())
 }
 
@@ -3207,6 +4056,9 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
 }
 
 fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) {
+    let madness_source_contract = t
+        .is_madness_offer
+        .then(|| MadnessOfferSourceContractV4::capture(state, t.source));
     state.stack.push(StackItem {
         kind: if t.is_madness_offer {
             StackItemKind::MadnessOffer
@@ -3235,7 +4087,10 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) {
         // own resolution context -- see `StackItem::kicked`'s doc for the
         // full chain.
         kicked: t.kicked,
-        v4: StackStateV4::default(),
+        v4: StackStateV4 {
+            madness_source_contract,
+            ..StackStateV4::default()
+        },
     });
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
@@ -3258,6 +4113,88 @@ enum ResolutionProgress {
     Suspended,
 }
 
+/// Validates the one nonspell stack shape that intentionally has no inline
+/// effect program. A Madness offer is bound to the exact exiled incarnation
+/// that produced it; neither its redundant flag nor its kind is authority to
+/// move an arbitrary permanent/card when the choice is answered.
+fn validate_madness_offer_stack_item(state: &GameState, item: &StackItem) -> Result<(), String> {
+    if item.kind != StackItemKind::MadnessOffer
+        || !item.madness_offer
+        || item.inline_effect.is_some()
+        || item.is_copy
+        || item.is_flashback
+        || !item.targets.is_empty()
+        || !item.discarded.is_empty()
+        || item.mode_chosen != 0
+        || item.kicked
+        || item.v4.cast_method.is_some()
+        || item.v4.source_contract.is_some()
+        || item.v4.face_index != 0
+        || item.v4.x_value != 0
+        || !item.v4.paid_cost_refs.is_empty()
+        || item.v4.target_spec.is_some()
+        || !item.v4.target_contracts.is_empty()
+        || item.v4.activated_ability_index.is_some()
+    {
+        return Err("Madness offer carries incompatible producer metadata".to_string());
+    }
+    let contract = item
+        .v4
+        .madness_source_contract
+        .ok_or("Madness offer lost its exact exiled-source contract")?;
+    let source = state
+        .objects
+        .try_get(item.source)
+        .ok_or("Madness offer source object is missing")?;
+    if contract.source != item.source
+        || contract.card_def != source.card_def
+        || contract.owner != source.owner
+        || contract.controller != source.controller
+        || contract.controller != item.controller
+        || contract.owner != item.controller
+        || contract.zone != Zone::Exile
+        || source.zone != Zone::Exile
+        || contract.zone_change_count != source.zone_change_count
+        || source.spell_copy_origin.is_some()
+    {
+        return Err(
+            "Madness offer source contract no longer matches its exact incarnation".to_string(),
+        );
+    }
+    let exile_memberships = state
+        .exile
+        .iter()
+        .filter(|&&candidate| candidate == item.source)
+        .count();
+    let appears_elsewhere = [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
+        let zones = &state.players[player.index()];
+        zones.library.contains(&item.source)
+            || zones.hand.contains(&item.source)
+            || zones.battlefield.contains(&item.source)
+            || zones.graveyard.contains(&item.source)
+    }) || state.command.contains(&item.source);
+    if exile_memberships != 1 || appears_elsewhere {
+        return Err("Madness offer source is not indexed exclusively in exile".to_string());
+    }
+    let def = card_def::CARD_DEFS
+        .get(source.card_def as usize)
+        .ok_or("Madness offer source definition is missing")?;
+    if !def.is_executable() || !def.is_castable() || def.madness_cost.is_none() {
+        return Err("Madness offer source definition has no Madness cast".to_string());
+    }
+    let mut memberships = state
+        .stack
+        .iter()
+        .filter(|candidate| candidate.source == item.source);
+    let live = memberships
+        .next()
+        .ok_or("Madness offer has no live stack membership")?;
+    if memberships.next().is_some() || live != item {
+        return Err("Madness offer does not own unique exact stack membership".to_string());
+    }
+    Ok(())
+}
+
 /// Checks every target of a spell again at resolution time (608.2b). The
 /// target specs are sequential, so dependent specs such as
 /// `PlayerThenTheirCreature` validate each target against the already-valid
@@ -3266,6 +4203,10 @@ pub(crate) fn validated_stack_item_target_spec(
     item: &StackItem,
     state: &GameState,
 ) -> Result<Option<TargetSpec>, String> {
+    validate_spell_stack_source(state, item)?;
+    if item.madness_offer != (item.kind == StackItemKind::MadnessOffer) {
+        return Err("Madness-offer kind and flag disagree".to_string());
+    }
     if state
         .engine
         .pending_cast
@@ -3307,6 +4248,11 @@ pub(crate) fn validated_stack_item_target_spec(
             })
         }
         StackItemKind::ActivatedAbility => {
+            if item.inline_effect.is_none() || item.v4.madness_source_contract.is_some() {
+                return Err(
+                    "activated stack item carries incompatible producer metadata".to_string(),
+                );
+            }
             let ability_index = item
                 .v4
                 .activated_ability_index
@@ -3323,12 +4269,21 @@ pub(crate) fn validated_stack_item_target_spec(
             }
             Some(ability.target_spec)
         }
-        StackItemKind::TriggeredAbility | StackItemKind::MadnessOffer => {
+        StackItemKind::TriggeredAbility => {
             if item.v4.activated_ability_index.is_some() {
                 return Err(
                     "non-activated stack item carries an activated-ability index".to_string(),
                 );
             }
+            if item.inline_effect.is_none() || item.v4.madness_source_contract.is_some() {
+                return Err(
+                    "triggered stack item carries incompatible producer metadata".to_string(),
+                );
+            }
+            None
+        }
+        StackItemKind::MadnessOffer => {
+            validate_madness_offer_stack_item(state, item)?;
             None
         }
     };
@@ -3359,6 +4314,56 @@ pub(crate) fn validated_stack_item_target_spec(
         {
             return Err("stack target contract is structurally malformed".to_string());
         }
+        if let StackTargetContractV4::Object {
+            object,
+            zone: Zone::Stack,
+            zone_change_count,
+            spell_copy_origin,
+            ..
+        } = contract
+        {
+            let live = state.objects.get(object);
+            // A physical card that has left and later returned is an ordinary
+            // stale target under CR 400.7. Do not inspect whatever unrelated
+            // spell/ability its newer incarnation may currently source.
+            // Structural validation above has already rejected a future
+            // generation and requires virtual copies to stay exact-generation.
+            if live.zone_change_count != zone_change_count {
+                continue;
+            }
+            let mut matches = state
+                .stack
+                .iter()
+                .filter(|candidate| candidate.source == object);
+            if let Some(target_item) = matches.next() {
+                if matches.next().is_some() {
+                    return Err("stack target contract names duplicate stack items".to_string());
+                }
+                if target_item.kind != StackItemKind::Spell {
+                    return Err("stack spell target changed into a nonspell item".to_string());
+                }
+                validate_spell_stack_source(state, target_item).map_err(|error| {
+                    format!("targeted spell has invalid source provenance: {error}")
+                })?;
+            } else {
+                // A later incarnation is an ordinary stale target. A ceased
+                // virtual copy deliberately retains its final Stack marker
+                // and generation while losing membership, and is stale too.
+                // Only a same-generation physical spell disappearing from
+                // the stack without a zone transition is malformed.
+                if live.zone_change_count == zone_change_count {
+                    let Some(origin) = spell_copy_origin else {
+                        return Err(
+                            "physical stack target lost same-incarnation membership".to_string()
+                        );
+                    };
+                    if live.spell_copy_origin != Some(origin) {
+                        return Err("ceased stack-copy target origin changed".to_string());
+                    }
+                    validate_spell_copy_origin_chain(state, object, live.card_def, origin)?;
+                }
+            }
+        }
     }
     Ok(Some(spec))
 }
@@ -3384,29 +4389,97 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     Ok(any_legal)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpellDeparture {
+    Move { source: ObjectId, to_zone: Zone },
+    Cease { source: ObjectId },
+}
+
+/// Purely derives how a spell source leaves the stack. Flashback replaces
+/// every physical departure with exile, while a virtual copy never enters a
+/// card zone. All reachable resolution, fizzle, copy-continuation, and
+/// counter/move paths share this one discriminator.
+fn plan_spell_departure(
+    state: &GameState,
+    item: &StackItem,
+    requested_zone: Zone,
+) -> Result<SpellDeparture, String> {
+    if requested_zone == Zone::Stack {
+        return Err("a spell departure cannot request the stack zone".to_string());
+    }
+    validate_spell_source_contract_fields(state, item)?;
+    if item.kind != StackItemKind::Spell {
+        return Err("only a spell stack item has a spell departure".to_string());
+    }
+    Ok(if item.is_copy {
+        SpellDeparture::Cease {
+            source: item.source,
+        }
+    } else {
+        SpellDeparture::Move {
+            source: item.source,
+            to_zone: if item.is_flashback {
+                Zone::Exile
+            } else {
+                requested_zone
+            },
+        }
+    })
+}
+
+fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Result<(), String> {
+    match departure {
+        SpellDeparture::Move { source, to_zone } => {
+            event::propose_and_commit(state, ProposedEvent::zone_change(source, to_zone));
+        }
+        SpellDeparture::Cease { source } => {
+            // Resolution pops its item before applying the final
+            // disposition; countering/copy-continuation paths apply while it
+            // is still indexed. Both represent the same virtual cease.
+            if state.stack.iter().any(|item| item.source == source)
+                && !event::cease_to_exist(state, source)
+            {
+                return Err("the virtual spell copy could not cease to exist".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Applies the last part of a completed spell resolution. Physical cards
-/// move normally; virtual spell copies simply stop being represented by a
-/// live stack item and never enter a card zone.
-fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) {
+/// move normally; virtual spell copies cease without entering a card zone.
+fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result<(), String> {
     if item.inline_effect.is_some() || item.kind != StackItemKind::Spell {
-        return;
+        return Ok(());
     }
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
     if !(def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery)) {
-        return;
+        return Ok(());
     }
-    if item.is_copy {
-        // The stack item was already removed by the caller. The virtual
-        // arena object intentionally remains unreachable with its last
-        // Zone::Stack marker, exactly like a ceased token's stale zone.
-        return;
-    }
-    let to_zone = if item.is_flashback {
-        Zone::Exile
-    } else {
-        Zone::Graveyard
+    let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
+    apply_spell_departure(state, departure)
+}
+
+/// Applies a source-moving `EffectOp` to a live spell stack item after exact
+/// source validation. Returns `Ok(false)` when `object` is not a live spell
+/// source, allowing ordinary object movement to use the event pipeline.
+pub(crate) fn apply_live_stack_spell_departure(
+    state: &mut GameState,
+    object: ObjectId,
+    requested_zone: Zone,
+) -> Result<bool, String> {
+    let Some(item) = state
+        .stack
+        .iter()
+        .find(|candidate| candidate.source == object && candidate.kind == StackItemKind::Spell)
+        .cloned()
+    else {
+        return Ok(false);
     };
-    event::propose_and_commit(state, ProposedEvent::zone_change(item.source, to_zone));
+    validate_spell_stack_source(state, &item)?;
+    let departure = plan_spell_departure(state, &item, requested_zone)?;
+    apply_spell_departure(state, departure)?;
+    Ok(true)
 }
 
 fn execute_resolving_program(
@@ -3421,7 +4494,7 @@ fn execute_resolving_program(
     }
 
     match effect::begin_resumable_resolution(program, ctx, item.clone(), state) {
-        Ok(effect::ResumableProgress::Complete(completed)) if completed == *item => {
+        Ok(effect::ResumableProgress::Complete(completed)) if *completed == *item => {
             ResolutionProgress::Complete
         }
         Ok(effect::ResumableProgress::Suspended) => {
@@ -3476,7 +4549,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
 
     if !targets_legal {
-        finish_resolved_stack_item(state, &item);
+        if finish_resolved_stack_item(state, &item).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
         return ResolutionProgress::Complete;
     }
 
@@ -3521,10 +4598,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     // (702.10e). Creatures/artifacts/enchantments handle entering the
     // battlefield themselves, via their own MoveObject effect.
     if def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery) {
-        let to_zone = if item.is_flashback {
-            Zone::Exile
-        } else {
-            Zone::Graveyard
+        let to_zone = match plan_spell_departure(state, &item, Zone::Graveyard) {
+            Ok(SpellDeparture::Move { to_zone, .. }) => to_zone,
+            Ok(SpellDeparture::Cease { .. }) | Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return ResolutionProgress::Suspended;
+            }
         };
         if let Some(pd) = state.engine.pending_discard.as_mut() {
             // The effect just resolved into `EffectOp::DiscardCards`
@@ -3556,7 +4636,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             // deferred move actually happens once that's all done.
             poc.spell_resume = Some((item.source, to_zone));
         } else {
-            finish_resolved_stack_item(state, &item);
+            if finish_resolved_stack_item(state, &item).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return ResolutionProgress::Suspended;
+            }
         }
     }
     ResolutionProgress::Complete
@@ -4040,10 +5124,141 @@ fn assign_attacker_damage_to_blockers(
 
 // ---------------------------------------------------------------- actions
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingCastActionStage {
+    ChooseKicker,
+    ChooseSpellMode,
+    ChooseTarget,
+    ChooseCastMode,
+    ChooseCostTarget,
+    Discard,
+    AwaitEngineAdvance,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingActivationActionStage {
+    ChooseTarget,
+    Discard,
+    AwaitEngineAdvance,
+}
+
+/// Purely derives the one action family, if any, exposed by a staged cast.
+/// `step` consults this before matching the requested action, so priority,
+/// combat, and unrelated choice actions cannot overwrite a pending cast or
+/// mutate around its 601.2 ordering.
+fn pending_cast_action_stage(
+    state: &GameState,
+    pending: &PendingCast,
+) -> Result<PendingCastActionStage, String> {
+    validate_pending_cast(state, pending)?;
+    if state.engine.pending_discard.is_some() {
+        return Ok(PendingCastActionStage::Discard);
+    }
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    if pending.kicked.is_none() {
+        return Ok(PendingCastActionStage::ChooseKicker);
+    }
+    if pending.mode_chosen.is_none() {
+        return Ok(PendingCastActionStage::ChooseSpellMode);
+    }
+    let active_target_spec = match pending.mode_chosen {
+        Some(0) => def.target_spec,
+        Some(1) => {
+            def.mode2
+                .as_ref()
+                .ok_or("pending cast selected a nonexistent second mode")?
+                .target_spec
+        }
+        Some(_) => return Err("pending cast selected an unknown spell mode".to_string()),
+        None => unreachable!("handled unresolved mode above"),
+    };
+    if pending.targets_chosen.len() < usize::from(target_count(active_target_spec)) {
+        return Ok(PendingCastActionStage::ChooseTarget);
+    }
+    if pending.cast_mode.is_none() {
+        return Ok(PendingCastActionStage::ChooseCastMode);
+    }
+    if pending.sacrifice_chosen.len() < usize::from(sacrifice_lands_needed(pending, def)) {
+        return Ok(PendingCastActionStage::ChooseCostTarget);
+    }
+    Ok(PendingCastActionStage::AwaitEngineAdvance)
+}
+
+fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionStage) -> bool {
+    matches!(
+        (stage, action),
+        (
+            PendingCastActionStage::ChooseKicker,
+            Action::ChooseKicker(_)
+        ) | (
+            PendingCastActionStage::ChooseSpellMode,
+            Action::ChooseSpellMode(_)
+        ) | (
+            PendingCastActionStage::ChooseTarget,
+            Action::ChooseTarget(_)
+        ) | (
+            PendingCastActionStage::ChooseCastMode,
+            Action::ChooseCastMode(_)
+        ) | (
+            PendingCastActionStage::ChooseCostTarget,
+            Action::ChooseCostTarget(_)
+        ) | (PendingCastActionStage::Discard, Action::Discard(_))
+    )
+}
+
+fn pending_activation_action_stage(
+    state: &GameState,
+    pending: &PendingActivation,
+) -> Result<PendingActivationActionStage, String> {
+    validate_pending_activation(state, pending)?;
+    if state.engine.pending_discard.is_some() {
+        return Ok(PendingActivationActionStage::Discard);
+    }
+    if pending.targets_chosen.len() < usize::from(target_count(pending.target_spec)) {
+        return Ok(PendingActivationActionStage::ChooseTarget);
+    }
+    Ok(PendingActivationActionStage::AwaitEngineAdvance)
+}
+
+fn action_matches_pending_activation_stage(
+    action: &Action,
+    stage: PendingActivationActionStage,
+) -> bool {
+    matches!(
+        (stage, action),
+        (
+            PendingActivationActionStage::ChooseTarget,
+            Action::ChooseTarget(_)
+        ) | (PendingActivationActionStage::Discard, Action::Discard(_))
+    )
+}
+
 /// Applies `action` in response to the last `Decision` returned by
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    if let Some(pending) = state.engine.pending_cast.as_ref() {
+        let stage = pending_cast_action_stage(state, pending)?;
+        if !action_matches_pending_cast_stage(&action, stage) {
+            return Err(format!(
+                "action does not match pending cast stage {stage:?}"
+            ));
+        }
+    }
+    if let Some(pending) = state.engine.pending_activation.as_ref() {
+        let stage = pending_activation_action_stage(state, pending)?;
+        if !action_matches_pending_activation_stage(&action, stage) {
+            return Err(format!(
+                "action does not match pending activation stage {stage:?}"
+            ));
+        }
+    }
+    if let Some(pending_discard) = state.engine.pending_discard.as_ref() {
+        validate_pending_discard_binding(state, pending_discard).map_err(|(_, message)| message)?;
+        if !matches!(&action, Action::Discard(_)) {
+            return Err("only the exact Discard action may answer a pending discard".to_string());
+        }
+    }
     match action {
         Action::Pass => {
             let p = state.priority_player;
@@ -4123,43 +5338,80 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             Ok(())
         }
         Action::ChooseTarget(t) => {
-            if state
-                .engine
-                .pending_spell_copy
-                .as_ref()
-                .is_some_and(|pending| pending.stage == SpellCopyStage::Target)
-            {
-                return apply_choose_spell_copy_target(state, t);
-            }
-            let (spec, chosen_so_far) = pending_target_spec_and_chosen(state).ok_or("no spell or ability is currently being targeted")?;
-            if !completable_next_targets_for(spec, &chosen_so_far, state).contains(&t) {
-                return Err(format!("{t:?} is not a legal target"));
-            }
-            let contract = StackTargetContractV4::capture(state, t);
-            if let Some(p) = state.engine.pending_cast.as_mut() {
-                p.targets_chosen.push(t);
-                p.target_contracts.push(contract);
-            } else if let Some(p) = state.engine.pending_activation.as_mut() {
-                p.targets_chosen.push(t);
-                p.target_contracts.push(contract);
-            }
-            Ok(())
+            apply_choose_target(state, t)
         }
         Action::ChooseCostTarget(id) => apply_choose_cost_target(state, id),
         Action::ChooseCastMode(mode) => {
-            let pending = state.engine.pending_cast.as_mut().ok_or("no spell is currently being cast")?;
+            let pending = state
+                .engine
+                .pending_cast
+                .clone()
+                .ok_or("no spell is currently being cast")?;
+            validate_pending_cast(state, &pending)?;
             if pending.cast_mode.is_some() {
                 return Err("this cast's mode has already been chosen".to_string());
             }
-            pending.cast_mode = Some(mode);
+            let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+            let active_target_spec = match pending.mode_chosen {
+                Some(0) => def.target_spec,
+                Some(1) => def
+                    .mode2
+                    .as_ref()
+                    .ok_or("pending cast selected a nonexistent second mode")?
+                    .target_spec,
+                Some(_) => return Err("pending cast selected an unknown spell mode".to_string()),
+                None => {
+                    return Err("cast mode chosen before the spell mode completed".to_string())
+                }
+            };
+            if pending.kicked.is_none()
+                || pending.targets_chosen.len()
+                    != usize::from(target_count(active_target_spec))
+                || pending.target_contracts.len() != pending.targets_chosen.len()
+            {
+                return Err("cast mode chosen before prior cast stages completed".to_string());
+            }
+            let alt = def
+                .alt_cost
+                .ok_or("this spell has no alternative cast mode")?;
+            let normal = effective_normal_cast_cost(def, pending.controller, state);
+            let normal_ok = mana::can_pay(&normal, 0, pending.controller, state).is_some();
+            let alt_ok = can_pay_components(alt, pending.controller, pending.spell, state);
+            if !normal_ok || !alt_ok {
+                return Err("a cast-mode action requires both modes to remain payable".to_string());
+            }
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .expect("validated cast remains pending")
+                .cast_mode = Some(mode);
             Ok(())
         }
         Action::ChooseKicker(kicked) => {
-            let pending = state.engine.pending_cast.as_mut().ok_or("no spell is currently being cast")?;
+            let pending = state
+                .engine
+                .pending_cast
+                .clone()
+                .ok_or("no spell is currently being cast")?;
+            validate_pending_cast(state, &pending)?;
             if pending.kicked.is_some() {
                 return Err("this cast's kicker has already been chosen".to_string());
             }
-            pending.kicked = Some(kicked);
+            let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+            let kicker = def
+                .kicker_cost
+                .ok_or("this spell has no kicker choice")?;
+            let normal = effective_normal_cast_cost(def, pending.controller, state);
+            if mana::can_pay_combined(&[&normal, &kicker], 0, pending.controller, state).is_none() {
+                return Err("the kicker choice is no longer payable".to_string());
+            }
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .expect("validated cast remains pending")
+                .kicked = Some(kicked);
             Ok(())
         }
         Action::ChooseSpellMode(mode) => {
@@ -4169,6 +5421,10 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 .pending_cast
                 .as_ref()
                 .ok_or("no spell is currently being cast")?;
+            validate_pending_cast(state, pending)?;
+            if pending.kicked.is_none() {
+                return Err("spell mode chosen before the kicker stage completed".to_string());
+            }
             if pending.mode_chosen.is_some() {
                 return Err("this cast's mode has already been chosen".to_string());
             }
@@ -4210,32 +5466,105 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     }
 }
 
-/// The active `TargetSpec` for whatever is currently being targeted
-/// (mode-aware for a modal cast) and the targets already picked so far
-/// this same targeting pass -- see `legal_targets_for`'s doc for why the
-/// second pick of a dependent spec (`PlayerThenTheirCreature`) needs both.
-fn pending_target_spec_and_chosen(state: &GameState) -> Option<(TargetSpec, Vec<Target>)> {
-    if let Some(p) = &state.engine.pending_cast {
-        let def = &card_def::CARD_DEFS[state.objects.get(p.spell).card_def as usize];
-        if p.target_spec != def.target_spec {
-            return None;
-        }
-        let spec = match p.mode_chosen {
-            Some(1) => {
-                def.mode2
-                    .as_ref()
-                    .expect("mode_chosen == 1 only when mode2 is Some")
-                    .target_spec
+#[derive(Debug, Clone)]
+enum TargetingProducer {
+    Cast {
+        pending: PendingCast,
+        spec: TargetSpec,
+    },
+    Activation(PendingActivation),
+    SpellCopy(PendingSpellCopy),
+}
+
+fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, String> {
+    let mut producers = Vec::new();
+    if let Some(pending) = state.engine.pending_cast.as_ref() {
+        validate_pending_cast(state, pending)?;
+        if pending.kicked.is_some() {
+            if let Some(mode) = pending.mode_chosen {
+                let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+                let spec = if mode == 1 {
+                    def.mode2
+                        .as_ref()
+                        .ok_or("pending cast selected a nonexistent second mode")?
+                        .target_spec
+                } else {
+                    def.target_spec
+                };
+                if pending.targets_chosen.len() < usize::from(target_count(spec)) {
+                    producers.push(TargetingProducer::Cast {
+                        pending: pending.clone(),
+                        spec,
+                    });
+                }
             }
-            None | Some(0) => def.target_spec,
-            Some(_) => return None,
-        };
-        return Some((spec, p.targets_chosen.clone()));
+        }
     }
-    if let Some(p) = &state.engine.pending_activation {
-        return Some((p.target_spec, p.targets_chosen.clone()));
+    if let Some(pending) = state.engine.pending_activation.as_ref() {
+        validate_pending_activation(state, pending)?;
+        if pending.targets_chosen.len() < usize::from(target_count(pending.target_spec)) {
+            producers.push(TargetingProducer::Activation(pending.clone()));
+        }
     }
-    None
+    if let Some(pending) = state.engine.pending_spell_copy.as_ref() {
+        if pending.stage == SpellCopyStage::Target {
+            validate_pending_spell_copy(state, pending)?;
+            producers.push(TargetingProducer::SpellCopy(pending.clone()));
+        }
+    }
+    match producers.len() {
+        1 => Ok(producers.pop().expect("length checked above")),
+        0 => Err("no targeting context is currently pending".to_string()),
+        _ => Err("multiple targeting contexts are simultaneously pending".to_string()),
+    }
+}
+
+fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), String> {
+    match exact_targeting_producer(state)? {
+        TargetingProducer::Cast { pending, spec } => {
+            if !completable_next_targets_for(spec, &pending.targets_chosen, state).contains(&target)
+            {
+                return Err(format!("{target:?} is not a legal cast target"));
+            }
+            let contract = StackTargetContractV4::capture(state, target);
+            let live = state
+                .engine
+                .pending_cast
+                .as_mut()
+                .ok_or("validated cast targeting context disappeared")?;
+            if live != &pending {
+                return Err("cast targeting context changed before commit".to_string());
+            }
+            live.targets_chosen.push(target);
+            live.target_contracts.push(contract);
+            Ok(())
+        }
+        TargetingProducer::Activation(pending) => {
+            if !completable_next_targets_for(pending.target_spec, &pending.targets_chosen, state)
+                .contains(&target)
+            {
+                return Err(format!("{target:?} is not a legal activation target"));
+            }
+            let contract = StackTargetContractV4::capture(state, target);
+            let live = state
+                .engine
+                .pending_activation
+                .as_mut()
+                .ok_or("validated activation targeting context disappeared")?;
+            if live != &pending {
+                return Err("activation targeting context changed before commit".to_string());
+            }
+            live.targets_chosen.push(target);
+            live.target_contracts.push(contract);
+            Ok(())
+        }
+        TargetingProducer::SpellCopy(pending) => {
+            if state.engine.pending_spell_copy.as_ref() != Some(&pending) {
+                return Err("spell-copy targeting context changed before commit".to_string());
+            }
+            apply_choose_spell_copy_target(state, target)
+        }
+    }
 }
 
 /// Answers one `Decision::ChooseCostTargets` pick -- see that decision's
@@ -4245,13 +5574,41 @@ fn pending_target_spec_and_chosen(state: &GameState) -> Option<(TargetSpec, Vec<
 /// pool has a `SacrificeLands` cost component, unlike `ChooseTarget` which
 /// also answers `PendingActivation`'s targeting.
 fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), String> {
-    if let Some(pending) = state.engine.pending_cast.as_ref() {
+    if let Some(pending) = state.engine.pending_cast.clone() {
+        validate_pending_cast(state, &pending)?;
         let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-        let needed = sacrifice_lands_needed(pending, def);
+        let needed = sacrifice_lands_needed(&pending, def);
         if (pending.sacrifice_chosen.len() as u8) < needed {
-            if !sacrificeable_lands(pending.controller, state, &pending.sacrifice_chosen)
-                .contains(&id)
+            let active_target_spec = match pending.mode_chosen {
+                Some(0) => def.target_spec,
+                Some(1) => {
+                    def.mode2
+                        .as_ref()
+                        .ok_or("pending cast selected a nonexistent second mode")?
+                        .target_spec
+                }
+                Some(_) => return Err("pending cast selected an unknown spell mode".to_string()),
+                None => {
+                    return Err(
+                        "cast sacrifice target chosen before spell mode completed".to_string()
+                    )
+                }
+            };
+            if pending.kicked.is_none()
+                || pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
+                || pending.cast_mode.is_none()
             {
+                return Err(
+                    "cast sacrifice target chosen before prior cast stages completed".to_string(),
+                );
+            }
+            let candidates =
+                sacrificeable_lands(pending.controller, state, &pending.sacrifice_chosen);
+            let remaining = needed - pending.sacrifice_chosen.len() as u8;
+            if candidates.len() < usize::from(remaining) {
+                return Err("cast sacrifice cost can no longer be completed".to_string());
+            }
+            if !candidates.contains(&id) {
                 return Err(format!("{id} is not a legal cost-sacrifice candidate"));
             }
             state
@@ -4266,7 +5623,12 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
     }
     if let Some(pending) = state.engine.pending_optional_cost_sacrifice.as_ref() {
         if (pending.chosen.len() as u8) < pending.remaining {
-            if !sacrificeable_lands(pending.player, state, &pending.chosen).contains(&id) {
+            let candidates = sacrificeable_lands(pending.player, state, &pending.chosen);
+            let remaining = pending.remaining - pending.chosen.len() as u8;
+            if candidates.len() < usize::from(remaining) {
+                return Err("optional sacrifice cost can no longer be completed".to_string());
+            }
+            if !candidates.contains(&id) {
                 return Err(format!("{id} is not a legal cost-sacrifice candidate"));
             }
             state
@@ -4303,7 +5665,7 @@ fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<
         return Err("duplicate card in discard selection".to_string());
     }
     let exclude = match &pd.resume {
-        DiscardResume::FinishCast => state.engine.pending_cast.as_ref().map(|p| p.spell),
+        DiscardResume::FinishCast { .. } => state.engine.pending_cast.as_ref().map(|p| p.spell),
         DiscardResume::FinishActivation { source, .. } => Some(*source),
         _ => None,
     };
@@ -4314,7 +5676,6 @@ fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<
     {
         return Err("illegal discard selection".to_string());
     }
-    state.engine.pending_discard = None;
     apply_discard(state, chosen, pd);
     Ok(())
 }
@@ -4382,6 +5743,7 @@ fn apply_choose_optional_cost(
 /// no mana cost, cast event, or cast trigger is produced.
 fn expected_spell_copy_source_object(
     original: &crate::state::GameObject,
+    parent: &StackItem,
     pending: &PendingSpellCopy,
 ) -> crate::state::GameObject {
     crate::state::GameObject {
@@ -4396,6 +5758,14 @@ fn expected_spell_copy_source_object(
         counters: Default::default(),
         attachments: Vec::new(),
         v4: ObjectStateV4::from_card_def(original.card_def),
+        spell_copy_origin: Some(SpellCopyOriginV4 {
+            parent: parent.source,
+            parent_card_def: original.card_def,
+            parent_owner: original.owner,
+            parent_controller: parent.controller,
+            parent_stack_zone_change_count: original.zone_change_count,
+            parent_was_copy: original.spell_copy_origin.is_some(),
+        }),
         plotted_turn: None,
         zone_change_count: 0,
     }
@@ -4405,6 +5775,7 @@ fn expected_spell_copy(
     parent: &StackItem,
     pending: &PendingSpellCopy,
     copy_source: ObjectId,
+    source_contract: StackSourceContractV4,
 ) -> StackItem {
     let mut copy = parent.clone();
     copy.source = copy_source;
@@ -4413,6 +5784,7 @@ fn expected_spell_copy(
     copy.v4.target_contracts = vec![pending
         .inherited_target_contract
         .expect("validated copy continuation retains the inherited target contract")];
+    copy.v4.source_contract = Some(source_contract);
     copy.is_copy = true;
     copy.is_flashback = false;
     copy.madness_offer = false;
@@ -4423,10 +5795,11 @@ fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> Objec
     let (_, parent) = pending_spell_copy_parent(state, pending)
         .expect("validated immediately before paying; no action can interleave");
     let original = state.objects.get(parent.source);
-    let copy_source = state
-        .objects
-        .push(expected_spell_copy_source_object(original, pending));
-    let copy = expected_spell_copy(&parent, pending, copy_source);
+    let copy_source = state.objects.push(expected_spell_copy_source_object(
+        original, &parent, pending,
+    ));
+    let source_contract = StackSourceContractV4::capture(state, copy_source, CastMethodV4::Normal);
+    let copy = expected_spell_copy(&parent, pending, copy_source, source_contract);
     state.stack.push(copy);
     copy_source
 }
@@ -4449,6 +5822,7 @@ fn pending_spell_copy_parent(
     if parent.kind != StackItemKind::Spell {
         return Err("only a spell can be copied by this resolution".to_string());
     }
+    validate_spell_stack_source(state, parent)?;
     let source = state
         .objects
         .try_get(parent.source)
@@ -4491,6 +5865,19 @@ pub(crate) fn validate_pending_spell_copy(
     state: &GameState,
     pending: &PendingSpellCopy,
 ) -> Result<StackItem, String> {
+    if state.engine.pending_cast.is_some()
+        || state.engine.pending_activation.is_some()
+        || state.engine.pending_discard.is_some()
+        || state.engine.pending_optional_cost.is_some()
+        || state.engine.pending_optional_cost_sacrifice.is_some()
+        || state.engine.pending_effect.is_some()
+        || !state.engine.pending_triggers.is_empty()
+        || state.engine.pending_kicked_source.is_some()
+    {
+        return Err(
+            "spell-copy continuation coexists with another staged engine context".to_string(),
+        );
+    }
     let (parent_index, parent) = pending_spell_copy_parent(state, pending)?;
     if parent.inline_effect.is_some()
         || !parent.discarded.is_empty()
@@ -4577,9 +5964,17 @@ pub(crate) fn validate_pending_spell_copy(
                 .objects
                 .try_get(copy_source)
                 .ok_or("the spell-copy continuation's copy object no longer exists")?;
-            let expected_copy = expected_spell_copy(&parent, pending, copy_source);
-            let expected_copy_object =
-                expected_spell_copy_source_object(state.objects.get(parent.source), pending);
+            let expected_copy = expected_spell_copy(
+                &parent,
+                pending,
+                copy_source,
+                StackSourceContractV4::capture(state, copy_source, CastMethodV4::Normal),
+            );
+            let expected_copy_object = expected_spell_copy_source_object(
+                state.objects.get(parent.source),
+                &parent,
+                pending,
+            );
             if matches.next().is_some()
                 || copy_index + 1 != state.stack.len()
                 || copy_index != parent_index + 1
@@ -4619,19 +6014,11 @@ fn finish_pending_spell_copy_resolution(
             return Err("the resolving physical spell has no supported departure".to_string());
         }
     }
+    let departure = plan_spell_departure(state, &item, Zone::Graveyard)?;
     state.engine.pending_spell_copy = None;
-    if item.is_copy {
-        if !event::cease_to_exist(state, item.source) {
-            return Err("the resolving spell copy could not be removed from the stack".to_string());
-        }
-    } else {
-        finish_resolved_stack_item(state, &item);
-        // Chain Lightning is an instant/sorcery and the helper above removes
-        // it via the zone-change pipeline. Keep the continuation fail-closed
-        // if this generic shape is ever reused by a nonmoving stack item.
-        if state.stack.iter().any(|entry| entry.source == item.source) {
-            return Err("the resolving physical spell did not leave the stack".to_string());
-        }
+    apply_spell_departure(state, departure)?;
+    if state.stack.iter().any(|entry| entry.source == item.source) {
+        return Err("the resolving spell did not leave the stack".to_string());
     }
     collect_and_queue_triggers(state);
     reset_priority(state);
@@ -4748,22 +6135,46 @@ fn apply_choose_spell_copy_target(state: &mut GameState, target: Target) -> Resu
 /// graveyard, never on the stack/battlefield again, proving the attempt was
 /// offered, attempted, and reverted, not silently declined upfront. If the
 /// madness cost genuinely can't be paid, that surfaces naturally at
-/// `finalize_cast`'s existing `cost_override` affordability check, which
+/// `finalize_cast`'s definition-derived affordability check, which
 /// (see `abort_cast`'s doc) reverts a failed Madness attempt to the
 /// graveyard instead of erroring -- matching the reference's observed
 /// "offer it, attempt it, let it fizzle to the graveyard" behavior rather
 /// than a hard failure this function used to return.
-fn apply_choose_madness_cast(state: &mut GameState, cast_it: bool) -> Result<(), String> {
+fn validate_madness_decision_preflight(state: &GameState) -> Result<(ObjectId, PlayerId), String> {
+    if state.engine.priority_passes != [true, true] {
+        return Err(
+            "Madness decision has not reached its post-priority resolution stage".to_string(),
+        );
+    }
+    if state.engine.pending_cast.is_some()
+        || state.engine.pending_activation.is_some()
+        || state.engine.pending_discard.is_some()
+        || state.engine.pending_optional_cost.is_some()
+        || state.engine.pending_optional_cost_sacrifice.is_some()
+        || state.engine.pending_spell_copy.is_some()
+        || state.engine.pending_effect.is_some()
+        || !state.engine.pending_triggers.is_empty()
+        || (state.step == Step::DeclareAttackers && !state.engine.combat.attackers_declared)
+        || (state.step == Step::DeclareBlockers && !state.engine.combat.blockers_declared)
+    {
+        return Err("Madness decision conflicts with another pending engine stage".to_string());
+    }
     let top = state.stack.last().ok_or("no Madness decision is pending")?;
-    if !top.madness_offer {
+    validated_stack_item_target_spec(top, state)?;
+    if top.kind != StackItemKind::MadnessOffer {
         return Err("no Madness decision is pending".to_string());
     }
+    Ok((top.source, top.controller))
+}
+
+fn apply_choose_madness_cast(state: &mut GameState, cast_it: bool) -> Result<(), String> {
+    let (card, owner) = validate_madness_decision_preflight(state)?;
     let item = state
         .stack
         .pop()
         .expect("just confirmed the top of stack is a madness offer");
-    let card = item.source;
-    let owner = item.controller;
+    debug_assert_eq!(item.source, card);
+    debug_assert_eq!(item.controller, owner);
     if !cast_it {
         event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Graveyard));
         // Same "a stack item just resolved" bookkeeping `resolve_top_of_
@@ -4775,10 +6186,9 @@ fn apply_choose_madness_cast(state: &mut GameState, cast_it: bool) -> Result<(),
         return Ok(());
     }
     let def = &card_def::CARD_DEFS[state.objects.get(card).card_def as usize];
-    let cost = def
-        .madness_cost
+    def.madness_cost
         .expect("only a Madness card's own offer is ever pushed as a madness_offer StackItem");
-    begin_cast_ex(state, owner, card, Some(cost));
+    begin_cast_ex(state, owner, card, Some(CastMethodV4::Madness));
     Ok(())
 }
 
@@ -4929,10 +6339,10 @@ fn begin_cast(state: &mut GameState, player: PlayerId, spell_id: ObjectId) {
     begin_cast_ex(state, player, spell_id, None);
 }
 
-/// `forced_cost_override`, when `Some`, is a Madness cast (`Action::
+/// `forced_cast_method`, when `Some`, is a Madness cast (`Action::
 /// ChooseMadnessCast(true)`): the card is already sitting in `state.exile`
-/// (moved there by `apply_discard`'s Madness interception), and is cast for
-/// exactly this cost rather than any zone-inferred cost. `None` covers every
+/// (moved there by `apply_discard`'s Madness interception), and its exact
+/// definition-owned Madness cost is derived later from this method. `None` covers every
 /// ordinary `Action::CastSpell`, where the cost (if overridden at all) is
 /// inferred from the spell's zone instead (`Cost::zero()` for a Plotted
 /// card cast from exile).
@@ -4940,25 +6350,65 @@ fn begin_cast_ex(
     state: &mut GameState,
     player: PlayerId,
     spell_id: ObjectId,
-    forced_cost_override: Option<Cost>,
+    forced_cast_method: Option<CastMethodV4>,
 ) {
     let origin_zone = state.objects.get(spell_id).zone;
-    let is_flashback = forced_cost_override.is_none() && origin_zone == Zone::Graveyard;
+    let origin_zone_change_count = state.objects.get(spell_id).zone_change_count;
+    let def = &card_def::CARD_DEFS[state.objects.get(spell_id).card_def as usize];
+    let plotted_turn = state.objects.get(spell_id).plotted_turn;
+    debug_assert!(matches!(
+        forced_cast_method,
+        None | Some(CastMethodV4::Madness)
+    ));
+    let is_flashback = forced_cast_method.is_none() && origin_zone == Zone::Graveyard;
     // A card sitting in Exile isn't necessarily Plotted any more: an
     // impulse-draw effect (`effect::EffectOp::ImpulseDraw`) also exiles
     // cards that must still be cast for their *real* mana cost, not for
-    // free -- only `GameObject::plotted_turn.is_some()` (stamped exclusively
-    // by `plot_spell`) means "this was actually Plotted". Root-caused while
+    // free. A Plotted cast requires both the definition-owned Plot ability and
+    // an earlier-turn marker belonging to this card's exact exile
+    // incarnation. Root-caused while
     // adding Reckless Impulse/Clockwork Percussionist/Experimental
     // Synthesizer: before this check, any impulse-exiled spell would have
     // been cast for `Cost::zero()`, same as a genuinely Plotted card.
-    let is_plotted = forced_cost_override.is_none()
+    let is_plotted = forced_cast_method.is_none()
         && origin_zone == Zone::Exile
-        && state.objects.get(spell_id).plotted_turn.is_some();
-    let def = &card_def::CARD_DEFS[state.objects.get(spell_id).card_def as usize];
+        && state.objects.get(spell_id).owner == player
+        && def.plot_cost.is_some()
+        && plotted_turn.is_some_and(|turn| turn < state.turn);
     let target_spec = def.target_spec;
-    let cost_override = forced_cost_override.or(if is_plotted { Some(Cost::zero()) } else { None });
-    let cast_mode = if is_flashback || cost_override.is_some() || def.alt_cost.is_none() {
+    let cast_method = forced_cast_method.unwrap_or(if is_flashback {
+        CastMethodV4::Flashback
+    } else if is_plotted {
+        CastMethodV4::Plotted
+    } else {
+        CastMethodV4::Normal
+    });
+    let cast_route = match cast_method {
+        CastMethodV4::Flashback => SpellCastRouteV4::GraveyardFlashback,
+        CastMethodV4::Plotted => SpellCastRouteV4::Plotted {
+            plotted_turn: plotted_turn
+                .expect("a Plotted cast was derived from an exact Plot marker"),
+        },
+        CastMethodV4::Madness => SpellCastRouteV4::Madness,
+        CastMethodV4::Normal if origin_zone == Zone::Hand => SpellCastRouteV4::Hand,
+        CastMethodV4::Normal if origin_zone == Zone::Exile => {
+            let permission = active_permission_for(player, spell_id, state)
+                .expect("an ordinary Exile cast was offered through an exact play permission");
+            debug_assert_eq!(permission.play_or_cast, PlayOrCast::Cast);
+            SpellCastRouteV4::ExilePermission {
+                holder: permission.holder,
+                permission_zone_change_count: permission.zone_change_generation,
+            }
+        }
+        _ => unreachable!("begin_cast_ex only announces supported cast routes"),
+    };
+    let cast_origin = SpellCastOriginV4 {
+        origin_zone,
+        origin_zone_change_count,
+        route: cast_route,
+        finalized_method: None,
+    };
+    let cast_mode = if cast_method != CastMethodV4::Normal || def.alt_cost.is_none() {
         Some(CastMode::Normal)
     } else {
         None
@@ -4976,6 +6426,21 @@ fn begin_cast_ex(
     };
 
     move_to_stack(state, spell_id, origin_zone);
+    if is_plotted {
+        // `move_to_stack` clears incarnation-local Plot provenance by
+        // default. Keep it only across the active Exile -> Stack attempt so
+        // source validation and an abort-to-Exile retry retain the marker.
+        state.objects.get_mut(spell_id).plotted_turn = plotted_turn;
+    }
+    // `move_to_stack` resets incarnation-local object state. Install the
+    // independently frozen pre-move evidence only after that reset, before
+    // either the placeholder or its duplicate source contract is created.
+    state.objects.get_mut(spell_id).v4.spell_cast_origin = Some(cast_origin);
+    // A spell on the stack is controlled by the player who cast it, which
+    // may differ from its owner when an exact exile-play permission names a
+    // different holder. Freeze that controller into the source contract.
+    state.objects.get_mut(spell_id).controller = player;
+    let source_contract = StackSourceContractV4::capture(state, spell_id, cast_method);
     state.stack.push(StackItem {
         kind: StackItemKind::Spell,
         source: spell_id,
@@ -4990,19 +6455,15 @@ fn begin_cast_ex(
         // `finalize_cast` fills this in once `PendingCast::kicked` resolves
         // -- see `StackItem::kicked`'s doc.
         kicked: false,
-        v4: StackStateV4::spell(if is_flashback {
-            CastMethodV4::Flashback
-        } else if is_plotted {
-            CastMethodV4::Plotted
-        } else if forced_cost_override.is_some() {
-            CastMethodV4::Madness
-        } else {
-            CastMethodV4::Normal
-        }),
+        v4: StackStateV4 {
+            source_contract: Some(source_contract),
+            ..StackStateV4::spell(cast_method)
+        },
     });
 
     state.engine.pending_cast = Some(PendingCast {
         spell: spell_id,
+        source_contract,
         controller: player,
         target_spec,
         targets_chosen: vec![],
@@ -5010,7 +6471,6 @@ fn begin_cast_ex(
         is_flashback,
         cast_mode,
         additional_cost_discarded,
-        cost_override,
         mode_chosen,
         origin_zone,
         sacrifice_chosen: vec![],
@@ -5046,92 +6506,112 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
 /// fills in the targets/discards on the `StackItem` `begin_cast` already
 /// pushed (601.2a put the spell there before this ran). 117.3c: the caster
 /// retains priority afterward.
-fn finalize_cast(state: &mut GameState) {
+fn finalize_cast(state: &mut GameState, discarded: Vec<ObjectId>) -> Result<(), String> {
+    let staged = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .ok_or("finalize_cast requires a pending cast")?;
+    validate_pending_cast(state, staged)?;
+    let staged_method = state
+        .stack
+        .last()
+        .and_then(|item| item.v4.cast_method)
+        .ok_or("validated cast placeholder lost its cast method")?;
     let pending = state
         .engine
         .pending_cast
         .take()
         .expect("finalize_cast requires a pending cast");
+    let cast_method = finalized_cast_method(&pending, staged_method);
+    finalize_owned_cast(state, pending, cast_method, discarded)
+}
+
+/// Commits a cast whose complete staged record was already validated and
+/// removed from `EngineState`. Interactive FinishCast discard uses this form
+/// so the chosen cards and any Madness triggers they create never coexist
+/// with a serialized, self-authenticating `PendingCast` payment state.
+fn finalize_owned_cast(
+    state: &mut GameState,
+    pending: PendingCast,
+    cast_method: CastMethodV4,
+    discarded: Vec<ObjectId>,
+) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let mut was_kicked = false;
 
-    if let Some(cost) = pending.cost_override {
-        // Plot (free) or Madness (its own alternative cost) -- see
-        // `PendingCast::cost_override`'s doc. Same unreachable-`abort_cast`
-        // shape as every other cost branch here: `Cost::zero()` always
-        // trivially pays, and a Madness cast's affordability is re-checked
-        // immediately before `begin_cast_ex` is even called
-        // (`apply_choose_madness_cast`).
-        let Some(plan) = mana::can_pay(&cost, 0, pending.controller, state) else {
-            return abort_cast(state, pending);
-        };
-        pay_plan(state, pending.controller, &plan);
-    } else if pending.is_flashback {
-        let fb = def
-            .flashback
-            .as_ref()
-            .expect("is_flashback implies CardDef::flashback is Some");
-        // 601.2h: offer-time legality checks the same ordered component
-        // slice. No priority window opens mid-cast, but this fallible shared
-        // payment path still fails closed for a restored/forward-generated
-        // unsupported shape rather than completing a free cast.
-        if !pay_cost_components(
-            state,
-            pending.controller,
-            pending.spell,
-            fb.cost,
-            &pending.sacrifice_chosen,
-        ) {
-            return abort_cast(state, pending);
+    match cast_method {
+        CastMethodV4::Plotted => {}
+        CastMethodV4::Madness => {
+            let cost = def
+                .madness_cost
+                .expect("validated Madness cast has a definition-owned cost");
+            let Some(plan) = mana::can_pay(&cost, 0, pending.controller, state) else {
+                abort_cast(state, pending, cast_method);
+                return Ok(());
+            };
+            pay_plan(state, pending.controller, &plan);
         }
-    } else {
-        match pending
-            .cast_mode
-            .expect("resolved by drain_pending_cast_or_decide before finalize_cast is reached")
-        {
-            CastMode::Normal => {
-                let kicked = pending.kicked == Some(true);
-                let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-                let plan = if kicked {
-                    let kicker_cost = def.kicker_cost.expect("kicked is only true when begin_cast_ex/drain_pending_cast_or_decide saw a kicker_cost");
-                    mana::can_pay_combined(
-                        &[&normal_cost, &kicker_cost],
-                        0,
-                        pending.controller,
-                        state,
-                    )
-                } else {
-                    mana::can_pay(&normal_cost, 0, pending.controller, state)
-                };
-                let Some(plan) = plan else {
-                    return abort_cast(state, pending);
-                };
-                pay_plan(state, pending.controller, &plan);
-                was_kicked = kicked;
+        CastMethodV4::Flashback => {
+            let fb = def
+                .flashback
+                .as_ref()
+                .expect("validated Flashback cast has a definition-owned cost");
+            if !pay_cost_components(
+                state,
+                pending.controller,
+                pending.spell,
+                fb.cost,
+                &pending.sacrifice_chosen,
+            ) {
+                abort_cast(state, pending, cast_method);
+                return Ok(());
             }
-            CastMode::Alternative => {
-                let alt = def
-                    .alt_cost
-                    .expect("Alternative mode only chosen when alt_cost is Some");
-                if !pay_cost_components(
-                    state,
-                    pending.controller,
-                    pending.spell,
-                    alt,
-                    &pending.sacrifice_chosen,
-                ) {
-                    return abort_cast(state, pending);
-                }
+        }
+        CastMethodV4::Normal => {
+            let kicked = pending.kicked == Some(true);
+            let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
+            let plan = if kicked {
+                let kicker_cost = def
+                    .kicker_cost
+                    .expect("validated kicked cast has a definition-owned kicker cost");
+                mana::can_pay_combined(&[&normal_cost, &kicker_cost], 0, pending.controller, state)
+            } else {
+                mana::can_pay(&normal_cost, 0, pending.controller, state)
+            };
+            let Some(plan) = plan else {
+                abort_cast(state, pending, cast_method);
+                return Ok(());
+            };
+            pay_plan(state, pending.controller, &plan);
+            was_kicked = kicked;
+        }
+        CastMethodV4::Alternative => {
+            let alt = def
+                .alt_cost
+                .expect("validated alternative cast has a definition-owned cost");
+            if !pay_cost_components(
+                state,
+                pending.controller,
+                pending.spell,
+                alt,
+                &pending.sacrifice_chosen,
+            ) {
+                abort_cast(state, pending, cast_method);
+                return Ok(());
             }
+        }
+        CastMethodV4::Escape | CastMethodV4::Bestow | CastMethodV4::Omen => {
+            unreachable!("validate_pending_cast rejects unsupported cast methods")
         }
     }
     if let Some(add) = def.additional_cost {
         if !pay_cost_components(state, pending.controller, pending.spell, add, &[]) {
-            return abort_cast(state, pending);
+            abort_cast(state, pending, cast_method);
+            return Ok(());
         }
     }
 
-    let discarded = pending.additional_cost_discarded.unwrap_or_default();
     let mut paid_cost_objects = pending.sacrifice_chosen.clone();
     paid_cost_objects.extend(discarded.iter().copied());
     // Capture after sacrifice/discard zone changes have committed. These refs
@@ -5149,6 +6629,20 @@ fn finalize_cast(state: &mut GameState) {
     } else {
         def.target_spec
     };
+    // Payment is now irrevocably complete. Stamp the independently owned
+    // source-object record before recapturing the finalized stack contract;
+    // later validators require both copies to agree with this exact method.
+    let cast_origin = state
+        .objects
+        .get_mut(pending.spell)
+        .v4
+        .spell_cast_origin
+        .as_mut()
+        .expect("validated pending cast retains its frozen origin evidence");
+    debug_assert!(cast_origin.finalized_method.is_none());
+    cast_origin.finalized_method = Some(cast_method);
+    let finalized_source_contract =
+        StackSourceContractV4::capture(state, pending.spell, cast_method);
     let item = state.stack.last_mut().expect("begin_cast pushed this spell's StackItem and nothing can push another item while a cast is pending");
     debug_assert_eq!(
         item.source, pending.spell,
@@ -5161,9 +6655,8 @@ fn finalize_cast(state: &mut GameState) {
     item.mode_chosen = pending.mode_chosen.unwrap_or(0);
     item.kicked = was_kicked;
     item.v4.paid_cost_refs = paid_cost_refs;
-    if pending.cast_mode == Some(CastMode::Alternative) {
-        item.v4.cast_method = Some(CastMethodV4::Alternative);
-    }
+    item.v4.cast_method = Some(cast_method);
+    item.v4.source_contract = Some(finalized_source_contract);
     state.players[pending.controller.index()].spells_cast_this_turn = state.players
         [pending.controller.index()]
     .spells_cast_this_turn
@@ -5177,12 +6670,13 @@ fn finalize_cast(state: &mut GameState) {
     collect_and_queue_triggers(state);
     state.engine.priority_passes = [false, false];
     state.priority_player = pending.controller;
+    Ok(())
 }
 
 /// 601.2a's flip side: if an announced cast turns out to be unpayable, the
 /// spell returns to whichever zone it was announced from -- *except* a
-/// Madness-cost cast (`PendingCast::cost_override` set from
-/// `CardDef::madness_cost`, `apply_choose_madness_cast`'s `cast_it == true`
+/// Madness-cost cast (`PendingCast` stamped with `CastMethodV4::Madness`,
+/// `apply_choose_madness_cast`'s `cast_it == true`
 /// branch), which goes to the graveyard instead of back to exile.
 ///
 /// Root-caused against two golden-trace games (Sol #90, increment 11 --
@@ -5195,14 +6689,14 @@ fn finalize_cast(state: &mut GameState) {
 /// resolving to "graveyard" on any non-cast outcome; the reference
 /// evidently applies that same ultimate destination to a cast that was
 /// *attempted* but couldn't complete, rather than rules-textually
-/// re-offering the exiled card later. A Plotted cast's `cost_override`
-/// (`Cost::zero()`) can never actually fail this check (paying nothing is
+/// re-offering the exiled card later. A Plotted cast's definition-derived
+/// zero cost can never actually fail this check (paying nothing is
 /// always affordable), so this branch is unreachable for Plot -- the
 /// madness-cost check is the only real discriminator needed here.
 ///
 /// Root-caused (increment 15) against `game_20260713_002201_0023.txt`
 /// decision 127: the only reachable caller of this function today is
-/// `finalize_cast`'s `cost_override` branch, itself only reachable from
+/// `finalize_cast`'s method-derived cost branch, itself only reachable from
 /// `apply_choose_madness_cast`'s `cast_it == true` arm -- i.e. this always
 /// runs as the tail end of *resolving* a Madness-offer triggered ability
 /// (`advance_until_decision`'s `top.madness_offer` interception), exactly
@@ -5233,15 +6727,15 @@ fn finalize_cast(state: &mut GameState) {
 /// `collect_and_queue_triggers`/`reset_priority` pair `apply_choose_
 /// madness_cast`'s decline branch already has, rather than leaving
 /// `priority_passes` untouched.
-fn abort_cast(state: &mut GameState, pending: PendingCast) {
+fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMethodV4) {
     let item = state.stack.pop();
     debug_assert!(
         item.is_some_and(|i| i.source == pending.spell),
         "abort_cast expects its spell's placeholder to be the top of the stack"
     );
     let owner = state.objects.get(pending.spell).owner;
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-    let to_zone = if pending.origin_zone == Zone::Exile && def.madness_cost.is_some() {
+    let plotted_turn = state.objects.get(pending.spell).plotted_turn;
+    let to_zone = if cast_method == CastMethodV4::Madness {
         Zone::Graveyard
     } else {
         pending.origin_zone
@@ -5258,6 +6752,12 @@ fn abort_cast(state: &mut GameState, pending: PendingCast) {
     {
         let object = state.objects.get_mut(pending.spell);
         object.zone = to_zone;
+        object.controller = owner;
+        object.plotted_turn = if cast_method == CastMethodV4::Plotted && to_zone == Zone::Exile {
+            plotted_turn
+        } else {
+            None
+        };
         object.zone_change_count += 1;
         object
             .v4
@@ -5391,6 +6891,7 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
     let turn = state.turn;
     let object = state.objects.get_mut(id);
     object.zone = Zone::Stack;
+    object.plotted_turn = None;
     object.zone_change_count += 1;
     object
         .v4
@@ -5541,6 +7042,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: ObjectStateV4::from_card_def(card_id),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -5563,6 +7065,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: ObjectStateV4::from_card_def(card_id),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -5585,6 +7088,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: ObjectStateV4::from_card_def(card_id),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -6258,9 +7762,40 @@ mod tests {
     // Searing Blaze and the four Blast cards.
     // ================================================================
 
-    fn put_on_stack(state: &mut GameState, player: PlayerId, card_name: &str) -> ObjectId {
+    fn put_on_stack_with_method(
+        state: &mut GameState,
+        player: PlayerId,
+        card_name: &str,
+        cast_method: CastMethodV4,
+    ) -> ObjectId {
         let card_id =
             card_id_by_name(card_name).unwrap_or_else(|| panic!("{card_name} not in CARD_DEFS"));
+        let (origin_zone, route, plotted_turn) = match cast_method {
+            CastMethodV4::Flashback => {
+                (Zone::Graveyard, SpellCastRouteV4::GraveyardFlashback, None)
+            }
+            CastMethodV4::Plotted => (
+                Zone::Exile,
+                SpellCastRouteV4::Plotted {
+                    plotted_turn: state.turn.saturating_sub(1),
+                },
+                Some(state.turn.saturating_sub(1)),
+            ),
+            CastMethodV4::Madness => (Zone::Exile, SpellCastRouteV4::Madness, None),
+            CastMethodV4::Normal | CastMethodV4::Alternative => {
+                (Zone::Hand, SpellCastRouteV4::Hand, None)
+            }
+            CastMethodV4::Escape | CastMethodV4::Bestow | CastMethodV4::Omen => {
+                panic!("test helper cannot fabricate an unsupported cast method")
+            }
+        };
+        let mut object_v4 = ObjectStateV4::from_card_def(card_id);
+        object_v4.spell_cast_origin = Some(SpellCastOriginV4 {
+            origin_zone,
+            origin_zone_change_count: 0,
+            route,
+            finalized_method: Some(cast_method),
+        });
         let obj_id = state.objects.push(crate::state::GameObject {
             card_def: card_id,
             name: card_name.to_string(),
@@ -6272,10 +7807,12 @@ mod tests {
             damage: 0,
             counters: Default::default(),
             attachments: Vec::new(),
-            v4: ObjectStateV4::from_card_def(card_id),
-            plotted_turn: None,
-            zone_change_count: 0,
+            v4: object_v4,
+            spell_copy_origin: None,
+            plotted_turn,
+            zone_change_count: 1,
         });
+        let source_contract = StackSourceContractV4::capture(state, obj_id, cast_method);
         state.stack.push(StackItem {
             kind: StackItemKind::Spell,
             source: obj_id,
@@ -6284,13 +7821,107 @@ mod tests {
             is_copy: false,
             inline_effect: None,
             discarded: vec![],
-            is_flashback: false,
+            is_flashback: cast_method == CastMethodV4::Flashback,
             mode_chosen: 0,
             madness_offer: false,
             kicked: false,
-            v4: StackStateV4::spell(CastMethodV4::Normal),
+            v4: StackStateV4 {
+                source_contract: Some(source_contract),
+                ..StackStateV4::spell(cast_method)
+            },
         });
         obj_id
+    }
+
+    fn put_on_stack(state: &mut GameState, player: PlayerId, card_name: &str) -> ObjectId {
+        put_on_stack_with_method(state, player, card_name, CastMethodV4::Normal)
+    }
+
+    fn stage_madness_offer(state: &mut GameState, player: PlayerId) -> ObjectId {
+        let temper = put_in_hand(state, player, "Fiery Temper");
+        state.engine.pending_discard = Some(PendingDiscard {
+            player,
+            count: 1,
+            resume: DiscardResume::None,
+        });
+        step(state, Action::Discard(vec![temper])).unwrap();
+        assert!(matches!(
+            advance_until_decision(state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.stack.last().map(|item| item.source), Some(temper));
+        assert_eq!(
+            state.stack.last().unwrap().kind,
+            StackItemKind::MadnessOffer
+        );
+        temper
+    }
+
+    fn put_spell_copy_on_stack_from_method(
+        state: &mut GameState,
+        player: PlayerId,
+        card_name: &str,
+        parent_method: CastMethodV4,
+    ) -> ObjectId {
+        let parent = put_on_stack_with_method(state, player, card_name, parent_method);
+        let mut copy_item = state
+            .stack
+            .pop()
+            .expect("the physical parent was just placed on the stack");
+        let parent_object = state.objects.get(parent).clone();
+        let copy_origin = SpellCopyOriginV4 {
+            parent,
+            parent_card_def: parent_object.card_def,
+            parent_owner: parent_object.owner,
+            parent_controller: parent_object.controller,
+            parent_stack_zone_change_count: parent_object.zone_change_count,
+            parent_was_copy: false,
+        };
+        let copy = state.objects.push(crate::state::GameObject {
+            card_def: parent_object.card_def,
+            name: parent_object.name,
+            owner: parent_object.owner,
+            controller: parent_object.controller,
+            zone: Zone::Stack,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Default::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(parent_object.card_def),
+            spell_copy_origin: Some(copy_origin),
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        copy_item.source = copy;
+        copy_item.is_copy = true;
+        copy_item.is_flashback = false;
+        copy_item.v4.cast_method = Some(CastMethodV4::Normal);
+        copy_item.v4.source_contract = Some(StackSourceContractV4::capture(
+            state,
+            copy,
+            CastMethodV4::Normal,
+        ));
+        state.stack.push(copy_item);
+
+        let parent_destination = if parent_method == CastMethodV4::Flashback {
+            Zone::Exile
+        } else {
+            Zone::Graveyard
+        };
+        event::propose_and_commit(
+            state,
+            ProposedEvent::zone_change(parent, parent_destination),
+        );
+        copy
+    }
+
+    fn put_spell_copy_on_stack(
+        state: &mut GameState,
+        player: PlayerId,
+        card_name: &str,
+    ) -> ObjectId {
+        put_spell_copy_on_stack_from_method(state, player, card_name, CastMethodV4::Normal)
     }
 
     /// Both players passing priority (117.3c: the caster keeps priority
@@ -6532,6 +8163,7 @@ mod tests {
                 counters: Default::default(),
                 attachments: Vec::new(),
                 v4: ObjectStateV4::from_card_def(mountain),
+                spell_copy_origin: None,
                 plotted_turn: None,
                 zone_change_count: 0,
             });
@@ -7233,14 +8865,29 @@ mod tests {
 
     #[test]
     fn shared_counter_effect_preserves_flashback_and_copy_departure_and_stale_fizzle() {
-        for (is_copy, is_flashback) in [(false, true), (true, true)] {
+        for is_copy in [false, true] {
             let mut state = ready_game_in_main1(0);
-            put_on_battlefield(&mut state, PlayerId::P0, "Island");
-            let target = put_on_stack(&mut state, PlayerId::P1, "Counterspell");
-            state.stack.last_mut().unwrap().is_copy = is_copy;
-            state.stack.last_mut().unwrap().is_flashback = is_flashback;
-            let dispel = put_in_hand(&mut state, PlayerId::P0, "Dispel");
-            step(&mut state, Action::CastSpell(dispel)).unwrap();
+            let (target, counter_name) = if is_copy {
+                put_on_battlefield(&mut state, PlayerId::P0, "Island");
+                (
+                    put_spell_copy_on_stack(&mut state, PlayerId::P1, "Counterspell"),
+                    "Dispel",
+                )
+            } else {
+                put_on_battlefield(&mut state, PlayerId::P0, "Island");
+                put_on_battlefield(&mut state, PlayerId::P0, "Island");
+                (
+                    put_on_stack_with_method(
+                        &mut state,
+                        PlayerId::P1,
+                        "Deep Analysis",
+                        CastMethodV4::Flashback,
+                    ),
+                    "Counterspell",
+                )
+            };
+            let counter = put_in_hand(&mut state, PlayerId::P0, counter_name);
+            step(&mut state, Action::CastSpell(counter)).unwrap();
             step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
             pass_until_stack_resolves(&mut state);
             if is_copy {
@@ -7313,8 +8960,7 @@ mod tests {
     fn pyroblast_countering_a_copied_blue_spell_makes_only_the_copy_cease() {
         let mut state = ready_game_in_main1(1);
         let pyroblast = put_in_hand(&mut state, PlayerId::P0, "Pyroblast");
-        let copied_counterspell = put_on_stack(&mut state, PlayerId::P1, "Counterspell");
-        state.stack.last_mut().unwrap().is_copy = true;
+        let copied_counterspell = put_spell_copy_on_stack(&mut state, PlayerId::P1, "Counterspell");
 
         step(&mut state, Action::CastSpell(pyroblast)).unwrap();
         step(&mut state, Action::ChooseSpellMode(0)).unwrap();
@@ -7345,9 +8991,21 @@ mod tests {
         for copied in [false, true] {
             let mut state = ready_game_in_main1(1);
             let pyroblast = put_in_hand(&mut state, PlayerId::P0, "Pyroblast");
-            let target = put_on_stack(&mut state, PlayerId::P1, "Counterspell");
-            state.stack.last_mut().unwrap().is_flashback = true;
-            state.stack.last_mut().unwrap().is_copy = copied;
+            let target = if copied {
+                put_spell_copy_on_stack_from_method(
+                    &mut state,
+                    PlayerId::P1,
+                    "Deep Analysis",
+                    CastMethodV4::Flashback,
+                )
+            } else {
+                put_on_stack_with_method(
+                    &mut state,
+                    PlayerId::P1,
+                    "Deep Analysis",
+                    CastMethodV4::Flashback,
+                )
+            };
 
             step(&mut state, Action::CastSpell(pyroblast)).unwrap();
             step(&mut state, Action::ChooseSpellMode(0)).unwrap();
@@ -7370,8 +9028,7 @@ mod tests {
     fn spell_target_pools_include_instant_copies_but_exclude_all_nonspell_items() {
         let mut state = empty_game();
         let physical = put_on_stack(&mut state, PlayerId::P0, "Counterspell");
-        let copy = put_on_stack(&mut state, PlayerId::P1, "Counterspell");
-        state.stack.last_mut().unwrap().is_copy = true;
+        let copy = put_spell_copy_on_stack(&mut state, PlayerId::P1, "Counterspell");
 
         let activated = put_on_battlefield(&mut state, PlayerId::P0, "Blood Token");
         state.stack.push(StackItem {
@@ -7441,8 +9098,7 @@ mod tests {
         let creature = put_on_stack(&mut state, PlayerId::P0, "Guttersnipe");
         let sorcery = put_on_stack(&mut state, PlayerId::P1, "Faithless Looting");
         let red_instant = put_on_stack(&mut state, PlayerId::P0, "Lightning Bolt");
-        let blue_instant_copy = put_on_stack(&mut state, PlayerId::P1, "Counterspell");
-        state.stack.last_mut().unwrap().is_copy = true;
+        let blue_instant_copy = put_spell_copy_on_stack(&mut state, PlayerId::P1, "Counterspell");
 
         assert_eq!(
             legal_targets_for(TargetSpec::AnySpellOnStack, &[], &state),
@@ -7925,6 +9581,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: ObjectStateV4::from_card_def(card_id),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -8911,6 +10568,950 @@ mod tests {
             }
             other => panic!("expected ResolvedSetEffect, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn mid_cast_source_contracts_round_trip_for_normal_flashback_plot_and_madness() {
+        let mut normal = ready_game_in_main1(1);
+        let bolt = put_in_hand(&mut normal, PlayerId::P0, "Lightning Bolt");
+        step(&mut normal, Action::CastSpell(bolt)).unwrap();
+
+        let mut flashback = ready_game_in_main1(1);
+        let dart = put_in_graveyard(&mut flashback, PlayerId::P0, "Lava Dart");
+        step(&mut flashback, Action::CastSpell(dart)).unwrap();
+
+        let mut plotted = ready_game_in_main1(0);
+        plotted.turn = 2;
+        let robbery = put_in_hand(&mut plotted, PlayerId::P0, "Highway Robbery");
+        event::propose_and_commit(
+            &mut plotted,
+            ProposedEvent::zone_change(robbery, Zone::Exile),
+        );
+        plotted.objects.get_mut(robbery).plotted_turn = Some(1);
+        step(&mut plotted, Action::CastSpell(robbery)).unwrap();
+
+        let mut madness = ready_game_in_main1(1);
+        let temper = put_in_hand(&mut madness, PlayerId::P0, "Fiery Temper");
+        event::propose_and_commit(
+            &mut madness,
+            ProposedEvent::zone_change(temper, Zone::Exile),
+        );
+        begin_cast_ex(
+            &mut madness,
+            PlayerId::P0,
+            temper,
+            Some(CastMethodV4::Madness),
+        );
+
+        for (state, expected_method, expected_route) in [
+            (normal, CastMethodV4::Normal, SpellCastRouteV4::Hand),
+            (
+                flashback,
+                CastMethodV4::Flashback,
+                SpellCastRouteV4::GraveyardFlashback,
+            ),
+            (
+                plotted,
+                CastMethodV4::Plotted,
+                SpellCastRouteV4::Plotted { plotted_turn: 1 },
+            ),
+            (madness, CastMethodV4::Madness, SpellCastRouteV4::Madness),
+        ] {
+            let json = serde_json::to_vec(&state).unwrap();
+            let restored: GameState = serde_json::from_slice(&json).unwrap();
+            assert_eq!(restored, state);
+            let pending = restored.engine.pending_cast.as_ref().unwrap();
+            validate_pending_cast(&restored, pending).unwrap();
+            assert_eq!(pending.source_contract.cast_method, expected_method);
+            assert_eq!(
+                pending
+                    .source_contract
+                    .spell_cast_origin
+                    .expect("physical pending cast has frozen origin")
+                    .route,
+                expected_route
+            );
+            assert_eq!(
+                restored.stack.last().unwrap().v4.source_contract,
+                Some(pending.source_contract)
+            );
+        }
+    }
+
+    #[test]
+    fn owner_only_cast_methods_reject_coherent_cross_owner_source_tamper() {
+        let mut normal = ready_game_in_main1(1);
+        let bolt = put_in_hand(&mut normal, PlayerId::P0, "Lightning Bolt");
+        step(&mut normal, Action::CastSpell(bolt)).unwrap();
+
+        let mut flashback = ready_game_in_main1(1);
+        let dart = put_in_graveyard(&mut flashback, PlayerId::P0, "Lava Dart");
+        step(&mut flashback, Action::CastSpell(dart)).unwrap();
+
+        let mut plotted = ready_game_in_main1(0);
+        plotted.turn = 2;
+        let robbery = put_in_hand(&mut plotted, PlayerId::P0, "Highway Robbery");
+        event::propose_and_commit(
+            &mut plotted,
+            ProposedEvent::zone_change(robbery, Zone::Exile),
+        );
+        plotted.objects.get_mut(robbery).plotted_turn = Some(1);
+        step(&mut plotted, Action::CastSpell(robbery)).unwrap();
+
+        let mut madness = ready_game_in_main1(1);
+        let temper = put_in_hand(&mut madness, PlayerId::P0, "Fiery Temper");
+        event::propose_and_commit(
+            &mut madness,
+            ProposedEvent::zone_change(temper, Zone::Exile),
+        );
+        begin_cast_ex(
+            &mut madness,
+            PlayerId::P0,
+            temper,
+            Some(CastMethodV4::Madness),
+        );
+
+        for (mut state, action) in [
+            (normal, Action::ChooseTarget(Target::Player(PlayerId::P1))),
+            (
+                flashback,
+                Action::ChooseTarget(Target::Player(PlayerId::P1)),
+            ),
+            (plotted, Action::Pass),
+            (madness, Action::ChooseTarget(Target::Player(PlayerId::P1))),
+        ] {
+            let source = state.engine.pending_cast.as_ref().unwrap().spell;
+            state.objects.get_mut(source).owner = PlayerId::P1;
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .source_contract
+                .owner = PlayerId::P1;
+            state
+                .stack
+                .last_mut()
+                .unwrap()
+                .v4
+                .source_contract
+                .as_mut()
+                .unwrap()
+                .owner = PlayerId::P1;
+            assert!(
+                validate_pending_cast(&state, state.engine.pending_cast.as_ref().unwrap()).is_err()
+            );
+            let before = state.clone();
+            assert!(step(&mut state, action).is_err());
+            assert_eq!(state, before);
+        }
+    }
+
+    #[test]
+    fn forged_plot_markers_and_dirty_placeholder_fail_before_action_mutation() {
+        for plotted_turn in [3, 4] {
+            let mut forged_plot = ready_game_in_main1(0);
+            forged_plot.turn = 3;
+            let robbery = put_in_hand(&mut forged_plot, PlayerId::P0, "Highway Robbery");
+            event::propose_and_commit(
+                &mut forged_plot,
+                ProposedEvent::zone_change(robbery, Zone::Exile),
+            );
+            forged_plot.objects.get_mut(robbery).plotted_turn = Some(plotted_turn);
+            let before = forged_plot.clone();
+            assert!(step(&mut forged_plot, Action::CastSpell(robbery)).is_err());
+            assert_eq!(forged_plot, before);
+        }
+
+        let mut non_plot = ready_game_in_main1(1);
+        non_plot.turn = 3;
+        let bolt = put_in_hand(&mut non_plot, PlayerId::P0, "Lightning Bolt");
+        event::propose_and_commit(&mut non_plot, ProposedEvent::zone_change(bolt, Zone::Exile));
+        non_plot.objects.get_mut(bolt).plotted_turn = Some(1);
+        let before = non_plot.clone();
+        assert!(step(&mut non_plot, Action::CastSpell(bolt)).is_err());
+        assert_eq!(non_plot, before);
+
+        let mut state = ready_game_in_main1(1);
+        let bolt = put_in_hand(&mut state, PlayerId::P0, "Lightning Bolt");
+        step(&mut state, Action::CastSpell(bolt)).unwrap();
+        state.stack.last_mut().unwrap().targets = vec![Target::Player(PlayerId::P1)];
+        let before = state.clone();
+        assert!(step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1))
+        )
+        .is_err());
+        assert_eq!(state, before, "placeholder tamper must be non-mutating");
+    }
+
+    #[test]
+    fn lava_dart_cost_target_cannot_precede_its_spell_target() {
+        let mut state = ready_game_in_main1(0);
+        let mountain = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let dart = put_in_graveyard(&mut state, PlayerId::P0, "Lava Dart");
+        step(&mut state, Action::CastSpell(dart)).unwrap();
+
+        let before = state.clone();
+        assert!(step(&mut state, Action::ChooseCostTarget(mountain)).is_err());
+        assert_eq!(state, before);
+        assert!(state
+            .engine
+            .pending_cast
+            .as_ref()
+            .unwrap()
+            .sacrifice_chosen
+            .is_empty());
+    }
+
+    #[test]
+    fn fireblast_losing_remaining_candidates_aborts_without_partial_payment() {
+        let mut state = ready_game_in_main1(0);
+        let first = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let second = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let fireblast = put_in_hand(&mut state, PlayerId::P0, "Fireblast");
+        step(&mut state, Action::CastSpell(fireblast)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::ChooseCostTargets { .. }
+        ));
+        let mut stale_action = state.clone();
+        event::propose_and_commit(
+            &mut stale_action,
+            ProposedEvent::zone_change(second, Zone::Graveyard),
+        );
+        let before = stale_action.clone();
+        assert!(step(&mut stale_action, Action::ChooseCostTarget(first)).is_err());
+        assert_eq!(stale_action, before);
+
+        step(&mut state, Action::ChooseCostTarget(first)).unwrap();
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(second, Zone::Graveyard),
+        );
+
+        let _ = advance_until_decision(&mut state);
+        assert!(state.engine.pending_cast.is_none());
+        assert_eq!(state.objects.get(fireblast).zone, Zone::Hand);
+        assert!(state.players[0].battlefield.contains(&first));
+        assert_eq!(state.objects.get(first).zone, Zone::Battlefield);
+    }
+
+    #[test]
+    fn highway_optional_sacrifice_with_no_remaining_candidate_halts_without_recursing() {
+        let mut state = ready_game_in_main1(0);
+        let first = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let second = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let robbery = put_in_hand(&mut state, PlayerId::P0, "Highway Robbery");
+        step(&mut state, Action::CastSpell(robbery)).unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseOptionalCost { .. }
+        ));
+        step(
+            &mut state,
+            Action::ChooseOptionalCost(OptionalCostChoice::SacrificeLand),
+        )
+        .unwrap();
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(first, Zone::Graveyard),
+        );
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(second, Zone::Graveyard),
+        );
+
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            } if source == robbery
+        ));
+    }
+
+    #[test]
+    fn grab_finish_cast_discard_is_bound_synchronous_and_snapshot_reproducible() {
+        let mut state = ready_game_in_main1(2);
+        let grab = put_in_hand(&mut state, PlayerId::P0, "Grab the Prize");
+        let temper = put_in_hand(&mut state, PlayerId::P0, "Fiery Temper");
+        put_in_hand(&mut state, PlayerId::P0, "Lightning Bolt");
+        step(&mut state, Action::CastSpell(grab)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::Discard { count: 1, .. }
+        ));
+
+        let mut tampered = state.clone();
+        let DiscardResume::FinishCast { controller, .. } =
+            &mut tampered.engine.pending_discard.as_mut().unwrap().resume
+        else {
+            panic!("Grab must own a FinishCast discard")
+        };
+        *controller = PlayerId::P1;
+        let before = tampered.clone();
+        assert!(step(&mut tampered, Action::Discard(vec![temper])).is_err());
+        assert_eq!(tampered, before);
+        assert!(crate::rl::observe_v2(
+            &tampered,
+            &crate::surface_v2::HarnessSurfaceV2::new(),
+            PlayerId::P0,
+            0,
+        )
+        .is_err());
+
+        let snapshot = state.snapshot();
+        step(&mut state, Action::Discard(vec![temper])).unwrap();
+        assert!(state.engine.pending_cast.is_none());
+        assert!(state.engine.pending_discard.is_none());
+        assert_eq!(state.stack.last().map(|item| item.source), Some(grab));
+        assert_eq!(state.stack.last().unwrap().discarded, vec![temper]);
+        assert_eq!(state.objects.get(temper).zone, Zone::Exile);
+        assert!(state
+            .engine
+            .pending_triggers
+            .iter()
+            .any(|trigger| trigger.source == temper && trigger.is_madness_offer));
+        let expected = state.state_hash();
+
+        state.restore(&snapshot);
+        step(&mut state, Action::Discard(vec![temper])).unwrap();
+        assert_eq!(state.state_hash(), expected);
+    }
+
+    #[test]
+    fn frozen_spell_target_cannot_be_retyped_as_an_ability_before_counter_resolution() {
+        let mut state = ready_game_in_main1(0);
+        put_on_battlefield(&mut state, PlayerId::P0, "Island");
+        put_on_battlefield(&mut state, PlayerId::P0, "Island");
+        let target = put_on_stack(&mut state, PlayerId::P1, "Lightning Bolt");
+        let counter = put_in_hand(&mut state, PlayerId::P0, "Counterspell");
+        step(&mut state, Action::CastSpell(counter)).unwrap();
+        step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        let _ = advance_until_decision(&mut state);
+        let target_item = state
+            .stack
+            .iter_mut()
+            .find(|item| item.source == target)
+            .unwrap();
+        target_item.kind = StackItemKind::TriggeredAbility;
+        target_item.v4 = StackStateV4::default();
+        target_item.inline_effect = None;
+        state.engine.priority_passes = [true, true];
+
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            } if source == counter
+        ));
+        assert_eq!(state.objects.get(target).zone, Zone::Stack);
+    }
+
+    #[test]
+    fn nonowner_exile_permission_binds_caster_control_and_abort_restores_owner() {
+        let mut success = ready_game_in_main1(1);
+        let bolt = put_in_hand(&mut success, PlayerId::P1, "Lightning Bolt");
+        event::propose_and_commit(&mut success, ProposedEvent::zone_change(bolt, Zone::Exile));
+        success.engine.exile_play_permissions.push(PlayPermission {
+            object: bolt,
+            holder: PlayerId::P0,
+            zone_change_generation: success.objects.get(bolt).zone_change_count,
+            play_or_cast: PlayOrCast::Cast,
+            expiry: PlayPermissionExpiry::EndOfTurn,
+        });
+        step(&mut success, Action::CastSpell(bolt)).unwrap();
+        assert_eq!(success.objects.get(bolt).controller, PlayerId::P0);
+        assert_eq!(
+            success
+                .engine
+                .pending_cast
+                .as_ref()
+                .unwrap()
+                .source_contract
+                .controller,
+            PlayerId::P0
+        );
+        let permission_origin = success
+            .engine
+            .pending_cast
+            .as_ref()
+            .unwrap()
+            .source_contract
+            .spell_cast_origin
+            .expect("an Exile cast freezes its exact authorization route");
+        assert!(matches!(
+            permission_origin.route,
+            SpellCastRouteV4::ExilePermission {
+                holder: PlayerId::P0,
+                permission_zone_change_count,
+            } if permission_zone_change_count == permission_origin.origin_zone_change_count
+        ));
+        assert_eq!(permission_origin.origin_zone, Zone::Exile);
+        assert_eq!(permission_origin.finalized_method, None);
+        step(
+            &mut success,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        let _ = advance_until_decision(&mut success);
+        assert!(success.engine.pending_cast.is_none());
+        assert_eq!(success.stack.last().unwrap().controller, PlayerId::P0);
+        assert_eq!(
+            success
+                .objects
+                .get(bolt)
+                .v4
+                .spell_cast_origin
+                .unwrap()
+                .finalized_method,
+            Some(CastMethodV4::Normal)
+        );
+
+        let mut aborted = ready_game_in_main1(1);
+        let land = aborted.players[0].battlefield[0];
+        let bolt = put_in_hand(&mut aborted, PlayerId::P1, "Lightning Bolt");
+        event::propose_and_commit(&mut aborted, ProposedEvent::zone_change(bolt, Zone::Exile));
+        aborted.engine.exile_play_permissions.push(PlayPermission {
+            object: bolt,
+            holder: PlayerId::P0,
+            zone_change_generation: aborted.objects.get(bolt).zone_change_count,
+            play_or_cast: PlayOrCast::Cast,
+            expiry: PlayPermissionExpiry::EndOfTurn,
+        });
+        step(&mut aborted, Action::CastSpell(bolt)).unwrap();
+        aborted.objects.get_mut(land).tapped = true;
+        step(
+            &mut aborted,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        let _ = advance_until_decision(&mut aborted);
+        assert!(aborted.engine.pending_cast.is_none());
+        assert_eq!(aborted.objects.get(bolt).zone, Zone::Exile);
+        assert_eq!(aborted.objects.get(bolt).controller, PlayerId::P1);
+        assert!(aborted.exile.contains(&bolt));
+    }
+
+    #[test]
+    fn lorien_activation_tamper_is_nonmutating_and_fails_rl_projection() {
+        let mut state = ready_game_in_main1(1);
+        let lorien = put_in_hand(&mut state, PlayerId::P0, "Lorien Revealed");
+        step(&mut state, Action::ActivateAbility(lorien, 0)).unwrap();
+        let snapshot = state.snapshot();
+        let json = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&json).unwrap();
+        assert_eq!(restored, state);
+        let _ = advance_until_decision(&mut restored);
+        assert!(restored.engine.pending_activation.is_none());
+        assert_eq!(restored.objects.get(lorien).zone, Zone::Graveyard);
+
+        state.restore(&snapshot);
+        state
+            .engine
+            .pending_activation
+            .as_mut()
+            .unwrap()
+            .ability_index = u8::MAX;
+        let before = state.clone();
+        assert!(step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1))
+        )
+        .is_err());
+        assert_eq!(state, before);
+        assert!(crate::rl::observe_v2(
+            &state,
+            &crate::surface_v2::HarnessSurfaceV2::new(),
+            PlayerId::P0,
+            0,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn pending_cast_rejects_unrelated_actions_without_orphaning_its_placeholder() {
+        let mut state = ready_game_in_main1(2);
+        let first = put_in_hand(&mut state, PlayerId::P0, "Lightning Bolt");
+        let second = put_in_hand(&mut state, PlayerId::P0, "Lightning Bolt");
+        step(&mut state, Action::CastSpell(first)).unwrap();
+
+        for action in [Action::CastSpell(second), Action::Pass] {
+            let mut attempt = state.clone();
+            let before = attempt.clone();
+            assert!(step(&mut attempt, action).is_err());
+            assert_eq!(attempt, before);
+        }
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.stack[0].source, first);
+        assert_eq!(state.engine.pending_cast.as_ref().unwrap().spell, first);
+    }
+
+    #[test]
+    fn fireblast_cast_mode_cannot_precede_targeting() {
+        let mut state = ready_game_in_main1(6);
+        let fireblast = put_in_hand(&mut state, PlayerId::P0, "Fireblast");
+        step(&mut state, Action::CastSpell(fireblast)).unwrap();
+        let before = state.clone();
+        assert!(step(&mut state, Action::ChooseCastMode(CastMode::Alternative)).is_err());
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn pending_activation_and_bound_discard_reject_unrelated_actions_without_mutation() {
+        let mut activation = ready_game_in_main1(2);
+        let lorien = put_in_hand(&mut activation, PlayerId::P0, "Lorien Revealed");
+        let bolt = put_in_hand(&mut activation, PlayerId::P0, "Lightning Bolt");
+        step(&mut activation, Action::ActivateAbility(lorien, 0)).unwrap();
+        for action in [
+            Action::Pass,
+            Action::CastSpell(bolt),
+            Action::ActivateAbility(lorien, 0),
+        ] {
+            let mut attempt = activation.clone();
+            let before = attempt.clone();
+            assert!(step(&mut attempt, action).is_err());
+            assert_eq!(attempt, before);
+        }
+
+        let mut discard = ready_game_in_main1(1);
+        let blood = put_on_battlefield(&mut discard, PlayerId::P0, "Blood Token");
+        let bolt = put_in_hand(&mut discard, PlayerId::P0, "Lightning Bolt");
+        put_in_hand(&mut discard, PlayerId::P0, "Fiery Temper");
+        put_in_hand(&mut discard, PlayerId::P0, "Lava Dart");
+        step(&mut discard, Action::ActivateAbility(blood, 0)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut discard),
+            Decision::Discard { .. }
+        ));
+        for action in [
+            Action::Pass,
+            Action::CastSpell(bolt),
+            Action::ActivateAbility(blood, 0),
+        ] {
+            let mut attempt = discard.clone();
+            let before = attempt.clone();
+            assert!(step(&mut attempt, action).is_err());
+            assert_eq!(attempt, before);
+        }
+    }
+
+    #[test]
+    fn activation_and_spell_copy_continuations_cannot_coexist() {
+        let mut state = ready_game_in_main1(2);
+        let chain = put_in_hand(&mut state, PlayerId::P0, "Chain Lightning");
+        let lorien = put_in_hand(&mut state, PlayerId::P0, "Lorien Revealed");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        begin_activation(&mut state, PlayerId::P0, lorien, 0);
+        assert!(validate_pending_spell_copy(
+            &state,
+            state.engine.pending_spell_copy.as_ref().unwrap()
+        )
+        .is_err());
+        assert!(validate_pending_activation(
+            &state,
+            state.engine.pending_activation.as_ref().unwrap()
+        )
+        .is_err());
+        assert!(crate::rl::observe_v2(
+            &state,
+            &crate::surface_v2::HarnessSurfaceV2::new(),
+            PlayerId::P0,
+            0,
+        )
+        .is_err());
+        let before = state.clone();
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(state, before);
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::Halted { source, .. } if source == chain
+        ));
+    }
+
+    #[test]
+    fn orphaned_finish_discard_rejects_every_action_without_mutation() {
+        let mut cast = ready_game_in_main1(3);
+        let grab = put_in_hand(&mut cast, PlayerId::P0, "Grab the Prize");
+        let bolt = put_in_hand(&mut cast, PlayerId::P0, "Lightning Bolt");
+        put_in_hand(&mut cast, PlayerId::P0, "Fiery Temper");
+        step(&mut cast, Action::CastSpell(grab)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut cast),
+            Decision::Discard { .. }
+        ));
+        cast.engine.pending_cast = None;
+        for action in [Action::Pass, Action::CastSpell(bolt)] {
+            let mut attempt = cast.clone();
+            let before = attempt.clone();
+            assert!(step(&mut attempt, action).is_err());
+            assert_eq!(attempt, before);
+        }
+
+        let mut activation = ready_game_in_main1(1);
+        let blood = put_on_battlefield(&mut activation, PlayerId::P0, "Blood Token");
+        let bolt = put_in_hand(&mut activation, PlayerId::P0, "Lightning Bolt");
+        put_in_hand(&mut activation, PlayerId::P0, "Fiery Temper");
+        step(&mut activation, Action::ActivateAbility(blood, 0)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut activation),
+            Decision::Discard { .. }
+        ));
+        activation.engine.pending_activation = None;
+        for action in [Action::Pass, Action::CastSpell(bolt)] {
+            let mut attempt = activation.clone();
+            let before = attempt.clone();
+            assert!(step(&mut attempt, action).is_err());
+            assert_eq!(attempt, before);
+        }
+    }
+
+    #[test]
+    fn madness_offer_requires_canonical_kind_source_and_post_priority_stage() {
+        let mut forged = ready_game_in_main1(0);
+        let source = put_on_battlefield(&mut forged, PlayerId::P0, "Guttersnipe");
+        forged.stack.push(StackItem {
+            kind: StackItemKind::TriggeredAbility,
+            source,
+            controller: PlayerId::P0,
+            targets: vec![],
+            is_copy: false,
+            inline_effect: Some(EffectOp::Sequence(vec![])),
+            discarded: vec![],
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: true,
+            kicked: false,
+            v4: StackStateV4::default(),
+        });
+        forged.engine.priority_passes = [true, true];
+        for cast_it in [false, true] {
+            let mut attempt = forged.clone();
+            let before = attempt.clone();
+            assert!(step(&mut attempt, Action::ChooseMadnessCast(cast_it)).is_err());
+            assert_eq!(attempt, before);
+        }
+        assert!(crate::rl::observe_v2(
+            &forged,
+            &crate::surface_v2::HarnessSurfaceV2::new(),
+            PlayerId::P0,
+            0,
+        )
+        .is_err());
+        assert!(matches!(
+            advance_until_decision(&mut forged),
+            Decision::Halted { source: halted, .. } if halted == source
+        ));
+        assert_eq!(forged.objects.get(source).zone, Zone::Battlefield);
+        assert_eq!(forged.stack.last().map(|item| item.source), Some(source));
+
+        let mut early = ready_game_in_main1(1);
+        let temper = stage_madness_offer(&mut early, PlayerId::P0);
+        assert_eq!(early.engine.priority_passes, [false, false]);
+        for cast_it in [false, true] {
+            let mut attempt = early.clone();
+            let before = attempt.clone();
+            assert!(step(&mut attempt, Action::ChooseMadnessCast(cast_it)).is_err());
+            assert_eq!(attempt, before);
+        }
+
+        early.engine.priority_passes = [true, true];
+        event::propose_and_commit(
+            &mut early,
+            ProposedEvent::zone_change(temper, Zone::Graveyard),
+        );
+        event::propose_and_commit(&mut early, ProposedEvent::zone_change(temper, Zone::Exile));
+        for cast_it in [false, true] {
+            let mut attempt = early.clone();
+            let before = attempt.clone();
+            assert!(step(&mut attempt, Action::ChooseMadnessCast(cast_it)).is_err());
+            assert_eq!(attempt, before);
+        }
+    }
+
+    #[test]
+    fn physical_spell_cannot_be_retyped_into_definition_shaped_nonspell_producers() {
+        let mut triggered = ready_game_in_main1(0);
+        let spell = put_on_stack(&mut triggered, PlayerId::P0, "Guttersnipe");
+        let item = triggered.stack.last_mut().unwrap();
+        item.kind = StackItemKind::TriggeredAbility;
+        item.v4 = StackStateV4::default();
+        item.inline_effect = Some(EffectOp::Sequence(vec![]));
+        assert!(crate::rl::observe_v2(
+            &triggered,
+            &crate::surface_v2::HarnessSurfaceV2::new(),
+            PlayerId::P0,
+            0,
+        )
+        .is_err());
+        triggered.engine.priority_passes = [true, true];
+        assert!(matches!(
+            advance_until_decision(&mut triggered),
+            Decision::Halted { source, .. } if source == spell
+        ));
+        assert_eq!(triggered.objects.get(spell).zone, Zone::Stack);
+        assert_eq!(triggered.stack.last().map(|item| item.source), Some(spell));
+
+        let mut activated = ready_game_in_main1(0);
+        let spell = put_on_stack(&mut activated, PlayerId::P0, "Experimental Synthesizer");
+        let def = &card_def::CARD_DEFS[activated.objects.get(spell).card_def as usize];
+        let ability = &def.activated_abilities[0];
+        let ability_target_spec = ability.target_spec;
+        let ability_effect = (ability.effect)();
+        let item = activated.stack.last_mut().unwrap();
+        item.kind = StackItemKind::ActivatedAbility;
+        item.v4 = StackStateV4 {
+            target_spec: Some(ability_target_spec),
+            activated_ability_index: Some(0),
+            ..StackStateV4::default()
+        };
+        item.inline_effect = Some(ability_effect);
+        assert!(crate::rl::observe_v2(
+            &activated,
+            &crate::surface_v2::HarnessSurfaceV2::new(),
+            PlayerId::P0,
+            0,
+        )
+        .is_err());
+        activated.engine.priority_passes = [true, true];
+        assert!(matches!(
+            advance_until_decision(&mut activated),
+            Decision::Halted { source, .. } if source == spell
+        ));
+        assert_eq!(activated.objects.get(spell).zone, Zone::Stack);
+        assert_eq!(activated.stack.last().map(|item| item.source), Some(spell));
+    }
+
+    #[test]
+    fn finalized_cast_origin_rejects_coherent_method_and_payment_relabels() {
+        fn assert_relabel_rejected(
+            mut state: GameState,
+            source: ObjectId,
+            forged_method: CastMethodV4,
+            forged_flashback: bool,
+        ) {
+            assert!(state.engine.pending_cast.is_none());
+            assert_eq!(state.stack.last().map(|item| item.source), Some(source));
+            validate_spell_stack_source(&state, state.stack.last().unwrap())
+                .expect("the production-finalized spell must begin canonical");
+
+            let item = state.stack.last_mut().unwrap();
+            item.v4.cast_method = Some(forged_method);
+            item.v4
+                .source_contract
+                .as_mut()
+                .expect("a finalized spell retains its source contract")
+                .cast_method = forged_method;
+            item.is_flashback = forged_flashback;
+
+            let forged = state.stack.last().unwrap().clone();
+            assert!(validate_spell_stack_source(&state, &forged).is_err());
+            assert!(plan_spell_departure(&state, &forged, Zone::Graveyard).is_err());
+            assert!(crate::rl::observe_v2(
+                &state,
+                &crate::surface_v2::HarnessSurfaceV2::new(),
+                PlayerId::P0,
+                0,
+            )
+            .is_err());
+        }
+
+        // Production Hand -> Stack cast, then the auditor's symmetric
+        // three-field Normal -> Flashback relabel. Lava Dart supports both
+        // paths, so definition and redundant stack fields alone cannot tell
+        // whether resolution should exile it.
+        let mut hand = ready_game_in_main1(1);
+        let hand_dart = put_in_hand(&mut hand, PlayerId::P0, "Lava Dart");
+        step(&mut hand, Action::CastSpell(hand_dart)).unwrap();
+        step(
+            &mut hand,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        let _ = advance_until_decision(&mut hand);
+        assert_relabel_rejected(hand, hand_dart, CastMethodV4::Flashback, true);
+
+        // Lava Dart supports both Normal and Flashback, so changing the
+        // method, contract method, and legacy flag coherently used to pass
+        // every definition check and redirect departure from Exile to the
+        // graveyard. Its exact GraveyardFlashback route now rejects it.
+        let mut flashback = ready_game_in_main1(0);
+        put_on_battlefield(&mut flashback, PlayerId::P0, "Mountain");
+        let dart = put_in_graveyard(&mut flashback, PlayerId::P0, "Lava Dart");
+        step(&mut flashback, Action::CastSpell(dart)).unwrap();
+        step(
+            &mut flashback,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        let _ = advance_until_decision(&mut flashback);
+        assert_relabel_rejected(flashback, dart, CastMethodV4::Normal, false);
+
+        // The paid method stamp also distinguishes two casts sharing the
+        // same Hand route. Fireblast's successfully paid alternative cost
+        // cannot later be rewritten into an ordinary mana-paid cast.
+        let mut alternative = ready_game_in_main1(0);
+        put_on_battlefield(&mut alternative, PlayerId::P0, "Mountain");
+        put_on_battlefield(&mut alternative, PlayerId::P0, "Mountain");
+        let fireblast = put_in_hand(&mut alternative, PlayerId::P0, "Fireblast");
+        step(&mut alternative, Action::CastSpell(fireblast)).unwrap();
+        step(
+            &mut alternative,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        let first = match advance_until_decision(&mut alternative) {
+            Decision::ChooseCostTargets { candidates, .. } => candidates[0],
+            other => panic!("expected Fireblast cost target, got {other:?}"),
+        };
+        step(&mut alternative, Action::ChooseCostTarget(first)).unwrap();
+        let _ = advance_until_decision(&mut alternative);
+        assert_eq!(
+            alternative.stack.last().unwrap().v4.cast_method,
+            Some(CastMethodV4::Alternative)
+        );
+        assert_relabel_rejected(alternative, fireblast, CastMethodV4::Normal, false);
+    }
+
+    #[test]
+    fn old_spell_target_ignores_a_later_incarnations_nonspell_stack_item() {
+        let mut state = ready_game_in_main1(0);
+        put_on_battlefield(&mut state, PlayerId::P0, "Island");
+        put_on_battlefield(&mut state, PlayerId::P0, "Island");
+        let target = put_on_stack(&mut state, PlayerId::P1, "Lightning Bolt");
+        let counter = put_in_hand(&mut state, PlayerId::P0, "Counterspell");
+        step(&mut state, Action::CastSpell(counter)).unwrap();
+        step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+
+        let target_index = state
+            .stack
+            .iter()
+            .position(|item| item.source == target)
+            .unwrap();
+        state.stack.remove(target_index);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(target, Zone::Battlefield),
+        );
+        state.stack.insert(
+            0,
+            StackItem {
+                kind: StackItemKind::TriggeredAbility,
+                source: target,
+                controller: PlayerId::P1,
+                targets: vec![],
+                is_copy: false,
+                inline_effect: Some(EffectOp::Sequence(vec![])),
+                discarded: vec![],
+                is_flashback: false,
+                mode_chosen: 0,
+                madness_offer: false,
+                kicked: false,
+                v4: StackStateV4::default(),
+            },
+        );
+        state.engine.priority_passes = [true, true];
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert!(state.engine.halted.is_none());
+        assert_eq!(state.objects.get(counter).zone, Zone::Graveyard);
+        assert_eq!(state.stack.last().map(|item| item.source), Some(target));
+    }
+
+    #[test]
+    fn plot_marker_is_exact_incarnation_provenance_and_survives_only_an_aborted_retry() {
+        let mut resolved = ready_game_in_main1(4);
+        resolved.turn = 2;
+        let robbery = put_in_hand(&mut resolved, PlayerId::P0, "Highway Robbery");
+        event::propose_and_commit(
+            &mut resolved,
+            ProposedEvent::zone_change(robbery, Zone::Exile),
+        );
+        resolved.objects.get_mut(robbery).plotted_turn = Some(1);
+        step(&mut resolved, Action::CastSpell(robbery)).unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut resolved),
+            Decision::ChooseOptionalCost { .. }
+        ));
+        step(
+            &mut resolved,
+            Action::ChooseOptionalCost(OptionalCostChoice::Decline),
+        )
+        .unwrap();
+        assert_eq!(resolved.objects.get(robbery).zone, Zone::Graveyard);
+        assert_eq!(resolved.objects.get(robbery).plotted_turn, None);
+
+        event::propose_and_commit(
+            &mut resolved,
+            ProposedEvent::zone_change(robbery, Zone::Exile),
+        );
+        resolved.engine.exile_play_permissions.push(PlayPermission {
+            object: robbery,
+            holder: PlayerId::P0,
+            zone_change_generation: resolved.objects.get(robbery).zone_change_count,
+            play_or_cast: PlayOrCast::Cast,
+            expiry: PlayPermissionExpiry::EndOfTurn,
+        });
+        resolved.engine.priority_passes = [false, false];
+        resolved.priority_player = PlayerId::P0;
+        step(&mut resolved, Action::CastSpell(robbery)).unwrap();
+        assert_eq!(
+            resolved
+                .engine
+                .pending_cast
+                .as_ref()
+                .unwrap()
+                .source_contract
+                .cast_method,
+            CastMethodV4::Normal
+        );
+
+        let mut retry = ready_game_in_main1(0);
+        retry.turn = 2;
+        let robbery = put_in_hand(&mut retry, PlayerId::P0, "Highway Robbery");
+        event::propose_and_commit(&mut retry, ProposedEvent::zone_change(robbery, Zone::Exile));
+        retry.objects.get_mut(robbery).plotted_turn = Some(1);
+        step(&mut retry, Action::CastSpell(robbery)).unwrap();
+        let pending = retry.engine.pending_cast.take().unwrap();
+        abort_cast(&mut retry, pending, CastMethodV4::Plotted);
+        assert_eq!(retry.objects.get(robbery).zone, Zone::Exile);
+        assert_eq!(retry.objects.get(robbery).plotted_turn, Some(1));
+        step(&mut retry, Action::CastSpell(robbery)).unwrap();
+        assert_eq!(
+            retry
+                .engine
+                .pending_cast
+                .as_ref()
+                .unwrap()
+                .source_contract
+                .cast_method,
+            CastMethodV4::Plotted
+        );
     }
 
     #[test]

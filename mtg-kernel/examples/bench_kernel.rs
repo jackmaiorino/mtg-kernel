@@ -457,6 +457,7 @@ fn synthetic_state_of_size(total_objects: u32, seed: u64) -> GameState {
                 counters: Counters::default(),
                 attachments: Vec::new(),
                 v4: mtg_kernel::state::ObjectStateV4::from_card_def(token_card_def),
+                spell_copy_origin: None,
                 plotted_turn: None,
                 zone_change_count: 0,
             });

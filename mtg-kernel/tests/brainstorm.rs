@@ -50,6 +50,7 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
         counters: Counters::default(),
         attachments: Vec::new(),
         v4: mtg_kernel::state::ObjectStateV4::from_card_def(card_def),
+        spell_copy_origin: None,
         plotted_turn: None,
         zone_change_count: 0,
     });
@@ -219,7 +220,7 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     );
     let first_snapshot = state.snapshot();
     let first_hash = state.state_hash();
-    assert_eq!(first_hash, 0xdc52_2840_583c_3885);
+    assert_eq!(first_hash, 0x7f53_97f4_16d7_7350);
 
     answer_hand_choice(&mut state, *a);
     assert_eq!(
@@ -253,7 +254,7 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     ));
     let answered_snapshot = state.snapshot();
     let answered_hash = state.state_hash();
-    assert_eq!(answered_hash, 0x1517_5867_dbc5_cd9d);
+    assert_eq!(answered_hash, 0xebf5_9788_e70e_04f0);
     let answered = state.clone();
     assert!(engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(*a))).is_err());
     assert_eq!(state, answered, "an answered action is immediately stale");
@@ -275,7 +276,7 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     );
     let second_snapshot = state.snapshot();
     let second_hash = state.state_hash();
-    assert_eq!(second_hash, 0x0a2b_8c1f_9371_0c12);
+    assert_eq!(second_hash, 0xf9ea_ade7_b83e_b073);
 
     answer_hand_choice(&mut state, *c);
     assert_eq!(state.players[0].library, vec![*a, *d]);
@@ -328,7 +329,7 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     );
     let expected = state.clone();
     let expected_hash = state.state_hash();
-    assert_eq!(expected_hash, 0xf5db_8aef_e3d4_bb59);
+    assert_eq!(expected_hash, 0x0931_cf7a_368a_09d9);
 
     state.restore(&second_snapshot);
     assert_eq!(state.state_hash(), second_hash);

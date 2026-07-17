@@ -45,6 +45,7 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
         counters: Counters::default(),
         attachments: Vec::new(),
         v4: mtg_kernel::state::ObjectStateV4::from_card_def(card_def),
+        spell_copy_origin: None,
         plotted_turn: None,
         zone_change_count: 0,
     });
@@ -386,6 +387,14 @@ fn copied_flashback_draws_without_repaying_and_virtual_copy_never_enters_exile()
         counters: Counters::default(),
         attachments: Vec::new(),
         v4: mtg_kernel::state::ObjectStateV4::from_card_def(original.card_def),
+        spell_copy_origin: Some(mtg_kernel::state::SpellCopyOriginV4 {
+            parent: deep,
+            parent_card_def: original.card_def,
+            parent_owner: original.owner,
+            parent_controller: original.controller,
+            parent_stack_zone_change_count: original.zone_change_count,
+            parent_was_copy: false,
+        }),
         plotted_turn: None,
         zone_change_count: 0,
     });
@@ -393,6 +402,12 @@ fn copied_flashback_draws_without_repaying_and_virtual_copy_never_enters_exile()
     copy.source = copy_source;
     copy.is_copy = true;
     copy.is_flashback = false;
+    copy.v4.cast_method = Some(mtg_kernel::state::CastMethodV4::Normal);
+    copy.v4.source_contract = Some(mtg_kernel::state::StackSourceContractV4::capture(
+        &state,
+        copy_source,
+        mtg_kernel::state::CastMethodV4::Normal,
+    ));
     state.stack.push(copy);
     let history_start = state.engine.event_history.len();
 

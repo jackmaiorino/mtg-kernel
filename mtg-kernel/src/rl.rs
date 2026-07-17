@@ -42,9 +42,9 @@ pub const OBSERVATION_SCHEMA_VERSION: u32 = 4;
 pub const LEGAL_ACTION_SCHEMA_VERSION: u32 = 4;
 pub const OBSERVATION_SCHEMA_VERSION_V5: u32 = 5;
 pub const LEGAL_ACTION_SCHEMA_VERSION_V5: u32 = 5;
-pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 9;
+pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 10;
 pub const POLICY_EPISODE_SCHEMA_VERSION: u32 = 5;
-pub const MANIFEST_SCHEMA_VERSION: u32 = 7;
+pub const MANIFEST_SCHEMA_VERSION: u32 = 8;
 pub const DEFAULT_MAX_PHYSICAL_DECISIONS: u64 = 200_000;
 pub const DEFAULT_MAX_POLICY_STEPS: u64 = 25_600_000;
 pub const BURN_MIRROR_MATCHUP: &str = "burn_mirror";
@@ -4714,6 +4714,8 @@ fn pending_cast_semantic_v2(
     acting_player: PlayerId,
     p: &engine::PendingCast,
 ) -> Result<PendingCastSemanticV2> {
+    engine::validate_pending_cast(state, p)
+        .map_err(|error| RlContractError(format!("invalid pending cast: {error}")))?;
     Ok(PendingCastSemanticV2 {
         source: visible_card_ref(state, p.spell, acting_player)?,
         controller: p.controller.into(),
@@ -4736,6 +4738,8 @@ fn pending_activation_semantic_v2(
     acting_player: PlayerId,
     p: &engine::PendingActivation,
 ) -> Result<PendingActivationSemanticV2> {
+    engine::validate_pending_activation(state, p)
+        .map_err(|error| RlContractError(format!("invalid pending activation: {error}")))?;
     Ok(PendingActivationSemanticV2 {
         source: visible_card_ref(state, p.source, acting_player)?,
         controller: p.controller.into(),
@@ -4753,9 +4757,11 @@ fn pending_discard_semantic_v2(
     acting_player: PlayerId,
     p: &engine::PendingDiscard,
 ) -> Result<PendingDiscardSemanticV2> {
+    engine::validate_pending_discard_binding(state, p)
+        .map_err(|(_, error)| RlContractError(format!("invalid pending discard: {error}")))?;
     let (resume_stage, resume_source) = match &p.resume {
         engine::DiscardResume::None => (DiscardResumeSemanticV2::None, None),
-        engine::DiscardResume::FinishCast => (DiscardResumeSemanticV2::FinishCast, None),
+        engine::DiscardResume::FinishCast { .. } => (DiscardResumeSemanticV2::FinishCast, None),
         engine::DiscardResume::FinishActivation { .. } => {
             (DiscardResumeSemanticV2::FinishActivation, None)
         }
@@ -5104,6 +5110,7 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
                     controller,
                     zone,
                     zone_change_count,
+                    ..
                 } => {
                     if usize::from(card_def) >= crate::card_def::CARD_DEFS.len() {
                         return Err(RlContractError(
@@ -5418,6 +5425,7 @@ mod policy_v5_artifact_tests {
                 counters: Counters::default(),
                 attachments: Vec::new(),
                 v4: ObjectStateV4::from_card_def(card_def),
+                spell_copy_origin: None,
                 plotted_turn: None,
                 zone_change_count: 0,
             });
