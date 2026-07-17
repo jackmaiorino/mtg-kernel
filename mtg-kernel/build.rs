@@ -206,6 +206,14 @@ enum Special {
         mill: u8,
         draw: u8,
     },
+    /// Privately look at and reorder the top `look` cards of the controller's
+    /// library, optionally shuffle that library, then draw `draw` cards.
+    /// Ponder is the first consumer; keeping this as a parameterized recipe
+    /// prevents card-name behavior from leaking into the runtime engine.
+    LookReorderMayShuffleThenDraw {
+        look: u8,
+        draw: u8,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -256,6 +264,7 @@ fn special_for(name: &str) -> Special {
             mill: 2,
             draw: 1,
         },
+        "Ponder" => Special::LookReorderMayShuffleThenDraw { look: 3, draw: 1 },
         _ => Special::None,
     }
 }
@@ -677,6 +686,42 @@ fn codegen(cards: &[CardJson]) -> String {
         }
         writeln!(out, "        ],").unwrap();
         writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    let mut look_reorder_may_shuffle_then_draw_shapes = Vec::new();
+    for card in cards {
+        if let Special::LookReorderMayShuffleThenDraw { look, draw } = special_for(&card.name) {
+            let shape = (look, draw);
+            if !look_reorder_may_shuffle_then_draw_shapes.contains(&shape) {
+                look_reorder_may_shuffle_then_draw_shapes.push(shape);
+            }
+        }
+    }
+    for (look, draw) in look_reorder_may_shuffle_then_draw_shapes {
+        writeln!(
+            out,
+            "fn spell_effect_look_reorder_may_shuffle_then_draw_{look}_{draw}() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::LookAtLibraryTopAndReorder {{ player: PlayerRef::Controller, count: {look} }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::MayShuffleLibrary {{ player: PlayerRef::Controller }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -1118,6 +1163,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::WindingWay => (
                 "TargetSpec::None",
                 "spell_effect_winding_way".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::LookReorderMayShuffleThenDraw { look, draw } => (
+                "TargetSpec::None",
+                format!("spell_effect_look_reorder_may_shuffle_then_draw_{look}_{draw}"),
                 "no_effect".to_string(),
             ),
             Special::MillThenDraw { player, mill, draw } => {

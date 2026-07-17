@@ -1630,6 +1630,25 @@ pub fn legal_action_candidates_v1(
                     )?;
                 }
             }
+            Decision::ChooseEffectBoolean { player, source, .. } => {
+                let actor = (*player).into();
+                let source = card_ref(state, *source)?;
+                // Schema-v4's canonical Boolean ordering follows the
+                // existing ChooseKicker convention: false/No, then true/Yes.
+                // Legacy AIRL displays chooseUse as Yes then No; the semantic
+                // values agree even though candidate indices are reversed.
+                for value in [false, true] {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseEffectBoolean {
+                            actor,
+                            source: source.clone(),
+                            value,
+                        },
+                        SurfaceAction::Action(Action::ChooseEffectBoolean(value)),
+                    )?;
+                }
+            }
             Decision::ChooseOptionalCost {
                 player,
                 discard_payable,
@@ -1815,6 +1834,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseSpellMode { player, .. }
             | Decision::ChooseEffectOption { player, .. }
             | Decision::ChooseEffectTargets { player, .. }
+            | Decision::ChooseEffectBoolean { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }
@@ -3579,6 +3599,7 @@ fn pending_effect_semantic_v4(
     acting_player: PlayerId,
     pending: &crate::effect::EffectContinuation,
 ) -> Result<PendingEffectSemanticV4> {
+    crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
     let choice = pending
         .choice
         .as_ref()
@@ -3608,6 +3629,9 @@ fn pending_effect_semantic_v4(
                     let chooser_private = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
+                            | crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
+                                ..
+                            }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {
@@ -3623,11 +3647,10 @@ fn pending_effect_semantic_v4(
                     Ok(PendingEffectChoiceSemanticV4::Targets {
                         player: (*player).into(),
                         structural_path: path.clone(),
-                        // The existence and exact count of a mill-order
-                        // decision are public, but cards still physically in
-                        // the library remain chooser-private until the batch
-                        // commits. Non-choosers therefore receive the typed
-                        // choice envelope without either candidate payload.
+                        // The existence/count of a private-library decision
+                        // are public, but cards still physically in the
+                        // library remain chooser-private. Non-choosers get
+                        // the typed envelope without candidate payloads.
                         selected_targets: visible_targets(selected)?,
                         legal_targets: visible_targets(legal)?,
                         min_targets: *min_targets,
@@ -3641,9 +3664,27 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
                                 TargetSelectionPurposeV4::CardSelection
                             }
+                            crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
+                                ..
+                            } => TargetSelectionPurposeV4::LibraryOrder,
                         },
                     })
                 }
+                crate::effect::PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path,
+                    default,
+                    purpose,
+                } => Ok(PendingEffectChoiceSemanticV4::Boolean {
+                    player: (*player).into(),
+                    structural_path: path.clone(),
+                    default: *default,
+                    purpose: match purpose {
+                        crate::effect::EffectBooleanChoicePurpose::ShuffleLibrary { .. } => {
+                            BooleanChoicePurposeV4::Shuffle
+                        }
+                    },
+                }),
             }
         })
         .transpose()?;

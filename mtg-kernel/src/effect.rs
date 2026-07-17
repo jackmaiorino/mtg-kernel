@@ -300,6 +300,23 @@ pub enum EffectOp {
         player: PlayerRef,
         count: u8,
     },
+    /// Privately looks at up to the top `count` cards of `player`'s
+    /// library and lets that same player put them back in any order. The
+    /// interpreter binds the exact prefix/incarnations before yielding the
+    /// ordered choice. AIRL/XMage presents each explicit pick as the next
+    /// deepest card; the forced final card is therefore the new top card.
+    /// Appended to preserve every existing variant's derived hash identity.
+    LookAtLibraryTopAndReorder {
+        player: PlayerRef,
+        count: u8,
+    },
+    /// The selected player may shuffle their library. This is a real
+    /// resolution-time Boolean choice even for a zero- or one-card library;
+    /// accepting uses the state's deterministic shuffle stream and declining
+    /// leaves both order and knowledge untouched. Appended for hash identity.
+    MayShuffleLibrary {
+        player: PlayerRef,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -330,6 +347,22 @@ pub enum EffectFrame {
         order_resolved: bool,
         path: Vec<u16>,
     },
+    /// Commits one privately chosen ordering of an exact bound library
+    /// prefix. `expected_prefix` preserves its pre-choice order separately
+    /// from `ordered`, so a stale continuation cannot accept a same-set
+    /// shuffle/reorder that incarnation-only validation would miss.
+    ReorderLibraryTop {
+        player: PlayerId,
+        expected_prefix: Vec<EffectObjectBinding>,
+        ordered: Vec<EffectObjectBinding>,
+        path: Vec<u16>,
+    },
+    /// Executes an accepted optional shuffle on the next engine advance,
+    /// rather than mutating during the action-answering call itself.
+    ShuffleLibrary {
+        player: PlayerId,
+        path: Vec<u16>,
+    },
 }
 
 /// Binds a physical arena id to the exact incarnation selected when an effect
@@ -355,7 +388,7 @@ pub struct EffectTargetCandidate {
 /// Public schema-v4 projects this graveyard-ordering use as the already
 /// reserved `TargetSelectionPurposeV4::CardSelection`; no card-specific
 /// state or action identity is introduced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EffectTargetSelectionPurpose {
     OrderIntoGraveyard {
         preserve_known_identity: bool,
@@ -364,6 +397,22 @@ pub enum EffectTargetSelectionPurpose {
     /// Only the milled cards' owner may inspect candidate identities while
     /// the choice is pending; the completed graveyard remains public.
     OrderMilledIntoGraveyard,
+    /// Orders a privately looked-at library prefix. The original ordered
+    /// bindings are retained independently from the mutable selected/legal
+    /// partition so restore/tamper validation can require the exact prefix,
+    /// not merely the same set of cards.
+    OrderLookedLibraryTop {
+        player: PlayerId,
+        original_prefix: Vec<EffectObjectBinding>,
+    },
+}
+
+/// Internal completion semantics for a generic Boolean effect choice.
+/// Public schema-v4 projects the shuffle use through its already-reserved
+/// `BooleanChoicePurposeV4::Shuffle` variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EffectBooleanChoicePurpose {
+    ShuffleLibrary { player: PlayerId },
 }
 
 /// A policy-visible choice yielded by the generic effect interpreter. This is
@@ -387,6 +436,12 @@ pub enum PendingEffectChoice {
         ordered: bool,
         purpose: EffectTargetSelectionPurpose,
     },
+    ChooseBoolean {
+        player: PlayerId,
+        path: Vec<u16>,
+        default: Option<bool>,
+        purpose: EffectBooleanChoicePurpose,
+    },
 }
 
 impl PendingEffectChoice {
@@ -394,13 +449,15 @@ impl PendingEffectChoice {
         match self {
             PendingEffectChoice::ChooseOption { player, .. } => *player,
             PendingEffectChoice::SelectTargets { player, .. } => *player,
+            PendingEffectChoice::ChooseBoolean { player, .. } => *player,
         }
     }
 
     pub fn structural_path(&self) -> &[u16] {
         match self {
             PendingEffectChoice::ChooseOption { path, .. }
-            | PendingEffectChoice::SelectTargets { path, .. } => path,
+            | PendingEffectChoice::SelectTargets { path, .. }
+            | PendingEffectChoice::ChooseBoolean { path, .. } => path,
         }
     }
 }
@@ -464,6 +521,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         // graveyard batch can yield its owner's ordering choice.
         EffectOp::RevealTopAndPartitionByType { .. } => true,
         EffectOp::MillCards { count, .. } => *count > 1,
+        EffectOp::LookAtLibraryTopAndReorder { .. } | EffectOp::MayShuffleLibrary { .. } => true,
         _ => false,
     }
 }
@@ -538,7 +596,7 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                 .push(EffectFrame::Program { op: selected, path });
             Ok(())
         }
-        PendingEffectChoice::SelectTargets { .. } => {
+        PendingEffectChoice::SelectTargets { .. } | PendingEffectChoice::ChooseBoolean { .. } => {
             continuation.choice = Some(choice);
             Err("the pending effect is not waiting for an option".to_string())
         }
@@ -628,6 +686,60 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
     complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())
 }
 
+/// Records one generic Boolean answer without executing its consequence.
+/// The next engine advance owns the accepted shuffle, keeping `step()` a
+/// pure continuation transition and making post-action snapshots stable.
+pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<(), String> {
+    validate_pending_effect_choice(state)?;
+    let continuation = state
+        .engine
+        .pending_effect
+        .as_mut()
+        .ok_or("no effect continuation is pending")?;
+    let choice = continuation
+        .choice
+        .take()
+        .ok_or("the pending effect is not waiting for a choice")?;
+    match choice {
+        PendingEffectChoice::ChooseBoolean {
+            player,
+            mut path,
+            default,
+            purpose,
+        } => {
+            path.push(u16::from(value));
+            match purpose {
+                EffectBooleanChoicePurpose::ShuffleLibrary {
+                    player: library_player,
+                } => {
+                    if player != library_player {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path,
+                            default,
+                            purpose,
+                        });
+                        return Err(
+                            "shuffle choice player does not own the selected library".to_string()
+                        );
+                    }
+                    if value {
+                        continuation.frames.push(EffectFrame::ShuffleLibrary {
+                            player: library_player,
+                            path,
+                        });
+                    }
+                }
+            }
+            Ok(())
+        }
+        PendingEffectChoice::ChooseOption { .. } | PendingEffectChoice::SelectTargets { .. } => {
+            continuation.choice = Some(choice);
+            Err("the pending effect is not waiting for a Boolean choice".to_string())
+        }
+    }
+}
+
 fn complete_resumable_target_selection(
     continuation: &mut EffectContinuation,
 ) -> Result<(), String> {
@@ -645,7 +757,7 @@ fn complete_resumable_target_selection(
         continuation.choice = Some(choice);
         return Err("the pending effect is not waiting for a target selection".to_string());
     };
-    let objects = selected
+    let mut objects = selected
         .into_iter()
         .map(|candidate| {
             let binding = candidate.expected_object.ok_or_else(|| {
@@ -671,6 +783,21 @@ fn complete_resumable_target_selection(
             continuation.frames.push(EffectFrame::MillLibraryBatch {
                 objects,
                 order_resolved: true,
+                path,
+            });
+        }
+        EffectTargetSelectionPurpose::OrderLookedLibraryTop {
+            player,
+            original_prefix,
+        } => {
+            // AIRL's ordered-card chooser treats the first explicit pick as
+            // deepest and the forced final card as topmost. `selected` is in
+            // pick order, while the state library is top-to-bottom.
+            objects.reverse();
+            continuation.frames.push(EffectFrame::ReorderLibraryTop {
+                player,
+                expected_prefix: original_prefix,
+                ordered: objects,
                 path,
             });
         }
@@ -716,29 +843,88 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     else {
         return Ok(());
     };
-    if let PendingEffectChoice::SelectTargets {
-        selected,
-        legal,
-        purpose,
-        ..
-    } = choice
-    {
-        for candidate in selected.iter().chain(legal) {
-            validate_effect_target_candidate(state, candidate)?;
+    match choice {
+        PendingEffectChoice::SelectTargets {
+            player: chooser,
+            selected,
+            legal,
+            purpose,
+            ..
+        } => {
+            for candidate in selected.iter().chain(legal) {
+                validate_effect_target_candidate(state, candidate)?;
+            }
+            match purpose {
+                EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
+                    let bindings = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "milled-card ordering target lacks an object-incarnation binding"
+                                    .to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    validate_bound_library_prefix(state, &bindings)?;
+                    let library_owner = bindings
+                        .first()
+                        .map(|binding| state.objects.get(binding.object).owner)
+                        .ok_or_else(|| {
+                            "milled-card ordering choice has no bound library objects".to_string()
+                        })?;
+                    if *chooser != library_owner {
+                        return Err(
+                            "milled-card ordering player does not own the selected library"
+                                .to_string(),
+                        );
+                    }
+                }
+                EffectTargetSelectionPurpose::OrderLookedLibraryTop {
+                    player: library_player,
+                    original_prefix,
+                } => {
+                    if chooser != library_player {
+                        return Err(
+                            "library-order choice player does not own the selected library"
+                                .to_string(),
+                        );
+                    }
+                    validate_bound_library_prefix_exact(state, *library_player, original_prefix)?;
+                    let mut partition = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "library-order target lacks an object-incarnation binding"
+                                    .to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    let mut original = original_prefix.clone();
+                    partition.sort_by_key(|binding| binding.object);
+                    original.sort_by_key(|binding| binding.object);
+                    if partition != original {
+                        return Err("library-order candidates do not partition the bound prefix"
+                            .to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::OrderIntoGraveyard { .. } => {}
+            }
         }
-        if *purpose == EffectTargetSelectionPurpose::OrderMilledIntoGraveyard {
-            let bindings = selected
-                .iter()
-                .chain(legal)
-                .map(|candidate| {
-                    candidate.expected_object.ok_or_else(|| {
-                        "milled-card ordering target lacks an object-incarnation binding"
-                            .to_string()
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            validate_bound_library_prefix(state, &bindings)?;
+        PendingEffectChoice::ChooseBoolean {
+            player,
+            purpose:
+                EffectBooleanChoicePurpose::ShuffleLibrary {
+                    player: library_player,
+                },
+            ..
+        } => {
+            if player != library_player {
+                return Err("shuffle choice player/library mismatch".to_string());
+            }
         }
+        PendingEffectChoice::ChooseOption { .. } => {}
     }
     Ok(())
 }
@@ -843,6 +1029,40 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     }
                     commit_zone_change_batch(state, &objects, Zone::Graveyard, false)?;
                 }
+                EffectFrame::ReorderLibraryTop {
+                    player,
+                    expected_prefix,
+                    ordered,
+                    path: _,
+                } => {
+                    validate_bound_library_prefix_exact(state, player, &expected_prefix)?;
+                    for &binding in &ordered {
+                        validate_effect_object_binding(state, binding)?;
+                    }
+                    let mut expected_set = expected_prefix
+                        .iter()
+                        .map(|binding| binding.object)
+                        .collect::<Vec<_>>();
+                    let mut ordered_set = ordered
+                        .iter()
+                        .map(|binding| binding.object)
+                        .collect::<Vec<_>>();
+                    expected_set.sort_unstable();
+                    ordered_set.sort_unstable();
+                    if ordered_set != expected_set {
+                        return Err(
+                            "chosen library order is not the bound prefix permutation".to_string()
+                        );
+                    }
+                    let ordered_ids = ordered
+                        .iter()
+                        .map(|binding| binding.object)
+                        .collect::<Vec<_>>();
+                    state.reorder_library_top(player, &ordered_ids, &[player])?;
+                }
+                EffectFrame::ShuffleLibrary { player, path: _ } => {
+                    state.shuffle_library(player);
+                }
                 EffectFrame::Program { .. } => unreachable!(),
             }
             continue;
@@ -930,6 +1150,30 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     path,
                 });
             }
+            EffectOp::LookAtLibraryTopAndReorder { player, count } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_prefix = bind_library_top(state, player, count);
+                // A private look changes only this observer's knowledge. A
+                // 0/1-card prefix has no ordering choice and must not erase
+                // another observer's still-valid prior fact.
+                state.reveal_library_top(player, player, original_prefix.len());
+                if original_prefix.len() >= 2 {
+                    stage_library_order_choice(&mut continuation, player, path, original_prefix);
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::MayShuffleLibrary { player } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path,
+                    default: Some(false),
+                    purpose: EffectBooleanChoicePurpose::ShuffleLibrary { player },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
             leaf => execute(&leaf, &continuation.ctx, state),
         }
     }
@@ -1009,6 +1253,38 @@ fn stage_graveyard_order_choice(
     });
 }
 
+fn stage_library_order_choice(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    path: Vec<u16>,
+    original_prefix: Vec<EffectObjectBinding>,
+) {
+    let count = original_prefix
+        .len()
+        .try_into()
+        .expect("library-order target count fits the u16 public contract");
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path,
+        selected: Vec::new(),
+        legal: original_prefix
+            .iter()
+            .copied()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: count,
+        max_targets: count,
+        ordered: true,
+        purpose: EffectTargetSelectionPurpose::OrderLookedLibraryTop {
+            player,
+            original_prefix,
+        },
+    });
+}
+
 fn bind_library_top(state: &GameState, player: PlayerId, count: u8) -> Vec<EffectObjectBinding> {
     state.players[player.index()].library
         [..usize::from(count).min(state.players[player.index()].library.len())]
@@ -1062,6 +1338,41 @@ fn validate_bound_library_prefix(
     current.sort_unstable();
     if expected != current {
         return Err("milled-card bindings no longer match the live library prefix".to_string());
+    }
+    Ok(())
+}
+
+/// Exact-order counterpart to the mill batch's set validator. Private look
+/// choices retain their originally observed prefix separately from the
+/// mutable selected/legal partition, so even a same-card-set reorder in a
+/// restored/tampered state fails closed before accepting another action.
+fn validate_bound_library_prefix_exact(
+    state: &GameState,
+    player: PlayerId,
+    objects: &[EffectObjectBinding],
+) -> Result<(), String> {
+    if objects
+        .iter()
+        .any(|binding| binding.expected_zone != Zone::Library)
+    {
+        return Err("library-order binding does not expect the library zone".to_string());
+    }
+    for &binding in objects {
+        validate_effect_object_binding(state, binding)?;
+        if state.objects.get(binding.object).owner != player {
+            return Err("library-order binding has the wrong library owner".to_string());
+        }
+    }
+    let library = &state.players[player.index()].library;
+    if library.len() < objects.len() {
+        return Err("library-order binding is longer than the live library".to_string());
+    }
+    let expected = objects
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    if library[..objects.len()] != expected {
+        return Err("bound library prefix changed order or identity".to_string());
     }
     Ok(())
 }
@@ -1462,6 +1773,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             );
             commit_zone_change_batch(state, &objects, Zone::Graveyard, false)
                 .expect("fresh mill bindings remain valid");
+        }
+        EffectOp::LookAtLibraryTopAndReorder { .. } | EffectOp::MayShuffleLibrary { .. } => {
+            panic!("private library choices must use the resumable interpreter")
         }
     }
 }

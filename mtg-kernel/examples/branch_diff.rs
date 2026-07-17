@@ -764,6 +764,9 @@ fn fixed_continuation_action(decision: &SurfaceDecision) -> Result<SurfaceAction
         SurfaceDecision::Decision(Decision::ChooseEffectOption { .. }) => {
             Ok(SurfaceAction::Action(Action::ChooseEffectOption(0)))
         }
+        SurfaceDecision::Decision(Decision::ChooseEffectBoolean { .. }) => {
+            Ok(SurfaceAction::Action(Action::ChooseEffectBoolean(false)))
+        }
         SurfaceDecision::Decision(Decision::ChooseEffectTargets {
             legal_targets,
             can_finish,
