@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "fc15acd0b0808e83470c5bfead5d851d0f163b2d83021d1a5a20c8298a96717c"
+    "registry_raw_sha256": "e7247bded615fbef4be8de57014e76261faae0970f579655eaf90ef94fed6335"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 37,
+    "full_cards": 38,
     "partial_cards": 0,
-    "no_effect_cards": 113,
+    "no_effect_cards": 112,
     "token_dependencies": 3
   },
   "deck_mainboard_copy_totals": [
@@ -66,9 +66,9 @@
     },
     {
       "deck_id": "CawGates",
-      "full": 11,
+      "full": 13,
       "partial": 0,
-      "no_effect": 49,
+      "no_effect": 47,
       "total": 60
     },
     {
@@ -2477,10 +2477,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Priest of Titania",

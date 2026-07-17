@@ -222,6 +222,13 @@ enum Special {
         draw: u8,
         put: u8,
     },
+    /// Privately scry `scry`, then draw `draw` cards. Preordain is the first
+    /// consumer; the engine owns subset selection, both ordering directions,
+    /// hidden information, and the atomic final library transition.
+    ScryThenDraw {
+        scry: u8,
+        draw: u8,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -274,6 +281,7 @@ fn special_for(name: &str) -> Special {
         },
         "Ponder" => Special::LookReorderMayShuffleThenDraw { look: 3, draw: 1 },
         "Brainstorm" => Special::DrawThenPutHandOnLibraryTop { draw: 3, put: 2 },
+        "Preordain" => Special::ScryThenDraw { scry: 2, draw: 1 },
         _ => Special::None,
     }
 }
@@ -766,6 +774,37 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    let mut scry_then_draw_shapes = Vec::new();
+    for card in cards {
+        if let Special::ScryThenDraw { scry, draw } = special_for(&card.name) {
+            let shape = (scry, draw);
+            if !scry_then_draw_shapes.contains(&shape) {
+                scry_then_draw_shapes.push(shape);
+            }
+        }
+    }
+    for (scry, draw) in scry_then_draw_shapes {
+        writeln!(
+            out,
+            "fn spell_effect_scry_then_draw_{scry}_{draw}() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::Scry {{ player: PlayerRef::Controller, count: {scry} }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     let mut mill_then_draw_shapes = Vec::new();
     for card in cards {
         if let Special::MillThenDraw { player, mill, draw } = special_for(&card.name) {
@@ -1213,6 +1252,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::DrawThenPutHandOnLibraryTop { draw, put } => (
                 "TargetSpec::None",
                 format!("spell_effect_draw_then_put_hand_on_library_top_{draw}_{put}"),
+                "no_effect".to_string(),
+            ),
+            Special::ScryThenDraw { scry, draw } => (
+                "TargetSpec::None",
+                format!("spell_effect_scry_then_draw_{scry}_{draw}"),
                 "no_effect".to_string(),
             ),
             Special::MillThenDraw { player, mill, draw } => {

@@ -3635,6 +3635,7 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::PutHandCardOnLibraryTop {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::ScryLibrary { .. }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {
@@ -3673,6 +3674,18 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::PutHandCardOnLibraryTop {
                                 ..
                             } => TargetSelectionPurposeV4::LibraryOrder,
+                            crate::effect::EffectTargetSelectionPurpose::ScryLibrary {
+                                stage,
+                                ..
+                            } => match stage {
+                                crate::effect::ScrySelectionStage::ChooseBottomSubset => {
+                                    TargetSelectionPurposeV4::CardSelection
+                                }
+                                crate::effect::ScrySelectionStage::OrderBottom { .. }
+                                | crate::effect::ScrySelectionStage::OrderRetainedTop { .. } => {
+                                    TargetSelectionPurposeV4::LibraryOrder
+                                }
+                            },
                         },
                     })
                 }

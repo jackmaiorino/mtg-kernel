@@ -326,6 +326,25 @@ pub enum EffectOp {
         player: PlayerRef,
         count: u8,
     },
+    /// Privately looks at the top `min(count, library.len())` cards of
+    /// `player`'s library. The currently certified contract is only
+    /// Preordain/Scry2 final-state semantics: `count > 2` fails before any
+    /// library binding or reveal. The player chooses an unordered subset to
+    /// put on the bottom, explicitly orders a 2-card bottom group
+    /// shallow-to-deep, then explicitly orders a 2-card retained group
+    /// deepest-to-topmost. The three private stages never open priority, SBA,
+    /// or trigger windows; one atomic state transition applies the final
+    /// top/tail/bottom order.
+    ///
+    /// No partial SCRY/SCRY_TO_BOTTOM/SCRIED event family is emitted yet.
+    /// Arbitrary higher-count scry requires XMage-order bottom commitment plus
+    /// typed hooks for those events, as does any supported replacement or
+    /// trigger that observes them. Appended to preserve existing derived hash
+    /// identities.
+    Scry {
+        player: PlayerRef,
+        count: u8,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -391,6 +410,43 @@ pub enum EffectFrame {
         /// prompt paths must remain mutually consistent with this copy.
         canonical_path: Vec<u16>,
     },
+    /// Resumes one private scry after a completed policy stage. All original
+    /// prefix bindings, requested-count metadata, and canonical structural
+    /// path remain redundant in every progress state so a stale or malformed
+    /// snapshot fails before the atomic library transition.
+    ScryLibrary {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        original_prefix: Vec<EffectObjectBinding>,
+        progress: ScryProgress,
+        /// Deterministic redundant commitment to `progress`. This is not an
+        /// authentication boundary, but it makes any isolated progress-field
+        /// corruption fail closed instead of silently selecting another valid
+        /// subset/order.
+        progress_fingerprint: u64,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
+}
+
+/// Completed private scry stages. A subset is canonicalized into original
+/// prefix order before it enters this trusted frame, so the order in which
+/// stage-one targets were selected can never leak into bottom ordering.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ScryProgress {
+    BottomSubsetChosen {
+        bottom_subset: Vec<EffectObjectBinding>,
+    },
+    BottomOrderChosen {
+        bottom_subset: Vec<EffectObjectBinding>,
+        ordered_bottom: Vec<EffectObjectBinding>,
+    },
+    TopOrderChosen {
+        bottom_subset: Vec<EffectObjectBinding>,
+        ordered_bottom: Vec<EffectObjectBinding>,
+        ordered_top: Vec<EffectObjectBinding>,
+    },
 }
 
 /// Binds a physical arena id to the exact incarnation selected when an effect
@@ -445,6 +501,34 @@ pub enum EffectTargetSelectionPurpose {
         prompt_index: u16,
         continuation_path: Vec<u16>,
         canonical_path: Vec<u16>,
+    },
+    /// One of the three private scry prompts. Stage one is an unordered,
+    /// variable-size card selection; stages two and three are exact library
+    /// orderings. Schema-v4 projects these through its existing
+    /// CardSelection/LibraryOrder purposes and redacts identities from the
+    /// non-chooser.
+    ScryLibrary {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        original_prefix: Vec<EffectObjectBinding>,
+        stage: ScrySelectionStage,
+        /// Redundant deterministic commitment to `stage`; see the frame's
+        /// progress fingerprint for the trusted-snapshot threat boundary.
+        stage_fingerprint: u64,
+        canonical_path: Vec<u16>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ScrySelectionStage {
+    ChooseBottomSubset,
+    OrderBottom {
+        bottom_subset: Vec<EffectObjectBinding>,
+    },
+    OrderRetainedTop {
+        bottom_subset: Vec<EffectObjectBinding>,
+        ordered_bottom: Vec<EffectObjectBinding>,
     },
 }
 
@@ -565,7 +649,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         EffectOp::MillCards { count, .. } => *count > 1,
         EffectOp::LookAtLibraryTopAndReorder { .. }
         | EffectOp::MayShuffleLibrary { .. }
-        | EffectOp::PutCardsFromHandOnLibraryTop { .. } => true,
+        | EffectOp::PutCardsFromHandOnLibraryTop { .. }
+        | EffectOp::Scry { .. } => true,
         _ => false,
     }
 }
@@ -885,6 +970,77 @@ fn complete_resumable_target_selection(
                     canonical_path,
                 });
         }
+        EffectTargetSelectionPurpose::ScryLibrary {
+            player,
+            requested_count,
+            original_library_len,
+            original_prefix,
+            stage,
+            stage_fingerprint,
+            canonical_path,
+        } => {
+            validate_scry_bound_metadata(requested_count, original_library_len, &original_prefix)?;
+            if stage_fingerprint != scry_stage_fingerprint(&stage) {
+                return Err("scry prompt stage fingerprint changed".to_string());
+            }
+            let mut expected_choice_path = canonical_path.clone();
+            expected_choice_path.push(scry_stage_tag(&stage));
+            if path != expected_choice_path {
+                return Err("scry prompt structural path changed".to_string());
+            }
+            let progress = match stage {
+                ScrySelectionStage::ChooseBottomSubset => {
+                    let bottom_subset = canonicalize_scry_subset(&original_prefix, &objects)?;
+                    ScryProgress::BottomSubsetChosen { bottom_subset }
+                }
+                ScrySelectionStage::OrderBottom { bottom_subset } => {
+                    validate_exact_binding_permutation(
+                        &bottom_subset,
+                        &objects,
+                        "scry bottom order",
+                    )?;
+                    ScryProgress::BottomOrderChosen {
+                        bottom_subset,
+                        ordered_bottom: objects,
+                    }
+                }
+                ScrySelectionStage::OrderRetainedTop {
+                    bottom_subset,
+                    ordered_bottom,
+                } => {
+                    validate_exact_binding_permutation(
+                        &bottom_subset,
+                        &ordered_bottom,
+                        "scry ordered bottom",
+                    )?;
+                    let retained = scry_retained_prefix(&original_prefix, &bottom_subset)?;
+                    validate_exact_binding_permutation(
+                        &retained,
+                        &objects,
+                        "scry retained-top order",
+                    )?;
+                    // Like Ponder, this prompt's first explicit selection is
+                    // deepest and the forced final card is topmost.
+                    objects.reverse();
+                    ScryProgress::TopOrderChosen {
+                        bottom_subset,
+                        ordered_bottom,
+                        ordered_top: objects,
+                    }
+                }
+            };
+            let progress_fingerprint = scry_progress_fingerprint(&progress);
+            continuation.frames.push(EffectFrame::ScryLibrary {
+                player,
+                requested_count,
+                original_library_len,
+                original_prefix,
+                progress,
+                progress_fingerprint,
+                path: canonical_path.clone(),
+                canonical_path,
+            });
+        }
     }
     Ok(())
 }
@@ -1051,6 +1207,111 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     if partition != original {
                         return Err("hand-to-library candidates do not partition the bound hand"
                             .to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::ScryLibrary {
+                    player: library_player,
+                    requested_count,
+                    original_library_len,
+                    original_prefix,
+                    stage,
+                    stage_fingerprint,
+                    canonical_path,
+                } => {
+                    if chooser != library_player {
+                        return Err(
+                            "scry choice player does not own the selected library".to_string()
+                        );
+                    }
+                    validate_scry_live_metadata(
+                        state,
+                        *library_player,
+                        *requested_count,
+                        *original_library_len,
+                        original_prefix,
+                    )?;
+                    if *stage_fingerprint != scry_stage_fingerprint(stage) {
+                        return Err("scry prompt stage fingerprint changed".to_string());
+                    }
+                    let mut expected_path = canonical_path.clone();
+                    expected_path.push(scry_stage_tag(stage));
+                    if path != &expected_path {
+                        return Err("scry prompt structural path changed".to_string());
+                    }
+                    let candidates = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "scry target lacks an object-incarnation binding".to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    match stage {
+                        ScrySelectionStage::ChooseBottomSubset => {
+                            let count = u16::try_from(original_prefix.len())
+                                .map_err(|_| "scry prefix exceeds u16".to_string())?;
+                            if *min_targets != 0 || *max_targets != count || *ordered {
+                                return Err("scry bottom-subset prompt has a noncanonical shape"
+                                    .to_string());
+                            }
+                            validate_exact_binding_permutation(
+                                original_prefix,
+                                &candidates,
+                                "scry bottom-subset candidates",
+                            )?;
+                        }
+                        ScrySelectionStage::OrderBottom { bottom_subset } => {
+                            validate_canonical_scry_subset(original_prefix, bottom_subset)?;
+                            if bottom_subset.len() < 2 {
+                                return Err(
+                                    "scry bottom-order prompt has no genuine ordering choice"
+                                        .to_string(),
+                                );
+                            }
+                            let count = u16::try_from(bottom_subset.len())
+                                .map_err(|_| "scry bottom group exceeds u16".to_string())?;
+                            if *min_targets != count || *max_targets != count || !*ordered {
+                                return Err(
+                                    "scry bottom-order prompt has a noncanonical shape".to_string()
+                                );
+                            }
+                            validate_exact_binding_permutation(
+                                bottom_subset,
+                                &candidates,
+                                "scry bottom-order candidates",
+                            )?;
+                        }
+                        ScrySelectionStage::OrderRetainedTop {
+                            bottom_subset,
+                            ordered_bottom,
+                        } => {
+                            validate_canonical_scry_subset(original_prefix, bottom_subset)?;
+                            validate_exact_binding_permutation(
+                                bottom_subset,
+                                ordered_bottom,
+                                "scry ordered bottom",
+                            )?;
+                            let retained = scry_retained_prefix(original_prefix, bottom_subset)?;
+                            if retained.len() < 2 {
+                                return Err(
+                                    "scry retained-top prompt has no genuine ordering choice"
+                                        .to_string(),
+                                );
+                            }
+                            let count = u16::try_from(retained.len())
+                                .map_err(|_| "scry retained group exceeds u16".to_string())?;
+                            if *min_targets != count || *max_targets != count || !*ordered {
+                                return Err(
+                                    "scry retained-top prompt has a noncanonical shape".to_string()
+                                );
+                            }
+                            validate_exact_binding_permutation(
+                                &retained,
+                                &candidates,
+                                "scry retained-top candidates",
+                            )?;
+                        }
                     }
                 }
                 EffectTargetSelectionPurpose::OrderIntoGraveyard { .. } => {}
@@ -1331,6 +1592,149 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
+                EffectFrame::ScryLibrary {
+                    player,
+                    requested_count,
+                    original_library_len,
+                    original_prefix,
+                    progress,
+                    progress_fingerprint,
+                    path,
+                    canonical_path,
+                } => {
+                    if path != canonical_path {
+                        return Err(
+                            "scry coordinator path changed from its canonical path".to_string()
+                        );
+                    }
+                    if progress_fingerprint != scry_progress_fingerprint(&progress) {
+                        return Err("scry coordinator progress fingerprint changed".to_string());
+                    }
+                    validate_scry_live_metadata(
+                        state,
+                        player,
+                        requested_count,
+                        original_library_len,
+                        &original_prefix,
+                    )?;
+                    match progress {
+                        ScryProgress::BottomSubsetChosen { bottom_subset } => {
+                            validate_canonical_scry_subset(&original_prefix, &bottom_subset)?;
+                            if bottom_subset.len() >= 2 {
+                                stage_scry_choice(
+                                    &mut continuation,
+                                    player,
+                                    requested_count,
+                                    original_library_len,
+                                    original_prefix,
+                                    ScrySelectionStage::OrderBottom { bottom_subset },
+                                    canonical_path,
+                                )?;
+                                state.engine.pending_effect = Some(continuation);
+                                return Ok(ResumableProgress::Suspended);
+                            }
+                            let ordered_bottom = bottom_subset.clone();
+                            let progress = ScryProgress::BottomOrderChosen {
+                                bottom_subset,
+                                ordered_bottom,
+                            };
+                            let progress_fingerprint = scry_progress_fingerprint(&progress);
+                            continuation.frames.push(EffectFrame::ScryLibrary {
+                                player,
+                                requested_count,
+                                original_library_len,
+                                original_prefix,
+                                progress,
+                                progress_fingerprint,
+                                path,
+                                canonical_path,
+                            });
+                        }
+                        ScryProgress::BottomOrderChosen {
+                            bottom_subset,
+                            ordered_bottom,
+                        } => {
+                            validate_canonical_scry_subset(&original_prefix, &bottom_subset)?;
+                            validate_exact_binding_permutation(
+                                &bottom_subset,
+                                &ordered_bottom,
+                                "scry ordered bottom",
+                            )?;
+                            let retained = scry_retained_prefix(&original_prefix, &bottom_subset)?;
+                            if retained.len() >= 2 {
+                                stage_scry_choice(
+                                    &mut continuation,
+                                    player,
+                                    requested_count,
+                                    original_library_len,
+                                    original_prefix,
+                                    ScrySelectionStage::OrderRetainedTop {
+                                        bottom_subset,
+                                        ordered_bottom,
+                                    },
+                                    canonical_path,
+                                )?;
+                                state.engine.pending_effect = Some(continuation);
+                                return Ok(ResumableProgress::Suspended);
+                            }
+                            let progress = ScryProgress::TopOrderChosen {
+                                bottom_subset,
+                                ordered_bottom,
+                                ordered_top: retained,
+                            };
+                            let progress_fingerprint = scry_progress_fingerprint(&progress);
+                            continuation.frames.push(EffectFrame::ScryLibrary {
+                                player,
+                                requested_count,
+                                original_library_len,
+                                original_prefix,
+                                progress,
+                                progress_fingerprint,
+                                path,
+                                canonical_path,
+                            });
+                        }
+                        ScryProgress::TopOrderChosen {
+                            bottom_subset,
+                            ordered_bottom,
+                            ordered_top,
+                        } => {
+                            validate_canonical_scry_subset(&original_prefix, &bottom_subset)?;
+                            validate_exact_binding_permutation(
+                                &bottom_subset,
+                                &ordered_bottom,
+                                "scry ordered bottom",
+                            )?;
+                            let retained = scry_retained_prefix(&original_prefix, &bottom_subset)?;
+                            validate_exact_binding_permutation(
+                                &retained,
+                                &ordered_top,
+                                "scry ordered retained top",
+                            )?;
+                            let expected_prefix = original_prefix
+                                .iter()
+                                .map(|binding| crate::state::ObjectLinkV4 {
+                                    object: binding.object,
+                                    zone_change_count: binding.expected_zone_change_count,
+                                })
+                                .collect::<Vec<_>>();
+                            let retained_top = ordered_top
+                                .iter()
+                                .map(|binding| binding.object)
+                                .collect::<Vec<_>>();
+                            let bottom = ordered_bottom
+                                .iter()
+                                .map(|binding| binding.object)
+                                .collect::<Vec<_>>();
+                            state.apply_scry_result(
+                                player,
+                                &expected_prefix,
+                                &retained_top,
+                                &bottom,
+                            )?;
+                        }
+                    }
+                }
                 EffectFrame::Program { .. } => unreachable!(),
             }
             continue;
@@ -1457,6 +1861,37 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         path,
                         canonical_path,
                     });
+            }
+            EffectOp::Scry { player, count } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library_len = state.players[player.index()]
+                    .library
+                    .len()
+                    .try_into()
+                    .expect("a live library length fits the u32 state contract");
+                // Reject outside the certified Scry2 envelope before even a
+                // private prefix binding is materialized.
+                validate_scry_static_metadata(count, original_library_len)?;
+                let original_prefix = bind_library_top(state, player, count);
+                validate_scry_bound_metadata(count, original_library_len, &original_prefix)?;
+                // Looking is private. Candidate identities remain visible to
+                // the owner alone through both state knowledge and RL
+                // projection; another observer receives only the typed choice
+                // envelope and its public cardinalities.
+                state.reveal_library_top(player, player, original_prefix.len());
+                if !original_prefix.is_empty() {
+                    stage_scry_choice(
+                        &mut continuation,
+                        player,
+                        count,
+                        original_library_len,
+                        original_prefix,
+                        ScrySelectionStage::ChooseBottomSubset,
+                        path,
+                    )?;
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             leaf => execute(&leaf, &continuation.ctx, state),
         }
@@ -1616,6 +2051,283 @@ fn stage_hand_to_library_choice(
             canonical_path,
         },
     });
+}
+
+fn stage_scry_choice(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    requested_count: u8,
+    original_library_len: u32,
+    original_prefix: Vec<EffectObjectBinding>,
+    stage: ScrySelectionStage,
+    canonical_path: Vec<u16>,
+) -> Result<(), String> {
+    validate_scry_bound_metadata(requested_count, original_library_len, &original_prefix)?;
+    let (candidates, min_targets, max_targets, ordered) = match &stage {
+        ScrySelectionStage::ChooseBottomSubset => (
+            original_prefix.clone(),
+            0,
+            u16::try_from(original_prefix.len())
+                .map_err(|_| "scry prefix exceeds u16".to_string())?,
+            false,
+        ),
+        ScrySelectionStage::OrderBottom { bottom_subset } => {
+            validate_canonical_scry_subset(&original_prefix, bottom_subset)?;
+            if bottom_subset.len() < 2 {
+                return Err("scry bottom-order prompt has no genuine choice".to_string());
+            }
+            let count = u16::try_from(bottom_subset.len())
+                .map_err(|_| "scry bottom group exceeds u16".to_string())?;
+            (bottom_subset.clone(), count, count, true)
+        }
+        ScrySelectionStage::OrderRetainedTop {
+            bottom_subset,
+            ordered_bottom,
+        } => {
+            validate_canonical_scry_subset(&original_prefix, bottom_subset)?;
+            validate_exact_binding_permutation(
+                bottom_subset,
+                ordered_bottom,
+                "scry ordered bottom",
+            )?;
+            let retained = scry_retained_prefix(&original_prefix, bottom_subset)?;
+            if retained.len() < 2 {
+                return Err("scry retained-top prompt has no genuine choice".to_string());
+            }
+            let count = u16::try_from(retained.len())
+                .map_err(|_| "scry retained group exceeds u16".to_string())?;
+            (retained, count, count, true)
+        }
+    };
+    let mut choice_path = canonical_path.clone();
+    choice_path.push(scry_stage_tag(&stage));
+    let stage_fingerprint = scry_stage_fingerprint(&stage);
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path: choice_path,
+        selected: Vec::new(),
+        legal: candidates
+            .into_iter()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets,
+        max_targets,
+        ordered,
+        purpose: EffectTargetSelectionPurpose::ScryLibrary {
+            player,
+            requested_count,
+            original_library_len,
+            original_prefix,
+            stage,
+            stage_fingerprint,
+            canonical_path,
+        },
+    });
+    Ok(())
+}
+
+fn scry_stage_tag(stage: &ScrySelectionStage) -> u16 {
+    match stage {
+        ScrySelectionStage::ChooseBottomSubset => 0,
+        ScrySelectionStage::OrderBottom { .. } => 1,
+        ScrySelectionStage::OrderRetainedTop { .. } => 2,
+    }
+}
+
+fn scry_stage_fingerprint(stage: &ScrySelectionStage) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325;
+    hash = fnv1a_u64(hash, u64::from(scry_stage_tag(stage)));
+    match stage {
+        ScrySelectionStage::ChooseBottomSubset => hash,
+        ScrySelectionStage::OrderBottom { bottom_subset } => fnv1a_bindings(hash, bottom_subset),
+        ScrySelectionStage::OrderRetainedTop {
+            bottom_subset,
+            ordered_bottom,
+        } => {
+            hash = fnv1a_bindings(hash, bottom_subset);
+            fnv1a_bindings(hash, ordered_bottom)
+        }
+    }
+}
+
+fn scry_progress_fingerprint(progress: &ScryProgress) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325;
+    match progress {
+        ScryProgress::BottomSubsetChosen { bottom_subset } => {
+            hash = fnv1a_u64(hash, 0);
+            fnv1a_bindings(hash, bottom_subset)
+        }
+        ScryProgress::BottomOrderChosen {
+            bottom_subset,
+            ordered_bottom,
+        } => {
+            hash = fnv1a_u64(hash, 1);
+            hash = fnv1a_bindings(hash, bottom_subset);
+            fnv1a_bindings(hash, ordered_bottom)
+        }
+        ScryProgress::TopOrderChosen {
+            bottom_subset,
+            ordered_bottom,
+            ordered_top,
+        } => {
+            hash = fnv1a_u64(hash, 2);
+            hash = fnv1a_bindings(hash, bottom_subset);
+            hash = fnv1a_bindings(hash, ordered_bottom);
+            fnv1a_bindings(hash, ordered_top)
+        }
+    }
+}
+
+fn fnv1a_bindings(mut hash: u64, bindings: &[EffectObjectBinding]) -> u64 {
+    hash = fnv1a_u64(hash, bindings.len() as u64);
+    for binding in bindings {
+        hash = fnv1a_u64(hash, u64::from(binding.object.0));
+        hash = fnv1a_u64(hash, zone_fingerprint(binding.expected_zone));
+        hash = fnv1a_u64(hash, u64::from(binding.expected_zone_change_count));
+    }
+    hash
+}
+
+fn fnv1a_u64(mut hash: u64, value: u64) -> u64 {
+    for byte in value.to_le_bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn zone_fingerprint(zone: Zone) -> u64 {
+    match zone {
+        Zone::Library => 0,
+        Zone::Hand => 1,
+        Zone::Battlefield => 2,
+        Zone::Graveyard => 3,
+        Zone::Stack => 4,
+        Zone::Exile => 5,
+        Zone::Command => 6,
+    }
+}
+
+fn validate_scry_static_metadata(
+    requested_count: u8,
+    original_library_len: u32,
+) -> Result<usize, String> {
+    if requested_count > 2 {
+        return Err(
+            "scry counts above two are outside the certified Preordain contract".to_string(),
+        );
+    }
+    let library_len = usize::try_from(original_library_len)
+        .map_err(|_| "scry original library length does not fit usize".to_string())?;
+    Ok(usize::from(requested_count).min(library_len))
+}
+
+fn validate_scry_bound_metadata(
+    requested_count: u8,
+    original_library_len: u32,
+    original_prefix: &[EffectObjectBinding],
+) -> Result<(), String> {
+    let expected_prefix_len = validate_scry_static_metadata(requested_count, original_library_len)?;
+    if original_prefix.len() != expected_prefix_len {
+        return Err(
+            "scry-bound prefix length disagrees with requested count and original library length"
+                .to_string(),
+        );
+    }
+    if original_prefix
+        .iter()
+        .any(|binding| binding.expected_zone != Zone::Library)
+    {
+        return Err("scry binding does not expect the library zone".to_string());
+    }
+    let mut ids = original_prefix
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.len() != original_prefix.len() {
+        return Err("scry-bound prefix contains a duplicate physical object".to_string());
+    }
+    Ok(())
+}
+
+fn validate_scry_live_metadata(
+    state: &GameState,
+    player: PlayerId,
+    requested_count: u8,
+    original_library_len: u32,
+    original_prefix: &[EffectObjectBinding],
+) -> Result<(), String> {
+    validate_scry_bound_metadata(requested_count, original_library_len, original_prefix)?;
+    if state.players[player.index()].library.len()
+        != usize::try_from(original_library_len)
+            .map_err(|_| "scry original library length does not fit usize".to_string())?
+    {
+        return Err("scry library length changed while its private choice was pending".to_string());
+    }
+    validate_bound_library_prefix_exact(state, player, original_prefix)
+}
+
+fn validate_exact_binding_permutation(
+    expected: &[EffectObjectBinding],
+    actual: &[EffectObjectBinding],
+    label: &str,
+) -> Result<(), String> {
+    let mut expected = expected.to_vec();
+    let mut actual = actual.to_vec();
+    expected.sort_by_key(|binding| binding.object);
+    actual.sort_by_key(|binding| binding.object);
+    if actual != expected {
+        return Err(format!("{label} is not an exact bound-object permutation"));
+    }
+    Ok(())
+}
+
+fn canonicalize_scry_subset(
+    original_prefix: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    let mut selected_sorted = selected.to_vec();
+    selected_sorted.sort_by_key(|binding| binding.object);
+    selected_sorted.dedup();
+    if selected_sorted.len() != selected.len()
+        || selected_sorted
+            .iter()
+            .any(|binding| !original_prefix.contains(binding))
+    {
+        return Err("scry bottom selection is not a unique subset of the bound prefix".to_string());
+    }
+    Ok(original_prefix
+        .iter()
+        .copied()
+        .filter(|binding| selected.contains(binding))
+        .collect())
+}
+
+fn validate_canonical_scry_subset(
+    original_prefix: &[EffectObjectBinding],
+    bottom_subset: &[EffectObjectBinding],
+) -> Result<(), String> {
+    if canonicalize_scry_subset(original_prefix, bottom_subset)? != bottom_subset {
+        return Err("scry bottom subset is not in canonical prefix order".to_string());
+    }
+    Ok(())
+}
+
+fn scry_retained_prefix(
+    original_prefix: &[EffectObjectBinding],
+    bottom_subset: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    validate_canonical_scry_subset(original_prefix, bottom_subset)?;
+    Ok(original_prefix
+        .iter()
+        .copied()
+        .filter(|binding| !bottom_subset.contains(binding))
+        .collect())
 }
 
 /// Validates the redundant progress/path metadata carried by Brainstorm-style
@@ -2180,7 +2892,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::LookAtLibraryTopAndReorder { .. }
         | EffectOp::MayShuffleLibrary { .. }
-        | EffectOp::PutCardsFromHandOnLibraryTop { .. } => {
+        | EffectOp::PutCardsFromHandOnLibraryTop { .. }
+        | EffectOp::Scry { .. } => {
             panic!("private library choices must use the resumable interpreter")
         }
     }
