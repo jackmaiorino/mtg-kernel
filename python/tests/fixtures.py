@@ -12,7 +12,7 @@ PROVENANCE = {
     "protocol": "kernel_rl_jsonl",
     "protocol_version": 5,
     "schema_version": 5,
-    "kernel_version": "0.0.3-spike",
+    "kernel_version": "0.0.4-spike",
     "surface_version": 2,
     "policy_surface_version": 5,
     "card_db_hash": 13755609902749199750,

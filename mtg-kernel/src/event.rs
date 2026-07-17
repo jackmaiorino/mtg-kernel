@@ -516,6 +516,7 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                     v4.entered_battlefield_turn = Some(state.turn);
                     v4
                 },
+                spell_copy_origin: None,
                 plotted_turn: None,
                 zone_change_count: 0,
             });
@@ -637,6 +638,11 @@ fn commit_zone_change(
         // effect. Moves to Stack are engine actions and never enter this
         // helper, so every destination handled here begins owner-controlled.
         obj.controller = owner;
+        // Plot is provenance of one exact exile incarnation, not a durable
+        // property of the physical card. `engine::plot_spell` re-stamps the
+        // newly-created Exile incarnation immediately after this move; every
+        // other ordinary zone change must clear the old marker.
+        obj.plotted_turn = None;
         // CR 400.7's zone-change identity: bumped on *every* zone change,
         // regardless of which zones, so `engine::PlayPermission::
         // zone_change_generation` can tell "still sitting where it was granted"

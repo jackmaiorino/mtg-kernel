@@ -20,8 +20,8 @@ use mtg_kernel::rl::{
     POLICY_EPISODE_SCHEMA_VERSION,
 };
 use mtg_kernel::state::{
-    Counters, GameObject, GameState, StackItem, StackItemKind, Step, Target, Zone,
-    DIAGNOSTIC_STATE_HASH_ALGORITHM,
+    CastMethodV4, Counters, GameObject, GameState, SpellCastOriginV4, SpellCastRouteV4, StackItem,
+    StackItemKind, Step, Target, Zone, DIAGNOSTIC_STATE_HASH_ALGORITHM,
 };
 use mtg_kernel::surface_v2::{HarnessSurfaceV2, SurfaceAction, SurfaceDecision};
 use serde::Serialize;
@@ -57,6 +57,18 @@ fn empty_state() -> GameState {
 
 fn make_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
     let card_def = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing from CARD_DEFS"));
+    let mut object_v4 = mtg_kernel::state::ObjectStateV4::from_card_def(card_def);
+    let zone_change_count = if zone == Zone::Stack {
+        object_v4.spell_cast_origin = Some(SpellCastOriginV4 {
+            origin_zone: Zone::Hand,
+            origin_zone_change_count: 0,
+            route: SpellCastRouteV4::Hand,
+            finalized_method: Some(CastMethodV4::Normal),
+        });
+        1
+    } else {
+        0
+    };
     let id = state.objects.push(GameObject {
         card_def,
         name: name.to_string(),
@@ -68,9 +80,10 @@ fn make_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) 
         damage: 0,
         counters: Counters::default(),
         attachments: Vec::new(),
-        v4: mtg_kernel::state::ObjectStateV4::from_card_def(card_def),
+        v4: object_v4,
+        spell_copy_origin: None,
         plotted_turn: None,
-        zone_change_count: 0,
+        zone_change_count,
     });
     match zone {
         Zone::Hand => state.players[player.index()].hand.push(id),
@@ -603,6 +616,11 @@ fn rl_contract_ceased_objects_leave_live_effects_but_remain_historical_stack_tar
                 &state,
                 Target::Object(token),
             )];
+            v4.source_contract = Some(mtg_kernel::state::StackSourceContractV4::capture(
+                &state,
+                source,
+                mtg_kernel::state::CastMethodV4::Normal,
+            ));
             v4
         },
     });
@@ -806,7 +824,7 @@ fn rl_contract_paid_cost_refs_keep_known_hand_cards_without_leaking_unknown_ones
         controller: PlayerId::P1,
         targets: Vec::new(),
         is_copy: false,
-        inline_effect: None,
+        inline_effect: Some(mtg_kernel::effect::EffectOp::Sequence(vec![])),
         discarded: Vec::new(),
         is_flashback: false,
         mode_chosen: 0,
@@ -884,7 +902,7 @@ fn rl_contract_public_paid_cost_provenance_survives_later_hidden_zone_changes() 
         controller: PlayerId::P0,
         targets: Vec::new(),
         is_copy: false,
-        inline_effect: None,
+        inline_effect: Some(mtg_kernel::effect::EffectOp::Sequence(vec![])),
         discarded: Vec::new(),
         is_flashback: false,
         mode_chosen: 0,
@@ -1282,6 +1300,11 @@ fn rl_contract_stack_items_expose_explicit_public_kind() {
                 let mut v4 =
                     mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal);
                 v4.target_spec = Some(TargetSpec::None);
+                v4.source_contract = Some(mtg_kernel::state::StackSourceContractV4::capture(
+                    &state,
+                    source,
+                    mtg_kernel::state::CastMethodV4::Normal,
+                ));
                 (None, v4)
             }
             StackItemKind::ActivatedAbility => {
@@ -1294,9 +1317,19 @@ fn rl_contract_stack_items_expose_explicit_public_kind() {
                 };
                 (Some((ability.effect)()), v4)
             }
-            StackItemKind::TriggeredAbility | StackItemKind::MadnessOffer => {
-                (None, mtg_kernel::state::StackStateV4::default())
-            }
+            StackItemKind::TriggeredAbility => (
+                Some(mtg_kernel::effect::EffectOp::Sequence(vec![])),
+                mtg_kernel::state::StackStateV4::default(),
+            ),
+            StackItemKind::MadnessOffer => (
+                None,
+                mtg_kernel::state::StackStateV4 {
+                    madness_source_contract: Some(
+                        mtg_kernel::state::MadnessOfferSourceContractV4::capture(&state, source),
+                    ),
+                    ..Default::default()
+                },
+            ),
         };
         state.stack.push(StackItem {
             kind,
@@ -1351,6 +1384,11 @@ fn rl_contract_spell_copy_state_and_binary_actions_are_explicit() {
             v4.target_contracts = vec![mtg_kernel::state::StackTargetContractV4::Player(
                 PlayerId::P1,
             )];
+            v4.source_contract = Some(mtg_kernel::state::StackSourceContractV4::capture(
+                &state,
+                parent,
+                mtg_kernel::state::CastMethodV4::Normal,
+            ));
             v4
         },
     });
@@ -1480,6 +1518,11 @@ fn rl_contract_chain_copy_keeps_historical_target_through_same_generation_contro
         mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal);
     parent_v4.target_spec = Some(TargetSpec::AnyTarget);
     parent_v4.target_contracts = vec![contract];
+    parent_v4.source_contract = Some(mtg_kernel::state::StackSourceContractV4::capture(
+        &state,
+        parent,
+        mtg_kernel::state::CastMethodV4::Normal,
+    ));
     state.stack.push(StackItem {
         kind: StackItemKind::Spell,
         source: parent,
@@ -1702,8 +1745,38 @@ fn rl_contract_h2_blocker_and_discard_reshape_context_changes_hash() {
 fn rl_contract_engine_pending_cast_context_changes_hash() {
     let mut a = empty_state();
     let spell = make_object(&mut a, PlayerId::P0, "Lightning Bolt", Zone::Stack);
+    a.objects
+        .get_mut(spell)
+        .v4
+        .spell_cast_origin
+        .as_mut()
+        .unwrap()
+        .finalized_method = None;
+    let source_contract = mtg_kernel::state::StackSourceContractV4::capture(
+        &a,
+        spell,
+        mtg_kernel::state::CastMethodV4::Normal,
+    );
+    a.stack.push(StackItem {
+        kind: StackItemKind::Spell,
+        source: spell,
+        controller: PlayerId::P0,
+        targets: Vec::new(),
+        is_copy: false,
+        inline_effect: None,
+        discarded: Vec::new(),
+        is_flashback: false,
+        mode_chosen: 0,
+        madness_offer: false,
+        kicked: false,
+        v4: mtg_kernel::state::StackStateV4 {
+            source_contract: Some(source_contract),
+            ..mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal)
+        },
+    });
     a.engine.pending_cast = Some(PendingCast {
         spell,
+        source_contract,
         controller: PlayerId::P0,
         target_spec: TargetSpec::AnyTarget,
         targets_chosen: vec![Target::Player(PlayerId::P1)],
@@ -1713,7 +1786,6 @@ fn rl_contract_engine_pending_cast_context_changes_hash() {
         is_flashback: false,
         cast_mode: Some(CastMode::Normal),
         additional_cost_discarded: Some(Vec::new()),
-        cost_override: None,
         mode_chosen: Some(0),
         origin_zone: Zone::Hand,
         sacrifice_chosen: Vec::new(),
@@ -2194,7 +2266,7 @@ fn rl_contract_pending_effect_reuses_the_public_resolving_stack_source() {
         controller: PlayerId::P0,
         targets: Vec::new(),
         is_copy: false,
-        inline_effect: None,
+        inline_effect: Some(mtg_kernel::effect::EffectOp::Sequence(vec![])),
         discarded: Vec::new(),
         is_flashback: false,
         mode_chosen: 0,
@@ -2354,8 +2426,8 @@ fn rl_contract_episode_records_use_independent_schema_versions_and_pin_hash_algo
     let policy_seed = derive_policy_seed(9999, 0);
     let run = record_burn_mirror_episode(0, env_seed, policy_seed, 64).unwrap();
 
-    assert_eq!(AUDIT_EPISODE_SCHEMA_VERSION, 9);
-    assert_eq!(MANIFEST_SCHEMA_VERSION, 7);
+    assert_eq!(AUDIT_EPISODE_SCHEMA_VERSION, 10);
+    assert_eq!(MANIFEST_SCHEMA_VERSION, 8);
     assert_eq!(POLICY_EPISODE_SCHEMA_VERSION, 5);
     let audit_header = serde_json::to_value(&run.audit_records[0]).unwrap();
     assert_eq!(audit_header["schema_version"], AUDIT_EPISODE_SCHEMA_VERSION);
@@ -2442,6 +2514,14 @@ fn rl_contract_audit_reader_fails_closed_on_legacy_missing_or_unknown_hash_contr
     values[0]["diagnostic_state_hash_algorithm"] = Value::String("unknown-v99".to_string());
     let unknown = records_to_jsonl(&values);
     assert!(parse_audit_episode_jsonl(&unknown)
+        .unwrap_err()
+        .to_string()
+        .contains("unsupported diagnostic_state_hash_algorithm"));
+
+    values[0]["diagnostic_state_hash_algorithm"] =
+        Value::String("fnv1a64-serde-json-game-state-envelope-v4".to_string());
+    let known_legacy_v4_algorithm = records_to_jsonl(&values);
+    assert!(parse_audit_episode_jsonl(&known_legacy_v4_algorithm)
         .unwrap_err()
         .to_string()
         .contains("unsupported diagnostic_state_hash_algorithm"));
@@ -3018,6 +3098,13 @@ fn rl_contract_terminal_outcome_accounting_is_explicit() {
         .contains("unsupported diagnostic_state_hash_algorithm"));
 
     let mut known_legacy_algorithm = value.clone();
+    known_legacy_algorithm["diagnostic_state_hash_algorithm"] =
+        Value::String("fnv1a64-serde-json-game-state-envelope-v4".to_string());
+    assert!(parse_run_manifest_json(&known_legacy_algorithm.to_string())
+        .unwrap_err()
+        .to_string()
+        .contains("unsupported diagnostic_state_hash_algorithm"));
+
     known_legacy_algorithm["diagnostic_state_hash_algorithm"] =
         Value::String("fnv1a64-serde-json-game-state-envelope-v2".to_string());
     assert!(parse_run_manifest_json(&known_legacy_algorithm.to_string())

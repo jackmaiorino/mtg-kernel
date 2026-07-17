@@ -29,6 +29,7 @@ fn put_on_battlefield(state: &mut GameState, name: &str) -> ObjectId {
         counters: Counters::default(),
         attachments: Vec::new(),
         v4: mtg_kernel::state::ObjectStateV4::from_card_def(card_def),
+        spell_copy_origin: None,
         plotted_turn: None,
         zone_change_count: 0,
     });

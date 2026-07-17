@@ -29,8 +29,9 @@ use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1, TargetRefV1};
 use mtg_kernel::state::{
-    CastMethodV4, Counters, GameObject, GameState, StackItem, StackItemKind, StackStateV4, Step,
-    Target, Zone, DIAGNOSTIC_STATE_HASH_ALGORITHM,
+    CastMethodV4, Counters, GameObject, GameState, SpellCastOriginV4, SpellCastRouteV4,
+    SpellCopyOriginV4, StackItem, StackItemKind, StackSourceContractV4, StackStateV4, Step, Target,
+    Zone, DIAGNOSTIC_STATE_HASH_ALGORITHM,
 };
 use mtg_kernel::surface_v2::SurfaceDecision;
 
@@ -80,6 +81,7 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
         counters: Counters::default(),
         attachments: Vec::new(),
         v4: mtg_kernel::state::ObjectStateV4::from_card_def(card_def),
+        spell_copy_origin: None,
         plotted_turn: None,
         zone_change_count: 0,
     });
@@ -102,7 +104,71 @@ fn put_spell_on_stack(
     is_copy: bool,
     is_flashback: bool,
 ) -> ObjectId {
+    if is_copy {
+        assert!(
+            !is_flashback,
+            "supported copies have canonical normal provenance"
+        );
+        let parent = put_spell_on_stack(state, player, name, false, false);
+        let mut item = state.stack.pop().expect("physical parent was just pushed");
+        let parent_object = state.objects.get(parent).clone();
+        let id = state.objects.push(GameObject {
+            card_def: parent_object.card_def,
+            name: parent_object.name,
+            owner: parent_object.owner,
+            controller: parent_object.controller,
+            zone: Zone::Stack,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: mtg_kernel::state::ObjectStateV4::from_card_def(parent_object.card_def),
+            spell_copy_origin: Some(SpellCopyOriginV4 {
+                parent,
+                parent_card_def: parent_object.card_def,
+                parent_owner: parent_object.owner,
+                parent_controller: parent_object.controller,
+                parent_stack_zone_change_count: parent_object.zone_change_count,
+                parent_was_copy: false,
+            }),
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        item.source = id;
+        item.is_copy = true;
+        item.is_flashback = false;
+        item.v4.cast_method = Some(CastMethodV4::Normal);
+        item.v4.source_contract = Some(StackSourceContractV4::capture(
+            state,
+            id,
+            CastMethodV4::Normal,
+        ));
+        state.stack.push(item);
+        event::propose_and_commit(state, ProposedEvent::zone_change(parent, Zone::Graveyard));
+        return id;
+    }
     let card_def = card_id(name);
+    let cast_method = if is_flashback {
+        CastMethodV4::Flashback
+    } else {
+        CastMethodV4::Normal
+    };
+    let mut object_v4 = mtg_kernel::state::ObjectStateV4::from_card_def(card_def);
+    object_v4.spell_cast_origin = Some(SpellCastOriginV4 {
+        origin_zone: if is_flashback {
+            Zone::Graveyard
+        } else {
+            Zone::Hand
+        },
+        origin_zone_change_count: 0,
+        route: if is_flashback {
+            SpellCastRouteV4::GraveyardFlashback
+        } else {
+            SpellCastRouteV4::Hand
+        },
+        finalized_method: Some(cast_method),
+    });
     let id = state.objects.push(GameObject {
         card_def,
         name: name.to_string(),
@@ -114,10 +180,12 @@ fn put_spell_on_stack(
         damage: 0,
         counters: Counters::default(),
         attachments: Vec::new(),
-        v4: mtg_kernel::state::ObjectStateV4::from_card_def(card_def),
+        v4: object_v4,
+        spell_copy_origin: None,
         plotted_turn: None,
-        zone_change_count: 0,
+        zone_change_count: 1,
     });
+    let source_contract = StackSourceContractV4::capture(state, id, cast_method);
     state.stack.push(StackItem {
         kind: StackItemKind::Spell,
         source: id,
@@ -130,11 +198,10 @@ fn put_spell_on_stack(
         mode_chosen: 0,
         madness_offer: false,
         kicked: false,
-        v4: StackStateV4::spell(if is_flashback {
-            CastMethodV4::Flashback
-        } else {
-            CastMethodV4::Normal
-        }),
+        v4: StackStateV4 {
+            source_contract: Some(source_contract),
+            ..StackStateV4::spell(cast_method)
+        },
     });
     id
 }
@@ -252,7 +319,7 @@ fn blue_elemental_blast_filters_red_targets_and_stabilizes_rl_actions() {
     let first_counter_actions = target_actions(&state, &counter_targets);
     assert_eq!(
         first_counter_actions,
-        vec![(red_spell, "legal-action-v4:fe3c70e0ebc2eeed".to_string(),)]
+        vec![(red_spell, "legal-action-v4:f5e310ec485d9d3c".to_string(),)]
     );
     assert!(!first_counter_actions
         .iter()
@@ -314,7 +381,7 @@ fn blue_blasts_with_zero_viable_modes_are_not_offered_or_castable() {
 }
 
 #[test]
-fn blue_pending_cast_is_frozen_into_diagnostic_hash_v4() {
+fn blue_pending_cast_is_frozen_into_diagnostic_hash_v5() {
     let mut state = ready_game();
     put_spell_on_stack(&mut state, PlayerId::P1, "Lightning Bolt", false, false);
     let red_permanent = put_object(&mut state, PlayerId::P1, "Guttersnipe", Zone::Battlefield);
@@ -335,7 +402,7 @@ fn blue_pending_cast_is_frozen_into_diagnostic_hash_v4() {
     );
     assert_eq!(
         DIAGNOSTIC_STATE_HASH_ALGORITHM,
-        "fnv1a64-serde-json-game-state-envelope-v4"
+        "fnv1a64-serde-json-game-state-envelope-v5"
     );
     let json = serde_json::to_string(&state).unwrap();
     assert!(json.contains("\"target_spec\":\"RedSpellOnStack\""));
@@ -345,7 +412,7 @@ fn blue_pending_cast_is_frozen_into_diagnostic_hash_v4() {
         restored.diagnostic_state_hash(),
         state.diagnostic_state_hash()
     );
-    assert_eq!(state.diagnostic_state_hash(), 0x358a_c803_ca4d_87b0);
+    assert_eq!(state.diagnostic_state_hash(), 0xb531_c85b_c876_5b42);
 
     engine::step(&mut state, Action::ChooseSpellMode(1)).unwrap();
     let decision = engine::advance_until_decision(&mut state);

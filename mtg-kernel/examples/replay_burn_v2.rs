@@ -3872,6 +3872,7 @@ mod tests {
                 counters: Default::default(),
                 attachments: Vec::new(),
                 v4: mtg_kernel::state::ObjectStateV4::from_card_def(mountain),
+                spell_copy_origin: None,
                 plotted_turn: None,
                 zone_change_count: 0,
             });
@@ -3890,6 +3891,7 @@ mod tests {
                 counters: Default::default(),
                 attachments: Vec::new(),
                 v4: mtg_kernel::state::ObjectStateV4::from_card_def(lightning_bolt),
+                spell_copy_origin: None,
                 plotted_turn: None,
                 zone_change_count: 0,
             });
@@ -3969,6 +3971,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: mtg_kernel::state::ObjectStateV4::from_card_def(guttersnipe),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -3986,6 +3989,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: mtg_kernel::state::ObjectStateV4::from_card_def(mountain),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -4046,6 +4050,35 @@ mod tests {
             |id| CARD_DEFS[id as usize].name.to_string(),
             1,
         );
+        state.step = mtg_kernel::state::Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        for _ in 0..6 {
+            let land = state.objects.push(mtg_kernel::state::GameObject {
+                card_def: mountain,
+                name: "Mountain".to_string(),
+                owner: PlayerId::P0,
+                controller: PlayerId::P0,
+                zone: Zone::Battlefield,
+                tapped: false,
+                summoning_sick: false,
+                damage: 0,
+                counters: Default::default(),
+                attachments: Vec::new(),
+                v4: mtg_kernel::state::ObjectStateV4::from_card_def(mountain),
+                spell_copy_origin: None,
+                plotted_turn: None,
+                zone_change_count: 0,
+            });
+            state.players[PlayerId::P0.index()].battlefield.push(land);
+        }
+        let mut spell_v4 = mtg_kernel::state::ObjectStateV4::from_card_def(fireblast);
+        spell_v4.spell_cast_origin = Some(mtg_kernel::state::SpellCastOriginV4 {
+            origin_zone: Zone::Hand,
+            origin_zone_change_count: 0,
+            route: mtg_kernel::state::SpellCastRouteV4::Hand,
+            finalized_method: None,
+        });
         let spell = state.objects.push(mtg_kernel::state::GameObject {
             card_def: fireblast,
             name: "Fireblast".to_string(),
@@ -4057,21 +4090,46 @@ mod tests {
             damage: 0,
             counters: Default::default(),
             attachments: Vec::new(),
-            v4: mtg_kernel::state::ObjectStateV4::from_card_def(fireblast),
+            v4: spell_v4,
+            spell_copy_origin: None,
             plotted_turn: None,
-            zone_change_count: 0,
+            zone_change_count: 1,
+        });
+        let source_contract = mtg_kernel::state::StackSourceContractV4::capture(
+            &state,
+            spell,
+            mtg_kernel::state::CastMethodV4::Normal,
+        );
+        state.stack.push(mtg_kernel::state::StackItem {
+            kind: mtg_kernel::state::StackItemKind::Spell,
+            source: spell,
+            controller: PlayerId::P0,
+            targets: Vec::new(),
+            is_copy: false,
+            inline_effect: None,
+            discarded: Vec::new(),
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            v4: mtg_kernel::state::StackStateV4 {
+                source_contract: Some(source_contract),
+                ..mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal)
+            },
         });
         state.engine.pending_cast = Some(mtg_kernel::engine::PendingCast {
             spell,
+            source_contract,
             controller: PlayerId::P0,
-            target_spec: mtg_kernel::card_def::TargetSpec::None,
-            targets_chosen: Vec::new(),
-            target_contracts: Vec::new(),
+            target_spec: mtg_kernel::card_def::TargetSpec::AnyTarget,
+            targets_chosen: vec![mtg_kernel::state::Target::Player(PlayerId::P1)],
+            target_contracts: vec![mtg_kernel::state::StackTargetContractV4::Player(
+                PlayerId::P1,
+            )],
             is_flashback: false,
             cast_mode: None,
-            additional_cost_discarded: None,
-            cost_override: None,
-            mode_chosen: None,
+            additional_cost_discarded: Some(Vec::new()),
+            mode_chosen: Some(0),
             origin_zone: Zone::Hand,
             sacrifice_chosen: Vec::new(),
             kicked: Some(false),
@@ -4135,6 +4193,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: mtg_kernel::state::ObjectStateV4::from_card_def(fiery_temper),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -4204,6 +4263,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: mtg_kernel::state::ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });

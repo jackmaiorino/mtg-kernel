@@ -713,7 +713,7 @@ pub enum EffectAnsweredChoiceGuard {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumableProgress {
-    Complete(StackItem),
+    Complete(Box<StackItem>),
     Suspended,
 }
 
@@ -1406,6 +1406,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 .to_string(),
         );
     }
+    crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
+        .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     validate_answered_choice_guard(state, pending)?;
     let Some(choice) = pending.choice.as_ref() else {
         return Ok(());
@@ -2514,7 +2516,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
     if continuation.answered_choice_guard.is_some() {
         return Err("effect completed with an unconsumed answered-choice guard".to_string());
     }
-    Ok(ResumableProgress::Complete(continuation.resolving_item))
+    Ok(ResumableProgress::Complete(Box::new(
+        continuation.resolving_item,
+    )))
 }
 
 impl ExecCtx {
@@ -3442,28 +3446,15 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::MoveObject { object, to_zone } => {
             let object = ctx.resolve_object(*object);
-            let live_stack_spell = state
-                .stack
-                .iter()
-                .find(|item| {
-                    item.source == object && item.kind == crate::state::StackItemKind::Spell
-                })
-                .cloned();
             if *to_zone != Zone::Stack {
-                if let Some(item) = live_stack_spell {
-                    if item.is_copy {
-                        // A copied spell is not a card and never enters a
-                        // destination zone when it leaves the stack (707.10a).
-                        event::cease_to_exist(state, object);
-                        return;
-                    }
-                    if item.is_flashback {
-                        // Flashback's replacement applies to every attempted
-                        // move away from the stack, including being countered.
-                        event::propose_and_commit(
-                            state,
-                            event::ProposedEvent::zone_change(object, Zone::Exile),
-                        );
+                match crate::engine::apply_live_stack_spell_departure(state, object, *to_zone) {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(_) => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            object,
+                        ));
                         return;
                     }
                 }
@@ -3859,6 +3850,7 @@ mod tests {
                 controller: state.objects.get(creature).controller,
                 zone: state.objects.get(creature).zone,
                 zone_change_count: state.objects.get(creature).zone_change_count,
+                spell_copy_origin: state.objects.get(creature).spell_copy_origin,
             }],
             discarded: Vec::new(),
             kicked: false,

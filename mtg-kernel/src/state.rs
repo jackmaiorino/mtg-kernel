@@ -13,13 +13,13 @@ pub const STARTING_LIFE: i32 = 20;
 
 /// Exact diagnostic full-state hash contract written into privileged audit
 /// artifacts. The algorithm is FNV-1a-64 over the compact UTF-8 JSON bytes of
-/// `DiagnosticStateHashEnvelopeV4` below.
+/// `DiagnosticStateHashEnvelopeV5` below.
 ///
 /// Changing the envelope, JSON representation, or digest algorithm requires a
 /// new constant value and an audit-artifact schema bump. Policy artifacts do
 /// not contain this privileged full-state diagnostic.
-pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v4";
-pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 4;
+pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v5";
+pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
@@ -101,6 +101,13 @@ pub struct ObjectStateV4 {
     pub minimum_blockers_override: Option<u8>,
     /// W/U/B/R/G/C bits naming the land types this object can landwalk.
     pub landwalk_mask: u8,
+    /// Exact pre-stack incarnation and authorization route for a physical
+    /// spell currently being cast or waiting on the stack. This is kept on
+    /// the source object, independently of the mutable `StackItem`, so a
+    /// restored stack record cannot coherently relabel Flashback as Normal
+    /// (or vice versa) by changing only redundant stack fields. Every
+    /// ordinary zone change clears it through `reset_for_zone_change`.
+    pub spell_cast_origin: Option<SpellCastOriginV4>,
 }
 
 impl ObjectStateV4 {
@@ -128,6 +135,7 @@ impl ObjectStateV4 {
             ward_generic: 0,
             minimum_blockers_override: None,
             landwalk_mask: 0,
+            spell_cast_origin: None,
         }
     }
 
@@ -176,6 +184,14 @@ pub struct GameObject {
     pub counters: Counters,
     pub attachments: Vec<ObjectId>,
     pub v4: ObjectStateV4,
+    /// Immutable provenance for a virtual spell-copy object. Physical cards
+    /// and tokens always carry `None`; the spell-copy allocator is the only
+    /// production path that creates `Some`. This lives on the arena object,
+    /// rather than only on a mutable stack item flag, so a restored state
+    /// cannot turn a physical card into a copy (or vice versa) by flipping a
+    /// single redundant boolean.
+    #[serde(default)]
+    pub spell_copy_origin: Option<SpellCopyOriginV4>,
     /// `Some(turn)` iff this card was Plotted (`PlotAbility`) on kernel
     /// round `turn` -- set by `engine::plot_spell`, read by
     /// `engine::is_plotted_castable_now` (castable from exile for free at
@@ -212,6 +228,7 @@ impl GameObject {
             counters: Counters::default(),
             attachments: Vec::new(),
             v4: ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         }
@@ -326,6 +343,120 @@ pub enum CastMethodV4 {
     Omen,
 }
 
+/// Independently frozen route by which a physical spell's immediately
+/// preceding incarnation was authorized to enter the stack. Exile routes
+/// are deliberately distinct: ordinary impulse permission, Plot, and
+/// Madness share a zone but never share a cost or departure contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SpellCastRouteV4 {
+    Hand,
+    GraveyardFlashback,
+    ExilePermission {
+        holder: PlayerId,
+        permission_zone_change_count: u32,
+    },
+    Plotted {
+        plotted_turn: u32,
+    },
+    Madness,
+}
+
+/// Incarnation-local cast provenance stored on the physical source object
+/// and copied into its stack source contract. `finalized_method` remains
+/// `None` while 601.2's choices and payments are pending, then is stamped
+/// exactly once after the definition-derived cost successfully commits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SpellCastOriginV4 {
+    pub origin_zone: Zone,
+    pub origin_zone_change_count: u32,
+    pub route: SpellCastRouteV4,
+    pub finalized_method: Option<CastMethodV4>,
+}
+
+/// Immutable provenance of a virtual spell-copy arena object. The parent
+/// binding is historical: once the parent leaves the stack its live zone
+/// generation may advance, while this record continues to identify exactly
+/// which stack incarnation produced the copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SpellCopyOriginV4 {
+    pub parent: ObjectId,
+    pub parent_card_def: u16,
+    pub parent_owner: PlayerId,
+    pub parent_controller: PlayerId,
+    pub parent_stack_zone_change_count: u32,
+    /// Whether the immediate parent arena object was itself a virtual copy.
+    /// This redundant immutable bit lets descendants validate ancestry even
+    /// after that parent has ceased and no stack item remains to carry an
+    /// `is_copy` flag.
+    pub parent_was_copy: bool,
+}
+
+/// Exact source identity owned by a spell stack item. Abilities and triggers
+/// carry `None`; every spell, including a transient cast placeholder and a
+/// virtual copy, carries `Some` captured after its source entered the stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StackSourceContractV4 {
+    pub source: ObjectId,
+    pub card_def: u16,
+    pub owner: PlayerId,
+    pub controller: PlayerId,
+    pub zone: Zone,
+    pub zone_change_count: u32,
+    pub spell_copy_origin: Option<SpellCopyOriginV4>,
+    pub spell_cast_origin: Option<SpellCastOriginV4>,
+    pub cast_method: CastMethodV4,
+}
+
+impl StackSourceContractV4 {
+    pub fn capture(
+        state: &GameState,
+        source: ObjectId,
+        cast_method: CastMethodV4,
+    ) -> StackSourceContractV4 {
+        let object = state.objects.get(source);
+        StackSourceContractV4 {
+            source,
+            card_def: object.card_def,
+            owner: object.owner,
+            controller: object.controller,
+            zone: object.zone,
+            zone_change_count: object.zone_change_count,
+            spell_copy_origin: object.spell_copy_origin,
+            spell_cast_origin: object.v4.spell_cast_origin,
+            cast_method,
+        }
+    }
+}
+
+/// Exact exiled-card incarnation that owns a Madness offer on the stack.
+/// This is deliberately separate from [`StackSourceContractV4`]: the latter
+/// describes a spell after 601.2a has moved it to the stack, while a Madness
+/// offer is a triggered ability whose physical source must remain in exile
+/// until the offer is accepted or declined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MadnessOfferSourceContractV4 {
+    pub source: ObjectId,
+    pub card_def: u16,
+    pub owner: PlayerId,
+    pub controller: PlayerId,
+    pub zone: Zone,
+    pub zone_change_count: u32,
+}
+
+impl MadnessOfferSourceContractV4 {
+    pub fn capture(state: &GameState, source: ObjectId) -> MadnessOfferSourceContractV4 {
+        let object = state.objects.get(source);
+        MadnessOfferSourceContractV4 {
+            source,
+            card_def: object.card_def,
+            owner: object.owner,
+            controller: object.controller,
+            zone: object.zone,
+            zone_change_count: object.zone_change_count,
+        }
+    }
+}
+
 /// Historical identity of one object used to pay a cost. It belongs to the
 /// stack incarnation and must not follow the arena object through later zone
 /// changes.
@@ -360,6 +491,8 @@ pub enum StackTargetContractV4 {
         controller: PlayerId,
         zone: Zone,
         zone_change_count: u32,
+        #[serde(default)]
+        spell_copy_origin: Option<SpellCopyOriginV4>,
     },
 }
 
@@ -376,6 +509,7 @@ impl StackTargetContractV4 {
                     controller: live.controller,
                     zone: live.zone,
                     zone_change_count: live.zone_change_count,
+                    spell_copy_origin: live.spell_copy_origin,
                 }
             }
         }
@@ -450,6 +584,7 @@ pub fn stack_target_contract_is_structurally_valid(
         owner,
         zone,
         zone_change_count,
+        spell_copy_origin,
         ..
     } = contract
     else {
@@ -458,8 +593,15 @@ pub fn stack_target_contract_is_structurally_valid(
     state.objects.try_get(object).is_some_and(|live| {
         live.card_def == card_def
             && live.owner == owner
-            && zone_change_count <= live.zone_change_count
-            && (zone_change_count != live.zone_change_count || zone == live.zone)
+            && live.spell_copy_origin == spell_copy_origin
+            && if spell_copy_origin.is_some() {
+                zone == Zone::Stack
+                    && live.zone == Zone::Stack
+                    && zone_change_count == live.zone_change_count
+            } else {
+                zone_change_count <= live.zone_change_count
+                    && (zone_change_count != live.zone_change_count || zone == live.zone)
+            }
     })
 }
 
@@ -472,6 +614,16 @@ pub struct StackStateV4 {
     pub face_index: u8,
     pub x_value: u16,
     pub paid_cost_refs: Vec<PaidCostRefV4>,
+    /// Exact source incarnation for a spell stack item. This is internal
+    /// full-state provenance and intentionally does not alter public stack,
+    /// observation, action, or policy schemas.
+    #[serde(default)]
+    pub source_contract: Option<StackSourceContractV4>,
+    /// Exact exiled source incarnation for a Madness-offer triggered ability.
+    /// `None` for spells and every other ability kind. Internal full-state
+    /// provenance only; public observation/action/policy shapes are unchanged.
+    #[serde(default)]
+    pub madness_source_contract: Option<MadnessOfferSourceContractV4>,
     /// Target specification selected for this stack item (mode-aware for a
     /// spell, definition-owned for an activation). `None` only for untargeted
     /// abilities/triggers and the transient cast placeholder before 601.2c.
@@ -1264,13 +1416,13 @@ impl Hasher for Fnv1a64 {
 }
 
 #[derive(Serialize)]
-struct DiagnosticStateHashEnvelopeV4<'a> {
+struct DiagnosticStateHashEnvelopeV5<'a> {
     schema_version: u32,
     state: &'a GameState,
 }
 
 fn diagnostic_state_hash_bytes(state: &GameState) -> Vec<u8> {
-    serde_json::to_vec(&DiagnosticStateHashEnvelopeV4 {
+    serde_json::to_vec(&DiagnosticStateHashEnvelopeV5 {
         schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION,
         state,
     })
@@ -1437,6 +1589,56 @@ mod tests {
     }
 
     #[test]
+    fn physical_target_contract_rejects_a_forged_copy_origin_in_a_later_generation() {
+        let (lib0, lib1) = two_card_libraries();
+        let mut state = GameState::new_from_libraries(&lib0, &lib1, debug_names, 7);
+        let parent = ObjectId(0);
+        let target = ObjectId(1);
+        state.players[PlayerId::P0.index()]
+            .library
+            .retain(|&object| object != target);
+        state.players[PlayerId::P0.index()].battlefield.push(target);
+        state.objects.get_mut(target).zone = Zone::Battlefield;
+        let contract = StackTargetContractV4::capture(&state, Target::Object(target));
+        assert!(stack_target_contract_is_structurally_valid(
+            &state,
+            TargetSpec::AnyTarget,
+            0,
+            Target::Object(target),
+            contract,
+        ));
+
+        state.objects.get_mut(target).zone_change_count += 1;
+        assert!(stack_target_contract_is_structurally_valid(
+            &state,
+            TargetSpec::AnyTarget,
+            0,
+            Target::Object(target),
+            contract,
+        ));
+
+        let parent_object = state.objects.get(parent).clone();
+        state.objects.get_mut(target).spell_copy_origin = Some(SpellCopyOriginV4 {
+            parent,
+            parent_card_def: state.objects.get(target).card_def,
+            parent_owner: parent_object.owner,
+            parent_controller: parent_object.controller,
+            parent_stack_zone_change_count: parent_object.zone_change_count,
+            parent_was_copy: false,
+        });
+        assert!(
+            !stack_target_contract_is_structurally_valid(
+                &state,
+                TargetSpec::AnyTarget,
+                0,
+                Target::Object(target),
+                contract,
+            ),
+            "copy provenance is immutable for the arena object, even across later generations"
+        );
+    }
+
+    #[test]
     fn state_hash_is_deterministic_for_identical_sequences() {
         let (lib0, lib1) = two_card_libraries();
         let mut a = GameState::new_from_libraries(&lib0, &lib1, debug_names, 99);
@@ -1461,13 +1663,13 @@ mod tests {
 
         assert_eq!(
             DIAGNOSTIC_STATE_HASH_ALGORITHM,
-            "fnv1a64-serde-json-game-state-envelope-v4"
+            "fnv1a64-serde-json-game-state-envelope-v5"
         );
-        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 4);
+        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 5);
         assert!(
-            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":4,\"state\":{")
+            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":5,\"state\":{")
         );
-        assert_eq!(state.diagnostic_state_hash(), 0xae77_b6e1_81d5_1596);
+        assert_eq!(state.diagnostic_state_hash(), 0x8650_30b6_0d41_3489);
     }
 
     /// Draws to different players don't interact, so interleaving order
@@ -1506,7 +1708,7 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_state_hash_includes_rng_and_pending_cost_override() {
+    fn diagnostic_state_hash_includes_rng_and_pending_source_contract() {
         let (lib0, lib1) = two_card_libraries();
         let mut state = GameState::new_from_libraries(&lib0, &lib1, debug_names, 99);
         let initial = state.diagnostic_state_hash();
@@ -1518,8 +1720,10 @@ mod tests {
         );
 
         let spell = state.players[0].library[0];
+        let source_contract = StackSourceContractV4::capture(&state, spell, CastMethodV4::Normal);
         state.engine.pending_cast = Some(crate::engine::PendingCast {
             spell,
+            source_contract,
             controller: PlayerId::P0,
             target_spec: crate::card_def::TargetSpec::None,
             targets_chosen: Vec::new(),
@@ -1527,18 +1731,23 @@ mod tests {
             is_flashback: false,
             cast_mode: Some(crate::engine::CastMode::Normal),
             additional_cost_discarded: Some(Vec::new()),
-            cost_override: None,
             mode_chosen: Some(0),
             origin_zone: Zone::Hand,
             sacrifice_chosen: Vec::new(),
             kicked: Some(false),
         });
-        let ordinary_cost = state.diagnostic_state_hash();
-        state.engine.pending_cast.as_mut().unwrap().cost_override = Some(crate::mana::Cost::zero());
+        let ordinary_contract = state.diagnostic_state_hash();
+        state
+            .engine
+            .pending_cast
+            .as_mut()
+            .unwrap()
+            .source_contract
+            .zone_change_count += 1;
         assert_ne!(
             state.diagnostic_state_hash(),
-            ordinary_cost,
-            "the diagnostic full-state envelope must not skip cost_override"
+            ordinary_contract,
+            "the diagnostic full-state envelope must not skip the pending source contract"
         );
     }
 

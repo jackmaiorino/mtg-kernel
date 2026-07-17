@@ -1434,6 +1434,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(card_id),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -1633,6 +1634,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(bolt),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -1675,6 +1677,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(bolt),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -1697,7 +1700,22 @@ mod tests {
         assert!(surface.suppressions().is_empty());
 
         state.players[0].hand.retain(|&h| h != id);
-        state.objects.get_mut(id).zone = Zone::Stack;
+        {
+            let object = state.objects.get_mut(id);
+            object.zone = Zone::Stack;
+            object.zone_change_count += 1;
+            object.v4.spell_cast_origin = Some(crate::state::SpellCastOriginV4 {
+                origin_zone: Zone::Hand,
+                origin_zone_change_count: object.zone_change_count - 1,
+                route: crate::state::SpellCastRouteV4::Hand,
+                finalized_method: Some(crate::state::CastMethodV4::Normal),
+            });
+        }
+        let source_contract = crate::state::StackSourceContractV4::capture(
+            &state,
+            id,
+            crate::state::CastMethodV4::Normal,
+        );
         state.stack.push(crate::state::StackItem {
             kind: crate::state::StackItemKind::Spell,
             source: id,
@@ -1713,6 +1731,7 @@ mod tests {
             v4: crate::state::StackStateV4 {
                 target_spec: Some(crate::card_def::TargetSpec::AnyTarget),
                 target_contracts: vec![crate::state::StackTargetContractV4::Player(PlayerId::P1)],
+                source_contract: Some(source_contract),
                 ..crate::state::StackStateV4::spell(crate::state::CastMethodV4::Normal)
             },
         });
@@ -1759,6 +1778,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(bolt),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -1903,6 +1923,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(bolt),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -2073,6 +2094,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(bolt),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -2222,6 +2244,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(bolt),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -2445,6 +2468,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(bolt),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -2564,9 +2588,11 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(temper_def),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
+        state.exile.push(temper);
 
         // A second real spell in hand, so the post-cast reprompt (if it
         // isn't wrongly suppressed) has a genuine alternative to offer, not
@@ -2584,6 +2610,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(lava_dart_def),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -2604,7 +2631,12 @@ mod tests {
             mode_chosen: 0,
             madness_offer: true,
             kicked: false,
-            v4: crate::state::StackStateV4::default(),
+            v4: crate::state::StackStateV4 {
+                madness_source_contract: Some(crate::state::MadnessOfferSourceContractV4::capture(
+                    &state, temper,
+                )),
+                ..crate::state::StackStateV4::default()
+            },
         });
         state.engine.priority_passes = [true, true];
         state.step = Step::Main1;
@@ -2714,9 +2746,11 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(temper_def),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
+        state.exile.push(temper);
 
         let lava_dart_def = card_def::card_id_by_name("Lava Dart").unwrap();
         let lava_dart = state.objects.push(crate::state::GameObject {
@@ -2731,6 +2765,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(lava_dart_def),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -2753,7 +2788,12 @@ mod tests {
             mode_chosen: 0,
             madness_offer: true,
             kicked: false,
-            v4: crate::state::StackStateV4::default(),
+            v4: crate::state::StackStateV4 {
+                madness_source_contract: Some(crate::state::MadnessOfferSourceContractV4::capture(
+                    &state, temper,
+                )),
+                ..crate::state::StackStateV4::default()
+            },
         });
         state.engine.priority_passes = [true, true];
         state.step = Step::Main1;
@@ -2879,6 +2919,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(bolt),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -3020,6 +3061,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(bushwhacker_def),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });
@@ -3038,6 +3080,7 @@ mod tests {
             counters: Default::default(),
             attachments: Vec::new(),
             v4: crate::state::ObjectStateV4::from_card_def(raider_def),
+            spell_copy_origin: None,
             plotted_turn: None,
             zone_change_count: 0,
         });

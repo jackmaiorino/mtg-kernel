@@ -1064,6 +1064,7 @@ mod tests {
                 counters: Counters::default(),
                 attachments: Vec::new(),
                 v4: ObjectStateV4::from_card_def(card_def),
+                spell_copy_origin: None,
                 plotted_turn: None,
                 zone_change_count: 0,
             });
