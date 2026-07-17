@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "30d2535b87552671b2b77ef1e302881ef15751acbcd57c8a3658953e9cf9645d"
+    "registry_raw_sha256": "fd0b03718a2eda0b86d9f47b81163d26be2d49bf3987f1d888fc2f8aabccf76e"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 33,
+    "full_cards": 35,
     "partial_cards": 0,
-    "no_effect_cards": 117,
+    "no_effect_cards": 115,
     "token_dependencies": 3
   },
   "deck_mainboard_copy_totals": [
@@ -59,9 +59,9 @@
     },
     {
       "deck_id": "Terror",
-      "full": 22,
+      "full": 30,
       "partial": 0,
-      "no_effect": 38,
+      "no_effect": 30,
       "total": 60
     },
     {
@@ -2106,10 +2106,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Mesmeric Fiend",
@@ -3247,10 +3245,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Thoughtcast",

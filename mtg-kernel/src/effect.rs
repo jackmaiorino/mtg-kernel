@@ -286,6 +286,20 @@ pub enum EffectOp {
     OfferAffectedPlayerSpellCopy {
         affected: TargetRef,
     },
+    /// Puts up to the top `count` cards of `player`'s library into their
+    /// graveyard as one library-to-graveyard zone-change batch. This is not a draw: a
+    /// short or empty library simply contributes fewer cards and never sets
+    /// the draw-from-empty marker. If two or more cards would move together,
+    /// their owner orders the batch through the resumable interpreter; the
+    /// pending private-library identities are exposed only to that owner.
+    /// This primitive does not yet emit a distinct pre-batch `MILL_CARDS`
+    /// replacement event or a post-move mill-summary event; those hooks stay
+    /// fail-closed until a supported pool card consumes them. Appended to
+    /// preserve every existing variant's derived hash identity.
+    MillCards {
+        player: PlayerRef,
+        count: u8,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -307,11 +321,23 @@ pub enum EffectFrame {
         order_resolved: bool,
         path: Vec<u16>,
     },
+    /// A bound library prefix awaiting its owner-selected graveyard order.
+    /// Kept distinct from public reveal/partition batches so hidden milled
+    /// identities stay chooser-private while the resolution is suspended.
+    /// Appended to preserve existing continuation hashes.
+    MillLibraryBatch {
+        objects: Vec<EffectObjectBinding>,
+        order_resolved: bool,
+        path: Vec<u16>,
+    },
 }
 
-/// Binds a physical arena id to the exact public incarnation selected when
-/// an effect snapshotted it. A restored/stale continuation must never move a
-/// later incarnation that happens to reuse the same stable `ObjectId`.
+/// Binds a physical arena id to the exact incarnation selected when an effect
+/// snapshotted it. Visibility is governed separately: public reveals expose
+/// these bindings to both players, while a mill-order continuation exposes
+/// its otherwise-hidden bindings only to the cards' owner. A restored/stale
+/// continuation must never move a later incarnation that happens to reuse
+/// the same stable `ObjectId`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EffectObjectBinding {
     pub object: ObjectId,
@@ -331,7 +357,13 @@ pub struct EffectTargetCandidate {
 /// state or action identity is introduced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EffectTargetSelectionPurpose {
-    OrderIntoGraveyard { preserve_known_identity: bool },
+    OrderIntoGraveyard {
+        preserve_known_identity: bool,
+    },
+    /// Orders a bound, otherwise-hidden library prefix for a mill batch.
+    /// Only the milled cards' owner may inspect candidate identities while
+    /// the choice is pending; the completed graveyard remains public.
+    OrderMilledIntoGraveyard,
 }
 
 /// A policy-visible choice yielded by the generic effect interpreter. This is
@@ -414,10 +446,10 @@ pub struct ExecCtx {
     pub kicked: bool,
 }
 
-/// Whether this program contains a policy-visible `Choice` anywhere in its
+/// Whether this program can yield a policy-visible choice anywhere in its
 /// tree. Existing Burn/Rally programs stay on their frozen synchronous/legacy
-/// continuation paths; only genuinely choice-bearing programs enter the v4
-/// interpreter in this first migration slice.
+/// continuation paths; explicit `Choice`, public partition ordering, and
+/// multi-card mill ordering enter the v4 interpreter.
 pub fn contains_player_choice(op: &EffectOp) -> bool {
     match op {
         EffectOp::Sequence(ops) => ops.iter().any(contains_player_choice),
@@ -431,6 +463,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         // the program must enter the resumable interpreter so a 2+ card
         // graveyard batch can yield its owner's ordering choice.
         EffectOp::RevealTopAndPartitionByType { .. } => true,
+        EffectOp::MillCards { count, .. } => *count > 1,
         _ => false,
     }
 }
@@ -624,18 +657,24 @@ fn complete_resumable_target_selection(
             Ok(binding)
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let (to_zone, preserve_known_identity) = match purpose {
+    match purpose {
         EffectTargetSelectionPurpose::OrderIntoGraveyard {
             preserve_known_identity,
-        } => (Zone::Graveyard, preserve_known_identity),
-    };
-    continuation.frames.push(EffectFrame::MoveObjectsBatch {
-        objects,
-        to_zone,
-        preserve_known_identity,
-        order_resolved: true,
-        path,
-    });
+        } => continuation.frames.push(EffectFrame::MoveObjectsBatch {
+            objects,
+            to_zone: Zone::Graveyard,
+            preserve_known_identity,
+            order_resolved: true,
+            path,
+        }),
+        EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
+            continuation.frames.push(EffectFrame::MillLibraryBatch {
+                objects,
+                order_resolved: true,
+                path,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -678,11 +717,27 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         return Ok(());
     };
     if let PendingEffectChoice::SelectTargets {
-        selected, legal, ..
+        selected,
+        legal,
+        purpose,
+        ..
     } = choice
     {
         for candidate in selected.iter().chain(legal) {
             validate_effect_target_candidate(state, candidate)?;
+        }
+        if *purpose == EffectTargetSelectionPurpose::OrderMilledIntoGraveyard {
+            let bindings = selected
+                .iter()
+                .chain(legal)
+                .map(|candidate| {
+                    candidate.expected_object.ok_or_else(|| {
+                        "milled-card ordering target lacks an object-incarnation binding"
+                            .to_string()
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            validate_bound_library_prefix(state, &bindings)?;
         }
     }
     Ok(())
@@ -730,53 +785,66 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
 
     while let Some(frame) = continuation.frames.pop() {
         let EffectFrame::Program { op, path } = frame else {
-            let EffectFrame::MoveObjectsBatch {
-                objects,
-                to_zone,
-                preserve_known_identity,
-                order_resolved,
-                path,
-            } = frame
-            else {
-                unreachable!()
-            };
-            if to_zone == Zone::Graveyard && objects.len() >= 2 && !order_resolved {
-                for binding in &objects {
-                    validate_effect_object_binding(state, *binding)?;
-                }
-                let player = state.objects.get(objects[0].object).owner;
-                assert!(
-                    objects
-                        .iter()
-                        .all(|binding| state.objects.get(binding.object).owner == player),
-                    "one graveyard-order batch must contain cards from one owner"
-                );
-                let count = objects
-                    .len()
-                    .try_into()
-                    .expect("effect target count fits the u16 public contract");
-                continuation.choice = Some(PendingEffectChoice::SelectTargets {
-                    player,
+            match frame {
+                EffectFrame::MoveObjectsBatch {
+                    objects,
+                    to_zone,
+                    preserve_known_identity,
+                    order_resolved,
                     path,
-                    selected: Vec::new(),
-                    legal: objects
-                        .into_iter()
-                        .map(|binding| EffectTargetCandidate {
-                            target: Target::Object(binding.object),
-                            expected_object: Some(binding),
-                        })
-                        .collect(),
-                    min_targets: count,
-                    max_targets: count,
-                    ordered: true,
-                    purpose: EffectTargetSelectionPurpose::OrderIntoGraveyard {
-                        preserve_known_identity,
-                    },
-                });
-                state.engine.pending_effect = Some(continuation);
-                return Ok(ResumableProgress::Suspended);
+                } => {
+                    if to_zone == Zone::Graveyard && objects.len() >= 2 && !order_resolved {
+                        for binding in &objects {
+                            validate_effect_object_binding(state, *binding)?;
+                        }
+                        let player = state.objects.get(objects[0].object).owner;
+                        assert!(
+                            objects
+                                .iter()
+                                .all(|binding| state.objects.get(binding.object).owner == player),
+                            "one graveyard-order batch must contain cards from one owner"
+                        );
+                        stage_graveyard_order_choice(
+                            &mut continuation,
+                            player,
+                            path,
+                            objects,
+                            EffectTargetSelectionPurpose::OrderIntoGraveyard {
+                                preserve_known_identity,
+                            },
+                        );
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                    commit_zone_change_batch(state, &objects, to_zone, preserve_known_identity)?;
+                }
+                EffectFrame::MillLibraryBatch {
+                    objects,
+                    order_resolved,
+                    path,
+                } => {
+                    validate_bound_library_prefix(state, &objects)?;
+                    if objects.len() >= 2 && !order_resolved {
+                        let player = state.objects.get(objects[0].object).owner;
+                        // A mill instruction does not publicly reveal its
+                        // library snapshot before the move. The owner must
+                        // nevertheless see the cards to order them, so grant
+                        // only that perspective exact temporary knowledge.
+                        state.reveal_library_top(player, player, objects.len());
+                        stage_graveyard_order_choice(
+                            &mut continuation,
+                            player,
+                            path,
+                            objects,
+                            EffectTargetSelectionPurpose::OrderMilledIntoGraveyard,
+                        );
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                    commit_zone_change_batch(state, &objects, Zone::Graveyard, false)?;
+                }
+                EffectFrame::Program { .. } => unreachable!(),
             }
-            commit_zone_change_batch(state, &objects, to_zone, preserve_known_identity)?;
             continue;
         };
         match op {
@@ -854,6 +922,14 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     });
                 }
             }
+            EffectOp::MillCards { player, count } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                continuation.frames.push(EffectFrame::MillLibraryBatch {
+                    objects: bind_library_top(state, player, count),
+                    order_resolved: false,
+                    path,
+                });
+            }
             leaf => execute(&leaf, &continuation.ctx, state),
         }
     }
@@ -902,6 +978,92 @@ impl ExecCtx {
             }
         }
     }
+}
+
+fn stage_graveyard_order_choice(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    path: Vec<u16>,
+    objects: Vec<EffectObjectBinding>,
+    purpose: EffectTargetSelectionPurpose,
+) {
+    let count = objects
+        .len()
+        .try_into()
+        .expect("effect target count fits the u16 public contract");
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path,
+        selected: Vec::new(),
+        legal: objects
+            .into_iter()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: count,
+        max_targets: count,
+        ordered: true,
+        purpose,
+    });
+}
+
+fn bind_library_top(state: &GameState, player: PlayerId, count: u8) -> Vec<EffectObjectBinding> {
+    state.players[player.index()].library
+        [..usize::from(count).min(state.players[player.index()].library.len())]
+        .iter()
+        .copied()
+        .map(|object| EffectObjectBinding {
+            object,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect()
+}
+
+/// Validates both object incarnation and membership in the exact current
+/// library prefix. Zone-change generations alone cannot detect a shuffle or
+/// reorder, so a restored mill continuation must also prove that its bound
+/// set is still precisely the top N cards it originally snapshotted.
+fn validate_bound_library_prefix(
+    state: &GameState,
+    objects: &[EffectObjectBinding],
+) -> Result<(), String> {
+    let Some(first) = objects.first() else {
+        return Ok(());
+    };
+    if objects
+        .iter()
+        .any(|binding| binding.expected_zone != Zone::Library)
+    {
+        return Err("milled-card binding does not expect the library zone".to_string());
+    }
+    for &binding in objects {
+        validate_effect_object_binding(state, binding)?;
+    }
+    let owner = state.objects.get(first.object).owner;
+    if objects
+        .iter()
+        .any(|binding| state.objects.get(binding.object).owner != owner)
+    {
+        return Err("milled-card bindings do not share one library owner".to_string());
+    }
+    let library = &state.players[owner.index()].library;
+    if library.len() < objects.len() {
+        return Err("milled-card binding is longer than the live library".to_string());
+    }
+    let mut expected = objects
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    let mut current = library[..objects.len()].to_vec();
+    expected.sort_unstable();
+    current.sort_unstable();
+    if expected != current {
+        return Err("milled-card bindings no longer match the live library prefix".to_string());
+    }
+    Ok(())
 }
 
 fn reveal_top_and_partition(
@@ -1290,6 +1452,16 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 stage: crate::engine::SpellCopyStage::Payment,
                 copy_source: None,
             });
+        }
+        EffectOp::MillCards { player, count } => {
+            let player = ctx.resolve_player(*player, state);
+            let objects = bind_library_top(state, player, *count);
+            assert!(
+                objects.len() < 2,
+                "a multi-card mill must use the resumable interpreter"
+            );
+            commit_zone_change_batch(state, &objects, Zone::Graveyard, false)
+                .expect("fresh mill bindings remain valid");
         }
     }
 }

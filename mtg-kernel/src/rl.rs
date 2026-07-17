@@ -3604,31 +3604,46 @@ fn pending_effect_semantic_v4(
                     max_targets,
                     ordered,
                     purpose,
-                } => Ok(PendingEffectChoiceSemanticV4::Targets {
-                    player: (*player).into(),
-                    structural_path: path.clone(),
-                    selected_targets: selected
-                        .iter()
-                        .map(|candidate| {
-                            effect_target_ref_visible(state, candidate.target, acting_player)
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                    legal_targets: legal
-                        .iter()
-                        .map(|candidate| {
-                            effect_target_ref_visible(state, candidate.target, acting_player)
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                    min_targets: *min_targets,
-                    max_targets: *max_targets,
-                    can_finish: selected.len() >= usize::from(*min_targets),
-                    ordered: *ordered,
-                    purpose: match purpose {
-                        crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
-                            ..
-                        } => TargetSelectionPurposeV4::CardSelection,
-                    },
-                }),
+                } => {
+                    let chooser_private = matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
+                    ) && acting_player != *player;
+                    let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
+                        if chooser_private {
+                            return Ok(Vec::new());
+                        }
+                        candidates
+                            .iter()
+                            .map(|candidate| {
+                                effect_target_ref_visible(state, candidate.target, acting_player)
+                            })
+                            .collect::<Result<Vec<_>>>()
+                    };
+                    Ok(PendingEffectChoiceSemanticV4::Targets {
+                        player: (*player).into(),
+                        structural_path: path.clone(),
+                        // The existence and exact count of a mill-order
+                        // decision are public, but cards still physically in
+                        // the library remain chooser-private until the batch
+                        // commits. Non-choosers therefore receive the typed
+                        // choice envelope without either candidate payload.
+                        selected_targets: visible_targets(selected)?,
+                        legal_targets: visible_targets(legal)?,
+                        min_targets: *min_targets,
+                        max_targets: *max_targets,
+                        can_finish: selected.len() >= usize::from(*min_targets),
+                        ordered: *ordered,
+                        purpose: match purpose {
+                            crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
+                                TargetSelectionPurposeV4::CardSelection
+                            }
+                        },
+                    })
+                }
             }
         })
         .transpose()?;
