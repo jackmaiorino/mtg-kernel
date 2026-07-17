@@ -2,11 +2,14 @@ use mtg_kernel::card_def::{card_id_by_name, TargetSpec, CARD_DEFS};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const FIXTURE_JSON: &str = include_str!("../../data/xmage_counter_reference_windows_v1.json");
 const OPPONENT_DECISION_PREFIX: &str = "REPLAY_OPPONENT_DECISION_JSON: ";
+const XMAGE_ORACLE_ROOT_ENV: &str = "MTG_KERNEL_XMAGE_ORACLE_ROOT";
+const VENDORED_XMAGE_ORACLE_ROOT: &str = "oracle/xmage";
 
 fn fixture() -> Value {
     serde_json::from_str(FIXTURE_JSON).expect("counter reference fixture is valid JSON")
@@ -180,8 +183,60 @@ fn tracked_counter_windows_are_structured_and_match_kernel_card_types() {
     assert_eq!(total_records, 6);
 }
 
-fn repository_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+fn standalone_repository_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("mtg-kernel crate is inside the standalone repository")
+        .to_path_buf()
+}
+
+fn resolve_xmage_oracle_root(repository_root: &Path, configured: Option<&OsStr>) -> PathBuf {
+    match configured {
+        Some(root) if Path::new(root).is_absolute() => PathBuf::from(root),
+        Some(root) => repository_root.join(root),
+        None => repository_root.join(VENDORED_XMAGE_ORACLE_ROOT),
+    }
+}
+
+fn xmage_oracle_root() -> PathBuf {
+    let repository_root = standalone_repository_root();
+    let root = resolve_xmage_oracle_root(
+        &repository_root,
+        std::env::var_os(XMAGE_ORACLE_ROOT_ENV).as_deref(),
+    );
+    assert!(
+        root.is_dir(),
+        "XMage oracle root {} does not exist; set {XMAGE_ORACLE_ROOT_ENV} to an XMage checkout/artifact root or vendor the pinned material under {}",
+        root.display(),
+        repository_root
+            .join(VENDORED_XMAGE_ORACLE_ROOT)
+            .display()
+    );
+    root
+}
+
+#[test]
+fn xmage_oracle_root_defaults_to_standalone_vendor_directory() {
+    let repository_root = Path::new("standalone-repository");
+    assert_eq!(
+        resolve_xmage_oracle_root(repository_root, None),
+        repository_root.join(VENDORED_XMAGE_ORACLE_ROOT)
+    );
+}
+
+#[test]
+fn xmage_oracle_root_override_is_explicit_and_repository_relative() {
+    let repository_root = Path::new("standalone-repository");
+    assert_eq!(
+        resolve_xmage_oracle_root(repository_root, Some(OsStr::new("fixtures/xmage"))),
+        repository_root.join("fixtures/xmage")
+    );
+
+    let absolute = std::env::temp_dir().join("mtg-kernel-xmage-oracle");
+    assert_eq!(
+        resolve_xmage_oracle_root(repository_root, Some(absolute.as_os_str())),
+        absolute
+    );
 }
 
 fn read_and_verify(root: &Path, spec: &Value) -> Vec<u8> {
@@ -240,9 +295,9 @@ fn positive_multiset_delta(before: Vec<String>, after: Vec<String>) -> BTreeMap<
 }
 
 #[test]
-#[ignore = "requires the ignored local XMage golden trace material"]
+#[ignore = "requires MTG_KERNEL_XMAGE_ORACLE_ROOT or oracle/xmage material"]
 fn source_traces_match_fixture() {
-    let root = repository_root();
+    let root = xmage_oracle_root();
     let fixture = fixture();
     read_and_verify(&root, &fixture["run_manifest"]);
 

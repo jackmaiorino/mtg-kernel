@@ -37,6 +37,11 @@ import mtg_kernel_rl.trainer as trainer_mod
 from fixtures import DECK_HASHES, DECK_IDS, fake_launcher
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PYTHON_ROOT = REPO_ROOT / "python"
+PYTHON_TESTS_ROOT = PYTHON_ROOT / "tests"
+
+
 def _state(path: Path, update: int) -> dict:
     return load_checkpoint_file(path / "checkpoints" / f"update-{update:08d}.pt")
 
@@ -113,7 +118,10 @@ def _trim_to_head(root: Path, head: int) -> None:
 
 def _subprocess_env() -> dict[str, str]:
     env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(["kernel/python", "kernel/python/tests"])
+    python_paths = [str(PYTHON_ROOT), str(PYTHON_TESTS_ROOT)]
+    if env.get("PYTHONPATH"):
+        python_paths.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(python_paths)
     return env
 
 
@@ -2855,7 +2863,7 @@ class TrainerTest(unittest.TestCase):
             env_marker = tmp / "env-started.marker"
             script = tmp / "bad_kernel_version_env.py"
             script.write_text(
-                """
+                f"""
 from __future__ import annotations
 
 import json
@@ -2863,7 +2871,7 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path.cwd() / "kernel/python/tests"))
+sys.path.insert(0, {str(PYTHON_TESTS_ROOT)!r})
 from fixtures import decision_response
 
 marker = os.environ.get("BAD_KERNEL_VERSION_MARKER")
@@ -2925,13 +2933,12 @@ for line in sys.stdin:
             launcher = fake_launcher(tmp, "train_pair")
             fresh = tmp / "fresh"
             split = tmp / "split"
-            env = dict(os.environ)
-            env["PYTHONPATH"] = os.pathsep.join(["kernel/python", "kernel/python/tests"])
+            env = _subprocess_env()
 
             def run_train(args: list[str]) -> None:
                 subprocess.check_call(
                     [sys.executable, "-m", "mtg_kernel_rl", "train", *args],
-                    cwd=Path.cwd(),
+                    cwd=REPO_ROOT,
                     env=env,
                     stdout=subprocess.DEVNULL,
                 )

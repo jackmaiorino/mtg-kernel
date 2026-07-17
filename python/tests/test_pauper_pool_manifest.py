@@ -11,8 +11,8 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-TOOLS = REPO_ROOT / "kernel" / "python" / "tools"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TOOLS = REPO_ROOT / "python" / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
@@ -98,6 +98,11 @@ class PauperPoolManifestTest(unittest.TestCase):
         cls.registry = load(cls.registry_path)
 
     def test_exact_java_order_keys_paths_hashes_and_protocol(self) -> None:
+        self.assertEqual(manifests.repo_root_from_script(), REPO_ROOT)
+        self.assertEqual(
+            manifests.DECK_BASE_PATH,
+            Path("oracle/xmage/decks/Pauper"),
+        )
         self.assertEqual(
             tuple(
                 (spec.deck_id, spec.source_key, spec.filename, spec.source_sha256)
@@ -110,7 +115,7 @@ class PauperPoolManifestTest(unittest.TestCase):
         self.assertEqual(
             self.pool["source"],
             {
-                "java_factory_path": "Mage.Server.Plugins/Mage.Player.AIRL/src/mage/player/ai/rl/DeterminizationSampler.java",
+                "java_factory_path": "oracle/xmage/DeterminizationSampler.java",
                 "java_factory_method": "DeterminizationSampler.pauperDefaults",
                 "java_factory_file_sha256": "0df59e3f934aaafc46835411e3fc53cf060a63cceb03c4921e52c35f4d55669d",
                 "java_factory_method_sha256": "a5fc8d84f7fa70f1c41c9ce0f50e892cb4d68119313128f54e14316a01febd7b",
@@ -356,9 +361,9 @@ class PauperPoolManifestTest(unittest.TestCase):
         self.assertEqual(
             self.support["inputs"],
             {
-                "pool_path": "kernel/data/pauper_pool_v1.json",
+                "pool_path": "data/pauper_pool_v1.json",
                 "pool_raw_sha256": hashlib.sha256(pool_raw).hexdigest(),
-                "registry_path": "kernel/data/cards_v1.json",
+                "registry_path": "data/cards_v1.json",
                 "registry_raw_sha256": hashlib.sha256(registry_raw).hexdigest(),
             },
         )

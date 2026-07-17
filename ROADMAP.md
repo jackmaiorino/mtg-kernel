@@ -1,7 +1,8 @@
 # MTG Kernel Science-Ready Roadmap
 
 Status: active
-Roadmap baseline: `a78e9a2f81b0fdd7eec4c692c837e25656794ebb` (`Kernel: Prove evaluator failure boundaries`)
+Roadmap baseline: standalone commit `2f63aec4de0dbed6a5ee9b01933decfe630c07ec` (`Kernel: Prove evaluator failure boundaries`; rewritten from Mage commit `a78e9a2f81b0fdd7eec4c692c837e25656794ebb`)
+Repository status: standalone cutover complete; this repository is now the active development line. See `EXTRACTION_PROVENANCE.md` for the exact Mage-to-kernel checkpoint mapping.
 Scope: the nine canonical Pauper decks below in best-of-one play. Sideboarding and best-of-three are a separate, deferred gate.
 
 ## Decision summary
@@ -12,7 +13,9 @@ These nine decks are the complete Pauper meta pool carried forward from the prev
 
 The current checkpoint has a strong deterministic RL and artifact foundation, but complete-deck coverage is still Burn plus Rally. The deliberate schema-v4 migration is now complete across Rust and Python, reserving the generic state, hidden-information, cost, relation, continuation, and choice shapes needed by the remaining decks without exposing card-specific policy actions. Metadata-derived basic lands, the reusable Counterspell/Dispel stack-interaction slice, and Winding Way's generic resolution-time library partition work across the other decks, without making any incomplete deck runnable. The generated pool metadata freezes all nine decks, and the schema-v2 registry at the legacy `cards_v1.json` path declares exact memberships and fail-closed engine capabilities for the 132 deck cards it contains; eighteen Spy cards are still absent, and most registered cards still lack executable behavior. Card-pool expansion therefore precedes claims about general Pauper learning.
 
-The implementation order is:
+Repository cutover is effective now, before the next card-mechanics slice. This separates day-to-day trainer, runner, evaluator, and rules work from the XMage application while retaining XMage only as an explicit oracle. It does not waive the later clean-clone and science-certification gates.
+
+The implementation order after cutover is:
 
 1. Preserve the certified Burn/Rally baseline. The two designated local corpora now pass tracked content-lock and provenance gates and each replay 40/40 with zero divergence.
 2. Build reusable card, target, cost, zone, trigger, combat, and token primitives.
@@ -23,7 +26,7 @@ The implementation order is:
 7. Wildfire.
 8. CawGates.
 9. Spy.
-10. Run the final sampled and greedy 9x9 matrices, then complete independent-repository and clean-clone release gates.
+10. Run the final sampled and greedy 9x9 matrices, then complete clean-clone reproducibility and science-release certification.
 
 ## Science-ready completion definition
 
@@ -101,7 +104,7 @@ The registry currently contains 135 definitions: 132 deck cards and three tokens
 
 Chain Lightning's implementation checkpoint is backed by unit tests for unpayable and declined payment, copied-stack identity, retargeting, recursive copies, illegal-target fizzles, copy-aware counters and flashback replacement, target-pool filtering, RL serialization/action semantics, and snapshot/restore determinism. The locked `rally_mirror_v2` corpus contains 40 games, 15 logged payment prompts, six accepted payments, six retarget prompts, and three accepted retargets. Its manifest pins ReferenceRules v2 and Java oracle commit `0723fc0c2be922af47b0ef0539f28114cc23b998`; the runtime provenance gate passes. Replay reaches GameOver in all 40 traces, matches all 40 winners, and reports zero divergence and zero halt. Closing the former residuals required mirroring Java's rendered-cast-candidate equivalence in the replay comparator while preserving exact chosen object identity, filtering attackers killed before blocker declaration, and matching XMage's deterministic generic-mana pool spending order.
 
-The formal Burn and Rally evidence is now content-locked locally by tracked metadata; `kernel/CORPUS_CONTENT_LOCKS.md` defines the byte-level algorithm. This makes mutation or substitution detectable, but it does not make the ignored corpus payloads available from a clean clone. Durable content-addressed storage, authenticated retrieval, and post-download digest verification remain part of the independent-repository release gate.
+The formal Burn and Rally evidence is content-locked by tracked metadata; `CORPUS_CONTENT_LOCKS.md` defines the byte-level algorithm. `corpus_archives_v1.json` additionally pins the exact release-archive bytes and binds each archive to its content-lock aggregate. `python/tools/fetch_corpora.py` provides fail-closed retrieval, safe extraction, and post-download verification for a clean clone.
 
 Keyword representation is also not rules completeness. For example, defender is represented but not enforced when declaring attackers, trample still uses a no-trample combat path, and deathtouch, lifelink, protection, hexproof, and ward need real rules behavior.
 
@@ -296,16 +299,20 @@ BO3 promotion requires:
 
 Until this gate passes, reports must say "canonical-mainboard BO1," not "Pauper match" or "BO3."
 
-## Independent repository, CI, and clean-clone finish
+## Standalone cutover, CI, and clean-clone finish
 
-This is the final engineering milestone, after the 9x9 BO1 matrix passes.
+The repository cutover is complete now: the path-filtered history and exact source/standalone checkpoint mapping are recorded in `EXTRACTION_PROVENANCE.md`, and new work continues in this repository. Cutover is an ownership and dependency boundary, not the final science-ready certificate.
 
-1. Extract `kernel/` into an independent repository while preserving a documented commit mapping to this XMage checkpoint.
-2. Vendor the generated card database, token definitions, canonical deck manifests, and source hashes needed at build/runtime. Publish the formal replay corpora to durable content-addressed storage and provide an authenticated retrieval command that verifies the tracked lock before use. XMage Java sources remain provenance and oracle inputs, not runtime dependencies.
-3. Pin Rust, Python, dependency-lock, schema, seed-derivation, and artifact-format versions.
-4. Add Linux and Windows CI that runs formatting/lint checks, `cargo test --locked`, the Python test suite, deck/hash validation, all unit/golden tests, and a bounded deterministic mirror/cross-deck smoke.
-5. From a brand-new clone with no parent XMage checkout, build the environment, run one training update, recover/validate its store, run sampled and greedy paired evaluation, and reproduce checked-in expected artifact digests.
-6. Verify generated outputs, caches, model artifacts, databases, and `target/` remain untracked and the clean-clone workflow ends with a clean worktree.
-7. Tag the first release only after CI and clean-clone artifacts record the independent repository commit, original Mage checkpoint, nine deck hashes, card-database hash, environment binary hash, and protocol versions.
+The remaining repository-hardening work may proceed alongside card coverage:
+
+1. The generated card database, token definitions, canonical deck manifests, and source hashes needed at build/runtime are vendored. The formal replay corpora have tracked release-archive byte locks and a retrieval command that verifies both archive and corpus content locks before use. XMage Java sources remain provenance and optional oracle inputs, not runtime dependencies.
+2. Rust, Python, the cross-platform Python dependency lock, schema, seed derivation, and artifact formats are pinned. Any deliberate protocol change must produce a new version rather than silently reinterpreting existing artifacts.
+3. Linux and Windows CI runs formatting/lint checks, `cargo test --locked`, the Python test suite, deck/hash validation, all unit/golden tests, and bounded deterministic environment smoke coverage.
+
+Final clean-clone and science-release certification remains after the 9x9 BO1 matrix passes:
+
+4. From a brand-new clone with no parent XMage checkout, build the environment, run one training update, recover/validate its store, run sampled and greedy paired evaluation, and reproduce checked-in expected artifact digests.
+5. Verify generated outputs, caches, model artifacts, databases, and `target/` remain untracked and the clean-clone workflow ends with a clean worktree.
+6. Tag the first release only after CI and clean-clone artifacts record the independent repository commit, original Mage checkpoint, nine deck hashes, card-database hash, environment binary hash, and protocol versions.
 
 The project is finished for science-ready BO1 only when that release artifact and the accepted sampled-primary 9x9 matrix can be independently reproduced.

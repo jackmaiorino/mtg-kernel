@@ -57,6 +57,9 @@ from mtg_kernel_rl.training_store import TrainingStore
 from fixtures import DECK_HASHES, DECK_IDS, PROVENANCE, actor_observation, fake_launcher, legal_actions
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 V3_ACTION_SELECTION_GOLDEN = {
     "categorical_sampler": {
         "action_rng": "one splitmix64-v1 uint64 output per decision, initialized directly from the action seed",
@@ -738,7 +741,7 @@ class SampledPublicationProofTest(unittest.TestCase):
                                 target_name,
                                 str(marker),
                             ],
-                            cwd=Path(__file__).resolve().parents[3],
+                            cwd=REPO_ROOT,
                             env=child_env,
                             capture_output=True,
                             text=True,

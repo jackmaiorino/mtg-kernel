@@ -26,7 +26,15 @@ Schema v1 uses this exact algorithm:
    parsing any trace.
 
 The lock deliberately excludes `live_checkpoints/`: those files are supporting
-generation evidence, not replay inputs. The tracked metadata makes local
-evidence tamper-evident; the large corpus bytes are still outside Git. An
-independent clean clone therefore still needs durable, digest-verified corpus
-storage and retrieval before it can reproduce these reference gates.
+generation evidence, not replay inputs. The tracked metadata makes the replay
+inputs tamper-evident. The corresponding byte-locked ZIP assets are described
+by `corpus_archives_v1.json` and published outside Git under the repository's
+`corpora-v1` release. An independent clone retrieves and verifies them with:
+
+```bash
+uv run --no-sync python python/tools/fetch_corpora.py --destination corpora
+```
+
+The fetcher validates the archive catalog, exact archive bytes, safe ZIP entry
+set, and this content lock before installing a corpus atomically. It also
+revalidates an existing installation rather than trusting its presence.

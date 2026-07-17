@@ -1,6 +1,6 @@
 //! Static card database. `CARD_DEFS` (and `card_id_by_name`,
 //! `KERNEL_CARDDB_HASH`) are generated at build time by `build.rs` from
-//! `kernel/data/cards_v1.json` -- see that file for the codegen and its
+//! `data/cards_v1.json` -- see that file for the codegen and its
 //! validation (duplicate names / empty deck coverage / schema-version
 //! mismatch all fail the build).
 //!

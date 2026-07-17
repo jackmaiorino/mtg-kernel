@@ -1,0 +1,19 @@
+* text=auto
+
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.python-version text eol=lf
+*.json text eol=lf
+*.java text eol=lf
+*.lock text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.rs text eol=lf
+*.sh text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# The canonical deck-source hash contract materializes CRLF before hashing.
+*.dek text eol=crlf

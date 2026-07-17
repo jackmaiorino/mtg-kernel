@@ -40,6 +40,9 @@ from mtg_kernel_rl.training_store import TrainingStore
 from fixtures import DECK_HASHES, DECK_IDS, PROVENANCE, actor_observation, fake_launcher, legal_actions
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 def _train_fixture(
     root: Path,
     *,
@@ -506,7 +509,7 @@ class EvaluationPublicationProofTest(unittest.TestCase):
                                 target_name,
                                 str(marker),
                             ],
-                            cwd=Path(__file__).resolve().parents[3],
+                            cwd=REPO_ROOT,
                             env=child_env,
                             capture_output=True,
                             text=True,

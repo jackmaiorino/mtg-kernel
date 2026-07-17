@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "jackmaiorino/mtg-kernel",
+  "release_tag": "corpora-v1",
+  "archives": [
+    {
+      "directory": "burn_mirror_v6",
+      "asset": "burn_mirror_v6.zip",
+      "size": 2378048,
+      "sha256": "b350d0cf520dd919958a279199ebcc00e1955070dfa2e61199f7ddcf661aef9b",
+      "content_lock_aggregate_sha256": "d1a5fb9fdd0c0cadb4019ad1821b474083a969e971f9c3d3194c168036f76ea0"
+    },
+    {
+      "directory": "rally_mirror_v2",
+      "asset": "rally_mirror_v2.zip",
+      "size": 2913372,
+      "sha256": "83beb23fa397cdf6169c9fdb122d627d4ecbebc0f0bd28a4afe99b8ad208fb58",
+      "content_lock_aggregate_sha256": "95b0ebd38d03e3828409378ea81cefe6ed601e9a89be685c9a691c61391dfaa5"
+    }
+  ]
+}

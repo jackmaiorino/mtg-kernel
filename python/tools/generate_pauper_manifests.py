@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Generate and verify the canonical nine-deck Pauper pool manifests.
 
-This tool is intentionally stdlib-only.  It treats the Java
-``DeterminizationSampler.pauperDefaults()`` declaration and its nine checked-in
-XMage deck files as the roster source of truth. Engine support is read from
-each registry record's fail-closed ``engine_capability`` field, shared with the
-Rust card-definition code generator.
+This tool is intentionally stdlib-only.  It treats the vendored XMage oracle
+snapshot of ``DeterminizationSampler.pauperDefaults()`` and its nine deck files
+as the roster source of truth. Engine support is read from each registry
+record's fail-closed ``engine_capability`` field, shared with the Rust
+card-definition code generator.
 """
 
 from __future__ import annotations
@@ -34,15 +34,15 @@ MATERIALIZATION_ORDER = "utf8_card_name_then_copy_ordinal"
 JAVA_FACTORY_FILE_SHA256 = "0df59e3f934aaafc46835411e3fc53cf060a63cceb03c4921e52c35f4d55669d"
 JAVA_FACTORY_METHOD_SHA256 = "a5fc8d84f7fa70f1c41c9ce0f50e892cb4d68119313128f54e14316a01febd7b"
 
-JAVA_FACTORY_PATH = Path(
-    "Mage.Server.Plugins/Mage.Player.AIRL/src/mage/player/ai/rl/DeterminizationSampler.java"
-)
-DECK_BASE_PATH = Path(
+XMAGE_ORACLE_PATH = Path("oracle/xmage")
+JAVA_FACTORY_PATH = XMAGE_ORACLE_PATH / "DeterminizationSampler.java"
+DECK_BASE_PATH = XMAGE_ORACLE_PATH / "decks/Pauper"
+JAVA_DECLARED_DECK_BASE_PATH = (
     "Mage.Server.Plugins/Mage.Player.AIRL/src/mage/player/ai/decks/Pauper"
 )
-REGISTRY_PATH = Path("kernel/data/cards_v1.json")
-POOL_PATH = Path("kernel/data/pauper_pool_v1.json")
-SUPPORT_PATH = Path("kernel/data/pauper_support_v1.json")
+REGISTRY_PATH = Path("data/cards_v1.json")
+POOL_PATH = Path("data/pauper_pool_v1.json")
+SUPPORT_PATH = Path("data/pauper_support_v1.json")
 
 
 class ManifestError(RuntimeError):
@@ -96,7 +96,7 @@ EXPECTED_MAINBOARD_SUPPORT = {
 
 
 def repo_root_from_script() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[2]
 
 
 def sha256_hex(data: bytes) -> str:
@@ -208,7 +208,7 @@ def _validate_java_factory(repo_root: Path) -> None:
         )
     body = method
     base_match = re.search(r'String base = "([^"]+)";', body)
-    if base_match is None or base_match.group(1) != DECK_BASE_PATH.as_posix():
+    if base_match is None or base_match.group(1) != JAVA_DECLARED_DECK_BASE_PATH:
         raise ManifestError("pauperDefaults() deck base path drifted")
     actual = re.findall(r'paths\.put\("([^"]+)", base \+ "/([^"]+)"\);', body)
     expected = [(spec.source_key, spec.filename) for spec in DECK_SPECS]

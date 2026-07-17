@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,9 @@ version = "0.4.0"
 description = "Strict Python RL client and deterministic runner for the MTG kernel JSONL environment"
 requires-python = ">=3.11"
 dependencies = ["torch>=2.2,<3"]
+
+[project.optional-dependencies]
+test = ["numpy>=1.26,<3"]
 
 [project.scripts]
 mtg-kernel-rl = "mtg_kernel_rl.cli:main"
@@ -18,3 +21,14 @@ package-dir = {"" = "python"}
 [tool.setuptools.packages.find]
 where = ["python"]
 include = ["mtg_kernel_rl*"]
+
+[tool.uv]
+required-version = "==0.11.29"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

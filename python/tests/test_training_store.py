@@ -27,9 +27,16 @@ from mtg_kernel_rl.trainer import train
 from fixtures import fake_launcher
 
 
+PYTHON_ROOT = Path(__file__).resolve().parents[1]
+PYTHON_TESTS_ROOT = Path(__file__).resolve().parent
+
+
 def _subprocess_env() -> dict[str, str]:
     env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(["kernel/python", "kernel/python/tests"])
+    python_paths = [str(PYTHON_ROOT), str(PYTHON_TESTS_ROOT)]
+    if env.get("PYTHONPATH"):
+        python_paths.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(python_paths)
     return env
 
 
