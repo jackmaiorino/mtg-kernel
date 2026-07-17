@@ -5,14 +5,14 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "2877b362ac1dfb25c656cb2f3376d26dbc2ffca8501579728848337449673d34"
+    "registry_raw_sha256": "e2e3ae6013f036b84e52163b6902f08410a515b2d6edbdf2a90a1b07de92efb1"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 43,
+    "full_cards": 44,
     "partial_cards": 0,
-    "no_effect_cards": 107,
-    "token_dependencies": 3
+    "no_effect_cards": 106,
+    "token_dependencies": 4
   },
   "deck_mainboard_copy_totals": [
     {
@@ -59,9 +59,9 @@
     },
     {
       "deck_id": "Terror",
-      "full": 48,
+      "full": 50,
       "partial": 0,
-      "no_effect": 12,
+      "no_effect": 10,
       "total": 60
     },
     {
@@ -108,6 +108,18 @@
       "name": "Samurai Token",
       "required_by": [
         "Experimental Synthesizer"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Bird Illusion Token",
+      "required_by": [
+        "Murmuring Mystic"
       ],
       "registry_status": "present",
       "expected_decks": [],
@@ -2238,10 +2250,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Myr Enforcer",

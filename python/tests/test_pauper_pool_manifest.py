@@ -476,7 +476,12 @@ class PauperPoolManifestTest(unittest.TestCase):
         )
         for name in non_tokens:
             self.assertEqual(registry_cards[name]["decks"], expected_membership[name], name)
-        for token_name in ("Blood Token", "Human Soldier Token", "Samurai Token"):
+        for token_name in (
+            "Blood Token",
+            "Human Soldier Token",
+            "Samurai Token",
+            "Bird Illusion Token",
+        ):
             self.assertTrue(registry_cards[token_name]["is_token"])
             self.assertEqual(registry_cards[token_name]["decks"], [])
         spy_declared = {
@@ -546,10 +551,10 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 43,
+                "full_cards": 44,
                 "partial_cards": 0,
-                "no_effect_cards": 107,
-                "token_dependencies": 3,
+                "no_effect_cards": 106,
+                "token_dependencies": 4,
             },
         )
         expected_copy_totals = [
@@ -559,7 +564,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Elves", "full": 17, "partial": 0, "no_effect": 43, "total": 60},
             {"deck_id": "Spy", "full": 8, "partial": 0, "no_effect": 52, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Terror", "full": 48, "partial": 0, "no_effect": 12, "total": 60},
+            {"deck_id": "Terror", "full": 50, "partial": 0, "no_effect": 10, "total": 60},
             {"deck_id": "CawGates", "full": 16, "partial": 0, "no_effect": 44, "total": 60},
             {"deck_id": "Faeries", "full": 24, "partial": 0, "no_effect": 36, "total": 60},
         ]
@@ -654,6 +659,16 @@ class PauperPoolManifestTest(unittest.TestCase):
         self.assertEqual(lorien["sideboard"], [])
         self.assertEqual(lorien["support_status"], "full")
         self.assertEqual(lorien["blockers"], [])
+        murmuring_mystic = next(
+            row for row in self.support["cards"] if row["name"] == "Murmuring Mystic"
+        )
+        self.assertEqual(
+            murmuring_mystic["mainboard"],
+            [{"deck_id": "Terror", "copies": 2}],
+        )
+        self.assertEqual(murmuring_mystic["sideboard"], [])
+        self.assertEqual(murmuring_mystic["support_status"], "full")
+        self.assertEqual(murmuring_mystic["blockers"], [])
         blue_blasts = {
             row["name"]: row
             for row in self.support["cards"]
@@ -717,6 +732,16 @@ class PauperPoolManifestTest(unittest.TestCase):
                 {
                     "name": "Samurai Token",
                     "required_by": ["Experimental Synthesizer"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Bird Illusion Token",
+                    "required_by": ["Murmuring Mystic"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],

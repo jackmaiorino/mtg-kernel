@@ -93,7 +93,7 @@ impl CardCapability {
 /// 105.1's subtype line, typed (per external review: "subtype queries
 /// structured, typed access, not string contains"). A fully closed set --
 /// one named variant per distinct subtype string across the whole
-/// 135-card pool -- rather than a named-variants-plus-string-fallback
+/// 136-definition pool -- rather than a named-variants-plus-string-fallback
 /// design: `Subtype` is embedded in `effect::CreatureFilter` /
 /// `effect::EffectOp`, which need to derive `Deserialize`, and a
 /// `&'static str` payload (needed for a fallback variant to round-trip
@@ -177,6 +177,9 @@ pub enum Subtype {
     Warrior,
     Wizard,
     Zombie,
+    /// Appended for Bird Illusion Token. Existing stable ids are never
+    /// renumbered when the closed pool gains another supported subtype.
+    Illusion,
 }
 
 impl Subtype {
@@ -591,18 +594,19 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // 132 real pool cards + 3 tokens (Blood, created by Voldaren
+        // 132 real pool cards + 4 tokens (Blood, created by Voldaren
         // Epicure's ETB trigger; Human Soldier Token/Samurai Token, created
-        // by Rally at the Hornburg/Experimental Synthesizer -- see
-        // `trigger.rs`/`build.rs::activated_abilities_for`).
-        assert_eq!(CARD_DEFS.len(), 135);
+        // by Rally at the Hornburg/Experimental Synthesizer; Bird Illusion
+        // Token, created by Murmuring Mystic -- see `trigger.rs`/`build.rs`).
+        assert_eq!(CARD_DEFS.len(), 136);
     }
 
     #[test]
     fn card_db_hash_v5_is_frozen() {
         // Version 5 keeps the complete generated-selector grammar while
-        // adding the symmetric checked-color/filter-timing Blast recipes.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x3e82_c5ed_e646_5ba9);
+        // adding the symmetric Blast recipes, Mystic capability/subtypes,
+        // and the appended Bird Illusion token definition.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x12da_6075_9e28_97cb);
     }
 
     #[test]
@@ -728,7 +732,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 46, "43 deck cards plus three required tokens");
+        assert_eq!(full, 48, "44 deck cards plus four required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -1107,6 +1111,29 @@ mod tests {
     fn sneaky_snacker_has_flying() {
         let id = card_id_by_name("Sneaky Snacker").expect("Sneaky Snacker in pool");
         assert!(CARD_DEFS[id as usize].keywords.has(Keywords::FLYING));
+    }
+
+    #[test]
+    fn bird_illusion_token_is_append_only_blue_flying_one_one() {
+        assert_eq!(Subtype::Zombie.stable_id(), 54);
+        assert_eq!(Subtype::Illusion.stable_id(), 55);
+
+        let id = card_id_by_name("Bird Illusion Token")
+            .expect("Bird Illusion Token should be codegen'd as a token");
+        assert_eq!(
+            id, 135,
+            "new token must append without renumbering pool ids"
+        );
+        let def = &CARD_DEFS[id as usize];
+        assert_eq!(def.capability, CardCapability::Full);
+        assert!(def.is_token);
+        assert!(!def.is_castable());
+        assert_eq!(def.colors, &[ManaColor::U]);
+        assert_eq!(def.types, &[CardType::Creature]);
+        assert_eq!(def.subtypes, &[Subtype::Bird, Subtype::Illusion]);
+        assert_eq!(def.power, Some(1));
+        assert_eq!(def.toughness, Some(1));
+        assert!(def.keywords.has(Keywords::FLYING));
     }
 
     #[test]
