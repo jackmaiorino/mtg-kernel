@@ -10,6 +10,7 @@ import json
 import random
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -1065,14 +1066,48 @@ class TrainerTest(unittest.TestCase):
                 (record["learner_policy_step_count"], record["learner_physical_decision_count"]),
                 (4, 2),
             )
-            self.assertEqual(
-                record["loss"],
-                {
-                    "loss_hex": "0x1.9835d60000000p+1",
-                    "policy_sum_hex": "0x1.136d940000000p+2",
-                    "value_sum_hex": "0x1.0990840000000p+2",
-                },
+            expected_loss = {
+                "loss_hex": "0x1.9835d60000000p+1",
+                "policy_sum_hex": "0x1.136d940000000p+2",
+                "value_sum_hex": "0x1.0990840000000p+2",
+            }
+            self.assertEqual(set(record["loss"]), set(expected_loss))
+
+            def positive_float32_bits(value_hex: str) -> int:
+                value = float.fromhex(value_hex)
+                self.assertTrue(math.isfinite(value))
+                self.assertGreaterEqual(value, 0.0)
+                return struct.unpack(">I", struct.pack(">f", value))[0]
+
+            # Runtime compatibility deliberately fingerprints the OS,
+            # architecture, and Torch build. Hosted CPU builds may round
+            # log_softmax by one binary32 ULP, so retain a tight portable
+            # numeric golden rather than falsely claiming cross-runtime
+            # checkpoint bit identity.
+            for field, reference_hex in expected_loss.items():
+                actual_hex = record["loss"][field]
+                self.assertIsInstance(actual_hex, str)
+                self.assertLessEqual(
+                    abs(
+                        positive_float32_bits(actual_hex)
+                        - positive_float32_bits(reference_hex)
+                    ),
+                    2,
+                    field,
+                )
+
+            policy_sum = torch.tensor(
+                float.fromhex(record["loss"]["policy_sum_hex"]),
+                dtype=torch.float32,
             )
+            value_sum = torch.tensor(
+                float.fromhex(record["loss"]["value_sum_hex"]),
+                dtype=torch.float32,
+            )
+            recomputed_loss_hex = float(
+                ((policy_sum + 0.5 * value_sum) / 2).item()
+            ).hex()
+            self.assertEqual(record["loss"]["loss_hex"], recomputed_loss_hex)
             summaries = record["episode_summaries"]
             self.assertEqual(
                 [
