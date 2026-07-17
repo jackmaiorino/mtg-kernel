@@ -35,6 +35,20 @@ pub enum CreatureFilter {
     ControlledWithSubtype(Subtype),
 }
 
+/// Typed predicate for a private library search. The first consumer is
+/// Islandcycling, whose Oracle filter is a physical land card carrying the
+/// Island subtype (basic or nonbasic). This remains definition data and can
+/// grow with other typecycling/basic-search shapes without card-name logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LibraryCardFilter {
+    /// The card must currently have the requested effective subtype and be
+    /// a land. Effective subtypes come from `ObjectStateV4`; card types are
+    /// definition-derived only while the object remains on face zero because
+    /// the current kernel has no type-changing operation or effective-type
+    /// field. Search validation fails closed outside that invariant.
+    LandWithSubtype(Subtype),
+}
+
 /// How long an impulse-drawn card (`EffectOp::ImpulseDraw`) stays playable
 /// from exile. `EndOfTurn` is cleared unconditionally at the very next
 /// `Step::Cleanup`, whoever's; `UntilOwnersNextTurn` survives through the
@@ -345,6 +359,23 @@ pub enum EffectOp {
         player: PlayerRef,
         count: u8,
     },
+    /// Search `player`'s library for zero or one physical card matching the
+    /// typed filter, put the chosen card into hand, reveal it publicly, then
+    /// shuffle. The optional zero-card result is rules-correct fail-to-find,
+    /// even while matches exist. Zero matches still suspend on a uniform
+    /// private Finish-only prompt, preventing continuation presence from
+    /// leaking match existence. Candidate identity remains chooser-private
+    /// until the selected card reaches hand and is revealed.
+    ///
+    /// This operation intentionally does not synthesize XMage's typed
+    /// SEARCH_LIBRARY/LIBRARY_SEARCHED/SHUFFLE_LIBRARY event family yet;
+    /// only the ordinary replaceable zone change is emitted. A supported
+    /// consumer of those replacement/trigger hooks must add them first.
+    /// Appended to preserve existing derived hash identities.
+    SearchLibraryToHand {
+        player: PlayerRef,
+        filter: LibraryCardFilter,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -425,6 +456,20 @@ pub enum EffectFrame {
         /// corruption fail closed instead of silently selecting another valid
         /// subset/order.
         progress_fingerprint: u64,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
+    /// Commits an optional, incarnation-bound private search result. The
+    /// exact full library order is retained independently from the selected
+    /// candidate so restored state cannot alter a noncandidate card, append
+    /// a hidden card, or reorder the library before the deterministic
+    /// shuffle.
+    SearchLibraryToHand {
+        player: PlayerId,
+        filter: LibraryCardFilter,
+        filter_fingerprint: u64,
+        original_library: Vec<EffectObjectBinding>,
+        selected: Option<EffectObjectBinding>,
         path: Vec<u16>,
         canonical_path: Vec<u16>,
     },
@@ -516,6 +561,17 @@ pub enum EffectTargetSelectionPurpose {
         /// Redundant deterministic commitment to `stage`; see the frame's
         /// progress fingerprint for the trusted-snapshot threat boundary.
         stage_fingerprint: u64,
+        canonical_path: Vec<u16>,
+    },
+    /// Optional zero-or-one result of a private, typed whole-library search.
+    /// The complete original library binds exact order, membership, and
+    /// incarnations; candidates are a canonical physical-card partition of
+    /// that snapshot rather than name-deduplicated AIRL display entries.
+    SearchLibraryToHand {
+        player: PlayerId,
+        filter: LibraryCardFilter,
+        filter_fingerprint: u64,
+        original_library: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
 }
@@ -650,7 +706,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         EffectOp::LookAtLibraryTopAndReorder { .. }
         | EffectOp::MayShuffleLibrary { .. }
         | EffectOp::PutCardsFromHandOnLibraryTop { .. }
-        | EffectOp::Scry { .. } => true,
+        | EffectOp::Scry { .. }
+        | EffectOp::SearchLibraryToHand { .. } => true,
         _ => false,
     }
 }
@@ -1041,6 +1098,29 @@ fn complete_resumable_target_selection(
                 canonical_path,
             });
         }
+        EffectTargetSelectionPurpose::SearchLibraryToHand {
+            player,
+            filter,
+            filter_fingerprint,
+            original_library,
+            canonical_path,
+        } => {
+            if path != canonical_path {
+                return Err("library-search prompt structural path changed".to_string());
+            }
+            if objects.len() > 1 {
+                return Err("library search selected more than one card".to_string());
+            }
+            continuation.frames.push(EffectFrame::SearchLibraryToHand {
+                player,
+                filter,
+                filter_fingerprint,
+                original_library,
+                selected: objects.pop(),
+                path: canonical_path.clone(),
+                canonical_path,
+            });
+        }
     }
     Ok(())
 }
@@ -1312,6 +1392,56 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                                 "scry retained-top candidates",
                             )?;
                         }
+                    }
+                }
+                EffectTargetSelectionPurpose::SearchLibraryToHand {
+                    player: library_player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    canonical_path,
+                } => {
+                    if chooser != library_player {
+                        return Err(
+                            "library-search choice player does not own the selected library"
+                                .to_string(),
+                        );
+                    }
+                    if path != canonical_path {
+                        return Err("library-search prompt structural path changed".to_string());
+                    }
+                    if *filter_fingerprint != library_filter_fingerprint(*filter) {
+                        return Err("library-search filter fingerprint changed".to_string());
+                    }
+                    if *min_targets != 0 || *max_targets != 1 || *ordered || !selected.is_empty() {
+                        return Err("library-search prompt has a noncanonical shape".to_string());
+                    }
+                    validate_library_search_live_metadata(
+                        state,
+                        *library_player,
+                        *filter,
+                        original_library,
+                    )?;
+                    let expected = library_search_candidates(
+                        state,
+                        *library_player,
+                        *filter,
+                        original_library,
+                    )?;
+                    let actual = legal
+                        .iter()
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "library-search target lacks an object-incarnation binding"
+                                    .to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    if actual != expected {
+                        return Err(
+                            "library-search candidates are not the canonical physical match set"
+                                .to_string(),
+                        );
                     }
                 }
                 EffectTargetSelectionPurpose::OrderIntoGraveyard { .. } => {}
@@ -1735,6 +1865,54 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         }
                     }
                 }
+                EffectFrame::SearchLibraryToHand {
+                    player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    selected,
+                    path,
+                    canonical_path,
+                } => {
+                    if path != canonical_path {
+                        return Err(
+                            "library-search coordinator path changed from its canonical path"
+                                .to_string(),
+                        );
+                    }
+                    if filter_fingerprint != library_filter_fingerprint(filter) {
+                        return Err("library-search coordinator filter changed".to_string());
+                    }
+                    validate_library_search_live_metadata(
+                        state,
+                        player,
+                        filter,
+                        &original_library,
+                    )?;
+                    let candidates =
+                        library_search_candidates(state, player, filter, &original_library)?;
+                    if let Some(binding) = selected {
+                        if !candidates.contains(&binding) {
+                            return Err("library-search result is outside the canonical match set"
+                                .to_string());
+                        }
+                        // The search move itself is an ordinary replaceable
+                        // zone change. Public reveal follows the successful
+                        // move, then the remaining library is shuffled.
+                        event::propose_and_commit(
+                            state,
+                            event::ProposedEvent::zone_change(binding.object, Zone::Hand),
+                        );
+                        if state.objects.get(binding.object).zone == Zone::Hand {
+                            for observer in [PlayerId::P0, PlayerId::P1] {
+                                state
+                                    .reveal_hand_card(observer, player, binding.object)
+                                    .expect("a successful searched-card move is publicly revealed");
+                            }
+                        }
+                    }
+                    state.shuffle_library(player);
+                }
                 EffectFrame::Program { .. } => unreachable!(),
             }
             continue;
@@ -1892,6 +2070,27 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
+            }
+            EffectOp::SearchLibraryToHand { player, filter } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library = bind_library_exact(state, player);
+                validate_library_search_live_metadata(state, player, filter, &original_library)?;
+                let candidates =
+                    library_search_candidates(state, player, filter, &original_library)?;
+                // Always suspend on the same private, Finish-capable prompt,
+                // even when there are zero matches. Auto-resolving the empty
+                // case would let a nonacting observer distinguish zero from
+                // nonzero matches by the mere presence of a continuation.
+                stage_library_search_choice(
+                    &mut continuation,
+                    player,
+                    filter,
+                    original_library,
+                    candidates,
+                    path,
+                );
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
             }
             leaf => execute(&leaf, &continuation.ctx, state),
         }
@@ -2126,6 +2325,164 @@ fn stage_scry_choice(
             canonical_path,
         },
     });
+    Ok(())
+}
+
+fn stage_library_search_choice(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    filter: LibraryCardFilter,
+    original_library: Vec<EffectObjectBinding>,
+    candidates: Vec<EffectObjectBinding>,
+    canonical_path: Vec<u16>,
+) {
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path: canonical_path.clone(),
+        selected: Vec::new(),
+        legal: candidates
+            .into_iter()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: 0,
+        max_targets: 1,
+        ordered: false,
+        purpose: EffectTargetSelectionPurpose::SearchLibraryToHand {
+            player,
+            filter,
+            filter_fingerprint: library_filter_fingerprint(filter),
+            original_library,
+            canonical_path,
+        },
+    });
+}
+
+fn bind_library_exact(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+    state.players[player.index()]
+        .library
+        .iter()
+        .copied()
+        .map(|object| EffectObjectBinding {
+            object,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect()
+}
+
+fn library_filter_matches(
+    state: &GameState,
+    binding: EffectObjectBinding,
+    filter: LibraryCardFilter,
+) -> Result<bool, String> {
+    validate_effect_object_binding(state, binding)?;
+    let object = state.objects.get(binding.object);
+    let def = crate::card_def::CARD_DEFS
+        .get(object.card_def as usize)
+        .ok_or_else(|| "library-search card definition is missing".to_string())?;
+    if object.v4.face_index != 0 {
+        // ObjectStateV4 currently materializes effective subtypes but not an
+        // effective card-type mask. No executable kernel operation changes a
+        // card's types today, so base types are current only for face zero.
+        // Fail closed on any alternate/dynamic face instead of silently
+        // treating its front-face type line as effective. A future type- or
+        // face-changing mechanic must add effective type state first.
+        return Err(
+            "library-search effective card types are unavailable for a non-front face".to_string(),
+        );
+    }
+    let subtype_ids = &object.v4.effective_subtype_ids;
+    if subtype_ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err("library-search effective subtypes are not sorted and unique".to_string());
+    }
+    Ok(match filter {
+        LibraryCardFilter::LandWithSubtype(subtype) => {
+            def.has_type(CardType::Land) && subtype_ids.binary_search(&subtype.stable_id()).is_ok()
+        }
+    })
+}
+
+fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
+    match filter {
+        LibraryCardFilter::LandWithSubtype(subtype) => {
+            // `Subtype::stable_id` is explicitly append-only for schema v4,
+            // unlike a derived Rust hash implementation detail.
+            fnv1a_u64(
+                fnv1a_u64(0xcbf2_9ce4_8422_2325, 0),
+                u64::from(subtype.stable_id()),
+            )
+        }
+    }
+}
+
+fn library_search_candidates(
+    state: &GameState,
+    player: PlayerId,
+    filter: LibraryCardFilter,
+    original_library: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    validate_library_search_live_metadata(state, player, filter, original_library)?;
+    let mut matches = original_library
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(
+            |(position, binding)| match library_filter_matches(state, binding, filter) {
+                Ok(true) => Some(Ok((position, binding))),
+                Ok(false) => None,
+                Err(error) => Some(Err(error)),
+            },
+        )
+        .collect::<Result<Vec<_>, String>>()?;
+    // Match AIRL's human-facing name order while retaining every physical
+    // copy. Library position is the deterministic tie-break for same-name
+    // cards, so stable action ids remain object-semantic rather than name-
+    // deduplicated or candidate-index-based.
+    matches.sort_by(|(left_position, left), (right_position, right)| {
+        let left_name =
+            crate::card_def::CARD_DEFS[state.objects.get(left.object).card_def as usize].name;
+        let right_name =
+            crate::card_def::CARD_DEFS[state.objects.get(right.object).card_def as usize].name;
+        left_name
+            .cmp(right_name)
+            .then_with(|| left_position.cmp(right_position))
+    });
+    Ok(matches.into_iter().map(|(_, binding)| binding).collect())
+}
+
+fn validate_library_search_live_metadata(
+    state: &GameState,
+    player: PlayerId,
+    _filter: LibraryCardFilter,
+    original_library: &[EffectObjectBinding],
+) -> Result<(), String> {
+    let library = &state.players[player.index()].library;
+    if library.len() != original_library.len() {
+        return Err("library-search library length changed while pending".to_string());
+    }
+    let mut seen = Vec::with_capacity(original_library.len());
+    for (position, &binding) in original_library.iter().enumerate() {
+        if binding.expected_zone != Zone::Library {
+            return Err("library-search binding does not expect the library zone".to_string());
+        }
+        validate_effect_object_binding(state, binding)?;
+        let object = state.objects.get(binding.object);
+        if object.owner != player {
+            return Err("library-search binding has the wrong library owner".to_string());
+        }
+        if library[position] != binding.object {
+            return Err("library-search library order or identity changed".to_string());
+        }
+        seen.push(binding.object);
+    }
+    seen.sort_unstable();
+    seen.dedup();
+    if seen.len() != original_library.len() {
+        return Err("library-search snapshot contains a duplicate physical object".to_string());
+    }
     Ok(())
 }
 
@@ -2893,7 +3250,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         EffectOp::LookAtLibraryTopAndReorder { .. }
         | EffectOp::MayShuffleLibrary { .. }
         | EffectOp::PutCardsFromHandOnLibraryTop { .. }
-        | EffectOp::Scry { .. } => {
+        | EffectOp::Scry { .. }
+        | EffectOp::SearchLibraryToHand { .. } => {
             panic!("private library choices must use the resumable interpreter")
         }
     }

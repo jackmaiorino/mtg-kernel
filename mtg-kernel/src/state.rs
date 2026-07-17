@@ -12,13 +12,13 @@ pub const STARTING_LIFE: i32 = 20;
 
 /// Exact diagnostic full-state hash contract written into privileged audit
 /// artifacts. The algorithm is FNV-1a-64 over the compact UTF-8 JSON bytes of
-/// `DiagnosticStateHashEnvelopeV1` below.
+/// `DiagnosticStateHashEnvelopeV2` below.
 ///
 /// Changing the envelope, JSON representation, or digest algorithm requires a
 /// new constant value and an audit-artifact schema bump. Policy artifacts do
 /// not contain this privileged full-state diagnostic.
-pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v1";
-pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 1;
+pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v2";
+pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
@@ -386,9 +386,9 @@ pub struct StackItem {
     /// `card_def::CARD_DEFS[objects[source].card_def].spell_effect`
     /// instead.
     pub inline_effect: Option<crate::effect::EffectOp>,
-    /// Cards discarded to pay this cast's mandatory additional cost (Grab
-    /// the Prize), threaded through to `effect::ExecCtx::discarded` at
-    /// resolution time. Empty for everything else.
+    /// Cards discarded to pay this cast/activation's cost (Grab the Prize's
+    /// additional cost or Cycling/typecycling's source), threaded through to
+    /// `effect::ExecCtx::discarded` at resolution time.
     pub discarded: Vec<ObjectId>,
     /// True iff this spell was cast via flashback: on resolution, an
     /// instant/sorcery goes to exile instead of the graveyard (702.10e).
@@ -1104,13 +1104,13 @@ impl Hasher for Fnv1a64 {
 }
 
 #[derive(Serialize)]
-struct DiagnosticStateHashEnvelopeV1<'a> {
+struct DiagnosticStateHashEnvelopeV2<'a> {
     schema_version: u32,
     state: &'a GameState,
 }
 
 fn diagnostic_state_hash_bytes(state: &GameState) -> Vec<u8> {
-    serde_json::to_vec(&DiagnosticStateHashEnvelopeV1 {
+    serde_json::to_vec(&DiagnosticStateHashEnvelopeV2 {
         schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION,
         state,
     })
@@ -1301,13 +1301,13 @@ mod tests {
 
         assert_eq!(
             DIAGNOSTIC_STATE_HASH_ALGORITHM,
-            "fnv1a64-serde-json-game-state-envelope-v1"
+            "fnv1a64-serde-json-game-state-envelope-v2"
         );
-        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 1);
+        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 2);
         assert!(
-            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":1,\"state\":{")
+            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":2,\"state\":{")
         );
-        assert_eq!(state.diagnostic_state_hash(), 0xbd23_32bb_d985_bae9);
+        assert_eq!(state.diagnostic_state_hash(), 0x6dcc_4332_ac75_cb3c);
     }
 
     /// Draws to different players don't interact, so interleaving order

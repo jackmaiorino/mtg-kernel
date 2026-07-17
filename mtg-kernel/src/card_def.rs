@@ -40,7 +40,8 @@
 //! coverage_ledger.md` for the full per-card ledger.
 
 use crate::effect::{
-    CreatureFilter, EffectCond, EffectOp, ImpulseDuration, ObjectRef, PlayerRef, TargetRef,
+    CreatureFilter, EffectCond, EffectOp, ImpulseDuration, LibraryCardFilter, ObjectRef, PlayerRef,
+    TargetRef,
 };
 use crate::mana::{Cost, ManaColor, Pip};
 use crate::state::Zone;
@@ -295,6 +296,13 @@ pub enum CostComponent {
     SacrificeSelf,
     /// Exile the source permanent/card itself.
     ExileSelf,
+    /// Discard the source card itself from its owner's hand. Unlike
+    /// `DiscardCards`, this is not an interactive choice: typecycling and
+    /// ordinary Cycling bind the activating card as the cost's exact object.
+    /// Kept distinct from `SacrificeSelf` because discard replacements and
+    /// future cycle/discard event hooks apply to a hand-zone move, not a
+    /// battlefield sacrifice.
+    DiscardSelf,
     /// Discard `n` cards from hand, chosen by the payer (`engine::Decision::Discard`).
     DiscardCards(u8),
     /// Sacrifice `n` controlled lands. This pool's only land is Mountain,
@@ -322,13 +330,18 @@ pub struct FlashbackDef {
 }
 
 /// A non-mana activated ability (605/602 use the stack, unlike a mana
-/// ability). Only the shapes Masked Meower's and Blood's abilities need:
-/// no-target, resolves off the stack as an inline `EffectOp` program (see
+/// ability). Permanent abilities and hand-zone Cycling/typecycling share the
+/// same no-target, inline-`EffectOp` stack representation (see
 /// `state::StackItem::inline_effect`).
 pub struct ActivatedAbilityDef {
     pub cost: &'static [CostComponent],
     pub target_spec: TargetSpec,
     pub effect: fn() -> EffectOp,
+    /// Zone in which the printed ability may be activated. Existing
+    /// permanent abilities use `Battlefield`; Cycling/typecycling use
+    /// `Hand`. This is definition data rather than a card-name branch, so a
+    /// future card with abilities in multiple zones composes normally.
+    pub activation_zone: Zone,
     /// True iff this ability may only be activated at sorcery speed
     /// (`ActivateAsSorceryActivatedAbility` in Java -- Experimental
     /// Synthesizer's "Activate only as a sorcery."). Checked by
@@ -575,10 +588,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v4_is_frozen() {
-        // Version 4 binds every generated gameplay selector into the
-        // per-card provenance identity.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xb162_8274_c329_6730);
+    fn card_db_hash_v5_is_frozen() {
+        // Version 5 retains the complete generated-selector coverage from
+        // v4 and adds Lorien's Draw3 and structured Islandcycling recipe.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x1da0_a6ad_2ded_9e61);
     }
 
     #[test]
@@ -704,7 +717,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 43, "40 deck cards plus three required tokens");
+        assert_eq!(full, 44, "41 deck cards plus three required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

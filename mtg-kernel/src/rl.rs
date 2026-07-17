@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 pub const OBSERVATION_SCHEMA_VERSION_V1: u32 = 1;
 pub const OBSERVATION_SCHEMA_VERSION: u32 = 4;
 pub const LEGAL_ACTION_SCHEMA_VERSION: u32 = 4;
-pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 5;
+pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 6;
 pub const POLICY_EPISODE_SCHEMA_VERSION: u32 = 4;
 pub const MANIFEST_SCHEMA_VERSION: u32 = 5;
 pub const DEFAULT_MAX_DECISIONS: u64 = 200_000;
@@ -3636,6 +3636,17 @@ fn pending_effect_semantic_v4(
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::ScryLibrary { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
+                                ..
+                            }
+                    ) && acting_player != *player;
+                    let search_for_chooser = matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
+                    ) && acting_player == *player;
+                    let redact_search_shape = matches!(
+                        purpose,
+                        crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {
@@ -3644,22 +3655,41 @@ fn pending_effect_semantic_v4(
                         candidates
                             .iter()
                             .map(|candidate| {
-                                effect_target_ref_visible(state, candidate.target, acting_player)
+                                if search_for_chooser {
+                                    // A library search grants its chooser
+                                    // temporary access to every matching
+                                    // physical object without installing
+                                    // persistent library-order knowledge.
+                                    // This direct projection is therefore
+                                    // confined to the chooser and prompt.
+                                    target_ref(state, candidate.target)
+                                } else {
+                                    effect_target_ref_visible(
+                                        state,
+                                        candidate.target,
+                                        acting_player,
+                                    )
+                                }
                             })
                             .collect::<Result<Vec<_>>>()
                     };
                     Ok(PendingEffectChoiceSemanticV4::Targets {
                         player: (*player).into(),
                         structural_path: path.clone(),
-                        // The existence/count of a private-library decision
-                        // are public, but cards still physically in the
-                        // library remain chooser-private. Non-choosers get
-                        // the typed envelope without candidate payloads.
+                        // Cards physically in a private library remain
+                        // chooser-private. Fixed-cardinality reorder/scry
+                        // prompts retain their public shape; a whole-library
+                        // search also redacts its match count, leaving only
+                        // the typed envelope for a non-chooser.
                         selected_targets: visible_targets(selected)?,
                         legal_targets: visible_targets(legal)?,
-                        min_targets: *min_targets,
-                        max_targets: *max_targets,
-                        can_finish: selected.len() >= usize::from(*min_targets),
+                        min_targets: if redact_search_shape { 0 } else { *min_targets },
+                        max_targets: if redact_search_shape { 0 } else { *max_targets },
+                        can_finish: if redact_search_shape {
+                            true
+                        } else {
+                            selected.len() >= usize::from(*min_targets)
+                        },
                         ordered: *ordered,
                         purpose: match purpose {
                             crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
@@ -3686,6 +3716,9 @@ fn pending_effect_semantic_v4(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
+                            crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
+                                ..
+                            } => TargetSelectionPurposeV4::SearchResult,
                         },
                     })
                 }
@@ -3764,7 +3797,7 @@ fn pending_discard_semantic_v2(
     let (resume_stage, resume_source) = match &p.resume {
         engine::DiscardResume::None => (DiscardResumeSemanticV2::None, None),
         engine::DiscardResume::FinishCast => (DiscardResumeSemanticV2::FinishCast, None),
-        engine::DiscardResume::FinishActivation => {
+        engine::DiscardResume::FinishActivation { .. } => {
             (DiscardResumeSemanticV2::FinishActivation, None)
         }
         engine::DiscardResume::FinishSpellResolution { source, .. } => (

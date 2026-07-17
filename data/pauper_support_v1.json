@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "53903b0cb59f05ad68fc0e9b867384b039920bb32ea4a65af6f6b7ce4d9e4d63"
+    "registry_raw_sha256": "40385183622c0702c4acfdb6102fe7861de289b191dad69aa689257001c57e43"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 40,
+    "full_cards": 41,
     "partial_cards": 0,
-    "no_effect_cards": 110,
+    "no_effect_cards": 109,
     "token_dependencies": 3
   },
   "deck_mainboard_copy_totals": [
@@ -59,16 +59,16 @@
     },
     {
       "deck_id": "Terror",
-      "full": 44,
+      "full": 48,
       "partial": 0,
-      "no_effect": 16,
+      "no_effect": 12,
       "total": 60
     },
     {
       "deck_id": "CawGates",
-      "full": 13,
+      "full": 16,
       "partial": 0,
-      "no_effect": 47,
+      "no_effect": 44,
       "total": 60
     },
     {
@@ -1955,10 +1955,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lotleth Giant",
