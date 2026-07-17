@@ -1,10 +1,11 @@
 use mtg_kernel::rl::{
-    burn_deck_hash, derive_env_seed, derive_policy_seed, record_burn_mirror_episode,
+    burn_deck_hash, derive_env_seed, derive_policy_seed, rally_deck_hash,
+    record_burn_mirror_episode,
 };
 use mtg_kernel::rl_session::{
     KernelRlJsonlServerV1, KernelRlResponseV1, RlEpisodeSessionV1, RlSessionErrorCode,
-    RlSessionResponseV1, CANONICAL_BURN_DECK_ID, RL_SESSION_PROTOCOL_VERSION,
-    RL_SESSION_SCHEMA_VERSION,
+    RlSessionResponseV1, CANONICAL_BURN_DECK_ID, CANONICAL_RALLY_DECK_ID,
+    RL_SESSION_PROTOCOL_VERSION, RL_SESSION_SCHEMA_VERSION,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -209,6 +210,83 @@ fn rl_session_deck_aware_reset_pins_identity_on_every_response() {
     assert_eq!(terminal["response_type"], "terminal");
     assert_eq!(terminal["deck_ids"], expected_ids);
     assert_eq!(terminal["deck_hashes"], expected_hashes);
+}
+
+#[test]
+fn rl_session_accepts_all_ordered_burn_rally_pairs_with_exact_hashes() {
+    for (index, (p0, p1, expected_hashes)) in [
+        (
+            CANONICAL_BURN_DECK_ID,
+            CANONICAL_BURN_DECK_ID,
+            [burn_deck_hash(), burn_deck_hash()],
+        ),
+        (
+            CANONICAL_BURN_DECK_ID,
+            CANONICAL_RALLY_DECK_ID,
+            [burn_deck_hash(), rally_deck_hash()],
+        ),
+        (
+            CANONICAL_RALLY_DECK_ID,
+            CANONICAL_BURN_DECK_ID,
+            [rally_deck_hash(), burn_deck_hash()],
+        ),
+        (
+            CANONICAL_RALLY_DECK_ID,
+            CANONICAL_RALLY_DECK_ID,
+            [rally_deck_hash(), rally_deck_hash()],
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut server = KernelRlJsonlServerV1::new();
+        let request = reset_line_for_decks(
+            &format!("runtime-pair-{index}"),
+            index as u64,
+            0,
+            [p0.to_string(), p1.to_string()],
+        );
+        let first = server.handle_line(&request);
+        assert_eq!(server.handle_line(&request), first);
+        let response = parse_response(&first);
+        assert_eq!(response["response_type"], "terminal");
+        assert_eq!(response["terminal_code"], "decision_cap");
+        assert_eq!(response["deck_ids"], json!([p0, p1]));
+        assert_eq!(response["deck_hashes"], json!(expected_hashes));
+    }
+}
+
+#[test]
+fn rl_session_runtime_deck_lookup_is_exact_case_and_non_mutating() {
+    for (index, unsupported) in ["burn", "BURN", "rally", "RALLY", "Terror", ""]
+        .into_iter()
+        .enumerate()
+    {
+        let mut server = KernelRlJsonlServerV1::new();
+        let active = parse_response(&server.handle_line(&reset_line("exact-active", 16)));
+        let rejected = parse_response(&server.handle_line(&reset_line_for_decks(
+            &format!("case-reject-{index}"),
+            99,
+            16,
+            [CANONICAL_BURN_DECK_ID.to_string(), unsupported.to_string()],
+        )));
+        assert_eq!(rejected["response_type"], "error");
+        assert_eq!(rejected["error"]["code"], "unsupported_deck");
+        assert_eq!(
+            rejected["error"]["message"],
+            "unsupported deck_id for seat 1; supported exact canonical ids are \"Burn\" and \"Rally\""
+        );
+
+        let valid = parse_response(&server.handle_line(&step_line_from_decision(
+            &format!("case-active-{index}"),
+            &active,
+            0,
+        )));
+        assert_ne!(valid["response_type"], "error");
+        assert_eq!(valid["episode_id"], active["episode_id"]);
+        assert_eq!(valid["deck_ids"], active["deck_ids"]);
+        assert_eq!(valid["deck_hashes"], active["deck_hashes"]);
+    }
 }
 
 #[test]

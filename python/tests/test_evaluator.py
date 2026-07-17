@@ -805,6 +805,51 @@ class EvaluatorUnitTest(unittest.TestCase):
             with self.subTest(head=head), self.assertRaises(ValueError):
                 _validate_request(**{**valid, "expected_candidate_head": head})
 
+    def test_mirror_deck_request_boundary_is_shared_and_fail_fast(self) -> None:
+        valid = dict(
+            expected_candidate_head="a" * 64,
+            pairs=1,
+            base_seed=0,
+            bootstrap_replicates=1_000,
+            max_physical_decisions=1,
+            max_policy_steps=1,
+            timeout_ms=1,
+        )
+        for deck_ids in (("Burn", "Burn"), ("Rally", "Rally")):
+            with self.subTest(allowed=deck_ids):
+                self.assertEqual(
+                    _validate_request(**valid, deck_ids=deck_ids)[-1],
+                    deck_ids,
+                )
+
+        for deck_ids in (("Burn", "Rally"), ("Rally", "Burn")):
+            with self.subTest(rejected=deck_ids), tempfile.TemporaryDirectory() as tmp_name:
+                root = Path(tmp_name)
+                out = root / "evaluation"
+                with (
+                    mock.patch.object(evaluator_mod, "_preflight_store") as preflight,
+                    mock.patch.object(evaluator_mod, "OutputLock") as output_lock,
+                    mock.patch.object(evaluator_mod, "KernelRlClient") as client,
+                ):
+                    with self.assertRaisesRegex(ValueError, "mirror pairing"):
+                        evaluate(
+                            training_store=root / "missing-store",
+                            expected_candidate_head="a" * 64,
+                            env_bin=root / "missing-env",
+                            out_dir=out,
+                            pairs=1,
+                            base_seed=0,
+                            bootstrap_replicates=1_000,
+                            max_physical_decisions=1,
+                            max_policy_steps=1,
+                            timeout_ms=1,
+                            deck_ids=deck_ids,
+                        )
+                preflight.assert_not_called()
+                output_lock.assert_not_called()
+                client.assert_not_called()
+                self.assertFalse(out.exists())
+
     def test_cli_exact_surface_and_path_free_canonical_summary(self) -> None:
         argv = [
             "evaluate",

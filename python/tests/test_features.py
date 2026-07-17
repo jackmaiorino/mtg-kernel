@@ -392,7 +392,7 @@ class FeatureEncodingTest(unittest.TestCase):
         self.assertEqual(encoded.schema.object_group_count, 20)
         self.assertEqual(encoded.schema.action_ref_feature_dim, 25)
         self.assertEqual(encoded.schema.contract_digest, "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396")
-        self.assertEqual(encoded.schema.encoding_digest, "d2dc48d5aa806c02a2d5a3881d53f3a5b68a38fc2321eb9a3b1e31f760ac5d70")
+        self.assertEqual(encoded.schema.encoding_digest, "ea74553564d370a18679ee5ad62fb359f7ad659b06d42144eb2f53393eee434e")
 
     def test_detached_historical_paid_cost_refs_get_dedicated_nodes(self) -> None:
         obs = complete_observation()
@@ -441,6 +441,106 @@ class FeatureEncodingTest(unittest.TestCase):
         for invalid in (duplicate, conflicting):
             with self.assertRaises(FeatureSchemaError):
                 assert_observation_classified(invalid)
+
+    def test_multiple_abilities_from_one_source_share_a_node_but_keep_stack_order(self) -> None:
+        observation = complete_observation()
+        source = deep_copy(observation["projection"]["graveyards"][0][0]["stable"])
+        observation["projection"]["continuous_effects"] = []
+
+        def ability(stack_index: int, kind: str) -> dict:
+            return {
+                "stack_index": stack_index,
+                "source": deep_copy(source),
+                "controller": "p0",
+                "targets": [],
+                "stack_item_kind": kind,
+                "is_copy": False,
+                "is_flashback": False,
+                "mode_chosen": 0,
+                "madness_offer": False,
+                "kicked": False,
+                "cast_method": None,
+                "face_index": 0,
+                "x_value": 0,
+                "paid_cost_refs": [],
+            }
+
+        observation["projection"]["stack"] = [
+            ability(0, "activated_ability"),
+            ability(1, "triggered_ability"),
+        ]
+        assert_observation_classified(observation)
+        encoded = encode_decision(observation, complete_legal_actions())
+        one_ability = deep_copy(observation)
+        one_ability["projection"]["stack"] = [
+            deep_copy(one_ability["projection"]["stack"][0])
+        ]
+        self.assertEqual(
+            encoded.object_features.shape[0],
+            encode_decision(one_ability, complete_legal_actions()).object_features.shape[0],
+        )
+
+        reversed_kinds = deep_copy(observation)
+        reversed_kinds["projection"]["stack"][0]["stack_item_kind"] = (
+            "triggered_ability"
+        )
+        reversed_kinds["projection"]["stack"][1]["stack_item_kind"] = (
+            "activated_ability"
+        )
+        assert_observation_classified(reversed_kinds)
+        self.assertNotEqual(
+            encoded_digest(encoded),
+            encoded_digest(encode_decision(reversed_kinds, complete_legal_actions())),
+        )
+
+        duplicate_spell_source = deep_copy(observation)
+        for item in duplicate_spell_source["projection"]["stack"]:
+            item["stack_item_kind"] = "spell"
+            item["cast_method"] = "normal"
+        with self.assertRaises(FeatureSchemaError):
+            assert_observation_classified(duplicate_spell_source)
+
+    def test_combat_references_must_resolve_to_visible_object_nodes(self) -> None:
+        observation = complete_observation()
+        stale = stable_ref(9_999, 133, "p0", "Graveyard", zone_change_count=1)
+        observation["projection"]["combat"]["ordered_attackers"].append(stale)
+        with self.assertRaisesRegex(
+            FeatureSchemaError,
+            "ordered_attackers must resolve to observed object nodes",
+        ):
+            assert_observation_classified(observation)
+
+        stale_blocker = complete_observation()
+        stale_blocker["projection"]["combat"]["attacker_to_ordered_blockers"][0][
+            1
+        ].append(stale)
+        with self.assertRaisesRegex(
+            FeatureSchemaError,
+            "ordered blockers must resolve to observed object nodes",
+        ):
+            assert_observation_classified(stale_blocker)
+
+    def test_blocked_attacker_remains_explicit_after_every_blocker_leaves(self) -> None:
+        blocked = observation()
+        blocked["projection"]["combat"]["attacker_to_ordered_blockers"][0][1] = []
+        unblocked = deep_copy(blocked)
+        unblocked["projection"]["combat"]["attacker_to_ordered_blockers"] = []
+
+        blocked_encoded = encode_decision(blocked, legal_actions())
+        unblocked_encoded = encode_decision(unblocked, legal_actions())
+        role_index = EDGE_ROLES.index("combat_attacker")
+        extra_index = len(EDGE_ROLES) + 3
+        blocked_rows = blocked_encoded.edge_features[
+            blocked_encoded.edge_features[:, role_index] == 1.0
+        ]
+        unblocked_rows = unblocked_encoded.edge_features[
+            unblocked_encoded.edge_features[:, role_index] == 1.0
+        ]
+        self.assertEqual(blocked_rows.shape[0], 1)
+        self.assertEqual(unblocked_rows.shape[0], 1)
+        self.assertEqual(float(blocked_rows[0, extra_index]), 1.0)
+        self.assertEqual(float(unblocked_rows[0, extra_index]), 0.0)
+        self.assertNotEqual(encoded_digest(blocked_encoded), encoded_digest(unblocked_encoded))
 
     def test_reserved_v4_observation_families_all_affect_encoding(self) -> None:
         base = complete_observation()

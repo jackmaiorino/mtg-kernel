@@ -17,8 +17,8 @@ CLASSIFICATIONS = (MODEL_INPUT, OPERATIONAL_ONLY, FORBIDDEN)
 
 FEATURE_SCHEMA_VERSION = "actor-relative-v5-python-4"
 FEATURE_REGISTRY_VERSION = "rust-observation-v5-action-v5-registry-4"
-ENCODING_CONTRACT_VERSION = "actor-relative-node-graph-10"
-MODEL_CONTRACT_VERSION = "kernel-policy-value-net-6"
+ENCODING_CONTRACT_VERSION = "actor-relative-node-graph-11"
+MODEL_CONTRACT_VERSION = "kernel-policy-value-net-7"
 
 STATE_HASH_DIM = 96
 ACTION_HASH_DIM = 96
@@ -1145,6 +1145,7 @@ def _encoding_payload() -> dict[str, Any]:
         "surface_stages": SURFACE_STAGES,
         "engine_stages": ENGINE_STAGES,
         "node_registry": "per_decision_keys_arena_id_zone_change_count_handles_from_actor_relative_order",
+        "combat_attacker_edge_extra": ["was_blocked"],
     }
 
 
@@ -1926,9 +1927,21 @@ def _objects(obs: dict[str, Any]) -> tuple[_NodeRegistry, list[list[float]], lis
         for paid_order, paid_ref in enumerate(item["paid_cost_refs"]):
             paid_node = registry.resolve(paid_ref)
             _append_edge(edge_rows, edge_sources, edge_targets, source, paid_node, "paid_cost", i, paid_order)
+    blocked_attacker_keys = {
+        _stable_key(pair[0]) for pair in p["combat"]["attacker_to_ordered_blockers"]
+    }
     for i, ref in enumerate(p["combat"]["ordered_attackers"]):
         node = registry.resolve(ref)
-        _append_edge(edge_rows, edge_sources, edge_targets, node, node, "combat_attacker", i)
+        _append_edge(
+            edge_rows,
+            edge_sources,
+            edge_targets,
+            node,
+            node,
+            "combat_attacker",
+            i,
+            extra=[_flag(_stable_key(ref) in blocked_attacker_keys)],
+        )
     for attacker_order, pair in enumerate(p["combat"]["attacker_to_ordered_blockers"]):
         attacker, blockers = pair
         attacker_node = registry.resolve(attacker)
@@ -2505,7 +2518,21 @@ def _validate_observation_semantics(observation: dict[str, Any]) -> None:
             raise FeatureSchemaError("only spell stack items may be marked as copies")
         key = _stable_key(item["source"])
         if key in stack_by_key:
-            raise FeatureSchemaError("stack contains duplicate stable object incarnations")
+            prior_item = stack_by_key[key][1]
+            if (
+                prior_item["stack_item_kind"] == "spell"
+                or item["stack_item_kind"] == "spell"
+            ):
+                raise FeatureSchemaError(
+                    "spell stack items must have distinct stable object incarnations"
+                )
+            # Multiple activated/triggered abilities from the same source
+            # may coexist legally (for example sacrificing Experimental
+            # Synthesizer places its activated ability and leaves trigger on
+            # the stack). Their ordered item semantics remain in the
+            # canonical observation digest; object-graph references share
+            # the one physical source node. Keep the topmost entry for
+            # pending-effect source validation below.
         stack_by_key[key] = (i, item)
         observed_node_keys.add(key)
         if item["stack_item_kind"] == "spell":
@@ -2516,6 +2543,33 @@ def _validate_observation_semantics(observation: dict[str, Any]) -> None:
         paid_keys = [_stable_key(ref) for ref in item["paid_cost_refs"]]
         if len(paid_keys) != len(set(paid_keys)):
             raise FeatureSchemaError("paid_cost_refs must not repeat an object incarnation")
+    combat = p["combat"]
+    attacker_keys = [_stable_key(ref) for ref in combat["ordered_attackers"]]
+    if len(attacker_keys) != len(set(attacker_keys)):
+        raise FeatureSchemaError("ordered_attackers must not repeat an object incarnation")
+    if any(key not in observed_node_keys for key in attacker_keys):
+        raise FeatureSchemaError("ordered_attackers must resolve to observed object nodes")
+    blocked_attacker_keys: list[tuple[int, int]] = []
+    for attacker, blockers in combat["attacker_to_ordered_blockers"]:
+        attacker_key = _stable_key(attacker)
+        blocked_attacker_keys.append(attacker_key)
+        blocker_keys = [_stable_key(blocker) for blocker in blockers]
+        if attacker_key not in set(attacker_keys):
+            raise FeatureSchemaError(
+                "blocked attacker must appear in ordered_attackers"
+            )
+        if len(blocker_keys) != len(set(blocker_keys)):
+            raise FeatureSchemaError(
+                "ordered blockers must not repeat an object incarnation"
+            )
+        if any(key not in observed_node_keys for key in blocker_keys):
+            raise FeatureSchemaError(
+                "ordered blockers must resolve to observed object nodes"
+            )
+    if len(blocked_attacker_keys) != len(set(blocked_attacker_keys)):
+        raise FeatureSchemaError(
+            "attacker_to_ordered_blockers must not repeat an attacker"
+        )
     _validate_engine_context(p["engine_context"], observation["acting_player"], p["stack"])
     for owner_index, entries in enumerate(observation["known_library_cards"]):
         owner = "p0" if owner_index == 0 else "p1"

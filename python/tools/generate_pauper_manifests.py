@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate and verify the canonical nine-deck Pauper pool manifests.
+"""Generate and verify canonical Pauper pool and runtime-deck manifests.
 
 This tool is intentionally stdlib-only.  It treats the vendored XMage oracle
 snapshot of ``DeterminizationSampler.pauperDefaults()`` and its nine deck files
@@ -27,10 +27,14 @@ from xml.etree import ElementTree
 
 POOL_SCHEMA = "kernel_pauper_pool/v1"
 SUPPORT_SCHEMA = "kernel_pauper_support/v1"
+RUNTIME_DECKS_SCHEMA = "kernel_runtime_decks/v1"
 REGISTRY_SCHEMA_VERSION = 2
 PROTOCOL = "canonical-mainboard-bo1/v1"
 SOURCE_HASH_NORMALIZATION = "utf8_text_crlf_v1"
 MATERIALIZATION_ORDER = "utf8_card_name_then_copy_ordinal"
+RUNTIME_MATERIALIZATION_ORDER = "xmage_xml_row_then_copy_ordinal/v1"
+RUNTIME_CARD_ID_ASSIGNMENT = "zero_based_data_cards_v1_json_cards_array_index/v1"
+RUNTIME_DECK_HASH_ALGORITHM = "fnv1a64-serde-json-u16-array/v1"
 JAVA_FACTORY_FILE_SHA256 = "0df59e3f934aaafc46835411e3fc53cf060a63cceb03c4921e52c35f4d55669d"
 JAVA_FACTORY_METHOD_SHA256 = "a5fc8d84f7fa70f1c41c9ce0f50e892cb4d68119313128f54e14316a01febd7b"
 
@@ -43,6 +47,7 @@ JAVA_DECLARED_DECK_BASE_PATH = (
 REGISTRY_PATH = Path("data/cards_v1.json")
 POOL_PATH = Path("data/pauper_pool_v1.json")
 SUPPORT_PATH = Path("data/pauper_support_v1.json")
+RUNTIME_DECKS_PATH = Path("data/runtime_decks_v1.json")
 
 
 class ManifestError(RuntimeError):
@@ -61,6 +66,14 @@ class DeckSpec:
         return (DECK_BASE_PATH / self.filename).as_posix()
 
 
+@dataclass(frozen=True)
+class DeckRow:
+    source_row_ordinal: int
+    name: str
+    quantity: int
+    sideboard: bool
+
+
 # This order is the protocol order and must match pauperDefaults() exactly.
 DECK_SPECS = (
     DeckSpec("Wildfire", "Wildfire", "Deck - Jund Wildfire.dek", "cff35798ff724888a9e5a4520dd55e70b0c628a55908697aa116089d8fd980a5"),
@@ -74,6 +87,14 @@ DECK_SPECS = (
     DeckSpec("CawGates", "CawGates", "Deck - Caw-Gates.dek", "72c2bbf76a7fd219349a0ad81c44dc6166b4a797a1f66fe9b5a5de79aa6cdc14"),
     DeckSpec("Faeries", "Faeries", "Deck - Mono-Blue Faeries.dek", "8cb962c4ccee6a5f8c0c70fc27c17d13323d13606c82b9b12b8985aa87e0f344"),
 )
+
+# Runnable deck admission is deliberate rather than inferred from the current
+# support totals. Filtering DECK_SPECS preserves the canonical pool order.
+RUNTIME_DECK_IDS = ("Rally", "Burn")
+EXPECTED_RUNTIME_DECK_HASHES = {
+    "Rally": "0x0c9f01c2544412bf",
+    "Burn": "0x5fdb7b92986b6fc1",
+}
 
 
 TOKEN_DEPENDENCIES = (
@@ -101,6 +122,29 @@ def repo_root_from_script() -> Path:
 
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def fnv1a64(data: bytes) -> int:
+    value = 0xCBF29CE484222325
+    for byte in data:
+        value ^= byte
+        value = (value * 0x100000001B3) & 0xFFFF_FFFF_FFFF_FFFF
+    return value
+
+
+def runtime_deck_hash(card_ids: list[int]) -> str:
+    if any(
+        type(card_id) is not int or card_id < 0 or card_id > 0xFFFF
+        for card_id in card_ids
+    ):
+        raise ManifestError("runtime deck card ids must be unsigned 16-bit integers")
+    encoded = json.dumps(
+        card_ids,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("ascii")
+    return f"0x{fnv1a64(encoded):016x}"
 
 
 def canonical_source_bytes(raw: bytes, *, context: str) -> bytes:
@@ -216,7 +260,9 @@ def _validate_java_factory(repo_root: Path) -> None:
         raise ManifestError(f"pauperDefaults() order/path drift: expected {expected!r}, got {actual!r}")
 
 
-def _parse_deck(repo_root: Path, spec: DeckSpec) -> tuple[Counter[str], Counter[str]]:
+def _parse_deck(
+    repo_root: Path, spec: DeckSpec
+) -> tuple[Counter[str], Counter[str], tuple[DeckRow, ...]]:
     path = repo_root / Path(spec.source_path)
     try:
         raw = path.read_bytes()
@@ -237,6 +283,7 @@ def _parse_deck(repo_root: Path, spec: DeckSpec) -> tuple[Counter[str], Counter[
 
     mainboard: Counter[str] = Counter()
     sideboard: Counter[str] = Counter()
+    rows: list[DeckRow] = []
     for row_number, row in enumerate(root.findall("Cards"), start=1):
         name = row.attrib.get("Name")
         quantity_text = row.attrib.get("Quantity")
@@ -255,18 +302,28 @@ def _parse_deck(repo_root: Path, spec: DeckSpec) -> tuple[Counter[str], Counter[
             )
         if sideboard_text == "false":
             mainboard[name] += quantity
+            is_sideboard = False
         elif sideboard_text == "true":
             sideboard[name] += quantity
+            is_sideboard = True
         else:
             raise ManifestError(
                 f"{spec.source_path}: Cards row {row_number} Sideboard must be true or false"
             )
+        rows.append(
+            DeckRow(
+                source_row_ordinal=row_number,
+                name=name,
+                quantity=quantity,
+                sideboard=is_sideboard,
+            )
+        )
     if sum(mainboard.values()) != 60 or sum(sideboard.values()) != 15:
         raise ManifestError(
             f"{spec.source_path}: expected 60+15 cards, got "
             f"{sum(mainboard.values())}+{sum(sideboard.values())}"
         )
-    return mainboard, sideboard
+    return mainboard, sideboard, tuple(rows)
 
 
 def _zone_payload(counts: Counter[str]) -> dict[str, Any]:
@@ -294,7 +351,7 @@ def build_pool_manifest(repo_root: Path) -> tuple[dict[str, Any], dict[str, tupl
     main_copies = 0
     side_copies = 0
     for order, spec in enumerate(DECK_SPECS, start=1):
-        mainboard, sideboard = _parse_deck(repo_root, spec)
+        mainboard, sideboard, _rows = _parse_deck(repo_root, spec)
         rosters[spec.deck_id] = (mainboard, sideboard)
         all_main.update(mainboard)
         all_side.update(sideboard)
@@ -411,6 +468,131 @@ def normalize_registry(
     registry["pool_decks"] = [spec.filename for spec in DECK_SPECS]
     registry["unresolved"] = _utf8_sort(set(expected_memberships) - registered_non_tokens)
     return registry
+
+
+def build_runtime_decks_manifest(
+    repo_root: Path, registry: dict[str, Any]
+) -> dict[str, Any]:
+    cards = registry.get("cards")
+    if not isinstance(cards, list):
+        raise ManifestError("cards_v1.json cards must be a list")
+    if len(cards) > 0x1_0000:
+        raise ManifestError(
+            "cards_v1.json has too many cards for unsigned 16-bit runtime ids"
+        )
+
+    registry_by_name: dict[str, tuple[int, dict[str, Any]]] = {}
+    for card_id, card in enumerate(cards):
+        if not isinstance(card, dict):
+            raise ManifestError(f"cards_v1.json card {card_id} must be an object")
+        name = card.get("name")
+        if not isinstance(name, str) or not name or name != name.strip():
+            raise ManifestError(f"cards_v1.json card {card_id} has invalid name")
+        if name in registry_by_name:
+            raise ManifestError(f"cards_v1.json duplicate card name {name!r}")
+        registry_by_name[name] = (card_id, card)
+
+    runtime_specs = [
+        (canonical_pool_order, spec)
+        for canonical_pool_order, spec in enumerate(DECK_SPECS, start=1)
+        if spec.deck_id in RUNTIME_DECK_IDS
+    ]
+    actual_ids = tuple(spec.deck_id for _order, spec in runtime_specs)
+    if actual_ids != RUNTIME_DECK_IDS:
+        raise ManifestError(
+            f"runtime deck order drift: expected {RUNTIME_DECK_IDS!r}, got {actual_ids!r}"
+        )
+
+    decks: list[dict[str, Any]] = []
+    for canonical_pool_order, spec in runtime_specs:
+        mainboard, _sideboard, rows = _parse_deck(repo_root, spec)
+        materialized: list[dict[str, Any]] = []
+        card_ids: list[int] = []
+        for row in rows:
+            if row.sideboard:
+                continue
+            resolved = registry_by_name.get(row.name)
+            if resolved is None:
+                raise ManifestError(
+                    f"runtime deck {spec.deck_id} card {row.name!r} is absent from cards_v1.json"
+                )
+            card_id, registry_card = resolved
+            if registry_card.get("is_token") is True:
+                raise ManifestError(
+                    f"runtime deck {spec.deck_id} card {row.name!r} is a token"
+                )
+            capability = _registry_engine_capability(
+                registry_card,
+                context=f"runtime deck {spec.deck_id} card {row.name!r}",
+            )
+            if capability != "full":
+                raise ManifestError(
+                    f"runtime deck {spec.deck_id} card {row.name!r} must have full "
+                    f"engine_capability, got {capability!r}"
+                )
+            memberships = registry_card.get("decks")
+            if not isinstance(memberships, list) or any(
+                not isinstance(membership, str) for membership in memberships
+            ):
+                raise ManifestError(
+                    f"runtime deck {spec.deck_id} card {row.name!r} decks must be "
+                    "a list of strings"
+                )
+            if spec.filename not in memberships:
+                raise ManifestError(
+                    f"runtime deck {spec.deck_id} card {row.name!r} is missing canonical "
+                    "registry membership"
+                )
+            for copy_ordinal in range(1, row.quantity + 1):
+                materialized.append(
+                    {
+                        "source_row_ordinal": row.source_row_ordinal,
+                        "copy_ordinal": copy_ordinal,
+                        "name": row.name,
+                        "card_id": card_id,
+                    }
+                )
+                card_ids.append(card_id)
+
+        if len(materialized) != 60 or len(card_ids) != 60:
+            raise ManifestError(
+                f"runtime deck {spec.deck_id} must materialize exactly 60 mainboard copies"
+            )
+        computed_hash = runtime_deck_hash(card_ids)
+        expected_hash = EXPECTED_RUNTIME_DECK_HASHES[spec.deck_id]
+        if computed_hash != expected_hash:
+            raise ManifestError(
+                f"runtime deck {spec.deck_id} hash drift: expected {expected_hash}, "
+                f"got {computed_hash}"
+            )
+        decks.append(
+            {
+                "canonical_pool_order": canonical_pool_order,
+                "id": spec.deck_id,
+                "source_path": spec.source_path,
+                "source_sha256": spec.source_sha256,
+                "mainboard_copy_count": len(materialized),
+                "unique_mainboard_cards": len(mainboard),
+                "runtime_deck_hash": computed_hash,
+                "materialized_mainboard": materialized,
+            }
+        )
+
+    return {
+        "schema": RUNTIME_DECKS_SCHEMA,
+        "protocol": PROTOCOL,
+        "source_hash_normalization": SOURCE_HASH_NORMALIZATION,
+        "materialization": {
+            "order": RUNTIME_MATERIALIZATION_ORDER,
+            "source_row_ordinal_base": 1,
+            "copy_ordinal_base": 1,
+        },
+        "card_ids": {
+            "assignment": RUNTIME_CARD_ID_ASSIGNMENT,
+            "deck_hash_algorithm": RUNTIME_DECK_HASH_ALGORITHM,
+        },
+        "decks": decks,
+    }
 
 
 def _registry_engine_capability(card: dict[str, Any], *, context: str) -> str:
@@ -554,6 +736,7 @@ def expected_outputs(repo_root: Path) -> dict[Path, bytes]:
     normalized_registry = normalize_registry(registry, rosters)
     registry_bytes = dump_json(normalized_registry)
     pool_bytes = dump_json(pool)
+    runtime_decks = build_runtime_decks_manifest(repo_root, normalized_registry)
     support = build_support_manifest(
         rosters=rosters,
         registry=normalized_registry,
@@ -564,6 +747,7 @@ def expected_outputs(repo_root: Path) -> dict[Path, bytes]:
         REGISTRY_PATH: registry_bytes,
         POOL_PATH: pool_bytes,
         SUPPORT_PATH: dump_json(support),
+        RUNTIME_DECKS_PATH: dump_json(runtime_decks),
     }
 
 
@@ -603,7 +787,12 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 def write_outputs(repo_root: Path) -> None:
     outputs = expected_outputs(repo_root)
-    for relative_path in (REGISTRY_PATH, POOL_PATH, SUPPORT_PATH):
+    for relative_path in (
+        REGISTRY_PATH,
+        POOL_PATH,
+        SUPPORT_PATH,
+        RUNTIME_DECKS_PATH,
+    ):
         path = repo_root / relative_path
         expected = outputs[relative_path]
         if path.exists() and path.read_bytes() == expected:

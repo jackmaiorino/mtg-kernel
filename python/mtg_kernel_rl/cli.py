@@ -12,13 +12,13 @@ from .sampled_evaluator import evaluate_sampled
 from .trainer import train
 
 
-def _add_deck_ids_argument(parser: argparse.ArgumentParser) -> None:
+def _add_deck_ids_argument(parser: argparse.ArgumentParser, *, help_text: str) -> None:
     parser.add_argument(
         "--deck-ids",
         nargs=2,
         default=("Burn", "Burn"),
         metavar=("P0_DECK", "P1_DECK"),
-        help="ordered physical p0/p1 deck IDs (default: Burn Burn)",
+        help=f"{help_text} (default: Burn Burn)",
     )
 
 
@@ -34,7 +34,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-policy-steps", required=True, type=int)
     run.add_argument("--p0", required=True, choices=sorted(POLICIES))
     run.add_argument("--p1", required=True, choices=sorted(POLICIES))
-    _add_deck_ids_argument(run)
+    _add_deck_ids_argument(
+        run,
+        help_text=(
+            "ordered physical p0/p1 deck IDs; each must be exact Burn or Rally; "
+            "all four ordered pairs are supported"
+        ),
+    )
     train_parser = sub.add_parser("train")
     train_parser.add_argument("--env-bin", required=True, type=Path)
     train_parser.add_argument("--out-dir", required=True, type=Path)
@@ -46,7 +52,13 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--value-coef", default=None, type=float)
     train_parser.add_argument("--max-physical-decisions", default=None, type=int)
     train_parser.add_argument("--max-policy-steps", default=None, type=int)
-    _add_deck_ids_argument(train_parser)
+    _add_deck_ids_argument(
+        train_parser,
+        help_text=(
+            "one exact mirror pairing, Burn Burn or Rally Rally; repeat the original pair "
+            "when resuming"
+        ),
+    )
     evaluate_parser = sub.add_parser("evaluate")
     evaluate_parser.add_argument("--training-store", required=True, type=Path)
     evaluate_parser.add_argument("--expected-candidate-head", required=True)
@@ -58,7 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_parser.add_argument("--max-physical-decisions", required=True, type=int)
     evaluate_parser.add_argument("--max-policy-steps", required=True, type=int)
     evaluate_parser.add_argument("--timeout-ms", required=True, type=int)
-    _add_deck_ids_argument(evaluate_parser)
+    _add_deck_ids_argument(
+        evaluate_parser,
+        help_text="one exact mirror pairing, Burn Burn or Rally Rally; mixed decks are rejected",
+    )
     sampled_parser = sub.add_parser("evaluate-sampled")
     sampled_parser.add_argument("--training-store", required=True, type=Path)
     sampled_parser.add_argument("--expected-candidate-head", required=True)
@@ -70,7 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
     sampled_parser.add_argument("--max-physical-decisions", required=True, type=int)
     sampled_parser.add_argument("--max-policy-steps", required=True, type=int)
     sampled_parser.add_argument("--timeout-ms", required=True, type=int)
-    _add_deck_ids_argument(sampled_parser)
+    _add_deck_ids_argument(
+        sampled_parser,
+        help_text="one exact mirror pairing, Burn Burn or Rally Rally; mixed decks are rejected",
+    )
     return parser
 
 

@@ -1,4 +1,4 @@
-//! Copy-on-write snapshots.
+//! Snapshot API; v1 full-clone implementation.
 //!
 //! v1 is deliberately a full clone: `GameState` is plain-old-data (Vecs of
 //! small structs, no interior mutability, no pointers), so `Clone` already

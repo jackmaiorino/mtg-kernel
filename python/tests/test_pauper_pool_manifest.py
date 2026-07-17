@@ -93,9 +93,11 @@ class PauperPoolManifestTest(unittest.TestCase):
         cls.pool_path = REPO_ROOT / manifests.POOL_PATH
         cls.support_path = REPO_ROOT / manifests.SUPPORT_PATH
         cls.registry_path = REPO_ROOT / manifests.REGISTRY_PATH
+        cls.runtime_decks_path = REPO_ROOT / manifests.RUNTIME_DECKS_PATH
         cls.pool = load(cls.pool_path)
         cls.support = load(cls.support_path)
         cls.registry = load(cls.registry_path)
+        cls.runtime_decks = load(cls.runtime_decks_path)
 
     def test_exact_java_order_keys_paths_hashes_and_protocol(self) -> None:
         self.assertEqual(manifests.repo_root_from_script(), REPO_ROOT)
@@ -210,6 +212,170 @@ class PauperPoolManifestTest(unittest.TestCase):
             sum(1 for row in caw_manifest["mainboard"]["cards"] if row["name"] == "Island"),
             1,
         )
+
+    def test_runtime_decks_are_exact_xmage_row_then_copy_materializations(self) -> None:
+        self.assertEqual(
+            set(self.runtime_decks),
+            {
+                "schema",
+                "protocol",
+                "source_hash_normalization",
+                "materialization",
+                "card_ids",
+                "decks",
+            },
+        )
+        self.assertEqual(self.runtime_decks["schema"], "kernel_runtime_decks/v1")
+        self.assertEqual(self.runtime_decks["protocol"], "canonical-mainboard-bo1/v1")
+        self.assertEqual(
+            self.runtime_decks["source_hash_normalization"], "utf8_text_crlf_v1"
+        )
+        self.assertEqual(
+            self.runtime_decks["materialization"],
+            {
+                "order": "xmage_xml_row_then_copy_ordinal/v1",
+                "source_row_ordinal_base": 1,
+                "copy_ordinal_base": 1,
+            },
+        )
+        self.assertEqual(
+            self.runtime_decks["card_ids"],
+            {
+                "assignment": "zero_based_data_cards_v1_json_cards_array_index/v1",
+                "deck_hash_algorithm": "fnv1a64-serde-json-u16-array/v1",
+            },
+        )
+
+        runtime_specs = [
+            (order, spec)
+            for order, spec in enumerate(manifests.DECK_SPECS, start=1)
+            if spec.deck_id in manifests.RUNTIME_DECK_IDS
+        ]
+        self.assertEqual(
+            [(order, spec.deck_id) for order, spec in runtime_specs],
+            [(2, "Rally"), (6, "Burn")],
+        )
+        self.assertEqual(
+            [deck["id"] for deck in self.runtime_decks["decks"]],
+            ["Rally", "Burn"],
+        )
+        self.assertEqual(
+            [deck["canonical_pool_order"] for deck in self.runtime_decks["decks"]],
+            [2, 6],
+        )
+
+        registry_ids = {
+            card["name"]: card_id
+            for card_id, card in enumerate(self.registry["cards"])
+        }
+        expected_hashes = {
+            "Rally": "0x0c9f01c2544412bf",
+            "Burn": "0x5fdb7b92986b6fc1",
+        }
+        expected_unique = {"Rally": 14, "Burn": 12}
+        for deck, (canonical_pool_order, spec) in zip(
+            self.runtime_decks["decks"], runtime_specs, strict=True
+        ):
+            self.assertEqual(
+                set(deck),
+                {
+                    "canonical_pool_order",
+                    "id",
+                    "source_path",
+                    "source_sha256",
+                    "mainboard_copy_count",
+                    "unique_mainboard_cards",
+                    "runtime_deck_hash",
+                    "materialized_mainboard",
+                },
+            )
+            self.assertEqual(deck["canonical_pool_order"], canonical_pool_order)
+            self.assertEqual(deck["id"], spec.deck_id)
+            self.assertEqual(deck["source_path"], spec.source_path)
+            self.assertEqual(deck["source_sha256"], spec.source_sha256)
+            self.assertEqual(deck["mainboard_copy_count"], 60)
+            self.assertEqual(
+                deck["unique_mainboard_cards"], expected_unique[spec.deck_id]
+            )
+            self.assertEqual(deck["runtime_deck_hash"], expected_hashes[spec.deck_id])
+
+            source = REPO_ROOT / spec.source_path
+            self.assertEqual(
+                manifests.canonical_source_sha256(
+                    source.read_bytes(), context=spec.source_path
+                ),
+                deck["source_sha256"],
+            )
+            expected_materialization = []
+            root = ElementTree.parse(source).getroot()
+            for source_row_ordinal, row in enumerate(root.findall("Cards"), start=1):
+                if row.attrib["Sideboard"] == "true":
+                    continue
+                name = row.attrib["Name"]
+                for copy_ordinal in range(1, int(row.attrib["Quantity"]) + 1):
+                    expected_materialization.append(
+                        {
+                            "source_row_ordinal": source_row_ordinal,
+                            "copy_ordinal": copy_ordinal,
+                            "name": name,
+                            "card_id": registry_ids[name],
+                        }
+                    )
+            self.assertEqual(deck["materialized_mainboard"], expected_materialization)
+            self.assertEqual(len(expected_materialization), 60)
+            self.assertTrue(
+                all(
+                    set(card)
+                    == {"source_row_ordinal", "copy_ordinal", "name", "card_id"}
+                    for card in deck["materialized_mainboard"]
+                )
+            )
+            card_ids = [card["card_id"] for card in deck["materialized_mainboard"]]
+            self.assertEqual(
+                manifests.runtime_deck_hash(card_ids), expected_hashes[spec.deck_id]
+            )
+
+    def test_runtime_deck_generation_rejects_registry_identity_and_capability_drift(self) -> None:
+        reordered = json.loads(json.dumps(self.registry))
+        first = next(
+            index
+            for index, card in enumerate(reordered["cards"])
+            if card["name"] == "Clockwork Percussionist"
+        )
+        second = next(
+            index
+            for index, card in enumerate(reordered["cards"])
+            if card["name"] == "Voldaren Epicure"
+        )
+        reordered["cards"][first], reordered["cards"][second] = (
+            reordered["cards"][second],
+            reordered["cards"][first],
+        )
+        with self.assertRaisesRegex(manifests.ManifestError, "Rally hash drift"):
+            manifests.build_runtime_decks_manifest(REPO_ROOT, reordered)
+
+        demoted = json.loads(json.dumps(self.registry))
+        next(
+            card
+            for card in demoted["cards"]
+            if card["name"] == "Clockwork Percussionist"
+        )["engine_capability"] = "partial"
+        with self.assertRaisesRegex(
+            manifests.ManifestError, "Clockwork Percussionist.*must have full"
+        ):
+            manifests.build_runtime_decks_manifest(REPO_ROOT, demoted)
+
+        malformed_membership = json.loads(json.dumps(self.registry))
+        next(
+            card
+            for card in malformed_membership["cards"]
+            if card["name"] == "Clockwork Percussionist"
+        )["decks"] = "Deck - Mono Red Rally.dek"
+        with self.assertRaisesRegex(
+            manifests.ManifestError,
+            "Clockwork Percussionist.*decks must be a list of strings",
+        ):
+            manifests.build_runtime_decks_manifest(REPO_ROOT, malformed_membership)
 
     def test_json_loader_rejects_duplicate_keys_and_nonfinite_values(self) -> None:
         with self.assertRaises(manifests.ManifestError):
@@ -604,6 +770,7 @@ class PauperPoolManifestTest(unittest.TestCase):
                 manifests.REGISTRY_PATH,
                 manifests.POOL_PATH,
                 manifests.SUPPORT_PATH,
+                manifests.RUNTIME_DECKS_PATH,
                 *(Path(spec.source_path) for spec in manifests.DECK_SPECS),
             ]
             for relative_path in required:
@@ -615,6 +782,7 @@ class PauperPoolManifestTest(unittest.TestCase):
                 manifests.REGISTRY_PATH,
                 manifests.POOL_PATH,
                 manifests.SUPPORT_PATH,
+                manifests.RUNTIME_DECKS_PATH,
             ):
                 with self.subTest(relative_path=relative_path.as_posix()):
                     path = temporary_root / relative_path
@@ -623,6 +791,21 @@ class PauperPoolManifestTest(unittest.TestCase):
                     with self.assertRaises(manifests.ManifestError):
                         manifests.check_outputs(temporary_root)
                     path.write_bytes(original)
+
+            runtime_path = temporary_root / manifests.RUNTIME_DECKS_PATH
+            original = runtime_path.read_bytes()
+            duplicate_schema = original.replace(
+                b'{\n  "schema":',
+                b'{\n  "schema": "duplicate",\n  "schema":',
+                1,
+            )
+            self.assertNotEqual(duplicate_schema, original)
+            runtime_path.write_bytes(duplicate_schema)
+            with self.assertRaisesRegex(
+                manifests.ManifestError, "duplicate JSON object key"
+            ):
+                manifests.check_outputs(temporary_root)
+            runtime_path.write_bytes(original)
 
 
 if __name__ == "__main__":

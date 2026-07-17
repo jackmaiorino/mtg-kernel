@@ -1,4 +1,4 @@
-"""Deterministic Burn-mirror runner over the strict kernel RL client."""
+"""Deterministic deck-identified runner over the strict kernel RL client."""
 
 from __future__ import annotations
 

@@ -2,11 +2,12 @@
 //!
 //! This module is intentionally data-shaped. It exposes a perspective-safe
 //! observation projection, structured legal-action ids, versioned JSONL episode
-//! records, and a deterministic Burn-mirror rollout helper. It does not make
-//! any learning or strength claim.
+//! records, generic Burn/Rally deck-pair construction, and a backward-compatible
+//! deterministic Burn-mirror rollout helper. It does not make any learning or
+//! strength claim.
 
 use crate::card_def::{
-    card_id_by_name, preflight_fully_supported_deck, CardType, Keywords, CARD_DEFS,
+    preflight_fully_supported_deck, CardType, DeckPreflightError, Keywords, CARD_DEFS,
     KERNEL_CARDDB_HASH,
 };
 use crate::engine::{
@@ -21,6 +22,7 @@ use crate::policy_surface_v5::{
     PolicySurfaceV5, POLICY_SURFACE_VERSION,
 };
 use crate::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
+use crate::runtime_decks::runtime_deck_by_id;
 use crate::state::{
     CastMethodV4, DungeonStateV4, GameObject, GameState, PaidCostRefV4, SplitMix64, StackItem,
     StackItemKind, Target, Zone, DIAGNOSTIC_STATE_HASH_ALGORITHM,
@@ -1289,37 +1291,18 @@ pub struct RunManifestV1 {
     pub variable_metadata: VariableMetadataV1,
 }
 
-pub const BURN_MAINBOARD: &[(&str, u32)] = &[
-    ("Sneaky Snacker", 4),
-    ("Faithless Looting", 2),
-    ("Highway Robbery", 4),
-    ("Masked Meower", 4),
-    ("Lightning Bolt", 4),
-    ("Mountain", 18),
-    ("Grab the Prize", 4),
-    ("Fireblast", 4),
-    ("Guttersnipe", 4),
-    ("Fiery Temper", 4),
-    ("Voldaren Epicure", 4),
-    ("Lava Dart", 4),
-];
-
 pub fn burn_deck_ids() -> Vec<u16> {
-    let mut ids = Vec::with_capacity(60);
-    for &(name, qty) in BURN_MAINBOARD {
-        let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing from CARD_DEFS"));
-        for _ in 0..qty {
-            ids.push(id);
-        }
-    }
-    assert_eq!(
-        ids.len(),
-        60,
-        "Mono-Red Burn mainboard should be exactly 60 cards"
-    );
-    preflight_fully_supported_deck(&ids)
-        .expect("the runnable Burn environment requires a fully supported token-free mainboard");
-    ids
+    runtime_deck_by_id("Burn")
+        .expect("Burn is frozen in the runtime deck catalog")
+        .card_ids
+        .to_vec()
+}
+
+pub fn rally_deck_ids() -> Vec<u16> {
+    runtime_deck_by_id("Rally")
+        .expect("Rally is frozen in the runtime deck catalog")
+        .card_ids
+        .to_vec()
 }
 
 pub fn shuffled(ids: &[u16], rng: &mut SplitMix64) -> Vec<u16> {
@@ -1331,17 +1314,31 @@ pub fn shuffled(ids: &[u16], rng: &mut SplitMix64) -> Vec<u16> {
     v
 }
 
-pub fn build_burn_mirror_state(seed: u64) -> GameState {
-    let deck = burn_deck_ids();
+pub fn build_deck_pair_state(
+    seed: u64,
+    p0_deck: &[u16],
+    p1_deck: &[u16],
+) -> std::result::Result<GameState, DeckPreflightError> {
+    // Both complete decks are admitted before RNG consumption or state
+    // construction, so a bad second seat cannot partially shuffle/mutate an
+    // environment that callers might otherwise retain.
+    preflight_fully_supported_deck(p0_deck)?;
+    preflight_fully_supported_deck(p1_deck)?;
     let mut shuffle_rng = SplitMix64::seed(seed);
-    let lib0 = shuffled(&deck, &mut shuffle_rng);
-    let lib1 = shuffled(&deck, &mut shuffle_rng);
+    let lib0 = shuffled(p0_deck, &mut shuffle_rng);
+    let lib1 = shuffled(p1_deck, &mut shuffle_rng);
     let mut state = GameState::new_from_libraries(&lib0, &lib1, card_name, seed);
     for _ in 0..7 {
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P1));
     }
-    state
+    Ok(state)
+}
+
+pub fn build_burn_mirror_state(seed: u64) -> GameState {
+    let deck = burn_deck_ids();
+    build_deck_pair_state(seed, &deck, &deck)
+        .expect("the cataloged Burn deck is fully supported and token-free")
 }
 
 pub fn derive_env_seed(base_seed: u64, episode_id: u64) -> u64 {
@@ -3723,7 +3720,15 @@ pub fn validate_selected_action(
 }
 
 pub fn burn_deck_hash() -> u64 {
-    stable_hash_json(&burn_deck_ids()).expect("burn deck ids serialize")
+    runtime_deck_by_id("Burn")
+        .expect("Burn is frozen in the runtime deck catalog")
+        .runtime_deck_hash
+}
+
+pub fn rally_deck_hash() -> u64 {
+    runtime_deck_by_id("Rally")
+        .expect("Rally is frozen in the runtime deck catalog")
+        .runtime_deck_hash
 }
 
 fn deck_identifiers() -> [String; 2] {
@@ -3902,6 +3907,41 @@ fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV1> {
     })
 }
 
+fn detached_resolving_source_ref(
+    state: &GameState,
+    id: ObjectId,
+    context: &'static str,
+) -> Result<CardStableRefV1> {
+    let object = state
+        .objects
+        .try_get(id)
+        .ok_or_else(|| RlContractError(format!("{context} source object is missing")))?;
+    if object.zone != Zone::Stack {
+        return Err(RlContractError(format!(
+            "{context} source must retain its public Stack zone marker"
+        )));
+    }
+    card_ref(state, id)
+}
+
+fn object_is_live_in_zone_index(state: &GameState, id: ObjectId) -> Result<bool> {
+    let object = state
+        .objects
+        .try_get(id)
+        .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
+    Ok(match object.zone {
+        Zone::Library => state.players[object.owner.index()].library.contains(&id),
+        Zone::Hand => state.players[object.owner.index()].hand.contains(&id),
+        Zone::Battlefield => state.players[object.owner.index()]
+            .battlefield
+            .contains(&id),
+        Zone::Graveyard => state.players[object.owner.index()].graveyard.contains(&id),
+        Zone::Exile => state.exile.contains(&id),
+        Zone::Stack => state.stack.iter().any(|item| item.source == id),
+        Zone::Command => state.command.contains(&id),
+    })
+}
+
 fn visible_card_ref(
     state: &GameState,
     id: ObjectId,
@@ -3911,11 +3951,12 @@ fn visible_card_ref(
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
-    let visible = match object.zone {
-        Zone::Battlefield | Zone::Graveyard | Zone::Exile | Zone::Stack | Zone::Command => true,
-        Zone::Hand => object.owner == acting_player,
-        Zone::Library => false,
-    };
+    let visible = object_is_live_in_zone_index(state, id)?
+        && match object.zone {
+            Zone::Battlefield | Zone::Graveyard | Zone::Exile | Zone::Stack | Zone::Command => true,
+            Zone::Hand => object.owner == acting_player,
+            Zone::Library => false,
+        };
     if visible {
         Ok(Some(card_ref(state, id)?))
     } else {
@@ -4238,13 +4279,22 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
 }
 
 fn combat_public_v2(state: &GameState) -> Result<CombatStatePublicV2> {
+    let live_attackers = state
+        .engine
+        .combat
+        .attackers
+        .iter()
+        .copied()
+        .filter_map(|id| match object_is_live_in_zone_index(state, id) {
+            Ok(true) => Some(Ok(id)),
+            Ok(false) => None,
+            Err(err) => Some(Err(err)),
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(CombatStatePublicV2 {
         attackers_declared: state.engine.combat.attackers_declared,
         blockers_declared: state.engine.combat.blockers_declared,
-        ordered_attackers: state
-            .engine
-            .combat
-            .attackers
+        ordered_attackers: live_attackers
             .iter()
             .map(|&id| card_ref(state, id))
             .collect::<Result<Vec<_>>>()?,
@@ -4253,12 +4303,18 @@ fn combat_public_v2(state: &GameState) -> Result<CombatStatePublicV2> {
             .combat
             .blocked_by
             .iter()
+            .filter(|(attacker, _)| live_attackers.contains(attacker))
             .map(|(attacker, blockers)| {
                 Ok((
                     card_ref(state, *attacker)?,
                     blockers
                         .iter()
-                        .map(|&id| card_ref(state, id))
+                        .copied()
+                        .filter_map(|id| match object_is_live_in_zone_index(state, id) {
+                            Ok(true) => Some(card_ref(state, id)),
+                            Ok(false) => None,
+                            Err(err) => Some(Err(err)),
+                        })
                         .collect::<Result<Vec<_>>>()?,
                 ))
             })
@@ -4702,13 +4758,38 @@ fn pending_discard_semantic_v2(
         engine::DiscardResume::FinishActivation { .. } => {
             (DiscardResumeSemanticV2::FinishActivation, None)
         }
+        // These sources were public stack objects before resolution popped
+        // them. The choice remains inside that uninterrupted resolution, so
+        // preserve the historical public incarnation while it is detached.
         engine::DiscardResume::FinishSpellResolution { source, .. } => (
             DiscardResumeSemanticV2::FinishSpellResolution,
-            visible_card_ref(state, *source, acting_player)?,
+            Some(detached_resolving_source_ref(
+                state,
+                *source,
+                "pending discard spell resolution",
+            )?),
         ),
-        engine::DiscardResume::FinishOptionalCost { source, .. } => (
+        engine::DiscardResume::FinishOptionalCost {
+            source,
+            spell_resume,
+            ..
+        } => (
             DiscardResumeSemanticV2::FinishOptionalCost,
-            visible_card_ref(state, *source, acting_player)?,
+            match spell_resume {
+                Some((resume_source, _)) => {
+                    if resume_source != source {
+                        return Err(RlContractError(
+                            "pending discard optional-cost source binding mismatch".to_string(),
+                        ));
+                    }
+                    Some(detached_resolving_source_ref(
+                        state,
+                        *source,
+                        "pending discard optional cost",
+                    )?)
+                }
+                None => visible_card_ref(state, *source, acting_player)?,
+            },
         ),
     };
     Ok(PendingDiscardSemanticV2 {
@@ -4724,13 +4805,27 @@ fn pending_optional_cost_semantic_v2(
     acting_player: PlayerId,
     p: &engine::PendingOptionalCost,
 ) -> Result<PendingOptionalCostSemanticV2> {
-    let (spell_resume_source, spell_resume_zone) = match p.spell_resume {
-        Some((source, zone)) => (visible_card_ref(state, source, acting_player)?, Some(zone)),
-        None => (None, None),
+    // MayPayCostThen is staged from a resolving public stack item after the
+    // item was popped and before its deferred post-resolution zone move.
+    let (source, spell_resume_source, spell_resume_zone) = match p.spell_resume {
+        Some((resume_source, zone)) => {
+            if resume_source != p.source {
+                return Err(RlContractError(
+                    "pending optional-cost source binding mismatch".to_string(),
+                ));
+            }
+            let source = detached_resolving_source_ref(state, p.source, "pending optional cost")?;
+            (Some(source.clone()), Some(source), Some(zone))
+        }
+        None => (
+            visible_card_ref(state, p.source, acting_player)?,
+            None,
+            None,
+        ),
     };
     Ok(PendingOptionalCostSemanticV2 {
         player: p.player.into(),
-        source: visible_card_ref(state, p.source, acting_player)?,
+        source,
         discard_cards: p.discard,
         sacrifice_lands: p.sacrifice_lands,
         discard_payable: p.discard_payable,
@@ -4745,13 +4840,28 @@ fn pending_optional_cost_sacrifice_semantic_v2(
     acting_player: PlayerId,
     p: &engine::PendingOptionalCostSacrifice,
 ) -> Result<PendingOptionalCostSacrificeSemanticV2> {
-    let (spell_resume_source, spell_resume_zone) = match p.spell_resume {
-        Some((source, zone)) => (visible_card_ref(state, source, acting_player)?, Some(zone)),
-        None => (None, None),
+    // This is the same uninterrupted public resolving-source context carried
+    // forward from PendingOptionalCost.
+    let (source, spell_resume_source, spell_resume_zone) = match p.spell_resume {
+        Some((resume_source, zone)) => {
+            if resume_source != p.source {
+                return Err(RlContractError(
+                    "pending optional-cost sacrifice source binding mismatch".to_string(),
+                ));
+            }
+            let source =
+                detached_resolving_source_ref(state, p.source, "pending optional-cost sacrifice")?;
+            (Some(source.clone()), Some(source), Some(zone))
+        }
+        None => (
+            visible_card_ref(state, p.source, acting_player)?,
+            None,
+            None,
+        ),
     };
     Ok(PendingOptionalCostSacrificeSemanticV2 {
         player: p.player.into(),
-        source: visible_card_ref(state, p.source, acting_player)?,
+        source,
         remaining: p.remaining,
         chosen: visible_card_refs(state, &p.chosen, acting_player)?,
         spell_resume_source,
@@ -5215,6 +5325,7 @@ fn _assert_game_object_is_visible_data(_: &GameObject) {}
 #[cfg(test)]
 mod policy_v5_artifact_tests {
     use super::*;
+    use crate::card_def::card_id_by_name;
     use crate::policy_surface_v5::PolicySurfaceV5;
     use crate::state::{Counters, ObjectStateV4, Step};
 

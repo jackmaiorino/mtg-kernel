@@ -13,6 +13,34 @@ from mtg_kernel_rl.model import KernelPolicyValueNet, greedy_action
 
 
 class RealEnvTest(unittest.TestCase):
+    def test_release_kernel_env_accepts_all_ordered_burn_rally_pairs(self) -> None:
+        env_bin = os.environ.get("MTG_KERNEL_RL_ENV_BIN")
+        if not env_bin:
+            self.skipTest("MTG_KERNEL_RL_ENV_BIN not set")
+        self.assertTrue(Path(env_bin).is_file())
+        burn_hash = 0x5FDB7B92986B6FC1
+        rally_hash = 0x0C9F01C2544412BF
+        pairings = (
+            (("Burn", "Burn"), (burn_hash, burn_hash)),
+            (("Burn", "Rally"), (burn_hash, rally_hash)),
+            (("Rally", "Burn"), (rally_hash, burn_hash)),
+            (("Rally", "Rally"), (rally_hash, rally_hash)),
+        )
+        with KernelRlClient(env_bin, timeout_s=5.0) as client:
+            for episode_id, (deck_ids, deck_hashes) in enumerate(pairings):
+                response = client.reset(
+                    episode_id=episode_id,
+                    env_seed=derive_env_seed(71501, episode_id),
+                    max_physical_decisions=64,
+                    max_policy_steps=8_192,
+                    deck_ids=deck_ids,
+                )
+                self.assertIsInstance(response, Decision)
+                self.assertEqual(response.deck_ids, deck_ids)
+                self.assertEqual(response.deck_hashes, deck_hashes)
+                self.assertEqual(response.step, 0)
+                self.assertTrue(response.legal_actions)
+
     def test_release_kernel_env_smoke_and_model_greedy_path(self) -> None:
         env_bin = os.environ.get("MTG_KERNEL_RL_ENV_BIN")
         if not env_bin:
