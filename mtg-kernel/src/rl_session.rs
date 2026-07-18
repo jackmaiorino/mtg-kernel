@@ -424,7 +424,7 @@ struct CurrentDecisionV1 {
     bound_physical_decision_count: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct FastActorCurrentDecisionV1 {
     actor: PlayerId,
     decision_kind: FastActorDecisionKindV1,
@@ -2597,6 +2597,18 @@ fn flat_build_action_cache_v1(
     })
 }
 
+fn flat_install_action_cache_build_result_v1(
+    current: &mut FastActorCurrentDecisionV1,
+    result: Result<FlatActionDecisionCacheV1, FlatActionDecisionSliceErrorV1>,
+) {
+    current.flat_action_cache = None;
+    current.flat_action_cache_error = None;
+    match result {
+        Ok(cache) => current.flat_action_cache = Some(cache),
+        Err(error) => current.flat_action_cache_error = Some(error),
+    }
+}
+
 /// Revalidates the live private decision against its exact cached public rows
 /// without rescanning the arena or recomputing SHA-256. This pass is
 /// allocation-free and touches only current candidates and their references.
@@ -3798,9 +3810,10 @@ impl FastActorSessionV1 {
     }
 
     /// Audit-only reconstruction of the current private cache using its own
-    /// retained vector capacities. This leaves the public binding and rows
-    /// unchanged and exists solely to attribute steady-state cache allocation
-    /// and construction cost separately from environment transitions.
+    /// retained vector capacities. A successful rebuild leaves the public
+    /// binding and rows unchanged and exists solely to attribute steady-state
+    /// cache allocation and construction cost separately from environment
+    /// transitions.
     #[cfg(any(test, feature = "flat-action-diagnostic"))]
     pub fn diagnostic_rebuild_current_flat_action_cache_v1(
         &mut self,
@@ -3814,13 +3827,12 @@ impl FastActorSessionV1 {
         match rebuilt {
             Ok(cache) => {
                 let commitment = cache.binding.candidate_order_commitment;
-                current.flat_action_cache = Some(cache);
-                current.flat_action_cache_error = None;
+                flat_install_action_cache_build_result_v1(&mut current, Ok(cache));
                 self.current = Some(current);
                 Ok(commitment)
             }
             Err(error) => {
-                current.flat_action_cache_error = Some(error);
+                flat_install_action_cache_build_result_v1(&mut current, Err(error));
                 self.current = Some(current);
                 Err(error)
             }
@@ -4314,10 +4326,8 @@ impl FastActorSessionV1 {
             flat_action_cache_error: None,
         };
         let reusable_cache = self.flat_action_cache_spare.take();
-        match flat_build_action_cache_v1(self, &current, reusable_cache) {
-            Ok(cache) => current.flat_action_cache = Some(cache),
-            Err(error) => current.flat_action_cache_error = Some(error),
-        }
+        let cache_result = flat_build_action_cache_v1(self, &current, reusable_cache);
+        flat_install_action_cache_build_result_v1(&mut current, cache_result);
         self.current = Some(current);
     }
 }
@@ -6228,6 +6238,205 @@ mod tests {
         current.flat_action_cache = Some(cache);
         current.flat_action_cache_error = None;
         session.current = Some(current);
+    }
+
+    fn flat_publish_action_cache_error_fixture(
+        session: &mut FastActorSessionV1,
+        error: FlatActionDecisionSliceErrorV1,
+    ) {
+        let mut current = session.current.take().expect("flat fixture is active");
+        assert!(current.flat_action_cache_error.is_none());
+        assert!(session.flat_action_cache_spare.is_none());
+
+        // Faithfully model the publication boundary after a prior decision's
+        // successful cache was offered for vector-capacity reuse. A failed
+        // build consumes and drops that reusable cache; it cannot become the
+        // new decision's cache or return to the spare slot.
+        session.flat_action_cache_spare = current.flat_action_cache.take();
+        let consumed_reusable = session
+            .flat_action_cache_spare
+            .take()
+            .expect("fixture begins with a successful reusable cache");
+        drop(consumed_reusable);
+        flat_install_action_cache_build_result_v1(&mut current, Err(error));
+        session.current = Some(current);
+    }
+
+    #[test]
+    fn flat_action_cached_build_error_preserves_fast_actor_and_snapshot_contract() {
+        let mut session = fast_attacker_session(1, 16, 2_048);
+        let decision = flat_current_decision(&session);
+        let prior_binding = session
+            .current
+            .as_ref()
+            .unwrap()
+            .flat_action_cache
+            .as_ref()
+            .unwrap()
+            .binding;
+        let cached_error = FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic;
+        flat_publish_action_cache_error_fixture(&mut session, cached_error);
+
+        let current = session.current.as_ref().unwrap();
+        assert!(current.flat_action_cache.is_none());
+        assert_eq!(current.flat_action_cache_error, Some(cached_error));
+        assert!(session.flat_action_cache_spare.is_none());
+
+        let mut actions = [poison_flat_action(); 4];
+        let mut refs = [poison_flat_ref(); 4];
+        let mut objects = [poison_flat_object(); 4];
+        let original_actions = actions;
+        let original_refs = refs;
+        let original_objects = objects;
+        let mut stale = decision;
+        stale.episode_id = stale.episode_id.wrapping_add(1);
+        let stale_error = session
+            .encode_current_flat_action_slice_v1(
+                stale,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(
+            stale_error,
+            FlatActionDecisionSliceErrorV1::StaleEpisodeBinding
+        );
+        assert_eq!(actions, original_actions);
+        assert_eq!(refs, original_refs);
+        assert_eq!(objects, original_objects);
+
+        let mut stale = decision;
+        stale.environment_revision = stale.environment_revision.wrapping_add(1);
+        let stale_error = session
+            .encode_current_flat_action_slice_v1(
+                stale,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(
+            stale_error,
+            FlatActionDecisionSliceErrorV1::StaleEnvironmentRevision
+        );
+        assert_eq!(actions, original_actions);
+        assert_eq!(refs, original_refs);
+        assert_eq!(objects, original_objects);
+
+        let mut stale = decision;
+        stale.step = stale.step.wrapping_add(1);
+        let stale_error = session
+            .encode_current_flat_action_slice_v1(
+                stale,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(
+            stale_error,
+            FlatActionDecisionSliceErrorV1::DecisionMetadataMismatch
+        );
+        assert_eq!(actions, original_actions);
+        assert_eq!(refs, original_refs);
+        assert_eq!(objects, original_objects);
+
+        let encode_error = session
+            .encode_current_flat_action_slice_v1(
+                decision,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(encode_error, cached_error);
+        assert_eq!(actions, original_actions);
+        assert_eq!(refs, original_refs);
+        assert_eq!(objects, original_objects);
+
+        let cloned = session.clone();
+        assert_eq!(cloned.current, session.current);
+        assert!(cloned.flat_action_cache_spare.is_none());
+        assert_eq!(
+            cloned
+                .encode_current_flat_action_slice_v1(
+                    decision,
+                    &mut FlatActionDecisionSliceBuffersV1 {
+                        actions: &mut actions,
+                        refs: &mut refs,
+                        objects: &mut objects,
+                    },
+                )
+                .unwrap_err(),
+            cached_error
+        );
+        assert_eq!(actions, original_actions);
+        assert_eq!(refs, original_refs);
+        assert_eq!(objects, original_objects);
+
+        let snapshot = session.snapshot_v1();
+        let before_state = session.state.clone();
+        let before_current = session.current.clone();
+        let before_response = session.current_response();
+        let before_environment_revision = session.environment_revision;
+        let before_policy_steps = session.policy_step_count;
+        let before_physical_decisions = session.physical_decision_count;
+        let consume_error = session
+            .consume_current_flat_action_slice_v1(prior_binding, 0)
+            .unwrap_err();
+        assert_eq!(
+            consume_error.code,
+            RlSessionErrorCode::StaleEnvironmentBinding
+        );
+        assert_eq!(session.state, before_state);
+        assert_eq!(session.current, before_current);
+        assert_eq!(session.current_response(), before_response);
+        assert_eq!(session.environment_revision, before_environment_revision);
+        assert_eq!(session.policy_step_count, before_policy_steps);
+        assert_eq!(session.physical_decision_count, before_physical_decisions);
+        assert!(session.flat_action_cache_spare.is_none());
+
+        session
+            .step(decision.episode_id, decision.step, 1)
+            .expect("generic FastActor step remains usable after a flat-cache failure");
+        assert_eq!(session.policy_step_count, before_policy_steps + 1);
+        assert!(session.flat_action_cache_spare.is_none());
+
+        session.restore_v1(&snapshot);
+        assert_eq!(session.state, before_state);
+        assert_eq!(session.current, before_current);
+        assert!(session.flat_action_cache_spare.is_none());
+        assert_eq!(
+            session
+                .encode_current_flat_action_slice_v1(
+                    decision,
+                    &mut FlatActionDecisionSliceBuffersV1 {
+                        actions: &mut actions,
+                        refs: &mut refs,
+                        objects: &mut objects,
+                    },
+                )
+                .unwrap_err(),
+            cached_error
+        );
+        assert_eq!(actions, original_actions);
+        assert_eq!(refs, original_refs);
+        assert_eq!(objects, original_objects);
+        let restored_policy_steps = session.policy_step_count;
+        session
+            .step(decision.episode_id, decision.step, 1)
+            .expect("restored generic FastActor step remains usable");
+        assert_eq!(session.policy_step_count, restored_policy_steps + 1);
+        assert!(session.flat_action_cache_spare.is_none());
     }
 
     #[test]
