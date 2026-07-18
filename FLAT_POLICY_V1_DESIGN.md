@@ -1,8 +1,8 @@
-# Flat policy v1 design candidate
+# Flat policy v1 design
 
-Status: typed full-state record implementation candidate. The checked-in
-`FlatDecisionV1` producer now covers globals, objects, relations, variable
-auxiliary rows, and the pre-existing action slice, but it does not admit an
+Status: validated bounded typed full-state record checkpoint. The checked-in
+`FlatDecisionV1` producer covers globals, objects, relations, variable auxiliary
+rows, and the pre-existing action slice, but it does not yet admit an
 accelerator projection, model, checkpoint, training, evaluation, or performance
 contract. See `FLAT_POLICY_V1_VALIDATION.md` for the bounded engineering
 evidence and explicit limitations. All diagnostic timings remain noncanonical
@@ -486,14 +486,15 @@ workloads and interference bounds.
    tails, semantic parity, and zero allocation with admitted capacities. The
    refs-only private cache is a source candidate; promote it only after the
    clean validation matrix and diagnostic provenance pass.
-3. The implementation candidate inventories all 964 authoritative semantic
-   leaves, including 778 model inputs, 176 operational-only leaves, and ten
-   forbidden leaves. It adds typed globals, the lossless object core, and
-   variable auxiliary rows. Independent semantic-destination audit remains a
-   promotion gate; no provisional float width is frozen.
-4. The implementation candidate adds the required role-specific relation union
-   and bounded parity/privacy/actor-relative fixtures. It may be named a full
-   typed state-record candidate, but not yet a scorer or production trainer
+3. The validated bounded implementation inventories all 964 authoritative
+   semantic leaves, including 778 model inputs, 176 operational-only leaves,
+   and ten forbidden leaves. It adds typed globals, the lossless object core,
+   and variable auxiliary rows. Independent semantic-destination and contract
+   audits passed after their findings were repaired; no provisional float width
+   is frozen.
+4. The validated bounded implementation includes the required role-specific
+   relation union and parity/privacy/actor-relative fixtures. It is the accepted
+   typed state-record checkpoint, but not yet a scorer or production trainer
    input.
 5. Generate and validate the accelerator projection, then measure full encoding
    shapes/rate on all ordered Burn/Rally matchups plus synthetic structural tails.

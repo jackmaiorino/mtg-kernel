@@ -2,10 +2,10 @@
 
 Date: 2026-07-18
 
-Status: bounded engineering checkpoint candidate, not a scorer, trainer, or
+Status: validated bounded engineering checkpoint, not a scorer, trainer, or
 science-release certificate
 
-Base source parent: `13644f30d33c7ab80f01c9d7c71fe59980f0c285`
+Base source parent: `3de6d2c450d4d32f120f70034324bfc72e1e3339`
 
 ## Scope
 
@@ -48,10 +48,12 @@ leaves discovered from `python/mtg_kernel_rl/features.py` exactly once:
 | Operational only | 176 |
 | Forbidden | 10 |
 
-The ten forbidden leaves are absent from public model rows. Raw arena ids and
-zone-change counters are used only for private reference validation. Names,
-display strings, stable strings, and diagnostic hashes are not stored in the
-typed model tables.
+The ten forbidden leaves are absent from public model rows. Raw arena ids stay
+private. Zone-change counters appear only in the separate operational
+`FlatActionObjectV1` table used to bind and revalidate executable action
+references; they are absent from model rows and must remain actor-side when a
+scoring bridge is added. Names, display strings, stable strings, and diagnostic
+hashes are not stored in the typed model tables.
 
 ## Focused evidence
 
@@ -70,9 +72,18 @@ The focused Rust tests validate:
 - snapshot, clone, restore, and stale expected-decision behavior;
 - no caller-buffer publication for short capacity, including a separate exact
   check for each of the eleven ragged tables;
-- absolute-seat swapping of a bounded initial fixture, including an effect
-  source and affected opponent, produces identical actor-relative globals,
-  objects, auxiliary rows, and relations;
+- valid absolute-seat swaps covering historical stack targets, object
+  relations, continuous effects, permissions, attachments, and goads produce
+  identical actor-relative globals, objects, auxiliary rows, and relations;
+- announcement-time target control survives a same-generation live control
+  change; immutable card, owner, or zone conflicts and detached historical
+  targets in inadmissible zones fail closed, while an exact later live target
+  coalesces with its historical identity;
+- one pre-cost object used both as a spell target and an additional paid cost
+  resolves to distinct historical target and paid-cost rows, with each relation
+  bound to its role-specific row;
+- set-like relations use one actor-relative canonical order, including the
+  same-object permission tie-break;
 - mutations to names, hashes, raw arena ids, and raw zone-change counters do
   not change public model tables, while card identity does;
 - every modeled continuous-effect field changes the typed effect signature,
@@ -100,6 +111,7 @@ existing locked Python environment was used with `PYTHONPATH=python`.
 cargo fmt --all -- --check
 
 python python/tools/generate_flat_policy_v1_goldens.py --check
+python -O python/tools/generate_flat_policy_v1_goldens.py --check
 python -m unittest python.tests.test_flat_policy_v1_goldens -v
 
 cargo test --locked -p mtg-kernel --lib flat_policy_v1::tests -- --nocapture
@@ -133,7 +145,8 @@ binary artifact format.
 
 Burn and Rally randomized walks plus the bounded synthetic fixtures are strong
 engineering coverage, not an exhaustive proof over every constructible pending
-or private context. The generated inventory proves complete one-to-one leaf
-classification; final contract promotion still requires an independent source
-audit of the semantic destination mapping before freezing an accelerator
-projection.
+or private context. Independent source audits found and closed historical-target
+controller, actor-relative ordering, heuristic-destination, and contract-digest
+gaps. The generated inventory now proves complete one-to-one leaf
+classification. A future accelerator projection remains a separate versioned
+contract and must preserve the actor-side operational action-object boundary.

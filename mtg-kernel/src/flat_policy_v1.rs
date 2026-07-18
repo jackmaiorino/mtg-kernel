@@ -1116,6 +1116,34 @@ impl FlatDecisionEncoderV1 {
         found.ok_or(FlatDecisionErrorV1::InvalidReference)
     }
 
+    fn resolve_paid_cost_reference(
+        &self,
+        stable: &CardStableRefV1,
+        actor: PlayerSeatV1,
+    ) -> Result<u32, FlatDecisionErrorV1> {
+        let wanted = Self::private_key(stable, actor, HISTORICAL_PAID_COST_KIND_V1);
+        let mut found = None;
+        for (index, key) in self.object_keys.iter().enumerate() {
+            let Some(key) = key else { continue };
+            if key.arena_id == wanted.arena_id
+                && key.zone_change_count == wanted.zone_change_count
+                && matches!(key.historical_kind, 0 | HISTORICAL_PAID_COST_KIND_V1)
+            {
+                if key.card_token != wanted.card_token
+                    || key.owner != wanted.owner
+                    || key.controller != wanted.controller
+                    || key.zone != wanted.zone
+                {
+                    return Err(FlatDecisionErrorV1::InconsistentReference);
+                }
+                if found.replace(usize_u32(index)?).is_some() {
+                    return Err(FlatDecisionErrorV1::InconsistentReference);
+                }
+            }
+        }
+        found.ok_or(FlatDecisionErrorV1::InvalidReference)
+    }
+
     fn add_private_card(
         &mut self,
         card: &CardPrivateV1,
@@ -1147,17 +1175,22 @@ impl FlatDecisionEncoderV1 {
         let wanted = Self::private_key(stable, actor, historical_kind);
         for (index, key) in self.object_keys.iter().enumerate() {
             let Some(key) = key else { continue };
-            if key.arena_id == wanted.arena_id
-                && key.zone_change_count == wanted.zone_change_count
-                && (key.historical_kind == historical_kind
-                    || key.historical_kind == 0
-                    || historical_kind == 0)
+            if key.arena_id == wanted.arena_id && key.zone_change_count == wanted.zone_change_count
             {
                 if key.card_token != wanted.card_token
                     || key.owner != wanted.owner
                     || key.zone != wanted.zone
-                    || (historical_kind != HISTORICAL_STACK_TARGET_KIND_V1
-                        && key.controller != wanted.controller)
+                {
+                    return Err(FlatDecisionErrorV1::InconsistentReference);
+                }
+                if key.historical_kind != historical_kind
+                    && key.historical_kind != 0
+                    && historical_kind != 0
+                {
+                    continue;
+                }
+                if historical_kind != HISTORICAL_STACK_TARGET_KIND_V1
+                    && key.controller != wanted.controller
                 {
                     return Err(FlatDecisionErrorV1::InconsistentReference);
                 }
@@ -2372,7 +2405,7 @@ impl FlatDecisionEncoderV1 {
                 );
             }
             for (paid_order, paid) in item.paid_cost_refs.iter().enumerate() {
-                let paid = self.resolve_reference(paid, actor)?;
+                let paid = self.resolve_paid_cost_reference(paid, actor)?;
                 self.push_relation(
                     FlatRelationRoleV1::PaidCost,
                     Some(source),
@@ -3829,6 +3862,91 @@ mod tests {
                 Err(error) => error,
             };
             assert_eq!(error, FlatDecisionErrorV1::InvalidReference);
+        }
+    }
+
+    #[test]
+    fn overlapping_stack_target_and_paid_cost_use_distinct_historical_rows() {
+        let session = FastActorSessionV1::reset_with_limits(90_026, 126, 128, 16_384);
+        let expected = expected(&session);
+        let mut observation = session.flat_policy_observation_v1(expected).unwrap();
+        let actor = observation.acting_player;
+        let other = opponent(actor);
+        let stack_source = synthetic_stable(90_026, 1, actor, actor, Zone::Stack);
+        let historical_target = synthetic_stable(90_027, 2, actor, other, Zone::Battlefield);
+        let mut paid_cost = historical_target.clone();
+        paid_cost.controller = actor;
+        observation
+            .projection
+            .surface
+            .stack
+            .push(StackItemPublicV2 {
+                stack_index: 0,
+                source: stack_source,
+                controller: actor,
+                targets: vec![TargetRefV1::Object {
+                    object: historical_target,
+                }],
+                stack_item_kind: StackItemKindV2::Spell,
+                is_copy: false,
+                is_flashback: false,
+                mode_chosen: 0,
+                madness_offer: false,
+                kicked: false,
+                cast_method: Some(CastMethodV4::Normal),
+                face_index: 0,
+                x_value: 0,
+                paid_cost_refs: vec![paid_cost],
+            });
+
+        let encoded = materialize_observation(&observation).unwrap();
+        let target_index = encoded
+            .relations
+            .iter()
+            .find(|relation| {
+                relation.role == FlatRelationRoleV1::StackTarget && relation.secondary_order == 1
+            })
+            .and_then(|relation| relation.target_object)
+            .unwrap();
+        let paid_index = encoded
+            .relations
+            .iter()
+            .find(|relation| relation.role == FlatRelationRoleV1::PaidCost)
+            .and_then(|relation| relation.target_object)
+            .unwrap();
+
+        assert_ne!(target_index, paid_index);
+        assert_eq!(
+            encoded.objects[usize::try_from(target_index).unwrap()].group,
+            FlatObjectGroupV1::HistoricalStackTarget
+        );
+        assert_eq!(
+            encoded.objects[usize::try_from(paid_index).unwrap()].group,
+            FlatObjectGroupV1::HistoricalPaidCost
+        );
+        assert_eq!(
+            encoded.objects[usize::try_from(target_index).unwrap()].controller,
+            FlatRelativePlayerV1::Opponent
+        );
+        assert_eq!(
+            encoded.objects[usize::try_from(paid_index).unwrap()].controller,
+            FlatRelativePlayerV1::SelfPlayer
+        );
+
+        for conflict in 0..3 {
+            let mut invalid = observation.clone();
+            let paid = &mut invalid.projection.surface.stack[0].paid_cost_refs[0];
+            match conflict {
+                0 => paid.card_db_id ^= 1,
+                1 => paid.owner = other,
+                2 => paid.zone = Zone::Stack,
+                _ => unreachable!(),
+            }
+            let error = match materialize_observation(&invalid) {
+                Ok(_) => panic!("cross-kind immutable conflict {conflict} was accepted"),
+                Err(error) => error,
+            };
+            assert_eq!(error, FlatDecisionErrorV1::InconsistentReference);
         }
     }
 
