@@ -524,6 +524,21 @@ struct WorkerRoundV1 {
     worker_id: usize,
     decisions: Vec<RoundDecisionV1>,
     terminals: Vec<RoundTerminalV1>,
+    reply: WorkerReplyV1,
+}
+
+impl WorkerRoundV1 {
+    fn with_capacity(worker_id: usize, capacity: usize) -> Self {
+        Self {
+            worker_id,
+            decisions: Vec::with_capacity(capacity),
+            terminals: Vec::with_capacity(capacity),
+            reply: WorkerReplyV1 {
+                actions: Vec::with_capacity(capacity),
+                terminal_acks: Vec::with_capacity(capacity),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -556,7 +571,7 @@ struct WorkerReplyV1 {
 enum WorkerControlV1 {
     Continue {
         release_epoch: u64,
-        reply: WorkerReplyV1,
+        round: WorkerRoundV1,
     },
     Cancel,
 }
@@ -1356,35 +1371,39 @@ fn worker_loop(
             )
         })
         .collect();
-    let mut pending_reply: Option<WorkerReplyV1> = None;
+    let mut round = WorkerRoundV1::with_capacity(worker_id, config.sessions_per_worker);
     loop {
         if runtime.cancel.load(Ordering::Acquire) || Instant::now() >= runtime.deadline {
             return Ok(());
         }
-        if let Some(mut reply) = pending_reply.take() {
-            for lane in &mut lanes {
-                lane.apply_reply(&mut reply)?;
-            }
-            if !reply.actions.is_empty() || !reply.terminal_acks.is_empty() {
-                return Err(WorkerFailureV1 {
-                    worker_id,
-                    logical_lane_id: first_lane,
-                    episode_id: u64::MAX,
-                    phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
-                });
-            }
+        for lane in &mut lanes {
+            lane.apply_reply(&mut round.reply)?;
+        }
+        if !round.reply.actions.is_empty() || !round.reply.terminal_acks.is_empty() {
+            return Err(WorkerFailureV1 {
+                worker_id,
+                logical_lane_id: first_lane,
+                episode_id: u64::MAX,
+                phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
+            });
+        }
+        if !round.decisions.is_empty() || !round.terminals.is_empty() {
+            return Err(WorkerFailureV1 {
+                worker_id,
+                logical_lane_id: first_lane,
+                episode_id: u64::MAX,
+                phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
+            });
         }
 
-        let mut decisions = Vec::with_capacity(config.sessions_per_worker);
-        let mut terminals = Vec::with_capacity(config.sessions_per_worker);
         for lane in &mut lanes {
             lane.fill(config, runtime.end_episode_id, runtime.logical_lane_count)?;
             lane.advance_to_event(
                 config,
                 runtime.deadline,
                 &runtime.cancel,
-                &mut decisions,
-                &mut terminals,
+                &mut round.decisions,
+                &mut round.terminals,
             )?;
             if runtime.cancel.load(Ordering::Acquire) || Instant::now() >= runtime.deadline {
                 return Ok(());
@@ -1403,7 +1422,7 @@ fn worker_loop(
                 })?;
             return Ok(());
         }
-        if decisions.is_empty() && terminals.is_empty() {
+        if round.decisions.is_empty() && round.terminals.is_empty() {
             return Err(WorkerFailureV1 {
                 worker_id,
                 logical_lane_id: first_lane,
@@ -1412,11 +1431,7 @@ fn worker_loop(
             });
         }
         message_tx
-            .send(WorkerMessageV1::Round(WorkerRoundV1 {
-                worker_id,
-                decisions,
-                terminals,
-            }))
+            .send(WorkerMessageV1::Round(round))
             .map_err(|_| WorkerFailureV1 {
                 worker_id,
                 logical_lane_id: first_lane,
@@ -1435,7 +1450,7 @@ fn worker_loop(
         match control_rx.recv_timeout(remaining) {
             Ok(WorkerControlV1::Continue {
                 release_epoch,
-                reply,
+                round: returned_round,
             }) => {
                 while runtime.released_epoch.load(Ordering::Acquire) < release_epoch {
                     if runtime.cancel.load(Ordering::Acquire) || Instant::now() >= runtime.deadline
@@ -1444,7 +1459,15 @@ fn worker_loop(
                     }
                     thread::yield_now();
                 }
-                pending_reply = Some(reply);
+                if returned_round.worker_id != worker_id {
+                    return Err(WorkerFailureV1 {
+                        worker_id,
+                        logical_lane_id: first_lane,
+                        episode_id: u64::MAX,
+                        phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
+                    });
+                }
+                round = returned_round;
             }
             Ok(WorkerControlV1::Cancel) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
             Err(RecvTimeoutError::Timeout) => return Ok(()),
@@ -1708,6 +1731,12 @@ pub fn run_async_flat_scored_rollout_v1(
     let mut round_values = Vec::<f32>::new();
     let mut round_action_offsets = Vec::<usize>::new();
     let mut chunk_action_offsets = Vec::<usize>::new();
+    let mut seen = vec![false; config.worker_count];
+    let mut done_this_round = vec![false; config.worker_count];
+    let mut round_decisions = Vec::with_capacity(logical_lane_count);
+    let mut round_terminals = Vec::with_capacity(logical_lane_count);
+    let mut worker_rounds: Vec<Option<WorkerRoundV1>> =
+        (0..config.worker_count).map(|_| None).collect();
 
     let broker_result = (|| -> Result<(), AsyncFlatScoredRolloutErrorV1> {
         while active_workers.iter().any(|active| *active) {
@@ -1716,10 +1745,11 @@ pub fn run_async_flat_scored_rollout_v1(
             }
             let round_index = metrics.complete_round_count;
             checked_add(&mut metrics.complete_round_count, 1)?;
-            let mut seen = vec![false; config.worker_count];
-            let mut done_this_round = vec![false; config.worker_count];
-            let mut round_decisions = Vec::with_capacity(logical_lane_count);
-            let mut round_terminals = Vec::with_capacity(logical_lane_count);
+            seen.fill(false);
+            done_this_round.fill(false);
+            round_decisions.clear();
+            round_terminals.clear();
+            debug_assert!(worker_rounds.iter().all(Option::is_none));
             let active_count = active_workers.iter().filter(|active| **active).count();
             for _ in 0..active_count {
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -1762,7 +1792,11 @@ pub fn run_async_flat_scored_rollout_v1(
                         done_this_round[worker_id] = true;
                     }
                     WorkerMessageV1::Round(mut round) => {
-                        if round.decisions.is_empty() && round.terminals.is_empty() {
+                        if (round.decisions.is_empty() && round.terminals.is_empty())
+                            || !round.reply.actions.is_empty()
+                            || !round.reply.terminal_acks.is_empty()
+                            || worker_rounds[worker_id].is_some()
+                        {
                             return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                         }
                         if round.decisions.iter().any(|decision| {
@@ -1780,6 +1814,7 @@ pub fn run_async_flat_scored_rollout_v1(
                         }
                         round_decisions.append(&mut round.decisions);
                         round_terminals.append(&mut round.terminals);
+                        worker_rounds[worker_id] = Some(round);
                     }
                 }
             }
@@ -1933,10 +1968,7 @@ pub fn run_async_flat_scored_rollout_v1(
             digest.update([0x52]);
             digest.update(round_index.to_le_bytes());
             digest.update((round_decisions.len() as u64).to_le_bytes());
-            let mut replies: Vec<WorkerReplyV1> = (0..config.worker_count)
-                .map(|_| WorkerReplyV1::default())
-                .collect();
-            for (decision_index, decision) in round_decisions.into_iter().enumerate() {
+            for (decision_index, decision) in round_decisions.drain(..).enumerate() {
                 let logit_start = round_action_offsets[decision_index];
                 let logit_end = round_action_offsets[decision_index + 1];
                 let broker_episode = broker_episodes
@@ -1961,17 +1993,22 @@ pub fn run_async_flat_scored_rollout_v1(
                 digest.update(ordinal.to_le_bytes());
                 digest.update(action_seed.to_le_bytes());
                 digest.update(selected_index.to_le_bytes());
-                replies[decision.worker_id].actions.push(ActionReplyV1 {
-                    logical_lane_id: decision.logical_lane_id,
-                    binding: decision.packet.decision.binding,
-                    selected_index,
-                    packet: decision.packet,
-                });
+                worker_rounds[decision.worker_id]
+                    .as_mut()
+                    .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
+                    .reply
+                    .actions
+                    .push(ActionReplyV1 {
+                        logical_lane_id: decision.logical_lane_id,
+                        binding: decision.packet.decision.binding,
+                        selected_index,
+                        packet: decision.packet,
+                    });
                 checked_add(&mut metrics.sampled_action_count, 1)?;
             }
 
             digest.update((round_terminals.len() as u64).to_le_bytes());
-            for terminal in round_terminals {
+            for terminal in round_terminals.drain(..) {
                 if episodes.len() == episode_count_usize {
                     return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                 }
@@ -1982,7 +2019,10 @@ pub fn run_async_flat_scored_rollout_v1(
                     terminal.learner_action_count,
                     terminal.learner_trace_hash,
                 )?);
-                replies[terminal.worker_id]
+                worker_rounds[terminal.worker_id]
+                    .as_mut()
+                    .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
+                    .reply
                     .terminal_acks
                     .push(terminal.logical_lane_id);
                 checked_add(&mut metrics.terminal_notification_count, 1)?;
@@ -1999,16 +2039,16 @@ pub fn run_async_flat_scored_rollout_v1(
                 if !active_workers[worker_id] || done_this_round[worker_id] {
                     continue;
                 }
-                if replies[worker_id].actions.is_empty()
-                    && replies[worker_id].terminal_acks.is_empty()
-                {
+                let round = worker_rounds[worker_id]
+                    .take()
+                    .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+                if round.reply.actions.is_empty() && round.reply.terminal_acks.is_empty() {
                     return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                 }
-                let reply = std::mem::take(&mut replies[worker_id]);
                 control_txs[worker_id]
                     .send(WorkerControlV1::Continue {
                         release_epoch,
-                        reply,
+                        round,
                     })
                     .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
             }
