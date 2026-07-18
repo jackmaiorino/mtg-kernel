@@ -56,18 +56,20 @@ On Windows, use `target/release/kernel_rl_env.exe` for `--env-bin`. Run `mtg-ker
 
 ## Performance evidence
 
-The bounded Rust candidate
+The bounded Rust sampler
 `f32-q8-expq63-hamilton-splitmix64-v1` is documented in
 [FAST_SAMPLER_V1_VALIDATION.md](FAST_SAMPLER_V1_VALIDATION.md). It has a new
 sampler identity and does not reinterpret historical
-`decimal-softmax-hamilton-splitmix64-v1` artifacts. The candidate is on audit
-hold: its probability diagnostic now uses a provenance-bound 2,048-decision
-all-policy Rally workload shape, but that source's performance/timing gate was
-invalid, no source rates are imported, and the prior sampler rates are
-superseded pending a clean runtime-manifest run. The workload is Rally-only,
-not nine-deck coverage. The candidate is not wired into the live Python
-trainer/evaluator and makes no learning-noninferiority or end-to-end training
-claim.
+`decimal-softmax-hamilton-splitmix64-v1` artifacts. Its immutable canonical
+sampler-only matrix passed all 19 predeclared claim checks: median throughput
+was 20,494,573.554883800 decisions/second at one thread and
+190,915,808.754026413 decisions/second at 16 threads. The probability and
+capacity workload uses a provenance-bound 2,048-decision all-policy Rally
+shape. That source's own performance/timing gate was invalid and contributes
+no source rate; it supplies workload-shape provenance only. The result is
+Rally-only, not nine-deck coverage. The sampler is not wired into the live
+Python trainer/evaluator and makes no learning-noninferiority or end-to-end
+training claim.
 
 `bench_kernel --ceiling-json-v1` is an H2 engine-plus-`HarnessSurfaceV2` upper-bound diagnostic. It excludes production `PolicySurfaceV5` scalarization/transactional cloning, RL-session observation and legal-action encoding, privileged integrity checks, JSONL/IPC, neural inference and sampling, optimization, and artifact persistence. It therefore must not be compared directly with end-to-end XMage trainer throughput. An end-to-end training speedup over XMage has not yet been established; designated-hardware trainer throughput remains an open roadmap gate.
 
