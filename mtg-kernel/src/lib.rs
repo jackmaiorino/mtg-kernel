@@ -18,6 +18,7 @@
 //! - Strict single-session JSONL reset/step boundary; parallelism and batching
 //!   are orchestrated outside the Rust process.
 
+pub mod async_flat_scored_rollout_v1;
 pub mod async_rollout;
 pub mod async_rollout_v2;
 pub mod card_def;

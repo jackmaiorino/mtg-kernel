@@ -18,10 +18,10 @@ use crate::policy_surface_v5::{
 };
 use crate::rl::{
     build_deck_pair_state, core_policy_action_candidates_v5, legal_action_candidates_v5,
-    observe_policy_v5, parse_strict_json_value, ActionSemanticV1, CardStableRefV1,
-    CorePolicyActionCandidateV1, EpisodeTerminalSummaryV1, LegalActionV5, ObservationV5,
-    PlayerSeatV1, PolicyLegalActionCandidateV5, RlContractError, TargetRefV1,
-    TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2,
+    observe_policy_v5, observe_policy_v5_unhashed_for_flat_policy, parse_strict_json_value,
+    ActionSemanticV1, CardStableRefV1, CorePolicyActionCandidateV1, EpisodeTerminalSummaryV1,
+    LegalActionV5, ObservationV5, PlayerSeatV1, PolicyLegalActionCandidateV5, RlContractError,
+    TargetRefV1, TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2,
 };
 use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition};
 use crate::state::{Target, Zone};
@@ -3927,7 +3927,7 @@ impl FastActorSessionV1 {
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
         flat_validate_action_cache_v1(self, current, cache)?;
-        observe_policy_v5(
+        observe_policy_v5_unhashed_for_flat_policy(
             &self.state,
             &self.surface,
             current.actor,
@@ -5744,6 +5744,26 @@ mod tests {
         let (observations, stable_actions) = test_policy_v5_materialization_calls();
         assert!(observations > 0);
         assert!(stable_actions > 0);
+    }
+
+    #[test]
+    fn flat_policy_session_bridge_builds_typed_state_without_artifact_hashing() {
+        crate::rl::reset_test_visible_projection_hash_calls();
+        let session = FastActorSessionV1::reset_with_decks_and_limits(
+            82_110,
+            41_110,
+            256,
+            32_768,
+            [
+                CANONICAL_RALLY_DECK_ID.to_string(),
+                CANONICAL_RALLY_DECK_ID.to_string(),
+            ],
+        )
+        .unwrap();
+        let decision = flat_current_decision(&session);
+        let observation = session.flat_policy_observation_v1(decision).unwrap();
+        assert_eq!(observation.visible_projection_hash, 0);
+        assert_eq!(crate::rl::test_visible_projection_hash_calls(), (0, 0));
     }
 
     #[test]
