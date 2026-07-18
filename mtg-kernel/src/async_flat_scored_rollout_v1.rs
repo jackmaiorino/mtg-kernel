@@ -95,6 +95,7 @@ struct TestScoredActionEventV1 {
     expected: FastActorDecisionV1,
     learner_ordinal: u64,
     safe_packet_payload: String,
+    scorer_value_bits: u32,
     selected_index: u32,
 }
 
@@ -524,6 +525,14 @@ fn test_content_sensitive_logits(
     payload
 }
 
+#[cfg(test)]
+fn test_content_sensitive_value(payload: &str) -> f32 {
+    let payload_hash = hash_bytes(FNV1A64_OFFSET, payload.as_bytes());
+    let value_q8 =
+        i32::try_from((payload_hash >> 11) & 0x7ff).expect("masked test value fits i32") - 1024;
+    value_q8 as f32 / 256.0
+}
+
 struct RoundDecisionV1 {
     worker_id: usize,
     logical_lane_id: usize,
@@ -575,10 +584,26 @@ enum WorkerMessageV1 {
     Failed(WorkerFailureV1),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FiniteScorerValueV1(u32);
+
+impl FiniteScorerValueV1 {
+    fn new(value: f32) -> Option<Self> {
+        value.is_finite().then_some(Self(value.to_bits()))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BoundScoredActionV1 {
+    binding: crate::flat_policy_v1::FlatDecisionBindingV1,
+    learner_ordinal: u64,
+    selected_index: u32,
+    predicted_value: FiniteScorerValueV1,
+}
+
 struct ActionReplyV1 {
     logical_lane_id: usize,
-    binding: crate::flat_policy_v1::FlatDecisionBindingV1,
-    selected_index: u32,
+    scored: BoundScoredActionV1,
     packet: ValidatedOwnedFlatScoringDecisionV1,
 }
 
@@ -670,9 +695,10 @@ impl LocalLaneV1 {
                 .position(|action| action.logical_lane_id == self.logical_lane_id)
                 .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
             let action = reply.actions.swap_remove(index);
-            if action.binding != waiting.binding
+            if action.scored.binding != waiting.binding
                 || action.packet.decision().binding != waiting.binding
-                || action.selected_index >= waiting.expected.legal_action_count
+                || action.scored.learner_ordinal != self.learner_action_count
+                || action.scored.selected_index >= waiting.expected.legal_action_count
             {
                 return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
             }
@@ -682,8 +708,8 @@ impl LocalLaneV1 {
                 .as_mut()
                 .ok_or(missing_session)?
                 .consume_current_flat_action_slice_v1(
-                    action.binding.action_binding,
-                    action.selected_index,
+                    action.scored.binding.action_binding,
+                    action.scored.selected_index,
                 )
                 .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerConsume))?;
             #[cfg(test)]
@@ -693,9 +719,10 @@ impl LocalLaneV1 {
                     .expect("test action-event sink mutex poisoned")
                     .push(TestScoredActionEventV1 {
                         expected: waiting.expected,
-                        learner_ordinal: self.learner_action_count,
+                        learner_ordinal: action.scored.learner_ordinal,
                         safe_packet_payload: test_safe_packet_payload(action.packet.scorer_view()),
-                        selected_index: action.selected_index,
+                        scorer_value_bits: action.scored.predicted_value.0,
+                        selected_index: action.scored.selected_index,
                     });
             }
             self.packet = Some(action.packet.into_inner());
@@ -710,7 +737,7 @@ impl LocalLaneV1 {
             self.learner_trace_hash = record_trace(
                 self.learner_trace_hash,
                 waiting.expected,
-                action.selected_index,
+                action.scored.selected_index,
             );
         } else if reply
             .actions
@@ -1907,8 +1934,13 @@ pub fn run_async_flat_scored_rollout_v1(
                     .actions
                     .push(ActionReplyV1 {
                         logical_lane_id: decision.logical_lane_id,
-                        binding: decision.packet.decision().binding,
-                        selected_index,
+                        scored: BoundScoredActionV1 {
+                            binding: decision.packet.decision().binding,
+                            learner_ordinal: ordinal,
+                            selected_index,
+                            predicted_value: FiniteScorerValueV1::new(round_values[decision_index])
+                                .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?,
+                        },
                         packet: decision.packet,
                     });
                 checked_add(&mut metrics.sampled_action_count, 1)?;
@@ -2231,15 +2263,40 @@ mod tests {
                 assert_eq!(end - start, decision.actions().len());
                 let payload =
                     test_content_sensitive_logits(decision, &mut action_logits[start..end]);
-                let payload_hash = hash_bytes(FNV1A64_OFFSET, payload.as_bytes());
-                let value_q8 = i32::try_from((payload_hash >> 11) & 0x7ff)
-                    .expect("masked test value fits i32")
-                    - 1024;
-                *value = value_q8 as f32 / 256.0;
+                *value = test_content_sensitive_value(&payload);
                 self.saw_nonuniform_multi_action |= action_logits[start..end]
                     .first()
                     .is_some_and(|first| action_logits[start + 1..end].iter().any(|x| x != first));
                 self.distinct_payloads.insert(payload);
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct ValueSwappingScorer {
+        inner: ContentSensitiveScorer,
+        swapped: bool,
+    }
+
+    impl FlatBatchScorerV1 for ValueSwappingScorer {
+        fn score_batch_v1(
+            &mut self,
+            batch: &FlatScoringBatchViewV1<'_>,
+            action_logits: &mut [f32],
+            values: &mut [f32],
+        ) -> Result<(), FlatBatchScorerErrorV1> {
+            self.inner.score_batch_v1(batch, action_logits, values)?;
+            if !self.swapped {
+                'pairs: for left in 0..values.len() {
+                    for right in left + 1..values.len() {
+                        if values[left].to_bits() != values[right].to_bits() {
+                            values.swap(left, right);
+                            self.swapped = true;
+                            break 'pairs;
+                        }
+                    }
+                }
             }
             Ok(())
         }
@@ -2344,6 +2401,7 @@ mod tests {
                         events.push(TestScoredActionEventV1 {
                             expected,
                             learner_ordinal,
+                            scorer_value_bits: test_content_sensitive_value(&payload).to_bits(),
                             safe_packet_payload: payload,
                             selected_index,
                         });
@@ -2830,6 +2888,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn synchronous_reference_oracle_rejects_value_misassociation() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let mut config = config(1, 1, 1, 9);
+        config.first_episode_id = 37;
+        let reference = synchronous_content_sensitive_reference(&config);
+        let mut misassociated = reference.events.clone();
+        let first_value_bits = misassociated
+            .first()
+            .expect("reference must contain scored events")
+            .scorer_value_bits;
+        let source_index = misassociated
+            .iter()
+            .position(|event| event.scorer_value_bits != first_value_bits)
+            .expect("reference must contain distinct scorer values");
+        let source_value_bits = misassociated[source_index].scorer_value_bits;
+        misassociated[0].scorer_value_bits = source_value_bits;
+        misassociated[source_index].scorer_value_bits = first_value_bits;
+
+        assert_eq!(
+            first_action_event_mismatch(&reference.events, &misassociated),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn asynchronous_oracle_rejects_scorer_value_row_swap() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let mut config = config(1, 4, 4, 9);
+        config.first_episode_id = 37;
+        let reference = synchronous_content_sensitive_reference(&config);
+        let mut scorer = ValueSwappingScorer::default();
+        let (result, events) = capture_async_action_events(|| {
+            run_async_flat_scored_rollout_v1(config, &mut scorer).unwrap()
+        });
+
+        assert!(result.all_natural());
+        assert!(scorer.swapped);
+        assert_eq!(result.episodes, reference.episodes);
+        assert!(first_action_event_mismatch(&reference.events, &events).is_some());
+    }
+
     struct FailingScorer {
         calls: u64,
         fail_on: u64,
@@ -2896,6 +2996,45 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    struct NonFiniteValueScorer {
+        value_bits: u32,
+    }
+
+    impl FlatBatchScorerV1 for NonFiniteValueScorer {
+        fn score_batch_v1(
+            &mut self,
+            _batch: &FlatScoringBatchViewV1<'_>,
+            logits: &mut [f32],
+            values: &mut [f32],
+        ) -> Result<(), FlatBatchScorerErrorV1> {
+            logits.fill(0.0);
+            values.fill(0.0);
+            values[0] = f32::from_bits(self.value_bits);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn non_finite_scorer_value_fails_closed_with_exact_bits() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        for value_bits in [0x7fc0_1234, f32::INFINITY.to_bits()] {
+            let error = run_async_flat_scored_rollout_v1(
+                config(1, 1, 1, 1),
+                &mut NonFiniteValueScorer { value_bits },
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                AsyncFlatScoredRolloutErrorV1::ScorerOutputNonFinite {
+                    batch_index: 0,
+                    output_index: 0,
+                    is_value: true,
+                    bits: value_bits,
+                }
+            );
+        }
     }
 
     #[test]
