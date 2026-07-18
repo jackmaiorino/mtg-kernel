@@ -23,8 +23,8 @@ use crate::rl::{
 };
 use crate::rl_session::{
     FastActorDecisionV1, FastActorSessionV1, FlatActionCoreV1, FlatActionDecisionBindingV1,
-    FlatActionDecisionSliceBuffersV1, FlatActionDecisionSliceErrorV1, FlatActionObjectGroupV1,
-    FlatActionObjectV1, FlatActionRefRoleV1, FlatActionRefV1,
+    FlatActionDecisionSliceBuffersV1, FlatActionDecisionSliceErrorV1, FlatActionKindV1,
+    FlatActionObjectGroupV1, FlatActionObjectV1, FlatActionRefRoleV1, FlatActionRefV1,
     FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1,
 };
 use crate::state::{AbilityKindV4, CastMethodV4};
@@ -682,6 +682,161 @@ pub struct FlatScorerActionRefV1 {
     pub model_object_index: u32,
 }
 
+/// Digest-covered scorer vocabulary projected from the operational action
+/// slice. The exhaustive conversion below makes every internal action-kind
+/// addition a compile-time scorer-contract update point.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum FlatScorerActionKindV1 {
+    #[default]
+    Pass = 0,
+    PlayLand = 1,
+    CastSpell = 2,
+    ActivateManaAbility = 3,
+    ActivateAbility = 4,
+    PlotSpell = 5,
+    ChooseTarget = 6,
+    ChooseCostTarget = 7,
+    ChooseCastMode = 8,
+    ChooseKicker = 9,
+    ChooseSpellMode = 10,
+    ChooseEffectOption = 11,
+    ChooseEffectTarget = 12,
+    FinishEffectSelection = 13,
+    ChooseEffectColor = 14,
+    ChooseEffectNumber = 15,
+    ChooseEffectBoolean = 16,
+    FinishTargetSelection = 17,
+    ChooseOptionalCostUse = 18,
+    ChooseOptionalCostWhich = 19,
+    ChooseSpellCopyPayment = 20,
+    ChooseSpellCopyRetarget = 21,
+    ChooseMadnessCast = 22,
+    Discard = 23,
+    ChooseAttackerInclusion = 24,
+    ChooseBlockerInclusion = 25,
+    OrderTriggers = 26,
+}
+
+impl From<FlatActionKindV1> for FlatScorerActionKindV1 {
+    fn from(kind: FlatActionKindV1) -> Self {
+        match kind {
+            FlatActionKindV1::Pass => Self::Pass,
+            FlatActionKindV1::PlayLand => Self::PlayLand,
+            FlatActionKindV1::CastSpell => Self::CastSpell,
+            FlatActionKindV1::ActivateManaAbility => Self::ActivateManaAbility,
+            FlatActionKindV1::ActivateAbility => Self::ActivateAbility,
+            FlatActionKindV1::PlotSpell => Self::PlotSpell,
+            FlatActionKindV1::ChooseTarget => Self::ChooseTarget,
+            FlatActionKindV1::ChooseCostTarget => Self::ChooseCostTarget,
+            FlatActionKindV1::ChooseCastMode => Self::ChooseCastMode,
+            FlatActionKindV1::ChooseKicker => Self::ChooseKicker,
+            FlatActionKindV1::ChooseSpellMode => Self::ChooseSpellMode,
+            FlatActionKindV1::ChooseEffectOption => Self::ChooseEffectOption,
+            FlatActionKindV1::ChooseEffectTarget => Self::ChooseEffectTarget,
+            FlatActionKindV1::FinishEffectSelection => Self::FinishEffectSelection,
+            FlatActionKindV1::ChooseEffectColor => Self::ChooseEffectColor,
+            FlatActionKindV1::ChooseEffectNumber => Self::ChooseEffectNumber,
+            FlatActionKindV1::ChooseEffectBoolean => Self::ChooseEffectBoolean,
+            FlatActionKindV1::FinishTargetSelection => Self::FinishTargetSelection,
+            FlatActionKindV1::ChooseOptionalCostUse => Self::ChooseOptionalCostUse,
+            FlatActionKindV1::ChooseOptionalCostWhich => Self::ChooseOptionalCostWhich,
+            FlatActionKindV1::ChooseSpellCopyPayment => Self::ChooseSpellCopyPayment,
+            FlatActionKindV1::ChooseSpellCopyRetarget => Self::ChooseSpellCopyRetarget,
+            FlatActionKindV1::ChooseMadnessCast => Self::ChooseMadnessCast,
+            FlatActionKindV1::Discard => Self::Discard,
+            FlatActionKindV1::ChooseAttackerInclusion => Self::ChooseAttackerInclusion,
+            FlatActionKindV1::ChooseBlockerInclusion => Self::ChooseBlockerInclusion,
+            FlatActionKindV1::OrderTriggers => Self::OrderTriggers,
+        }
+    }
+}
+
+/// Complete model-visible scalar action row. This deliberately mirrors rather
+/// than aliases [`FlatActionCoreV1`], so the typed-layout digest closes every
+/// field that can cross the scorer boundary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FlatScorerActionCoreV1 {
+    pub kind: FlatScorerActionKindV1,
+    pub flags: u16,
+    pub ability_index: u8,
+    pub remaining: u8,
+    pub mode_index: u8,
+    pub mode_count: u8,
+    pub option_index: u16,
+    pub option_count: u16,
+    pub selected_count: u16,
+    pub min_targets: u16,
+    pub max_targets: u16,
+    pub number: i32,
+    pub minimum: i32,
+    pub maximum: i32,
+    pub mana_choice: u8,
+    pub color: u8,
+    pub cast_mode: u8,
+    pub cost_kind: u8,
+    pub optional_cost_choice: u8,
+    pub target_kind: u8,
+    pub target_player: u8,
+    pub ref_start: u32,
+    pub ref_len: u16,
+}
+
+impl From<FlatActionCoreV1> for FlatScorerActionCoreV1 {
+    fn from(action: FlatActionCoreV1) -> Self {
+        let FlatActionCoreV1 {
+            kind,
+            flags,
+            ability_index,
+            remaining,
+            mode_index,
+            mode_count,
+            option_index,
+            option_count,
+            selected_count,
+            min_targets,
+            max_targets,
+            number,
+            minimum,
+            maximum,
+            mana_choice,
+            color,
+            cast_mode,
+            cost_kind,
+            optional_cost_choice,
+            target_kind,
+            target_player,
+            ref_start,
+            ref_len,
+        } = action;
+        Self {
+            kind: kind.into(),
+            flags,
+            ability_index,
+            remaining,
+            mode_index,
+            mode_count,
+            option_index,
+            option_count,
+            selected_count,
+            min_targets,
+            max_targets,
+            number,
+            minimum,
+            maximum,
+            mana_choice,
+            color,
+            cast_mode,
+            cost_kind,
+            optional_cost_choice,
+            target_kind,
+            target_player,
+            ref_start,
+            ref_len,
+        }
+    }
+}
+
 /// Complete model-visible surface of one scored decision packet.
 ///
 /// The private fields and explicit constructor make additions compile-time
@@ -701,7 +856,7 @@ pub struct FlatScoringDecisionViewV1<'a> {
     completed_dungeons: &'a [FlatCompletedDungeonV1],
     effect_subtype_changes: &'a [FlatEffectSubtypeChangeV1],
     context_path_elements: &'a [FlatContextPathElementV1],
-    actions: &'a [FlatActionCoreV1],
+    actions: &'a [FlatScorerActionCoreV1],
     action_refs: &'a [FlatScorerActionRefV1],
 }
 
@@ -717,7 +872,7 @@ impl<'a> FlatScoringDecisionViewV1<'a> {
         completed_dungeons: &'a [FlatCompletedDungeonV1],
         effect_subtype_changes: &'a [FlatEffectSubtypeChangeV1],
         context_path_elements: &'a [FlatContextPathElementV1],
-        actions: &'a [FlatActionCoreV1],
+        actions: &'a [FlatScorerActionCoreV1],
         action_refs: &'a [FlatScorerActionRefV1],
     ) -> Self {
         Self {
@@ -771,7 +926,7 @@ impl<'a> FlatScoringDecisionViewV1<'a> {
         self.context_path_elements
     }
 
-    pub fn actions(self) -> &'a [FlatActionCoreV1] {
+    pub fn actions(self) -> &'a [FlatScorerActionCoreV1] {
         self.actions
     }
 
@@ -4146,6 +4301,46 @@ mod tests {
     }
 
     #[test]
+    fn paid_cost_controller_conflict_with_live_object_fails_at_resolver() {
+        let session = FastActorSessionV1::reset_with_limits(90_027, 127, 128, 16_384);
+        let expected = expected(&session);
+        let mut observation = session.flat_policy_observation_v1(expected).unwrap();
+        let actor = observation.acting_player;
+        let other = opponent(actor);
+        let live = synthetic_stable(90_028, 2, actor, actor, Zone::Battlefield);
+        observation.projection.surface.battlefield[seat_index(actor)]
+            .push(synthetic_public(live.clone()));
+        let mut conflicting_paid_cost = live;
+        conflicting_paid_cost.controller = other;
+        observation
+            .projection
+            .surface
+            .stack
+            .push(StackItemPublicV2 {
+                stack_index: u32::try_from(observation.projection.surface.stack.len()).unwrap(),
+                source: synthetic_stable(90_029, 3, actor, actor, Zone::Stack),
+                controller: actor,
+                targets: Vec::new(),
+                stack_item_kind: StackItemKindV2::Spell,
+                is_copy: false,
+                is_flashback: false,
+                mode_chosen: 0,
+                madness_offer: false,
+                kicked: false,
+                cast_method: Some(CastMethodV4::Normal),
+                face_index: 0,
+                x_value: 0,
+                paid_cost_refs: vec![conflicting_paid_cost],
+            });
+
+        let error = match materialize_observation(&observation) {
+            Ok(_) => panic!("live-versus-paid-cost controller conflict was accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error, FlatDecisionErrorV1::InconsistentReference);
+    }
+
+    #[test]
     fn set_like_relation_inputs_have_one_canonical_typed_order() {
         let session = FastActorSessionV1::reset_with_limits(90_025, 125, 128, 16_384);
         let expected = expected(&session);
@@ -4685,6 +4880,169 @@ mod tests {
             encoder.cached_scorer_action_refs_v1(stale),
             Err(FlatDecisionErrorV1::ScorerBindingMismatch)
         );
+    }
+
+    #[test]
+    fn scorer_action_projection_is_field_exact_and_kind_exhaustive() {
+        let action = FlatActionCoreV1 {
+            kind: FlatActionKindV1::OrderTriggers,
+            flags: 0x1234,
+            ability_index: 1,
+            remaining: 2,
+            mode_index: 3,
+            mode_count: 4,
+            option_index: 5,
+            option_count: 6,
+            selected_count: 7,
+            min_targets: 8,
+            max_targets: 9,
+            number: -10,
+            minimum: -11,
+            maximum: 12,
+            mana_choice: 13,
+            color: 14,
+            cast_mode: 15,
+            cost_kind: 16,
+            optional_cost_choice: 17,
+            target_kind: 18,
+            target_player: 19,
+            ref_start: 20,
+            ref_len: 21,
+        };
+        assert_eq!(
+            FlatScorerActionCoreV1::from(action),
+            FlatScorerActionCoreV1 {
+                kind: FlatScorerActionKindV1::OrderTriggers,
+                flags: 0x1234,
+                ability_index: 1,
+                remaining: 2,
+                mode_index: 3,
+                mode_count: 4,
+                option_index: 5,
+                option_count: 6,
+                selected_count: 7,
+                min_targets: 8,
+                max_targets: 9,
+                number: -10,
+                minimum: -11,
+                maximum: 12,
+                mana_choice: 13,
+                color: 14,
+                cast_mode: 15,
+                cost_kind: 16,
+                optional_cost_choice: 17,
+                target_kind: 18,
+                target_player: 19,
+                ref_start: 20,
+                ref_len: 21,
+            }
+        );
+
+        let kinds = [
+            (FlatActionKindV1::Pass, FlatScorerActionKindV1::Pass),
+            (FlatActionKindV1::PlayLand, FlatScorerActionKindV1::PlayLand),
+            (
+                FlatActionKindV1::CastSpell,
+                FlatScorerActionKindV1::CastSpell,
+            ),
+            (
+                FlatActionKindV1::ActivateManaAbility,
+                FlatScorerActionKindV1::ActivateManaAbility,
+            ),
+            (
+                FlatActionKindV1::ActivateAbility,
+                FlatScorerActionKindV1::ActivateAbility,
+            ),
+            (
+                FlatActionKindV1::PlotSpell,
+                FlatScorerActionKindV1::PlotSpell,
+            ),
+            (
+                FlatActionKindV1::ChooseTarget,
+                FlatScorerActionKindV1::ChooseTarget,
+            ),
+            (
+                FlatActionKindV1::ChooseCostTarget,
+                FlatScorerActionKindV1::ChooseCostTarget,
+            ),
+            (
+                FlatActionKindV1::ChooseCastMode,
+                FlatScorerActionKindV1::ChooseCastMode,
+            ),
+            (
+                FlatActionKindV1::ChooseKicker,
+                FlatScorerActionKindV1::ChooseKicker,
+            ),
+            (
+                FlatActionKindV1::ChooseSpellMode,
+                FlatScorerActionKindV1::ChooseSpellMode,
+            ),
+            (
+                FlatActionKindV1::ChooseEffectOption,
+                FlatScorerActionKindV1::ChooseEffectOption,
+            ),
+            (
+                FlatActionKindV1::ChooseEffectTarget,
+                FlatScorerActionKindV1::ChooseEffectTarget,
+            ),
+            (
+                FlatActionKindV1::FinishEffectSelection,
+                FlatScorerActionKindV1::FinishEffectSelection,
+            ),
+            (
+                FlatActionKindV1::ChooseEffectColor,
+                FlatScorerActionKindV1::ChooseEffectColor,
+            ),
+            (
+                FlatActionKindV1::ChooseEffectNumber,
+                FlatScorerActionKindV1::ChooseEffectNumber,
+            ),
+            (
+                FlatActionKindV1::ChooseEffectBoolean,
+                FlatScorerActionKindV1::ChooseEffectBoolean,
+            ),
+            (
+                FlatActionKindV1::FinishTargetSelection,
+                FlatScorerActionKindV1::FinishTargetSelection,
+            ),
+            (
+                FlatActionKindV1::ChooseOptionalCostUse,
+                FlatScorerActionKindV1::ChooseOptionalCostUse,
+            ),
+            (
+                FlatActionKindV1::ChooseOptionalCostWhich,
+                FlatScorerActionKindV1::ChooseOptionalCostWhich,
+            ),
+            (
+                FlatActionKindV1::ChooseSpellCopyPayment,
+                FlatScorerActionKindV1::ChooseSpellCopyPayment,
+            ),
+            (
+                FlatActionKindV1::ChooseSpellCopyRetarget,
+                FlatScorerActionKindV1::ChooseSpellCopyRetarget,
+            ),
+            (
+                FlatActionKindV1::ChooseMadnessCast,
+                FlatScorerActionKindV1::ChooseMadnessCast,
+            ),
+            (FlatActionKindV1::Discard, FlatScorerActionKindV1::Discard),
+            (
+                FlatActionKindV1::ChooseAttackerInclusion,
+                FlatScorerActionKindV1::ChooseAttackerInclusion,
+            ),
+            (
+                FlatActionKindV1::ChooseBlockerInclusion,
+                FlatScorerActionKindV1::ChooseBlockerInclusion,
+            ),
+            (
+                FlatActionKindV1::OrderTriggers,
+                FlatScorerActionKindV1::OrderTriggers,
+            ),
+        ];
+        for (index, (operational, scorer)) in kinds.into_iter().enumerate() {
+            assert_eq!(FlatScorerActionKindV1::from(operational), scorer);
+            assert_eq!(scorer as usize, index);
+        }
     }
 
     #[test]

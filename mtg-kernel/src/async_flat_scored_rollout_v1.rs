@@ -27,8 +27,8 @@ use crate::flat_policy_v1::{
     FlatEffectSubtypeChangeKindV1, FlatEffectSubtypeChangeV1, FlatGlobalsV1,
     FlatObjectAbilityUseV1, FlatObjectCoreV1, FlatObjectGoadV1, FlatObjectGroupV1,
     FlatObjectSourceKindV1, FlatObjectSubtypeV1, FlatPendingEffectChoiceV1,
-    FlatPolicyContractDigestsV1, FlatRelationV1, FlatRelativePlayerV1, FlatScorerActionRefV1,
-    FlatScoringDecisionViewV1, FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1,
+    FlatPolicyContractDigestsV1, FlatRelationV1, FlatRelativePlayerV1, FlatScorerActionCoreV1,
+    FlatScorerActionRefV1, FlatScoringDecisionViewV1, FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1,
     FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1,
     FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1, FLAT_POLICY_CONTRACT_DIGESTS_V1,
     FLAT_POLICY_ENUM_MAPPING_VERSION_V1, FLAT_POLICY_FEATURE_INVENTORY_VERSION_V1,
@@ -401,7 +401,7 @@ struct OwnedFlatScoringDecisionV1 {
     completed_dungeons: Vec<FlatCompletedDungeonV1>,
     effect_subtype_changes: Vec<FlatEffectSubtypeChangeV1>,
     context_path_elements: Vec<FlatContextPathElementV1>,
-    actions: Vec<FlatActionCoreV1>,
+    actions: Vec<FlatScorerActionCoreV1>,
     scorer_action_refs: Vec<FlatScorerActionRefV1>,
 }
 
@@ -576,6 +576,7 @@ struct LocalLaneV1 {
     response: Option<FastActorResponseV1>,
     encoder: FlatDecisionEncoderV1,
     packet: Option<OwnedFlatScoringDecisionV1>,
+    operational_actions: Vec<FlatActionCoreV1>,
     operational_action_refs: Vec<FlatActionRefV1>,
     operational_action_objects: Vec<FlatActionObjectV1>,
     waiting_decision: Option<WaitingDecisionV1>,
@@ -604,6 +605,7 @@ impl LocalLaneV1 {
             response: None,
             encoder: FlatDecisionEncoderV1::default(),
             packet: Some(OwnedFlatScoringDecisionV1::default()),
+            operational_actions: Vec::new(),
             operational_action_refs: Vec::new(),
             operational_action_objects: Vec::new(),
             waiting_decision: None,
@@ -795,6 +797,7 @@ impl LocalLaneV1 {
                         expected,
                         &mut self.encoder,
                         &mut packet,
+                        &mut self.operational_actions,
                         &mut self.operational_action_refs,
                         &mut self.operational_action_objects,
                     )
@@ -839,6 +842,7 @@ fn encode_packet(
     expected: FastActorDecisionV1,
     encoder: &mut FlatDecisionEncoderV1,
     packet: &mut OwnedFlatScoringDecisionV1,
+    operational_actions: &mut Vec<FlatActionCoreV1>,
     operational_action_refs: &mut Vec<FlatActionRefV1>,
     operational_action_objects: &mut Vec<FlatActionObjectV1>,
 ) -> Result<(), FlatDecisionErrorV1> {
@@ -851,7 +855,7 @@ fn encode_packet(
         writable(&mut packet.completed_dungeons);
         writable(&mut packet.effect_subtype_changes);
         writable(&mut packet.context_path_elements);
-        writable(&mut packet.actions);
+        writable(operational_actions);
         writable(operational_action_refs);
         writable(operational_action_objects);
         let result = session.encode_current_flat_decision_v1(
@@ -866,7 +870,7 @@ fn encode_packet(
                 completed_dungeons: &mut packet.completed_dungeons,
                 effect_subtype_changes: &mut packet.effect_subtype_changes,
                 context_path_elements: &mut packet.context_path_elements,
-                actions: &mut packet.actions,
+                actions: operational_actions,
                 action_refs: operational_action_refs,
                 action_objects: operational_action_objects,
             },
@@ -906,7 +910,7 @@ fn encode_packet(
                 continue;
             }
             Err(FlatDecisionErrorV1::InsufficientActionCapacity { required, .. }) => {
-                resize_required(&mut packet.actions, required);
+                resize_required(operational_actions, required);
                 continue;
             }
             Err(FlatDecisionErrorV1::InsufficientActionRefCapacity { required, .. }) => {
@@ -919,6 +923,22 @@ fn encode_packet(
             }
             Err(error) => return Err(error),
         };
+        let active_action_count = usize::try_from(decision.active_action_count)
+            .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?;
+        let operational_actions = operational_actions
+            .get(..active_action_count)
+            .ok_or(FlatDecisionErrorV1::InvalidReference)?;
+        packet.actions.clear();
+        packet
+            .actions
+            .try_reserve(operational_actions.len())
+            .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?;
+        packet.actions.extend(
+            operational_actions
+                .iter()
+                .copied()
+                .map(FlatScorerActionCoreV1::from),
+        );
         let scorer_action_refs =
             encoder.cached_scorer_action_refs_v1(decision.binding.action_binding)?;
         packet.scorer_action_refs.clear();
@@ -2297,6 +2317,17 @@ mod tests {
         (result, events)
     }
 
+    fn first_action_event_mismatch(
+        expected: &[TestScoredActionEventV1],
+        actual: &[TestScoredActionEventV1],
+    ) -> Option<usize> {
+        expected
+            .iter()
+            .zip(actual)
+            .position(|(expected, actual)| expected != actual)
+            .or_else(|| (expected.len() != actual.len()).then(|| expected.len().min(actual.len())))
+    }
+
     struct SynchronousReferenceV1 {
         episodes: Vec<AsyncRolloutEpisodeV1>,
         events: Vec<TestScoredActionEventV1>,
@@ -2316,6 +2347,7 @@ mod tests {
         let mut events = Vec::new();
         let mut encoder = FlatDecisionEncoderV1::default();
         let mut packet = OwnedFlatScoringDecisionV1::default();
+        let mut operational_actions = Vec::new();
         let mut operational_action_refs = Vec::new();
         let mut operational_action_objects = Vec::new();
         let mut sampler = FastCategoricalScratch::default();
@@ -2355,6 +2387,7 @@ mod tests {
                             expected,
                             &mut encoder,
                             &mut packet,
+                            &mut operational_actions,
                             &mut operational_action_refs,
                             &mut operational_action_objects,
                         )
@@ -2475,7 +2508,7 @@ mod tests {
                 card_token: 1,
                 ..Default::default()
             }],
-            actions: vec![FlatActionCoreV1 {
+            actions: vec![FlatScorerActionCoreV1 {
                 ref_start: 0,
                 ref_len: 1,
                 ..Default::default()
@@ -2813,7 +2846,10 @@ mod tests {
             assert!(scorer.saw_nonuniform_multi_action);
             assert!(scorer.distinct_payloads.len() > 1);
             assert_eq!(result.episodes, reference.episodes);
-            assert_eq!(events, reference.events);
+            assert_eq!(
+                first_action_event_mismatch(&reference.events, &events),
+                None
+            );
             assert_eq!(result.policy_step_count, reference.policy_step_count);
             assert_eq!(
                 result.physical_decision_count,
@@ -2828,6 +2864,31 @@ mod tests {
                 reference.scored_action_logit_count
             );
         }
+    }
+
+    #[test]
+    fn synchronous_reference_oracle_rejects_packet_misassociation() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let mut config = config(1, 1, 1, 9);
+        config.first_episode_id = 37;
+        let reference = synchronous_content_sensitive_reference(&config);
+        let mut misassociated = reference.events.clone();
+        let first_payload = misassociated
+            .first()
+            .expect("reference must contain scored events")
+            .safe_packet_payload
+            .clone();
+        let source_index = misassociated
+            .iter()
+            .position(|event| event.safe_packet_payload != first_payload)
+            .expect("reference must contain distinct scored packet payloads");
+        misassociated[0].safe_packet_payload =
+            misassociated[source_index].safe_packet_payload.clone();
+
+        assert_eq!(
+            first_action_event_mismatch(&reference.events, &misassociated),
+            Some(0)
+        );
     }
 
     struct FailingScorer {
@@ -3049,7 +3110,7 @@ mod tests {
         );
         assert_eq!(
             digest,
-            "c13e8ed95683316b3d4d2f4aa5d631170723d4c9b53605da63b5611ec4901ef5"
+            "582cb191e1fd0c8835e1e85a45d6f7077bdf77a5b52e0d39701c5e27f5949df7"
         );
     }
 }
