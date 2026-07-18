@@ -9316,6 +9316,10 @@ mod tests {
         // Only 1 Mountain in play: the combined {R}{R} kicked cost isn't
         // payable, so `Decision::ChooseKicker` is never even offered --
         // same "no real choice" shortcut as `ChooseCastMode`.
+        assert!(
+            !matches!(advance_until_decision(&mut state), Decision::ChooseKicker { .. }),
+            "the matched-uniform policy must consume no leaf or physical decision for this forced unkicked cast"
+        );
         pass_until_stack_resolves(&mut state);
         assert_eq!(effective_power(&state, bushwhacker), 1);
         assert!(
@@ -9829,6 +9833,59 @@ mod tests {
         assert!(state.stack.is_empty());
         assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
         assert_eq!(state.players[0].graveyard, vec![bolt]);
+    }
+
+    #[test]
+    fn chain_lightning_unpayable_decline_has_the_same_no_copy_terminal_shape() {
+        let mut state = ready_game_in_main1(1);
+        let chain = put_in_hand(&mut state, PlayerId::P0, "Chain Lightning");
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment {
+                player: PlayerId::P1,
+                spell,
+            } if spell == chain
+        ));
+
+        step(&mut state, Action::ChooseSpellCopyPayment(false)).unwrap();
+        assert!(state.engine.pending_spell_copy.is_none());
+        assert!(state.stack.is_empty());
+        assert_eq!(state.objects.get(chain).zone, Zone::Graveyard);
+        assert_eq!(state.players[0].graveyard, vec![chain]);
+        assert_eq!(
+            state.objects.len(),
+            2,
+            "the declined unpayable branch creates no virtual copy"
+        );
+    }
+
+    #[test]
+    fn blood_activation_with_one_discardable_card_is_forced_before_policy_dispatch() {
+        let mut state = ready_game_in_main1(1);
+        let blood = put_on_battlefield(&mut state, PlayerId::P0, "Blood Token");
+        let discarded = put_in_hand(&mut state, PlayerId::P0, "Lightning Bolt");
+
+        step(&mut state, Action::ActivateAbility(blood, 0)).unwrap();
+        let next = advance_until_decision(&mut state);
+        assert!(
+            !matches!(next, Decision::Discard { .. }),
+            "a one-card Blood discard must auto-resolve without a policy decision"
+        );
+        assert!(state.players[0].hand.is_empty());
+        assert_eq!(state.players[0].graveyard, vec![discarded]);
+        assert!(state.engine.pending_discard.is_none());
+        assert!(state.engine.pending_activation.is_none());
+        assert_eq!(
+            state.stack.len(),
+            1,
+            "the paid Blood ability is now on stack"
+        );
     }
 
     #[test]

@@ -989,6 +989,21 @@ impl FastActorSessionV1 {
         .expect("fast actor core environment serializes")
     }
 
+    /// Audit-only copy of the current canonical semantic action order.
+    ///
+    /// The fast actor deliberately omits semantic records from its hot
+    /// response. Benchmarks that need to prove full-v5 parity may call this
+    /// outside their timed loop; reset and step never invoke it.
+    pub fn diagnostic_current_action_semantics(&self) -> Option<Vec<ActionSemanticV1>> {
+        self.current.as_ref().map(|decision| {
+            decision
+                .candidates
+                .iter()
+                .map(|candidate| candidate.semantic.clone())
+                .collect()
+        })
+    }
+
     pub fn snapshot_v1(&self) -> FastActorSessionSnapshotV1 {
         FastActorSessionSnapshotV1(self.clone())
     }
@@ -1918,6 +1933,7 @@ mod tests {
         ActionSemanticV1,
     };
     use crate::state::{Counters, GameObject, GameState, ObjectStateV4, SplitMix64, Step, Zone};
+    use std::collections::HashSet;
 
     fn attacker_state(count: usize) -> GameState {
         let mut state = GameState::new_from_libraries(&[], &[], card_name, 91);
@@ -1977,6 +1993,32 @@ mod tests {
             state.players[1].battlefield.push(id);
         }
         state
+    }
+
+    fn add_battlefield_object(
+        state: &mut GameState,
+        player: PlayerId,
+        name: &str,
+    ) -> crate::ids::ObjectId {
+        let card_def = card_id_by_name(name).unwrap();
+        let id = state.objects.push(GameObject {
+            card_def,
+            name: name.to_string(),
+            owner: player,
+            controller: player,
+            zone: Zone::Battlefield,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        state.players[player.index()].battlefield.push(id);
+        id
     }
 
     fn attacker_session(
@@ -2613,6 +2655,59 @@ mod tests {
         let (observations, stable_actions) = test_policy_v5_materialization_calls();
         assert!(observations > 0);
         assert!(stable_actions > 0);
+    }
+
+    #[test]
+    fn matched_rally_priority_menu_preserves_each_physical_mana_and_blood_source() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 91);
+        let mountain_a = add_battlefield_object(&mut state, PlayerId::P0, "Mountain");
+        let mountain_b = add_battlefield_object(&mut state, PlayerId::P0, "Mountain");
+        let furnace = add_battlefield_object(&mut state, PlayerId::P0, "Great Furnace");
+        let blood_a = add_battlefield_object(&mut state, PlayerId::P0, "Blood Token");
+        let blood_b = add_battlefield_object(&mut state, PlayerId::P0, "Blood Token");
+        let decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                castable_spells: Vec::new(),
+                mana_abilities: vec![mountain_a, mountain_b, furnace],
+                land_drops: Vec::new(),
+                activatable_abilities: vec![(blood_a, 0), (blood_b, 0)],
+                plot_actions: Vec::new(),
+            }));
+        let candidates = core_policy_action_candidates_v5(&decision, &state).unwrap();
+        let mana_sources: Vec<_> = candidates
+            .iter()
+            .filter_map(|candidate| match &candidate.semantic {
+                ActionSemanticV1::ActivateManaAbility { source, .. } => Some(source.arena_id),
+                _ => None,
+            })
+            .collect();
+        let blood_sources: Vec<_> = candidates
+            .iter()
+            .filter_map(|candidate| match &candidate.semantic {
+                ActionSemanticV1::ActivateAbility { source, .. } => Some(source.arena_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            mana_sources,
+            vec![mountain_a.0, mountain_b.0, furnace.0],
+            "two Mountains and Great Furnace must remain separate canonical actions"
+        );
+        assert_eq!(
+            blood_sources,
+            vec![blood_a.0, blood_b.0],
+            "each Blood token must remain a separate canonical source action"
+        );
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| &candidate.semantic)
+                .collect::<HashSet<_>>()
+                .len(),
+            candidates.len(),
+            "source-distinct actions must not collapse semantically"
+        );
     }
 
     #[test]

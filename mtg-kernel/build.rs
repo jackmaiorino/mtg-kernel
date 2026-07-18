@@ -13,15 +13,27 @@
 //! `engine_capability`; ordinary supported permanents and intrinsic basic-
 //! land mana are generated from metadata, while exceptional rules text is
 //! still composed explicitly below.
+//!
+//! The build also embeds a Git commit-tree integrity proof: build HEAD,
+//! clean/dirty status, and a deterministic SHA-256 over every tracked path,
+//! mode, type, and Git blob (or gitlink id). This is not a sealed-builder or
+//! complete rustc-input attestation; it does not claim to capture toolchain,
+//! environment, proc-macro, generated, or every dependency byte consumed by
+//! compilation.
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::Path;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 const EXPECTED_SCHEMA_VERSION: u32 = 2;
+const TRACKED_TREE_HASH_CONTRACT: &str =
+    "git-ls-tree-r-z-path-mode-type-framed-blob-content-or-gitlink-oid-sha256/v1";
 
 #[derive(Debug, Deserialize)]
 struct CardJson {
@@ -118,8 +130,256 @@ struct RuntimeDeckCopyJson {
     card_id: u16,
 }
 
+#[derive(Debug)]
+struct GitTreeEntry {
+    mode: Vec<u8>,
+    kind: Vec<u8>,
+    object_id: String,
+    path: Vec<u8>,
+}
+
+fn git_output(repo_root: &Path, args: &[&str], operation: &str) -> Vec<u8> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(repo_root)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to execute git for {operation}: {error}"));
+    if !output.status.success() {
+        panic!("git failed while resolving {operation}");
+    }
+    output.stdout
+}
+
+fn git_text(repo_root: &Path, args: &[&str], operation: &str) -> String {
+    let bytes = git_output(repo_root, args, operation);
+    std::str::from_utf8(&bytes)
+        .unwrap_or_else(|_| panic!("git returned non-UTF-8 data for {operation}"))
+        .trim()
+        .to_string()
+}
+
+fn parse_tree_entries(bytes: &[u8]) -> Vec<GitTreeEntry> {
+    let mut entries = Vec::new();
+    for record in bytes
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let tab = record
+            .iter()
+            .position(|byte| *byte == b'\t')
+            .expect("git ls-tree record contains a path separator");
+        let mut metadata = record[..tab].split(|byte| *byte == b' ');
+        let mode = metadata.next().expect("git ls-tree record contains a mode");
+        let kind = metadata.next().expect("git ls-tree record contains a type");
+        let object_id = metadata
+            .next()
+            .expect("git ls-tree record contains an object id");
+        if metadata.next().is_some()
+            || mode.is_empty()
+            || kind.is_empty()
+            || object_id.is_empty()
+            || record[tab + 1..].is_empty()
+        {
+            panic!("git ls-tree returned malformed tracked-tree metadata");
+        }
+        let object_id = std::str::from_utf8(object_id)
+            .expect("git object id is ASCII")
+            .to_string();
+        if !object_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            panic!("git ls-tree returned a malformed object id");
+        }
+        entries.push(GitTreeEntry {
+            mode: mode.to_vec(),
+            kind: kind.to_vec(),
+            object_id,
+            path: record[tab + 1..].to_vec(),
+        });
+    }
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    if entries.windows(2).any(|pair| pair[0].path == pair[1].path) {
+        panic!("git ls-tree returned duplicate tracked paths");
+    }
+    entries
+}
+
+fn git_blob_contents(repo_root: &Path, entries: &[GitTreeEntry]) -> Vec<Option<Vec<u8>>> {
+    let mut child = Command::new("git")
+        .args(["cat-file", "--batch"])
+        .current_dir(repo_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("git cat-file starts for tracked-tree binding");
+    {
+        let stdin = child.stdin.as_mut().expect("git cat-file stdin is piped");
+        for entry in entries.iter().filter(|entry| entry.kind == b"blob") {
+            writeln!(stdin, "{}", entry.object_id).expect("git cat-file accepts tracked blob ids");
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .expect("git cat-file completes for tracked-tree binding");
+    if !output.status.success() {
+        panic!("git cat-file failed for tracked-tree binding");
+    }
+
+    let mut cursor = 0usize;
+    let mut contents = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if entry.kind == b"commit" {
+            if entry.mode != b"160000" {
+                panic!("tracked commit entry is not a gitlink");
+            }
+            contents.push(None);
+            continue;
+        }
+        if entry.kind != b"blob" || entry.mode == b"160000" {
+            panic!("tracked tree contains an unsupported entry type");
+        }
+        let relative_newline = output.stdout[cursor..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .expect("git cat-file response contains a header terminator");
+        let header_end = cursor + relative_newline;
+        let header = std::str::from_utf8(&output.stdout[cursor..header_end])
+            .expect("git cat-file header is ASCII");
+        let mut fields = header.split(' ');
+        let returned_id = fields.next().expect("git cat-file header has object id");
+        let returned_kind = fields.next().expect("git cat-file header has type");
+        let size = fields
+            .next()
+            .expect("git cat-file header has size")
+            .parse::<usize>()
+            .expect("git cat-file blob size fits usize");
+        if fields.next().is_some() || returned_id != entry.object_id || returned_kind != "blob" {
+            panic!("git cat-file returned unexpected tracked blob metadata");
+        }
+        let content_start = header_end + 1;
+        let content_end = content_start
+            .checked_add(size)
+            .expect("tracked blob bounds fit usize");
+        if content_end >= output.stdout.len() || output.stdout[content_end] != b'\n' {
+            panic!("git cat-file returned a truncated tracked blob");
+        }
+        contents.push(Some(output.stdout[content_start..content_end].to_vec()));
+        cursor = content_end + 1;
+    }
+    if cursor != output.stdout.len() {
+        panic!("git cat-file returned unconsumed tracked blob bytes");
+    }
+    contents
+}
+
+fn hash_frame(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+}
+
+fn tracked_tree_sha256(repo_root: &Path, commit: &str) -> String {
+    let listing = git_output(
+        repo_root,
+        &["ls-tree", "-r", "-z", "--full-tree", commit],
+        "tracked tree listing",
+    );
+    let entries = parse_tree_entries(&listing);
+    let contents = git_blob_contents(repo_root, &entries);
+    let mut hasher = Sha256::new();
+    hasher.update(TRACKED_TREE_HASH_CONTRACT.as_bytes());
+    hasher.update([0]);
+    hasher.update((entries.len() as u64).to_be_bytes());
+    for (entry, content) in entries.iter().zip(contents.iter()) {
+        hash_frame(&mut hasher, &entry.path);
+        hash_frame(&mut hasher, &entry.mode);
+        hash_frame(&mut hasher, &entry.kind);
+        match content {
+            Some(bytes) => hash_frame(&mut hasher, bytes),
+            None => hash_frame(&mut hasher, entry.object_id.as_bytes()),
+        }
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn resolve_git_path(repo_root: &Path, name: &str) -> PathBuf {
+    let resolved = git_text(
+        repo_root,
+        &["rev-parse", "--git-path", name],
+        "git metadata path",
+    );
+    let path = PathBuf::from(resolved);
+    if path.is_absolute() {
+        path
+    } else {
+        repo_root.join(path)
+    }
+}
+
+fn emit_commit_tree_rerun_inputs(repo_root: &Path) {
+    for name in ["HEAD", "index", "packed-refs"] {
+        println!(
+            "cargo:rerun-if-changed={}",
+            resolve_git_path(repo_root, name).display()
+        );
+    }
+    let symbolic_ref = Command::new("git")
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .current_dir(repo_root)
+        .output()
+        .expect("git symbolic-ref executes for commit-tree binding");
+    if symbolic_ref.status.success() {
+        let reference = std::str::from_utf8(&symbolic_ref.stdout)
+            .expect("git symbolic ref is UTF-8")
+            .trim();
+        println!(
+            "cargo:rerun-if-changed={}",
+            resolve_git_path(repo_root, reference).display()
+        );
+    }
+    let tracked = git_output(
+        repo_root,
+        &["ls-files", "-z"],
+        "tracked worktree rerun inputs",
+    );
+    for path in tracked
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let path =
+            std::str::from_utf8(path).expect("tracked paths must be UTF-8 for Cargo rerun binding");
+        println!("cargo:rerun-if-changed={}", repo_root.join(path).display());
+    }
+    for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+}
+
+fn configure_commit_tree_binding(repo_root: &Path) {
+    emit_commit_tree_rerun_inputs(repo_root);
+    let head = git_text(repo_root, &["rev-parse", "HEAD"], "build HEAD binding");
+    if head.len() != 40
+        || !head
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        panic!("build HEAD binding is not a lowercase SHA-1 commit id");
+    }
+    let status = git_output(
+        repo_root,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+        "build source status",
+    );
+    let clean = status.is_empty();
+    let tree_sha256 = tracked_tree_sha256(repo_root, &head);
+    println!("cargo:rustc-env=MTG_KERNEL_BUILD_GIT_HEAD={head}");
+    println!("cargo:rustc-env=MTG_KERNEL_BUILD_GIT_CLEAN={clean}");
+    println!("cargo:rustc-env=MTG_KERNEL_BUILD_TRACKED_TREE_SHA256={tree_sha256}");
+    println!("cargo:rustc-env=MTG_KERNEL_BUILD_TRACKED_TREE_CONTRACT={TRACKED_TREE_HASH_CONTRACT}");
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
+    let repo_root = Path::new(&manifest_dir).join("..");
+    configure_commit_tree_binding(&repo_root);
     let json_path = Path::new(&manifest_dir)
         .join("..")
         .join("data")
