@@ -1,11 +1,12 @@
-# Flat policy v1 design candidate
+# Flat policy v1 design
 
-Status: partial action-slice performance candidate only. This document does
-not admit a full state encoder, model, checkpoint, training, evaluation, or
-performance contract. All diagnostic timings remain noncanonical until a
-clean-source audit. Passing that source audit does not promote or canonicalize
-environment-only timings; canonical performance promotion remains a separate
-gate.
+Status: validated bounded typed full-state record checkpoint. The checked-in
+`FlatDecisionV1` producer covers globals, objects, relations, variable auxiliary
+rows, and the pre-existing action slice, but it does not yet admit an
+accelerator projection, model, checkpoint, training, evaluation, or performance
+contract. See `FLAT_POLICY_V1_VALIDATION.md` for the bounded engineering
+evidence and explicit limitations. All diagnostic timings remain noncanonical
+until their separate source and measurement gates pass.
 
 ## Purpose
 
@@ -106,12 +107,33 @@ FlatActionRefV1
   card_token: u16
   object_index: u16
 
+FlatPolicyContractDigestsV1
+  mapping_sha256: [u8; 32]
+  feature_inventory_sha256: [u8; 32]
+  typed_layout_sha256: [u8; 32]
+
 AcceleratorProjectionCandidateV1
   globals: [f32; 128]
   object_features: [f32; 16]
   relation_features: [f32; 8]
   action_features: [f32; 64]
 ```
+
+`FlatDecisionBindingV1` carries all three digests plus the independent
+action-reference projection-role mapping version. Consumers compare the full
+version-and-digest binding: regenerating an enum map, classified inventory, or
+typed layout under an unchanged numeric V1 therefore changes semantic identity
+instead of being accepted silently. Build-time codegen recomputes the canonical
+inventory and mapping digests, validates the source hashes recorded by the
+inventory/goldens, and fails closed on a stale or malformed generated file.
+
+The Rust action slice and Python projection intentionally use different role
+widths. Rust's internal `FlatActionRefRoleV1` is eight-wide, with
+`pending_sources` at internal id 7. Python's `action_ref_role` projection is
+ten-wide: plural `attackers` and `blockers` occupy projection ids 7 and 8, and
+`pending_sources` occupies projection id 9. The generated, versioned crosswalk
+is identity for internal ids 0 through 6 and maps internal 7 to projection 9.
+The projection-only plural roles are not emitted by the Rust action slice.
 
 The checked-in partial slice uses `FlatActionDecisionBindingV1`, which also
 binds the slice, reference-role, card-token, and commitment versions;
@@ -209,7 +231,9 @@ The safe one-pass v1 consume path remains below the advisory 2.5-million
 aggregate decisions/second continuation floor. It must not be silently changed
 to trust the cache. A future O(1) path therefore requires a new, reviewed
 control-plane contract, provisionally `FlatActionConsumeLeaseV2`, while keeping
-the model-visible action/reference/object rows byte-identical to v1.
+the model-visible action/reference and typed-state rows byte-identical to v1.
+The separate `FlatActionObjectV1` table remains operational and actor-side; it
+is never a scorer input.
 
 The lease would be a non-serializable, non-model-input Rust capability owned by
 the actor service. It would bind the complete public v1 binding plus a private
@@ -464,12 +488,16 @@ workloads and interference bounds.
    tails, semantic parity, and zero allocation with admitted capacities. The
    refs-only private cache is a source candidate; promote it only after the
    clean validation matrix and diagnostic provenance pass.
-3. Inventory every schema-v5 model-input field formerly represented explicitly
-   or through canonical digest bytes. Add typed globals and the lossless object
-   core; do not freeze 128/16 until the inventory and range proof pass.
-4. Add the required role-specific relation union and parity/privacy fixtures.
-   Only this globals+objects+relations+actions record may be named a full flat
-   policy encoder.
+3. The validated bounded implementation inventories all 964 authoritative
+   semantic leaves, including 778 model inputs, 176 operational-only leaves,
+   and ten forbidden leaves. It adds typed globals, the lossless object core,
+   and variable auxiliary rows. Independent semantic-destination and contract
+   audits passed after their findings were repaired; no provisional float width
+   is frozen.
+4. The validated bounded implementation includes the required role-specific
+   relation union and parity/privacy/actor-relative fixtures. It is the accepted
+   typed state-record checkpoint, but not yet a scorer or production trainer
+   input.
 5. Generate and validate the accelerator projection, then measure full encoding
    shapes/rate on all ordered Burn/Rally matchups plus synthetic structural tails.
    Revise candidate dimensions with a new contract identifier if a mapping or
