@@ -23,8 +23,14 @@ Coverage for each of all 14 tensors (156,097 parameters total) consists of:
 - three independently seeded, index-weighted float64 projections for each of
   those four vectors;
 - an order-sensitive SHA-256 sign/deadband fingerprint for each vector; and
-- fixed representatives at the first, middle, last, and largest-absolute
-  gradient positions (deduplicated for short tensors).
+- fixed representatives in the exact first, middle, last, and
+  largest-absolute-gradient order (deduplicated for short tensors).
+
+First- and second-moment comparisons use scale-specific absolute tolerances of
+`1e-6` and `1e-8`, respectively. The CPU/GPU gates use those same scales. This
+closes small-value ordering drift that the deliberately coarse sign/deadband
+fingerprint cannot see; the audited swap of `state_b2.second_moment[32]` and
+`[51]` is a pinned negative regression.
 
 The fixture also pins all nine logits, all three values, detached-loss terms,
 and all output gradients. A summary-preserving permutation of non-sampled
@@ -47,6 +53,8 @@ The service lifecycle is fail-closed. Pure host validation and dimension
 preflight errors remain retryable, but any internal-state or CUDA failure after
 that boundary poisons the service. A staged replacement remains owned beside
 the active batch until an explicit close drains successfully, and all
-model/output downloads reject a poisoned service. `close()` retains every
-resource if synchronization fails; `Drop` remains best-effort because it cannot
-return a CUDA driver error.
+model/output downloads reject a poisoned service, and CUDA-copy or downloaded
+model-validation failures poison immediately. `close()` retains every resource
+if synchronization fails and enters a terminal poisoned/closing state in which
+only an explicit close retry is legal. `Drop` remains best-effort because it
+cannot return a CUDA driver error.

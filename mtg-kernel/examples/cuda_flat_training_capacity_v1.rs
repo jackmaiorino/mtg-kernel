@@ -45,6 +45,8 @@ const ADAM_BETA2: f32 = 0.999;
 const ADAM_EPSILON: f32 = 1.0e-5;
 const NATIVE_ADAM_CONTRACT_VERSION: &str = "native-adam-epsilon-1e-5-v1";
 const UPDATED_PARAMETER_CPU_GPU_TOLERANCE: f32 = 5.0e-6;
+const FIRST_MOMENT_CPU_GPU_TOLERANCE: f32 = 1.0e-6;
+const SECOND_MOMENT_CPU_GPU_TOLERANCE: f32 = 1.0e-8;
 const MODEL_CONTRACT_VERSION: &str = "cuda-flat-training-capacity-v1";
 const GRADIENT_CHECK_STEP: f32 = 1.0e-3;
 const GRADIENT_CHECK_ABS_TOLERANCE: f32 = 2.0e-3;
@@ -55,12 +57,14 @@ const CUDA_THREADS: u32 = 256;
 const INDEPENDENT_GOLDEN_JSON: &str =
     include_str!("data/cuda_flat_training_independent_golden_v1.json");
 const INDEPENDENT_GOLDEN_FILE_SHA256: &str =
-    "b4038979c07b0f0bea2a12701545dc803180475941ecf118001408ba930e8c9d";
+    "7d810a308d223ee1228b2a6676c3d5906c8cd20d6dd7a33698dfda37eae6ade8";
 const INDEPENDENT_GOLDEN_SCHEMA_VERSION: &str = "cuda-flat-training-independent-golden-v1";
 const INDEPENDENT_FORWARD_ABS_TOLERANCE: f64 = 1.0e-4;
 const INDEPENDENT_LOSS_ABS_TOLERANCE: f64 = 2.0e-4;
 const INDEPENDENT_TENSOR_ABS_TOLERANCE: f64 = 1.0e-4;
 const INDEPENDENT_TENSOR_REL_TOLERANCE: f64 = 5.0e-3;
+const INDEPENDENT_FIRST_MOMENT_ABS_TOLERANCE: f64 = 1.0e-6;
+const INDEPENDENT_SECOND_MOMENT_ABS_TOLERANCE: f64 = 1.0e-8;
 const INDEPENDENT_ORDER_PROJECTION_ABS_TOLERANCE: f64 = 1.0e-5;
 const INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE: f64 = 5.0e-3;
 const INDEPENDENT_ORDER_PROJECTION_SEEDS: [u64; 3] = [
@@ -1430,6 +1434,8 @@ fn validate_independent_summary(
     label: &str,
     actual: &[f32],
     expected: IndependentGoldenVectorSummary,
+    absolute_tolerance: f64,
+    relative_tolerance: f64,
 ) -> Result<f64, Box<dyn Error>> {
     let actual = f64_vector_summary(actual)?;
     if actual.length != expected.length {
@@ -1451,8 +1457,8 @@ fn validate_independent_summary(
             &format!("{label}.{metric}"),
             actual,
             expected,
-            INDEPENDENT_TENSOR_ABS_TOLERANCE,
-            INDEPENDENT_TENSOR_REL_TOLERANCE,
+            absolute_tolerance,
+            relative_tolerance,
         )?);
     }
     Ok(maximum_error)
@@ -1484,6 +1490,8 @@ fn validate_independent_order_evidence(
     label: &str,
     actual: &[f32],
     expected: &IndependentGoldenOrderEvidence,
+    absolute_tolerance: f64,
+    relative_tolerance: f64,
 ) -> Result<f64, Box<dyn Error>> {
     if expected.projection_contract
         != "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order"
@@ -1518,11 +1526,38 @@ fn validate_independent_order_evidence(
             &format!("{label}.projection.{seed:016x}"),
             actual_projection,
             projection.value,
-            INDEPENDENT_ORDER_PROJECTION_ABS_TOLERANCE,
-            INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE,
+            absolute_tolerance,
+            relative_tolerance,
         )?);
     }
     Ok(maximum_error)
+}
+
+fn promised_representative_indices(values: &[f32]) -> Result<Vec<usize>, Box<dyn Error>> {
+    if values.is_empty() || !values.iter().all(|value| value.is_finite()) {
+        return Err("independent golden representative source must be non-empty and finite".into());
+    }
+    let mut largest_absolute_index = 0usize;
+    let mut largest_absolute_value = values[0].abs();
+    for (index, &value) in values.iter().enumerate().skip(1) {
+        let absolute = value.abs();
+        if absolute.total_cmp(&largest_absolute_value).is_gt() {
+            largest_absolute_index = index;
+            largest_absolute_value = absolute;
+        }
+    }
+    let mut indices = Vec::with_capacity(4);
+    for index in [
+        0,
+        values.len() / 2,
+        values.len() - 1,
+        largest_absolute_index,
+    ] {
+        if !indices.contains(&index) {
+            indices.push(index);
+        }
+    }
+    Ok(indices)
 }
 
 fn validate_independent_golden_fixture(
@@ -1752,90 +1787,116 @@ fn validate_independent_golden_fixture(
             &format!("{initial_name}.gradient_summary"),
             &updated_parameter.gradient,
             expected.gradient_summary,
+            INDEPENDENT_TENSOR_ABS_TOLERANCE,
+            INDEPENDENT_TENSOR_REL_TOLERANCE,
         )?);
         maximum_tensor_error = maximum_tensor_error.max(validate_independent_order_evidence(
             &format!("{initial_name}.gradient"),
             &updated_parameter.gradient,
             &expected.gradient_order_evidence,
+            INDEPENDENT_ORDER_PROJECTION_ABS_TOLERANCE,
+            INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE,
         )?);
         maximum_tensor_error = maximum_tensor_error.max(validate_independent_summary(
             &format!("{initial_name}.updated_value_summary"),
             &updated_parameter.value,
             expected.updated_value_summary,
+            INDEPENDENT_TENSOR_ABS_TOLERANCE,
+            INDEPENDENT_TENSOR_REL_TOLERANCE,
         )?);
         maximum_tensor_error = maximum_tensor_error.max(validate_independent_order_evidence(
             &format!("{initial_name}.updated_value"),
             &updated_parameter.value,
             &expected.updated_value_order_evidence,
+            INDEPENDENT_ORDER_PROJECTION_ABS_TOLERANCE,
+            INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE,
         )?);
         maximum_tensor_error = maximum_tensor_error.max(validate_independent_summary(
             &format!("{initial_name}.first_moment_summary"),
             &updated_parameter.first_moment,
             expected.first_moment_summary,
+            INDEPENDENT_FIRST_MOMENT_ABS_TOLERANCE,
+            INDEPENDENT_TENSOR_REL_TOLERANCE,
         )?);
         maximum_tensor_error = maximum_tensor_error.max(validate_independent_order_evidence(
             &format!("{initial_name}.first_moment"),
             &updated_parameter.first_moment,
             &expected.first_moment_order_evidence,
+            INDEPENDENT_FIRST_MOMENT_ABS_TOLERANCE,
+            INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE,
         )?);
         maximum_tensor_error = maximum_tensor_error.max(validate_independent_summary(
             &format!("{initial_name}.second_moment_summary"),
             &updated_parameter.second_moment,
             expected.second_moment_summary,
+            INDEPENDENT_SECOND_MOMENT_ABS_TOLERANCE,
+            INDEPENDENT_TENSOR_REL_TOLERANCE,
         )?);
         maximum_tensor_error = maximum_tensor_error.max(validate_independent_order_evidence(
             &format!("{initial_name}.second_moment"),
             &updated_parameter.second_moment,
             &expected.second_moment_order_evidence,
+            INDEPENDENT_SECOND_MOMENT_ABS_TOLERANCE,
+            INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE,
         )?);
-        if expected.representatives.is_empty() {
-            return Err(
-                format!("independent golden has no representatives for {initial_name}").into(),
-            );
+        let found_representative_indices = expected
+            .representatives
+            .iter()
+            .map(|representative| representative.index)
+            .collect::<Vec<_>>();
+        let promised_representative_indices =
+            promised_representative_indices(&updated_parameter.gradient)?;
+        if found_representative_indices != promised_representative_indices {
+            return Err(format!(
+                "independent golden representative sequence drifted for {initial_name}: found={found_representative_indices:?} promised={promised_representative_indices:?}"
+            )
+            .into());
         }
-        let mut representative_indices = std::collections::BTreeSet::new();
         for representative in &expected.representatives {
-            if representative.index >= expected.length
-                || !representative_indices.insert(representative.index)
-            {
+            if representative.index >= expected.length {
                 return Err(format!(
                     "independent golden representative index drifted for {initial_name}"
                 )
                 .into());
             }
             let index = representative.index;
-            for (field, actual, expected) in [
+            for (field, actual, expected, absolute_tolerance) in [
                 (
                     "initial_value",
                     f64::from(initial_parameter.value[index]),
                     representative.initial_value,
+                    INDEPENDENT_TENSOR_ABS_TOLERANCE,
                 ),
                 (
                     "gradient",
                     f64::from(updated_parameter.gradient[index]),
                     representative.gradient,
+                    INDEPENDENT_TENSOR_ABS_TOLERANCE,
                 ),
                 (
                     "first_moment",
                     f64::from(updated_parameter.first_moment[index]),
                     representative.first_moment,
+                    INDEPENDENT_FIRST_MOMENT_ABS_TOLERANCE,
                 ),
                 (
                     "second_moment",
                     f64::from(updated_parameter.second_moment[index]),
                     representative.second_moment,
+                    INDEPENDENT_SECOND_MOMENT_ABS_TOLERANCE,
                 ),
                 (
                     "updated_value",
                     f64::from(updated_parameter.value[index]),
                     representative.updated_value,
+                    INDEPENDENT_TENSOR_ABS_TOLERANCE,
                 ),
             ] {
                 maximum_tensor_error = maximum_tensor_error.max(independent_close(
                     &format!("{initial_name}[{index}].{field}"),
                     actual,
                     expected,
-                    INDEPENDENT_TENSOR_ABS_TOLERANCE,
+                    absolute_tolerance,
                     INDEPENDENT_TENSOR_REL_TOLERANCE,
                 )?);
             }
@@ -1875,6 +1936,8 @@ fn validate_independent_golden_fixture(
             "loss_absolute": INDEPENDENT_LOSS_ABS_TOLERANCE,
             "tensor_absolute": INDEPENDENT_TENSOR_ABS_TOLERANCE,
             "tensor_relative": INDEPENDENT_TENSOR_REL_TOLERANCE,
+            "first_moment_absolute": INDEPENDENT_FIRST_MOMENT_ABS_TOLERANCE,
+            "second_moment_absolute": INDEPENDENT_SECOND_MOMENT_ABS_TOLERANCE,
             "order_projection_absolute": INDEPENDENT_ORDER_PROJECTION_ABS_TOLERANCE,
             "order_projection_relative": INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE,
         },
@@ -2425,6 +2488,19 @@ enum ReplaceBatchFault {
     AfterReplacementStaged,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DownloadFault {
+    None,
+    AfterFirstOutputDownload,
+    CorruptDownloadedModel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CloseFault {
+    None,
+    SynchronizeFailure,
+}
+
 struct TrainingService {
     // No raw pinned host pointer or CUDA graph is owned by this v1. All copies
     // use cudarc's tracked slices. close() retains resources when synchronization
@@ -2435,6 +2511,7 @@ struct TrainingService {
     device_name: String,
     device_memory_bytes: usize,
     poisoned: bool,
+    closing: bool,
     closed: bool,
 }
 
@@ -2484,8 +2561,22 @@ impl TrainingService {
             device_name,
             device_memory_bytes,
             poisoned: false,
+            closing: false,
             closed: false,
         })
+    }
+
+    fn ensure_operational(&self) -> Result<(), Box<dyn Error>> {
+        if self.closed {
+            return Err("training service is closed".into());
+        }
+        if self.closing {
+            return Err("training service is closing after a failed close".into());
+        }
+        if self.poisoned {
+            return Err("training service is poisoned".into());
+        }
+        Ok(())
     }
 
     fn training_step(
@@ -2502,12 +2593,7 @@ impl TrainingService {
         adam: AdamConfig,
         fault: FaultPoint,
     ) -> Result<LossSummary, Box<dyn Error>> {
-        if self.closed {
-            return Err("training service is closed".into());
-        }
-        if self.poisoned {
-            return Err("training service is poisoned".into());
-        }
+        self.ensure_operational()?;
         if !value_coefficient.is_finite() || value_coefficient < 0.0 {
             return Err("value coefficient must be finite and non-negative".into());
         }
@@ -2608,12 +2694,7 @@ impl TrainingService {
         host_batch: &SyntheticBatch,
         fault: ReplaceBatchFault,
     ) -> Result<(), Box<dyn Error>> {
-        if self.closed {
-            return Err("training service is closed".into());
-        }
-        if self.poisoned {
-            return Err("training service is poisoned".into());
-        }
+        self.ensure_operational()?;
         host_batch.validate()?;
         let Some(resources) = self.resources.as_ref() else {
             self.poisoned = true;
@@ -2659,58 +2740,109 @@ impl TrainingService {
     }
 
     fn download_outputs(
-        &self,
+        &mut self,
     ) -> Result<(DownloadedActivations, DownloadedActivations), Box<dyn Error>> {
-        if self.closed {
-            return Err("training service is closed".into());
+        self.download_outputs_with_fault(DownloadFault::None)
+    }
+
+    fn download_outputs_with_fault(
+        &mut self,
+        fault: DownloadFault,
+    ) -> Result<(DownloadedActivations, DownloadedActivations), Box<dyn Error>> {
+        self.ensure_operational()?;
+        let result = self.download_outputs_inner(fault);
+        if result.is_err() {
+            self.poisoned = true;
         }
-        if self.poisoned {
-            return Err("training service is poisoned".into());
-        }
+        result
+    }
+
+    fn download_outputs_inner(
+        &self,
+        fault: DownloadFault,
+    ) -> Result<(DownloadedActivations, DownloadedActivations), Box<dyn Error>> {
         let resources = self
             .resources
             .as_ref()
             .ok_or("training resources are absent")?;
-        Ok((
-            resources.rollout.download(&self.stream)?,
-            resources.recompute.download(&self.stream)?,
-        ))
+        let rollout = resources.rollout.download(&self.stream)?;
+        if fault == DownloadFault::AfterFirstOutputDownload {
+            return Err("injected failure after first output download".into());
+        }
+        let recompute = resources.recompute.download(&self.stream)?;
+        Ok((rollout, recompute))
     }
 
-    fn download_model(&self) -> Result<HostModel, Box<dyn Error>> {
-        if self.closed {
-            return Err("training service is closed".into());
+    fn download_model(&mut self) -> Result<HostModel, Box<dyn Error>> {
+        self.download_model_with_fault(DownloadFault::None)
+    }
+
+    fn download_model_with_fault(
+        &mut self,
+        fault: DownloadFault,
+    ) -> Result<HostModel, Box<dyn Error>> {
+        self.ensure_operational()?;
+        let result = self.download_model_inner(fault);
+        if result.is_err() {
+            self.poisoned = true;
         }
-        if self.poisoned {
-            return Err("training service is poisoned".into());
-        }
-        self.resources
+        result
+    }
+
+    fn download_model_inner(&self, fault: DownloadFault) -> Result<HostModel, Box<dyn Error>> {
+        let mut model = self
+            .resources
             .as_ref()
             .ok_or_else(|| "training resources are absent".into())
-            .and_then(|resources| resources.model.download(&self.stream))
+            .and_then(|resources| resources.model.download(&self.stream))?;
+        if fault == DownloadFault::CorruptDownloadedModel {
+            model.state_w1.gradient.pop();
+        }
+        model.validate()?;
+        Ok(model)
     }
 
     fn close(&mut self) -> Result<(), Box<dyn Error>> {
+        self.close_with_fault(CloseFault::None)
+    }
+
+    fn close_with_fault(&mut self, fault: CloseFault) -> Result<(), Box<dyn Error>> {
         if self.closed {
             return Ok(());
         }
-        let synchronize = self.stream.synchronize();
+        let synchronize: Result<(), Box<dyn Error>> = if fault == CloseFault::SynchronizeFailure {
+            Err("injected close synchronization failure".into())
+        } else {
+            self.stream.synchronize().map_err(Into::into)
+        };
         // There are no graphs or pinned buffers in v1. If they are introduced,
         // they must be Options inside TrainingResources and explicitly taken in
         // graph -> pinned -> device-buffer order here, after synchronization.
-        finalize_close_after_synchronize(&mut self.resources, &mut self.closed, synchronize)
-            .map_err(Into::into)
+        finalize_close_after_synchronize(
+            &mut self.resources,
+            &mut self.closed,
+            &mut self.closing,
+            &mut self.poisoned,
+            synchronize,
+        )
     }
 }
 
 fn finalize_close_after_synchronize<T, E>(
     resources: &mut Option<T>,
     closed: &mut bool,
+    closing: &mut bool,
+    poisoned: &mut bool,
     synchronize: Result<(), E>,
 ) -> Result<(), E> {
-    synchronize?;
+    *closing = true;
+    if let Err(error) = synchronize {
+        *poisoned = true;
+        return Err(error);
+    }
     resources.take();
     *closed = true;
+    *closing = false;
     Ok(())
 }
 
@@ -2723,6 +2855,7 @@ impl Drop for TrainingService {
             if self.stream.synchronize().is_ok() {
                 self.resources.take();
                 self.closed = true;
+                self.closing = false;
             }
         }
     }
@@ -4025,8 +4158,8 @@ fn validate_cpu_gpu_once() -> Result<serde_json::Value, Box<dyn Error>> {
         || gpu_repeat_values_max_abs > 1.0e-6
         || loss_max_abs > 2.0e-3
         || difference.gradients > 2.0e-3
-        || difference.first_moments > 2.0e-4
-        || difference.second_moments > 2.0e-5
+        || difference.first_moments > FIRST_MOMENT_CPU_GPU_TOLERANCE
+        || difference.second_moments > SECOND_MOMENT_CPU_GPU_TOLERANCE
         || difference.values > UPDATED_PARAMETER_CPU_GPU_TOLERANCE
     {
         return Err(format!(
@@ -4091,6 +4224,10 @@ fn validate_cpu_gpu_once() -> Result<serde_json::Value, Box<dyn Error>> {
             "cpu_reference_vs_gpu": "tolerance-parity-not-bit-identity",
             "updated_parameter_max_abs_tolerance": UPDATED_PARAMETER_CPU_GPU_TOLERANCE,
             "updated_parameter_tolerance_pass": difference.values <= UPDATED_PARAMETER_CPU_GPU_TOLERANCE,
+            "first_moment_max_abs_tolerance": FIRST_MOMENT_CPU_GPU_TOLERANCE,
+            "first_moment_tolerance_pass": difference.first_moments <= FIRST_MOMENT_CPU_GPU_TOLERANCE,
+            "second_moment_max_abs_tolerance": SECOND_MOMENT_CPU_GPU_TOLERANCE,
+            "second_moment_tolerance_pass": difference.second_moments <= SECOND_MOMENT_CPU_GPU_TOLERANCE,
         },
         "actor_forward_passes": 1,
         "learner_recompute_forward_passes": 1,
@@ -4140,8 +4277,10 @@ fn validate_cpu_gpu_once() -> Result<serde_json::Value, Box<dyn Error>> {
         "lifecycle": {
             "ownership": "tracked-cudarc-copies; no-graphs; no-raw-pinned-pointers",
             "close": "resources-retained-unless-synchronization-succeeds",
+            "failed_close": "terminal-poisoned-closing-state; only explicit close retry is legal",
             "drop": "best-effort-drain-only; errors-cannot-be-reported",
             "replacement_failure": "service-poisoned; staged-and-active-batches-retained-until-explicit-close",
+            "download_failure": "CUDA-copy-or-host-validation failure poisons service and retains resources for close",
             "poisoned_downloads": "fail-closed",
         },
         "cublas_math_mode": "CUBLAS_PEDANTIC_MATH",
@@ -4296,6 +4435,14 @@ mod tests {
             5.0e-6f32.to_bits()
         );
         assert_eq!(
+            FIRST_MOMENT_CPU_GPU_TOLERANCE.to_bits(),
+            1.0e-6f32.to_bits()
+        );
+        assert_eq!(
+            SECOND_MOMENT_CPU_GPU_TOLERANCE.to_bits(),
+            1.0e-8f32.to_bits()
+        );
+        assert_eq!(
             AdamConfig::default().epsilon.to_bits(),
             ADAM_EPSILON.to_bits()
         );
@@ -4412,10 +4559,51 @@ mod tests {
         )
         .is_err());
 
-        let mut tensor_order_drift = fixture;
+        let mut tensor_order_drift = fixture.clone();
         tensor_order_drift.expected.tensors.swap(0, 1);
         assert!(validate_independent_golden_fixture(
             &tensor_order_drift,
+            &initial,
+            &batch,
+            &step,
+            &updated
+        )
+        .is_err());
+
+        let mut missing_representative = fixture.clone();
+        missing_representative.expected.tensors[0]
+            .representatives
+            .pop();
+        assert!(validate_independent_golden_fixture(
+            &missing_representative,
+            &initial,
+            &batch,
+            &step,
+            &updated
+        )
+        .is_err());
+
+        let mut extra_representative = fixture.clone();
+        let mut extra = extra_representative.expected.tensors[0].representatives[0];
+        extra.index = 1;
+        extra_representative.expected.tensors[0]
+            .representatives
+            .push(extra);
+        assert!(validate_independent_golden_fixture(
+            &extra_representative,
+            &initial,
+            &batch,
+            &step,
+            &updated
+        )
+        .is_err());
+
+        let mut reordered_representatives = fixture;
+        reordered_representatives.expected.tensors[0]
+            .representatives
+            .swap(0, 1);
+        assert!(validate_independent_golden_fixture(
+            &reordered_representatives,
             &initial,
             &batch,
             &step,
@@ -4527,6 +4715,14 @@ mod tests {
             report["parity_contract"]["updated_parameter_tolerance_pass"],
             true
         );
+        assert_eq!(
+            report["parity_contract"]["first_moment_tolerance_pass"],
+            true
+        );
+        assert_eq!(
+            report["parity_contract"]["second_moment_tolerance_pass"],
+            true
+        );
         assert_eq!(report["model_contract"]["version"], MODEL_CONTRACT_VERSION);
         assert_eq!(
             report["same_process_gpu_reproducibility"]["full_training_steps"],
@@ -4619,20 +4815,34 @@ mod tests {
     fn close_state_is_finalized_only_after_successful_synchronization() {
         let mut resources = Some(7u32);
         let mut closed = false;
+        let mut closing = false;
+        let mut poisoned = false;
         let error = finalize_close_after_synchronize(
             &mut resources,
             &mut closed,
+            &mut closing,
+            &mut poisoned,
             Err::<(), _>("injected synchronize failure"),
         )
         .unwrap_err();
         assert_eq!(error, "injected synchronize failure");
         assert_eq!(resources, Some(7));
         assert!(!closed);
+        assert!(closing);
+        assert!(poisoned);
 
-        finalize_close_after_synchronize(&mut resources, &mut closed, Ok::<_, &'static str>(()))
-            .unwrap();
+        finalize_close_after_synchronize(
+            &mut resources,
+            &mut closed,
+            &mut closing,
+            &mut poisoned,
+            Ok::<_, &'static str>(()),
+        )
+        .unwrap();
         assert_eq!(resources, None);
         assert!(closed);
+        assert!(!closing);
+        assert!(poisoned);
     }
 
     #[test]
@@ -4661,6 +4871,58 @@ mod tests {
     }
 
     #[test]
+    fn second_moment_scale_gate_rejects_the_audited_state_b2_swap() {
+        let batch = SyntheticBatch::small_golden().unwrap();
+        let initial = HostModel::deterministic().unwrap();
+        let mut updated = initial.clone();
+        let step = cpu_train_step(
+            &mut updated,
+            &batch,
+            VALUE_COEFFICIENT,
+            AdamConfig::default(),
+        )
+        .unwrap();
+        let fixture = parse_independent_golden().unwrap();
+        updated.state_b2.second_moment[32] = 3.999_661_7e-7f32;
+        updated.state_b2.second_moment[51] = 1.224_335_36e-5f32;
+        assert_eq!(
+            updated.state_b2.second_moment[32].to_bits(),
+            3.999_661_7e-7f32.to_bits()
+        );
+        assert_eq!(
+            updated.state_b2.second_moment[51].to_bits(),
+            1.224_335_36e-5f32.to_bits()
+        );
+        let before_fingerprint = independent_quantized_fingerprint(&updated.state_b2.second_moment);
+        updated.state_b2.second_moment.swap(32, 51);
+        assert_eq!(
+            independent_quantized_fingerprint(&updated.state_b2.second_moment),
+            before_fingerprint,
+            "the coarse sign/deadband fingerprint intentionally does not close this class"
+        );
+        validate_independent_summary(
+            "state_b2.second_moment_summary",
+            &updated.state_b2.second_moment,
+            fixture.expected.tensors[3].second_moment_summary,
+            INDEPENDENT_SECOND_MOMENT_ABS_TOLERANCE,
+            INDEPENDENT_TENSOR_REL_TOLERANCE,
+        )
+        .unwrap();
+        assert!(validate_independent_order_evidence(
+            "state_b2.second_moment",
+            &updated.state_b2.second_moment,
+            &fixture.expected.tensors[3].second_moment_order_evidence,
+            INDEPENDENT_SECOND_MOMENT_ABS_TOLERANCE,
+            INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE,
+        )
+        .is_err());
+        assert!(
+            validate_independent_golden_fixture(&fixture, &initial, &batch, &step, &updated)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn staged_replacement_failure_poisoning_retains_batches_until_explicit_close() {
         let batch = SyntheticBatch::small_golden().unwrap();
         let replacement = SyntheticBatch::small_golden_variant().unwrap();
@@ -4684,6 +4946,76 @@ mod tests {
         service.close().unwrap();
         assert!(service.closed);
         assert!(service.resources.is_none());
+    }
+
+    #[test]
+    fn download_cuda_and_validation_failures_poison_and_retain_resources_for_close() {
+        let batch = SyntheticBatch::small_golden().unwrap();
+        let model = HostModel::deterministic().unwrap();
+
+        let mut output_service = TrainingService::new(&model, &batch).unwrap();
+        let output_error = output_service
+            .download_outputs_with_fault(DownloadFault::AfterFirstOutputDownload)
+            .unwrap_err();
+        assert!(output_error
+            .to_string()
+            .contains("injected failure after first output download"));
+        assert!(output_service.poisoned);
+        assert!(!output_service.closing);
+        assert!(output_service.resources.is_some());
+        assert!(output_service.download_model().is_err());
+        assert!(output_service.download_outputs().is_err());
+        output_service.close().unwrap();
+
+        let mut model_service = TrainingService::new(&model, &batch).unwrap();
+        let model_error = model_service
+            .download_model_with_fault(DownloadFault::CorruptDownloadedModel)
+            .unwrap_err();
+        assert!(model_error
+            .to_string()
+            .contains("host parameter state_w1 shape mismatch"));
+        assert!(model_service.poisoned);
+        assert!(!model_service.closing);
+        assert!(model_service.resources.is_some());
+        assert!(model_service.download_model().is_err());
+        model_service.close().unwrap();
+    }
+
+    #[test]
+    fn failed_close_is_terminal_until_an_explicit_close_retry_succeeds() {
+        let batch = SyntheticBatch::small_golden().unwrap();
+        let replacement = SyntheticBatch::small_golden_variant().unwrap();
+        let model = HostModel::deterministic().unwrap();
+        let mut service = TrainingService::new(&model, &batch).unwrap();
+        let error = service
+            .close_with_fault(CloseFault::SynchronizeFailure)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("injected close synchronization failure"));
+        assert!(!service.closed);
+        assert!(service.closing);
+        assert!(service.poisoned);
+        assert!(service.resources.is_some());
+
+        for operation_error in [
+            service
+                .training_step(VALUE_COEFFICIENT, AdamConfig::default())
+                .unwrap_err(),
+            service.replace_batch(&replacement).unwrap_err(),
+            service.download_outputs().unwrap_err(),
+            service.download_model().unwrap_err(),
+        ] {
+            assert!(operation_error
+                .to_string()
+                .contains("training service is closing"));
+        }
+
+        service.close().unwrap();
+        assert!(service.closed);
+        assert!(!service.closing);
+        assert!(service.resources.is_none());
+        service.close().unwrap();
     }
 
     #[test]

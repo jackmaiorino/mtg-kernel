@@ -2117,7 +2117,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "UTF-8 JSON, sorted keys, indent=2, trailing LF, integrity field omitted",
-    "payload_sha256": "9e40a45f38933e842f65a122344a831ea5167dadf517e5251388e82eafb70d46"
+    "payload_sha256": "b12ce5404fe6d346d59dafa538de0c1976bf393154bb21acf9aa40b18782f23c"
   },
   "provenance": {
     "arithmetic": "contract inputs and parameters rounded to binary32 storage; forward, detached loss, backward, and Adam evaluated in Python float64",
@@ -2128,7 +2128,7 @@
     "generation_command": "python python/tools/generate_cuda_flat_training_golden_v1.py",
     "generator_language": "Python 3 standard library only",
     "generator_relative_path": "python/tools/generate_cuda_flat_training_golden_v1.py",
-    "generator_sha256": "20bf983d483023bc36f0cf82467dcf7806dec9d167c38afb965e9128eb6adf7b",
+    "generator_sha256": "0df81f73ba47fbd24f2cf8978b3e4931774f64e507fe76fd4a7d6182d68bb1db",
     "python_implementation": "CPython",
     "python_version": "3.13.14",
     "third_party_dependencies": []

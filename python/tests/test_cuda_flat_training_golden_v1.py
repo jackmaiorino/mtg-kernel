@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,6 +80,13 @@ class CudaFlatTrainingGoldenV1Tests(unittest.TestCase):
             GENERATOR.order_evidence(gradient),
             GENERATOR.order_evidence(permuted),
         )
+
+    def test_generator_rejects_non_cpython_even_at_the_pinned_version(self) -> None:
+        with mock.patch.object(
+            GENERATOR.platform, "python_implementation", return_value="PyPy"
+        ):
+            with self.assertRaisesRegex(RuntimeError, "requires CPython"):
+                GENERATOR.generate_fixture(GENERATOR_PATH)
 
 
 if __name__ == "__main__":

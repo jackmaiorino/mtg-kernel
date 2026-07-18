@@ -456,6 +456,12 @@ def canonical_bytes(value: object) -> bytes:
 def generate_fixture(generator_path: Path | None = None) -> dict[str, object]:
     if generator_path is None:
         generator_path = Path(__file__).resolve()
+    python_implementation = platform.python_implementation()
+    if python_implementation != "CPython":
+        raise RuntimeError(
+            "golden generation requires CPython, "
+            f"found {python_implementation}"
+        )
     configured_python_version = (
         generator_path.parents[2] / ".python-version"
     ).read_text(encoding="utf-8").strip()
@@ -537,7 +543,7 @@ def generate_fixture(generator_path: Path | None = None) -> dict[str, object]:
             "fixture_relative_path": FIXTURE_RELATIVE_PATH,
             "generator_sha256": generator_sha256,
             "generator_language": "Python 3 standard library only",
-            "python_implementation": platform.python_implementation(),
+            "python_implementation": python_implementation,
             "python_version": actual_python_version,
             "configured_python_version_file": ".python-version",
             "third_party_dependencies": [],
