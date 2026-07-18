@@ -23,13 +23,13 @@ use crate::fast_sampler::{
 };
 use crate::flat_policy_v1::{
     FlatCompletedDungeonV1, FlatContextElementKindV1, FlatContextKindV1, FlatContextPathElementV1,
-    FlatDecisionEncoderV1, FlatDecisionErrorV1, FlatDecisionV1, FlatEffectSubtypeChangeKindV1,
-    FlatEffectSubtypeChangeV1, FlatGlobalsV1, FlatObjectAbilityUseV1, FlatObjectCoreV1,
-    FlatObjectGoadV1, FlatObjectGroupV1, FlatObjectSourceKindV1, FlatObjectSubtypeV1,
-    FlatPendingEffectChoiceV1, FlatPolicyContractDigestsV1, FlatRelationV1, FlatRelativePlayerV1,
-    FlatScorerActionCoreV1, FlatScorerActionRefV1, FlatScoringDecisionViewV1,
-    FlatScoringOwnedBuffersV1, FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1,
-    FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1,
+    FlatDecisionBindingV1, FlatDecisionEncoderV1, FlatDecisionErrorV1, FlatDecisionV1,
+    FlatEffectSubtypeChangeKindV1, FlatEffectSubtypeChangeV1, FlatGlobalsV1,
+    FlatObjectAbilityUseV1, FlatObjectCoreV1, FlatObjectGoadV1, FlatObjectGroupV1,
+    FlatObjectSourceKindV1, FlatObjectSubtypeV1, FlatPendingEffectChoiceV1,
+    FlatPolicyContractDigestsV1, FlatRelationV1, FlatRelativePlayerV1, FlatScorerActionCoreV1,
+    FlatScorerActionRefV1, FlatScoringDecisionViewV1, FlatScoringOwnedBuffersV1,
+    FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1, FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1,
     FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1, FLAT_POLICY_CONTRACT_DIGESTS_V1,
     FLAT_POLICY_ENUM_MAPPING_VERSION_V1, FLAT_POLICY_FEATURE_INVENTORY_VERSION_V1,
     FLAT_POLICY_OBJECT_GROUP_MAPPING_VERSION_V1, FLAT_POLICY_RELATION_ROLE_MAPPING_VERSION_V1,
@@ -81,6 +81,9 @@ static TEST_EXIT_AFTER_ROUND_WORKER_ID_V1: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(usize::MAX);
 #[cfg(test)]
 static TEST_CONSUMED_ACTION_COUNT_V1: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+#[cfg(test)]
+static TEST_TERMINAL_ACK_COUNT_V1: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 #[cfg(test)]
 static TEST_CAPTURE_ACTION_EVENTS_V1: std::sync::atomic::AtomicBool =
@@ -187,6 +190,186 @@ pub trait FlatBatchScorerV1 {
         action_logits: &mut [f32],
         values: &mut [f32],
     ) -> Result<(), FlatBatchScorerErrorV1>;
+}
+
+/// Borrowed, fully validated scorer output for one selected learner action.
+/// The observer must copy only the fields it elects to stage; none of these
+/// buffers are transferred out of the broker.
+pub(crate) struct FlatScoredSelectedEventV1<'a> {
+    pub(crate) expected: FastActorDecisionV1,
+    pub(crate) binding: FlatDecisionBindingV1,
+    pub(crate) learner_ordinal: u64,
+    pub(crate) action_seed: u64,
+    pub(crate) selected_index: u32,
+    pub(crate) raw_action_logits: &'a [f32],
+    pub(crate) predicted_value_bits: u32,
+    pub(crate) decision: FlatScoringDecisionViewV1<'a>,
+}
+
+/// Compact terminal notification paired with the selected-action stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FlatScoredTerminalEventV1 {
+    pub(crate) terminal: AsyncRolloutTerminalV1,
+    pub(crate) learner_action_count: u64,
+    pub(crate) learner_trace_hash: u64,
+}
+
+/// Crate-private staging boundary for a future native learner. Implementations
+/// may only mutate inert owned staging: neither observation callback nor
+/// `finish_v1` may publish through shared state, I/O, or another side effect.
+/// The core can still reject after `finish_v1`, so that method must only return
+/// an inert owned value whose publication waits for this run function to return
+/// it successfully.
+pub(crate) trait FlatScoredTrajectoryObserverV1: Sized {
+    type Error;
+    type Output;
+
+    /// Compile-time capability used to preserve the original public no-op hot
+    /// path. Real observers retain complete-round prevalidation semantics.
+    const OBSERVES_TRAJECTORY: bool = true;
+
+    fn observe_selected_v1(
+        &mut self,
+        event: FlatScoredSelectedEventV1<'_>,
+    ) -> Result<(), Self::Error>;
+
+    fn observe_terminal_v1(&mut self, event: FlatScoredTerminalEventV1) -> Result<(), Self::Error>;
+
+    /// Converts private staging into an inert canonical owned value only after
+    /// the rollout has joined workers and validated the aggregate result. The
+    /// core retains authority to discard that value at its final deadline gate.
+    fn finish_v1(self) -> Result<Self::Output, Self::Error>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlatScoredObserverPhaseV1 {
+    Selected,
+    Terminal,
+    Finish,
+}
+
+#[derive(Debug)]
+pub(crate) enum AsyncFlatScoredObservedRunErrorV1<E> {
+    Rollout(AsyncFlatScoredRolloutErrorV1),
+    ObserverFailed {
+        phase: FlatScoredObserverPhaseV1,
+        error: E,
+    },
+    ObserverPanicked {
+        phase: FlatScoredObserverPhaseV1,
+    },
+}
+
+impl<E> From<AsyncFlatScoredRolloutErrorV1> for AsyncFlatScoredObservedRunErrorV1<E> {
+    fn from(error: AsyncFlatScoredRolloutErrorV1) -> Self {
+        Self::Rollout(error)
+    }
+}
+
+enum FlatScoredObserverInterruptionV1<E> {
+    Failed {
+        phase: FlatScoredObserverPhaseV1,
+        error: E,
+    },
+    Panicked {
+        phase: FlatScoredObserverPhaseV1,
+    },
+}
+
+impl<E> FlatScoredObserverInterruptionV1<E> {
+    fn into_run_error(self) -> AsyncFlatScoredObservedRunErrorV1<E> {
+        match self {
+            Self::Failed { phase, error } => {
+                AsyncFlatScoredObservedRunErrorV1::ObserverFailed { phase, error }
+            }
+            Self::Panicked { phase } => {
+                AsyncFlatScoredObservedRunErrorV1::ObserverPanicked { phase }
+            }
+        }
+    }
+}
+
+fn observe_selected_v1<O: FlatScoredTrajectoryObserverV1>(
+    observer: &mut O,
+    event: FlatScoredSelectedEventV1<'_>,
+) -> Result<(), FlatScoredObserverInterruptionV1<O::Error>> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        observer.observe_selected_v1(event)
+    })) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(FlatScoredObserverInterruptionV1::Failed {
+            phase: FlatScoredObserverPhaseV1::Selected,
+            error,
+        }),
+        Err(_) => Err(FlatScoredObserverInterruptionV1::Panicked {
+            phase: FlatScoredObserverPhaseV1::Selected,
+        }),
+    }
+}
+
+fn observe_terminal_v1<O: FlatScoredTrajectoryObserverV1>(
+    observer: &mut O,
+    event: FlatScoredTerminalEventV1,
+) -> Result<(), FlatScoredObserverInterruptionV1<O::Error>> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        observer.observe_terminal_v1(event)
+    })) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(FlatScoredObserverInterruptionV1::Failed {
+            phase: FlatScoredObserverPhaseV1::Terminal,
+            error,
+        }),
+        Err(_) => Err(FlatScoredObserverInterruptionV1::Panicked {
+            phase: FlatScoredObserverPhaseV1::Terminal,
+        }),
+    }
+}
+
+struct NoopFlatScoredTrajectoryObserverV1;
+
+impl FlatScoredTrajectoryObserverV1 for NoopFlatScoredTrajectoryObserverV1 {
+    type Error = std::convert::Infallible;
+    type Output = ();
+
+    const OBSERVES_TRAJECTORY: bool = false;
+
+    fn observe_selected_v1(
+        &mut self,
+        event: FlatScoredSelectedEventV1<'_>,
+    ) -> Result<(), Self::Error> {
+        let FlatScoredSelectedEventV1 {
+            expected,
+            binding,
+            learner_ordinal,
+            action_seed,
+            selected_index,
+            raw_action_logits,
+            predicted_value_bits,
+            decision,
+        } = event;
+        let _ = (
+            expected,
+            binding,
+            learner_ordinal,
+            action_seed,
+            selected_index,
+            raw_action_logits,
+            predicted_value_bits,
+            decision,
+        );
+        Ok(())
+    }
+
+    fn observe_terminal_v1(
+        &mut self,
+        _event: FlatScoredTerminalEventV1,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn finish_v1(self) -> Result<Self::Output, Self::Error> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -601,6 +784,14 @@ struct BoundScoredActionV1 {
     predicted_value: FiniteScorerValueV1,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ValidatedRoundSampleV1 {
+    learner_ordinal: u64,
+    action_seed: u64,
+    selected_index: u32,
+    predicted_value: FiniteScorerValueV1,
+}
+
 struct ActionReplyV1 {
     logical_lane_id: usize,
     scored: BoundScoredActionV1,
@@ -754,6 +945,8 @@ impl LocalLaneV1 {
                 .position(|lane| *lane == self.logical_lane_id)
                 .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
             reply.terminal_acks.swap_remove(index);
+            #[cfg(test)]
+            TEST_TERMINAL_ACK_COUNT_V1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.session = None;
             self.response = None;
             self.waiting_terminal = false;
@@ -1555,6 +1748,92 @@ impl MembershipDigestV1 {
     }
 }
 
+fn sample_validated_round_decision_v1(
+    broker_episodes: &mut [BrokerEpisodeV1],
+    sampler: &mut FastCategoricalScratch,
+    learner_policy_seed: u64,
+    decision: &RoundDecisionV1,
+    action_logits: &[f32],
+    predicted_value: f32,
+) -> Result<ValidatedRoundSampleV1, AsyncFlatScoredRolloutErrorV1> {
+    let broker_episode = broker_episodes
+        .get_mut(decision.logical_lane_id)
+        .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+    let (learner_ordinal, action_seed) =
+        broker_episode.sample_seed(learner_policy_seed, decision.expected.episode_id)?;
+    let selected_index = sampler
+        .sample(action_logits, action_seed)
+        .map_err(|error| AsyncFlatScoredRolloutErrorV1::SamplingFailed {
+            logical_lane_id: decision.logical_lane_id,
+            episode_id: decision.expected.episode_id,
+            decision_ordinal: learner_ordinal,
+            error,
+        })?;
+    broker_episode.commit_sample()?;
+    Ok(ValidatedRoundSampleV1 {
+        learner_ordinal,
+        action_seed,
+        selected_index: u32::try_from(selected_index)
+            .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?,
+        predicted_value: FiniteScorerValueV1::new(predicted_value)
+            .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?,
+    })
+}
+
+fn record_validated_round_sample_v1(
+    digest: &mut MembershipDigestV1,
+    decision: &RoundDecisionV1,
+    sample: ValidatedRoundSampleV1,
+) {
+    digest.update((decision.logical_lane_id as u64).to_le_bytes());
+    digest.update(decision.expected.episode_id.to_le_bytes());
+    digest.update(decision.expected.step.to_le_bytes());
+    digest.update(sample.learner_ordinal.to_le_bytes());
+    digest.update(sample.action_seed.to_le_bytes());
+    digest.update(sample.selected_index.to_le_bytes());
+}
+
+fn stage_validated_action_reply_v1(
+    worker_rounds: &mut [Option<WorkerRoundV1>],
+    decision: RoundDecisionV1,
+    sample: ValidatedRoundSampleV1,
+) -> Result<(), AsyncFlatScoredRolloutErrorV1> {
+    let binding = decision.packet.decision().binding;
+    worker_rounds
+        .get_mut(decision.worker_id)
+        .and_then(Option::as_mut)
+        .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
+        .reply
+        .actions
+        .push(ActionReplyV1 {
+            logical_lane_id: decision.logical_lane_id,
+            scored: BoundScoredActionV1 {
+                binding,
+                learner_ordinal: sample.learner_ordinal,
+                selected_index: sample.selected_index,
+                predicted_value: sample.predicted_value,
+            },
+            packet: decision.packet,
+        });
+    Ok(())
+}
+
+fn ensure_before_deadline_v1(deadline: Instant) -> Result<(), AsyncFlatScoredRolloutErrorV1> {
+    if Instant::now() >= deadline {
+        Err(AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded)
+    } else {
+        Ok(())
+    }
+}
+
+fn protocol_or_deadline_error_v1(deadline: Instant) -> AsyncFlatScoredRolloutErrorV1 {
+    if Instant::now() >= deadline {
+        AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded
+    } else {
+        AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation
+    }
+}
+
 /// Runs the finite multi-session scored rollout. The scorer remains on the
 /// calling thread; worker threads own every game session, private action
 /// cache, consume binding, and operational action-object buffer.
@@ -1562,16 +1841,42 @@ pub fn run_async_flat_scored_rollout_v1(
     config: AsyncRolloutConfigV2,
     scorer: &mut impl FlatBatchScorerV1,
 ) -> Result<AsyncFlatScoredRolloutResultV1, AsyncFlatScoredRolloutErrorV1> {
+    match run_async_flat_scored_rollout_observed_v1(
+        config,
+        scorer,
+        NoopFlatScoredTrajectoryObserverV1,
+    ) {
+        Ok((result, ())) => Ok(result),
+        Err(AsyncFlatScoredObservedRunErrorV1::Rollout(error)) => Err(error),
+        Err(AsyncFlatScoredObservedRunErrorV1::ObserverFailed { phase, error }) => {
+            let _ = phase;
+            match error {}
+        }
+        Err(AsyncFlatScoredObservedRunErrorV1::ObserverPanicked { phase }) => {
+            let _ = phase;
+            Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)
+        }
+    }
+}
+
+pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryObserverV1>(
+    config: AsyncRolloutConfigV2,
+    scorer: &mut impl FlatBatchScorerV1,
+    mut observer: O,
+) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
+{
     let api_started = Instant::now();
     if !(1..=ASYNC_ROLLOUT_MAX_WORKERS_V2).contains(&config.worker_count) {
         return Err(AsyncFlatScoredRolloutErrorV1::InvalidWorkerCount {
             requested: config.worker_count,
-        });
+        }
+        .into());
     }
     if !(1..=ASYNC_ROLLOUT_MAX_SESSIONS_PER_WORKER_V2).contains(&config.sessions_per_worker) {
         return Err(AsyncFlatScoredRolloutErrorV1::InvalidSessionsPerWorker {
             requested: config.sessions_per_worker,
-        });
+        }
+        .into());
     }
     let logical_lane_count = config
         .worker_count
@@ -1581,16 +1886,17 @@ pub fn run_async_flat_scored_rollout_v1(
         return Err(AsyncFlatScoredRolloutErrorV1::InvalidBrokerBatchTarget {
             requested: config.broker_batch_target,
             logical_lanes: logical_lane_count,
-        });
+        }
+        .into());
     }
     if config.scheduler_timeout.is_zero() {
-        return Err(AsyncFlatScoredRolloutErrorV1::InvalidSchedulerTimeout);
+        return Err(AsyncFlatScoredRolloutErrorV1::InvalidSchedulerTimeout.into());
     }
     let deadline = api_started
         .checked_add(config.scheduler_timeout)
         .ok_or(AsyncFlatScoredRolloutErrorV1::InvalidSchedulerTimeout)?;
     if config.episode_count == 0 {
-        return Err(AsyncFlatScoredRolloutErrorV1::EmptyEpisodeRange);
+        return Err(AsyncFlatScoredRolloutErrorV1::EmptyEpisodeRange.into());
     }
     let end_episode_id = config
         .first_episode_id
@@ -1647,7 +1953,7 @@ pub fn run_async_flat_scored_rollout_v1(
                     let _ = control.send(WorkerControlV1::Cancel);
                 }
                 let _ = join_every_worker(&mut handles);
-                return Err(AsyncFlatScoredRolloutErrorV1::WorkerSpawnFailed { worker_id });
+                return Err(AsyncFlatScoredRolloutErrorV1::WorkerSpawnFailed { worker_id }.into());
             }
         }
     }
@@ -1671,8 +1977,10 @@ pub fn run_async_flat_scored_rollout_v1(
     let mut done_this_round = vec![false; config.worker_count];
     let mut round_decisions = Vec::with_capacity(logical_lane_count);
     let mut round_terminals = Vec::with_capacity(logical_lane_count);
+    let mut round_samples = O::OBSERVES_TRAJECTORY.then(|| Vec::with_capacity(logical_lane_count));
     let mut worker_rounds: Vec<Option<WorkerRoundV1>> =
         (0..config.worker_count).map(|_| None).collect();
+    let mut observer_interruption = None;
 
     let broker_result = (|| -> Result<(), AsyncFlatScoredRolloutErrorV1> {
         while active_workers.iter().any(|active| *active) {
@@ -1902,48 +2210,72 @@ pub fn run_async_flat_scored_rollout_v1(
             digest.update([0x52]);
             digest.update(round_index.to_le_bytes());
             digest.update((round_decisions.len() as u64).to_le_bytes());
-            for (decision_index, decision) in round_decisions.drain(..).enumerate() {
-                let logit_start = round_action_offsets[decision_index];
-                let logit_end = round_action_offsets[decision_index + 1];
-                let broker_episode = broker_episodes
-                    .get_mut(decision.logical_lane_id)
-                    .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
-                let (ordinal, action_seed) = broker_episode
-                    .sample_seed(config.learner_policy_seed, decision.expected.episode_id)?;
-                let selected_index = sampler
-                    .sample(&round_logits[logit_start..logit_end], action_seed)
-                    .map_err(|error| AsyncFlatScoredRolloutErrorV1::SamplingFailed {
-                        logical_lane_id: decision.logical_lane_id,
-                        episode_id: decision.expected.episode_id,
-                        decision_ordinal: ordinal,
-                        error,
-                    })?;
-                broker_episode.commit_sample()?;
-                let selected_index = u32::try_from(selected_index)
-                    .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
-                digest.update((decision.logical_lane_id as u64).to_le_bytes());
-                digest.update(decision.expected.episode_id.to_le_bytes());
-                digest.update(decision.expected.step.to_le_bytes());
-                digest.update(ordinal.to_le_bytes());
-                digest.update(action_seed.to_le_bytes());
-                digest.update(selected_index.to_le_bytes());
-                worker_rounds[decision.worker_id]
+            if O::OBSERVES_TRAJECTORY {
+                let samples = round_samples
                     .as_mut()
-                    .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
-                    .reply
-                    .actions
-                    .push(ActionReplyV1 {
-                        logical_lane_id: decision.logical_lane_id,
-                        scored: BoundScoredActionV1 {
+                    .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+                samples.clear();
+                for (decision_index, decision) in round_decisions.iter().enumerate() {
+                    let logit_start = round_action_offsets[decision_index];
+                    let logit_end = round_action_offsets[decision_index + 1];
+                    let sample = sample_validated_round_decision_v1(
+                        &mut broker_episodes,
+                        &mut sampler,
+                        config.learner_policy_seed,
+                        decision,
+                        &round_logits[logit_start..logit_end],
+                        round_values[decision_index],
+                    )?;
+                    record_validated_round_sample_v1(&mut digest, decision, sample);
+                    samples.push(sample);
+                }
+                if samples.len() != round_decisions.len() {
+                    return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
+                }
+                for (decision_index, (decision, sample)) in
+                    round_decisions.drain(..).zip(samples.drain(..)).enumerate()
+                {
+                    let logit_start = round_action_offsets[decision_index];
+                    let logit_end = round_action_offsets[decision_index + 1];
+                    if let Err(interruption) = observe_selected_v1(
+                        &mut observer,
+                        FlatScoredSelectedEventV1 {
+                            expected: decision.expected,
                             binding: decision.packet.decision().binding,
-                            learner_ordinal: ordinal,
-                            selected_index,
-                            predicted_value: FiniteScorerValueV1::new(round_values[decision_index])
-                                .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?,
+                            learner_ordinal: sample.learner_ordinal,
+                            action_seed: sample.action_seed,
+                            selected_index: sample.selected_index,
+                            raw_action_logits: &round_logits[logit_start..logit_end],
+                            predicted_value_bits: sample.predicted_value.0,
+                            decision: decision.packet.scorer_view(),
                         },
-                        packet: decision.packet,
-                    });
-                checked_add(&mut metrics.sampled_action_count, 1)?;
+                    ) {
+                        observer_interruption = Some(interruption);
+                        return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
+                    }
+                    ensure_before_deadline_v1(deadline)?;
+                    stage_validated_action_reply_v1(&mut worker_rounds, decision, sample)?;
+                    checked_add(&mut metrics.sampled_action_count, 1)?;
+                }
+            } else {
+                if round_samples.is_some() {
+                    return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
+                }
+                for (decision_index, decision) in round_decisions.drain(..).enumerate() {
+                    let logit_start = round_action_offsets[decision_index];
+                    let logit_end = round_action_offsets[decision_index + 1];
+                    let sample = sample_validated_round_decision_v1(
+                        &mut broker_episodes,
+                        &mut sampler,
+                        config.learner_policy_seed,
+                        &decision,
+                        &round_logits[logit_start..logit_end],
+                        round_values[decision_index],
+                    )?;
+                    record_validated_round_sample_v1(&mut digest, &decision, sample);
+                    stage_validated_action_reply_v1(&mut worker_rounds, decision, sample)?;
+                    checked_add(&mut metrics.sampled_action_count, 1)?;
+                }
             }
 
             digest.update((round_terminals.len() as u64).to_le_bytes());
@@ -1953,11 +2285,26 @@ pub fn run_async_flat_scored_rollout_v1(
                 }
                 digest.update((terminal.logical_lane_id as u64).to_le_bytes());
                 digest.update(terminal.terminal.episode_id.to_le_bytes());
-                episodes.push(broker_episodes[terminal.logical_lane_id].finish(
+                let episode = broker_episodes[terminal.logical_lane_id].finish(
                     terminal.terminal,
                     terminal.learner_action_count,
                     terminal.learner_trace_hash,
-                )?);
+                )?;
+                if O::OBSERVES_TRAJECTORY {
+                    if let Err(interruption) = observe_terminal_v1(
+                        &mut observer,
+                        FlatScoredTerminalEventV1 {
+                            terminal: episode.terminal,
+                            learner_action_count: episode.learner_action_count,
+                            learner_trace_hash: episode.learner_trace_hash,
+                        },
+                    ) {
+                        observer_interruption = Some(interruption);
+                        return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
+                    }
+                    ensure_before_deadline_v1(deadline)?;
+                }
+                episodes.push(episode);
                 worker_rounds[terminal.worker_id]
                     .as_mut()
                     .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
@@ -1984,13 +2331,16 @@ pub fn run_async_flat_scored_rollout_v1(
                 if round.reply.actions.is_empty() && round.reply.terminal_acks.is_empty() {
                     return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                 }
+                ensure_before_deadline_v1(deadline)?;
                 control_txs[worker_id]
                     .send(WorkerControlV1::Continue {
                         release_epoch,
                         round,
                     })
-                    .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+                    .map_err(|_| protocol_or_deadline_error_v1(deadline))?;
+                ensure_before_deadline_v1(deadline)?;
             }
+            ensure_before_deadline_v1(deadline)?;
             released_epoch.store(release_epoch, Ordering::Release);
             for worker_id in 0..config.worker_count {
                 if done_this_round[worker_id] {
@@ -2017,10 +2367,13 @@ pub fn run_async_flat_scored_rollout_v1(
         }
     }
     let join_result = join_every_worker(&mut handles);
-    broker_result?;
-    join_result?;
+    if let Some(interruption) = observer_interruption {
+        return Err(interruption.into_run_error());
+    }
+    broker_result.map_err(AsyncFlatScoredObservedRunErrorV1::Rollout)?;
+    join_result.map_err(AsyncFlatScoredObservedRunErrorV1::Rollout)?;
     if Instant::now() >= deadline {
-        return Err(AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded);
+        return Err(AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded.into());
     }
     #[cfg(test)]
     {
@@ -2036,7 +2389,7 @@ pub fn run_async_flat_scored_rollout_v1(
             episode.terminal.episode_id != config.first_episode_id + index as u64
         })
     {
-        return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
+        return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
     }
     let policy_step_count =
         checked_episode_sum(&episodes, |episode| episode.terminal.policy_step_count)?;
@@ -2056,19 +2409,38 @@ pub fn run_async_flat_scored_rollout_v1(
                 .checked_add(metrics.short_batch_count)
                 .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
     {
-        return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
+        return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
     }
     metrics.batch_membership_digest = digest.finalize();
     if Instant::now() >= deadline {
-        return Err(AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded);
+        return Err(AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded.into());
+    }
+    let observed_output =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer.finish_v1())) {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) => {
+                return Err(AsyncFlatScoredObservedRunErrorV1::ObserverFailed {
+                    phase: FlatScoredObserverPhaseV1::Finish,
+                    error,
+                });
+            }
+            Err(_) => {
+                return Err(AsyncFlatScoredObservedRunErrorV1::ObserverPanicked {
+                    phase: FlatScoredObserverPhaseV1::Finish,
+                });
+            }
+        };
+    if Instant::now() >= deadline {
+        return Err(AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded.into());
     }
     metrics.total_elapsed_ns = u64::try_from(api_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
-    Ok(AsyncFlatScoredRolloutResultV1 {
+    let result = AsyncFlatScoredRolloutResultV1 {
         episodes,
         policy_step_count,
         physical_decision_count,
         metrics,
-    })
+    };
+    Ok((result, observed_output))
 }
 
 fn join_every_worker(
@@ -2203,6 +2575,7 @@ mod tests {
     use std::time::Duration;
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
+    const TEST_LEARNER_POLICY_SEED: u64 = 83_501;
 
     #[derive(Default)]
     struct ZeroScorer {
@@ -2299,6 +2672,311 @@ mod tests {
                 }
             }
             Ok(())
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct TestObservedSelectedEventV1 {
+        expected: FastActorDecisionV1,
+        binding: FlatDecisionBindingV1,
+        learner_ordinal: u64,
+        action_seed: u64,
+        selected_index: u32,
+        raw_action_logit_bits: Vec<u32>,
+        predicted_value_bits: u32,
+        safe_packet_payload: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum TestObservedTrajectoryEventV1 {
+        Selected(Box<TestObservedSelectedEventV1>),
+        Terminal(FlatScoredTerminalEventV1),
+    }
+
+    impl TestObservedTrajectoryEventV1 {
+        fn canonical_key(&self) -> (u64, u8, u64) {
+            match self {
+                Self::Selected(event) => (event.expected.episode_id, 0, event.learner_ordinal),
+                Self::Terminal(event) => (event.terminal.episode_id, 1, event.learner_action_count),
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct CanonicalTestTrajectoryObserverV1 {
+        staged: Vec<TestObservedTrajectoryEventV1>,
+    }
+
+    impl FlatScoredTrajectoryObserverV1 for CanonicalTestTrajectoryObserverV1 {
+        type Error = std::convert::Infallible;
+        type Output = Vec<TestObservedTrajectoryEventV1>;
+
+        fn observe_selected_v1(
+            &mut self,
+            event: FlatScoredSelectedEventV1<'_>,
+        ) -> Result<(), Self::Error> {
+            assert!(expected_matches_binding(
+                event.expected,
+                FlatDecisionV1 {
+                    binding: event.binding,
+                    ..FlatDecisionV1::default()
+                }
+            ));
+            assert_eq!(
+                event.action_seed,
+                derive_async_flat_scored_action_seed_v1(
+                    TEST_LEARNER_POLICY_SEED,
+                    event.expected.episode_id,
+                    event.learner_ordinal,
+                )
+            );
+            assert!(event.selected_index < event.expected.legal_action_count);
+            assert_eq!(
+                event.raw_action_logits.len(),
+                usize::try_from(event.expected.legal_action_count).unwrap()
+            );
+            let mut expected_logits = vec![0.0; event.raw_action_logits.len()];
+            let safe_packet_payload =
+                test_content_sensitive_logits(event.decision, &mut expected_logits);
+            let raw_action_logit_bits = event
+                .raw_action_logits
+                .iter()
+                .copied()
+                .map(f32::to_bits)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                raw_action_logit_bits,
+                expected_logits
+                    .iter()
+                    .copied()
+                    .map(f32::to_bits)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                event.predicted_value_bits,
+                test_content_sensitive_value(&safe_packet_payload).to_bits()
+            );
+            self.staged
+                .push(TestObservedTrajectoryEventV1::Selected(Box::new(
+                    TestObservedSelectedEventV1 {
+                        expected: event.expected,
+                        binding: event.binding,
+                        learner_ordinal: event.learner_ordinal,
+                        action_seed: event.action_seed,
+                        selected_index: event.selected_index,
+                        raw_action_logit_bits,
+                        predicted_value_bits: event.predicted_value_bits,
+                        safe_packet_payload,
+                    },
+                )));
+            Ok(())
+        }
+
+        fn observe_terminal_v1(
+            &mut self,
+            event: FlatScoredTerminalEventV1,
+        ) -> Result<(), Self::Error> {
+            self.staged
+                .push(TestObservedTrajectoryEventV1::Terminal(event));
+            Ok(())
+        }
+
+        fn finish_v1(mut self) -> Result<Self::Output, Self::Error> {
+            self.staged
+                .sort_unstable_by_key(TestObservedTrajectoryEventV1::canonical_key);
+            Ok(self.staged)
+        }
+    }
+
+    struct FailingFirstSelectedObserverV1 {
+        callback_count: Arc<AtomicU64>,
+        finished: Arc<AtomicBool>,
+    }
+
+    impl FlatScoredTrajectoryObserverV1 for FailingFirstSelectedObserverV1 {
+        type Error = u32;
+        type Output = ();
+
+        fn observe_selected_v1(
+            &mut self,
+            _event: FlatScoredSelectedEventV1<'_>,
+        ) -> Result<(), Self::Error> {
+            self.callback_count.fetch_add(1, Ordering::SeqCst);
+            Err(91)
+        }
+
+        fn observe_terminal_v1(
+            &mut self,
+            _event: FlatScoredTerminalEventV1,
+        ) -> Result<(), Self::Error> {
+            panic!("terminal must not precede the first selected event")
+        }
+
+        fn finish_v1(self) -> Result<Self::Output, Self::Error> {
+            self.finished.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct PanickingFirstSelectedObserverV1 {
+        callback_count: Arc<AtomicU64>,
+        finished: Arc<AtomicBool>,
+    }
+
+    impl FlatScoredTrajectoryObserverV1 for PanickingFirstSelectedObserverV1 {
+        type Error = std::convert::Infallible;
+        type Output = ();
+
+        fn observe_selected_v1(
+            &mut self,
+            _event: FlatScoredSelectedEventV1<'_>,
+        ) -> Result<(), Self::Error> {
+            self.callback_count.fetch_add(1, Ordering::SeqCst);
+            panic!("intentional trajectory observer panic")
+        }
+
+        fn observe_terminal_v1(
+            &mut self,
+            _event: FlatScoredTerminalEventV1,
+        ) -> Result<(), Self::Error> {
+            panic!("terminal must not precede the first selected event")
+        }
+
+        fn finish_v1(self) -> Result<Self::Output, Self::Error> {
+            self.finished.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct SlowFirstSelectedObserverV1 {
+        callback_count: Arc<AtomicU64>,
+        finished: Arc<AtomicBool>,
+        delay: Duration,
+    }
+
+    impl FlatScoredTrajectoryObserverV1 for SlowFirstSelectedObserverV1 {
+        type Error = std::convert::Infallible;
+        type Output = ();
+
+        fn observe_selected_v1(
+            &mut self,
+            _event: FlatScoredSelectedEventV1<'_>,
+        ) -> Result<(), Self::Error> {
+            self.callback_count.fetch_add(1, Ordering::SeqCst);
+            thread::sleep(self.delay);
+            Ok(())
+        }
+
+        fn observe_terminal_v1(
+            &mut self,
+            _event: FlatScoredTerminalEventV1,
+        ) -> Result<(), Self::Error> {
+            panic!("terminal must not precede the first selected event")
+        }
+
+        fn finish_v1(self) -> Result<Self::Output, Self::Error> {
+            self.finished.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct ErroringTerminalObserverV1;
+
+    impl FlatScoredTrajectoryObserverV1 for ErroringTerminalObserverV1 {
+        type Error = u32;
+        type Output = ();
+
+        fn observe_selected_v1(
+            &mut self,
+            _event: FlatScoredSelectedEventV1<'_>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn observe_terminal_v1(
+            &mut self,
+            _event: FlatScoredTerminalEventV1,
+        ) -> Result<(), Self::Error> {
+            Err(92)
+        }
+
+        fn finish_v1(self) -> Result<Self::Output, Self::Error> {
+            Ok(())
+        }
+    }
+
+    struct PanickingTerminalObserverV1;
+
+    impl FlatScoredTrajectoryObserverV1 for PanickingTerminalObserverV1 {
+        type Error = std::convert::Infallible;
+        type Output = ();
+
+        fn observe_selected_v1(
+            &mut self,
+            _event: FlatScoredSelectedEventV1<'_>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn observe_terminal_v1(
+            &mut self,
+            _event: FlatScoredTerminalEventV1,
+        ) -> Result<(), Self::Error> {
+            panic!("intentional terminal observer panic")
+        }
+
+        fn finish_v1(self) -> Result<Self::Output, Self::Error> {
+            Ok(())
+        }
+    }
+
+    struct ErroringFinishObserverV1;
+
+    impl FlatScoredTrajectoryObserverV1 for ErroringFinishObserverV1 {
+        type Error = u32;
+        type Output = ();
+
+        fn observe_selected_v1(
+            &mut self,
+            _event: FlatScoredSelectedEventV1<'_>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn observe_terminal_v1(
+            &mut self,
+            _event: FlatScoredTerminalEventV1,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn finish_v1(self) -> Result<Self::Output, Self::Error> {
+            Err(93)
+        }
+    }
+
+    struct PanickingFinishObserverV1;
+
+    impl FlatScoredTrajectoryObserverV1 for PanickingFinishObserverV1 {
+        type Error = std::convert::Infallible;
+        type Output = ();
+
+        fn observe_selected_v1(
+            &mut self,
+            _event: FlatScoredSelectedEventV1<'_>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn observe_terminal_v1(
+            &mut self,
+            _event: FlatScoredTerminalEventV1,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn finish_v1(self) -> Result<Self::Output, Self::Error> {
+            panic!("intentional trajectory observer finish panic")
         }
     }
 
@@ -2457,7 +3135,7 @@ mod tests {
             learner_seat: PlayerSeatV1::P0,
             environment_seed: 81_501,
             opponent_policy_seed: 82_501,
-            learner_policy_seed: 83_501,
+            learner_policy_seed: TEST_LEARNER_POLICY_SEED,
             max_physical_decisions: 5_000,
             max_policy_steps: 640_000,
             worker_count,
@@ -2819,6 +3497,46 @@ mod tests {
     }
 
     #[test]
+    fn public_noop_path_matches_private_noop_core() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let shaped = config(2, 2, 3, 8);
+        let mut public_scorer = ZeroScorer::default();
+        let public = run_async_flat_scored_rollout_v1(shaped.clone(), &mut public_scorer).unwrap();
+        let mut observed_scorer = ZeroScorer::default();
+        let (observed, output) = run_async_flat_scored_rollout_observed_v1(
+            shaped,
+            &mut observed_scorer,
+            NoopFlatScoredTrajectoryObserverV1,
+        )
+        .unwrap();
+
+        assert_eq!(output, ());
+        assert_eq!(observed.episodes, public.episodes);
+        assert_eq!(observed.policy_step_count, public.policy_step_count);
+        assert_eq!(
+            observed.physical_decision_count,
+            public.physical_decision_count
+        );
+        let mut public_metrics = public.metrics;
+        let mut observed_metrics = observed.metrics;
+        public_metrics.total_elapsed_ns = 0;
+        observed_metrics.total_elapsed_ns = 0;
+        assert_eq!(observed_metrics, public_metrics);
+        assert_eq!(
+            (
+                observed_scorer.calls,
+                observed_scorer.decisions,
+                observed_scorer.logits
+            ),
+            (
+                public_scorer.calls,
+                public_scorer.decisions,
+                public_scorer.logits
+            )
+        );
+    }
+
+    #[test]
     fn logical_transcript_is_schedule_invariant() {
         let _lock = TEST_LOCK.lock().unwrap();
         let mut base = config(1, 1, 1, 9);
@@ -2829,6 +3547,16 @@ mod tests {
             .iter()
             .all(|episode| episode.terminal.terminal_classification
                 == TerminalClassificationV1::Natural));
+        assert!(
+            reference
+                .events
+                .iter()
+                .map(|event| event.scorer_value_bits)
+                .collect::<BTreeSet<_>>()
+                .len()
+                > 1,
+            "schedule oracle must exercise distinct scorer value bits"
+        );
         let shapes = [(1, 1, 1), (1, 4, 3), (4, 1, 3), (4, 2, 5)];
         for (workers, sessions, target) in shapes {
             let mut shaped = base.clone();
@@ -2860,6 +3588,62 @@ mod tests {
                 result.metrics.scored_action_logit_count,
                 reference.scored_action_logit_count
             );
+        }
+    }
+
+    #[test]
+    fn observed_selected_and_terminal_stream_is_canonical_and_schedule_invariant() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let mut base = config(1, 1, 1, 9);
+        base.first_episode_id = 37;
+        let shapes = [(1, 1, 1), (1, 4, 3), (4, 1, 3), (4, 2, 5)];
+        let mut reference_stream = None;
+
+        for (workers, sessions, target) in shapes {
+            let mut shaped = base.clone();
+            shaped.worker_count = workers;
+            shaped.sessions_per_worker = sessions;
+            shaped.broker_batch_target = target;
+            let mut scorer = ContentSensitiveScorer::default();
+            let (result, stream) = run_async_flat_scored_rollout_observed_v1(
+                shaped,
+                &mut scorer,
+                CanonicalTestTrajectoryObserverV1::default(),
+            )
+            .unwrap();
+
+            assert!(result.all_natural());
+            assert_eq!(
+                stream
+                    .iter()
+                    .filter(|event| matches!(event, TestObservedTrajectoryEventV1::Selected(_)))
+                    .count(),
+                usize::try_from(result.metrics.sampled_action_count).unwrap()
+            );
+            let observed_terminals = stream
+                .iter()
+                .filter_map(|event| match event {
+                    TestObservedTrajectoryEventV1::Terminal(event) => Some(*event),
+                    TestObservedTrajectoryEventV1::Selected(_) => None,
+                })
+                .collect::<Vec<_>>();
+            let expected_terminals = result
+                .episodes
+                .iter()
+                .map(|episode| FlatScoredTerminalEventV1 {
+                    terminal: episode.terminal,
+                    learner_action_count: episode.learner_action_count,
+                    learner_trace_hash: episode.learner_trace_hash,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(observed_terminals, expected_terminals);
+            assert!(stream
+                .windows(2)
+                .all(|events| events[0].canonical_key() < events[1].canonical_key()));
+            match &reference_stream {
+                Some(reference) => assert_eq!(&stream, reference),
+                None => reference_stream = Some(stream),
+            }
         }
     }
 
@@ -2970,6 +3754,190 @@ mod tests {
         );
     }
 
+    #[test]
+    fn first_selected_observer_error_releases_no_multi_lane_action_or_output() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let callback_count = Arc::new(AtomicU64::new(0));
+        let finished = Arc::new(AtomicBool::new(false));
+        let observer = FailingFirstSelectedObserverV1 {
+            callback_count: Arc::clone(&callback_count),
+            finished: Arc::clone(&finished),
+        };
+        let mut scorer = ZeroScorer::default();
+
+        let error =
+            run_async_flat_scored_rollout_observed_v1(config(1, 4, 4, 4), &mut scorer, observer)
+                .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AsyncFlatScoredObservedRunErrorV1::ObserverFailed {
+                phase: FlatScoredObserverPhaseV1::Selected,
+                error: 91,
+            }
+        ));
+        assert_eq!(scorer.calls, 1);
+        assert_eq!(scorer.decisions, 4);
+        assert_eq!(callback_count.load(Ordering::SeqCst), 1);
+        assert!(!finished.load(Ordering::SeqCst));
+        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn first_selected_observer_panic_releases_no_multi_lane_action_or_output() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let callback_count = Arc::new(AtomicU64::new(0));
+        let finished = Arc::new(AtomicBool::new(false));
+        let observer = PanickingFirstSelectedObserverV1 {
+            callback_count: Arc::clone(&callback_count),
+            finished: Arc::clone(&finished),
+        };
+        let mut scorer = ZeroScorer::default();
+
+        let error =
+            run_async_flat_scored_rollout_observed_v1(config(1, 4, 4, 4), &mut scorer, observer)
+                .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AsyncFlatScoredObservedRunErrorV1::ObserverPanicked {
+                phase: FlatScoredObserverPhaseV1::Selected,
+            }
+        ));
+        assert_eq!(scorer.calls, 1);
+        assert_eq!(scorer.decisions, 4);
+        assert_eq!(callback_count.load(Ordering::SeqCst), 1);
+        assert!(!finished.load(Ordering::SeqCst));
+        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn slow_first_selected_observer_deadline_releases_no_action_or_output() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let callback_count = Arc::new(AtomicU64::new(0));
+        let finished = Arc::new(AtomicBool::new(false));
+        let observer = SlowFirstSelectedObserverV1 {
+            callback_count: Arc::clone(&callback_count),
+            finished: Arc::clone(&finished),
+            delay: Duration::from_millis(1_100),
+        };
+        let mut scorer = ZeroScorer::default();
+        let mut shaped = config(1, 4, 4, 4);
+        shaped.scheduler_timeout = Duration::from_secs(1);
+
+        let error =
+            run_async_flat_scored_rollout_observed_v1(shaped, &mut scorer, observer).unwrap_err();
+
+        assert!(matches!(
+            error,
+            AsyncFlatScoredObservedRunErrorV1::Rollout(
+                AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded
+            )
+        ));
+        assert_eq!(scorer.calls, 1);
+        assert_eq!(scorer.decisions, 4);
+        assert_eq!(callback_count.load(Ordering::SeqCst), 1);
+        assert!(!finished.load(Ordering::SeqCst));
+        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn terminal_observer_error_maps_phase_and_releases_no_terminal_ack_or_output() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let mut scorer = ZeroScorer::default();
+
+        let error = run_async_flat_scored_rollout_observed_v1(
+            config(1, 1, 1, 1),
+            &mut scorer,
+            ErroringTerminalObserverV1,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AsyncFlatScoredObservedRunErrorV1::ObserverFailed {
+                phase: FlatScoredObserverPhaseV1::Terminal,
+                error: 92,
+            }
+        ));
+        assert!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst) > 0);
+        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn terminal_observer_panic_maps_phase_and_releases_no_terminal_ack_or_output() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let mut scorer = ZeroScorer::default();
+
+        let error = run_async_flat_scored_rollout_observed_v1(
+            config(1, 1, 1, 1),
+            &mut scorer,
+            PanickingTerminalObserverV1,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AsyncFlatScoredObservedRunErrorV1::ObserverPanicked {
+                phase: FlatScoredObserverPhaseV1::Terminal,
+            }
+        ));
+        assert!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst) > 0);
+        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn finish_observer_error_maps_phase_and_returns_no_result_or_output() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let mut scorer = ZeroScorer::default();
+
+        let error = run_async_flat_scored_rollout_observed_v1(
+            config(1, 1, 1, 1),
+            &mut scorer,
+            ErroringFinishObserverV1,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AsyncFlatScoredObservedRunErrorV1::ObserverFailed {
+                phase: FlatScoredObserverPhaseV1::Finish,
+                error: 93,
+            }
+        ));
+        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn finish_observer_panic_maps_phase_and_returns_no_result_or_output() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let mut scorer = ZeroScorer::default();
+
+        let error = run_async_flat_scored_rollout_observed_v1(
+            config(1, 1, 1, 1),
+            &mut scorer,
+            PanickingFinishObserverV1,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AsyncFlatScoredObservedRunErrorV1::ObserverPanicked {
+                phase: FlatScoredObserverPhaseV1::Finish,
+            }
+        ));
+        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 1);
+    }
+
     struct UnwrittenScorer;
 
     impl FlatBatchScorerV1 for UnwrittenScorer {
@@ -3035,6 +4003,63 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn finite_scorer_value_wrapper_rejects_every_non_finite_class() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        assert_eq!(
+            FiniteScorerValueV1::new(-0.0),
+            Some(FiniteScorerValueV1(0x8000_0000))
+        );
+        for value in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            assert_eq!(FiniteScorerValueV1::new(value), None);
+        }
+    }
+
+    #[test]
+    fn apply_reply_rejects_corrupted_learner_ordinal_before_consume() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let shaped = config(1, 1, 1, 1);
+        let end_episode_id = shaped.first_episode_id + shaped.episode_count;
+        let mut lane = LocalLaneV1::vacant(0, 0, shaped.first_episode_id, end_episode_id);
+        lane.fill(&shaped, end_episode_id, 1).unwrap();
+        let mut decisions = Vec::new();
+        let mut terminals = Vec::new();
+        lane.advance_to_event(
+            &shaped,
+            Instant::now() + Duration::from_secs(30),
+            &AtomicBool::new(false),
+            &mut decisions,
+            &mut terminals,
+        )
+        .unwrap();
+        assert!(terminals.is_empty());
+        let decision = decisions.pop().expect("lane must reach a learner decision");
+        assert!(decisions.is_empty());
+        let binding = decision.packet.decision().binding;
+        let mut reply = WorkerReplyV1 {
+            actions: vec![ActionReplyV1 {
+                logical_lane_id: 0,
+                scored: BoundScoredActionV1 {
+                    binding,
+                    learner_ordinal: 1,
+                    selected_index: 0,
+                    predicted_value: FiniteScorerValueV1::new(0.0).unwrap(),
+                },
+                packet: decision.packet,
+            }],
+            terminal_acks: Vec::new(),
+        };
+
+        let error = lane.apply_reply(&mut reply).unwrap_err();
+        assert_eq!(
+            error.phase,
+            AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding
+        );
+        assert_eq!(lane.learner_action_count, 0);
+        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
     }
 
     #[test]
