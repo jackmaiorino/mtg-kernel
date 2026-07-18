@@ -31,7 +31,7 @@ use crate::surface_v2::{SurfaceAction, SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -1035,6 +1035,15 @@ pub struct LegalActionCandidateV1 {
     pub surface_action: SurfaceAction,
 }
 
+/// Shared ordered action core used by both the wire-facing policy surface and
+/// the in-process fast actor.  It deliberately contains no transport index,
+/// stable id, display text, observation, or serialization concern.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CoreSurfaceActionCandidateV1 {
+    pub(crate) semantic: ActionSemanticV1,
+    pub(crate) surface_action: SurfaceAction,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegalActionV5 {
     pub schema_version: u32,
@@ -1048,6 +1057,14 @@ pub struct LegalActionV5 {
 pub struct PolicyLegalActionCandidateV5 {
     pub record: LegalActionV5,
     pub policy_action: PolicyActionV5,
+}
+
+/// Policy-v5 action semantics and executable action in their single canonical
+/// order, before any wire record or stable id is materialized.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CorePolicyActionCandidateV1 {
+    pub(crate) semantic: ActionSemanticV1,
+    pub(crate) policy_action: PolicyActionV5,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1491,6 +1508,9 @@ pub fn observe_policy_v5(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV5> {
+    #[cfg(test)]
+    TEST_POLICY_V5_OBSERVATIONS.with(|calls| calls.set(calls.get().saturating_add(1)));
+
     if substep_count == 0 || substep_index >= substep_count {
         return Err(RlContractError(format!(
             "invalid physical decision substep {substep_index}/{substep_count}"
@@ -1587,20 +1607,10 @@ pub fn make_legal_action_v5(
     semantic: ActionSemanticV1,
     display_text: Option<String>,
 ) -> Result<LegalActionV5> {
-    if let ActionSemanticV1::Ambiguous { reason } = &semantic {
-        return Err(RlContractError(format!(
-            "ambiguous legal action representation refused: {reason}"
-        )));
-    }
-    if matches!(
-        semantic,
-        ActionSemanticV1::DeclareAttackers { .. }
-            | ActionSemanticV1::DeclareBlockersForAttacker { .. }
-    ) {
-        return Err(RlContractError(
-            "legacy aggregate combat semantic is forbidden on policy surface v5".to_string(),
-        ));
-    }
+    #[cfg(test)]
+    TEST_POLICY_V5_STABLE_ACTIONS.with(|calls| calls.set(calls.get().saturating_add(1)));
+
+    validate_policy_action_semantic_v5(&semantic)?;
     let hash = stable_hash_json(&semantic)?;
     Ok(LegalActionV5 {
         schema_version: LEGAL_ACTION_SCHEMA_VERSION_V5,
@@ -1615,21 +1625,40 @@ pub fn legal_action_candidates_v5(
     decision: &PolicyDecisionV5,
     state: &GameState,
 ) -> Result<Vec<PolicyLegalActionCandidateV5>> {
-    let mut out = match decision {
+    let core = core_policy_action_candidates_v5(decision, state)?;
+    let out = core
+        .into_iter()
+        .enumerate()
+        .map(|(selected_index, candidate)| {
+            Ok(PolicyLegalActionCandidateV5 {
+                record: make_legal_action_v5(
+                    u32::try_from(selected_index).map_err(|_| {
+                        RlContractError("policy action index exceeds u32".to_string())
+                    })?,
+                    candidate.semantic,
+                    None,
+                )?,
+                policy_action: candidate.policy_action,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure_unique_policy_action_ids(&out)?;
+    Ok(out)
+}
+
+pub(crate) fn core_policy_action_candidates_v5(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    let out: Vec<CorePolicyActionCandidateV1> = match decision {
         PolicyDecisionV5::Surface(surface_decision) => {
-            legal_action_candidates_v1(surface_decision, state)?
+            core_surface_action_candidates_v1(surface_decision, state)?
                 .into_iter()
-                .map(|candidate| {
-                    Ok(PolicyLegalActionCandidateV5 {
-                        record: make_legal_action_v5(
-                            candidate.record.selected_index,
-                            candidate.record.semantic,
-                            candidate.record.display_text,
-                        )?,
-                        policy_action: PolicyActionV5::Surface(candidate.surface_action),
-                    })
+                .map(|candidate| CorePolicyActionCandidateV1 {
+                    semantic: candidate.semantic,
+                    policy_action: PolicyActionV5::Surface(candidate.surface_action),
                 })
-                .collect::<Result<Vec<_>>>()?
+                .collect()
         }
         PolicyDecisionV5::AttackerInclusion {
             player, attacker, ..
@@ -1638,23 +1667,22 @@ pub fn legal_action_candidates_v5(
             let attacker_ref = card_ref(state, *attacker)?;
             [false, true]
                 .into_iter()
-                .enumerate()
-                .map(|(selected_index, include)| {
+                .map(|include| {
                     let semantic = ActionSemanticV1::ChooseAttackerInclusion {
                         actor,
                         attacker: attacker_ref.clone(),
                         include,
                     };
-                    Ok(PolicyLegalActionCandidateV5 {
-                        record: make_legal_action_v5(selected_index as u32, semantic, None)?,
+                    CorePolicyActionCandidateV1 {
+                        semantic,
                         policy_action: PolicyActionV5::ChooseAttackerInclusion {
                             actor: *player,
                             attacker: *attacker,
                             include,
                         },
-                    })
+                    }
                 })
-                .collect::<Result<Vec<_>>>()?
+                .collect()
         }
         PolicyDecisionV5::BlockerInclusion {
             player,
@@ -1667,38 +1695,111 @@ pub fn legal_action_candidates_v5(
             let blocker_ref = card_ref(state, *blocker)?;
             [false, true]
                 .into_iter()
-                .enumerate()
-                .map(|(selected_index, include)| {
+                .map(|include| {
                     let semantic = ActionSemanticV1::ChooseBlockerInclusion {
                         actor,
                         attacker: attacker_ref.clone(),
                         blocker: blocker_ref.clone(),
                         include,
                     };
-                    Ok(PolicyLegalActionCandidateV5 {
-                        record: make_legal_action_v5(selected_index as u32, semantic, None)?,
+                    CorePolicyActionCandidateV1 {
+                        semantic,
                         policy_action: PolicyActionV5::ChooseBlockerInclusion {
                             actor: *player,
                             attacker: *attacker,
                             blocker: *blocker,
                             include,
                         },
-                    })
+                    }
                 })
-                .collect::<Result<Vec<_>>>()?
+                .collect()
         }
     };
-    for (index, candidate) in out.iter_mut().enumerate() {
-        candidate.record.selected_index = index as u32;
-    }
-    ensure_unique_policy_action_ids(&out)?;
+    validate_core_policy_action_candidates_v5(&out)?;
     Ok(out)
+}
+
+fn validate_policy_action_semantic_v5(semantic: &ActionSemanticV1) -> Result<()> {
+    if let ActionSemanticV1::Ambiguous { reason } = semantic {
+        return Err(RlContractError(format!(
+            "ambiguous legal action representation refused: {reason}"
+        )));
+    }
+    if matches!(
+        semantic,
+        ActionSemanticV1::DeclareAttackers { .. }
+            | ActionSemanticV1::DeclareBlockersForAttacker { .. }
+    ) {
+        return Err(RlContractError(
+            "legacy aggregate combat semantic is forbidden on policy surface v5".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_core_policy_action_candidates_v5(
+    actions: &[CorePolicyActionCandidateV1],
+) -> Result<()> {
+    for action in actions {
+        validate_policy_action_semantic_v5(&action.semantic)?;
+    }
+
+    // Avoid a second allocation on ordinary small policy windows while still
+    // keeping pathological trigger-order windows linear rather than quadratic.
+    const LINEAR_SCAN_LIMIT: usize = 32;
+    if actions.len() <= LINEAR_SCAN_LIMIT {
+        for (index, action) in actions.iter().enumerate() {
+            if actions[..index]
+                .iter()
+                .any(|prior| prior.semantic == action.semantic)
+            {
+                return Err(RlContractError(
+                    "duplicate policy action semantic within one decision".to_string(),
+                ));
+            }
+        }
+    } else {
+        let mut seen = HashSet::with_capacity(actions.len());
+        for action in actions {
+            if !seen.insert(&action.semantic) {
+                return Err(RlContractError(
+                    "duplicate policy action semantic within one decision".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn legal_action_candidates_v1(
     decision: &SurfaceDecision,
     state: &GameState,
 ) -> Result<Vec<LegalActionCandidateV1>> {
+    let core = core_surface_action_candidates_v1(decision, state)?;
+    let out = core
+        .into_iter()
+        .enumerate()
+        .map(|(selected_index, candidate)| {
+            Ok(LegalActionCandidateV1 {
+                record: make_legal_action_v1(
+                    u32::try_from(selected_index).map_err(|_| {
+                        RlContractError("surface action index exceeds u32".to_string())
+                    })?,
+                    candidate.semantic,
+                    None,
+                )?,
+                surface_action: candidate.surface_action,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure_unique_action_ids(&out)?;
+    Ok(out)
+}
+
+fn core_surface_action_candidates_v1(
+    decision: &SurfaceDecision,
+    state: &GameState,
+) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
     let mut out = Vec::new();
     match decision {
         SurfaceDecision::Decision(decision) => match decision {
@@ -2118,7 +2219,6 @@ pub fn legal_action_candidates_v1(
             }
         }
     }
-    ensure_unique_action_ids(&out)?;
     Ok(out)
 }
 
@@ -5266,13 +5366,12 @@ fn visible_projection_hash_v5(observation: &ObservationV5) -> Result<u64> {
 }
 
 fn push_action(
-    out: &mut Vec<LegalActionCandidateV1>,
+    out: &mut Vec<CoreSurfaceActionCandidateV1>,
     semantic: ActionSemanticV1,
     surface_action: SurfaceAction,
 ) -> Result<()> {
-    let record = make_legal_action_v1(out.len() as u32, semantic, None)?;
-    out.push(LegalActionCandidateV1 {
-        record,
+    out.push(CoreSurfaceActionCandidateV1 {
+        semantic,
         surface_action,
     });
     Ok(())
@@ -5364,6 +5463,22 @@ fn stable_hash_json<T: Serialize>(value: &T) -> Result<u64> {
 thread_local! {
     static TEST_VISIBLE_PROJECTION_HASH_V2_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static TEST_VISIBLE_PROJECTION_HASH_V5_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static TEST_POLICY_V5_OBSERVATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static TEST_POLICY_V5_STABLE_ACTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_test_policy_v5_materialization_calls() {
+    TEST_POLICY_V5_OBSERVATIONS.with(|calls| calls.set(0));
+    TEST_POLICY_V5_STABLE_ACTIONS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn test_policy_v5_materialization_calls() -> (u64, u64) {
+    (
+        TEST_POLICY_V5_OBSERVATIONS.with(std::cell::Cell::get),
+        TEST_POLICY_V5_STABLE_ACTIONS.with(std::cell::Cell::get),
+    )
 }
 
 #[cfg(test)]

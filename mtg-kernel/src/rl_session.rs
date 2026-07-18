@@ -12,10 +12,12 @@ use crate::engine::Decision;
 use crate::ids::PlayerId;
 use crate::phase_profile::{measure_optional, RlPhaseProfileV1, RlPhaseV1};
 use crate::policy_surface_v5::{
-    PolicyDecisionV5, PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM, POLICY_SURFACE_VERSION,
+    PolicyDecisionV5, PolicySurfaceContextIdsV5, PolicySurfaceV5,
+    POLICY_ENVIRONMENT_HASH_ALGORITHM, POLICY_SURFACE_VERSION,
 };
 use crate::rl::{
-    build_deck_pair_state, legal_action_candidates_v5, observe_policy_v5, parse_strict_json_value,
+    build_deck_pair_state, core_policy_action_candidates_v5, legal_action_candidates_v5,
+    observe_policy_v5, parse_strict_json_value, ActionSemanticV1, CorePolicyActionCandidateV1,
     EpisodeTerminalSummaryV1, LegalActionV5, ObservationV5, PlayerSeatV1,
     PolicyLegalActionCandidateV5, RlContractError, TerminalClassificationV1, TerminalOutcomeV1,
     TerminalSafeCodeV2,
@@ -30,6 +32,8 @@ use std::fmt;
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_NAME: &str = "kernel_rl_jsonl";
+pub const FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM: &str =
+    "fnv1a64-serde-json-fast-actor-core-environment-v1";
 pub const CANONICAL_BURN_DECK_ID: &str = "Burn";
 pub const CANONICAL_RALLY_DECK_ID: &str = "Rally";
 
@@ -114,6 +118,37 @@ pub enum RlSessionResponseV1 {
     Terminal(RlSessionTerminalV1),
 }
 
+/// Allocation-light, in-process decision metadata for actor loops.
+///
+/// This type deliberately has no serde implementation and is not part of the
+/// JSONL protocol. The only action handle exposed to an actor is its dense,
+/// ordered index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FastActorDecisionKindV1 {
+    Surface,
+    AttackerInclusion,
+    BlockerInclusion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FastActorDecisionV1 {
+    pub episode_id: u64,
+    pub step: u64,
+    pub physical_decision_id: u64,
+    pub substep_index: u32,
+    pub substep_count: u32,
+    pub acting_player: PlayerSeatV1,
+    pub decision_kind: FastActorDecisionKindV1,
+    pub legal_action_count: u32,
+}
+
+/// Non-wire response for [`FastActorSessionV1`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FastActorResponseV1 {
+    Decision(FastActorDecisionV1),
+    Terminal(RlSessionTerminalV1),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RlSessionErrorCode {
@@ -160,6 +195,19 @@ struct CurrentDecisionV1 {
     bound_physical_decision_count: u64,
 }
 
+#[derive(Debug, Clone)]
+struct FastActorCurrentDecisionV1 {
+    actor: PlayerId,
+    decision_kind: FastActorDecisionKindV1,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+    candidates: Vec<CorePolicyActionCandidateV1>,
+    environment_revision: u64,
+    bound_policy_step_count: u64,
+    bound_physical_decision_count: u64,
+}
+
 #[derive(Clone)]
 pub struct RlEpisodeSessionV1 {
     deck_ids: SessionDeckIdsV1,
@@ -178,6 +226,28 @@ pub struct RlEpisodeSessionV1 {
 
 #[derive(Clone)]
 pub struct RlEpisodeSessionSnapshotV5(RlEpisodeSessionV1);
+
+/// In-process actor lane that preserves the v5 policy surface and transition
+/// semantics while omitting observations, visible hashes, stable/display
+/// strings, and all JSON/Python work.
+#[derive(Clone)]
+pub struct FastActorSessionV1 {
+    deck_ids: SessionDeckIdsV1,
+    deck_hashes: SessionDeckHashesV1,
+    episode_id: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    state: crate::state::GameState,
+    surface: PolicySurfaceV5,
+    environment_revision: u64,
+    policy_step_count: u64,
+    physical_decision_count: u64,
+    current: Option<FastActorCurrentDecisionV1>,
+    terminal: Option<RlSessionTerminalV1>,
+}
+
+#[derive(Clone)]
+pub struct FastActorSessionSnapshotV1(FastActorSessionV1);
 
 impl RlEpisodeSessionV1 {
     pub fn reset(episode_id: u64, env_seed: u64, max_physical_decisions: u64) -> Self {
@@ -347,6 +417,38 @@ impl RlEpisodeSessionV1 {
     pub fn privileged_environment_hash(&self) -> u64 {
         self.compute_environment_hash(self.current.as_ref())
             .expect("session environment serializes")
+    }
+
+    /// Exact audit hash over the shared actor-relevant state, surface, binding,
+    /// metadata, and ordered action semantics. Unlike the JSONL environment
+    /// hash, this intentionally excludes ObservationV5 and stable action ids.
+    pub fn privileged_core_environment_hash(&self) -> u64 {
+        let current = self
+            .current
+            .as_ref()
+            .map(|decision| CoreEnvironmentDecisionRefV1 {
+                actor: decision.actor,
+                physical_decision_id: decision.physical_decision_id,
+                substep_index: decision.substep_index,
+                substep_count: decision.substep_count,
+                environment_revision: decision.environment_revision,
+                bound_policy_step_count: decision.bound_policy_step_count,
+                bound_physical_decision_count: decision.bound_physical_decision_count,
+                legal_action_semantics: decision
+                    .candidates
+                    .iter()
+                    .map(|candidate| &candidate.record.semantic)
+                    .collect(),
+            });
+        compute_core_environment_hash(
+            &self.state,
+            &self.surface,
+            self.environment_revision,
+            self.policy_step_count,
+            self.physical_decision_count,
+            current,
+        )
+        .expect("session core environment serializes")
     }
 
     pub fn snapshot_v5(&self) -> RlEpisodeSessionSnapshotV5 {
@@ -695,6 +797,449 @@ impl RlEpisodeSessionV1 {
         let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
         Ok(fnv1a64(&bytes))
     }
+}
+
+impl FastActorSessionV1 {
+    pub fn reset(episode_id: u64, env_seed: u64, max_physical_decisions: u64) -> Self {
+        let max_policy_steps = max_physical_decisions.saturating_mul(128).max(1);
+        Self::reset_with_limits(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+        )
+    }
+
+    pub fn reset_with_limits(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+    ) -> Self {
+        Self::reset_with_decks_and_limits(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("the built-in Burn/Burn deck pair is supported")
+    }
+
+    pub fn reset_with_decks(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        let max_policy_steps = max_physical_decisions.saturating_mul(128).max(1);
+        Self::reset_with_decks_and_limits(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+        )
+    }
+
+    pub fn reset_with_decks_and_limits(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        let resolved_decks = resolve_runtime_decks(&deck_ids)?;
+        let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
+        let state = build_deck_pair_state(
+            env_seed,
+            resolved_decks[0].card_ids,
+            resolved_decks[1].card_ids,
+        )
+        .map_err(|_| {
+            session_error(
+                RlSessionErrorCode::UnsupportedDeck,
+                "runtime deck catalog failed full-support preflight",
+            )
+        })?;
+        let mut session = FastActorSessionV1 {
+            deck_ids,
+            deck_hashes,
+            episode_id,
+            max_physical_decisions,
+            max_policy_steps,
+            state,
+            surface: PolicySurfaceV5::new_for_session(),
+            environment_revision: 0,
+            policy_step_count: 0,
+            physical_decision_count: 0,
+            current: None,
+            terminal: None,
+        };
+        session.advance_to_decision_or_terminal();
+        Ok(session)
+    }
+
+    pub fn current_response(&self) -> FastActorResponseV1 {
+        if let Some(terminal) = &self.terminal {
+            return FastActorResponseV1::Terminal(terminal.clone());
+        }
+        let current = self
+            .current
+            .as_ref()
+            .expect("session has either a current decision or terminal");
+        FastActorResponseV1::Decision(FastActorDecisionV1 {
+            episode_id: self.episode_id,
+            step: self.policy_step_count,
+            physical_decision_id: current.physical_decision_id,
+            substep_index: current.substep_index,
+            substep_count: current.substep_count,
+            acting_player: current.actor.into(),
+            decision_kind: current.decision_kind,
+            legal_action_count: u32::try_from(current.candidates.len())
+                .expect("fast actor candidate count was checked when bound"),
+        })
+    }
+
+    pub fn policy_step_count(&self) -> u64 {
+        self.policy_step_count
+    }
+
+    pub fn physical_decision_count(&self) -> u64 {
+        self.physical_decision_count
+    }
+
+    pub fn diagnostic_state_hash(&self) -> u64 {
+        self.state.diagnostic_state_hash()
+    }
+
+    /// Audit-only counterpart to
+    /// [`RlEpisodeSessionV1::privileged_core_environment_hash`]. It is never
+    /// computed by reset/step and therefore does not tax the actor loop.
+    pub fn privileged_core_environment_hash(&self) -> u64 {
+        let current = self
+            .current
+            .as_ref()
+            .map(|decision| CoreEnvironmentDecisionRefV1 {
+                actor: decision.actor,
+                physical_decision_id: decision.physical_decision_id,
+                substep_index: decision.substep_index,
+                substep_count: decision.substep_count,
+                environment_revision: decision.environment_revision,
+                bound_policy_step_count: decision.bound_policy_step_count,
+                bound_physical_decision_count: decision.bound_physical_decision_count,
+                legal_action_semantics: decision
+                    .candidates
+                    .iter()
+                    .map(|candidate| &candidate.semantic)
+                    .collect(),
+            });
+        compute_core_environment_hash(
+            &self.state,
+            &self.surface,
+            self.environment_revision,
+            self.policy_step_count,
+            self.physical_decision_count,
+            current,
+        )
+        .expect("fast actor core environment serializes")
+    }
+
+    pub fn snapshot_v1(&self) -> FastActorSessionSnapshotV1 {
+        FastActorSessionSnapshotV1(self.clone())
+    }
+
+    pub fn restore_v1(&mut self, snapshot: &FastActorSessionSnapshotV1) {
+        *self = snapshot.0.clone();
+    }
+
+    pub fn step(
+        &mut self,
+        episode_id: u64,
+        expected_step: u64,
+        selected_index: u32,
+    ) -> Result<FastActorResponseV1, RlSessionError> {
+        if episode_id != self.episode_id {
+            return Err(session_error(
+                RlSessionErrorCode::EpisodeIdMismatch,
+                "step request episode_id does not match the active episode",
+            ));
+        }
+        if expected_step != self.policy_step_count {
+            return Err(session_error(
+                RlSessionErrorCode::ExpectedStepMismatch,
+                "step request expected_step does not match the active decision step",
+            ));
+        }
+        if self.terminal.is_some() {
+            return Err(session_error(
+                RlSessionErrorCode::EpisodeAlreadyTerminal,
+                "episode is already terminal; reset before stepping again",
+            ));
+        }
+
+        let current = self
+            .current
+            .as_ref()
+            .expect("nonterminal session has current decision");
+        if current.environment_revision != self.environment_revision
+            || current.bound_policy_step_count != self.policy_step_count
+            || current.bound_physical_decision_count != self.physical_decision_count
+        {
+            return Err(session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "active decision no longer matches its owned environment binding",
+            ));
+        }
+        let next_environment_revision =
+            self.environment_revision.checked_add(1).ok_or_else(|| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "owned environment revision exhausted",
+                )
+            })?;
+        let next_policy_step_count = self.policy_step_count.checked_add(1).ok_or_else(|| {
+            session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "owned policy step counter exhausted",
+            )
+        })?;
+        let completes_physical =
+            current.substep_index.checked_add(1) == Some(current.substep_count);
+        let next_physical_decision_count = if completes_physical {
+            self.physical_decision_count.checked_add(1).ok_or_else(|| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "owned physical decision counter exhausted",
+                )
+            })?
+        } else {
+            self.physical_decision_count
+        };
+        let Some(selected) = current.candidates.get(selected_index as usize) else {
+            return Err(session_error(
+                RlSessionErrorCode::SelectedIndexOutOfRange,
+                "selected_index is outside the current legal action list",
+            ));
+        };
+        let policy_action = selected.policy_action.clone();
+
+        self.surface
+            .apply_owned(
+                &mut self.state,
+                policy_action,
+                self.environment_revision,
+                next_environment_revision,
+            )
+            .map_err(|_| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "selected action no longer matches the active policy environment",
+                )
+            })?;
+        self.current = None;
+        self.environment_revision = next_environment_revision;
+        self.policy_step_count = next_policy_step_count;
+        self.physical_decision_count = next_physical_decision_count;
+        self.advance_to_decision_or_terminal();
+        Ok(self.current_response())
+    }
+
+    fn advance_to_decision_or_terminal(&mut self) {
+        self.current = None;
+        let surfaced = match self
+            .surface
+            .next_decision_owned(&mut self.state, self.environment_revision)
+        {
+            Ok(decision) => decision,
+            Err(_) => {
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    "fail_closed:policy_surface_environment".to_string(),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        };
+        match &surfaced {
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::GameOver { winner })) => {
+                self.terminal = Some(terminal_from_winner(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    *winner,
+                    "game_over".to_string(),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::Halted {
+                mechanic,
+                source,
+            })) => {
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("engine_halted:{mechanic:?}:source:{}", source.0),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+            _ => {}
+        }
+        let (substep_index, substep_count) = surfaced.substep();
+        if substep_index == 0 && self.physical_decision_count >= self.max_physical_decisions {
+            let _ = self.surface.discard_unanswered_scan();
+            self.terminal = Some(truncated_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                format!(
+                    "physical_decision_cap_reached:{}",
+                    self.max_physical_decisions
+                ),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        let remaining_group_steps = u64::from(substep_count - substep_index);
+        if self.policy_step_count.saturating_add(remaining_group_steps) > self.max_policy_steps {
+            if substep_index == 0 {
+                let _ = self.surface.discard_unanswered_scan();
+            }
+            self.terminal = Some(truncated_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                format!("policy_step_cap_reached:{}", self.max_policy_steps),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        let Some(actor) = surfaced.actor(&self.state) else {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:nonterminal decision without acting player".to_string(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        };
+        let candidates = match core_policy_action_candidates_v5(&surfaced, &self.state) {
+            Ok(candidates) => candidates,
+            Err(err) => {
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:{err}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        };
+        if candidates.is_empty() {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:nonterminal decision produced zero legal actions".to_string(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if u32::try_from(candidates.len()).is_err() {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:policy action index exceeds u32".to_string(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        let decision_kind = match surfaced {
+            PolicyDecisionV5::Surface(_) => FastActorDecisionKindV1::Surface,
+            PolicyDecisionV5::AttackerInclusion { .. } => {
+                FastActorDecisionKindV1::AttackerInclusion
+            }
+            PolicyDecisionV5::BlockerInclusion { .. } => FastActorDecisionKindV1::BlockerInclusion,
+        };
+        self.current = Some(FastActorCurrentDecisionV1 {
+            actor,
+            decision_kind,
+            physical_decision_id: self.physical_decision_count,
+            substep_index,
+            substep_count,
+            candidates,
+            environment_revision: self.environment_revision,
+            bound_policy_step_count: self.policy_step_count,
+            bound_physical_decision_count: self.physical_decision_count,
+        });
+    }
+}
+
+#[derive(Serialize)]
+struct CoreEnvironmentDecisionRefV1<'a> {
+    actor: PlayerId,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+    environment_revision: u64,
+    bound_policy_step_count: u64,
+    bound_physical_decision_count: u64,
+    legal_action_semantics: Vec<&'a ActionSemanticV1>,
+}
+
+fn compute_core_environment_hash(
+    state: &crate::state::GameState,
+    surface: &PolicySurfaceV5,
+    environment_revision: u64,
+    policy_step_count: u64,
+    physical_decision_count: u64,
+    current: Option<CoreEnvironmentDecisionRefV1<'_>>,
+) -> Result<u64, String> {
+    #[derive(Serialize)]
+    struct CoreEnvironmentEnvelopeV1<'a> {
+        schema_version: u32,
+        hash_algorithm: &'static str,
+        diagnostic_state_hash_algorithm: &'static str,
+        diagnostic_state_hash: u64,
+        harness_surface_context: crate::surface_v2::HarnessSurfacePublicContextV2,
+        policy_surface_context: PolicySurfaceContextIdsV5,
+        environment_revision: u64,
+        policy_step_count: u64,
+        physical_decision_count: u64,
+        current: Option<CoreEnvironmentDecisionRefV1<'a>>,
+    }
+
+    let envelope = CoreEnvironmentEnvelopeV1 {
+        schema_version: 1,
+        hash_algorithm: FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM,
+        diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+        diagnostic_state_hash: state.diagnostic_state_hash(),
+        harness_surface_context: surface.harness_public_context(),
+        policy_surface_context: surface.privileged_scan_context()?,
+        environment_revision,
+        policy_step_count,
+        physical_decision_count,
+        current,
+    };
+    let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
+    Ok(fnv1a64(&bytes))
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -1257,7 +1802,11 @@ mod tests {
     use crate::policy_surface_v5::{
         reset_test_exact_surface_hash_calls, test_exact_surface_hash_calls,
     };
-    use crate::rl::card_name;
+    use crate::rl::{
+        card_name, make_legal_action_v5, reset_test_policy_v5_materialization_calls,
+        test_policy_v5_materialization_calls, validate_core_policy_action_candidates_v5,
+        ActionSemanticV1,
+    };
     use crate::state::{Counters, GameObject, GameState, ObjectStateV4, SplitMix64, Step, Zone};
 
     fn attacker_state(count: usize) -> GameState {
@@ -1296,6 +1845,24 @@ mod tests {
     ) -> RlEpisodeSessionV1 {
         let mut session =
             RlEpisodeSessionV1::reset_with_limits(23, 91, max_physical_decisions, max_policy_steps);
+        session.state = attacker_state(count);
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        session
+    }
+
+    fn fast_attacker_session(
+        count: usize,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+    ) -> FastActorSessionV1 {
+        let mut session =
+            FastActorSessionV1::reset_with_limits(23, 91, max_physical_decisions, max_policy_steps);
         session.state = attacker_state(count);
         session.surface = PolicySurfaceV5::new();
         session.environment_revision = 0;
@@ -1598,6 +2165,311 @@ mod tests {
 
         session.restore_v5(&snapshot);
         assert!(session.step(23, step, include_index, &include_id).is_ok());
+    }
+
+    #[test]
+    fn fast_actor_cap_snapshot_retry_overflow_and_final_commit_are_fail_closed() {
+        let full_below = attacker_session(3, 8, 2);
+        let fast_below = fast_attacker_session(3, 8, 2);
+        let RlSessionResponseV1::Terminal(full_terminal) = full_below.current_response() else {
+            panic!("full cap fixture must terminate");
+        };
+        let FastActorResponseV1::Terminal(fast_terminal) = fast_below.current_response() else {
+            panic!("fast cap fixture must terminate");
+        };
+        assert_eq!(fast_terminal, full_terminal);
+        assert!(!fast_below.surface.scan_active());
+
+        let mut session = fast_attacker_session(3, 8, 3);
+        let response_before = session.current_response();
+        let state_before = session.state.clone();
+        let surface_before = session.surface.clone();
+        let binding_before = session.privileged_core_environment_hash();
+        let error = session.step(23, 0, u32::MAX).unwrap_err();
+        assert_eq!(error.code, RlSessionErrorCode::SelectedIndexOutOfRange);
+        assert_eq!(session.current_response(), response_before);
+        assert_eq!(session.state, state_before);
+        assert_eq!(
+            session.surface.harness_public_context(),
+            surface_before.harness_public_context()
+        );
+        assert_eq!(session.privileged_core_environment_hash(), binding_before);
+
+        let snapshot = session.snapshot_v1();
+        session.current.as_mut().unwrap().environment_revision += 1;
+        let error = session.step(23, 0, u32::MAX).unwrap_err();
+        assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        session.restore_v1(&snapshot);
+        let advanced = session.step(23, 0, 1).unwrap();
+        let FastActorResponseV1::Decision(advanced) = advanced else {
+            panic!("first combat answer must expose the second substep");
+        };
+        assert_eq!(advanced.step, 1);
+        assert_eq!(advanced.physical_decision_id, 0);
+        assert_eq!(advanced.substep_index, 1);
+        let advanced_hash = session.privileged_core_environment_hash();
+        session.restore_v1(&snapshot);
+        assert_eq!(
+            session.step(23, 0, 1).unwrap(),
+            FastActorResponseV1::Decision(advanced)
+        );
+        assert_eq!(session.privileged_core_environment_hash(), advanced_hash);
+
+        session.restore_v1(&snapshot);
+        session.environment_revision = u64::MAX;
+        session.current.as_mut().unwrap().environment_revision = u64::MAX;
+        let overflow_before = session.privileged_core_environment_hash();
+        let error = session.step(23, 0, u32::MAX).unwrap_err();
+        assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        assert_eq!(error.message, "owned environment revision exhausted");
+        assert_eq!(session.privileged_core_environment_hash(), overflow_before);
+
+        let mut final_commit = fast_attacker_session(1, 8, 8);
+        let final_snapshot = final_commit.snapshot_v1();
+        final_commit.state.players[0].battlefield.clear();
+        let tampered_state = final_commit.state.clone();
+        let response_before = final_commit.current_response();
+        let revision_before = final_commit.environment_revision;
+        let error = final_commit.step(23, 0, 1).unwrap_err();
+        assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        assert_eq!(final_commit.environment_revision, revision_before);
+        assert_eq!(final_commit.policy_step_count, 0);
+        assert_eq!(final_commit.physical_decision_count, 0);
+        assert_eq!(final_commit.state, tampered_state);
+        assert_eq!(final_commit.current_response(), response_before);
+        final_commit.restore_v1(&final_snapshot);
+        assert!(final_commit.step(23, 0, 1).is_ok());
+    }
+
+    #[test]
+    fn fast_actor_reset_and_steps_materialize_zero_observations_or_stable_ids() {
+        reset_test_policy_v5_materialization_calls();
+        let mut fast = fast_attacker_session(3, 8, 8);
+        assert_eq!(test_policy_v5_materialization_calls(), (0, 0));
+        for step in 0..3 {
+            fast.step(23, step, 1).unwrap();
+        }
+        assert_eq!(test_policy_v5_materialization_calls(), (0, 0));
+
+        let _full = attacker_session(3, 8, 8);
+        let (observations, stable_actions) = test_policy_v5_materialization_calls();
+        assert!(observations > 0);
+        assert!(stable_actions > 0);
+    }
+
+    #[test]
+    fn shared_core_and_full_v5_fail_identically_on_forbidden_or_duplicate_semantics() {
+        reset_test_policy_v5_materialization_calls();
+        let state = attacker_state(1);
+        let object = state.players[0].battlefield[0];
+
+        let legacy =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::DeclareAttackers {
+                player: PlayerId::P0,
+                eligible: vec![object],
+            }));
+        let fast_legacy = core_policy_action_candidates_v5(&legacy, &state).unwrap_err();
+        assert_eq!(test_policy_v5_materialization_calls(), (0, 0));
+        let full_legacy = legal_action_candidates_v5(&legacy, &state).unwrap_err();
+        assert_eq!(fast_legacy, full_legacy);
+        assert_eq!(
+            fast_legacy.0,
+            "legacy aggregate combat semantic is forbidden on policy surface v5"
+        );
+        assert_eq!(test_policy_v5_materialization_calls(), (0, 0));
+
+        let duplicate =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                castable_spells: vec![object, object],
+                mana_abilities: Vec::new(),
+                land_drops: Vec::new(),
+                activatable_abilities: Vec::new(),
+                plot_actions: Vec::new(),
+            }));
+        let fast_duplicate = core_policy_action_candidates_v5(&duplicate, &state).unwrap_err();
+        assert_eq!(test_policy_v5_materialization_calls(), (0, 0));
+        let full_duplicate = legal_action_candidates_v5(&duplicate, &state).unwrap_err();
+        assert_eq!(fast_duplicate, full_duplicate);
+        assert_eq!(
+            fast_duplicate.0,
+            "duplicate policy action semantic within one decision"
+        );
+        assert_eq!(test_policy_v5_materialization_calls(), (0, 0));
+
+        let ambiguous_semantic = ActionSemanticV1::Ambiguous {
+            reason: "audit_fixture".to_string(),
+        };
+        let ambiguous_core = [CorePolicyActionCandidateV1 {
+            semantic: ambiguous_semantic.clone(),
+            policy_action: crate::policy_surface_v5::PolicyActionV5::Surface(
+                crate::surface_v2::SurfaceAction::Action(crate::engine::Action::Pass),
+            ),
+        }];
+        let fast_ambiguous =
+            validate_core_policy_action_candidates_v5(&ambiguous_core).unwrap_err();
+        assert_eq!(test_policy_v5_materialization_calls(), (0, 0));
+        let full_ambiguous = make_legal_action_v5(0, ambiguous_semantic, None).unwrap_err();
+        assert_eq!(fast_ambiguous, full_ambiguous);
+        assert_eq!(
+            fast_ambiguous.0,
+            "ambiguous legal action representation refused: audit_fixture"
+        );
+        assert_eq!(test_policy_v5_materialization_calls(), (0, 1));
+    }
+
+    fn prove_fast_actor_parity(deck_id: &str, seed: u64) {
+        let episode_id = seed ^ 0xFA57_AC70_0000_0001;
+        let deck_ids = [deck_id.to_string(), deck_id.to_string()];
+        let mut full = RlEpisodeSessionV1::reset_with_decks_and_limits(
+            episode_id,
+            seed,
+            4_096,
+            524_288,
+            deck_ids.clone(),
+        )
+        .unwrap();
+        let mut jsonl_shadow = RlEpisodeSessionV1::reset_with_decks_and_limits(
+            episode_id,
+            seed,
+            4_096,
+            524_288,
+            deck_ids.clone(),
+        )
+        .unwrap();
+        let mut fast = FastActorSessionV1::reset_with_decks_and_limits(
+            episode_id, seed, 4_096, 524_288, deck_ids,
+        )
+        .unwrap();
+        let mut policy_rng = SplitMix64::seed(seed ^ 0xA66A_E6A7_E000_0005);
+        let mut saw_aggregate_combat = false;
+
+        for _ in 0..524_289 {
+            let full_response = full.current_response();
+            assert_eq!(
+                serde_json::to_vec(&jsonl_shadow.current_response()).unwrap(),
+                serde_json::to_vec(&full_response).unwrap(),
+                "{deck_id} JSONL response bytes diverged before selection"
+            );
+            assert_eq!(full.state, fast.state, "{deck_id} state diverged");
+            assert_eq!(
+                full.surface.harness_public_context(),
+                fast.surface.harness_public_context(),
+                "{deck_id} public surface context diverged"
+            );
+            assert_eq!(
+                full.surface.privileged_scan_context().unwrap(),
+                fast.surface.privileged_scan_context().unwrap(),
+                "{deck_id} private scan context diverged"
+            );
+            assert_eq!(full.environment_revision, fast.environment_revision);
+            assert_eq!(full.policy_step_count, fast.policy_step_count);
+            assert_eq!(full.physical_decision_count, fast.physical_decision_count);
+            assert_eq!(full.diagnostic_state_hash(), fast.diagnostic_state_hash());
+            assert_eq!(
+                full.privileged_core_environment_hash(),
+                fast.privileged_core_environment_hash(),
+                "{deck_id} shared core environment hash diverged"
+            );
+
+            match (full_response, fast.current_response()) {
+                (
+                    RlSessionResponseV1::Terminal(full_terminal),
+                    FastActorResponseV1::Terminal(fast_terminal),
+                ) => {
+                    assert_eq!(fast_terminal, full_terminal);
+                    assert!(
+                        deck_id != CANONICAL_RALLY_DECK_ID || saw_aggregate_combat,
+                        "Rally parity trace must exercise aggregate combat decomposition"
+                    );
+                    return;
+                }
+                (
+                    RlSessionResponseV1::Decision(full_decision),
+                    FastActorResponseV1::Decision(fast_decision),
+                ) => {
+                    assert_eq!(fast_decision.episode_id, full_decision.episode_id);
+                    assert_eq!(fast_decision.step, full_decision.step);
+                    assert_eq!(
+                        fast_decision.physical_decision_id,
+                        full_decision.physical_decision_id
+                    );
+                    assert_eq!(fast_decision.substep_index, full_decision.substep_index);
+                    assert_eq!(fast_decision.substep_count, full_decision.substep_count);
+                    assert_eq!(fast_decision.acting_player, full_decision.acting_player);
+                    assert_eq!(
+                        usize::try_from(fast_decision.legal_action_count).unwrap(),
+                        full_decision.legal_actions.len()
+                    );
+
+                    let full_current = full.current.as_ref().unwrap();
+                    let fast_current = fast.current.as_ref().unwrap();
+                    assert_eq!(full_current.candidates.len(), fast_current.candidates.len());
+                    for (wire, core) in full_current.candidates.iter().zip(&fast_current.candidates)
+                    {
+                        assert_eq!(wire.record.semantic, core.semantic);
+                        assert_eq!(wire.policy_action, core.policy_action);
+                    }
+                    saw_aggregate_combat |= fast_current.candidates.iter().any(|candidate| {
+                        matches!(
+                            candidate.semantic,
+                            ActionSemanticV1::ChooseAttackerInclusion { .. }
+                                | ActionSemanticV1::ChooseBlockerInclusion { .. }
+                        )
+                    });
+                    let selected_index = if matches!(
+                        fast_current
+                            .candidates
+                            .get(1)
+                            .map(|candidate| &candidate.semantic),
+                        Some(
+                            ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                                | ActionSemanticV1::ChooseBlockerInclusion { include: true, .. }
+                        )
+                    ) {
+                        1usize
+                    } else {
+                        (policy_rng.next_u64() % fast_current.candidates.len() as u64) as usize
+                    };
+                    let selected = &full_decision.legal_actions[selected_index];
+                    let full_next = full
+                        .step(
+                            episode_id,
+                            full_decision.step,
+                            selected.selected_index,
+                            &selected.stable_id,
+                        )
+                        .unwrap();
+                    let shadow_next = jsonl_shadow
+                        .step(
+                            episode_id,
+                            full_decision.step,
+                            selected.selected_index,
+                            &selected.stable_id,
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        serde_json::to_vec(&shadow_next).unwrap(),
+                        serde_json::to_vec(&full_next).unwrap(),
+                        "{deck_id} JSONL response bytes diverged after selection"
+                    );
+                    fast.step(
+                        episode_id,
+                        fast_decision.step,
+                        u32::try_from(selected_index).unwrap(),
+                    )
+                    .unwrap();
+                }
+                _ => panic!("{deck_id} full and fast terminal states diverged"),
+            }
+        }
+        panic!("{deck_id} fast actor parity trace exceeded its policy-step bound");
+    }
+
+    #[test]
+    fn fast_actor_matches_full_v5_burn_and_rally_traces_and_jsonl_shadow() {
+        prove_fast_actor_parity(CANONICAL_BURN_DECK_ID, 81_701);
+        prove_fast_actor_parity(CANONICAL_RALLY_DECK_ID, 81_702);
     }
 
     fn reset_in_suppression_audit_mode(

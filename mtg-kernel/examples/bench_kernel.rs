@@ -37,6 +37,9 @@ use serde::Serialize;
 #[path = "bench_kernel/three_lane_ceiling.rs"]
 mod three_lane_ceiling;
 use three_lane_ceiling::{run_three_lane_ceiling_json_v1, ThreeLaneConfigV1};
+#[path = "bench_kernel/fast_actor_ceiling.rs"]
+mod fast_actor_ceiling;
+use fast_actor_ceiling::{run_fast_actor_ceiling_json_v2, FastActorConfigV2};
 
 // ------------------------------------------------------------- tuning knobs
 
@@ -59,6 +62,19 @@ const BLOCK_CHANCE: (u64, u64) = (35, 100);
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--fast-actor-ceiling-json-v2") {
+        match FastActorConfigV2::parse(&args[1..]) {
+            Ok(config) => run_fast_actor_ceiling_json_v2(config),
+            Err(message) => {
+                eprintln!("{message}");
+                eprintln!(
+                    "usage: bench_kernel --fast-actor-ceiling-json-v2 --git-commit HEX40 [--deck Burn|Rally] [--actors 1,4,8,16] [--warmup-games N] [--games-per-actor N] [--validation-games N] [--seed N]"
+                );
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if args.first().map(String::as_str) == Some("--three-lane-ceiling-json-v1") {
         match ThreeLaneConfigV1::parse(&args[1..]) {
             Ok(config) => run_three_lane_ceiling_json_v1(config),
@@ -86,7 +102,7 @@ fn main() {
         return;
     }
     if !args.is_empty() {
-        eprintln!("usage: bench_kernel [--ceiling-json-v1 ... | --three-lane-ceiling-json-v1 ...]");
+        eprintln!("usage: bench_kernel [--ceiling-json-v1 ... | --three-lane-ceiling-json-v1 ... | --fast-actor-ceiling-json-v2 ...]");
         std::process::exit(2);
     }
     println!("=== mtg-kernel PERFORMANCE-ONLY benchmark suite (Sol #93 scope) ===");
