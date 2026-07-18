@@ -1210,6 +1210,31 @@ impl HarnessSurfaceV2 {
         }
     }
 
+    /// Read-only legality preflight for the policy-v5 fast actor. It validates
+    /// the complete blocker aggregate that would exist after answering the
+    /// current per-attacker reshape without consuming the reshape or mutating
+    /// `GameState`.
+    pub(crate) fn validate_declare_blockers_for_attacker(
+        &self,
+        state: &GameState,
+        expected_attacker: ObjectId,
+        blockers: &[ObjectId],
+    ) -> Result<(), String> {
+        let reshape = self
+            .blockers
+            .as_ref()
+            .ok_or("no DeclareBlockersForAttacker decision is pending")?;
+        let attacker = reshape
+            .current_attacker
+            .ok_or("no DeclareBlockersForAttacker decision is pending")?;
+        if attacker != expected_attacker {
+            return Err("stale DeclareBlockersForAttacker attacker binding".to_string());
+        }
+        let mut aggregate = reshape.accumulated.clone();
+        aggregate.extend(blockers.iter().copied().map(|blocker| (blocker, attacker)));
+        engine::validate_declare_blockers(state, &aggregate)
+    }
+
     /// See `HarnessSurfaceV1::apply`.
     pub fn apply(&mut self, state: &mut GameState, action: SurfaceAction) -> Result<(), String> {
         match action {
@@ -1395,19 +1420,42 @@ impl HarnessSurfaceV2 {
             }
             SurfaceAction::Action(a) => engine::step(state, a),
             SurfaceAction::DeclareBlockersForAttacker(blockers) => {
+                let attacker = self
+                    .blockers
+                    .as_ref()
+                    .and_then(|reshape| reshape.current_attacker)
+                    .ok_or("no DeclareBlockersForAttacker decision is pending")?;
+                self.validate_declare_blockers_for_attacker(state, attacker, &blockers)?;
+                let completes_reshape = self
+                    .blockers
+                    .as_ref()
+                    .is_some_and(|reshape| reshape.remaining.is_empty());
+                if completes_reshape {
+                    let reshape = self
+                        .blockers
+                        .as_ref()
+                        .expect("validated blocker reshape remains present");
+                    let mut aggregate = reshape.accumulated.clone();
+                    aggregate.extend(blockers.iter().copied().map(|blocker| (blocker, attacker)));
+                    // Apply the engine aggregate before consuming H2 state. If
+                    // an unexpected engine-stage invariant rejects it, both
+                    // the reshape and GameState remain retryable.
+                    engine::step(state, Action::DeclareBlockers(aggregate))?;
+                    self.blockers = None;
+                    return Ok(());
+                }
+
                 let reshape = self
                     .blockers
                     .as_mut()
                     .ok_or("no DeclareBlockersForAttacker decision is pending")?;
-                let attacker = reshape
+                let committed_attacker = reshape
                     .current_attacker
                     .take()
                     .ok_or("no DeclareBlockersForAttacker decision is pending")?;
+                debug_assert_eq!(committed_attacker, attacker);
                 for b in blockers {
-                    reshape.accumulated.push((b, attacker));
-                }
-                if reshape.remaining.is_empty() {
-                    self.finish_blockers_reshape(state);
+                    reshape.accumulated.push((b, committed_attacker));
                 }
                 Ok(())
             }

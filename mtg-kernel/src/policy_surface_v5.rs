@@ -5,8 +5,9 @@
 //! to a policy as a canonical binary scan and commits the aggregate action
 //! exactly once, after the final Boolean answer.
 
-use crate::engine::{Action, Decision};
+use crate::engine::{self, Action, Decision};
 use crate::ids::{ObjectId, PlayerId};
+use crate::rl_session::FastActorCurrentCandidateProofV1;
 use crate::state::GameState;
 use crate::surface_v2::{HarnessSurfaceV2, SuppressionAuditMode, SurfaceAction, SurfaceDecision};
 use serde::{Deserialize, Serialize};
@@ -169,6 +170,12 @@ enum CombatScanBindingV5 {
 enum EnvironmentBindingModeV5 {
     Exact,
     OwnedRevision(u64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FastActorInPlaceApplyErrorV1 {
+    RejectedBeforeMutation,
+    InternalApplyFailure,
 }
 
 impl CombatScanV5 {
@@ -470,6 +477,142 @@ impl PolicySurfaceV5 {
         *self = next_surface;
         *state = next_state;
         Ok(())
+    }
+
+    fn validate_fast_actor_current_action(
+        &self,
+        state: &GameState,
+        action: &PolicyActionV5,
+        current_revision: u64,
+        next_revision: u64,
+    ) -> Result<(), String> {
+        if current_revision.checked_add(1) != Some(next_revision) {
+            return Err("invalid owned policy environment revision transition".to_string());
+        }
+
+        let Some(scan) = self.scan.as_ref() else {
+            if !matches!(action, PolicyActionV5::Surface(_)) {
+                return Err("policy combat inclusion action without an active scan".to_string());
+            }
+            return Ok(());
+        };
+
+        scan.validate_binding(
+            state,
+            &self.inner,
+            EnvironmentBindingModeV5::OwnedRevision(current_revision),
+        )?;
+        scan.validate_shape()?;
+
+        let (candidate, include, blocker_attacker) = match (scan, action) {
+            (
+                CombatScanV5::Attackers {
+                    player,
+                    ordered_candidates,
+                    cursor,
+                    ..
+                },
+                PolicyActionV5::ChooseAttackerInclusion {
+                    actor,
+                    attacker,
+                    include,
+                },
+            ) => {
+                if *actor != *player {
+                    return Err("stale policy combat scan actor binding".to_string());
+                }
+                if *attacker != ordered_candidates[*cursor] {
+                    return Err("stale policy combat scan candidate binding".to_string());
+                }
+                (*attacker, *include, None)
+            }
+            (
+                CombatScanV5::Blockers {
+                    player,
+                    attacker,
+                    ordered_candidates,
+                    cursor,
+                    ..
+                },
+                PolicyActionV5::ChooseBlockerInclusion {
+                    actor,
+                    attacker: action_attacker,
+                    blocker,
+                    include,
+                },
+            ) => {
+                if *action_attacker != *attacker {
+                    return Err("stale blocker scan attacker binding".to_string());
+                }
+                if *actor != *player {
+                    return Err("stale policy combat scan actor binding".to_string());
+                }
+                if *blocker != ordered_candidates[*cursor] {
+                    return Err("stale policy combat scan candidate binding".to_string());
+                }
+                (*blocker, *include, Some(*attacker))
+            }
+            _ => return Err("policy action kind does not match active combat scan".to_string()),
+        };
+
+        let (ordered_candidates, cursor, selected) = match scan {
+            CombatScanV5::Attackers {
+                ordered_candidates,
+                cursor,
+                selected,
+                ..
+            }
+            | CombatScanV5::Blockers {
+                ordered_candidates,
+                cursor,
+                selected,
+                ..
+            } => (ordered_candidates, *cursor, selected),
+        };
+        let completes_scan = cursor.checked_add(1) == Some(ordered_candidates.len());
+
+        // Aggregate combat commit is the only scan path that reaches H2/the
+        // engine after advancing the scan. Preflight the exact aggregate while
+        // everything is still read-only so stale state cannot partially
+        // mutate or reach H2's blocker `expect` boundary.
+        if completes_scan {
+            let mut included = selected.clone();
+            if include {
+                included.push(candidate);
+            }
+            if let Some(attacker) = blocker_attacker {
+                self.inner
+                    .validate_declare_blockers_for_attacker(state, attacker, &included)?;
+            } else {
+                engine::validate_declare_attackers(state, &included)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Consumes an action proof created only from the fast session's exact
+    /// current candidate. Ownership, revision, scan/action binding, and final
+    /// combat aggregate legality are all checked before mutation; binding and
+    /// application cannot be split across two policy surfaces.
+    pub(crate) fn apply_fast_actor_current_candidate_in_place(
+        &mut self,
+        state: &mut GameState,
+        proof: FastActorCurrentCandidateProofV1,
+    ) -> Result<(), FastActorInPlaceApplyErrorV1> {
+        let (owner_surface, action, current_revision, next_revision) = proof.into_parts();
+        if !std::ptr::eq(owner_surface, std::ptr::from_ref(&*self)) {
+            return Err(FastActorInPlaceApplyErrorV1::RejectedBeforeMutation);
+        }
+        self.validate_fast_actor_current_action(state, &action, current_revision, next_revision)
+            .map_err(|_| FastActorInPlaceApplyErrorV1::RejectedBeforeMutation)?;
+        self.apply_in_place(
+            state,
+            action,
+            EnvironmentBindingModeV5::OwnedRevision(current_revision),
+            Some(next_revision),
+        )
+        .map_err(|_| FastActorInPlaceApplyErrorV1::InternalApplyFailure)
     }
 
     fn apply_in_place(
