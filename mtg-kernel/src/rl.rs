@@ -1417,6 +1417,17 @@ pub fn observe_v2(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV2> {
+    let mut observation = build_observation_v2(state, surface, acting_player, step_index)?;
+    observation.visible_projection_hash = visible_projection_hash_v2(&observation)?;
+    Ok(observation)
+}
+
+fn build_observation_v2(
+    state: &GameState,
+    surface: &crate::surface_v2::HarnessSurfaceV2,
+    acting_player: PlayerId,
+    step_index: u64,
+) -> Result<ObservationV2> {
     let projection = PublicObservationProjectionV2 {
         turn: state.turn,
         phase: state.step.into(),
@@ -1456,7 +1467,7 @@ pub fn observe_v2(
         .iter()
         .map(|&id| private_card(state, id))
         .collect::<Result<Vec<_>>>()?;
-    let mut obs = ObservationV2 {
+    Ok(ObservationV2 {
         schema_version: OBSERVATION_SCHEMA_VERSION,
         kernel_version: KERNEL_VERSION.to_string(),
         surface_version: H2_PREDICATE_VERSION,
@@ -1468,9 +1479,7 @@ pub fn observe_v2(
         known_library_cards: known_library_cards_v4(state, acting_player)?,
         known_hand_cards: known_hand_cards_v4(state, acting_player)?,
         visible_projection_hash: 0,
-    };
-    obs.visible_projection_hash = visible_projection_hash_v2(&obs)?;
-    Ok(obs)
+    })
 }
 
 pub fn observe_policy_v5(
@@ -1487,7 +1496,11 @@ pub fn observe_policy_v5(
             "invalid physical decision substep {substep_index}/{substep_count}"
         )));
     }
-    let base = observe_v2(state, surface.harness_surface(), acting_player, step_index)?;
+    // V5 wraps the complete V2 projection but does not expose V2's standalone
+    // projection hash. Building V2 without hashing avoids serializing the same
+    // large projection twice on every production policy step; the final V5
+    // hash below still covers every wrapped V2 field.
+    let base = build_observation_v2(state, surface.harness_surface(), acting_player, step_index)?;
     let policy_surface_context = policy_surface_context_v5(
         state,
         surface
@@ -5181,6 +5194,9 @@ fn visible_projection_hash(observation: &ObservationV1) -> Result<u64> {
 }
 
 fn visible_projection_hash_v2(observation: &ObservationV2) -> Result<u64> {
+    #[cfg(test)]
+    TEST_VISIBLE_PROJECTION_HASH_V2_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
+
     #[derive(Serialize)]
     struct ObservationHashInput<'a> {
         schema_version: u32,
@@ -5210,6 +5226,9 @@ fn visible_projection_hash_v2(observation: &ObservationV2) -> Result<u64> {
 }
 
 fn visible_projection_hash_v5(observation: &ObservationV5) -> Result<u64> {
+    #[cfg(test)]
+    TEST_VISIBLE_PROJECTION_HASH_V5_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
+
     #[derive(Serialize)]
     struct ObservationHashInput<'a> {
         schema_version: u32,
@@ -5336,12 +5355,60 @@ fn rng_below(rng: &mut SplitMix64, n: usize) -> usize {
 }
 
 fn stable_hash_json<T: Serialize>(value: &T) -> Result<u64> {
-    let bytes = serde_json::to_vec(value)?;
-    Ok(fnv1a64(&bytes))
+    let mut writer = Fnv1a64Writer::new();
+    serde_json::to_writer(&mut writer, value)?;
+    Ok(writer.finish())
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_VISIBLE_PROJECTION_HASH_V2_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static TEST_VISIBLE_PROJECTION_HASH_V5_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_test_visible_projection_hash_calls() {
+    TEST_VISIBLE_PROJECTION_HASH_V2_CALLS.with(|calls| calls.set(0));
+    TEST_VISIBLE_PROJECTION_HASH_V5_CALLS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+fn test_visible_projection_hash_calls() -> (u64, u64) {
+    (
+        TEST_VISIBLE_PROJECTION_HASH_V2_CALLS.with(std::cell::Cell::get),
+        TEST_VISIBLE_PROJECTION_HASH_V5_CALLS.with(std::cell::Cell::get),
+    )
+}
+
+struct Fnv1a64Writer(u64);
+
+impl Fnv1a64Writer {
+    const fn new() -> Self {
+        Self(0xcbf29ce484222325)
+    }
+
+    const fn finish(self) -> u64 {
+        self.0
+    }
+}
+
+impl Write for Fnv1a64Writer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = fnv1a64_continue(self.0, bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
+    fnv1a64_continue(0xcbf29ce484222325, bytes)
+}
+
+fn fnv1a64_continue(mut hash: u64, bytes: &[u8]) -> u64 {
     for &b in bytes {
         hash ^= b as u64;
         hash = hash.wrapping_mul(0x100000001b3);
@@ -5405,6 +5472,32 @@ mod policy_v5_artifact_tests {
     use crate::card_def::card_id_by_name;
     use crate::policy_surface_v5::PolicySurfaceV5;
     use crate::state::{Counters, ObjectStateV4, Step};
+
+    #[test]
+    fn policy_v5_hashes_only_the_final_observation() {
+        let state = GameState::new_from_libraries(&[], &[], card_name, 77);
+        let surface = PolicySurfaceV5::new();
+
+        reset_test_visible_projection_hash_calls();
+        let v2 = observe_v2(&state, surface.harness_surface(), PlayerId::P0, 0).unwrap();
+        assert_ne!(v2.visible_projection_hash, 0);
+        assert_eq!(test_visible_projection_hash_calls(), (1, 0));
+
+        reset_test_visible_projection_hash_calls();
+        let v5 = observe_policy_v5(&state, &surface, PlayerId::P0, 0, 0, 0, 1).unwrap();
+        assert_ne!(v5.visible_projection_hash, 0);
+        assert_eq!(test_visible_projection_hash_calls(), (0, 1));
+    }
+
+    #[test]
+    fn streaming_stable_hash_matches_the_canonical_json_bytes() {
+        let value = serde_json::json!({
+            "array": [null, true, -17, "escaped\ntext"],
+            "nested": {"unicode": "Black Lotus \u{1f3b4}"},
+        });
+        let canonical = serde_json::to_vec(&value).unwrap();
+        assert_eq!(stable_hash_json(&value).unwrap(), fnv1a64(&canonical));
+    }
 
     fn scan_records() -> Vec<PolicyEpisodeRecordV2> {
         let mut state = GameState::new_from_libraries(&[], &[], card_name, 77);
