@@ -156,6 +156,16 @@ pub const FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V1: u32 = 1;
 pub const FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V1: u32 = 1;
 pub const FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V1: u32 = 1;
 
+/// Explicit successor contract for the complete Python card-token domain.
+///
+/// V2 keeps the action-kind and reference-role vocabularies unchanged, but
+/// widens card tokens from `u16` to `u32`.  The slice and commitment identities
+/// therefore advance even though the role mapping itself remains version 1.
+pub const FLAT_ACTION_DECISION_SLICE_VERSION_V2: u32 = 2;
+pub const FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V2: u32 = FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V1;
+pub const FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V2: u32 = 2;
+pub const FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V2: u32 = 2;
+
 /// Schema-v5 action-kind vocabulary used by the scalar mapper. The current
 /// executable flat session subset deliberately rejects `ChooseEffectColor`,
 /// `ChooseEffectNumber`, and `FinishTargetSelection`: schema-v5 reserves those
@@ -289,6 +299,33 @@ impl FlatActionObjectV1 {
     }
 }
 
+/// V2 actor-visible object identity.  Token zero remains reserved for tensor
+/// padding; live rows admit the full inclusive range `1..=65_536`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlatActionObjectV2 {
+    pub card_token: u32,
+    pub group: FlatActionObjectGroupV1,
+    pub actor_visible_ordinal: u16,
+    pub owner_relative: u8,
+    pub controller_relative: u8,
+    pub zone: u8,
+    pub zone_change_count: u32,
+}
+
+impl FlatActionObjectV2 {
+    fn canonical_key(self) -> (u8, u16, u32, u32, u8, u8, u8) {
+        (
+            self.group as u8,
+            self.actor_visible_ordinal,
+            self.zone_change_count,
+            self.card_token,
+            self.owner_relative,
+            self.controller_relative,
+            self.zone,
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FlatActionRefV1 {
     pub action_index: u32,
@@ -296,6 +333,16 @@ pub struct FlatActionRefV1 {
     pub order_index: u16,
     pub associated_order: u16,
     pub card_token: u16,
+    pub object_index: u16,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlatActionRefV2 {
+    pub action_index: u32,
+    pub role: FlatActionRefRoleV1,
+    pub order_index: u16,
+    pub associated_order: u16,
+    pub card_token: u32,
     pub object_index: u16,
 }
 
@@ -322,9 +369,40 @@ pub struct FlatActionDecisionBindingV1 {
     pub candidate_order_commitment: [u8; 16],
 }
 
+/// V2 binding is intentionally a distinct type.  A V1 result cannot be
+/// consumed by a V2 path (or vice versa) even when every scalar happens to
+/// match, and the versioned commitment bytes use a separate hash domain.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlatActionDecisionBindingV2 {
+    pub slice_version: u32,
+    pub ref_role_mapping_version: u32,
+    pub card_token_mapping_version: u32,
+    pub candidate_commitment_version: u32,
+    pub card_db_hash: u64,
+    pub episode_id: u64,
+    pub environment_revision: u64,
+    pub bound_policy_step_count: u64,
+    pub physical_decision_id: u64,
+    pub bound_physical_decision_count: u64,
+    pub substep_index: u32,
+    pub substep_count: u32,
+    pub acting_player: u8,
+    pub decision_kind: u8,
+    pub legal_action_count: u32,
+    pub candidate_order_commitment: [u8; 16],
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FlatActionDecisionSliceV1 {
     pub binding: FlatActionDecisionBindingV1,
+    pub active_action_count: u32,
+    pub active_ref_count: u32,
+    pub active_object_count: u16,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlatActionDecisionSliceV2 {
+    pub binding: FlatActionDecisionBindingV2,
     pub active_action_count: u32,
     pub active_ref_count: u32,
     pub active_object_count: u16,
@@ -348,6 +426,12 @@ pub struct FlatActionDecisionSliceBuffersV1<'a> {
     pub actions: &'a mut [FlatActionCoreV1],
     pub refs: &'a mut [FlatActionRefV1],
     pub objects: &'a mut [FlatActionObjectV1],
+}
+
+pub struct FlatActionDecisionSliceBuffersV2<'a> {
+    pub actions: &'a mut [FlatActionCoreV1],
+    pub refs: &'a mut [FlatActionRefV2],
+    pub objects: &'a mut [FlatActionObjectV2],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,16 +523,12 @@ struct FastActorCurrentDecisionV1 {
     environment_revision: u64,
     bound_policy_step_count: u64,
     bound_physical_decision_count: u64,
-    /// Private, exact compact rows and v1 commitment for this immutable
-    /// decision. The cache is constructed only from the session-owned state
-    /// and candidate vector when the decision is published. Public v1 rows
-    /// and commitment bytes remain unchanged; this is not a wire-contract
-    /// version change.
+    /// V1 cache is populated only for sessions created in V1 contract mode.
     flat_action_cache: Option<FlatActionDecisionCacheV1>,
-    /// Exact construction failure for a decision outside the partial flat
-    /// action slice. The ordinary FastActor path remains usable; flat encode
-    /// returns this unchanged v1 error and flat consume has no cache authority.
     flat_action_cache_error: Option<FlatActionDecisionSliceErrorV1>,
+    /// V2 cache is populated only for sessions created in V2 contract mode.
+    flat_action_cache_v2: Option<FlatActionDecisionCacheV2>,
+    flat_action_cache_error_v2: Option<FlatActionDecisionSliceErrorV1>,
 }
 
 fn flat_player_id_v1(seat: PlayerSeatV1) -> PlayerId {
@@ -1033,11 +1113,22 @@ fn flat_stack_action_object_ordinal_v1(
     }
 }
 
-fn flat_visible_action_object_v1(
+#[derive(Debug, Clone, Copy)]
+struct FlatVisibleActionObjectComponentsV1 {
+    card_db_id: u16,
+    group: FlatActionObjectGroupV1,
+    actor_visible_ordinal: usize,
+    owner_relative: u8,
+    controller_relative: u8,
+    zone: u8,
+    zone_change_count: u32,
+}
+
+fn flat_visible_action_object_components_v1(
     state: &crate::state::GameState,
     actor: PlayerId,
     reference: &CardStableRefV1,
-) -> Result<FlatActionObjectV1, FlatActionDecisionSliceErrorV1> {
+) -> Result<FlatVisibleActionObjectComponentsV1, FlatActionDecisionSliceErrorV1> {
     let object_id = ObjectId(reference.arena_id);
     let object = state
         .objects
@@ -1135,18 +1226,60 @@ fn flat_visible_action_object_v1(
             )
         }
     };
-    Ok(FlatActionObjectV1 {
-        card_token: object
-            .card_def
-            .checked_add(1)
-            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+    Ok(FlatVisibleActionObjectComponentsV1 {
+        card_db_id: object.card_def,
         group,
-        actor_visible_ordinal: u16::try_from(ordinal)
-            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+        actor_visible_ordinal: ordinal,
         owner_relative: flat_relative_seat_v1(owner, actor.into())?,
         controller_relative: flat_relative_seat_v1(controller, actor.into())?,
         zone: flat_zone_v1(object.zone),
         zone_change_count: object.zone_change_count,
+    })
+}
+
+fn flat_card_token_v1(card_db_id: u16) -> Result<u16, FlatActionDecisionSliceErrorV1> {
+    card_db_id
+        .checked_add(1)
+        .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)
+}
+
+fn flat_card_token_v2(card_db_id: u16) -> u32 {
+    u32::from(card_db_id) + 1
+}
+
+fn flat_visible_action_object_v1(
+    state: &crate::state::GameState,
+    actor: PlayerId,
+    reference: &CardStableRefV1,
+) -> Result<FlatActionObjectV1, FlatActionDecisionSliceErrorV1> {
+    let fields = flat_visible_action_object_components_v1(state, actor, reference)?;
+    Ok(FlatActionObjectV1 {
+        card_token: flat_card_token_v1(fields.card_db_id)?,
+        group: fields.group,
+        actor_visible_ordinal: u16::try_from(fields.actor_visible_ordinal)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+        owner_relative: fields.owner_relative,
+        controller_relative: fields.controller_relative,
+        zone: fields.zone,
+        zone_change_count: fields.zone_change_count,
+    })
+}
+
+fn flat_visible_action_object_v2(
+    state: &crate::state::GameState,
+    actor: PlayerId,
+    reference: &CardStableRefV1,
+) -> Result<FlatActionObjectV2, FlatActionDecisionSliceErrorV1> {
+    let fields = flat_visible_action_object_components_v1(state, actor, reference)?;
+    Ok(FlatActionObjectV2 {
+        card_token: flat_card_token_v2(fields.card_db_id),
+        group: fields.group,
+        actor_visible_ordinal: u16::try_from(fields.actor_visible_ordinal)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+        owner_relative: fields.owner_relative,
+        controller_relative: fields.controller_relative,
+        zone: fields.zone,
+        zone_change_count: fields.zone_change_count,
     })
 }
 
@@ -2208,6 +2341,16 @@ struct FlatActionDecisionCacheV1 {
     scratch_resolved_objects: Vec<FlatResolvedActionObjectV1>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FlatActionDecisionCacheV2 {
+    binding: FlatActionDecisionBindingV2,
+    actions: Vec<FlatActionCoreV1>,
+    refs: Vec<FlatActionRefV2>,
+    objects: Vec<FlatActionObjectV2>,
+    scratch_unindexed_refs: Vec<FlatUnindexedActionRefV2>,
+    scratch_resolved_objects: Vec<FlatResolvedActionObjectV2>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FlatUnindexedActionRefV1 {
     action_index: u32,
@@ -2221,6 +2364,21 @@ struct FlatUnindexedActionRefV1 {
 struct FlatResolvedActionObjectV1 {
     arena_id: u32,
     object: FlatActionObjectV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FlatUnindexedActionRefV2 {
+    action_index: u32,
+    role: FlatActionRefRoleV1,
+    order_index: u16,
+    associated_order: u16,
+    object: FlatActionObjectV2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FlatResolvedActionObjectV2 {
+    arena_id: u32,
+    object: FlatActionObjectV2,
 }
 
 struct FlatActionCommitmentHasherV1(Sha256);
@@ -2296,6 +2454,92 @@ impl FlatActionCommitmentHasherV1 {
         self.0.update(reference.card_token.to_le_bytes());
         self.0.update(reference.object_index.to_le_bytes());
         // Bind the meaning of object_index, not only its integer slot.
+        self.0.update(object.card_token.to_le_bytes());
+        self.0.update([object.group as u8]);
+        self.0.update(object.actor_visible_ordinal.to_le_bytes());
+        self.0.update([object.owner_relative]);
+        self.0.update([object.controller_relative]);
+        self.0.update([object.zone]);
+        self.0.update(object.zone_change_count.to_le_bytes());
+    }
+
+    fn finish(self) -> [u8; 16] {
+        let digest = self.0.finalize();
+        let mut commitment = [0_u8; 16];
+        commitment.copy_from_slice(&digest[..16]);
+        commitment
+    }
+}
+
+struct FlatActionCommitmentHasherV2(Sha256);
+
+impl FlatActionCommitmentHasherV2 {
+    fn new(actor: PlayerSeatV1, action_count: u32, ref_count: u32, object_count: u16) -> Self {
+        let mut hash = Sha256::new();
+        hash.update(b"mtg-kernel-flat-action-candidate-order-v2\0");
+        hash.update(FLAT_ACTION_DECISION_SLICE_VERSION_V2.to_le_bytes());
+        hash.update(FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V2.to_le_bytes());
+        hash.update(FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V2.to_le_bytes());
+        hash.update(FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V2.to_le_bytes());
+        hash.update(KERNEL_CARDDB_HASH.to_le_bytes());
+        hash.update([match actor {
+            PlayerSeatV1::P0 => 0,
+            PlayerSeatV1::P1 => 1,
+        }]);
+        hash.update(action_count.to_le_bytes());
+        hash.update(ref_count.to_le_bytes());
+        hash.update(object_count.to_le_bytes());
+        Self(hash)
+    }
+
+    fn update_object(&mut self, object_index: u16, object: FlatActionObjectV2) {
+        self.0.update(b"O");
+        self.0.update(object_index.to_le_bytes());
+        self.0.update(object.card_token.to_le_bytes());
+        self.0.update([object.group as u8]);
+        self.0.update(object.actor_visible_ordinal.to_le_bytes());
+        self.0.update([object.owner_relative]);
+        self.0.update([object.controller_relative]);
+        self.0.update([object.zone]);
+        self.0.update(object.zone_change_count.to_le_bytes());
+    }
+
+    fn update_action(&mut self, action_index: u32, action: FlatActionCoreV1) {
+        self.0.update(b"A");
+        self.0.update(action_index.to_le_bytes());
+        self.0.update([flat_action_kind_id_v1(action.kind)]);
+        self.0.update(action.flags.to_le_bytes());
+        self.0.update([action.ability_index]);
+        self.0.update([action.remaining]);
+        self.0.update([action.mode_index]);
+        self.0.update([action.mode_count]);
+        self.0.update(action.option_index.to_le_bytes());
+        self.0.update(action.option_count.to_le_bytes());
+        self.0.update(action.selected_count.to_le_bytes());
+        self.0.update(action.min_targets.to_le_bytes());
+        self.0.update(action.max_targets.to_le_bytes());
+        self.0.update(action.number.to_le_bytes());
+        self.0.update(action.minimum.to_le_bytes());
+        self.0.update(action.maximum.to_le_bytes());
+        self.0.update([action.mana_choice]);
+        self.0.update([action.color]);
+        self.0.update([action.cast_mode]);
+        self.0.update([action.cost_kind]);
+        self.0.update([action.optional_cost_choice]);
+        self.0.update([action.target_kind]);
+        self.0.update([action.target_player]);
+        self.0.update(action.ref_start.to_le_bytes());
+        self.0.update(action.ref_len.to_le_bytes());
+    }
+
+    fn update_ref(&mut self, reference: FlatActionRefV2, object: FlatActionObjectV2) {
+        self.0.update(b"R");
+        self.0.update(reference.action_index.to_le_bytes());
+        self.0.update([flat_action_ref_role_id_v1(reference.role)]);
+        self.0.update(reference.order_index.to_le_bytes());
+        self.0.update(reference.associated_order.to_le_bytes());
+        self.0.update(reference.card_token.to_le_bytes());
+        self.0.update(reference.object_index.to_le_bytes());
         self.0.update(object.card_token.to_le_bytes());
         self.0.update([object.group as u8]);
         self.0.update(object.actor_visible_ordinal.to_le_bytes());
@@ -2466,6 +2710,77 @@ fn flat_action_commitment_from_rows_v1(
     Ok(commitment.finish())
 }
 
+fn flat_action_binding_v2(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    legal_action_count: u32,
+    candidate_order_commitment: [u8; 16],
+) -> FlatActionDecisionBindingV2 {
+    FlatActionDecisionBindingV2 {
+        slice_version: FLAT_ACTION_DECISION_SLICE_VERSION_V2,
+        ref_role_mapping_version: FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V2,
+        card_token_mapping_version: FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V2,
+        candidate_commitment_version: FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V2,
+        card_db_hash: KERNEL_CARDDB_HASH,
+        episode_id: session.episode_id,
+        environment_revision: session.environment_revision,
+        bound_policy_step_count: current.bound_policy_step_count,
+        physical_decision_id: current.physical_decision_id,
+        bound_physical_decision_count: current.bound_physical_decision_count,
+        substep_index: current.substep_index,
+        substep_count: current.substep_count,
+        acting_player: current.actor.0,
+        decision_kind: flat_decision_kind_id_v1(current.decision_kind),
+        legal_action_count,
+        candidate_order_commitment,
+    }
+}
+
+fn flat_action_commitment_from_rows_v2(
+    actor: PlayerSeatV1,
+    actions: &[FlatActionCoreV1],
+    refs: &[FlatActionRefV2],
+    objects: &[FlatActionObjectV2],
+) -> Result<[u8; 16], FlatActionDecisionSliceErrorV1> {
+    let action_count = u32::try_from(actions.len())
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    let ref_count = u32::try_from(refs.len())
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    let object_count = u16::try_from(objects.len())
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    let mut commitment =
+        FlatActionCommitmentHasherV2::new(actor, action_count, ref_count, object_count);
+    for (object_index, object) in objects.iter().copied().enumerate() {
+        commitment.update_object(
+            u16::try_from(object_index)
+                .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+            object,
+        );
+    }
+    for (action_index, action) in actions.iter().copied().enumerate() {
+        let ref_start = usize::try_from(action.ref_start)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let ref_end = ref_start
+            .checked_add(usize::from(action.ref_len))
+            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let action_refs = refs
+            .get(ref_start..ref_end)
+            .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+        for reference in action_refs.iter().copied() {
+            let object = *objects
+                .get(usize::from(reference.object_index))
+                .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+            commitment.update_ref(reference, object);
+        }
+        commitment.update_action(
+            u32::try_from(action_index)
+                .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+            action,
+        );
+    }
+    Ok(commitment.finish())
+}
+
 /// Builds the exact public v1 compact rows from referenced objects only.
 ///
 /// The prior implementation discovered referenced objects by repeatedly
@@ -2478,6 +2793,8 @@ fn flat_build_action_cache_v1(
     current: &FastActorCurrentDecisionV1,
     reusable: Option<FlatActionDecisionCacheV1>,
 ) -> Result<FlatActionDecisionCacheV1, FlatActionDecisionSliceErrorV1> {
+    #[cfg(test)]
+    TEST_FLAT_ACTION_V1_MATERIALIZATIONS.with(|calls| calls.set(calls.get().saturating_add(1)));
     flat_validate_current_binding_header_v1(session, current)?;
 
     let action_count_u32 = u32::try_from(current.candidates.len())
@@ -2597,6 +2914,129 @@ fn flat_build_action_cache_v1(
     })
 }
 
+/// Authoritative eager builder for every active decision.
+fn flat_build_action_cache_v2(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    reusable: Option<FlatActionDecisionCacheV2>,
+) -> Result<FlatActionDecisionCacheV2, FlatActionDecisionSliceErrorV1> {
+    flat_validate_current_binding_header_v1(session, current)?;
+    let action_count_u32 = u32::try_from(current.candidates.len())
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    let actor: PlayerSeatV1 = current.actor.into();
+    let (mut actions, mut refs, mut objects, mut unindexed_refs, mut resolved_objects) =
+        if let Some(mut reusable) = reusable {
+            reusable.actions.clear();
+            reusable.refs.clear();
+            reusable.objects.clear();
+            reusable.scratch_unindexed_refs.clear();
+            reusable.scratch_resolved_objects.clear();
+            (
+                reusable.actions,
+                reusable.refs,
+                reusable.objects,
+                reusable.scratch_unindexed_refs,
+                reusable.scratch_resolved_objects,
+            )
+        } else {
+            (
+                Vec::with_capacity(current.candidates.len()),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+        };
+    if actions.capacity() < current.candidates.len() {
+        actions.reserve(current.candidates.len());
+    }
+
+    for (action_index, candidate) in current.candidates.iter().enumerate() {
+        flat_validate_semantic_policy_pair_v1(candidate)?;
+        let action_index = u32::try_from(action_index)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let ref_start = u32::try_from(unindexed_refs.len())
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let core = flat_action_core_and_refs_v1(
+            &candidate.semantic,
+            actor,
+            ref_start,
+            |role, order_index, associated_order, reference| {
+                let object =
+                    flat_visible_action_object_v2(&session.state, current.actor, reference)?;
+                if let Some(previous) = resolved_objects
+                    .iter()
+                    .find(|candidate| candidate.arena_id == reference.arena_id)
+                {
+                    if previous.object != object {
+                        return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
+                    }
+                } else {
+                    if resolved_objects
+                        .iter()
+                        .any(|candidate| candidate.object.canonical_key() == object.canonical_key())
+                    {
+                        return Err(FlatActionDecisionSliceErrorV1::DuplicateCanonicalObject);
+                    }
+                    resolved_objects.push(FlatResolvedActionObjectV2 {
+                        arena_id: reference.arena_id,
+                        object,
+                    });
+                }
+                unindexed_refs.push(FlatUnindexedActionRefV2 {
+                    action_index,
+                    role,
+                    order_index,
+                    associated_order,
+                    object,
+                });
+                Ok(())
+            },
+        )?;
+        actions.push(core);
+    }
+    flat_validate_origin_decision_v1(current, &session.state)?;
+
+    resolved_objects.sort_unstable_by_key(|candidate| candidate.object.canonical_key());
+    if resolved_objects
+        .windows(2)
+        .any(|pair| pair[0].object.canonical_key() == pair[1].object.canonical_key())
+    {
+        return Err(FlatActionDecisionSliceErrorV1::DuplicateCanonicalObject);
+    }
+    objects.extend(resolved_objects.iter().map(|candidate| candidate.object));
+    if refs.capacity() < unindexed_refs.len() {
+        refs.reserve(unindexed_refs.len());
+    }
+    for reference in unindexed_refs.iter().copied() {
+        let key = reference.object.canonical_key();
+        let object_index = objects
+            .binary_search_by_key(&key, |candidate| candidate.canonical_key())
+            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+        refs.push(FlatActionRefV2 {
+            action_index: reference.action_index,
+            role: reference.role,
+            order_index: reference.order_index,
+            associated_order: reference.associated_order,
+            card_token: reference.object.card_token,
+            object_index: u16::try_from(object_index)
+                .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+        });
+    }
+    let commitment = flat_action_commitment_from_rows_v2(actor, &actions, &refs, &objects)?;
+    let binding = flat_action_binding_v2(session, current, action_count_u32, commitment);
+    unindexed_refs.clear();
+    resolved_objects.clear();
+    Ok(FlatActionDecisionCacheV2 {
+        binding,
+        actions,
+        refs,
+        objects,
+        scratch_unindexed_refs: unindexed_refs,
+        scratch_resolved_objects: resolved_objects,
+    })
+}
+
 fn flat_install_action_cache_build_result_v1(
     current: &mut FastActorCurrentDecisionV1,
     result: Result<FlatActionDecisionCacheV1, FlatActionDecisionSliceErrorV1>,
@@ -2606,6 +3046,18 @@ fn flat_install_action_cache_build_result_v1(
     match result {
         Ok(cache) => current.flat_action_cache = Some(cache),
         Err(error) => current.flat_action_cache_error = Some(error),
+    }
+}
+
+fn flat_install_action_cache_build_result_v2(
+    current: &mut FastActorCurrentDecisionV1,
+    result: Result<FlatActionDecisionCacheV2, FlatActionDecisionSliceErrorV1>,
+) {
+    current.flat_action_cache_v2 = None;
+    current.flat_action_cache_error_v2 = None;
+    match result {
+        Ok(cache) => current.flat_action_cache_v2 = Some(cache),
+        Err(error) => current.flat_action_cache_error_v2 = Some(error),
     }
 }
 
@@ -2772,6 +3224,110 @@ fn flat_validate_action_cache_for_consume_v1(
         .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
     if cache.binding
         != flat_action_binding_v1(
+            session,
+            current,
+            legal_action_count,
+            cache.binding.candidate_order_commitment,
+        )
+    {
+        return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+    }
+    Ok(())
+}
+
+fn flat_validate_action_cache_v2(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    cache: &FlatActionDecisionCacheV2,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_current_binding_header_v1(session, current)?;
+    let actor: PlayerSeatV1 = current.actor.into();
+    let mut validated_ref_count = 0_usize;
+    for candidate in &current.candidates {
+        flat_validate_semantic_policy_pair_v1(candidate)?;
+        let ref_start = u32::try_from(validated_ref_count)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let core = flat_action_core_and_refs_v1(
+            &candidate.semantic,
+            actor,
+            ref_start,
+            |_, _, _, reference| {
+                flat_visible_action_object_v2(&session.state, current.actor, reference)?;
+                Ok(())
+            },
+        )?;
+        validated_ref_count = validated_ref_count
+            .checked_add(usize::from(core.ref_len))
+            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    }
+    flat_validate_origin_decision_v1(current, &session.state)?;
+
+    let mut ref_cursor = 0_usize;
+    for (action_index, candidate) in current.candidates.iter().enumerate() {
+        let action_index_u32 = u32::try_from(action_index)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let ref_start = u32::try_from(ref_cursor)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let core = flat_action_core_and_refs_v1(
+            &candidate.semantic,
+            actor,
+            ref_start,
+            |role, order_index, associated_order, reference| {
+                let object =
+                    flat_visible_action_object_v2(&session.state, current.actor, reference)?;
+                let object_index = cache
+                    .objects
+                    .binary_search_by_key(&object.canonical_key(), |candidate| {
+                        candidate.canonical_key()
+                    })
+                    .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+                let actual = FlatActionRefV2 {
+                    action_index: action_index_u32,
+                    role,
+                    order_index,
+                    associated_order,
+                    card_token: object.card_token,
+                    object_index: u16::try_from(object_index)
+                        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+                };
+                if cache.refs.get(ref_cursor).copied() != Some(actual) {
+                    return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+                }
+                ref_cursor = ref_cursor
+                    .checked_add(1)
+                    .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+                Ok(())
+            },
+        )?;
+        if cache.actions.get(action_index).copied() != Some(core) {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+    }
+    if validated_ref_count != ref_cursor
+        || ref_cursor != cache.refs.len()
+        || current.candidates.len() != cache.actions.len()
+        || cache
+            .objects
+            .windows(2)
+            .any(|pair| pair[0].canonical_key() >= pair[1].canonical_key())
+        || cache
+            .objects
+            .iter()
+            .any(|object| !(1..=65_536).contains(&object.card_token))
+        || cache.refs.iter().any(|reference| {
+            !(1..=65_536).contains(&reference.card_token)
+                || cache
+                    .objects
+                    .get(usize::from(reference.object_index))
+                    .is_none_or(|object| object.card_token != reference.card_token)
+        })
+    {
+        return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+    }
+    let legal_action_count = u32::try_from(current.candidates.len())
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    if cache.binding
+        != flat_action_binding_v2(
             session,
             current,
             legal_action_count,
@@ -3077,6 +3633,12 @@ pub struct RlEpisodeSessionV1 {
 #[derive(Clone)]
 pub struct RlEpisodeSessionSnapshotV5(RlEpisodeSessionV1);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlatActionContractModeV1 {
+    V1,
+    V2,
+}
+
 /// In-process actor lane that preserves the v5 policy surface and transition
 /// semantics while omitting observations, visible hashes, stable/display
 /// strings, and all JSON/Python work.
@@ -3093,7 +3655,9 @@ pub struct FastActorSessionV1 {
     policy_step_count: u64,
     physical_decision_count: u64,
     current: Option<FastActorCurrentDecisionV1>,
+    flat_action_contract_mode: FlatActionContractModeV1,
     flat_action_cache_spare: Option<FlatActionDecisionCacheV1>,
+    flat_action_cache_spare_v2: Option<FlatActionDecisionCacheV2>,
     terminal: Option<RlSessionTerminalV1>,
 }
 
@@ -3700,6 +4264,44 @@ impl FastActorSessionV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_in_flat_action_mode(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            FlatActionContractModeV1::V1,
+        )
+    }
+
+    /// Constructs a session whose one eager action cache is the explicit V2
+    /// contract.  V1 APIs fail closed on this session, so the hot path never
+    /// constructs, copies, or hashes V1 rows.
+    pub fn reset_with_decks_and_limits_flat_action_v2(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_in_flat_action_mode(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            FlatActionContractModeV1::V2,
+        )
+    }
+
+    fn reset_with_decks_and_limits_in_flat_action_mode(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        flat_action_contract_mode: FlatActionContractModeV1,
+    ) -> Result<Self, RlSessionError> {
         let resolved_decks = resolve_runtime_decks(&deck_ids)?;
         let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
         let state = build_deck_pair_state(
@@ -3725,7 +4327,9 @@ impl FastActorSessionV1 {
             policy_step_count: 0,
             physical_decision_count: 0,
             current: None,
+            flat_action_contract_mode,
             flat_action_cache_spare: None,
+            flat_action_cache_spare_v2: None,
             terminal: None,
         };
         session.advance_to_decision_or_terminal();
@@ -3818,6 +4422,9 @@ impl FastActorSessionV1 {
     pub fn diagnostic_rebuild_current_flat_action_cache_v1(
         &mut self,
     ) -> Result<[u8; 16], FlatActionDecisionSliceErrorV1> {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V1 {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
         let mut current = self
             .current
             .take()
@@ -3855,6 +4462,9 @@ impl FastActorSessionV1 {
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
         flat_validate_expected_decision_v1(self, current, expected)?;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V1 {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
         if let Some(error) = current.flat_action_cache_error {
             return Err(error);
         }
@@ -3905,6 +4515,65 @@ impl FastActorSessionV1 {
         })
     }
 
+    /// Encodes the explicit V2 action contract.  V2 admits card token 65,536
+    /// and serializes every token as little-endian `u32`; it never reuses a V1
+    /// binding or commitment as consume authority.
+    pub fn encode_current_flat_action_slice_v2(
+        &self,
+        expected: FastActorDecisionV1,
+        buffers: &mut FlatActionDecisionSliceBuffersV2<'_>,
+    ) -> Result<FlatActionDecisionSliceV2, FlatActionDecisionSliceErrorV1> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        flat_validate_expected_decision_v1(self, current, expected)?;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V2 {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        if let Some(error) = current.flat_action_cache_error_v2 {
+            return Err(error);
+        }
+        let cache = current
+            .flat_action_cache_v2
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        flat_validate_action_cache_v2(self, current, cache)?;
+        let action_count = cache.actions.len();
+        let ref_count = cache.refs.len();
+        let object_count = cache.objects.len();
+
+        if buffers.actions.len() < action_count {
+            return Err(FlatActionDecisionSliceErrorV1::InsufficientActionCapacity {
+                required: action_count,
+                available: buffers.actions.len(),
+            });
+        }
+        if buffers.refs.len() < ref_count {
+            return Err(FlatActionDecisionSliceErrorV1::InsufficientRefCapacity {
+                required: ref_count,
+                available: buffers.refs.len(),
+            });
+        }
+        if buffers.objects.len() < object_count {
+            return Err(FlatActionDecisionSliceErrorV1::InsufficientObjectCapacity {
+                required: object_count,
+                available: buffers.objects.len(),
+            });
+        }
+        buffers.actions[..action_count].copy_from_slice(&cache.actions);
+        buffers.refs[..ref_count].copy_from_slice(&cache.refs);
+        buffers.objects[..object_count].copy_from_slice(&cache.objects);
+        Ok(FlatActionDecisionSliceV2 {
+            binding: cache.binding,
+            active_action_count: cache.binding.legal_action_count,
+            active_ref_count: u32::try_from(ref_count)
+                .expect("flat V2 reference count passed u32 cache construction"),
+            active_object_count: u16::try_from(object_count)
+                .expect("flat V2 object count passed u16 cache construction"),
+        })
+    }
+
     /// Builds the authoritative schema-v5 actor observation for the complete
     /// typed flat-policy producer after validating the exact fast-actor
     /// decision binding. This crate-private bridge deliberately returns the
@@ -3920,6 +4589,9 @@ impl FastActorSessionV1 {
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
         flat_validate_expected_decision_v1(self, current, expected)?;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V1 {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
         if let Some(error) = current.flat_action_cache_error {
             return Err(error);
         }
@@ -3928,6 +4600,38 @@ impl FastActorSessionV1 {
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
         flat_validate_action_cache_v1(self, current, cache)?;
+        observe_policy_v5_unhashed_for_flat_policy(
+            &self.state,
+            &self.surface,
+            current.actor,
+            self.policy_step_count,
+            current.physical_decision_id,
+            current.substep_index,
+            current.substep_count,
+        )
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
+    }
+
+    pub(crate) fn flat_policy_observation_v2(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<ObservationV5, FlatActionDecisionSliceErrorV1> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        flat_validate_expected_decision_v1(self, current, expected)?;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V2 {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        if let Some(error) = current.flat_action_cache_error_v2 {
+            return Err(error);
+        }
+        let cache = current
+            .flat_action_cache_v2
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        flat_validate_action_cache_v2(self, current, cache)?;
         observe_policy_v5_unhashed_for_flat_policy(
             &self.state,
             &self.surface,
@@ -3953,6 +4657,9 @@ impl FastActorSessionV1 {
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
         flat_validate_expected_decision_v1(self, current, expected)?;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V1 {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
         if let Some(error) = current.flat_action_cache_error {
             return Err(error);
         }
@@ -3961,6 +4668,33 @@ impl FastActorSessionV1 {
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
         flat_validate_action_cache_v1(self, current, cache)?;
+        if cache.binding != binding {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn flat_policy_validate_cached_binding_v2(
+        &self,
+        expected: FastActorDecisionV1,
+        binding: FlatActionDecisionBindingV2,
+    ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        flat_validate_expected_decision_v1(self, current, expected)?;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V2 {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        if let Some(error) = current.flat_action_cache_error_v2 {
+            return Err(error);
+        }
+        let cache = current
+            .flat_action_cache_v2
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        flat_validate_action_cache_v2(self, current, cache)?;
         if cache.binding != binding {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
@@ -3984,6 +4718,12 @@ impl FastActorSessionV1 {
                     "flat action result has no active decision to consume",
                 )
             })?;
+            if self.flat_action_contract_mode != FlatActionContractModeV1::V1 {
+                return Err(session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "flat V1 action result cannot consume a V2-mode session",
+                ));
+            }
             let cache = current.flat_action_cache.as_ref().ok_or_else(|| {
                 session_error(
                     RlSessionErrorCode::StaleEnvironmentBinding,
@@ -4002,6 +4742,51 @@ impl FastActorSessionV1 {
             return Err(session_error(
                 RlSessionErrorCode::StaleEnvironmentBinding,
                 "flat action result does not match the complete active decision binding",
+            ));
+        }
+        self.step(
+            binding.episode_id,
+            binding.bound_policy_step_count,
+            selected_index,
+        )
+    }
+
+    pub fn consume_current_flat_action_slice_v2(
+        &mut self,
+        binding: FlatActionDecisionBindingV2,
+        selected_index: u32,
+    ) -> Result<FastActorResponseV1, RlSessionError> {
+        let cached_binding = {
+            let current = self.current.as_ref().ok_or_else(|| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "flat V2 action result has no active decision to consume",
+                )
+            })?;
+            if self.flat_action_contract_mode != FlatActionContractModeV1::V2 {
+                return Err(session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "flat V2 action result cannot consume a V1-mode session",
+                ));
+            }
+            let cache = current.flat_action_cache_v2.as_ref().ok_or_else(|| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "active decision has no private flat V2 action cache",
+                )
+            })?;
+            flat_validate_action_cache_v2(self, current, cache).map_err(|_| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "active decision cannot reproduce its private flat V2 action rows",
+                )
+            })?;
+            cache.binding
+        };
+        if binding != cached_binding {
+            return Err(session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "flat V2 action result does not match the complete active decision binding",
             ));
         }
         self.step(
@@ -4233,6 +5018,7 @@ impl FastActorSessionV1 {
             .take()
             .expect("successful fast actor apply retains the consumed decision");
         self.flat_action_cache_spare = completed.flat_action_cache.take();
+        self.flat_action_cache_spare_v2 = completed.flat_action_cache_v2.take();
         self.environment_revision = next_environment_revision;
         self.policy_step_count = next_policy_step_count;
         self.physical_decision_count = next_physical_decision_count;
@@ -4386,10 +5172,21 @@ impl FastActorSessionV1 {
             bound_physical_decision_count: self.physical_decision_count,
             flat_action_cache: None,
             flat_action_cache_error: None,
+            flat_action_cache_v2: None,
+            flat_action_cache_error_v2: None,
         };
-        let reusable_cache = self.flat_action_cache_spare.take();
-        let cache_result = flat_build_action_cache_v1(self, &current, reusable_cache);
-        flat_install_action_cache_build_result_v1(&mut current, cache_result);
+        match self.flat_action_contract_mode {
+            FlatActionContractModeV1::V1 => {
+                let reusable_cache = self.flat_action_cache_spare.take();
+                let cache_result = flat_build_action_cache_v1(self, &current, reusable_cache);
+                flat_install_action_cache_build_result_v1(&mut current, cache_result);
+            }
+            FlatActionContractModeV1::V2 => {
+                let reusable_cache = self.flat_action_cache_spare_v2.take();
+                let cache_result = flat_build_action_cache_v2(self, &current, reusable_cache);
+                flat_install_action_cache_build_result_v2(&mut current, cache_result);
+            }
+        }
         self.current = Some(current);
     }
 }
@@ -4457,6 +5254,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 thread_local! {
     static TEST_EXACT_ENVIRONMENT_HASH_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static TEST_FLAT_ACTION_COMMITMENT_CONSTRUCTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static TEST_FLAT_ACTION_V1_MATERIALIZATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -4477,6 +5275,16 @@ fn reset_test_flat_action_commitment_constructions() {
 #[cfg(test)]
 fn test_flat_action_commitment_constructions() -> u64 {
     TEST_FLAT_ACTION_COMMITMENT_CONSTRUCTIONS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn reset_test_flat_action_v1_materializations() {
+    TEST_FLAT_ACTION_V1_MATERIALIZATIONS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+fn test_flat_action_v1_materializations() -> u64 {
+    TEST_FLAT_ACTION_V1_MATERIALIZATIONS.with(std::cell::Cell::get)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -8805,5 +9613,257 @@ mod tests {
                 0x17, 0xa2,
             ]
         );
+    }
+
+    #[test]
+    fn flat_action_v2_token_domain_and_commitment_goldens_are_independent() {
+        assert_eq!(flat_card_token_v1(u16::MAX - 1), Ok(u16::MAX));
+        assert_eq!(
+            flat_card_token_v1(u16::MAX),
+            Err(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)
+        );
+        assert_eq!(flat_card_token_v2(u16::MAX - 1), u32::from(u16::MAX));
+        assert_eq!(flat_card_token_v2(u16::MAX), 65_536);
+
+        let actions = [FlatActionCoreV1 {
+            ref_len: 1,
+            ..FlatActionCoreV1::default()
+        }];
+        let object_v1 = FlatActionObjectV1 {
+            card_token: u16::MAX,
+            group: FlatActionObjectGroupV1::Exile,
+            actor_visible_ordinal: 7,
+            owner_relative: 0,
+            controller_relative: 1,
+            zone: 5,
+            zone_change_count: 9,
+        };
+        let reference_v1 = FlatActionRefV1 {
+            action_index: 0,
+            role: FlatActionRefRoleV1::Card,
+            order_index: 3,
+            associated_order: 4,
+            card_token: u16::MAX,
+            object_index: 0,
+        };
+        let v1 = flat_action_commitment_from_rows_v1(
+            PlayerSeatV1::P0,
+            &actions,
+            &[reference_v1],
+            &[object_v1],
+        )
+        .unwrap();
+        assert_eq!(
+            v1,
+            [
+                0x20, 0x8d, 0xf4, 0x09, 0xeb, 0x3d, 0xff, 0x44, 0xce, 0x19, 0x80, 0x61, 0x12, 0x50,
+                0x94, 0x8f,
+            ]
+        );
+
+        let commitment_v2 = |card_token| {
+            let object = FlatActionObjectV2 {
+                card_token,
+                group: FlatActionObjectGroupV1::Exile,
+                actor_visible_ordinal: 7,
+                owner_relative: 0,
+                controller_relative: 1,
+                zone: 5,
+                zone_change_count: 9,
+            };
+            let reference = FlatActionRefV2 {
+                action_index: 0,
+                role: FlatActionRefRoleV1::Card,
+                order_index: 3,
+                associated_order: 4,
+                card_token,
+                object_index: 0,
+            };
+            flat_action_commitment_from_rows_v2(PlayerSeatV1::P0, &actions, &[reference], &[object])
+                .unwrap()
+        };
+        let common_v2 = commitment_v2(u32::from(u16::MAX));
+        assert_eq!(
+            common_v2,
+            [
+                0xdc, 0x0b, 0xf1, 0xed, 0x6b, 0x5d, 0x07, 0x3e, 0xea, 0xe9, 0x7f, 0xe2, 0x68, 0x53,
+                0x6a, 0x5e,
+            ]
+        );
+        assert_ne!(common_v2, v1);
+        assert_eq!(
+            commitment_v2(65_536),
+            [
+                0x75, 0x67, 0xfd, 0x5c, 0xe8, 0x81, 0xf7, 0xa6, 0x33, 0x51, 0x71, 0xa5, 0x2c, 0xd4,
+                0x66, 0x4f,
+            ]
+        );
+    }
+
+    #[test]
+    fn flat_action_v2_mode_isolated_hot_path_and_cross_version_rejection() {
+        reset_test_flat_action_commitment_constructions();
+        reset_test_flat_action_v1_materializations();
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            81_041,
+            141,
+            128,
+            16_384,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .unwrap();
+        assert_eq!(test_flat_action_v1_materializations(), 0);
+        assert_eq!(test_flat_action_commitment_constructions(), 0);
+        let decision = flat_current_decision(&session);
+
+        let mut v1_actions = [poison_flat_action(); 64];
+        let mut v1_refs = [poison_flat_ref(); 256];
+        let mut v1_objects = [poison_flat_object(); 128];
+        let v1_actions_before = v1_actions;
+        let v1_refs_before = v1_refs;
+        let v1_objects_before = v1_objects;
+        assert_eq!(
+            session.encode_current_flat_action_slice_v1(
+                decision,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut v1_actions,
+                    refs: &mut v1_refs,
+                    objects: &mut v1_objects,
+                },
+            ),
+            Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
+        );
+        assert_eq!(v1_actions, v1_actions_before);
+        assert_eq!(v1_refs, v1_refs_before);
+        assert_eq!(v1_objects, v1_objects_before);
+        assert_eq!(test_flat_action_v1_materializations(), 0);
+        assert_eq!(test_flat_action_commitment_constructions(), 0);
+
+        let poison_ref = FlatActionRefV2 {
+            action_index: u32::MAX,
+            role: FlatActionRefRoleV1::PendingSources,
+            order_index: u16::MAX,
+            associated_order: u16::MAX,
+            card_token: u32::MAX,
+            object_index: u16::MAX,
+        };
+        let poison_object = FlatActionObjectV2 {
+            card_token: u32::MAX,
+            group: FlatActionObjectGroupV1::Command,
+            actor_visible_ordinal: u16::MAX,
+            owner_relative: u8::MAX,
+            controller_relative: u8::MAX,
+            zone: u8::MAX,
+            zone_change_count: u32::MAX,
+        };
+        let mut actions = [poison_flat_action(); 64];
+        let mut refs = [poison_ref; 256];
+        let mut objects = [poison_object; 128];
+        let actions_before = actions;
+        let refs_before = refs;
+        let objects_before = objects;
+        let encoded = session
+            .encode_current_flat_action_slice_v2(
+                decision,
+                &mut FlatActionDecisionSliceBuffersV2 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            encoded.binding.slice_version,
+            FLAT_ACTION_DECISION_SLICE_VERSION_V2
+        );
+        assert_eq!(
+            encoded.binding.card_token_mapping_version,
+            FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V2
+        );
+        assert_eq!(
+            encoded.binding.candidate_commitment_version,
+            FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V2
+        );
+        assert_eq!(
+            &actions[encoded.active_action_count as usize..],
+            &actions_before[encoded.active_action_count as usize..]
+        );
+        assert_eq!(
+            &refs[encoded.active_ref_count as usize..],
+            &refs_before[encoded.active_ref_count as usize..]
+        );
+        assert_eq!(
+            &objects[usize::from(encoded.active_object_count)..],
+            &objects_before[usize::from(encoded.active_object_count)..]
+        );
+        assert!(refs[..encoded.active_ref_count as usize]
+            .iter()
+            .all(|row| (1..=65_536).contains(&row.card_token)));
+        assert!(objects[..usize::from(encoded.active_object_count)]
+            .iter()
+            .all(|row| (1..=65_536).contains(&row.card_token)));
+        assert_eq!(test_flat_action_v1_materializations(), 0);
+        assert_eq!(test_flat_action_commitment_constructions(), 0);
+
+        let response_before = session.current_response();
+        let state_before = session.diagnostic_state_hash();
+        let mut corruptions = Vec::new();
+        let mut wrong_slice = encoded.binding;
+        wrong_slice.slice_version = FLAT_ACTION_DECISION_SLICE_VERSION_V1;
+        corruptions.push(wrong_slice);
+        let mut wrong_token = encoded.binding;
+        wrong_token.card_token_mapping_version = FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V1;
+        corruptions.push(wrong_token);
+        let mut wrong_commitment_version = encoded.binding;
+        wrong_commitment_version.candidate_commitment_version =
+            FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V1;
+        corruptions.push(wrong_commitment_version);
+        let mut wrong_commitment = encoded.binding;
+        wrong_commitment.candidate_order_commitment[0] ^= 0x80;
+        corruptions.push(wrong_commitment);
+        for binding in corruptions {
+            let error = session
+                .consume_current_flat_action_slice_v2(binding, 0)
+                .unwrap_err();
+            assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+            assert_eq!(session.current_response(), response_before);
+            assert_eq!(session.diagnostic_state_hash(), state_before);
+        }
+
+        let snapshot = session.snapshot_v1();
+        let selected = encoded.binding.legal_action_count.saturating_sub(1);
+        let expected_response = session
+            .consume_current_flat_action_slice_v2(encoded.binding, selected)
+            .unwrap();
+        assert_eq!(test_flat_action_v1_materializations(), 0);
+        assert_eq!(test_flat_action_commitment_constructions(), 0);
+        session.restore_v1(&snapshot);
+        assert_eq!(
+            session
+                .consume_current_flat_action_slice_v2(encoded.binding, selected)
+                .unwrap(),
+            expected_response
+        );
+        assert_eq!(test_flat_action_v1_materializations(), 0);
+        assert_eq!(test_flat_action_commitment_constructions(), 0);
+
+        let v1_session = FastActorSessionV1::reset_with_limits(81_042, 142, 128, 16_384);
+        let v1_decision = flat_current_decision(&v1_session);
+        let mut v2_actions = [poison_flat_action(); 64];
+        let mut v2_refs = [poison_ref; 256];
+        let mut v2_objects = [poison_object; 128];
+        let before = (v2_actions, v2_refs, v2_objects);
+        assert_eq!(
+            v1_session.encode_current_flat_action_slice_v2(
+                v1_decision,
+                &mut FlatActionDecisionSliceBuffersV2 {
+                    actions: &mut v2_actions,
+                    refs: &mut v2_refs,
+                    objects: &mut v2_objects,
+                },
+            ),
+            Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
+        );
+        assert_eq!((v2_actions, v2_refs, v2_objects), before);
     }
 }
