@@ -229,4 +229,49 @@ cargo build --release --locked -p mtg-kernel --example bench_fast_sampler
   --evidence-manifest evidence/fast_sampler/run.manifest.json
 ```
 
-The capacity run in step 4 remains deferred in this audit-hold change.
+## Immutable canonical capacity result
+
+The subsequent canonical matrix was built from clean source commit
+`4692d7d931b253f32ad68e282acff37df6f61f7e`. Its manifest is
+`evidence/fast_sampler/run2.manifest.json` (SHA-256
+`2488401aa832022c5101697d53ca17f5381bd50d34ae00d5d46161de5fc457f8`),
+and its immutable evidence is `evidence/fast_sampler/run2.evidence.json`
+(file SHA-256
+`fd1f1ddb5329ad825ec07cb1ff7722103ac935cdaccbc8d88f8ed329993c3d6f`,
+canonical validation-record SHA-256
+`35d0ae490c9ae5f2b5088bf739bcbcf2c2d47478b6a347ec4ab8512199ef1109`).
+
+The bound executable SHA-256 is
+`d7cd1930e5096744b04d6cb6b5086e33f316cd7d0c70667baa6975d9196878c3`;
+the source-bundle SHA-256 is
+`d7383ea8591592319691dbcddddc8f54f6047ab76a277b35ff8546ec4bc8ae8c`;
+the `Cargo.lock` SHA-256 is
+`19881eb38bda75d87f82f05edc7f7b41d5a87ea6f4bfa17ce775462ba30e2dc4`;
+the toolchain SHA-256 is
+`d52c5633ea77aefd345519d0a6c87e19c2636a1e90178585c30db481b3de9de0`;
+and the exact `rustc -Vv` stdout SHA-256 is
+`9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064`.
+The Rally-derived observed-width artifact SHA-256 is
+`d9471ee78ee8b656040d1920118f962f4b239e55603220e3679b1d11b847e579`,
+and its canonical aggregate-record SHA-256 is
+`33490dc1fbf21555cc469595beadbda70c30092ac95cac297bc6f0e48ef18f7c`.
+
+The canonical parameters were five 2,000 ms repeats at one and 16 pinned
+threads, with a target of 1,250,000 decisions/second. Observed results were:
+
+| Threads | Minimum decisions/s | Median decisions/s | Maximum decisions/s | Minimum target multiple |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 20,286,121.685266145 | 20,494,573.554883800 | 20,579,096.075564817 | 16.228897348212914x |
+| 16 | 190,334,831.105957597 | 190,915,808.754026413 | 190,999,278.205630004 | 152.26786488476608x |
+
+All 19 claim checks were true across 85 workers with zero worker errors.
+External busy ranged from `0.04799474030243261` to
+`0.08733766233766234`; maximum start delay was `6,318,200 ns`, maximum
+finish overshoot was `19,300 ns`, and maximum CPU-snapshot alignment slack
+was `4,388,200 ns`. Every value remained within its predeclared bound.
+
+This positive result is a Rally-derived legal-action-width sampler
+microbenchmark only. It excludes model inference, environment stepping, IPC,
+training, all-nine-deck completion, any XMage speedup, and any learning claim.
+Broad Python discovery remains non-authoritative, and the all-nine-deck sampler
+gate remains deferred.
