@@ -1,16 +1,16 @@
 # Fast categorical sampler V1 validation
 
-Status: **audit hold**. The bounded Rust candidate is implemented for review,
-but no canonical observed-workload diagnostic or benchmark evidence is accepted
-for this revision. The sampler is not wired into the live Python
-trainer/evaluator.
+Status: **canonical sampler-only capacity evidence accepted**. The immutable
+matrix recorded below passed all 19 predeclared claim checks. The sampler is
+not wired into the live Python trainer/evaluator, and this result is not an
+end-to-end training or learning claim.
 
 Validation record date: 2026-07-18.
 
 ## Claim boundary
 
-This document defines the candidate contract and the gates required before a
-sampler-only throughput claim can be recorded. It does not establish learning
+This document defines the candidate contract, its gates, and the accepted
+sampler-only capacity result recorded below. It does not establish learning
 noninferiority, end-to-end training throughput, an XMage speedup, policy
 quality, or completion of the final all-nine-deck sampler gate.
 
