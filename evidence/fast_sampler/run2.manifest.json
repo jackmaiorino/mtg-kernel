@@ -1,0 +1,13 @@
+{
+  "schema_version": "fast_sampler_benchmark_evidence_manifest/v2",
+  "expected_clean_revision": "4692d7d931b253f32ad68e282acff37df6f61f7e",
+  "expected_source_bundle_sha256": "d7383ea8591592319691dbcddddc8f54f6047ab76a277b35ff8546ec4bc8ae8c",
+  "expected_cargo_lock_sha256": "19881eb38bda75d87f82f05edc7f7b41d5a87ea6f4bfa17ce775462ba30e2dc4",
+  "expected_toolchain_sha256": "d52c5633ea77aefd345519d0a6c87e19c2636a1e90178585c30db481b3de9de0",
+  "expected_executable_sha256": "d7cd1930e5096744b04d6cb6b5086e33f316cd7d0c70667baa6975d9196878c3",
+  "expected_rustc_verbose_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+  "expected_cargo_build_command_identity": "cargo build --release --locked -p mtg-kernel --example bench_fast_sampler",
+  "expected_rejected_build_override_contract_sha256": "476fc2772167ed3d7a244e14b670a25e17371a4a0cbe94777dc2d71b77f72991",
+  "expected_build_override_state_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "evidence_output_path": "evidence/fast_sampler/run2.evidence.json"
+}

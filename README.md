@@ -56,6 +56,19 @@ On Windows, use `target/release/kernel_rl_env.exe` for `--env-bin`. Run `mtg-ker
 
 ## Performance evidence
 
+The bounded Rust candidate
+`f32-q8-expq63-hamilton-splitmix64-v1` is documented in
+[FAST_SAMPLER_V1_VALIDATION.md](FAST_SAMPLER_V1_VALIDATION.md). It has a new
+sampler identity and does not reinterpret historical
+`decimal-softmax-hamilton-splitmix64-v1` artifacts. The candidate is on audit
+hold: its probability diagnostic now uses a provenance-bound 2,048-decision
+all-policy Rally workload shape, but that source's performance/timing gate was
+invalid, no source rates are imported, and the prior sampler rates are
+superseded pending a clean runtime-manifest run. The workload is Rally-only,
+not nine-deck coverage. The candidate is not wired into the live Python
+trainer/evaluator and makes no learning-noninferiority or end-to-end training
+claim.
+
 `bench_kernel --ceiling-json-v1` is an H2 engine-plus-`HarnessSurfaceV2` upper-bound diagnostic. It excludes production `PolicySurfaceV5` scalarization/transactional cloning, RL-session observation and legal-action encoding, privileged integrity checks, JSONL/IPC, neural inference and sampling, optimization, and artifact persistence. It therefore must not be compared directly with end-to-end XMage trainer throughput. An end-to-end training speedup over XMage has not yet been established; designated-hardware trainer throughput remains an open roadmap gate.
 
 The opt-in raw-ceiling lane emits one strict JSON record for a matched runtime deck and never counts safety-capped, halted, or apply-error episodes as completed games:

@@ -23,6 +23,7 @@ pub mod card_def;
 pub mod effect;
 pub mod engine;
 pub mod event;
+pub mod fast_sampler;
 pub mod ids;
 pub mod mana;
 pub mod phase_profile;
