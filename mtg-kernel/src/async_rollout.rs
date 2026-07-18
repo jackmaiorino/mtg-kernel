@@ -1059,6 +1059,7 @@ mod tests {
         let decision_a = FastActorDecisionV1 {
             episode_id: 1,
             step: 7,
+            environment_revision: 7,
             physical_decision_id: 6,
             substep_index: 0,
             substep_count: 1,

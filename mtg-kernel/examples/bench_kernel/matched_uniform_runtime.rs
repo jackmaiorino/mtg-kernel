@@ -642,6 +642,7 @@ fn fast_shape(decision: &RlSessionDecisionV1) -> Result<FastActorDecisionV1, Str
     Ok(FastActorDecisionV1 {
         episode_id: decision.episode_id,
         step: decision.step,
+        environment_revision: decision.step,
         physical_decision_id: decision.physical_decision_id,
         substep_index: decision.substep_index,
         substep_count: decision.substep_count,
@@ -2560,6 +2561,7 @@ mod tests {
         FastActorDecisionV1 {
             episode_id,
             step: u64::from(substep_index),
+            environment_revision: u64::from(substep_index),
             physical_decision_id,
             substep_index,
             substep_count,
