@@ -29,6 +29,9 @@ pub mod fast_sampler;
 pub mod flat_policy_v1;
 pub mod ids;
 pub mod mana;
+// Fixed-shape synthetic CPU oracle only; not a production trainer API.
+#[allow(dead_code)]
+pub(crate) mod native_flat_cpu_reference_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub mod rl;
