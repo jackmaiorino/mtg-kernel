@@ -32,6 +32,8 @@ pub mod mana;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
 pub(crate) mod native_flat_cpu_reference_v1;
+#[allow(dead_code)]
+pub(crate) mod native_trainer_schedule_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub mod rl;
