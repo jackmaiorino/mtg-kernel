@@ -36,6 +36,9 @@ pub const FLAT_POLICY_OBJECT_GROUP_MAPPING_VERSION_V1: u32 = 1;
 pub const FLAT_POLICY_RELATION_ROLE_MAPPING_VERSION_V1: u32 = 1;
 pub const FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1: u32 = 1;
 
+const HISTORICAL_STACK_TARGET_KIND_V1: u8 = 1;
+const HISTORICAL_PAID_COST_KIND_V1: u8 = 2;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum FlatRelativePlayerV1 {
@@ -540,6 +543,10 @@ pub struct FlatStackRelationDataV1 {
     pub x_value: u16,
     pub target_kind: FlatTargetKindV1,
     pub target_player: FlatRelativePlayerV1,
+    /// Announcement-time controller provenance for an object target. This is
+    /// intentionally independent of the current controller on the resolved
+    /// live object row because control can change without a zone change.
+    pub target_object_controller: FlatRelativePlayerV1,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -1033,6 +1040,36 @@ impl FlatDecisionEncoderV1 {
         found.ok_or(FlatDecisionErrorV1::InvalidReference)
     }
 
+    fn resolve_historical_stack_target(
+        &self,
+        stable: &CardStableRefV1,
+        actor: PlayerSeatV1,
+    ) -> Result<u32, FlatDecisionErrorV1> {
+        let wanted = Self::private_key(stable, actor, HISTORICAL_STACK_TARGET_KIND_V1);
+        let mut found = None;
+        for (index, key) in self.object_keys.iter().enumerate() {
+            let Some(key) = key else { continue };
+            if key.arena_id == wanted.arena_id
+                && key.zone_change_count == wanted.zone_change_count
+                && matches!(key.historical_kind, 0 | HISTORICAL_STACK_TARGET_KIND_V1)
+            {
+                if key.card_token != wanted.card_token
+                    || key.owner != wanted.owner
+                    || key.zone != wanted.zone
+                {
+                    return Err(FlatDecisionErrorV1::InconsistentReference);
+                }
+                if found.is_none() {
+                    found = Some(usize_u32(index)?);
+                }
+            }
+        }
+        if !matches!(wanted.zone, FlatZoneV1::Battlefield | FlatZoneV1::Stack) {
+            return Err(FlatDecisionErrorV1::InvalidReference);
+        }
+        found.ok_or(FlatDecisionErrorV1::InvalidReference)
+    }
+
     fn add_private_card(
         &mut self,
         card: &CardPrivateV1,
@@ -1072,13 +1109,19 @@ impl FlatDecisionEncoderV1 {
             {
                 if key.card_token != wanted.card_token
                     || key.owner != wanted.owner
-                    || key.controller != wanted.controller
                     || key.zone != wanted.zone
+                    || (historical_kind != HISTORICAL_STACK_TARGET_KIND_V1
+                        && key.controller != wanted.controller)
                 {
                     return Err(FlatDecisionErrorV1::InconsistentReference);
                 }
                 return usize_u32(index);
             }
+        }
+        if historical_kind == HISTORICAL_STACK_TARGET_KIND_V1
+            && !matches!(wanted.zone, FlatZoneV1::Battlefield | FlatZoneV1::Stack)
+        {
+            return Err(FlatDecisionErrorV1::InvalidReference);
         }
         let index = usize_u32(self.objects.len())?;
         self.objects.push(FlatObjectCoreV1 {
@@ -1139,7 +1182,14 @@ impl FlatDecisionEncoderV1 {
             });
         }
         let goad_start = usize_u32(self.goads.len())?;
-        for (order, goad) in card.goaded_by.iter().enumerate() {
+        let mut canonical_goads = card.goaded_by.clone();
+        canonical_goads.sort_unstable_by_key(|goad| {
+            (
+                relative_player(goad.player, actor) as u8,
+                goad.expires_at_turn,
+            )
+        });
+        for (order, goad) in canonical_goads.iter().enumerate() {
             let expires_after_turns = goad
                 .expires_at_turn
                 .checked_sub(current_turn)
@@ -1206,7 +1256,7 @@ impl FlatDecisionEncoderV1 {
             ability_use_start,
             ability_use_count: usize_u32(card.ability_uses_this_turn.len())?,
             goad_start,
-            goad_count: usize_u32(card.goaded_by.len())?,
+            goad_count: usize_u32(canonical_goads.len())?,
             ..*object
         };
         Ok(index)
@@ -1767,7 +1817,7 @@ impl FlatDecisionEncoderV1 {
                         FlatObjectGroupV1::HistoricalStackTarget,
                         FlatObjectSourceKindV1::Target,
                         ordinal,
-                        1,
+                        HISTORICAL_STACK_TARGET_KIND_V1,
                     )?;
                 }
             }
@@ -1944,7 +1994,7 @@ impl FlatDecisionEncoderV1 {
                     FlatObjectGroupV1::HistoricalPaidCost,
                     FlatObjectSourceKindV1::PaidCost,
                     paid_order,
-                    2,
+                    HISTORICAL_PAID_COST_KIND_V1,
                 )?;
                 paid_order = paid_order
                     .checked_add(1)
@@ -1985,6 +2035,10 @@ impl FlatDecisionEncoderV1 {
             (FlatTargetKindV1::None, FlatRelativePlayerV1::None),
             |target| target_parts(target, actor),
         );
+        let target_object_controller = match target {
+            Some(TargetRefV1::Object { object }) => relative_player(object.controller, actor),
+            _ => FlatRelativePlayerV1::None,
+        };
         FlatRelationPayloadV1::Stack(FlatStackRelationDataV1 {
             controller: relative_player(item.controller, actor),
             stack_item_kind: stack_kind_id(item.stack_item_kind),
@@ -1998,6 +2052,7 @@ impl FlatDecisionEncoderV1 {
             x_value: item.x_value,
             target_kind,
             target_player,
+            target_object_controller,
         })
     }
 
@@ -2033,14 +2088,14 @@ impl FlatDecisionEncoderV1 {
     fn permission_payload(
         permission: &ExilePlayPermissionPublicV2,
         actor: PlayerSeatV1,
-    ) -> FlatRelationPayloadV1 {
+    ) -> FlatPermissionRelationDataV1 {
         let (expiry, holder_turn_started) = match permission.expiry {
             PlayPermissionExpiryV2::EndOfTurn => (0, false),
             PlayPermissionExpiryV2::UntilHoldersNextTurn {
                 holder_turn_started,
             } => (1, holder_turn_started),
         };
-        FlatRelationPayloadV1::Permission(FlatPermissionRelationDataV1 {
+        FlatPermissionRelationDataV1 {
             holder: relative_player(permission.holder, actor),
             play_or_cast: match permission.play_or_cast {
                 PlayOrCastV2::Play => 0,
@@ -2048,7 +2103,7 @@ impl FlatDecisionEncoderV1 {
             },
             expiry,
             holder_turn_started,
-        })
+        }
     }
 
     fn context_payload(
@@ -2170,43 +2225,46 @@ impl FlatDecisionEncoderV1 {
         let opponent = opponent(actor);
         let p = &observation.projection.surface;
 
-        let zones = p
-            .battlefield
+        let actor_relative_cards = p.battlefield[seat_index(actor)]
             .iter()
-            .chain(p.graveyards.iter())
-            .flat_map(|zone| zone.iter())
+            .chain(p.battlefield[seat_index(opponent)].iter())
+            .chain(p.graveyards[seat_index(actor)].iter())
+            .chain(p.graveyards[seat_index(opponent)].iter())
             .chain(p.exile.iter());
-        let mut attachment_order = 0_u32;
-        for card in zones {
+        let mut attachment_pairs = Vec::new();
+        for card in actor_relative_cards {
             let host = self.resolve_live(&card.stable, actor)?;
             for &attachment_arena in &card.attachments {
                 let attachment = self.resolve_arena(attachment_arena)?;
-                let context =
-                    self.context_object_index(FlatObjectGroupV1::Attachment, attachment_order)?;
-                self.push_relation(
-                    FlatRelationRoleV1::Attachment,
-                    Some(context),
-                    Some(host),
-                    attachment_order,
-                    0,
-                    0,
-                    FlatRelationPayloadV1::None,
-                );
-                self.push_relation(
-                    FlatRelationRoleV1::Attachment,
-                    Some(context),
-                    Some(attachment),
-                    attachment_order,
-                    0,
-                    1,
-                    FlatRelationPayloadV1::None,
-                );
-                attachment_order = attachment_order
-                    .checked_add(1)
-                    .ok_or(FlatDecisionErrorV1::CheckedIntegerRange)?;
+                attachment_pairs.push((host, attachment));
             }
         }
-        for (order, relation) in p.object_relations.iter().enumerate() {
+        attachment_pairs.sort_unstable();
+        for (attachment_order, (host, attachment)) in attachment_pairs.into_iter().enumerate() {
+            let attachment_order = usize_u32(attachment_order)?;
+            let context =
+                self.context_object_index(FlatObjectGroupV1::Attachment, attachment_order)?;
+            self.push_relation(
+                FlatRelationRoleV1::Attachment,
+                Some(context),
+                Some(host),
+                attachment_order,
+                0,
+                0,
+                FlatRelationPayloadV1::None,
+            );
+            self.push_relation(
+                FlatRelationRoleV1::Attachment,
+                Some(context),
+                Some(attachment),
+                attachment_order,
+                0,
+                1,
+                FlatRelationPayloadV1::None,
+            );
+        }
+        let mut object_relations = Vec::with_capacity(p.object_relations.len());
+        for relation in &p.object_relations {
             match relation {
                 ObjectRelationPublicV4::AttachedTo {
                     object,
@@ -2214,30 +2272,27 @@ impl FlatDecisionEncoderV1 {
                 } => {
                     let source = self.resolve_live(object, actor)?;
                     let target = self.resolve_live(attached_to, actor)?;
-                    self.push_relation(
-                        FlatRelationRoleV1::AttachedTo,
-                        Some(source),
-                        Some(target),
-                        usize_u32(order)?,
-                        0,
-                        0,
-                        FlatRelationPayloadV1::None,
-                    );
+                    object_relations.push((FlatRelationRoleV1::AttachedTo, source, target));
                 }
                 ObjectRelationPublicV4::ExiledBy { object, exiled_by } => {
                     let source = self.resolve_live(object, actor)?;
                     let target = self.resolve_live(exiled_by, actor)?;
-                    self.push_relation(
-                        FlatRelationRoleV1::ExiledBy,
-                        Some(source),
-                        Some(target),
-                        usize_u32(order)?,
-                        0,
-                        0,
-                        FlatRelationPayloadV1::None,
-                    );
+                    object_relations.push((FlatRelationRoleV1::ExiledBy, source, target));
                 }
             }
+        }
+        object_relations
+            .sort_unstable_by_key(|(role, source, target)| (*role as u8, *source, *target));
+        for (order, (role, source, target)) in object_relations.into_iter().enumerate() {
+            self.push_relation(
+                role,
+                Some(source),
+                Some(target),
+                usize_u32(order)?,
+                0,
+                0,
+                FlatRelationPayloadV1::None,
+            );
         }
         for (stack_order, item) in p.stack.iter().enumerate() {
             let stack_order = usize_u32(stack_order)?;
@@ -2253,7 +2308,9 @@ impl FlatDecisionEncoderV1 {
             );
             for (target_order, target) in item.targets.iter().enumerate() {
                 let target_object = match target {
-                    TargetRefV1::Object { object } => Some(self.resolve_reference(object, actor)?),
+                    TargetRefV1::Object { object } => {
+                        Some(self.resolve_historical_stack_target(object, actor)?)
+                    }
                     TargetRefV1::Player { .. } => None,
                 };
                 self.push_relation(
@@ -2347,8 +2404,13 @@ impl FlatDecisionEncoderV1 {
                 0,
                 Self::effect_payload(effect, actor, None),
             );
-            for (affected_order, affected) in effect.affected_objects.iter().enumerate() {
-                let affected = self.resolve_live(affected, actor)?;
+            let mut affected_objects = effect
+                .affected_objects
+                .iter()
+                .map(|affected| self.resolve_live(affected, actor))
+                .collect::<Result<Vec<_>, _>>()?;
+            affected_objects.sort_unstable();
+            for (affected_order, affected) in affected_objects.into_iter().enumerate() {
                 self.push_relation(
                     FlatRelationRoleV1::EffectAffected,
                     Some(context),
@@ -2359,7 +2421,9 @@ impl FlatDecisionEncoderV1 {
                     Self::effect_payload(effect, actor, None),
                 );
             }
-            for (affected_order, &affected) in effect.affected_players.iter().enumerate() {
+            let mut affected_players = effect.affected_players.clone();
+            affected_players.sort_unstable_by_key(|&player| relative_player(player, actor) as u8);
+            for (affected_order, affected) in affected_players.into_iter().enumerate() {
                 self.push_relation(
                     FlatRelationRoleV1::EffectAffected,
                     Some(context),
@@ -2387,12 +2451,25 @@ impl FlatDecisionEncoderV1 {
                 });
             }
         }
-        for (order, permission) in p.exile_play_permissions.iter().enumerate() {
+        let mut permissions = Vec::with_capacity(p.exile_play_permissions.len());
+        for permission in &p.exile_play_permissions {
             if permission.zone_change_generation != permission.object.zone_change_count {
                 return Err(FlatDecisionErrorV1::InconsistentReference);
             }
-            let order = usize_u32(order)?;
             let object = self.resolve_live(&permission.object, actor)?;
+            permissions.push((object, Self::permission_payload(permission, actor)));
+        }
+        permissions.sort_unstable_by_key(|(object, payload)| {
+            (
+                *object,
+                std::cmp::Reverse(payload.holder as u8),
+                std::cmp::Reverse(payload.play_or_cast),
+                std::cmp::Reverse(payload.expiry),
+                payload.holder_turn_started,
+            )
+        });
+        for (order, (object, payload)) in permissions.into_iter().enumerate() {
+            let order = usize_u32(order)?;
             self.push_relation(
                 FlatRelationRoleV1::Permission,
                 Some(self.context_object_index(FlatObjectGroupV1::Permission, order)?),
@@ -2400,7 +2477,7 @@ impl FlatDecisionEncoderV1 {
                 order,
                 0,
                 0,
-                Self::permission_payload(permission, actor),
+                FlatRelationPayloadV1::Permission(payload),
             );
         }
         for (relative_owner, seat) in [actor, opponent].into_iter().enumerate() {
@@ -3271,6 +3348,10 @@ impl FastActorSessionV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rl::{
+        CardCharacteristicsV2, CardTypeFlagsV2, CountersV1, GoadPublicV4, KeywordFlagsV2,
+        StackItemPublicV2,
+    };
     use crate::rl_session::FastActorResponseV1;
 
     fn expected(session: &FastActorSessionV1) -> FastActorDecisionV1 {
@@ -3326,6 +3407,228 @@ mod tests {
         Ok(encoder)
     }
 
+    fn synthetic_stable(
+        arena_id: u32,
+        card_db_id: u16,
+        owner: PlayerSeatV1,
+        controller: PlayerSeatV1,
+        zone: Zone,
+    ) -> CardStableRefV1 {
+        CardStableRefV1 {
+            arena_id,
+            card_db_id,
+            owner,
+            controller,
+            zone,
+            zone_change_count: 0,
+        }
+    }
+
+    fn synthetic_public(stable: CardStableRefV1) -> CardPublicV2 {
+        CardPublicV2 {
+            stable,
+            card_name: String::new(),
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: CountersV1 {
+                plus1_plus1: 0,
+                minus1_minus1: 0,
+                minus0_minus1: 0,
+                stun: 0,
+                lore: 0,
+            },
+            attachments: Vec::new(),
+            plotted_turn: None,
+            is_token: false,
+            face_index: 0,
+            chosen_color: None,
+            entered_battlefield_turn: None,
+            ability_uses_this_turn: Vec::new(),
+            skip_next_untap: false,
+            goaded_by: Vec::new(),
+            characteristics: CardCharacteristicsV2 {
+                type_flags: CardTypeFlagsV2 {
+                    land: false,
+                    creature: true,
+                    instant: false,
+                    sorcery: false,
+                    artifact: false,
+                    enchantment: false,
+                },
+                base_power: Some(1),
+                base_toughness: Some(1),
+                effective_power: Some(1),
+                effective_toughness: Some(1),
+                effective_color_mask: 0,
+                effective_subtype_ids: Vec::new(),
+                effective_keywords: KeywordFlagsV2 {
+                    flying: false,
+                    reach: false,
+                    haste: false,
+                    vigilance: false,
+                    trample: false,
+                    first_strike: false,
+                    double_strike: false,
+                    deathtouch: false,
+                    menace: false,
+                    defender: false,
+                    lifelink: false,
+                    hexproof: false,
+                    indestructible: false,
+                    protection_from_monocolored: false,
+                    ward_generic: 0,
+                    minimum_blockers: 0,
+                    landwalk_mask: 0,
+                },
+            },
+        }
+    }
+
+    fn flip_stable_seats(stable: &mut CardStableRefV1) {
+        stable.owner = opponent(stable.owner);
+        stable.controller = opponent(stable.controller);
+    }
+
+    fn flip_target_seats(target: &mut TargetRefV1) {
+        match target {
+            TargetRefV1::Player { player } => *player = opponent(*player),
+            TargetRefV1::Object { object } => flip_stable_seats(object),
+        }
+    }
+
+    /// Exact seat transform for the bounded initial-state fixtures in this
+    /// module. Their pending/private contexts are empty; every populated
+    /// absolute-seat field used by the semantic regression fixtures is
+    /// transformed below.
+    fn flip_bounded_observation_seats(observation: &mut ObservationV5) {
+        let surface = &observation.projection.surface;
+        assert!(surface.engine_context.pending_cast.is_none());
+        assert!(surface.engine_context.pending_activation.is_none());
+        assert!(surface.engine_context.pending_discard.is_none());
+        assert!(surface.engine_context.pending_optional_cost.is_none());
+        assert!(surface
+            .engine_context
+            .pending_optional_cost_sacrifice
+            .is_none());
+        assert!(surface.engine_context.pending_spell_copy.is_none());
+        assert!(surface.engine_context.pending_effect.is_none());
+        assert!(surface.engine_context.pending_triggers.is_empty());
+        assert!(surface.surface_context.private_blockers.is_none());
+        assert!(surface.surface_context.private_discard.is_none());
+        assert!(surface.surface_context.private_optional_cost.is_none());
+        assert!(observation
+            .projection
+            .policy_surface_context
+            .private_combat_selection
+            .is_none());
+
+        observation.acting_player = opponent(observation.acting_player);
+        let surface = &mut observation.projection.surface;
+        surface.active_player = opponent(surface.active_player);
+        surface.priority_player = opponent(surface.priority_player);
+        surface.initiative = surface.initiative.map(opponent);
+        surface.life_totals.swap(0, 1);
+        surface.mana_pools.swap(0, 1);
+        surface.hand_counts.swap(0, 1);
+        surface.library_counts.swap(0, 1);
+        surface.player_status.swap(0, 1);
+        surface.battlefield.swap(0, 1);
+        surface.graveyards.swap(0, 1);
+        surface.engine_context.priority_passes.swap(0, 1);
+        surface
+            .engine_context
+            .last_mana_ability_activator_since_priority_boundary = surface
+            .engine_context
+            .last_mana_ability_activator_since_priority_boundary
+            .map(opponent);
+        surface.surface_context.combat_priority_spent.swap(0, 1);
+
+        for card in surface
+            .battlefield
+            .iter_mut()
+            .chain(surface.graveyards.iter_mut())
+            .flat_map(|zone| zone.iter_mut())
+            .chain(surface.exile.iter_mut())
+        {
+            flip_stable_seats(&mut card.stable);
+            for goad in &mut card.goaded_by {
+                goad.player = opponent(goad.player);
+            }
+            card.goaded_by
+                .sort_unstable_by_key(|goad| seat_index(goad.player));
+        }
+        for item in &mut surface.stack {
+            flip_stable_seats(&mut item.source);
+            item.controller = opponent(item.controller);
+            for target in &mut item.targets {
+                flip_target_seats(target);
+            }
+            for paid in &mut item.paid_cost_refs {
+                flip_stable_seats(paid);
+            }
+        }
+        for relation in &mut surface.object_relations {
+            match relation {
+                ObjectRelationPublicV4::AttachedTo {
+                    object,
+                    attached_to,
+                } => {
+                    flip_stable_seats(object);
+                    flip_stable_seats(attached_to);
+                }
+                ObjectRelationPublicV4::ExiledBy { object, exiled_by } => {
+                    flip_stable_seats(object);
+                    flip_stable_seats(exiled_by);
+                }
+            }
+        }
+        for attacker in &mut surface.combat.ordered_attackers {
+            flip_stable_seats(attacker);
+        }
+        for (attacker, blockers) in &mut surface.combat.attacker_to_ordered_blockers {
+            flip_stable_seats(attacker);
+            for blocker in blockers {
+                flip_stable_seats(blocker);
+            }
+        }
+        for effect in &mut surface.continuous_effects {
+            if let Some(source) = &mut effect.source {
+                flip_stable_seats(source);
+            }
+            effect.controller = effect.controller.map(opponent);
+            for affected in &mut effect.affected_objects {
+                flip_stable_seats(affected);
+            }
+            for affected in &mut effect.affected_players {
+                *affected = opponent(*affected);
+            }
+            effect
+                .affected_players
+                .sort_unstable_by_key(|&player| seat_index(player));
+        }
+        for permission in &mut surface.exile_play_permissions {
+            flip_stable_seats(&mut permission.object);
+            permission.holder = opponent(permission.holder);
+        }
+
+        for card in &mut observation.own_hand {
+            flip_stable_seats(&mut card.stable);
+        }
+        observation.known_library_cards.swap(0, 1);
+        for entries in &mut observation.known_library_cards {
+            for entry in entries {
+                flip_stable_seats(&mut entry.card.stable);
+            }
+        }
+        observation.known_hand_cards.swap(0, 1);
+        for cards in &mut observation.known_hand_cards {
+            for card in cards {
+                flip_stable_seats(&mut card.stable);
+            }
+        }
+    }
+
     fn assert_same_public_tables(a: &FlatDecisionEncoderV1, b: &FlatDecisionEncoderV1) {
         assert_eq!(a.globals, b.globals);
         assert_eq!(a.objects, b.objects);
@@ -3336,6 +3639,377 @@ mod tests {
         assert_eq!(a.completed_dungeons, b.completed_dungeons);
         assert_eq!(a.effect_subtype_changes, b.effect_subtype_changes);
         assert_eq!(a.context_path_elements, b.context_path_elements);
+    }
+
+    #[test]
+    fn historical_stack_target_keeps_announcement_controller_after_live_control_change() {
+        let actor = PlayerSeatV1::P0;
+        let coalesced_stable = synthetic_stable(90_023, 1, actor, actor, Zone::Battlefield);
+        let mut coalescing = FlatDecisionEncoderV1::default();
+        let historical_index = coalescing
+            .add_stable(
+                &coalesced_stable,
+                actor,
+                FlatObjectGroupV1::HistoricalStackTarget,
+                FlatObjectSourceKindV1::Target,
+                0,
+                HISTORICAL_STACK_TARGET_KIND_V1,
+            )
+            .unwrap();
+        let later_live_index = coalescing
+            .add_stable(
+                &coalesced_stable,
+                actor,
+                FlatObjectGroupV1::PendingContext,
+                FlatObjectSourceKindV1::Pending,
+                1,
+                0,
+            )
+            .unwrap();
+        assert_eq!(historical_index, later_live_index);
+        assert_eq!(coalescing.objects.len(), 1);
+
+        let session = FastActorSessionV1::reset_with_limits(90_024, 124, 128, 16_384);
+        let expected = expected(&session);
+        let mut observation = session.flat_policy_observation_v1(expected).unwrap();
+        let actor = observation.acting_player;
+        let other = opponent(actor);
+        let live_target = synthetic_stable(90_024, 1, actor, actor, Zone::Battlefield);
+        let stack_source = synthetic_stable(90_025, 2, actor, actor, Zone::Stack);
+        observation.projection.surface.battlefield[seat_index(actor)]
+            .push(synthetic_public(live_target.clone()));
+        let mut historical_target = live_target.clone();
+        historical_target.controller = other;
+        observation
+            .projection
+            .surface
+            .stack
+            .push(StackItemPublicV2 {
+                stack_index: 0,
+                source: stack_source,
+                controller: actor,
+                targets: vec![TargetRefV1::Object {
+                    object: historical_target.clone(),
+                }],
+                stack_item_kind: StackItemKindV2::Spell,
+                is_copy: false,
+                is_flashback: false,
+                mode_chosen: 0,
+                madness_offer: false,
+                kicked: false,
+                cast_method: Some(CastMethodV4::Normal),
+                face_index: 0,
+                x_value: 0,
+                paid_cost_refs: Vec::new(),
+            });
+
+        let changed_controller = materialize_observation(&observation).unwrap();
+        let target_relation = changed_controller
+            .relations
+            .iter()
+            .find(|relation| {
+                relation.role == FlatRelationRoleV1::StackTarget && relation.secondary_order == 1
+            })
+            .unwrap();
+        let target_object = target_relation.target_object.unwrap();
+        assert_eq!(
+            changed_controller.objects[usize::try_from(target_object).unwrap()].group,
+            FlatObjectGroupV1::SelfBattlefield
+        );
+        assert!(matches!(
+            target_relation.payload,
+            FlatRelationPayloadV1::Stack(FlatStackRelationDataV1 {
+                target_object_controller: FlatRelativePlayerV1::Opponent,
+                ..
+            })
+        ));
+
+        let mut seat_swapped = observation.clone();
+        flip_bounded_observation_seats(&mut seat_swapped);
+        let seat_swapped = materialize_observation(&seat_swapped).unwrap();
+        assert_same_public_tables(&changed_controller, &seat_swapped);
+
+        let mut live_controller = observation.clone();
+        let TargetRefV1::Object { object } =
+            &mut live_controller.projection.surface.stack[0].targets[0]
+        else {
+            unreachable!()
+        };
+        object.controller = actor;
+        let live_controller = materialize_observation(&live_controller).unwrap();
+        assert_eq!(changed_controller.objects, live_controller.objects);
+        assert_ne!(changed_controller.relations, live_controller.relations);
+
+        for conflict in 0..3 {
+            let mut invalid = observation.clone();
+            let TargetRefV1::Object { object } =
+                &mut invalid.projection.surface.stack[0].targets[0]
+            else {
+                unreachable!()
+            };
+            match conflict {
+                0 => object.card_db_id ^= 1,
+                1 => object.owner = other,
+                2 => object.zone = Zone::Graveyard,
+                _ => unreachable!(),
+            }
+            let error = match materialize_observation(&invalid) {
+                Ok(_) => panic!("historical target conflict {conflict} was accepted"),
+                Err(error) => error,
+            };
+            assert_eq!(error, FlatDecisionErrorV1::InconsistentReference);
+        }
+
+        for detached_zone in [
+            Zone::Library,
+            Zone::Hand,
+            Zone::Graveyard,
+            Zone::Exile,
+            Zone::Command,
+        ] {
+            let mut invalid = observation.clone();
+            invalid.projection.surface.battlefield[seat_index(actor)].clear();
+            let TargetRefV1::Object { object } =
+                &mut invalid.projection.surface.stack[0].targets[0]
+            else {
+                unreachable!()
+            };
+            object.zone = detached_zone;
+            let error = match materialize_observation(&invalid) {
+                Ok(_) => panic!("detached historical target in {detached_zone:?} was accepted"),
+                Err(error) => error,
+            };
+            assert_eq!(error, FlatDecisionErrorV1::InvalidReference);
+        }
+    }
+
+    #[test]
+    fn set_like_relation_inputs_have_one_canonical_typed_order() {
+        let session = FastActorSessionV1::reset_with_limits(90_025, 125, 128, 16_384);
+        let expected = expected(&session);
+        let mut observation = session.flat_policy_observation_v1(expected).unwrap();
+        let actor = observation.acting_player;
+        let other = opponent(actor);
+        let turn = observation.projection.surface.turn;
+        let self_host = synthetic_stable(91_000, 1, actor, actor, Zone::Battlefield);
+        let self_attachment = synthetic_stable(91_001, 2, actor, actor, Zone::Battlefield);
+        let other_host = synthetic_stable(91_002, 3, other, other, Zone::Battlefield);
+        let other_attachment = synthetic_stable(91_003, 4, other, other, Zone::Battlefield);
+        let exile_a = synthetic_stable(91_004, 5, actor, actor, Zone::Exile);
+        let exile_b = synthetic_stable(91_005, 6, actor, actor, Zone::Exile);
+
+        let mut self_host_card = synthetic_public(self_host.clone());
+        self_host_card.attachments = vec![other_attachment.arena_id, self_attachment.arena_id];
+        self_host_card.goaded_by = vec![
+            GoadPublicV4 {
+                player: PlayerSeatV1::P0,
+                expires_at_turn: turn + 1,
+            },
+            GoadPublicV4 {
+                player: PlayerSeatV1::P1,
+                expires_at_turn: turn + 1,
+            },
+        ];
+        observation.projection.surface.battlefield[seat_index(actor)] =
+            vec![self_host_card, synthetic_public(self_attachment.clone())];
+        observation.projection.surface.battlefield[seat_index(other)] = vec![
+            synthetic_public(other_host.clone()),
+            synthetic_public(other_attachment.clone()),
+        ];
+        observation.projection.surface.exile = vec![
+            synthetic_public(exile_a.clone()),
+            synthetic_public(exile_b.clone()),
+        ];
+        observation.projection.surface.object_relations = vec![
+            ObjectRelationPublicV4::ExiledBy {
+                object: self_attachment.clone(),
+                exiled_by: other_host.clone(),
+            },
+            ObjectRelationPublicV4::AttachedTo {
+                object: other_attachment.clone(),
+                attached_to: self_host.clone(),
+            },
+        ];
+        observation
+            .projection
+            .surface
+            .continuous_effects
+            .push(ContinuousEffectPublicV2 {
+                source: Some(self_host.clone()),
+                controller: Some(actor),
+                affected_objects: vec![other_host.clone(), self_attachment.clone()],
+                affected_players: vec![PlayerSeatV1::P0, PlayerSeatV1::P1],
+                global: false,
+                layers: 1,
+                timestamp: 1,
+                duration: EffectDurationV2::EndOfTurn,
+                power_delta: 1,
+                toughness_delta: 0,
+                grants_haste: false,
+                set_power: None,
+                set_toughness: None,
+                add_color_mask: 0,
+                remove_color_mask: 0,
+                add_subtype_ids: Vec::new(),
+                remove_subtype_ids: Vec::new(),
+                add_keyword_mask: 0,
+                remove_keyword_mask: 0,
+                ward_generic_delta: 0,
+                minimum_blockers: None,
+                add_landwalk_mask: 0,
+                remove_landwalk_mask: 0,
+                prevent_damage_from_color_mask: 0,
+                damage_cannot_be_prevented: false,
+            });
+        observation.projection.surface.exile_play_permissions = vec![
+            ExilePlayPermissionPublicV2 {
+                object: exile_b.clone(),
+                holder: other,
+                play_or_cast: PlayOrCastV2::Cast,
+                zone_change_generation: exile_b.zone_change_count,
+                expiry: PlayPermissionExpiryV2::UntilHoldersNextTurn {
+                    holder_turn_started: true,
+                },
+            },
+            ExilePlayPermissionPublicV2 {
+                object: exile_a.clone(),
+                holder: actor,
+                play_or_cast: PlayOrCastV2::Play,
+                zone_change_generation: exile_a.zone_change_count,
+                expiry: PlayPermissionExpiryV2::EndOfTurn,
+            },
+            ExilePlayPermissionPublicV2 {
+                object: exile_a.clone(),
+                holder: actor,
+                play_or_cast: PlayOrCastV2::Play,
+                zone_change_generation: exile_a.zone_change_count,
+                expiry: PlayPermissionExpiryV2::UntilHoldersNextTurn {
+                    holder_turn_started: true,
+                },
+            },
+            ExilePlayPermissionPublicV2 {
+                object: exile_a.clone(),
+                holder: other,
+                play_or_cast: PlayOrCastV2::Play,
+                zone_change_generation: exile_a.zone_change_count,
+                expiry: PlayPermissionExpiryV2::EndOfTurn,
+            },
+            ExilePlayPermissionPublicV2 {
+                object: exile_a.clone(),
+                holder: actor,
+                play_or_cast: PlayOrCastV2::Cast,
+                zone_change_generation: exile_a.zone_change_count,
+                expiry: PlayPermissionExpiryV2::EndOfTurn,
+            },
+            ExilePlayPermissionPublicV2 {
+                object: exile_a.clone(),
+                holder: actor,
+                play_or_cast: PlayOrCastV2::Play,
+                zone_change_generation: exile_a.zone_change_count,
+                expiry: PlayPermissionExpiryV2::UntilHoldersNextTurn {
+                    holder_turn_started: false,
+                },
+            },
+        ];
+        let baseline = materialize_observation(&observation).unwrap();
+        let exile_a_index = baseline
+            .objects
+            .iter()
+            .position(|object| {
+                object.group == FlatObjectGroupV1::Exile
+                    && object.card_token == card_token(exile_a.card_db_id)
+            })
+            .map(|index| u32::try_from(index).unwrap())
+            .unwrap();
+        let permission_tie_breaks: Vec<_> = baseline
+            .relations
+            .iter()
+            .filter(|relation| {
+                relation.role == FlatRelationRoleV1::Permission
+                    && relation.target_object == Some(exile_a_index)
+            })
+            .map(|relation| match relation.payload {
+                FlatRelationPayloadV1::Permission(payload) => (
+                    payload.holder,
+                    payload.play_or_cast,
+                    payload.expiry,
+                    payload.holder_turn_started,
+                ),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(
+            permission_tie_breaks,
+            vec![
+                (FlatRelativePlayerV1::Opponent, 0, 0, false),
+                (FlatRelativePlayerV1::SelfPlayer, 1, 0, false),
+                (FlatRelativePlayerV1::SelfPlayer, 0, 1, false),
+                (FlatRelativePlayerV1::SelfPlayer, 0, 1, true),
+                (FlatRelativePlayerV1::SelfPlayer, 0, 0, false),
+            ]
+        );
+
+        let mut seat_swapped = observation.clone();
+        flip_bounded_observation_seats(&mut seat_swapped);
+        let seat_swapped = materialize_observation(&seat_swapped).unwrap();
+        assert_same_public_tables(&baseline, &seat_swapped);
+
+        let mut reordered = observation;
+        reordered.projection.surface.battlefield[seat_index(actor)][0]
+            .attachments
+            .reverse();
+        reordered.projection.surface.object_relations.reverse();
+        reordered.projection.surface.continuous_effects[0]
+            .affected_objects
+            .reverse();
+        reordered
+            .projection
+            .surface
+            .exile_play_permissions
+            .reverse();
+        let canonical = materialize_observation(&reordered).unwrap();
+        assert_same_public_tables(&baseline, &canonical);
+    }
+
+    #[test]
+    fn attachment_and_goad_rows_are_exact_under_valid_actor_seat_swap() {
+        let session = FastActorSessionV1::reset_with_limits(90_026, 126, 128, 16_384);
+        let expected = expected(&session);
+        let mut observation = session.flat_policy_observation_v1(expected).unwrap();
+        let actor = observation.acting_player;
+        let other = opponent(actor);
+        let turn = observation.projection.surface.turn;
+        let self_host = synthetic_stable(92_000, 1, actor, actor, Zone::Battlefield);
+        let self_attachment = synthetic_stable(92_001, 2, actor, actor, Zone::Battlefield);
+        let other_host = synthetic_stable(92_002, 3, other, other, Zone::Battlefield);
+        let other_attachment = synthetic_stable(92_003, 4, other, other, Zone::Battlefield);
+        let goads = vec![
+            GoadPublicV4 {
+                player: PlayerSeatV1::P0,
+                expires_at_turn: turn + 1,
+            },
+            GoadPublicV4 {
+                player: PlayerSeatV1::P1,
+                expires_at_turn: turn + 1,
+            },
+        ];
+        let mut self_host_card = synthetic_public(self_host);
+        self_host_card.attachments = vec![self_attachment.arena_id];
+        self_host_card.goaded_by = goads.clone();
+        let mut other_host_card = synthetic_public(other_host);
+        other_host_card.attachments = vec![other_attachment.arena_id];
+        other_host_card.goaded_by = goads;
+        observation.projection.surface.battlefield[seat_index(actor)] =
+            vec![self_host_card, synthetic_public(self_attachment)];
+        observation.projection.surface.battlefield[seat_index(other)] =
+            vec![other_host_card, synthetic_public(other_attachment)];
+        let baseline = materialize_observation(&observation).unwrap();
+
+        let mut swapped = observation;
+        flip_bounded_observation_seats(&mut swapped);
+
+        let transformed = materialize_observation(&swapped).unwrap();
+        assert_same_public_tables(&baseline, &transformed);
     }
 
     #[test]
@@ -3493,7 +4167,6 @@ mod tests {
         let expected = expected(&session);
         let mut observation = session.flat_policy_observation_v1(expected).unwrap();
         let actor = observation.acting_player;
-        let other = opponent(actor);
         let source = observation.own_hand[0].stable.clone();
 
         // Keep this transform deliberately bounded to an initial projection so
@@ -3537,7 +4210,7 @@ mod tests {
                 source: Some(source.clone()),
                 controller: Some(actor),
                 affected_objects: vec![source],
-                affected_players: vec![other],
+                affected_players: vec![PlayerSeatV1::P0, PlayerSeatV1::P1],
                 global: false,
                 layers: 1,
                 timestamp: 19,
@@ -3563,45 +4236,7 @@ mod tests {
         let baseline = materialize_observation(&observation).unwrap();
 
         let mut swapped = observation;
-        swapped.acting_player = other;
-        let surface = &mut swapped.projection.surface;
-        surface.active_player = opponent(surface.active_player);
-        surface.priority_player = opponent(surface.priority_player);
-        surface.initiative = surface.initiative.map(opponent);
-        surface.life_totals.swap(0, 1);
-        surface.mana_pools.swap(0, 1);
-        surface.hand_counts.swap(0, 1);
-        surface.library_counts.swap(0, 1);
-        surface.player_status.swap(0, 1);
-        surface.battlefield.swap(0, 1);
-        surface.graveyards.swap(0, 1);
-        surface.engine_context.priority_passes.swap(0, 1);
-        surface
-            .engine_context
-            .last_mana_ability_activator_since_priority_boundary = surface
-            .engine_context
-            .last_mana_ability_activator_since_priority_boundary
-            .map(opponent);
-        surface.surface_context.combat_priority_spent.swap(0, 1);
-        let effect = &mut surface.continuous_effects[0];
-        effect.controller = effect.controller.map(opponent);
-        for player in &mut effect.affected_players {
-            *player = opponent(*player);
-        }
-        for stable in effect
-            .source
-            .iter_mut()
-            .chain(effect.affected_objects.iter_mut())
-        {
-            stable.owner = opponent(stable.owner);
-            stable.controller = opponent(stable.controller);
-        }
-        for card in &mut swapped.own_hand {
-            card.stable.owner = opponent(card.stable.owner);
-            card.stable.controller = opponent(card.stable.controller);
-        }
-        swapped.known_library_cards.swap(0, 1);
-        swapped.known_hand_cards.swap(0, 1);
+        flip_bounded_observation_seats(&mut swapped);
 
         let transformed = materialize_observation(&swapped).unwrap();
         assert_same_public_tables(&baseline, &transformed);
