@@ -6192,7 +6192,10 @@ fn apply_choose_madness_cast(state: &mut GameState, cast_it: bool) -> Result<(),
     Ok(())
 }
 
-fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> Result<(), String> {
+pub(crate) fn validate_declare_attackers(
+    state: &GameState,
+    attackers: &[ObjectId],
+) -> Result<(), String> {
     if state.step != Step::DeclareAttackers || state.engine.combat.attackers_declared {
         return Err("no declare-attackers decision is pending".to_string());
     }
@@ -6200,12 +6203,18 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     if !attackers.iter().all(|a| eligible.contains(a)) {
         return Err("one or more declared attackers is not an eligible attacker".to_string());
     }
-    let mut dedup = attackers.clone();
+    let mut dedup = attackers.to_vec();
     dedup.sort_unstable();
     dedup.dedup();
     if dedup.len() != attackers.len() {
         return Err("duplicate attacker in declaration".to_string());
     }
+
+    Ok(())
+}
+
+fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> Result<(), String> {
+    validate_declare_attackers(state, &attackers)?;
 
     for &id in &attackers {
         if !has_effective_keyword(state, id, Keywords::VIGILANCE) {
@@ -6219,9 +6228,9 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     Ok(())
 }
 
-fn apply_declare_blockers(
-    state: &mut GameState,
-    blocks: Vec<(ObjectId, ObjectId)>,
+pub(crate) fn validate_declare_blockers(
+    state: &GameState,
+    blocks: &[(ObjectId, ObjectId)],
 ) -> Result<(), String> {
     if state.step != Step::DeclareBlockers || state.engine.combat.blockers_declared {
         return Err("no declare-blockers decision is pending".to_string());
@@ -6235,7 +6244,7 @@ fn apply_declare_blockers(
         .filter(|&id| is_still_in_combat(state, id))
         .collect();
     let mut used_blockers = Vec::new();
-    for &(blocker, attacker) in &blocks {
+    for &(blocker, attacker) in blocks {
         if !attackers.contains(&attacker) {
             return Err(format!("{attacker} is not an attacker this combat"));
         }
@@ -6249,6 +6258,15 @@ fn apply_declare_blockers(
         }
         used_blockers.push(blocker);
     }
+
+    Ok(())
+}
+
+fn apply_declare_blockers(
+    state: &mut GameState,
+    blocks: Vec<(ObjectId, ObjectId)>,
+) -> Result<(), String> {
+    validate_declare_blockers(state, &blocks)?;
 
     let mut blocked_by: Vec<(ObjectId, Vec<ObjectId>)> = Vec::new();
     for &(blocker, attacker) in &blocks {
