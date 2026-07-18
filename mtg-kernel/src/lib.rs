@@ -19,6 +19,7 @@
 //!   are orchestrated outside the Rust process.
 
 pub mod async_rollout;
+pub mod async_rollout_v2;
 pub mod card_def;
 pub mod effect;
 pub mod engine;
