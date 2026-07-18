@@ -71,6 +71,12 @@ static TEST_DELAY_WORKER_ID_V1: std::sync::atomic::AtomicUsize =
 #[cfg(test)]
 static TEST_DELAY_WORKER_MS_V1: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 #[cfg(test)]
+static TEST_DELAY_FINAL_REDUCTION_MS_V1: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+#[cfg(test)]
+static TEST_ENTERED_FINAL_REDUCTION_V1: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
 static TEST_EXIT_AFTER_ROUND_WORKER_ID_V1: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(usize::MAX);
 #[cfg(test)]
@@ -2017,6 +2023,13 @@ pub fn run_async_flat_scored_rollout_v1(
     if Instant::now() >= deadline {
         return Err(AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded);
     }
+    #[cfg(test)]
+    {
+        TEST_ENTERED_FINAL_REDUCTION_V1.store(true, std::sync::atomic::Ordering::SeqCst);
+        thread::sleep(std::time::Duration::from_millis(
+            TEST_DELAY_FINAL_REDUCTION_MS_V1.load(std::sync::atomic::Ordering::SeqCst),
+        ));
+    }
 
     episodes.sort_unstable_by_key(|episode| episode.terminal.episode_id);
     if episodes.len() != episode_count_usize
@@ -2047,6 +2060,9 @@ pub fn run_async_flat_scored_rollout_v1(
         return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
     }
     metrics.batch_membership_digest = digest.finalize();
+    if Instant::now() >= deadline {
+        return Err(AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded);
+    }
     metrics.total_elapsed_ns = u64::try_from(api_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
     Ok(AsyncFlatScoredRolloutResultV1 {
         episodes,
@@ -2912,6 +2928,23 @@ mod tests {
             run_async_flat_scored_rollout_v1(delayed, &mut ZeroScorer::default()).unwrap_err();
         TEST_DELAY_WORKER_ID_V1.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
         TEST_DELAY_WORKER_MS_V1.store(0, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            error,
+            AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded
+        );
+    }
+
+    #[test]
+    fn final_reduction_cannot_return_success_after_public_deadline() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        TEST_ENTERED_FINAL_REDUCTION_V1.store(false, std::sync::atomic::Ordering::SeqCst);
+        TEST_DELAY_FINAL_REDUCTION_MS_V1.store(1_100, std::sync::atomic::Ordering::SeqCst);
+        let mut delayed = config(1, 1, 1, 1);
+        delayed.scheduler_timeout = Duration::from_secs(1);
+        let error =
+            run_async_flat_scored_rollout_v1(delayed, &mut ZeroScorer::default()).unwrap_err();
+        TEST_DELAY_FINAL_REDUCTION_MS_V1.store(0, std::sync::atomic::Ordering::SeqCst);
+        assert!(TEST_ENTERED_FINAL_REDUCTION_V1.load(std::sync::atomic::Ordering::SeqCst));
         assert_eq!(
             error,
             AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded
