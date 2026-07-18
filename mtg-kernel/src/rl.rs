@@ -1411,7 +1411,7 @@ pub fn observe_v1(
     let own_hand = state.players[acting_player.index()]
         .hand
         .iter()
-        .map(|&id| private_card(state, id))
+        .map(|&id| private_card(state, id, ObservationTextModeV2::FullArtifact))
         .collect::<Result<Vec<_>>>()?;
     let mut obs = ObservationV1 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V1,
@@ -1434,9 +1434,37 @@ pub fn observe_v2(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV2> {
-    let mut observation = build_observation_v2(state, surface, acting_player, step_index)?;
+    let mut observation = build_observation_v2(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        ObservationTextModeV2::FullArtifact,
+    )?;
     observation.visible_projection_hash = visible_projection_hash_v2(&observation)?;
     Ok(observation)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObservationTextModeV2 {
+    FullArtifact,
+    FlatForbiddenElided,
+}
+
+impl ObservationTextModeV2 {
+    fn kernel_version(self) -> String {
+        match self {
+            Self::FullArtifact => KERNEL_VERSION.to_string(),
+            Self::FlatForbiddenElided => String::new(),
+        }
+    }
+
+    fn card_name(self, card_id: u16) -> String {
+        match self {
+            Self::FullArtifact => card_name(card_id),
+            Self::FlatForbiddenElided => String::new(),
+        }
+    }
 }
 
 fn build_observation_v2(
@@ -1444,6 +1472,7 @@ fn build_observation_v2(
     surface: &crate::surface_v2::HarnessSurfaceV2,
     acting_player: PlayerId,
     step_index: u64,
+    text_mode: ObservationTextModeV2,
 ) -> Result<ObservationV2> {
     let projection = PublicObservationProjectionV2 {
         turn: state.turn,
@@ -1463,14 +1492,14 @@ fn build_observation_v2(
             player_status_v1(&state.players[1]),
         ],
         battlefield: [
-            public_cards_v2(state, &state.players[0].battlefield)?,
-            public_cards_v2(state, &state.players[1].battlefield)?,
+            public_cards_v2(state, &state.players[0].battlefield, text_mode)?,
+            public_cards_v2(state, &state.players[1].battlefield, text_mode)?,
         ],
         graveyards: [
-            public_cards_v2(state, &state.players[0].graveyard)?,
-            public_cards_v2(state, &state.players[1].graveyard)?,
+            public_cards_v2(state, &state.players[0].graveyard, text_mode)?,
+            public_cards_v2(state, &state.players[1].graveyard, text_mode)?,
         ],
-        exile: public_cards_v2(state, &state.exile)?,
+        exile: public_cards_v2(state, &state.exile, text_mode)?,
         stack: stack_public_v2(state, acting_player)?,
         combat: combat_public_v2(state)?,
         continuous_effects: continuous_effects_public_v2(state, acting_player)?,
@@ -1482,19 +1511,19 @@ fn build_observation_v2(
     let own_hand = state.players[acting_player.index()]
         .hand
         .iter()
-        .map(|&id| private_card(state, id))
+        .map(|&id| private_card(state, id, text_mode))
         .collect::<Result<Vec<_>>>()?;
     Ok(ObservationV2 {
         schema_version: OBSERVATION_SCHEMA_VERSION,
-        kernel_version: KERNEL_VERSION.to_string(),
+        kernel_version: text_mode.kernel_version(),
         surface_version: H2_PREDICATE_VERSION,
         card_db_hash: KERNEL_CARDDB_HASH,
         acting_player: acting_player.into(),
         step_index,
         projection,
         own_hand,
-        known_library_cards: known_library_cards_v4(state, acting_player)?,
-        known_hand_cards: known_hand_cards_v4(state, acting_player)?,
+        known_library_cards: known_library_cards_v4(state, acting_player, text_mode)?,
+        known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode)?,
         visible_projection_hash: 0,
     })
 }
@@ -1508,7 +1537,7 @@ pub fn observe_policy_v5(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV5> {
-    let mut observation = build_policy_observation_v5(
+    let mut observation = build_policy_observation_v5(PolicyObservationBuildV5 {
         state,
         surface,
         acting_player,
@@ -1516,15 +1545,17 @@ pub fn observe_policy_v5(
         physical_decision_id,
         substep_index,
         substep_count,
-    )?;
+        text_mode: ObservationTextModeV2::FullArtifact,
+    })?;
     observation.visible_projection_hash = visible_projection_hash_v5(&observation)?;
     Ok(observation)
 }
 
-/// Builds the complete typed policy observation without serializing it solely
-/// to populate the artifact-integrity hash. This is restricted to the flat
-/// encoder, which classifies `visible_projection_hash` as forbidden input and
-/// consumes only typed fields before the observation is dropped.
+/// Builds the complete model-semantic typed policy observation without
+/// serializing it solely to populate the artifact-integrity hash. This is
+/// restricted to the flat encoder, which classifies the hash plus human-readable
+/// kernel/card-name text as forbidden input and consumes only typed fields
+/// before the observation is dropped.
 pub(crate) fn observe_policy_v5_unhashed_for_flat_policy(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -1534,7 +1565,7 @@ pub(crate) fn observe_policy_v5_unhashed_for_flat_policy(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV5> {
-    build_policy_observation_v5(
+    build_policy_observation_v5(PolicyObservationBuildV5 {
         state,
         surface,
         acting_player,
@@ -1542,18 +1573,32 @@ pub(crate) fn observe_policy_v5_unhashed_for_flat_policy(
         physical_decision_id,
         substep_index,
         substep_count,
-    )
+        text_mode: ObservationTextModeV2::FlatForbiddenElided,
+    })
 }
 
-fn build_policy_observation_v5(
-    state: &GameState,
-    surface: &PolicySurfaceV5,
+struct PolicyObservationBuildV5<'a> {
+    state: &'a GameState,
+    surface: &'a PolicySurfaceV5,
     acting_player: PlayerId,
     step_index: u64,
     physical_decision_id: u64,
     substep_index: u32,
     substep_count: u32,
-) -> Result<ObservationV5> {
+    text_mode: ObservationTextModeV2,
+}
+
+fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<ObservationV5> {
+    let PolicyObservationBuildV5 {
+        state,
+        surface,
+        acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+        text_mode,
+    } = request;
     #[cfg(test)]
     TEST_POLICY_V5_OBSERVATIONS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
@@ -1566,7 +1611,13 @@ fn build_policy_observation_v5(
     // projection hash. Building V2 without hashing avoids serializing the same
     // large projection twice. The public artifact constructor hashes the
     // completed V5 observation once; the flat typed path explicitly skips it.
-    let base = build_observation_v2(state, surface.harness_surface(), acting_player, step_index)?;
+    let base = build_observation_v2(
+        state,
+        surface.harness_surface(),
+        acting_player,
+        step_index,
+        text_mode,
+    )?;
     let policy_surface_context = policy_surface_context_v5(
         state,
         surface
@@ -4258,14 +4309,18 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
     })
 }
 
-fn public_card_v2(state: &GameState, id: ObjectId) -> Result<CardPublicV2> {
+fn public_card_v2(
+    state: &GameState,
+    id: ObjectId,
+    text_mode: ObservationTextModeV2,
+) -> Result<CardPublicV2> {
     let object = state
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
-        card_name: card_name(object.card_def),
+        card_name: text_mode.card_name(object.card_def),
         tapped: object.tapped,
         summoning_sick: object.summoning_sick,
         damage: object.damage,
@@ -4310,24 +4365,35 @@ fn public_cards(state: &GameState, ids: &[ObjectId]) -> Result<Vec<CardPublicV1>
     ids.iter().map(|&id| public_card(state, id)).collect()
 }
 
-fn public_cards_v2(state: &GameState, ids: &[ObjectId]) -> Result<Vec<CardPublicV2>> {
-    ids.iter().map(|&id| public_card_v2(state, id)).collect()
+fn public_cards_v2(
+    state: &GameState,
+    ids: &[ObjectId],
+    text_mode: ObservationTextModeV2,
+) -> Result<Vec<CardPublicV2>> {
+    ids.iter()
+        .map(|&id| public_card_v2(state, id, text_mode))
+        .collect()
 }
 
-fn private_card(state: &GameState, id: ObjectId) -> Result<CardPrivateV1> {
+fn private_card(
+    state: &GameState,
+    id: ObjectId,
+    text_mode: ObservationTextModeV2,
+) -> Result<CardPrivateV1> {
     let object = state
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPrivateV1 {
         stable: card_ref(state, id)?,
-        card_name: card_name(object.card_def),
+        card_name: text_mode.card_name(object.card_def),
     })
 }
 
 fn known_library_cards_v4(
     state: &GameState,
     observer: PlayerId,
+    text_mode: ObservationTextModeV2,
 ) -> Result<[Vec<KnownLibraryCardV4>; 2]> {
     let mut result: [Vec<KnownLibraryCardV4>; 2] = std::array::from_fn(|_| Vec::new());
     for owner in [PlayerId::P0, PlayerId::P1] {
@@ -4348,14 +4414,18 @@ fn known_library_cards_v4(
             }
             result[owner.index()].push(KnownLibraryCardV4 {
                 position: entry.position,
-                card: private_card(state, object)?,
+                card: private_card(state, object, text_mode)?,
             });
         }
     }
     Ok(result)
 }
 
-fn known_hand_cards_v4(state: &GameState, observer: PlayerId) -> Result<[Vec<CardPrivateV1>; 2]> {
+fn known_hand_cards_v4(
+    state: &GameState,
+    observer: PlayerId,
+    text_mode: ObservationTextModeV2,
+) -> Result<[Vec<CardPrivateV1>; 2]> {
     let mut result: [Vec<CardPrivateV1>; 2] = std::array::from_fn(|_| Vec::new());
     for owner in [PlayerId::P0, PlayerId::P1] {
         if owner == observer {
@@ -4374,7 +4444,7 @@ fn known_hand_cards_v4(state: &GameState, observer: PlayerId) -> Result<[Vec<Car
                     "known hand entry does not match the live object incarnation".to_string(),
                 ));
             }
-            result[owner.index()].push(private_card(state, entry.object)?);
+            result[owner.index()].push(private_card(state, entry.object, text_mode)?);
         }
     }
     Ok(result)
@@ -5634,7 +5704,61 @@ mod policy_v5_artifact_tests {
 
     #[test]
     fn policy_v5_hashes_only_the_final_observation() {
-        let state = GameState::new_from_libraries(&[], &[], card_name, 77);
+        fn strip_flat_forbidden_fields(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(object) => {
+                    object.remove("kernel_version");
+                    object.remove("card_name");
+                    object.remove("visible_projection_hash");
+                    for child in object.values_mut() {
+                        strip_flat_forbidden_fields(child);
+                    }
+                }
+                serde_json::Value::Array(array) => {
+                    for child in array {
+                        strip_flat_forbidden_fields(child);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 77);
+        let card_def = card_id_by_name("Voldaren Epicure").unwrap();
+        let battlefield = state.objects.push(GameObject {
+            card_def,
+            name: "Voldaren Epicure".to_string(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone: Zone::Battlefield,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        state.players[0].battlefield.push(battlefield);
+        let hand = state.objects.push(GameObject {
+            card_def,
+            name: "Voldaren Epicure".to_string(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone: Zone::Hand,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        state.players[0].hand.push(hand);
         let surface = PolicySurfaceV5::new();
 
         reset_test_visible_projection_hash_calls();
@@ -5648,13 +5772,28 @@ mod policy_v5_artifact_tests {
         assert_eq!(test_visible_projection_hash_calls(), (0, 1));
 
         reset_test_visible_projection_hash_calls();
-        let mut flat =
+        let flat =
             observe_policy_v5_unhashed_for_flat_policy(&state, &surface, PlayerId::P0, 0, 0, 0, 1)
                 .unwrap();
         assert_eq!(flat.visible_projection_hash, 0);
         assert_eq!(test_visible_projection_hash_calls(), (0, 0));
-        flat.visible_projection_hash = v5.visible_projection_hash;
-        assert_eq!(flat, v5);
+        assert_eq!(v5.kernel_version, KERNEL_VERSION);
+        assert_eq!(
+            v5.projection.surface.battlefield[0][0].card_name,
+            "Voldaren Epicure"
+        );
+        assert_eq!(v5.own_hand[0].card_name, "Voldaren Epicure");
+        assert!(flat.kernel_version.is_empty());
+        assert!(flat.projection.surface.battlefield[0][0]
+            .card_name
+            .is_empty());
+        assert!(flat.own_hand[0].card_name.is_empty());
+
+        let mut full_semantics = serde_json::to_value(&v5).unwrap();
+        let mut flat_semantics = serde_json::to_value(&flat).unwrap();
+        strip_flat_forbidden_fields(&mut full_semantics);
+        strip_flat_forbidden_fields(&mut flat_semantics);
+        assert_eq!(flat_semantics, full_semantics);
     }
 
     #[test]
