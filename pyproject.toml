@@ -7,7 +7,7 @@ name = "mtg-kernel-rl"
 version = "0.5.0"
 description = "Strict RL client, deterministic runner, crash-consistent trainer, and mirror evaluators for the MTG kernel JSONL environment"
 requires-python = ">=3.11"
-dependencies = ["torch>=2.2,<3"]
+dependencies = ["numpy>=1.26,<3", "torch>=2.2,<3"]
 
 [project.optional-dependencies]
 test = ["numpy>=1.26,<3"]
