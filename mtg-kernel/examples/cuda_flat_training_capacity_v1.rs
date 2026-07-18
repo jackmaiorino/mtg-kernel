@@ -16,13 +16,20 @@
 //! `native-adam-epsilon-1e-5-v1`: gradients are never clamped or thresholded,
 //! identical GPU backend/run inputs must be bit-exact, and the independent CPU
 //! reference is tolerance parity rather than a cross-backend bit-identity claim.
+//! A checked standard-library Python float64 fixture independently covers the
+//! small synthetic forward, detached loss, output gradients, and all fourteen
+//! parameter tensors through full-vector summaries, order-sensitive evidence,
+//! and fixed representatives. It is still not an elementwise production-model
+//! oracle; see `CUDA_FLAT_TRAINING_GOLDEN_V1.md`.
 
 use cudarc::cublas::{sys as blas_sys, CudaBlas, Gemm, GemmConfig};
 use cudarc::driver::{
     CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
+use serde::Deserialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::sync::Arc;
 
@@ -45,6 +52,23 @@ const GRADIENT_CHECK_REL_TOLERANCE: f32 = 5.0e-2;
 const TINY_GRADIENT_ADAM_F64_TOLERANCE: f64 = 1.0e-9;
 const BASE_COMMIT: &str = "0925ae591a297a0a425992105a26d59309a9729b";
 const CUDA_THREADS: u32 = 256;
+const INDEPENDENT_GOLDEN_JSON: &str =
+    include_str!("data/cuda_flat_training_independent_golden_v1.json");
+const INDEPENDENT_GOLDEN_FILE_SHA256: &str =
+    "b4038979c07b0f0bea2a12701545dc803180475941ecf118001408ba930e8c9d";
+const INDEPENDENT_GOLDEN_SCHEMA_VERSION: &str = "cuda-flat-training-independent-golden-v1";
+const INDEPENDENT_FORWARD_ABS_TOLERANCE: f64 = 1.0e-4;
+const INDEPENDENT_LOSS_ABS_TOLERANCE: f64 = 2.0e-4;
+const INDEPENDENT_TENSOR_ABS_TOLERANCE: f64 = 1.0e-4;
+const INDEPENDENT_TENSOR_REL_TOLERANCE: f64 = 5.0e-3;
+const INDEPENDENT_ORDER_PROJECTION_ABS_TOLERANCE: f64 = 1.0e-5;
+const INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE: f64 = 5.0e-3;
+const INDEPENDENT_ORDER_PROJECTION_SEEDS: [u64; 3] = [
+    0x243f_6a88_85a3_08d3,
+    0x1319_8a2e_0370_7344,
+    0xa409_3822_299f_31d0,
+];
+const INDEPENDENT_ORDER_FINGERPRINT_DEADBAND: f64 = 1.0e-4;
 
 // Context only. The experiment has not been run against these gates.
 const ROLLOUT_DECISIONS_PER_SECOND_DEMAND: f64 = 573_000.0;
@@ -746,6 +770,166 @@ struct LossSummary {
     loss: f32,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenFixture {
+    schema_version: String,
+    contract: IndependentGoldenContract,
+    batch: IndependentGoldenBatch,
+    expected: IndependentGoldenExpected,
+    provenance: IndependentGoldenProvenance,
+    integrity: IndependentGoldenIntegrity,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenContract {
+    model_contract_version: String,
+    optimizer_contract_version: String,
+    state_dim: usize,
+    action_dim: usize,
+    hidden_dim: usize,
+    weight_seed: u64,
+    value_coefficient: f64,
+    learning_rate: f64,
+    beta1: f64,
+    beta2: f64,
+    epsilon: f64,
+    adam_step: usize,
+    parameter_count: usize,
+    advantage_detached: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenBatch {
+    counts: Vec<usize>,
+    offsets: Vec<i32>,
+    action_owner: Vec<i32>,
+    selected_global: Vec<i32>,
+    terminal_returns: Vec<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenExpected {
+    forward: IndependentGoldenForward,
+    detached_loss: IndependentGoldenLoss,
+    output_gradients: IndependentGoldenOutputGradients,
+    tensors: Vec<IndependentGoldenTensor>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenForward {
+    logits: Vec<f64>,
+    values: Vec<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenLoss {
+    policy_sum: f64,
+    value_sum: f64,
+    loss: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenOutputGradients {
+    d_logits: Vec<f64>,
+    d_values: Vec<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenTensor {
+    name: String,
+    length: usize,
+    gradient_summary: IndependentGoldenVectorSummary,
+    gradient_order_evidence: IndependentGoldenOrderEvidence,
+    updated_value_summary: IndependentGoldenVectorSummary,
+    updated_value_order_evidence: IndependentGoldenOrderEvidence,
+    first_moment_summary: IndependentGoldenVectorSummary,
+    first_moment_order_evidence: IndependentGoldenOrderEvidence,
+    second_moment_summary: IndependentGoldenVectorSummary,
+    second_moment_order_evidence: IndependentGoldenOrderEvidence,
+    representatives: Vec<IndependentGoldenRepresentative>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenVectorSummary {
+    length: usize,
+    mean: f64,
+    mean_abs: f64,
+    rms: f64,
+    minimum: f64,
+    maximum: f64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenRepresentative {
+    index: usize,
+    initial_value: f64,
+    gradient: f64,
+    first_moment: f64,
+    second_moment: f64,
+    updated_value: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenOrderEvidence {
+    projection_contract: String,
+    projections: Vec<IndependentGoldenProjection>,
+    quantized_fingerprint_contract: String,
+    quantized_fingerprint_sha256: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenProjection {
+    seed: u64,
+    value: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenProvenance {
+    generator_relative_path: String,
+    fixture_relative_path: String,
+    generator_sha256: String,
+    generator_language: String,
+    python_implementation: String,
+    python_version: String,
+    configured_python_version_file: String,
+    third_party_dependencies: Vec<String>,
+    generation_command: String,
+    check_command: String,
+    arithmetic: String,
+    claim_scope: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndependentGoldenIntegrity {
+    algorithm: String,
+    canonicalization: String,
+    payload_sha256: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct F64VectorSummary {
+    length: usize,
+    mean: f64,
+    mean_abs: f64,
+    rms: f64,
+    minimum: f64,
+    maximum: f64,
+}
+
 #[derive(Clone, Debug)]
 struct CpuOutputGradients {
     loss: LossSummary,
@@ -1170,6 +1354,543 @@ fn cpu_adam_update(
         return Err("CPU Adam produced a negative second moment".into());
     }
     Ok(())
+}
+
+fn parse_independent_golden() -> Result<IndependentGoldenFixture, Box<dyn Error>> {
+    let found_sha256 = format!("{:x}", Sha256::digest(INDEPENDENT_GOLDEN_JSON.as_bytes()));
+    if found_sha256 != INDEPENDENT_GOLDEN_FILE_SHA256 {
+        return Err(format!(
+            "independent golden fixture file SHA-256 drifted: {found_sha256} != {INDEPENDENT_GOLDEN_FILE_SHA256}"
+        )
+        .into());
+    }
+    serde_json::from_str(INDEPENDENT_GOLDEN_JSON)
+        .map_err(|error| format!("independent golden fixture is invalid: {error}").into())
+}
+
+fn is_lower_hex_digest(value: &str, length: usize) -> bool {
+    value.len() == length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn f64_vector_summary(values: &[f32]) -> Result<F64VectorSummary, Box<dyn Error>> {
+    if values.is_empty() || !values.iter().all(|value| value.is_finite()) {
+        return Err("independent golden summary input must be non-empty and finite".into());
+    }
+    let length = values.len();
+    let inverse_length = 1.0 / length as f64;
+    let mut sum = 0.0f64;
+    let mut sum_abs = 0.0f64;
+    let mut sum_squared = 0.0f64;
+    let mut minimum = f64::INFINITY;
+    let mut maximum = f64::NEG_INFINITY;
+    for &value in values {
+        let value = f64::from(value);
+        sum += value;
+        sum_abs += value.abs();
+        sum_squared += value * value;
+        minimum = minimum.min(value);
+        maximum = maximum.max(value);
+    }
+    Ok(F64VectorSummary {
+        length,
+        mean: sum * inverse_length,
+        mean_abs: sum_abs * inverse_length,
+        rms: (sum_squared * inverse_length).sqrt(),
+        minimum,
+        maximum,
+    })
+}
+
+fn independent_close(
+    label: &str,
+    actual: f64,
+    expected: f64,
+    absolute_tolerance: f64,
+    relative_tolerance: f64,
+) -> Result<f64, Box<dyn Error>> {
+    if !actual.is_finite() || !expected.is_finite() {
+        return Err(format!("independent golden {label} is non-finite").into());
+    }
+    let absolute_error = (actual - expected).abs();
+    let relative_scale = actual.abs().max(expected.abs()).max(1.0e-12);
+    let relative_error = absolute_error / relative_scale;
+    if absolute_error > absolute_tolerance && relative_error > relative_tolerance {
+        return Err(format!(
+            "independent golden {label} drifted: actual={actual} expected={expected} absolute_error={absolute_error} relative_error={relative_error} absolute_tolerance={absolute_tolerance} relative_tolerance={relative_tolerance}"
+        )
+        .into());
+    }
+    Ok(absolute_error)
+}
+
+fn validate_independent_summary(
+    label: &str,
+    actual: &[f32],
+    expected: IndependentGoldenVectorSummary,
+) -> Result<f64, Box<dyn Error>> {
+    let actual = f64_vector_summary(actual)?;
+    if actual.length != expected.length {
+        return Err(format!(
+            "independent golden {label} length drifted: {} != {}",
+            actual.length, expected.length
+        )
+        .into());
+    }
+    let mut maximum_error = 0.0f64;
+    for (metric, actual, expected) in [
+        ("mean", actual.mean, expected.mean),
+        ("mean_abs", actual.mean_abs, expected.mean_abs),
+        ("rms", actual.rms, expected.rms),
+        ("minimum", actual.minimum, expected.minimum),
+        ("maximum", actual.maximum, expected.maximum),
+    ] {
+        maximum_error = maximum_error.max(independent_close(
+            &format!("{label}.{metric}"),
+            actual,
+            expected,
+            INDEPENDENT_TENSOR_ABS_TOLERANCE,
+            INDEPENDENT_TENSOR_REL_TOLERANCE,
+        )?);
+    }
+    Ok(maximum_error)
+}
+
+fn independent_order_weight(index: usize, seed: u64) -> f64 {
+    let mixed = mix64((index as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ seed);
+    let fraction = (mixed >> 11) as f64 / (1u64 << 53) as f64;
+    fraction.mul_add(2.0, -1.0)
+}
+
+fn independent_quantized_fingerprint(values: &[f32]) -> String {
+    let mut hasher = Sha256::new();
+    for &value in values {
+        let value = f64::from(value);
+        let quantized = if value.abs() <= INDEPENDENT_ORDER_FINGERPRINT_DEADBAND {
+            0u8
+        } else if value < 0.0 {
+            1u8
+        } else {
+            2u8
+        };
+        hasher.update([quantized]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn validate_independent_order_evidence(
+    label: &str,
+    actual: &[f32],
+    expected: &IndependentGoldenOrderEvidence,
+) -> Result<f64, Box<dyn Error>> {
+    if expected.projection_contract
+        != "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order"
+        || expected.quantized_fingerprint_contract
+            != "sha256(sign with abs(value)<=1e-4 encoded as zero)"
+        || expected.projections.len() != INDEPENDENT_ORDER_PROJECTION_SEEDS.len()
+        || !is_lower_hex_digest(&expected.quantized_fingerprint_sha256, 64)
+    {
+        return Err(format!("independent golden {label} order contract drifted").into());
+    }
+    let found_fingerprint = independent_quantized_fingerprint(actual);
+    if found_fingerprint != expected.quantized_fingerprint_sha256 {
+        return Err(format!(
+            "independent golden {label} quantized order fingerprint drifted: {found_fingerprint} != {}",
+            expected.quantized_fingerprint_sha256
+        )
+        .into());
+    }
+    let mut maximum_error = 0.0f64;
+    for (&seed, projection) in INDEPENDENT_ORDER_PROJECTION_SEEDS
+        .iter()
+        .zip(&expected.projections)
+    {
+        if projection.seed != seed {
+            return Err(format!("independent golden {label} projection seed drifted").into());
+        }
+        let mut actual_projection = 0.0f64;
+        for (index, &value) in actual.iter().enumerate() {
+            actual_projection += f64::from(value) * independent_order_weight(index, seed);
+        }
+        maximum_error = maximum_error.max(independent_close(
+            &format!("{label}.projection.{seed:016x}"),
+            actual_projection,
+            projection.value,
+            INDEPENDENT_ORDER_PROJECTION_ABS_TOLERANCE,
+            INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE,
+        )?);
+    }
+    Ok(maximum_error)
+}
+
+fn validate_independent_golden_fixture(
+    fixture: &IndependentGoldenFixture,
+    initial: &HostModel,
+    batch: &SyntheticBatch,
+    step: &CpuStepResult,
+    updated: &HostModel,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    initial.validate()?;
+    batch.validate()?;
+    updated.validate()?;
+    if fixture.schema_version != INDEPENDENT_GOLDEN_SCHEMA_VERSION {
+        return Err("independent golden schema version drifted".into());
+    }
+    let contract = &fixture.contract;
+    if contract.model_contract_version != MODEL_CONTRACT_VERSION
+        || contract.optimizer_contract_version != NATIVE_ADAM_CONTRACT_VERSION
+        || contract.state_dim != STATE_DIM
+        || contract.action_dim != ACTION_DIM
+        || contract.hidden_dim != HIDDEN
+        || contract.weight_seed != WEIGHT_SEED
+        || contract.adam_step != 1
+        || contract.parameter_count != PARAMETER_COUNT
+        || !contract.advantage_detached
+    {
+        return Err("independent golden contract drifted".into());
+    }
+    for (name, actual, expected) in [
+        (
+            "contract.value_coefficient",
+            f64::from(VALUE_COEFFICIENT),
+            contract.value_coefficient,
+        ),
+        (
+            "contract.learning_rate",
+            f64::from(LEARNING_RATE),
+            contract.learning_rate,
+        ),
+        ("contract.beta1", f64::from(ADAM_BETA1), contract.beta1),
+        ("contract.beta2", f64::from(ADAM_BETA2), contract.beta2),
+        (
+            "contract.epsilon",
+            f64::from(ADAM_EPSILON),
+            contract.epsilon,
+        ),
+    ] {
+        independent_close(name, actual, expected, 1.0e-8, 1.0e-7)?;
+    }
+    let derived_counts = batch
+        .offsets
+        .windows(2)
+        .map(|window| usize::try_from(window[1] - window[0]))
+        .collect::<Result<Vec<_>, _>>()?;
+    let terminal_returns = batch
+        .terminal_returns
+        .iter()
+        .map(|&value| f64::from(value))
+        .collect::<Vec<_>>();
+    if fixture.batch.counts != derived_counts
+        || fixture.batch.offsets != batch.offsets
+        || fixture.batch.action_owner != batch.action_owner
+        || fixture.batch.selected_global != batch.selected_global
+        || fixture.batch.terminal_returns != terminal_returns
+    {
+        return Err("independent golden batch provenance drifted".into());
+    }
+    let provenance = &fixture.provenance;
+    if provenance.generator_relative_path != "python/tools/generate_cuda_flat_training_golden_v1.py"
+        || provenance.fixture_relative_path
+            != "mtg-kernel/examples/data/cuda_flat_training_independent_golden_v1.json"
+        || provenance.generator_language != "Python 3 standard library only"
+        || provenance.python_implementation != "CPython"
+        || provenance.python_version != "3.13.14"
+        || provenance.configured_python_version_file != ".python-version"
+        || !provenance.third_party_dependencies.is_empty()
+        || provenance.generation_command
+            != "python python/tools/generate_cuda_flat_training_golden_v1.py"
+        || provenance.check_command
+            != "python python/tools/generate_cuda_flat_training_golden_v1.py --check"
+        || !provenance
+            .arithmetic
+            .contains("forward, detached loss, backward, and Adam evaluated in Python float64")
+        || provenance.claim_scope
+            != "small synthetic correctness oracle only; no production or performance claim"
+        || !is_lower_hex_digest(&provenance.generator_sha256, 64)
+    {
+        return Err("independent golden generator provenance drifted".into());
+    }
+    if fixture.integrity.algorithm != "sha256"
+        || fixture.integrity.canonicalization
+            != "UTF-8 JSON, sorted keys, indent=2, trailing LF, integrity field omitted"
+        || !is_lower_hex_digest(&fixture.integrity.payload_sha256, 64)
+    {
+        return Err("independent golden integrity metadata drifted".into());
+    }
+
+    let expected_forward = &fixture.expected.forward;
+    if expected_forward.logits.len() != step.rollout.logits.len()
+        || expected_forward.values.len() != step.rollout.values.len()
+    {
+        return Err("independent golden forward shapes drifted".into());
+    }
+    let mut maximum_forward_error = 0.0f64;
+    for (index, (&actual, &expected)) in step
+        .rollout
+        .logits
+        .iter()
+        .zip(&expected_forward.logits)
+        .enumerate()
+    {
+        maximum_forward_error = maximum_forward_error.max(independent_close(
+            &format!("forward.logits[{index}]"),
+            f64::from(actual),
+            expected,
+            INDEPENDENT_FORWARD_ABS_TOLERANCE,
+            INDEPENDENT_TENSOR_REL_TOLERANCE,
+        )?);
+    }
+    for (index, (&actual, &expected)) in step
+        .rollout
+        .values
+        .iter()
+        .zip(&expected_forward.values)
+        .enumerate()
+    {
+        maximum_forward_error = maximum_forward_error.max(independent_close(
+            &format!("forward.values[{index}]"),
+            f64::from(actual),
+            expected,
+            INDEPENDENT_FORWARD_ABS_TOLERANCE,
+            INDEPENDENT_TENSOR_REL_TOLERANCE,
+        )?);
+    }
+    let expected_loss = &fixture.expected.detached_loss;
+    let mut maximum_loss_error = 0.0f64;
+    for (name, actual, expected) in [
+        (
+            "loss.policy_sum",
+            f64::from(step.loss.policy_sum),
+            expected_loss.policy_sum,
+        ),
+        (
+            "loss.value_sum",
+            f64::from(step.loss.value_sum),
+            expected_loss.value_sum,
+        ),
+        ("loss.loss", f64::from(step.loss.loss), expected_loss.loss),
+    ] {
+        maximum_loss_error = maximum_loss_error.max(independent_close(
+            name,
+            actual,
+            expected,
+            INDEPENDENT_LOSS_ABS_TOLERANCE,
+            INDEPENDENT_TENSOR_REL_TOLERANCE,
+        )?);
+    }
+    let output_gradients = cpu_terminal_loss_and_output_gradients(
+        &step.recompute.logits,
+        &step.recompute.values,
+        batch,
+        VALUE_COEFFICIENT,
+    )?;
+    let expected_output_gradients = &fixture.expected.output_gradients;
+    if output_gradients.d_logits.len() != expected_output_gradients.d_logits.len()
+        || output_gradients.d_values.len() != expected_output_gradients.d_values.len()
+    {
+        return Err("independent golden output-gradient shapes drifted".into());
+    }
+    let mut maximum_output_gradient_error = 0.0f64;
+    for (kind, actual, expected) in [
+        (
+            "d_logits",
+            output_gradients.d_logits.as_slice(),
+            expected_output_gradients.d_logits.as_slice(),
+        ),
+        (
+            "d_values",
+            output_gradients.d_values.as_slice(),
+            expected_output_gradients.d_values.as_slice(),
+        ),
+    ] {
+        for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
+            maximum_output_gradient_error = maximum_output_gradient_error.max(independent_close(
+                &format!("output_gradients.{kind}[{index}]"),
+                f64::from(actual),
+                expected,
+                INDEPENDENT_TENSOR_ABS_TOLERANCE,
+                INDEPENDENT_TENSOR_REL_TOLERANCE,
+            )?);
+        }
+    }
+
+    if fixture.expected.tensors.len() != 14 {
+        return Err("independent golden tensor count drifted".into());
+    }
+    let mut maximum_tensor_error = 0.0f64;
+    let mut representative_count = 0usize;
+    let mut covered_parameters = 0usize;
+    for (((initial_name, initial_parameter), (updated_name, updated_parameter)), expected) in
+        initial
+            .parameters()
+            .into_iter()
+            .zip(updated.parameters())
+            .zip(&fixture.expected.tensors)
+    {
+        if initial_name != updated_name || initial_name != expected.name {
+            return Err(format!(
+                "independent golden tensor order drifted: {initial_name}, {updated_name}, {}",
+                expected.name
+            )
+            .into());
+        }
+        if expected.length != initial_parameter.value.len()
+            || expected.length != updated_parameter.value.len()
+        {
+            return Err(
+                format!("independent golden tensor length drifted for {initial_name}").into(),
+            );
+        }
+        covered_parameters = checked_sum(
+            covered_parameters,
+            expected.length,
+            "independent golden covered parameters",
+        )?;
+        maximum_tensor_error = maximum_tensor_error.max(validate_independent_summary(
+            &format!("{initial_name}.gradient_summary"),
+            &updated_parameter.gradient,
+            expected.gradient_summary,
+        )?);
+        maximum_tensor_error = maximum_tensor_error.max(validate_independent_order_evidence(
+            &format!("{initial_name}.gradient"),
+            &updated_parameter.gradient,
+            &expected.gradient_order_evidence,
+        )?);
+        maximum_tensor_error = maximum_tensor_error.max(validate_independent_summary(
+            &format!("{initial_name}.updated_value_summary"),
+            &updated_parameter.value,
+            expected.updated_value_summary,
+        )?);
+        maximum_tensor_error = maximum_tensor_error.max(validate_independent_order_evidence(
+            &format!("{initial_name}.updated_value"),
+            &updated_parameter.value,
+            &expected.updated_value_order_evidence,
+        )?);
+        maximum_tensor_error = maximum_tensor_error.max(validate_independent_summary(
+            &format!("{initial_name}.first_moment_summary"),
+            &updated_parameter.first_moment,
+            expected.first_moment_summary,
+        )?);
+        maximum_tensor_error = maximum_tensor_error.max(validate_independent_order_evidence(
+            &format!("{initial_name}.first_moment"),
+            &updated_parameter.first_moment,
+            &expected.first_moment_order_evidence,
+        )?);
+        maximum_tensor_error = maximum_tensor_error.max(validate_independent_summary(
+            &format!("{initial_name}.second_moment_summary"),
+            &updated_parameter.second_moment,
+            expected.second_moment_summary,
+        )?);
+        maximum_tensor_error = maximum_tensor_error.max(validate_independent_order_evidence(
+            &format!("{initial_name}.second_moment"),
+            &updated_parameter.second_moment,
+            &expected.second_moment_order_evidence,
+        )?);
+        if expected.representatives.is_empty() {
+            return Err(
+                format!("independent golden has no representatives for {initial_name}").into(),
+            );
+        }
+        let mut representative_indices = std::collections::BTreeSet::new();
+        for representative in &expected.representatives {
+            if representative.index >= expected.length
+                || !representative_indices.insert(representative.index)
+            {
+                return Err(format!(
+                    "independent golden representative index drifted for {initial_name}"
+                )
+                .into());
+            }
+            let index = representative.index;
+            for (field, actual, expected) in [
+                (
+                    "initial_value",
+                    f64::from(initial_parameter.value[index]),
+                    representative.initial_value,
+                ),
+                (
+                    "gradient",
+                    f64::from(updated_parameter.gradient[index]),
+                    representative.gradient,
+                ),
+                (
+                    "first_moment",
+                    f64::from(updated_parameter.first_moment[index]),
+                    representative.first_moment,
+                ),
+                (
+                    "second_moment",
+                    f64::from(updated_parameter.second_moment[index]),
+                    representative.second_moment,
+                ),
+                (
+                    "updated_value",
+                    f64::from(updated_parameter.value[index]),
+                    representative.updated_value,
+                ),
+            ] {
+                maximum_tensor_error = maximum_tensor_error.max(independent_close(
+                    &format!("{initial_name}[{index}].{field}"),
+                    actual,
+                    expected,
+                    INDEPENDENT_TENSOR_ABS_TOLERANCE,
+                    INDEPENDENT_TENSOR_REL_TOLERANCE,
+                )?);
+            }
+            representative_count = checked_sum(
+                representative_count,
+                1,
+                "independent golden representative count",
+            )?;
+        }
+    }
+    if covered_parameters != PARAMETER_COUNT || updated.adam_step != contract.adam_step {
+        return Err("independent golden Adam coverage drifted".into());
+    }
+    Ok(json!({
+        "status": "pass",
+        "oracle": "independent-python-standard-library-float64",
+        "schema_version": fixture.schema_version,
+        "generator_sha256": provenance.generator_sha256,
+        "payload_sha256": fixture.integrity.payload_sha256,
+        "fixture_file_sha256": INDEPENDENT_GOLDEN_FILE_SHA256,
+        "tensor_count": fixture.expected.tensors.len(),
+        "parameters_covered_by_full_vector_summaries": covered_parameters,
+        "representative_entries_checked": representative_count,
+        "forward_and_detached_loss_checked": true,
+        "full_output_gradients_checked": true,
+        "full_gradient_summary_each_tensor_checked": true,
+        "full_adam_value_and_moment_summary_each_tensor_checked": true,
+        "order_sensitive_evidence_each_vector": "three seeded float64 projections plus SHA-256 sign/deadband fingerprint",
+        "maximum_abs_error": {
+            "forward": maximum_forward_error,
+            "loss": maximum_loss_error,
+            "output_gradients": maximum_output_gradient_error,
+            "tensor_summaries_and_representatives": maximum_tensor_error,
+        },
+        "tolerances": {
+            "forward_absolute": INDEPENDENT_FORWARD_ABS_TOLERANCE,
+            "loss_absolute": INDEPENDENT_LOSS_ABS_TOLERANCE,
+            "tensor_absolute": INDEPENDENT_TENSOR_ABS_TOLERANCE,
+            "tensor_relative": INDEPENDENT_TENSOR_REL_TOLERANCE,
+            "order_projection_absolute": INDEPENDENT_ORDER_PROJECTION_ABS_TOLERANCE,
+            "order_projection_relative": INDEPENDENT_ORDER_PROJECTION_REL_TOLERANCE,
+        },
+        "limitation": "float64 oracle validates full-vector reductions, order-sensitive projections/fingerprints, and fixed representatives, not every individual element",
+        "production_or_performance_claim": false,
+    }))
+}
+
+fn validate_independent_golden(
+    initial: &HostModel,
+    batch: &SyntheticBatch,
+    step: &CpuStepResult,
+    updated: &HostModel,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let fixture = parse_independent_golden()?;
+    validate_independent_golden_fixture(&fixture, initial, batch, step, updated)
 }
 
 fn linear_relu(
@@ -1684,6 +2405,9 @@ struct TrainingResources {
     kernels: Kernels,
     model: DeviceModel,
     batch: DeviceBatch,
+    // A replacement remains owned here until its uploads synchronize. On any
+    // failure the poisoned service retains both batches for explicit close().
+    pending_batch: Option<DeviceBatch>,
     rollout: DeviceActivations,
     recompute: DeviceActivations,
     gradients: DeviceGradients,
@@ -1693,6 +2417,12 @@ struct TrainingResources {
 enum FaultPoint {
     None,
     AfterRolloutForward,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReplaceBatchFault {
+    None,
+    AfterReplacementStaged,
 }
 
 struct TrainingService {
@@ -1746,6 +2476,7 @@ impl TrainingService {
                 kernels,
                 model,
                 batch,
+                pending_batch: None,
                 rollout,
                 recompute,
                 gradients,
@@ -1869,6 +2600,14 @@ impl TrainingService {
     }
 
     fn replace_batch(&mut self, host_batch: &SyntheticBatch) -> Result<(), Box<dyn Error>> {
+        self.replace_batch_with_fault(host_batch, ReplaceBatchFault::None)
+    }
+
+    fn replace_batch_with_fault(
+        &mut self,
+        host_batch: &SyntheticBatch,
+        fault: ReplaceBatchFault,
+    ) -> Result<(), Box<dyn Error>> {
         if self.closed {
             return Err("training service is closed".into());
         }
@@ -1876,22 +2615,46 @@ impl TrainingService {
             return Err("training service is poisoned".into());
         }
         host_batch.validate()?;
+        let Some(resources) = self.resources.as_ref() else {
+            self.poisoned = true;
+            return Err("training resources are absent".into());
+        };
+        let dimensions_match = host_batch.batch() == resources.batch.batch
+            && host_batch.total_actions() == resources.batch.total_actions;
+        if !dimensions_match {
+            return Err("replacement batch must preserve decision and action dimensions".into());
+        }
+        let result = self.replace_batch_inner(host_batch, fault);
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
+    fn replace_batch_inner(
+        &mut self,
+        host_batch: &SyntheticBatch,
+        fault: ReplaceBatchFault,
+    ) -> Result<(), Box<dyn Error>> {
         let resources = self
             .resources
             .as_mut()
             .ok_or("training resources are absent")?;
-        if host_batch.batch() != resources.batch.batch
-            || host_batch.total_actions() != resources.batch.total_actions
-        {
-            return Err("replacement batch must preserve decision and action dimensions".into());
+        if resources.pending_batch.is_some() {
+            return Err("replacement batch staging state is already occupied".into());
         }
         self.stream.synchronize()?;
         let replacement = DeviceBatch::new(&self.stream, host_batch)?;
-        resources.batch = replacement;
-        if let Err(error) = self.stream.synchronize() {
-            self.poisoned = true;
-            return Err(error.into());
+        resources.pending_batch = Some(replacement);
+        if fault == ReplaceBatchFault::AfterReplacementStaged {
+            return Err("injected failure after replacement batch staging".into());
         }
+        self.stream.synchronize()?;
+        let replacement = resources
+            .pending_batch
+            .take()
+            .ok_or("replacement batch staging state disappeared")?;
+        resources.batch = replacement;
         Ok(())
     }
 
@@ -1900,6 +2663,9 @@ impl TrainingService {
     ) -> Result<(DownloadedActivations, DownloadedActivations), Box<dyn Error>> {
         if self.closed {
             return Err("training service is closed".into());
+        }
+        if self.poisoned {
+            return Err("training service is poisoned".into());
         }
         let resources = self
             .resources
@@ -1914,6 +2680,9 @@ impl TrainingService {
     fn download_model(&self) -> Result<HostModel, Box<dyn Error>> {
         if self.closed {
             return Err("training service is closed".into());
+        }
+        if self.poisoned {
+            return Err("training service is poisoned".into());
         }
         self.resources
             .as_ref()
@@ -3038,7 +3807,7 @@ fn validate_tiny_gradient_adam() -> Result<serde_json::Value, Box<dyn Error>> {
         "f64_reference_tolerance": TINY_GRADIENT_ADAM_F64_TOLERANCE,
         "maximum_f32_f64_absolute_error": maximum_error,
         "steps": steps,
-        "independent_python_or_decimal_golden": "hold-not-implemented",
+        "independent_python_float64_golden": "covered-by-checked-small-synthetic-fixture-across-all-14-tensors",
     }))
 }
 
@@ -3228,6 +3997,8 @@ fn validate_cpu_gpu_once() -> Result<serde_json::Value, Box<dyn Error>> {
         VALUE_COEFFICIENT,
         AdamConfig::default(),
     )?;
+    let independent_python_float64_golden =
+        validate_independent_golden(&initial, &batch, &cpu, &cpu_model)?;
     let mut gpu = TrainingService::new(&initial, &batch)?;
     let gpu_loss = gpu.training_step(VALUE_COEFFICIENT, AdamConfig::default())?;
     let (gpu_rollout, gpu_recompute) = gpu.download_outputs()?;
@@ -3363,12 +4134,15 @@ fn validate_cpu_gpu_once() -> Result<serde_json::Value, Box<dyn Error>> {
         "gpu_updated_weight_hash": gpu_model.value_hash(),
         "central_difference_gradient_checks": central_difference_gradients,
         "tiny_gradient_adam": tiny_gradient_adam,
+        "independent_python_float64_golden": independent_python_float64_golden,
         "same_process_gpu_reproducibility": same_process_gpu_reproducibility,
-        "independent_python_or_decimal_golden_closure": "hold-not-implemented",
+        "independent_python_or_decimal_golden_closure": "pass-stdlib-python-float64-small-synthetic-fixture",
         "lifecycle": {
             "ownership": "tracked-cudarc-copies; no-graphs; no-raw-pinned-pointers",
             "close": "resources-retained-unless-synchronization-succeeds",
             "drop": "best-effort-drain-only; errors-cannot-be-reported",
+            "replacement_failure": "service-poisoned; staged-and-active-batches-retained-until-explicit-close",
+            "poisoned_downloads": "fail-closed",
         },
         "cublas_math_mode": "CUBLAS_PEDANTIC_MATH",
     }))
@@ -3580,33 +4354,115 @@ mod tests {
     fn cpu_reference_runs_actor_forward_recompute_backward_and_adam() {
         let batch = SyntheticBatch::small_golden().unwrap();
         let mut model = HostModel::deterministic().unwrap();
+        let initial = model.clone();
         let initial_hash = model.value_hash();
         let result =
             cpu_train_step(&mut model, &batch, VALUE_COEFFICIENT, AdamConfig::default()).unwrap();
-        // Pinned independently of the CUDA/cuBLAS path. These exact f32 and
-        // ordered-byte hashes make CPU semantic drift fail before GPU parity.
         assert_eq!(initial_hash, "cbe3fbd898ee96bb");
-        assert_eq!(model.value_hash(), "17cd7f5e9f4536a9");
+        let independent = validate_independent_golden(&initial, &batch, &result, &model).unwrap();
+        assert_eq!(independent["status"], "pass");
+        assert_eq!(independent["tensor_count"], 14);
         assert_eq!(
-            result.loss.policy_sum.to_bits(),
-            (-0.130_485_01f32).to_bits()
+            independent["parameters_covered_by_full_vector_summaries"],
+            PARAMETER_COUNT
         );
-        assert_eq!(result.loss.value_sum.to_bits(), 2.208_056_2f32.to_bits());
-        assert_eq!(result.loss.loss.to_bits(), 0.324_514_36f32.to_bits());
-        assert_eq!(
-            hash_f32_iter(result.rollout.logits.iter().copied()),
-            "e0c6387fbf357905"
-        );
-        assert_eq!(
-            hash_f32_iter(result.rollout.values.iter().copied()),
-            "7add18ce7f7be28f"
-        );
+        assert_eq!(independent["full_output_gradients_checked"], true);
         assert_eq!(model.adam_step, 1);
         assert_ne!(model.value_hash(), initial_hash);
         assert_eq!(result.rollout.logits, result.recompute.logits);
         assert_eq!(result.rollout.values, result.recompute.values);
         assert!(result.loss.loss.is_finite());
         assert!(model.all_finite());
+    }
+
+    #[test]
+    fn independent_fixture_rejects_numeric_contract_and_tensor_order_corruption() {
+        let batch = SyntheticBatch::small_golden().unwrap();
+        let initial = HostModel::deterministic().unwrap();
+        let mut updated = initial.clone();
+        let step = cpu_train_step(
+            &mut updated,
+            &batch,
+            VALUE_COEFFICIENT,
+            AdamConfig::default(),
+        )
+        .unwrap();
+        let fixture = parse_independent_golden().unwrap();
+        validate_independent_golden_fixture(&fixture, &initial, &batch, &step, &updated).unwrap();
+
+        let mut numeric_corruption = fixture.clone();
+        numeric_corruption.expected.forward.logits[0] += 0.25;
+        assert!(validate_independent_golden_fixture(
+            &numeric_corruption,
+            &initial,
+            &batch,
+            &step,
+            &updated
+        )
+        .is_err());
+
+        let mut contract_drift = fixture.clone();
+        contract_drift.contract.epsilon = 1.0e-8;
+        assert!(validate_independent_golden_fixture(
+            &contract_drift,
+            &initial,
+            &batch,
+            &step,
+            &updated
+        )
+        .is_err());
+
+        let mut tensor_order_drift = fixture;
+        tensor_order_drift.expected.tensors.swap(0, 1);
+        assert!(validate_independent_golden_fixture(
+            &tensor_order_drift,
+            &initial,
+            &batch,
+            &step,
+            &updated
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn independent_order_evidence_rejects_non_sampled_permutation() {
+        let batch = SyntheticBatch::small_golden().unwrap();
+        let initial = HostModel::deterministic().unwrap();
+        let mut updated = initial.clone();
+        let step = cpu_train_step(
+            &mut updated,
+            &batch,
+            VALUE_COEFFICIENT,
+            AdamConfig::default(),
+        )
+        .unwrap();
+        let fixture = parse_independent_golden().unwrap();
+        let sampled = fixture.expected.tensors[0]
+            .representatives
+            .iter()
+            .map(|representative| representative.index)
+            .collect::<std::collections::BTreeSet<_>>();
+        let indices = (0..updated.state_w1.gradient.len())
+            .filter(|index| !sampled.contains(index))
+            .take(1_024)
+            .collect::<Vec<_>>();
+        let before_summary = f64_vector_summary(&updated.state_w1.gradient).unwrap();
+        let first = updated.state_w1.gradient[indices[0]];
+        for window in indices.windows(2) {
+            updated.state_w1.gradient[window[0]] = updated.state_w1.gradient[window[1]];
+        }
+        updated.state_w1.gradient[*indices.last().unwrap()] = first;
+        let after_summary = f64_vector_summary(&updated.state_w1.gradient).unwrap();
+        assert_eq!(before_summary.length, after_summary.length);
+        assert_eq!(before_summary.mean, after_summary.mean);
+        assert_eq!(before_summary.mean_abs, after_summary.mean_abs);
+        assert_eq!(before_summary.rms, after_summary.rms);
+        assert_eq!(before_summary.minimum, after_summary.minimum);
+        assert_eq!(before_summary.maximum, after_summary.maximum);
+        assert!(
+            validate_independent_golden_fixture(&fixture, &initial, &batch, &step, &updated)
+                .is_err()
+        );
     }
 
     #[test]
@@ -3683,6 +4539,10 @@ mod tests {
         assert_eq!(
             report["central_difference_gradient_checks"]["tensor_count"],
             14
+        );
+        assert_eq!(
+            report["independent_python_float64_golden"]["status"],
+            "pass"
         );
         println!("{report}");
     }
@@ -3790,10 +4650,61 @@ mod tests {
         assert!(error
             .to_string()
             .contains("injected failure after asynchronous rollout forward"));
+        assert!(service.poisoned);
+        assert!(service.download_outputs().is_err());
+        assert!(service.download_model().is_err());
         service.close().unwrap();
         service.close().unwrap();
         assert!(service
             .training_step(VALUE_COEFFICIENT, AdamConfig::default())
             .is_err());
+    }
+
+    #[test]
+    fn staged_replacement_failure_poisoning_retains_batches_until_explicit_close() {
+        let batch = SyntheticBatch::small_golden().unwrap();
+        let replacement = SyntheticBatch::small_golden_variant().unwrap();
+        let model = HostModel::deterministic().unwrap();
+        let mut service = TrainingService::new(&model, &batch).unwrap();
+        let error = service
+            .replace_batch_with_fault(&replacement, ReplaceBatchFault::AfterReplacementStaged)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("injected failure after replacement batch staging"));
+        assert!(service.poisoned);
+        let resources = service.resources.as_ref().unwrap();
+        assert!(resources.pending_batch.is_some());
+        assert!(service.download_outputs().is_err());
+        assert!(service.download_model().is_err());
+        assert!(service.replace_batch(&replacement).is_err());
+        assert!(service
+            .training_step(VALUE_COEFFICIENT, AdamConfig::default())
+            .is_err());
+        service.close().unwrap();
+        assert!(service.closed);
+        assert!(service.resources.is_none());
+    }
+
+    #[test]
+    fn replacement_host_preflight_is_retryable_but_missing_resources_are_fatal() {
+        let batch = SyntheticBatch::small_golden().unwrap();
+        let model = HostModel::deterministic().unwrap();
+        let mut service = TrainingService::new(&model, &batch).unwrap();
+
+        let mut invalid = batch.clone();
+        invalid.offsets[1] = -1;
+        assert!(service.replace_batch(&invalid).is_err());
+        assert!(!service.poisoned);
+
+        let wrong_dimensions = SyntheticBatch::new(&[2, 2], &[0, 1], &[1, -1]).unwrap();
+        assert!(service.replace_batch(&wrong_dimensions).is_err());
+        assert!(!service.poisoned);
+
+        let resources = service.resources.take().unwrap();
+        assert!(service.replace_batch(&batch).is_err());
+        assert!(service.poisoned);
+        service.resources = Some(resources);
+        service.close().unwrap();
     }
 }
