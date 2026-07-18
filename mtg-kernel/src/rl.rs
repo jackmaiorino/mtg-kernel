@@ -1508,6 +1508,52 @@ pub fn observe_policy_v5(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV5> {
+    let mut observation = build_policy_observation_v5(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+    )?;
+    observation.visible_projection_hash = visible_projection_hash_v5(&observation)?;
+    Ok(observation)
+}
+
+/// Builds the complete typed policy observation without serializing it solely
+/// to populate the artifact-integrity hash. This is restricted to the flat
+/// encoder, which classifies `visible_projection_hash` as forbidden input and
+/// consumes only typed fields before the observation is dropped.
+pub(crate) fn observe_policy_v5_unhashed_for_flat_policy(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<ObservationV5> {
+    build_policy_observation_v5(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+    )
+}
+
+fn build_policy_observation_v5(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<ObservationV5> {
     #[cfg(test)]
     TEST_POLICY_V5_OBSERVATIONS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
@@ -1518,8 +1564,8 @@ pub fn observe_policy_v5(
     }
     // V5 wraps the complete V2 projection but does not expose V2's standalone
     // projection hash. Building V2 without hashing avoids serializing the same
-    // large projection twice on every production policy step; the final V5
-    // hash below still covers every wrapped V2 field.
+    // large projection twice. The public artifact constructor hashes the
+    // completed V5 observation once; the flat typed path explicitly skips it.
     let base = build_observation_v2(state, surface.harness_surface(), acting_player, step_index)?;
     let policy_surface_context = policy_surface_context_v5(
         state,
@@ -1527,7 +1573,7 @@ pub fn observe_policy_v5(
             .scan_context_for(acting_player)
             .map_err(RlContractError)?,
     )?;
-    let mut observation = ObservationV5 {
+    Ok(ObservationV5 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V5,
         kernel_version: base.kernel_version,
         surface_version: base.surface_version,
@@ -1546,9 +1592,7 @@ pub fn observe_policy_v5(
         known_library_cards: base.known_library_cards,
         known_hand_cards: base.known_hand_cards,
         visible_projection_hash: 0,
-    };
-    observation.visible_projection_hash = visible_projection_hash_v5(&observation)?;
-    Ok(observation)
+    })
 }
 
 fn policy_surface_context_v5(
@@ -5482,13 +5526,13 @@ pub(crate) fn test_policy_v5_materialization_calls() -> (u64, u64) {
 }
 
 #[cfg(test)]
-fn reset_test_visible_projection_hash_calls() {
+pub(crate) fn reset_test_visible_projection_hash_calls() {
     TEST_VISIBLE_PROJECTION_HASH_V2_CALLS.with(|calls| calls.set(0));
     TEST_VISIBLE_PROJECTION_HASH_V5_CALLS.with(|calls| calls.set(0));
 }
 
 #[cfg(test)]
-fn test_visible_projection_hash_calls() -> (u64, u64) {
+pub(crate) fn test_visible_projection_hash_calls() -> (u64, u64) {
     (
         TEST_VISIBLE_PROJECTION_HASH_V2_CALLS.with(std::cell::Cell::get),
         TEST_VISIBLE_PROJECTION_HASH_V5_CALLS.with(std::cell::Cell::get),
@@ -5602,6 +5646,15 @@ mod policy_v5_artifact_tests {
         let v5 = observe_policy_v5(&state, &surface, PlayerId::P0, 0, 0, 0, 1).unwrap();
         assert_ne!(v5.visible_projection_hash, 0);
         assert_eq!(test_visible_projection_hash_calls(), (0, 1));
+
+        reset_test_visible_projection_hash_calls();
+        let mut flat =
+            observe_policy_v5_unhashed_for_flat_policy(&state, &surface, PlayerId::P0, 0, 0, 0, 1)
+                .unwrap();
+        assert_eq!(flat.visible_projection_hash, 0);
+        assert_eq!(test_visible_projection_hash_calls(), (0, 0));
+        flat.visible_projection_hash = v5.visible_projection_hash;
+        assert_eq!(flat, v5);
     }
 
     #[test]

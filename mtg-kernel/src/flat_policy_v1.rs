@@ -23,8 +23,8 @@ use crate::rl::{
 };
 use crate::rl_session::{
     FastActorDecisionV1, FastActorSessionV1, FlatActionCoreV1, FlatActionDecisionBindingV1,
-    FlatActionDecisionSliceBuffersV1, FlatActionDecisionSliceErrorV1, FlatActionObjectGroupV1,
-    FlatActionObjectV1, FlatActionRefRoleV1, FlatActionRefV1,
+    FlatActionDecisionSliceBuffersV1, FlatActionDecisionSliceErrorV1, FlatActionKindV1,
+    FlatActionObjectGroupV1, FlatActionObjectV1, FlatActionRefRoleV1, FlatActionRefV1,
     FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1,
 };
 use crate::state::{AbilityKindV4, CastMethodV4};
@@ -36,6 +36,10 @@ pub const FLAT_POLICY_ENUM_MAPPING_VERSION_V1: u32 = 1;
 pub const FLAT_POLICY_OBJECT_GROUP_MAPPING_VERSION_V1: u32 = 1;
 pub const FLAT_POLICY_RELATION_ROLE_MAPPING_VERSION_V1: u32 = 1;
 pub const FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1: u32 = 1;
+pub const FLAT_SCORER_PACKET_VERSION_V1: u32 = 1;
+pub const FLAT_SCORER_ACTION_REF_VERSION_V1: u32 = 1;
+pub const FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V1: u32 = 1;
+pub const FLAT_SCORER_VISIBLE_MANIFEST_V1: &str = "globals,objects,relations,object_subtypes,ability_uses,goads,completed_dungeons,effect_subtype_changes,context_path_elements,actions,action_refs";
 
 include!(concat!(env!("OUT_DIR"), "/flat_policy_contract_v1.rs"));
 
@@ -663,6 +667,274 @@ pub const fn flat_action_ref_projection_role_id_v1(role: FlatActionRefRoleV1) ->
     }
 }
 
+/// Model-visible action reference for the scored-policy boundary.
+///
+/// Unlike [`FlatActionRefV1`], `model_object_index` addresses the typed
+/// [`FlatObjectCoreV1`] table. The operational action-object table and its
+/// zone-incarnation counters never cross this boundary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FlatScorerActionRefV1 {
+    pub action_index: u32,
+    pub projection_role_id: u8,
+    pub order_index: u16,
+    pub associated_order: u16,
+    pub card_token: u16,
+    pub model_object_index: u32,
+}
+
+/// Digest-covered scorer vocabulary projected from the operational action
+/// slice. The exhaustive conversion below makes every internal action-kind
+/// addition a compile-time scorer-contract update point.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum FlatScorerActionKindV1 {
+    #[default]
+    Pass = 0,
+    PlayLand = 1,
+    CastSpell = 2,
+    ActivateManaAbility = 3,
+    ActivateAbility = 4,
+    PlotSpell = 5,
+    ChooseTarget = 6,
+    ChooseCostTarget = 7,
+    ChooseCastMode = 8,
+    ChooseKicker = 9,
+    ChooseSpellMode = 10,
+    ChooseEffectOption = 11,
+    ChooseEffectTarget = 12,
+    FinishEffectSelection = 13,
+    ChooseEffectColor = 14,
+    ChooseEffectNumber = 15,
+    ChooseEffectBoolean = 16,
+    FinishTargetSelection = 17,
+    ChooseOptionalCostUse = 18,
+    ChooseOptionalCostWhich = 19,
+    ChooseSpellCopyPayment = 20,
+    ChooseSpellCopyRetarget = 21,
+    ChooseMadnessCast = 22,
+    Discard = 23,
+    ChooseAttackerInclusion = 24,
+    ChooseBlockerInclusion = 25,
+    OrderTriggers = 26,
+}
+
+impl From<FlatActionKindV1> for FlatScorerActionKindV1 {
+    fn from(kind: FlatActionKindV1) -> Self {
+        match kind {
+            FlatActionKindV1::Pass => Self::Pass,
+            FlatActionKindV1::PlayLand => Self::PlayLand,
+            FlatActionKindV1::CastSpell => Self::CastSpell,
+            FlatActionKindV1::ActivateManaAbility => Self::ActivateManaAbility,
+            FlatActionKindV1::ActivateAbility => Self::ActivateAbility,
+            FlatActionKindV1::PlotSpell => Self::PlotSpell,
+            FlatActionKindV1::ChooseTarget => Self::ChooseTarget,
+            FlatActionKindV1::ChooseCostTarget => Self::ChooseCostTarget,
+            FlatActionKindV1::ChooseCastMode => Self::ChooseCastMode,
+            FlatActionKindV1::ChooseKicker => Self::ChooseKicker,
+            FlatActionKindV1::ChooseSpellMode => Self::ChooseSpellMode,
+            FlatActionKindV1::ChooseEffectOption => Self::ChooseEffectOption,
+            FlatActionKindV1::ChooseEffectTarget => Self::ChooseEffectTarget,
+            FlatActionKindV1::FinishEffectSelection => Self::FinishEffectSelection,
+            FlatActionKindV1::ChooseEffectColor => Self::ChooseEffectColor,
+            FlatActionKindV1::ChooseEffectNumber => Self::ChooseEffectNumber,
+            FlatActionKindV1::ChooseEffectBoolean => Self::ChooseEffectBoolean,
+            FlatActionKindV1::FinishTargetSelection => Self::FinishTargetSelection,
+            FlatActionKindV1::ChooseOptionalCostUse => Self::ChooseOptionalCostUse,
+            FlatActionKindV1::ChooseOptionalCostWhich => Self::ChooseOptionalCostWhich,
+            FlatActionKindV1::ChooseSpellCopyPayment => Self::ChooseSpellCopyPayment,
+            FlatActionKindV1::ChooseSpellCopyRetarget => Self::ChooseSpellCopyRetarget,
+            FlatActionKindV1::ChooseMadnessCast => Self::ChooseMadnessCast,
+            FlatActionKindV1::Discard => Self::Discard,
+            FlatActionKindV1::ChooseAttackerInclusion => Self::ChooseAttackerInclusion,
+            FlatActionKindV1::ChooseBlockerInclusion => Self::ChooseBlockerInclusion,
+            FlatActionKindV1::OrderTriggers => Self::OrderTriggers,
+        }
+    }
+}
+
+/// Complete model-visible scalar action row. This deliberately mirrors rather
+/// than aliases [`FlatActionCoreV1`], so the typed-layout digest closes every
+/// field that can cross the scorer boundary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FlatScorerActionCoreV1 {
+    pub kind: FlatScorerActionKindV1,
+    pub flags: u16,
+    pub ability_index: u8,
+    pub remaining: u8,
+    pub mode_index: u8,
+    pub mode_count: u8,
+    pub option_index: u16,
+    pub option_count: u16,
+    pub selected_count: u16,
+    pub min_targets: u16,
+    pub max_targets: u16,
+    pub number: i32,
+    pub minimum: i32,
+    pub maximum: i32,
+    pub mana_choice: u8,
+    pub color: u8,
+    pub cast_mode: u8,
+    pub cost_kind: u8,
+    pub optional_cost_choice: u8,
+    pub target_kind: u8,
+    pub target_player: u8,
+    pub ref_start: u32,
+    pub ref_len: u16,
+}
+
+impl From<FlatActionCoreV1> for FlatScorerActionCoreV1 {
+    fn from(action: FlatActionCoreV1) -> Self {
+        let FlatActionCoreV1 {
+            kind,
+            flags,
+            ability_index,
+            remaining,
+            mode_index,
+            mode_count,
+            option_index,
+            option_count,
+            selected_count,
+            min_targets,
+            max_targets,
+            number,
+            minimum,
+            maximum,
+            mana_choice,
+            color,
+            cast_mode,
+            cost_kind,
+            optional_cost_choice,
+            target_kind,
+            target_player,
+            ref_start,
+            ref_len,
+        } = action;
+        Self {
+            kind: kind.into(),
+            flags,
+            ability_index,
+            remaining,
+            mode_index,
+            mode_count,
+            option_index,
+            option_count,
+            selected_count,
+            min_targets,
+            max_targets,
+            number,
+            minimum,
+            maximum,
+            mana_choice,
+            color,
+            cast_mode,
+            cost_kind,
+            optional_cost_choice,
+            target_kind,
+            target_player,
+            ref_start,
+            ref_len,
+        }
+    }
+}
+
+/// Complete model-visible surface of one scored decision packet.
+///
+/// The private fields and explicit constructor make additions compile-time
+/// review points. In particular this view cannot carry a decision binding,
+/// authority-bearing action object, seed, zone-change counter, or candidate
+/// commitment. [`FLAT_SCORER_VISIBLE_MANIFEST_V1`] names these accessors in
+/// their canonical order, and the typed-layout source digest binds both the
+/// manifest and this implementation.
+#[derive(Clone, Copy)]
+pub struct FlatScoringDecisionViewV1<'a> {
+    globals: &'a FlatGlobalsV1,
+    objects: &'a [FlatObjectCoreV1],
+    relations: &'a [FlatRelationV1],
+    object_subtypes: &'a [FlatObjectSubtypeV1],
+    ability_uses: &'a [FlatObjectAbilityUseV1],
+    goads: &'a [FlatObjectGoadV1],
+    completed_dungeons: &'a [FlatCompletedDungeonV1],
+    effect_subtype_changes: &'a [FlatEffectSubtypeChangeV1],
+    context_path_elements: &'a [FlatContextPathElementV1],
+    actions: &'a [FlatScorerActionCoreV1],
+    action_refs: &'a [FlatScorerActionRefV1],
+}
+
+impl<'a> FlatScoringDecisionViewV1<'a> {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        globals: &'a FlatGlobalsV1,
+        objects: &'a [FlatObjectCoreV1],
+        relations: &'a [FlatRelationV1],
+        object_subtypes: &'a [FlatObjectSubtypeV1],
+        ability_uses: &'a [FlatObjectAbilityUseV1],
+        goads: &'a [FlatObjectGoadV1],
+        completed_dungeons: &'a [FlatCompletedDungeonV1],
+        effect_subtype_changes: &'a [FlatEffectSubtypeChangeV1],
+        context_path_elements: &'a [FlatContextPathElementV1],
+        actions: &'a [FlatScorerActionCoreV1],
+        action_refs: &'a [FlatScorerActionRefV1],
+    ) -> Self {
+        Self {
+            globals,
+            objects,
+            relations,
+            object_subtypes,
+            ability_uses,
+            goads,
+            completed_dungeons,
+            effect_subtype_changes,
+            context_path_elements,
+            actions,
+            action_refs,
+        }
+    }
+
+    pub fn globals(self) -> &'a FlatGlobalsV1 {
+        self.globals
+    }
+
+    pub fn objects(self) -> &'a [FlatObjectCoreV1] {
+        self.objects
+    }
+
+    pub fn relations(self) -> &'a [FlatRelationV1] {
+        self.relations
+    }
+
+    pub fn object_subtypes(self) -> &'a [FlatObjectSubtypeV1] {
+        self.object_subtypes
+    }
+
+    pub fn ability_uses(self) -> &'a [FlatObjectAbilityUseV1] {
+        self.ability_uses
+    }
+
+    pub fn goads(self) -> &'a [FlatObjectGoadV1] {
+        self.goads
+    }
+
+    pub fn completed_dungeons(self) -> &'a [FlatCompletedDungeonV1] {
+        self.completed_dungeons
+    }
+
+    pub fn effect_subtype_changes(self) -> &'a [FlatEffectSubtypeChangeV1] {
+        self.effect_subtype_changes
+    }
+
+    pub fn context_path_elements(self) -> &'a [FlatContextPathElementV1] {
+        self.context_path_elements
+    }
+
+    pub fn actions(self) -> &'a [FlatScorerActionCoreV1] {
+        self.actions
+    }
+
+    pub fn action_refs(self) -> &'a [FlatScorerActionRefV1] {
+        self.action_refs
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FlatDecisionBindingV1 {
     pub action_binding: FlatActionDecisionBindingV1,
@@ -715,6 +987,7 @@ pub enum FlatDecisionErrorV1 {
     ObservationContract,
     InvalidReference,
     InconsistentReference,
+    ScorerBindingMismatch,
     FutureTurnRelation,
     CheckedIntegerRange,
     InsufficientObjectCapacity { required: usize, available: usize },
@@ -763,6 +1036,9 @@ pub struct FlatDecisionEncoderV1 {
     actions: Vec<FlatActionCoreV1>,
     action_refs: Vec<FlatActionRefV1>,
     action_objects: Vec<FlatActionObjectV1>,
+    action_object_to_model_object: Vec<u32>,
+    claimed_model_objects: Vec<bool>,
+    scorer_action_refs: Vec<FlatScorerActionRefV1>,
 }
 
 fn relative_player(seat: PlayerSeatV1, actor: PlayerSeatV1) -> FlatRelativePlayerV1 {
@@ -1009,6 +1285,9 @@ impl FlatDecisionEncoderV1 {
         self.actions.clear();
         self.action_refs.clear();
         self.action_objects.clear();
+        self.action_object_to_model_object.clear();
+        self.claimed_model_objects.clear();
+        self.scorer_action_refs.clear();
     }
 
     fn private_key(
@@ -3142,7 +3421,7 @@ impl FlatDecisionEncoderV1 {
         Ok(())
     }
 
-    fn validate_cached_tables(&self) -> Result<(), FlatDecisionErrorV1> {
+    fn validate_cached_tables(&mut self) -> Result<(), FlatDecisionErrorV1> {
         let object_count = usize_u32(self.objects.len())?;
         for relation in &self.relations {
             if relation
@@ -3209,74 +3488,142 @@ impl FlatDecisionEncoderV1 {
                 return Err(FlatDecisionErrorV1::InvalidReference);
             }
         }
-        for (action_object_index, action_object) in self.action_objects.iter().enumerate() {
-            let matching_model_objects = self
-                .objects
+        let mut action_object_to_model_object =
+            std::mem::take(&mut self.action_object_to_model_object);
+        action_object_to_model_object.clear();
+        let mut claimed_model_objects = std::mem::take(&mut self.claimed_model_objects);
+        claimed_model_objects.clear();
+        let mut scorer_action_refs = std::mem::take(&mut self.scorer_action_refs);
+        scorer_action_refs.clear();
+        let scorer_validation = (|| -> Result<(), FlatDecisionErrorV1> {
+            action_object_to_model_object
+                .try_reserve(self.action_objects.len())
+                .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?;
+            claimed_model_objects
+                .try_reserve(self.objects.len())
+                .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?;
+            claimed_model_objects.resize(self.objects.len(), false);
+            for (action_object_index, action_object) in self.action_objects.iter().enumerate() {
+                let mut matching_model_objects = self
+                    .objects
+                    .iter()
+                    .zip(&self.object_keys)
+                    .enumerate()
+                    .filter_map(|(model_object_index, (object, key))| {
+                        let Some(key) = key else { return None };
+                        let group_matches = match action_object.group {
+                            FlatActionObjectGroupV1::SelfHand => {
+                                object.group == FlatObjectGroupV1::SelfHand
+                            }
+                            FlatActionObjectGroupV1::KnownOpponentHand => {
+                                object.group == FlatObjectGroupV1::KnownOpponentHand
+                            }
+                            FlatActionObjectGroupV1::SelfBattlefield => {
+                                object.group == FlatObjectGroupV1::SelfBattlefield
+                            }
+                            FlatActionObjectGroupV1::OpponentBattlefield => {
+                                object.group == FlatObjectGroupV1::OpponentBattlefield
+                            }
+                            FlatActionObjectGroupV1::SelfGraveyard => {
+                                object.group == FlatObjectGroupV1::SelfGraveyard
+                            }
+                            FlatActionObjectGroupV1::OpponentGraveyard => {
+                                object.group == FlatObjectGroupV1::OpponentGraveyard
+                            }
+                            FlatActionObjectGroupV1::Exile => {
+                                object.group == FlatObjectGroupV1::Exile
+                            }
+                            FlatActionObjectGroupV1::Stack => {
+                                object.group == FlatObjectGroupV1::Stack
+                                    || (object.group == FlatObjectGroupV1::PendingContext
+                                        && object.source_kind == FlatObjectSourceKindV1::Pending)
+                            }
+                            FlatActionObjectGroupV1::Command => false,
+                            FlatActionObjectGroupV1::KnownSelfLibrary => {
+                                object.group == FlatObjectGroupV1::KnownSelfLibrary
+                            }
+                            FlatActionObjectGroupV1::KnownOpponentLibrary => {
+                                object.group == FlatObjectGroupV1::KnownOpponentLibrary
+                            }
+                        };
+                        let ordinal_matches = object.group == FlatObjectGroupV1::PendingContext
+                            || object.visible_ordinal
+                                == u32::from(action_object.actor_visible_ordinal);
+                        (group_matches
+                            && ordinal_matches
+                            && key.card_token == u32::from(action_object.card_token)
+                            && key.owner as u8 == action_object.owner_relative
+                            && key.controller as u8 == action_object.controller_relative
+                            && key.zone as u8 == action_object.zone
+                            && key.zone_change_count == action_object.zone_change_count)
+                            .then_some(model_object_index)
+                    });
+                let Some(model_object_index) = matching_model_objects.next() else {
+                    return Err(FlatDecisionErrorV1::InvalidReference);
+                };
+                if matching_model_objects.next().is_some()
+                    || claimed_model_objects[model_object_index]
+                    || self.action_refs.iter().any(|reference| {
+                        usize::from(reference.object_index) == action_object_index
+                            && reference.card_token != action_object.card_token
+                    })
+                {
+                    return Err(FlatDecisionErrorV1::InvalidReference);
+                }
+                claimed_model_objects[model_object_index] = true;
+                action_object_to_model_object.push(usize_u32(model_object_index)?);
+            }
+            if self
+                .action_refs
                 .iter()
-                .zip(&self.object_keys)
-                .filter(|(object, key)| {
-                    let Some(key) = key else { return false };
-                    let group_matches = match action_object.group {
-                        FlatActionObjectGroupV1::SelfHand => {
-                            object.group == FlatObjectGroupV1::SelfHand
-                        }
-                        FlatActionObjectGroupV1::KnownOpponentHand => {
-                            object.group == FlatObjectGroupV1::KnownOpponentHand
-                        }
-                        FlatActionObjectGroupV1::SelfBattlefield => {
-                            object.group == FlatObjectGroupV1::SelfBattlefield
-                        }
-                        FlatActionObjectGroupV1::OpponentBattlefield => {
-                            object.group == FlatObjectGroupV1::OpponentBattlefield
-                        }
-                        FlatActionObjectGroupV1::SelfGraveyard => {
-                            object.group == FlatObjectGroupV1::SelfGraveyard
-                        }
-                        FlatActionObjectGroupV1::OpponentGraveyard => {
-                            object.group == FlatObjectGroupV1::OpponentGraveyard
-                        }
-                        FlatActionObjectGroupV1::Exile => object.group == FlatObjectGroupV1::Exile,
-                        FlatActionObjectGroupV1::Stack => {
-                            object.group == FlatObjectGroupV1::Stack
-                                || (object.group == FlatObjectGroupV1::PendingContext
-                                    && object.source_kind == FlatObjectSourceKindV1::Pending)
-                        }
-                        FlatActionObjectGroupV1::Command => false,
-                        FlatActionObjectGroupV1::KnownSelfLibrary => {
-                            object.group == FlatObjectGroupV1::KnownSelfLibrary
-                        }
-                        FlatActionObjectGroupV1::KnownOpponentLibrary => {
-                            object.group == FlatObjectGroupV1::KnownOpponentLibrary
-                        }
-                    };
-                    let ordinal_matches = object.group == FlatObjectGroupV1::PendingContext
-                        || object.visible_ordinal == u32::from(action_object.actor_visible_ordinal);
-                    group_matches
-                        && ordinal_matches
-                        && key.card_token == u32::from(action_object.card_token)
-                        && key.owner as u8 == action_object.owner_relative
-                        && key.controller as u8 == action_object.controller_relative
-                        && key.zone as u8 == action_object.zone
-                        && key.zone_change_count == action_object.zone_change_count
-                })
-                .count();
-            if matching_model_objects != 1
-                || self.action_refs.iter().any(|reference| {
-                    usize::from(reference.object_index) == action_object_index
-                        && reference.card_token != action_object.card_token
-                })
+                .any(|reference| usize::from(reference.object_index) >= self.action_objects.len())
             {
                 return Err(FlatDecisionErrorV1::InvalidReference);
             }
+            scorer_action_refs
+                .try_reserve(self.action_refs.len())
+                .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?;
+            for reference in &self.action_refs {
+                let model_object_index = *action_object_to_model_object
+                    .get(usize::from(reference.object_index))
+                    .ok_or(FlatDecisionErrorV1::InvalidReference)?;
+                let model_object = self
+                    .objects
+                    .get(
+                        usize::try_from(model_object_index)
+                            .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?,
+                    )
+                    .ok_or(FlatDecisionErrorV1::InvalidReference)?;
+                if reference.action_index >= usize_u32(self.actions.len())?
+                    || model_object.card_token != u32::from(reference.card_token)
+                {
+                    return Err(FlatDecisionErrorV1::InvalidReference);
+                }
+                scorer_action_refs.push(FlatScorerActionRefV1 {
+                    action_index: reference.action_index,
+                    projection_role_id: flat_action_ref_projection_role_id_v1(reference.role),
+                    order_index: reference.order_index,
+                    associated_order: reference.associated_order,
+                    card_token: reference.card_token,
+                    model_object_index,
+                });
+            }
+            Ok(())
+        })();
+        self.action_object_to_model_object = action_object_to_model_object;
+        self.claimed_model_objects = claimed_model_objects;
+        self.scorer_action_refs = scorer_action_refs;
+        scorer_validation
+    }
+
+    pub(crate) fn cached_scorer_action_refs_v1(
+        &self,
+        binding: FlatActionDecisionBindingV1,
+    ) -> Result<&[FlatScorerActionRefV1], FlatDecisionErrorV1> {
+        if self.cached_binding != Some(binding) {
+            return Err(FlatDecisionErrorV1::ScorerBindingMismatch);
         }
-        if self
-            .action_refs
-            .iter()
-            .any(|reference| usize::from(reference.object_index) >= self.action_objects.len())
-        {
-            return Err(FlatDecisionErrorV1::InvalidReference);
-        }
-        Ok(())
+        Ok(&self.scorer_action_refs)
     }
 
     fn ensure_cache(
@@ -3475,6 +3822,9 @@ mod tests {
             actions: vec![FlatActionCoreV1::default()],
             action_refs: vec![FlatActionRefV1::default()],
             action_objects: vec![FlatActionObjectV1::default()],
+            action_object_to_model_object: Vec::new(),
+            claimed_model_objects: Vec::new(),
+            scorer_action_refs: Vec::new(),
         }
     }
 
@@ -3948,6 +4298,46 @@ mod tests {
             };
             assert_eq!(error, FlatDecisionErrorV1::InconsistentReference);
         }
+    }
+
+    #[test]
+    fn paid_cost_controller_conflict_with_live_object_fails_at_resolver() {
+        let session = FastActorSessionV1::reset_with_limits(90_027, 127, 128, 16_384);
+        let expected = expected(&session);
+        let mut observation = session.flat_policy_observation_v1(expected).unwrap();
+        let actor = observation.acting_player;
+        let other = opponent(actor);
+        let live = synthetic_stable(90_028, 2, actor, actor, Zone::Battlefield);
+        observation.projection.surface.battlefield[seat_index(actor)]
+            .push(synthetic_public(live.clone()));
+        let mut conflicting_paid_cost = live;
+        conflicting_paid_cost.controller = other;
+        observation
+            .projection
+            .surface
+            .stack
+            .push(StackItemPublicV2 {
+                stack_index: u32::try_from(observation.projection.surface.stack.len()).unwrap(),
+                source: synthetic_stable(90_029, 3, actor, actor, Zone::Stack),
+                controller: actor,
+                targets: Vec::new(),
+                stack_item_kind: StackItemKindV2::Spell,
+                is_copy: false,
+                is_flashback: false,
+                mode_chosen: 0,
+                madness_offer: false,
+                kicked: false,
+                cast_method: Some(CastMethodV4::Normal),
+                face_index: 0,
+                x_value: 0,
+                paid_cost_refs: vec![conflicting_paid_cost],
+            });
+
+        let error = match materialize_observation(&observation) {
+            Ok(_) => panic!("live-versus-paid-cost controller conflict was accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error, FlatDecisionErrorV1::InconsistentReference);
     }
 
     #[test]
@@ -4429,6 +4819,230 @@ mod tests {
                 })
             )
         }));
+    }
+
+    #[test]
+    fn scorer_action_refs_are_exactly_remapped_and_binding_checked() {
+        let session = FastActorSessionV1::reset_with_limits(90_019, 119, 128, 16_384);
+        let expected = expected(&session);
+        let mut encoder = FlatDecisionEncoderV1::default();
+        let mut objects = vec![FlatObjectCoreV1::default(); 512];
+        let mut relations = vec![FlatRelationV1::default(); 2_048];
+        let mut object_subtypes = vec![FlatObjectSubtypeV1::default(); 2_048];
+        let mut ability_uses = vec![FlatObjectAbilityUseV1::default(); 512];
+        let mut goads = vec![FlatObjectGoadV1::default(); 512];
+        let mut completed_dungeons = vec![FlatCompletedDungeonV1::default(); 128];
+        let mut effect_subtype_changes = vec![FlatEffectSubtypeChangeV1::default(); 512];
+        let mut context_path_elements = vec![FlatContextPathElementV1::default(); 512];
+        let mut actions = vec![FlatActionCoreV1::default(); 128];
+        let mut action_refs = vec![FlatActionRefV1::default(); 1_024];
+        let mut action_objects = vec![FlatActionObjectV1::default(); 1_024];
+        let encoded = session
+            .encode_current_flat_decision_v1(
+                expected,
+                &mut encoder,
+                &mut FlatDecisionBuffersV1 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                    action_objects: &mut action_objects,
+                },
+            )
+            .unwrap();
+        let safe_refs = encoder
+            .cached_scorer_action_refs_v1(encoded.binding.action_binding)
+            .unwrap();
+        assert_eq!(safe_refs.len(), encoded.active_action_ref_count as usize);
+        assert!(!safe_refs.is_empty());
+        for (operational, safe) in action_refs.iter().zip(safe_refs) {
+            let model_object = objects[safe.model_object_index as usize];
+            assert_eq!(safe.action_index, operational.action_index);
+            assert_eq!(
+                safe.projection_role_id,
+                flat_action_ref_projection_role_id_v1(operational.role)
+            );
+            assert_eq!(safe.order_index, operational.order_index);
+            assert_eq!(safe.associated_order, operational.associated_order);
+            assert_eq!(safe.card_token, operational.card_token);
+            assert_eq!(model_object.card_token, u32::from(safe.card_token));
+        }
+
+        let mut stale = encoded.binding.action_binding;
+        stale.bound_policy_step_count ^= 1;
+        assert_eq!(
+            encoder.cached_scorer_action_refs_v1(stale),
+            Err(FlatDecisionErrorV1::ScorerBindingMismatch)
+        );
+    }
+
+    #[test]
+    fn scorer_action_projection_is_field_exact_and_kind_exhaustive() {
+        let action = FlatActionCoreV1 {
+            kind: FlatActionKindV1::OrderTriggers,
+            flags: 0x1234,
+            ability_index: 1,
+            remaining: 2,
+            mode_index: 3,
+            mode_count: 4,
+            option_index: 5,
+            option_count: 6,
+            selected_count: 7,
+            min_targets: 8,
+            max_targets: 9,
+            number: -10,
+            minimum: -11,
+            maximum: 12,
+            mana_choice: 13,
+            color: 14,
+            cast_mode: 15,
+            cost_kind: 16,
+            optional_cost_choice: 17,
+            target_kind: 18,
+            target_player: 19,
+            ref_start: 20,
+            ref_len: 21,
+        };
+        assert_eq!(
+            FlatScorerActionCoreV1::from(action),
+            FlatScorerActionCoreV1 {
+                kind: FlatScorerActionKindV1::OrderTriggers,
+                flags: 0x1234,
+                ability_index: 1,
+                remaining: 2,
+                mode_index: 3,
+                mode_count: 4,
+                option_index: 5,
+                option_count: 6,
+                selected_count: 7,
+                min_targets: 8,
+                max_targets: 9,
+                number: -10,
+                minimum: -11,
+                maximum: 12,
+                mana_choice: 13,
+                color: 14,
+                cast_mode: 15,
+                cost_kind: 16,
+                optional_cost_choice: 17,
+                target_kind: 18,
+                target_player: 19,
+                ref_start: 20,
+                ref_len: 21,
+            }
+        );
+
+        let kinds = [
+            (FlatActionKindV1::Pass, FlatScorerActionKindV1::Pass),
+            (FlatActionKindV1::PlayLand, FlatScorerActionKindV1::PlayLand),
+            (
+                FlatActionKindV1::CastSpell,
+                FlatScorerActionKindV1::CastSpell,
+            ),
+            (
+                FlatActionKindV1::ActivateManaAbility,
+                FlatScorerActionKindV1::ActivateManaAbility,
+            ),
+            (
+                FlatActionKindV1::ActivateAbility,
+                FlatScorerActionKindV1::ActivateAbility,
+            ),
+            (
+                FlatActionKindV1::PlotSpell,
+                FlatScorerActionKindV1::PlotSpell,
+            ),
+            (
+                FlatActionKindV1::ChooseTarget,
+                FlatScorerActionKindV1::ChooseTarget,
+            ),
+            (
+                FlatActionKindV1::ChooseCostTarget,
+                FlatScorerActionKindV1::ChooseCostTarget,
+            ),
+            (
+                FlatActionKindV1::ChooseCastMode,
+                FlatScorerActionKindV1::ChooseCastMode,
+            ),
+            (
+                FlatActionKindV1::ChooseKicker,
+                FlatScorerActionKindV1::ChooseKicker,
+            ),
+            (
+                FlatActionKindV1::ChooseSpellMode,
+                FlatScorerActionKindV1::ChooseSpellMode,
+            ),
+            (
+                FlatActionKindV1::ChooseEffectOption,
+                FlatScorerActionKindV1::ChooseEffectOption,
+            ),
+            (
+                FlatActionKindV1::ChooseEffectTarget,
+                FlatScorerActionKindV1::ChooseEffectTarget,
+            ),
+            (
+                FlatActionKindV1::FinishEffectSelection,
+                FlatScorerActionKindV1::FinishEffectSelection,
+            ),
+            (
+                FlatActionKindV1::ChooseEffectColor,
+                FlatScorerActionKindV1::ChooseEffectColor,
+            ),
+            (
+                FlatActionKindV1::ChooseEffectNumber,
+                FlatScorerActionKindV1::ChooseEffectNumber,
+            ),
+            (
+                FlatActionKindV1::ChooseEffectBoolean,
+                FlatScorerActionKindV1::ChooseEffectBoolean,
+            ),
+            (
+                FlatActionKindV1::FinishTargetSelection,
+                FlatScorerActionKindV1::FinishTargetSelection,
+            ),
+            (
+                FlatActionKindV1::ChooseOptionalCostUse,
+                FlatScorerActionKindV1::ChooseOptionalCostUse,
+            ),
+            (
+                FlatActionKindV1::ChooseOptionalCostWhich,
+                FlatScorerActionKindV1::ChooseOptionalCostWhich,
+            ),
+            (
+                FlatActionKindV1::ChooseSpellCopyPayment,
+                FlatScorerActionKindV1::ChooseSpellCopyPayment,
+            ),
+            (
+                FlatActionKindV1::ChooseSpellCopyRetarget,
+                FlatScorerActionKindV1::ChooseSpellCopyRetarget,
+            ),
+            (
+                FlatActionKindV1::ChooseMadnessCast,
+                FlatScorerActionKindV1::ChooseMadnessCast,
+            ),
+            (FlatActionKindV1::Discard, FlatScorerActionKindV1::Discard),
+            (
+                FlatActionKindV1::ChooseAttackerInclusion,
+                FlatScorerActionKindV1::ChooseAttackerInclusion,
+            ),
+            (
+                FlatActionKindV1::ChooseBlockerInclusion,
+                FlatScorerActionKindV1::ChooseBlockerInclusion,
+            ),
+            (
+                FlatActionKindV1::OrderTriggers,
+                FlatScorerActionKindV1::OrderTriggers,
+            ),
+        ];
+        for (index, (operational, scorer)) in kinds.into_iter().enumerate() {
+            assert_eq!(FlatScorerActionKindV1::from(operational), scorer);
+            assert_eq!(scorer as usize, index);
+        }
     }
 
     #[test]
