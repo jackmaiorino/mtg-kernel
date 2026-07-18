@@ -102,6 +102,73 @@ Any raw-lane halt makes that trial invalid and opens a separate raw-engine
 correctness investigation; it is never discarded from the denominator or
 silently treated as H2/V5 evidence.
 
+`--matched-uniform-runtime-json-v2` is the fixed-Rally candidate for a later
+paired XMage runtime trial. Its timed lane is the in-process fast actor and
+its policy uses the exact `kernel-python-rl-seed-v2` group/leaf schedule with
+one physical-decision counter per actor seat. Before emitting any rate it
+runs untimed full-v5 versus fast-actor parity oracles on fixed Burn and Rally
+episodes, comparing metadata, semantic action order, selected ranks,
+per-seat counters, core hashes, and terminals. Any non-natural warmup or
+measurement game, driver error, truncation, or oracle mismatch refuses the
+record. Warmup and measurement use XMage v2's exact actor-striped uint63
+episode schedule (warmup starts at zero; measurement starts at `1 << 62`)
+and exact decimal durations. Each process accepts exactly one of 1, 4, 8, or
+16 actors. Main establishes a common start and deadline for each phase; actors
+launch only before that deadline, finish every in-flight game, and join. The
+denominator is the slowest actor's finish offset from the common start. The
+record includes each actor's attempted/natural count, first/last episode,
+finish offset, deadline-tail completions, plus actual policy action-selection
+and leaf-evaluation counters. Optional validation transcripts are materialized
+outside the timed loop.
+
+The trial, host, CPU, topology, power, affinity, and available-processor
+contracts intentionally mirror the XMage v2 adapter for an external same-host
+AB/BA validator. `strict` requires an exact commit and clean source tree;
+`dirty-smoke` always emits a nonclaiming diagnostic record. The Rust record
+always leaves `formal_comparison_claim` false: neither this candidate alone nor
+its absolute rates establish an XMage multiplier or training throughput. The
+running binary also exact-matches seven enumerated embedded runtime source
+components against the claimed commit before validation/timing and again after
+both phases, using UTF-8 bytes after CRLF-to-LF normalization while rejecting
+bare carriage returns; SHA-256 values are diagnostics, never a substitute for
+exact byte equality. A separate commit-tree proof binds the build HEAD and
+clean/dirty state to a deterministic SHA-256 over every tracked path, mode,
+type, and exact Git blob content (or gitlink object ID). Strict local-candidate
+trials recompute that expected-commit tree before and after timing and require
+it to equal the clean build-time tree.
+
+Those checks are commit-tree integrity plus seven-component defense in depth,
+not complete compiled-input provenance. They do not attest every byte consumed
+by rustc, build scripts, procedural macros, dependencies, the toolchain, or the
+build environment. Every emitted record therefore sets
+`compiled_input_closure_attested=false`,
+`formal_build_attestation_present=false`,
+`formal_build_attestation_required=true`, and
+`formal_paired_multiplier_authorized=false`. An external sealed-builder
+attestation covering the full compiled-input closure remains a required gate
+before any formal paired multiplier can be authorized. Effective
+available-processor/runtime bindings are likewise captured before and after
+the trial and must remain identical and match the declared count.
+
+```bash
+cargo run --release --locked --example bench_kernel -- \
+  --matched-uniform-runtime-json-v2 \
+  --expected-commit 0123456789abcdef0123456789abcdef01234567 \
+  --actors 16 \
+  --base-seed 71501 \
+  --warmup-seconds 1 \
+  --measure-seconds 10 \
+  --trial-id pair-0001-rust \
+  --binding-mode strict \
+  --affinity-contract-id fixed-cpuset.v1 \
+  --expected-available-processors 16 \
+  --cpu-contract-id cpu-model.v1 \
+  --topology-contract-id topology.v1 \
+  --host-contract-id designated-host.v1 \
+  --power-contract-id fixed-power.v1 \
+  --transcript-games-per-deck 0
+```
+
 H2 suppression auditing is explicit and policy-inert. `HarnessSurfaceV2::new`
 and the legacy raw-ceiling v1 retain `Full` ordered suppression records for
 replay diagnostics; `CountOnly` retains fixed reason counters; production

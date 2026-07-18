@@ -40,6 +40,9 @@ use three_lane_ceiling::{run_three_lane_ceiling_json_v1, ThreeLaneConfigV1};
 #[path = "bench_kernel/fast_actor_ceiling.rs"]
 mod fast_actor_ceiling;
 use fast_actor_ceiling::{run_fast_actor_ceiling_json_v2, FastActorConfigV2};
+#[path = "bench_kernel/matched_uniform_runtime.rs"]
+mod matched_uniform_runtime;
+use matched_uniform_runtime::{run_matched_uniform_runtime_json_v2, MatchedUniformConfigV2};
 
 // ------------------------------------------------------------- tuning knobs
 
@@ -62,6 +65,19 @@ const BLOCK_CHANCE: (u64, u64) = (35, 100);
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--matched-uniform-runtime-json-v2") {
+        match MatchedUniformConfigV2::parse(&args[1..]) {
+            Ok(config) => run_matched_uniform_runtime_json_v2(config),
+            Err(message) => {
+                eprintln!("{message}");
+                eprintln!(
+                    "usage: bench_kernel --matched-uniform-runtime-json-v2 --expected-commit HEX40 --actors 1|4|8|16 --base-seed UINT63 --warmup-seconds DECIMAL --measure-seconds DECIMAL --trial-id TOKEN --binding-mode strict|dirty-smoke --affinity-contract-id TOKEN --expected-available-processors N --cpu-contract-id TOKEN --topology-contract-id TOKEN --host-contract-id TOKEN --power-contract-id TOKEN [--transcript-games-per-deck 0|1|2]"
+                );
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if args.first().map(String::as_str) == Some("--fast-actor-ceiling-json-v2") {
         match FastActorConfigV2::parse(&args[1..]) {
             Ok(config) => run_fast_actor_ceiling_json_v2(config),
@@ -102,7 +118,7 @@ fn main() {
         return;
     }
     if !args.is_empty() {
-        eprintln!("usage: bench_kernel [--ceiling-json-v1 ... | --three-lane-ceiling-json-v1 ... | --fast-actor-ceiling-json-v2 ...]");
+        eprintln!("usage: bench_kernel [--ceiling-json-v1 ... | --three-lane-ceiling-json-v1 ... | --fast-actor-ceiling-json-v2 ... | --matched-uniform-runtime-json-v2 ...]");
         std::process::exit(2);
     }
     println!("=== mtg-kernel PERFORMANCE-ONLY benchmark suite (Sol #93 scope) ===");
