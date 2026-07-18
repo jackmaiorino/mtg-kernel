@@ -156,6 +156,10 @@ publication to the destination as the no-replace primitive, exact destination
 byte readback, and mandatory temporary cleanup. Existing evidence is never
 overwritten, including under a concurrent collision.
 
+When any gate fails, the JSON summary written to standard output includes the
+per-repeat timing and CPU-accounting diagnostics needed to identify the failed
+gate, but it never writes or promotes a canonical evidence artifact.
+
 The executable's manifest-template mode accepts only two distinct direct JSON
 children of `evidence/fast_sampler/`. It creates `evidence` and
 `evidence/fast_sampler` one component at a time, rejects traversal, repository

@@ -1985,6 +1985,7 @@ fn run() -> Result<bool, Box<dyn Error>> {
                 "canonical_evidence_written": false,
                 "claim_checks": claim_checks,
                 "summaries": summaries,
+                "repeat_diagnostics": &repeats,
             }))?
         );
         return Ok(false);
