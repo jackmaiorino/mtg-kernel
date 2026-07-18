@@ -8,8 +8,9 @@
 //! other id fails before an active session is created or replaced.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
-use crate::engine::Decision;
-use crate::ids::PlayerId;
+use crate::engine::{CastMode, CostKind, Decision, OptionalCostChoice};
+use crate::ids::{ObjectId, PlayerId};
+use crate::mana::ManaColor;
 use crate::phase_profile::{measure_optional, RlPhaseProfileV1, RlPhaseV1};
 use crate::policy_surface_v5::{
     FastActorInPlaceApplyErrorV1, PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5,
@@ -17,16 +18,18 @@ use crate::policy_surface_v5::{
 };
 use crate::rl::{
     build_deck_pair_state, core_policy_action_candidates_v5, legal_action_candidates_v5,
-    observe_policy_v5, parse_strict_json_value, ActionSemanticV1, CorePolicyActionCandidateV1,
-    EpisodeTerminalSummaryV1, LegalActionV5, ObservationV5, PlayerSeatV1,
-    PolicyLegalActionCandidateV5, RlContractError, TerminalClassificationV1, TerminalOutcomeV1,
-    TerminalSafeCodeV2,
+    observe_policy_v5, parse_strict_json_value, ActionSemanticV1, CardStableRefV1,
+    CorePolicyActionCandidateV1, EpisodeTerminalSummaryV1, LegalActionV5, ObservationV5,
+    PlayerSeatV1, PolicyLegalActionCandidateV5, RlContractError, TargetRefV1,
+    TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2,
 };
 use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition};
+use crate::state::{Target, Zone};
 use crate::surface_v2::{SuppressionAuditMode, SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fmt;
 
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
@@ -134,12 +137,224 @@ pub enum FastActorDecisionKindV1 {
 pub struct FastActorDecisionV1 {
     pub episode_id: u64,
     pub step: u64,
+    pub environment_revision: u64,
     pub physical_decision_id: u64,
     pub substep_index: u32,
     pub substep_count: u32,
     pub acting_player: PlayerSeatV1,
     pub decision_kind: FastActorDecisionKindV1,
     pub legal_action_count: u32,
+}
+
+/// Contract identifier for the deliberately partial action/binding encoder.
+///
+/// This slice contains no globals, full object state, relations, model input,
+/// or scorer claim. It must not be relabeled as `FlatDecisionV1`.
+pub const FLAT_ACTION_DECISION_SLICE_VERSION_V1: u32 = 1;
+pub const FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1: usize = 7;
+pub const FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V1: u32 = 1;
+pub const FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V1: u32 = 1;
+pub const FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V1: u32 = 1;
+
+/// Schema-v5 action-kind vocabulary used by the scalar mapper. The current
+/// executable flat session subset deliberately rejects `ChooseEffectColor`,
+/// `ChooseEffectNumber`, and `FinishTargetSelection`: schema-v5 reserves those
+/// semantic rows, but policy-v5 has no executable `Action` for them yet.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FlatActionKindV1 {
+    #[default]
+    Pass = 0,
+    PlayLand = 1,
+    CastSpell = 2,
+    ActivateManaAbility = 3,
+    ActivateAbility = 4,
+    PlotSpell = 5,
+    ChooseTarget = 6,
+    ChooseCostTarget = 7,
+    ChooseCastMode = 8,
+    ChooseKicker = 9,
+    ChooseSpellMode = 10,
+    ChooseEffectOption = 11,
+    ChooseEffectTarget = 12,
+    FinishEffectSelection = 13,
+    ChooseEffectColor = 14,
+    ChooseEffectNumber = 15,
+    ChooseEffectBoolean = 16,
+    FinishTargetSelection = 17,
+    ChooseOptionalCostUse = 18,
+    ChooseOptionalCostWhich = 19,
+    ChooseSpellCopyPayment = 20,
+    ChooseSpellCopyRetarget = 21,
+    ChooseMadnessCast = 22,
+    Discard = 23,
+    ChooseAttackerInclusion = 24,
+    ChooseBlockerInclusion = 25,
+    OrderTriggers = 26,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FlatActionRefRoleV1 {
+    #[default]
+    Source = 0,
+    Candidate = 1,
+    Card = 2,
+    Attacker = 3,
+    Blocker = 4,
+    TargetObject = 5,
+    Cards = 6,
+    PendingSources = 7,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum FlatActionObjectGroupV1 {
+    #[default]
+    SelfHand = 0,
+    KnownOpponentHand = 1,
+    SelfBattlefield = 2,
+    OpponentBattlefield = 3,
+    SelfGraveyard = 4,
+    OpponentGraveyard = 5,
+    Exile = 6,
+    Stack = 7,
+    Command = 8,
+    KnownSelfLibrary = 9,
+    KnownOpponentLibrary = 10,
+}
+
+pub const FLAT_ACTION_FLAG_PAY_V1: u16 = 1 << 0;
+pub const FLAT_ACTION_FLAG_CHANGE_TARGET_V1: u16 = 1 << 1;
+pub const FLAT_ACTION_FLAG_USE_COST_V1: u16 = 1 << 2;
+pub const FLAT_ACTION_FLAG_CAST_IT_V1: u16 = 1 << 3;
+pub const FLAT_ACTION_FLAG_VALUE_V1: u16 = 1 << 4;
+pub const FLAT_ACTION_FLAG_INCLUDE_V1: u16 = 1 << 5;
+
+/// Exact fixed-width scalar portion of one ordered policy-v5 action.
+///
+/// Enum fields use zero for absence and one-based ids for present values.
+/// Card/object semantics live in the ragged reference table.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlatActionCoreV1 {
+    pub kind: FlatActionKindV1,
+    pub flags: u16,
+    pub ability_index: u8,
+    pub remaining: u8,
+    pub mode_index: u8,
+    pub mode_count: u8,
+    pub option_index: u16,
+    pub option_count: u16,
+    pub selected_count: u16,
+    pub min_targets: u16,
+    pub max_targets: u16,
+    pub number: i32,
+    pub minimum: i32,
+    pub maximum: i32,
+    pub mana_choice: u8,
+    pub color: u8,
+    pub cast_mode: u8,
+    pub cost_kind: u8,
+    pub optional_cost_choice: u8,
+    pub target_kind: u8,
+    pub target_player: u8,
+    pub ref_start: u32,
+    pub ref_len: u16,
+}
+
+/// Actor-visible object identity used only by the partial action slice.
+/// Raw arena ids are deliberately absent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlatActionObjectV1 {
+    pub card_token: u16,
+    pub group: FlatActionObjectGroupV1,
+    pub actor_visible_ordinal: u16,
+    pub owner_relative: u8,
+    pub controller_relative: u8,
+    pub zone: u8,
+    pub zone_change_count: u32,
+}
+
+impl FlatActionObjectV1 {
+    fn canonical_key(self) -> (u8, u16, u32, u16, u8, u8, u8) {
+        (
+            self.group as u8,
+            self.actor_visible_ordinal,
+            self.zone_change_count,
+            self.card_token,
+            self.owner_relative,
+            self.controller_relative,
+            self.zone,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlatActionRefV1 {
+    pub action_index: u32,
+    pub role: FlatActionRefRoleV1,
+    pub order_index: u16,
+    pub associated_order: u16,
+    pub card_token: u16,
+    pub object_index: u16,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlatActionDecisionBindingV1 {
+    pub slice_version: u32,
+    pub ref_role_mapping_version: u32,
+    pub card_token_mapping_version: u32,
+    pub candidate_commitment_version: u32,
+    pub card_db_hash: u64,
+    pub episode_id: u64,
+    pub environment_revision: u64,
+    pub bound_policy_step_count: u64,
+    pub physical_decision_id: u64,
+    pub bound_physical_decision_count: u64,
+    pub substep_index: u32,
+    pub substep_count: u32,
+    pub acting_player: u8,
+    pub decision_kind: u8,
+    pub legal_action_count: u32,
+    /// First 128 bits of SHA-256 over the versioned ordered compact action,
+    /// reference, and referenced-object records. This is a stale-result guard,
+    /// not a collision-proof authorization token or artifact digest.
+    pub candidate_order_commitment: [u8; 16],
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlatActionDecisionSliceV1 {
+    pub binding: FlatActionDecisionBindingV1,
+    pub active_action_count: u32,
+    pub active_ref_count: u32,
+    pub active_object_count: u16,
+}
+
+pub struct FlatActionDecisionSliceBuffersV1<'a> {
+    pub actions: &'a mut [FlatActionCoreV1],
+    pub refs: &'a mut [FlatActionRefV1],
+    pub objects: &'a mut [FlatActionObjectV1],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlatActionDecisionSliceErrorV1 {
+    NoCurrentDecision,
+    StaleEpisodeBinding,
+    StaleEnvironmentRevision,
+    DecisionMetadataMismatch,
+    CorruptCurrentBinding,
+    ActingPlayerMismatch,
+    UnsupportedActionSemantic,
+    InvalidTriggerOrder,
+    InvalidActionRange,
+    InvalidDecisionRelation,
+    InvalidActionReference,
+    HiddenActionReference,
+    CheckedIntegerRange,
+    DuplicateCanonicalObject,
+    InsufficientActionCapacity { required: usize, available: usize },
+    InsufficientRefCapacity { required: usize, available: usize },
+    InsufficientObjectCapacity { required: usize, available: usize },
 }
 
 /// Non-wire response for [`FastActorSessionV1`].
@@ -199,6 +414,10 @@ struct CurrentDecisionV1 {
 struct FastActorCurrentDecisionV1 {
     actor: PlayerId,
     decision_kind: FastActorDecisionKindV1,
+    /// Exact private decision that produced `candidates`. The flat encoder
+    /// validates candidate context against this value without rebuilding the
+    /// allocating policy-v5 candidate vector.
+    origin_decision: PolicyDecisionV5,
     physical_decision_id: u64,
     substep_index: u32,
     substep_count: u32,
@@ -206,6 +425,2004 @@ struct FastActorCurrentDecisionV1 {
     environment_revision: u64,
     bound_policy_step_count: u64,
     bound_physical_decision_count: u64,
+}
+
+fn flat_player_id_v1(seat: PlayerSeatV1) -> PlayerId {
+    match seat {
+        PlayerSeatV1::P0 => PlayerId::P0,
+        PlayerSeatV1::P1 => PlayerId::P1,
+    }
+}
+
+fn flat_relative_seat_v1(
+    seat: PlayerSeatV1,
+    actor: PlayerSeatV1,
+) -> Result<u8, FlatActionDecisionSliceErrorV1> {
+    if seat == actor {
+        Ok(0)
+    } else if seat
+        == match actor {
+            PlayerSeatV1::P0 => PlayerSeatV1::P1,
+            PlayerSeatV1::P1 => PlayerSeatV1::P0,
+        }
+    {
+        Ok(1)
+    } else {
+        Err(FlatActionDecisionSliceErrorV1::ActingPlayerMismatch)
+    }
+}
+
+fn flat_mana_color_v1(color: ManaColor) -> u8 {
+    match color {
+        ManaColor::W => 1,
+        ManaColor::U => 2,
+        ManaColor::B => 3,
+        ManaColor::R => 4,
+        ManaColor::G => 5,
+        ManaColor::C => 6,
+    }
+}
+
+fn flat_cast_mode_v1(mode: CastMode) -> u8 {
+    match mode {
+        CastMode::Normal => 1,
+        CastMode::Alternative => 2,
+    }
+}
+
+fn flat_cost_kind_v1(kind: CostKind) -> u8 {
+    match kind {
+        CostKind::SacrificeLands => 1,
+        CostKind::SacrificePermanents => 2,
+        CostKind::SacrificeCreatures => 3,
+        CostKind::SacrificeArtifacts => 4,
+        CostKind::DiscardCards => 5,
+        CostKind::ExileFromGraveyard => 6,
+        CostKind::TapPermanents => 7,
+        CostKind::ReturnPermanentsToHand => 8,
+        CostKind::PayLife => 9,
+        CostKind::RemoveCounters => 10,
+        CostKind::PutCounters => 11,
+    }
+}
+
+fn flat_optional_cost_choice_v1(choice: OptionalCostChoice) -> u8 {
+    match choice {
+        OptionalCostChoice::Decline => 1,
+        OptionalCostChoice::Discard => 2,
+        OptionalCostChoice::SacrificeLand => 3,
+    }
+}
+
+fn flat_action_kind_id_v1(kind: FlatActionKindV1) -> u8 {
+    match kind {
+        FlatActionKindV1::Pass => 0,
+        FlatActionKindV1::PlayLand => 1,
+        FlatActionKindV1::CastSpell => 2,
+        FlatActionKindV1::ActivateManaAbility => 3,
+        FlatActionKindV1::ActivateAbility => 4,
+        FlatActionKindV1::PlotSpell => 5,
+        FlatActionKindV1::ChooseTarget => 6,
+        FlatActionKindV1::ChooseCostTarget => 7,
+        FlatActionKindV1::ChooseCastMode => 8,
+        FlatActionKindV1::ChooseKicker => 9,
+        FlatActionKindV1::ChooseSpellMode => 10,
+        FlatActionKindV1::ChooseEffectOption => 11,
+        FlatActionKindV1::ChooseEffectTarget => 12,
+        FlatActionKindV1::FinishEffectSelection => 13,
+        FlatActionKindV1::ChooseEffectColor => 14,
+        FlatActionKindV1::ChooseEffectNumber => 15,
+        FlatActionKindV1::ChooseEffectBoolean => 16,
+        FlatActionKindV1::FinishTargetSelection => 17,
+        FlatActionKindV1::ChooseOptionalCostUse => 18,
+        FlatActionKindV1::ChooseOptionalCostWhich => 19,
+        FlatActionKindV1::ChooseSpellCopyPayment => 20,
+        FlatActionKindV1::ChooseSpellCopyRetarget => 21,
+        FlatActionKindV1::ChooseMadnessCast => 22,
+        FlatActionKindV1::Discard => 23,
+        FlatActionKindV1::ChooseAttackerInclusion => 24,
+        FlatActionKindV1::ChooseBlockerInclusion => 25,
+        FlatActionKindV1::OrderTriggers => 26,
+    }
+}
+
+/// Stable accelerator/reference vocabulary. Callers must bind
+/// [`FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V1`] rather than relying on Rust
+/// discriminant layout.
+fn flat_action_ref_role_id_v1(role: FlatActionRefRoleV1) -> u8 {
+    match role {
+        FlatActionRefRoleV1::Source => 0,
+        FlatActionRefRoleV1::Candidate => 1,
+        FlatActionRefRoleV1::Card => 2,
+        FlatActionRefRoleV1::Attacker => 3,
+        FlatActionRefRoleV1::Blocker => 4,
+        FlatActionRefRoleV1::TargetObject => 5,
+        FlatActionRefRoleV1::Cards => 6,
+        FlatActionRefRoleV1::PendingSources => 7,
+    }
+}
+
+fn flat_decision_kind_id_v1(kind: FastActorDecisionKindV1) -> u8 {
+    match kind {
+        FastActorDecisionKindV1::Surface => 0,
+        FastActorDecisionKindV1::AttackerInclusion => 1,
+        FastActorDecisionKindV1::BlockerInclusion => 2,
+    }
+}
+
+fn flat_zone_v1(zone: Zone) -> u8 {
+    match zone {
+        Zone::Library => 0,
+        Zone::Hand => 1,
+        Zone::Battlefield => 2,
+        Zone::Graveyard => 3,
+        Zone::Stack => 4,
+        Zone::Exile => 5,
+        Zone::Command => 6,
+    }
+}
+
+fn flat_action_core_and_refs_v1<F>(
+    semantic: &ActionSemanticV1,
+    expected_actor: PlayerSeatV1,
+    ref_start: u32,
+    mut emit_ref: F,
+) -> Result<FlatActionCoreV1, FlatActionDecisionSliceErrorV1>
+where
+    F: FnMut(
+        FlatActionRefRoleV1,
+        u16,
+        u16,
+        &CardStableRefV1,
+    ) -> Result<(), FlatActionDecisionSliceErrorV1>,
+{
+    let mut core = FlatActionCoreV1 {
+        ref_start,
+        ..FlatActionCoreV1::default()
+    };
+    let mut ref_count = 0_usize;
+    let mut push_ref = |role: FlatActionRefRoleV1,
+                        order: usize,
+                        associated_order: usize,
+                        reference: &CardStableRefV1|
+     -> Result<(), FlatActionDecisionSliceErrorV1> {
+        let order = u16::try_from(order)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let associated_order = u16::try_from(associated_order)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        emit_ref(role, order, associated_order, reference)?;
+        ref_count = ref_count
+            .checked_add(1)
+            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        Ok(())
+    };
+    let check_actor = |actor: PlayerSeatV1| {
+        if actor == expected_actor {
+            Ok(())
+        } else {
+            Err(FlatActionDecisionSliceErrorV1::ActingPlayerMismatch)
+        }
+    };
+    match semantic {
+        ActionSemanticV1::Pass { actor } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::Pass;
+        }
+        ActionSemanticV1::PlayLand { actor, source } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::PlayLand;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::CastSpell { actor, source } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::CastSpell;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ActivateManaAbility {
+            actor,
+            source,
+            mana_choice,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ActivateManaAbility;
+            core.mana_choice = mana_choice.map(flat_mana_color_v1).unwrap_or(0);
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ActivateAbility {
+            actor,
+            source,
+            ability_index,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ActivateAbility;
+            core.ability_index = *ability_index;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::PlotSpell { actor, source } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::PlotSpell;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseTarget {
+            actor,
+            source,
+            remaining,
+            target,
+        } => {
+            check_actor(*actor)?;
+            if *remaining == 0 {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange);
+            }
+            core.kind = FlatActionKindV1::ChooseTarget;
+            core.remaining = *remaining;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+            match target {
+                TargetRefV1::Player { player } => {
+                    core.target_kind = 1;
+                    core.target_player = flat_relative_seat_v1(*player, expected_actor)? + 1;
+                }
+                TargetRefV1::Object { object } => {
+                    core.target_kind = 2;
+                    push_ref(FlatActionRefRoleV1::TargetObject, 0, 0, object)?;
+                }
+            }
+        }
+        ActionSemanticV1::ChooseCostTarget {
+            actor,
+            source,
+            cost_kind,
+            remaining,
+            candidate,
+        } => {
+            check_actor(*actor)?;
+            if *remaining == 0 {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange);
+            }
+            core.kind = FlatActionKindV1::ChooseCostTarget;
+            core.cost_kind = flat_cost_kind_v1(*cost_kind);
+            core.remaining = *remaining;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+            push_ref(FlatActionRefRoleV1::Candidate, 0, 0, candidate)?;
+        }
+        ActionSemanticV1::ChooseCastMode {
+            actor,
+            source,
+            mode,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseCastMode;
+            core.cast_mode = flat_cast_mode_v1(*mode);
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseKicker { actor, source, pay } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseKicker;
+            if *pay {
+                core.flags |= FLAT_ACTION_FLAG_PAY_V1;
+            }
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseSpellMode {
+            actor,
+            source,
+            mode_index,
+            mode_count,
+        } => {
+            check_actor(*actor)?;
+            if *mode_count == 0 || *mode_index >= *mode_count {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange);
+            }
+            core.kind = FlatActionKindV1::ChooseSpellMode;
+            core.mode_index = *mode_index;
+            core.mode_count = *mode_count;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseEffectOption {
+            actor,
+            source,
+            option_index,
+            option_count,
+        } => {
+            check_actor(*actor)?;
+            if *option_count < 2 || *option_index >= *option_count {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange);
+            }
+            core.kind = FlatActionKindV1::ChooseEffectOption;
+            core.option_index = *option_index;
+            core.option_count = *option_count;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseEffectTarget {
+            actor,
+            source,
+            target,
+            selected_count,
+            min_targets,
+            max_targets,
+        } => {
+            check_actor(*actor)?;
+            if *min_targets > *max_targets || *selected_count >= *max_targets {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange);
+            }
+            core.kind = FlatActionKindV1::ChooseEffectTarget;
+            core.selected_count = *selected_count;
+            core.min_targets = *min_targets;
+            core.max_targets = *max_targets;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+            match target {
+                TargetRefV1::Player { player } => {
+                    core.target_kind = 1;
+                    core.target_player = flat_relative_seat_v1(*player, expected_actor)? + 1;
+                }
+                TargetRefV1::Object { object } => {
+                    core.target_kind = 2;
+                    push_ref(FlatActionRefRoleV1::TargetObject, 0, 0, object)?;
+                }
+            }
+        }
+        ActionSemanticV1::FinishEffectSelection {
+            actor,
+            source,
+            selected_count,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::FinishEffectSelection;
+            core.selected_count = *selected_count;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseEffectColor {
+            actor,
+            source,
+            color,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseEffectColor;
+            core.color = flat_mana_color_v1(*color);
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseEffectNumber {
+            actor,
+            source,
+            number,
+            minimum,
+            maximum,
+        } => {
+            check_actor(*actor)?;
+            if *minimum > *maximum || *number < *minimum || *number > *maximum {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange);
+            }
+            core.kind = FlatActionKindV1::ChooseEffectNumber;
+            core.number = *number;
+            core.minimum = *minimum;
+            core.maximum = *maximum;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseEffectBoolean {
+            actor,
+            source,
+            value,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseEffectBoolean;
+            if *value {
+                core.flags |= FLAT_ACTION_FLAG_VALUE_V1;
+            }
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::FinishTargetSelection {
+            actor,
+            source,
+            selected_count,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::FinishTargetSelection;
+            core.selected_count = *selected_count;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseOptionalCostUse;
+            if *use_cost {
+                core.flags |= FLAT_ACTION_FLAG_USE_COST_V1;
+            }
+        }
+        ActionSemanticV1::ChooseOptionalCostWhich { actor, choice } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseOptionalCostWhich;
+            core.optional_cost_choice = flat_optional_cost_choice_v1(*choice);
+        }
+        ActionSemanticV1::ChooseSpellCopyPayment { actor, source, pay } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseSpellCopyPayment;
+            if *pay {
+                core.flags |= FLAT_ACTION_FLAG_PAY_V1;
+            }
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseSpellCopyRetarget {
+            actor,
+            source,
+            change_target,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseSpellCopyRetarget;
+            if *change_target {
+                core.flags |= FLAT_ACTION_FLAG_CHANGE_TARGET_V1;
+            }
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
+        ActionSemanticV1::ChooseMadnessCast {
+            actor,
+            card,
+            cast_it,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseMadnessCast;
+            if *cast_it {
+                core.flags |= FLAT_ACTION_FLAG_CAST_IT_V1;
+            }
+            push_ref(FlatActionRefRoleV1::Card, 0, 0, card)?;
+        }
+        ActionSemanticV1::Discard { actor, cards } => {
+            check_actor(*actor)?;
+            if cards.len() != 1 {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange);
+            }
+            core.kind = FlatActionKindV1::Discard;
+            for (index, card) in cards.iter().enumerate() {
+                push_ref(FlatActionRefRoleV1::Cards, index, 0, card)?;
+            }
+        }
+        ActionSemanticV1::ChooseAttackerInclusion {
+            actor,
+            attacker,
+            include,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseAttackerInclusion;
+            if *include {
+                core.flags |= FLAT_ACTION_FLAG_INCLUDE_V1;
+            }
+            push_ref(FlatActionRefRoleV1::Attacker, 0, 0, attacker)?;
+        }
+        ActionSemanticV1::ChooseBlockerInclusion {
+            actor,
+            attacker,
+            blocker,
+            include,
+        } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ChooseBlockerInclusion;
+            if *include {
+                core.flags |= FLAT_ACTION_FLAG_INCLUDE_V1;
+            }
+            push_ref(FlatActionRefRoleV1::Attacker, 0, 0, attacker)?;
+            push_ref(FlatActionRefRoleV1::Blocker, 0, 0, blocker)?;
+        }
+        ActionSemanticV1::OrderTriggers {
+            actor,
+            pending_sources,
+            order,
+        } => {
+            check_actor(*actor)?;
+            let count = pending_sources.len();
+            if count == 0 || count > FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1 || order.len() != count {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidTriggerOrder);
+            }
+            let mut seen = 0_u8;
+            for &position in order {
+                if position >= count {
+                    return Err(FlatActionDecisionSliceErrorV1::InvalidTriggerOrder);
+                }
+                let bit = 1_u8 << position;
+                if seen & bit != 0 {
+                    return Err(FlatActionDecisionSliceErrorV1::InvalidTriggerOrder);
+                }
+                seen |= bit;
+            }
+            if seen != ((1_u16 << count) - 1) as u8 {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidTriggerOrder);
+            }
+            core.kind = FlatActionKindV1::OrderTriggers;
+            for (index, source) in pending_sources.iter().enumerate() {
+                push_ref(
+                    FlatActionRefRoleV1::PendingSources,
+                    index,
+                    order[index],
+                    source,
+                )?;
+            }
+        }
+        ActionSemanticV1::DeclareAttackers { .. }
+        | ActionSemanticV1::DeclareBlockersForAttacker { .. }
+        | ActionSemanticV1::Ambiguous { .. } => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+        }
+    }
+    core.ref_len = u16::try_from(ref_count)
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    Ok(core)
+}
+
+fn flat_visible_action_object_v1(
+    state: &crate::state::GameState,
+    actor: PlayerId,
+    reference: &CardStableRefV1,
+) -> Result<FlatActionObjectV1, FlatActionDecisionSliceErrorV1> {
+    let object_id = ObjectId(reference.arena_id);
+    let object = state
+        .objects
+        .try_get(object_id)
+        .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+    let owner: PlayerSeatV1 = object.owner.into();
+    let controller: PlayerSeatV1 = object.controller.into();
+    if object.card_def != reference.card_db_id
+        || owner != reference.owner
+        || controller != reference.controller
+        || object.zone != reference.zone
+        || object.zone_change_count != reference.zone_change_count
+    {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
+    }
+    let position = |objects: &[ObjectId]| objects.iter().position(|&id| id == object_id);
+    let (group, ordinal) = match object.zone {
+        Zone::Hand if object.owner == actor => (
+            FlatActionObjectGroupV1::SelfHand,
+            position(&state.players[actor.index()].hand)
+                .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?,
+        ),
+        Zone::Hand => {
+            if position(&state.players[object.owner.index()].hand).is_none() {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
+            }
+            let ordinal = state.hand_knowledge[actor.index()][object.owner.index()]
+                .iter()
+                .position(|entry| {
+                    entry.object == object_id && entry.zone_change_count == object.zone_change_count
+                })
+                .ok_or(FlatActionDecisionSliceErrorV1::HiddenActionReference)?;
+            (FlatActionObjectGroupV1::KnownOpponentHand, ordinal)
+        }
+        Zone::Battlefield => {
+            let ordinal = position(&state.players[object.controller.index()].battlefield)
+                .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+            (
+                if object.controller == actor {
+                    FlatActionObjectGroupV1::SelfBattlefield
+                } else {
+                    FlatActionObjectGroupV1::OpponentBattlefield
+                },
+                ordinal,
+            )
+        }
+        Zone::Graveyard => {
+            let ordinal = position(&state.players[object.owner.index()].graveyard)
+                .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+            (
+                if object.owner == actor {
+                    FlatActionObjectGroupV1::SelfGraveyard
+                } else {
+                    FlatActionObjectGroupV1::OpponentGraveyard
+                },
+                ordinal,
+            )
+        }
+        Zone::Exile => (
+            FlatActionObjectGroupV1::Exile,
+            position(&state.exile).ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?,
+        ),
+        Zone::Stack => (
+            FlatActionObjectGroupV1::Stack,
+            state
+                .stack
+                .iter()
+                .position(|item| item.source == object_id)
+                .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?,
+        ),
+        Zone::Command => (
+            FlatActionObjectGroupV1::Command,
+            position(&state.command)
+                .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?,
+        ),
+        Zone::Library => {
+            let knowledge = state.library_knowledge[actor.index()][object.owner.index()]
+                .iter()
+                .find(|entry| {
+                    entry.object == object_id && entry.zone_change_count == object.zone_change_count
+                })
+                .ok_or(FlatActionDecisionSliceErrorV1::HiddenActionReference)?;
+            let library_position = usize::try_from(knowledge.position)
+                .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+            if state.players[object.owner.index()]
+                .library
+                .get(library_position)
+                != Some(&object_id)
+            {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
+            }
+            (
+                if object.owner == actor {
+                    FlatActionObjectGroupV1::KnownSelfLibrary
+                } else {
+                    FlatActionObjectGroupV1::KnownOpponentLibrary
+                },
+                library_position,
+            )
+        }
+    };
+    Ok(FlatActionObjectV1 {
+        card_token: object
+            .card_def
+            .checked_add(1)
+            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+        group,
+        actor_visible_ordinal: u16::try_from(ordinal)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+        owner_relative: flat_relative_seat_v1(owner, actor.into())?,
+        controller_relative: flat_relative_seat_v1(controller, actor.into())?,
+        zone: flat_zone_v1(object.zone),
+        zone_change_count: object.zone_change_count,
+    })
+}
+
+fn flat_current_ref_for_object_v1(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+    object_id: ObjectId,
+) -> Result<Option<FlatActionObjectV1>, FlatActionDecisionSliceErrorV1> {
+    let actor: PlayerSeatV1 = current.actor.into();
+    let mut found = None;
+    for candidate in &current.candidates {
+        flat_action_core_and_refs_v1(&candidate.semantic, actor, 0, |_, _, _, reference| {
+            if reference.arena_id == object_id.0 && found.is_none() {
+                found = Some(flat_visible_action_object_v1(
+                    state,
+                    current.actor,
+                    reference,
+                )?);
+            }
+            Ok(())
+        })?;
+        if found.is_some() {
+            break;
+        }
+    }
+    Ok(found)
+}
+
+fn flat_validate_controller_zone_v1(
+    state: &crate::state::GameState,
+    acting_player: PlayerId,
+    reference: &CardStableRefV1,
+    expected_controller: PlayerId,
+    expected_zone: Zone,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_visible_action_object_v1(state, acting_player, reference)?;
+    let object = state
+        .objects
+        .try_get(ObjectId(reference.arena_id))
+        .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+    if object.controller != expected_controller || object.zone != expected_zone {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
+    Ok(())
+}
+
+fn flat_validate_owner_controller_zone_v1(
+    state: &crate::state::GameState,
+    acting_player: PlayerId,
+    reference: &CardStableRefV1,
+    expected_owner: PlayerId,
+    expected_controller: PlayerId,
+    expected_zone: Zone,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_controller_zone_v1(
+        state,
+        acting_player,
+        reference,
+        expected_controller,
+        expected_zone,
+    )?;
+    let object = state
+        .objects
+        .try_get(ObjectId(reference.arena_id))
+        .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+    if object.owner != expected_owner {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
+    Ok(())
+}
+
+fn flat_validate_current_decision_relations_v1(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if current.substep_count == 0 || current.substep_index >= current.substep_count {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
+    let actor: PlayerSeatV1 = current.actor.into();
+    match current.decision_kind {
+        FastActorDecisionKindV1::Surface => {
+            if current.substep_index != 0
+                || current.substep_count != 1
+                || current.candidates.iter().any(|candidate| {
+                    matches!(
+                        candidate.semantic,
+                        ActionSemanticV1::ChooseAttackerInclusion { .. }
+                            | ActionSemanticV1::ChooseBlockerInclusion { .. }
+                    )
+                })
+            {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            }
+        }
+        FastActorDecisionKindV1::AttackerInclusion => {
+            let [first, second] = current.candidates.as_slice() else {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            };
+            let (
+                ActionSemanticV1::ChooseAttackerInclusion {
+                    actor: first_actor,
+                    attacker: first_attacker,
+                    include: false,
+                },
+                ActionSemanticV1::ChooseAttackerInclusion {
+                    actor: second_actor,
+                    attacker: second_attacker,
+                    include: true,
+                },
+            ) = (&first.semantic, &second.semantic)
+            else {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            };
+            if *first_actor != actor || *second_actor != actor || first_attacker != second_attacker
+            {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            }
+            flat_validate_controller_zone_v1(
+                state,
+                current.actor,
+                first_attacker,
+                current.actor,
+                Zone::Battlefield,
+            )?;
+        }
+        FastActorDecisionKindV1::BlockerInclusion => {
+            let [first, second] = current.candidates.as_slice() else {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            };
+            let (
+                ActionSemanticV1::ChooseBlockerInclusion {
+                    actor: first_actor,
+                    attacker: first_attacker,
+                    blocker: first_blocker,
+                    include: false,
+                },
+                ActionSemanticV1::ChooseBlockerInclusion {
+                    actor: second_actor,
+                    attacker: second_attacker,
+                    blocker: second_blocker,
+                    include: true,
+                },
+            ) = (&first.semantic, &second.semantic)
+            else {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            };
+            if *first_actor != actor
+                || *second_actor != actor
+                || first_attacker != second_attacker
+                || first_blocker != second_blocker
+            {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            }
+            flat_validate_controller_zone_v1(
+                state,
+                current.actor,
+                first_attacker,
+                current.actor.opponent(),
+                Zone::Battlefield,
+            )?;
+            flat_validate_controller_zone_v1(
+                state,
+                current.actor,
+                first_blocker,
+                current.actor,
+                Zone::Battlefield,
+            )?;
+        }
+    }
+
+    for candidate in &current.candidates {
+        match &candidate.semantic {
+            ActionSemanticV1::ActivateManaAbility { source, .. }
+            | ActionSemanticV1::ActivateAbility { source, .. } => {
+                flat_validate_controller_zone_v1(
+                    state,
+                    current.actor,
+                    source,
+                    current.actor,
+                    Zone::Battlefield,
+                )?;
+            }
+            ActionSemanticV1::PlotSpell { source, .. } => {
+                flat_validate_owner_controller_zone_v1(
+                    state,
+                    current.actor,
+                    source,
+                    current.actor,
+                    current.actor,
+                    Zone::Hand,
+                )?;
+            }
+            ActionSemanticV1::Discard { cards, .. } => {
+                for card in cards {
+                    flat_validate_owner_controller_zone_v1(
+                        state,
+                        current.actor,
+                        card,
+                        current.actor,
+                        current.actor,
+                        Zone::Hand,
+                    )?;
+                }
+            }
+            ActionSemanticV1::ChooseMadnessCast { card, .. } => {
+                flat_validate_owner_controller_zone_v1(
+                    state,
+                    current.actor,
+                    card,
+                    current.actor,
+                    current.actor,
+                    Zone::Exile,
+                )?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn flat_target_matches_v1(reference: &TargetRefV1, target: Target) -> bool {
+    match (reference, target) {
+        (TargetRefV1::Player { player }, Target::Player(actual)) => {
+            flat_player_id_v1(*player) == actual
+        }
+        (TargetRefV1::Object { object }, Target::Object(actual)) => {
+            ObjectId(object.arena_id) == actual
+        }
+        _ => false,
+    }
+}
+
+fn flat_ref_matches_object_v1(reference: &CardStableRefV1, object: ObjectId) -> bool {
+    ObjectId(reference.arena_id) == object
+}
+
+fn flat_trigger_order_rank_v1(order: &[usize]) -> Option<usize> {
+    if order.is_empty() || order.len() > FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1 {
+        return None;
+    }
+    let mut current = [0_usize; FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1];
+    for (index, slot) in current[..order.len()].iter_mut().enumerate() {
+        *slot = index;
+    }
+    let mut rank = 0_usize;
+    for start in 0..order.len() {
+        let branch = current[start..order.len()]
+            .iter()
+            .position(|value| *value == order[start])?;
+        let subtree_size = (1..(order.len() - start)).product::<usize>();
+        rank = rank.checked_add(branch.checked_mul(subtree_size)?)?;
+        current.swap(start, start + branch);
+    }
+    Some(rank)
+}
+
+/// Validates every candidate field against the exact private decision that
+/// produced it. This closes the gap where an executable `Action` omits
+/// contextual fields such as source, remaining count, option count, or the
+/// Madness card. The check intentionally does not rebuild the allocating
+/// policy-v5 candidate vector.
+fn flat_validate_origin_decision_v1(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    use crate::engine::Action;
+    use crate::surface::SurfaceAction;
+
+    let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
+    match &current.origin_decision {
+        PolicyDecisionV5::AttackerInclusion {
+            player,
+            attacker,
+            candidate_index,
+            candidate_count,
+        } => {
+            if current.decision_kind != FastActorDecisionKindV1::AttackerInclusion
+                || current.actor != *player
+                || current.substep_index != *candidate_index
+                || current.substep_count != *candidate_count
+            {
+                return Err(invalid());
+            }
+            for (index, candidate) in current.candidates.iter().enumerate() {
+                let include = index == 1;
+                if !matches!(
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::ChooseAttackerInclusion {
+                            actor,
+                            attacker: semantic_attacker,
+                            include: semantic_include,
+                        },
+                        PolicyActionV5::ChooseAttackerInclusion {
+                            actor: action_actor,
+                            attacker: action_attacker,
+                            include: action_include,
+                        }
+                    ) if flat_player_id_v1(*actor) == *player
+                        && flat_ref_matches_object_v1(semantic_attacker, *attacker)
+                        && *semantic_include == include
+                        && *action_actor == *player
+                        && *action_attacker == *attacker
+                        && *action_include == include
+                ) {
+                    return Err(invalid());
+                }
+            }
+            return Ok(());
+        }
+        PolicyDecisionV5::BlockerInclusion {
+            player,
+            attacker,
+            blocker,
+            candidate_index,
+            candidate_count,
+        } => {
+            if current.decision_kind != FastActorDecisionKindV1::BlockerInclusion
+                || current.actor != *player
+                || current.substep_index != *candidate_index
+                || current.substep_count != *candidate_count
+            {
+                return Err(invalid());
+            }
+            for (index, candidate) in current.candidates.iter().enumerate() {
+                let include = index == 1;
+                if !matches!(
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::ChooseBlockerInclusion {
+                            actor,
+                            attacker: semantic_attacker,
+                            blocker: semantic_blocker,
+                            include: semantic_include,
+                        },
+                        PolicyActionV5::ChooseBlockerInclusion {
+                            actor: action_actor,
+                            attacker: action_attacker,
+                            blocker: action_blocker,
+                            include: action_include,
+                        }
+                    ) if flat_player_id_v1(*actor) == *player
+                        && flat_ref_matches_object_v1(semantic_attacker, *attacker)
+                        && flat_ref_matches_object_v1(semantic_blocker, *blocker)
+                        && *semantic_include == include
+                        && *action_actor == *player
+                        && *action_attacker == *attacker
+                        && *action_blocker == *blocker
+                        && *action_include == include
+                ) {
+                    return Err(invalid());
+                }
+            }
+            return Ok(());
+        }
+        PolicyDecisionV5::Surface(_) => {
+            if current.decision_kind != FastActorDecisionKindV1::Surface
+                || current.substep_index != 0
+                || current.substep_count != 1
+            {
+                return Err(invalid());
+            }
+        }
+    }
+
+    let PolicyDecisionV5::Surface(origin) = &current.origin_decision else {
+        unreachable!("inclusion decisions returned above")
+    };
+    let SurfaceDecision::Decision(origin) = origin else {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    };
+    let actor_matches = |actor: PlayerSeatV1, player: PlayerId| flat_player_id_v1(actor) == player;
+    let candidates = current.candidates.as_slice();
+
+    match origin {
+        Decision::CastSpellOrPass {
+            player,
+            castable_spells,
+            mana_abilities,
+            land_drops,
+            activatable_abilities,
+            plot_actions,
+        } => {
+            let expected_count = castable_spells
+                .len()
+                .checked_add(mana_abilities.len())
+                .and_then(|count| count.checked_add(land_drops.len()))
+                .and_then(|count| count.checked_add(activatable_abilities.len()))
+                .and_then(|count| count.checked_add(plot_actions.len()))
+                .and_then(|count| count.checked_add(1))
+                .ok_or_else(invalid)?;
+            if current.actor != *player || candidates.len() != expected_count {
+                return Err(invalid());
+            }
+            let mut cursor = 0_usize;
+            for object in castable_spells {
+                let candidate = &candidates[cursor];
+                if !matches!(
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::CastSpell { actor, source },
+                        PolicyActionV5::Surface(SurfaceAction::Action(Action::CastSpell(action)))
+                    ) if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *object)
+                        && action == object
+                ) {
+                    return Err(invalid());
+                }
+                cursor += 1;
+            }
+            for object in mana_abilities {
+                let state_object = state.objects.try_get(*object).ok_or_else(invalid)?;
+                let choices = crate::card_def::CARD_DEFS
+                    .get(usize::from(state_object.card_def))
+                    .ok_or_else(invalid)?
+                    .produces_mana;
+                let expected_choice = (choices.len() == 1).then_some(choices[0]);
+                let candidate = &candidates[cursor];
+                if !matches!(
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::ActivateManaAbility {
+                            actor,
+                            source,
+                            mana_choice,
+                        },
+                        PolicyActionV5::Surface(SurfaceAction::Action(
+                            Action::ActivateManaAbility(action)
+                        ))
+                    ) if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *object)
+                        && *mana_choice == expected_choice
+                        && action == object
+                ) {
+                    return Err(invalid());
+                }
+                cursor += 1;
+            }
+            for object in land_drops {
+                let candidate = &candidates[cursor];
+                if !matches!(
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::PlayLand { actor, source },
+                        PolicyActionV5::Surface(SurfaceAction::Action(Action::PlayLand(action)))
+                    ) if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *object)
+                        && action == object
+                ) {
+                    return Err(invalid());
+                }
+                cursor += 1;
+            }
+            for (object, expected_ability_index) in activatable_abilities {
+                let candidate = &candidates[cursor];
+                if !matches!(
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::ActivateAbility {
+                            actor,
+                            source,
+                            ability_index,
+                        },
+                        PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateAbility(
+                            action,
+                            action_ability_index,
+                        )))
+                    ) if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *object)
+                        && ability_index == expected_ability_index
+                        && action == object
+                        && action_ability_index == expected_ability_index
+                ) {
+                    return Err(invalid());
+                }
+                cursor += 1;
+            }
+            for object in plot_actions {
+                let candidate = &candidates[cursor];
+                if !matches!(
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::PlotSpell { actor, source },
+                        PolicyActionV5::Surface(SurfaceAction::Action(Action::PlotSpell(action)))
+                    ) if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *object)
+                        && action == object
+                ) {
+                    return Err(invalid());
+                }
+                cursor += 1;
+            }
+            if !matches!(
+                (&candidates[cursor].semantic, &candidates[cursor].policy_action),
+                (
+                    ActionSemanticV1::Pass { actor },
+                    PolicyActionV5::Surface(SurfaceAction::Action(Action::Pass))
+                ) if actor_matches(*actor, *player)
+            ) {
+                return Err(invalid());
+            }
+        }
+        Decision::ChooseTargets {
+            player,
+            spell,
+            remaining,
+            legal_targets,
+        } => {
+            if current.actor != *player || candidates.len() != legal_targets.len() {
+                return Err(invalid());
+            }
+            for (candidate, target) in candidates.iter().zip(legal_targets) {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseTarget {
+                        actor,
+                        source,
+                        remaining: semantic_remaining,
+                        target: semantic_target,
+                    } if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *spell)
+                        && semantic_remaining == remaining
+                        && flat_target_matches_v1(semantic_target, *target)
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::ChooseCostTargets {
+            player,
+            source,
+            cost_kind,
+            remaining,
+            candidates: origin_candidates,
+        } => {
+            if current.actor != *player || candidates.len() != origin_candidates.len() {
+                return Err(invalid());
+            }
+            for (candidate, expected_candidate) in candidates.iter().zip(origin_candidates) {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseCostTarget {
+                        actor,
+                        source: semantic_source,
+                        cost_kind: semantic_cost_kind,
+                        remaining: semantic_remaining,
+                        candidate: semantic_candidate,
+                    } if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(semantic_source, *source)
+                        && semantic_cost_kind == cost_kind
+                        && semantic_remaining == remaining
+                        && flat_ref_matches_object_v1(semantic_candidate, *expected_candidate)
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::ChooseCastMode {
+            player,
+            spell,
+            options,
+        } => {
+            if current.actor != *player || candidates.len() != options.len() {
+                return Err(invalid());
+            }
+            for (candidate, expected_mode) in candidates.iter().zip(options) {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseCastMode {
+                        actor,
+                        source,
+                        mode,
+                    } if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *spell)
+                        && mode == expected_mode
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::ChooseKicker { player, spell } => {
+            if current.actor != *player || candidates.len() != 2 {
+                return Err(invalid());
+            }
+            for (index, candidate) in candidates.iter().enumerate() {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseKicker { actor, source, pay }
+                        if actor_matches(*actor, *player)
+                            && flat_ref_matches_object_v1(source, *spell)
+                            && *pay == (index == 1)
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::ChooseSpellMode {
+            player,
+            spell,
+            mode_count,
+        } => {
+            if current.actor != *player || candidates.len() != usize::from(*mode_count) {
+                return Err(invalid());
+            }
+            for (index, candidate) in candidates.iter().enumerate() {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseSpellMode {
+                        actor,
+                        source,
+                        mode_index,
+                        mode_count: semantic_mode_count,
+                    } if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *spell)
+                        && usize::from(*mode_index) == index
+                        && semantic_mode_count == mode_count
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::ChooseEffectOption {
+            player,
+            source,
+            option_count,
+        } => {
+            if current.actor != *player || candidates.len() != usize::from(*option_count) {
+                return Err(invalid());
+            }
+            for (index, candidate) in candidates.iter().enumerate() {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseEffectOption {
+                        actor,
+                        source: semantic_source,
+                        option_index,
+                        option_count: semantic_option_count,
+                    } if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(semantic_source, *source)
+                        && usize::from(*option_index) == index
+                        && semantic_option_count == option_count
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::ChooseEffectTargets {
+            player,
+            source,
+            selected_count,
+            min_targets,
+            max_targets,
+            legal_targets,
+            can_finish,
+        } => {
+            let expected_count = legal_targets.len() + usize::from(*can_finish);
+            if current.actor != *player || candidates.len() != expected_count {
+                return Err(invalid());
+            }
+            for (candidate, expected_target) in
+                candidates[..legal_targets.len()].iter().zip(legal_targets)
+            {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseEffectTarget {
+                        actor,
+                        source: semantic_source,
+                        target,
+                        selected_count: semantic_selected_count,
+                        min_targets: semantic_min_targets,
+                        max_targets: semantic_max_targets,
+                    } if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(semantic_source, *source)
+                        && flat_target_matches_v1(target, *expected_target)
+                        && semantic_selected_count == selected_count
+                        && semantic_min_targets == min_targets
+                        && semantic_max_targets == max_targets
+                ) {
+                    return Err(invalid());
+                }
+            }
+            if *can_finish
+                && !matches!(
+                    &candidates[legal_targets.len()].semantic,
+                    ActionSemanticV1::FinishEffectSelection {
+                        actor,
+                        source: semantic_source,
+                        selected_count: semantic_selected_count,
+                    } if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(semantic_source, *source)
+                        && semantic_selected_count == selected_count
+                )
+            {
+                return Err(invalid());
+            }
+        }
+        Decision::ChooseEffectBoolean { player, source, .. } => {
+            if current.actor != *player || candidates.len() != 2 {
+                return Err(invalid());
+            }
+            for (index, candidate) in candidates.iter().enumerate() {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseEffectBoolean {
+                        actor,
+                        source: semantic_source,
+                        value,
+                    } if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(semantic_source, *source)
+                        && *value == (index == 1)
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::ChooseOptionalCost {
+            player,
+            discard_payable,
+            sacrifice_payable,
+        } => {
+            if current.actor != *player || candidates.len() != 2 {
+                return Err(invalid());
+            }
+            let valid = match (*discard_payable, *sacrifice_payable) {
+                (false, false) => candidates.iter().enumerate().all(|(index, candidate)| {
+                    matches!(
+                        candidate.semantic,
+                        ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost }
+                            if actor_matches(actor, *player) && use_cost == (index == 1)
+                    )
+                }),
+                (true, true) => matches!(
+                    (&candidates[0].semantic, &candidates[1].semantic),
+                    (
+                        ActionSemanticV1::ChooseOptionalCostWhich {
+                            actor: first_actor,
+                            choice: OptionalCostChoice::Discard,
+                        },
+                        ActionSemanticV1::ChooseOptionalCostWhich {
+                            actor: second_actor,
+                            choice: OptionalCostChoice::SacrificeLand,
+                        }
+                    ) if actor_matches(*first_actor, *player)
+                        && actor_matches(*second_actor, *player)
+                ),
+                _ => false,
+            };
+            if !valid {
+                return Err(invalid());
+            }
+        }
+        Decision::ChooseSpellCopyPayment { player, spell } => {
+            if current.actor != *player || candidates.len() != 2 {
+                return Err(invalid());
+            }
+            for (index, candidate) in candidates.iter().enumerate() {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseSpellCopyPayment { actor, source, pay }
+                        if actor_matches(*actor, *player)
+                            && flat_ref_matches_object_v1(source, *spell)
+                            && *pay == (index == 0)
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::ChooseSpellCopyRetarget { player, copy } => {
+            if current.actor != *player || candidates.len() != 2 {
+                return Err(invalid());
+            }
+            for (index, candidate) in candidates.iter().enumerate() {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseSpellCopyRetarget {
+                        actor,
+                        source,
+                        change_target,
+                    } if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *copy)
+                        && *change_target == (index == 0)
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::ChooseMadnessCast { player, card } => {
+            if current.actor != *player || candidates.len() != 2 {
+                return Err(invalid());
+            }
+            for (index, candidate) in candidates.iter().enumerate() {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ChooseMadnessCast {
+                        actor,
+                        card: semantic_card,
+                        cast_it,
+                    } if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(semantic_card, *card)
+                        && *cast_it == (index == 1)
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::Discard {
+            player,
+            count,
+            choices,
+        } => {
+            if current.actor != *player || *count != 1 || candidates.len() != choices.len() {
+                return Err(invalid());
+            }
+            for (candidate, expected_card) in candidates.iter().zip(choices) {
+                if !matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::Discard { actor, cards }
+                        if actor_matches(*actor, *player)
+                            && cards.len() == 1
+                            && flat_ref_matches_object_v1(&cards[0], *expected_card)
+                ) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::OrderTriggers { player, pending } => {
+            let expected_count = (1..=pending.len()).product::<usize>();
+            if current.actor != *player
+                || pending.is_empty()
+                || pending.len() > FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1
+                || candidates.len() != expected_count
+            {
+                return Err(invalid());
+            }
+            for (candidate_index, candidate) in candidates.iter().enumerate() {
+                let ActionSemanticV1::OrderTriggers {
+                    actor,
+                    pending_sources,
+                    order,
+                } = &candidate.semantic
+                else {
+                    return Err(invalid());
+                };
+                if !actor_matches(*actor, *player)
+                    || pending_sources.len() != pending.len()
+                    || pending_sources
+                        .iter()
+                        .zip(pending)
+                        .any(|(reference, trigger)| {
+                            !flat_ref_matches_object_v1(reference, trigger.source)
+                        })
+                    || flat_trigger_order_rank_v1(order) != Some(candidate_index)
+                {
+                    return Err(invalid());
+                }
+            }
+        }
+        Decision::DeclareAttackers { .. }
+        | Decision::DeclareBlockers { .. }
+        | Decision::GameOver { .. }
+        | Decision::Halted { .. } => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+        }
+    }
+    Ok(())
+}
+
+fn flat_validate_semantic_policy_pair_v1(
+    candidate: &CorePolicyActionCandidateV1,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    use crate::engine::Action;
+    use crate::surface::SurfaceAction;
+
+    let paired = match (&candidate.semantic, &candidate.policy_action) {
+        (
+            ActionSemanticV1::Pass { .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::Pass)),
+        ) => true,
+        (
+            ActionSemanticV1::PlayLand { source, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::PlayLand(actual))),
+        )
+        | (
+            ActionSemanticV1::CastSpell { source, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::CastSpell(actual))),
+        )
+        | (
+            ActionSemanticV1::ActivateManaAbility { source, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateManaAbility(actual))),
+        )
+        | (
+            ActionSemanticV1::PlotSpell { source, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::PlotSpell(actual))),
+        ) => ObjectId(source.arena_id) == *actual,
+        (
+            ActionSemanticV1::ActivateAbility {
+                source,
+                ability_index,
+                ..
+            },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateAbility(
+                actual,
+                actual_index,
+            ))),
+        ) => ObjectId(source.arena_id) == *actual && ability_index == actual_index,
+        (
+            ActionSemanticV1::ChooseTarget { target, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseTarget(actual))),
+        ) => flat_target_matches_v1(target, *actual),
+        (
+            ActionSemanticV1::ChooseCostTarget { candidate, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseCostTarget(actual))),
+        ) => ObjectId(candidate.arena_id) == *actual,
+        (
+            ActionSemanticV1::ChooseCastMode { mode, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseCastMode(actual))),
+        ) => mode == actual,
+        (
+            ActionSemanticV1::ChooseKicker { pay, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseKicker(actual))),
+        ) => pay == actual,
+        (
+            ActionSemanticV1::ChooseSpellMode { mode_index, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseSpellMode(actual))),
+        ) => mode_index == actual,
+        (
+            ActionSemanticV1::ChooseEffectOption { option_index, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectOption(actual))),
+        ) => option_index == actual,
+        (
+            ActionSemanticV1::ChooseEffectTarget { target, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectTarget(actual))),
+        ) => flat_target_matches_v1(target, *actual),
+        (
+            ActionSemanticV1::FinishEffectSelection { .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
+        ) => true,
+        (
+            ActionSemanticV1::ChooseEffectBoolean { value, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectBoolean(actual))),
+        ) => value == actual,
+        (
+            ActionSemanticV1::ChooseOptionalCostUse { use_cost, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseOptionalCostStage(actual))),
+        ) => use_cost == actual,
+        (
+            ActionSemanticV1::ChooseOptionalCostWhich { choice, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseOptionalCostStage(actual))),
+        ) => match choice {
+            OptionalCostChoice::Discard => *actual,
+            OptionalCostChoice::SacrificeLand => !*actual,
+            OptionalCostChoice::Decline => false,
+        },
+        (
+            ActionSemanticV1::ChooseSpellCopyPayment { pay, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseSpellCopyPayment(actual))),
+        ) => pay == actual,
+        (
+            ActionSemanticV1::ChooseSpellCopyRetarget { change_target, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseSpellCopyRetarget(actual))),
+        ) => change_target == actual,
+        (
+            ActionSemanticV1::ChooseMadnessCast { cast_it, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseMadnessCast(actual))),
+        ) => cast_it == actual,
+        (
+            ActionSemanticV1::Discard { cards, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::Discard(actual))),
+        ) => {
+            cards.len() == actual.len()
+                && cards
+                    .iter()
+                    .zip(actual)
+                    .all(|(card, actual)| ObjectId(card.arena_id) == *actual)
+        }
+        (
+            ActionSemanticV1::ChooseAttackerInclusion {
+                actor,
+                attacker,
+                include,
+            },
+            PolicyActionV5::ChooseAttackerInclusion {
+                actor: actual_actor,
+                attacker: actual_attacker,
+                include: actual_include,
+            },
+        ) => {
+            flat_player_id_v1(*actor) == *actual_actor
+                && ObjectId(attacker.arena_id) == *actual_attacker
+                && include == actual_include
+        }
+        (
+            ActionSemanticV1::ChooseBlockerInclusion {
+                actor,
+                attacker,
+                blocker,
+                include,
+            },
+            PolicyActionV5::ChooseBlockerInclusion {
+                actor: actual_actor,
+                attacker: actual_attacker,
+                blocker: actual_blocker,
+                include: actual_include,
+            },
+        ) => {
+            flat_player_id_v1(*actor) == *actual_actor
+                && ObjectId(attacker.arena_id) == *actual_attacker
+                && ObjectId(blocker.arena_id) == *actual_blocker
+                && include == actual_include
+        }
+        (
+            ActionSemanticV1::OrderTriggers { order, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::OrderTriggers(actual))),
+        ) => order == actual,
+        (
+            ActionSemanticV1::ChooseEffectColor { .. }
+            | ActionSemanticV1::ChooseEffectNumber { .. }
+            | ActionSemanticV1::FinishTargetSelection { .. },
+            _,
+        ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
+        (
+            ActionSemanticV1::DeclareAttackers { .. }
+            | ActionSemanticV1::DeclareBlockersForAttacker { .. }
+            | ActionSemanticV1::Ambiguous { .. },
+            _,
+        ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
+        _ => false,
+    };
+    if paired {
+        Ok(())
+    } else {
+        Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FlatActionPreflightV1 {
+    binding: FlatActionDecisionBindingV1,
+    action_count: usize,
+    ref_count: usize,
+    object_count: usize,
+}
+
+struct FlatActionCommitmentHasherV1(Sha256);
+
+impl FlatActionCommitmentHasherV1 {
+    fn new(actor: PlayerSeatV1, action_count: u32, ref_count: u32, object_count: u16) -> Self {
+        let mut hash = Sha256::new();
+        hash.update(b"mtg-kernel-flat-action-candidate-order-v1\0");
+        hash.update(FLAT_ACTION_DECISION_SLICE_VERSION_V1.to_le_bytes());
+        hash.update(FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V1.to_le_bytes());
+        hash.update(FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V1.to_le_bytes());
+        hash.update(FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V1.to_le_bytes());
+        hash.update(KERNEL_CARDDB_HASH.to_le_bytes());
+        hash.update([match actor {
+            PlayerSeatV1::P0 => 0,
+            PlayerSeatV1::P1 => 1,
+        }]);
+        hash.update(action_count.to_le_bytes());
+        hash.update(ref_count.to_le_bytes());
+        hash.update(object_count.to_le_bytes());
+        Self(hash)
+    }
+
+    fn update_object(&mut self, object_index: u16, object: FlatActionObjectV1) {
+        self.0.update(b"O");
+        self.0.update(object_index.to_le_bytes());
+        self.0.update(object.card_token.to_le_bytes());
+        self.0.update([object.group as u8]);
+        self.0.update(object.actor_visible_ordinal.to_le_bytes());
+        self.0.update([object.owner_relative]);
+        self.0.update([object.controller_relative]);
+        self.0.update([object.zone]);
+        self.0.update(object.zone_change_count.to_le_bytes());
+    }
+
+    fn update_action(&mut self, action_index: u32, action: FlatActionCoreV1) {
+        self.0.update(b"A");
+        self.0.update(action_index.to_le_bytes());
+        self.0.update([flat_action_kind_id_v1(action.kind)]);
+        self.0.update(action.flags.to_le_bytes());
+        self.0.update([action.ability_index]);
+        self.0.update([action.remaining]);
+        self.0.update([action.mode_index]);
+        self.0.update([action.mode_count]);
+        self.0.update(action.option_index.to_le_bytes());
+        self.0.update(action.option_count.to_le_bytes());
+        self.0.update(action.selected_count.to_le_bytes());
+        self.0.update(action.min_targets.to_le_bytes());
+        self.0.update(action.max_targets.to_le_bytes());
+        self.0.update(action.number.to_le_bytes());
+        self.0.update(action.minimum.to_le_bytes());
+        self.0.update(action.maximum.to_le_bytes());
+        self.0.update([action.mana_choice]);
+        self.0.update([action.color]);
+        self.0.update([action.cast_mode]);
+        self.0.update([action.cost_kind]);
+        self.0.update([action.optional_cost_choice]);
+        self.0.update([action.target_kind]);
+        self.0.update([action.target_player]);
+        self.0.update(action.ref_start.to_le_bytes());
+        self.0.update(action.ref_len.to_le_bytes());
+    }
+
+    fn update_ref(&mut self, reference: FlatActionRefV1, object: FlatActionObjectV1) {
+        self.0.update(b"R");
+        self.0.update(reference.action_index.to_le_bytes());
+        self.0.update([flat_action_ref_role_id_v1(reference.role)]);
+        self.0.update(reference.order_index.to_le_bytes());
+        self.0.update(reference.associated_order.to_le_bytes());
+        self.0.update(reference.card_token.to_le_bytes());
+        self.0.update(reference.object_index.to_le_bytes());
+        // Bind the meaning of object_index, not only its integer slot.
+        self.0.update(object.card_token.to_le_bytes());
+        self.0.update([object.group as u8]);
+        self.0.update(object.actor_visible_ordinal.to_le_bytes());
+        self.0.update([object.owner_relative]);
+        self.0.update([object.controller_relative]);
+        self.0.update([object.zone]);
+        self.0.update(object.zone_change_count.to_le_bytes());
+    }
+
+    fn finish(self) -> [u8; 16] {
+        let digest = self.0.finalize();
+        let mut commitment = [0_u8; 16];
+        commitment.copy_from_slice(&digest[..16]);
+        commitment
+    }
+}
+
+fn flat_canonical_object_index_v1(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+    object: FlatActionObjectV1,
+) -> Result<u16, FlatActionDecisionSliceErrorV1> {
+    let key = object.canonical_key();
+    let mut lower_count = 0_usize;
+    let mut exact_count = 0_usize;
+    for (object_id, _) in state.objects.iter() {
+        let Some(candidate) = flat_current_ref_for_object_v1(current, state, object_id)? else {
+            continue;
+        };
+        match candidate.canonical_key().cmp(&key) {
+            std::cmp::Ordering::Less => {
+                lower_count = lower_count
+                    .checked_add(1)
+                    .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+            }
+            std::cmp::Ordering::Equal => {
+                exact_count = exact_count
+                    .checked_add(1)
+                    .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+            }
+            std::cmp::Ordering::Greater => {}
+        }
+    }
+    if exact_count != 1 {
+        return Err(FlatActionDecisionSliceErrorV1::DuplicateCanonicalObject);
+    }
+    u16::try_from(lower_count).map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)
+}
+
+fn flat_for_each_canonical_object_v1<F>(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+    object_count: usize,
+    mut visit: F,
+) -> Result<(), FlatActionDecisionSliceErrorV1>
+where
+    F: FnMut(u16, FlatActionObjectV1) -> Result<(), FlatActionDecisionSliceErrorV1>,
+{
+    for expected_index in 0..object_count {
+        let mut selected = None;
+        for (object_id, _) in state.objects.iter() {
+            let Some(candidate) = flat_current_ref_for_object_v1(current, state, object_id)? else {
+                continue;
+            };
+            if usize::from(flat_canonical_object_index_v1(current, state, candidate)?)
+                == expected_index
+                && selected.replace(candidate).is_some()
+            {
+                return Err(FlatActionDecisionSliceErrorV1::DuplicateCanonicalObject);
+            }
+        }
+        let selected = selected.ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+        visit(
+            u16::try_from(expected_index)
+                .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+            selected,
+        )?;
+    }
+    Ok(())
+}
+
+/// Correctness-first preflight for the partial slice.
+///
+/// This currently repeats whole-arena scans and nested canonical-index scans,
+/// then emission resolves the same references again. It is intentionally an
+/// explicit performance blocker: do not use this implementation to claim the
+/// direct-encoder throughput gate. A later refs-only/cached-binding redesign
+/// must preserve these fail-closed semantics and allocation tests.
+fn flat_action_preflight_v1(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> Result<FlatActionPreflightV1, FlatActionDecisionSliceErrorV1> {
+    if current.environment_revision != session.environment_revision
+        || current.bound_policy_step_count != session.policy_step_count
+        || current.bound_physical_decision_count != session.physical_decision_count
+    {
+        return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+    }
+    if current.candidates.is_empty() {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
+    flat_validate_current_decision_relations_v1(current, &session.state)?;
+
+    let action_count = current.candidates.len();
+    let action_count_u32 = u32::try_from(action_count)
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    let actor: PlayerSeatV1 = current.actor.into();
+    let mut ref_count = 0_usize;
+    for candidate in &current.candidates {
+        flat_validate_semantic_policy_pair_v1(candidate)?;
+        let ref_start = u32::try_from(ref_count)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let core = flat_action_core_and_refs_v1(
+            &candidate.semantic,
+            actor,
+            ref_start,
+            |_, _, _, reference| {
+                flat_visible_action_object_v1(&session.state, current.actor, reference)?;
+                Ok(())
+            },
+        )?;
+        ref_count = ref_count
+            .checked_add(usize::from(core.ref_len))
+            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    }
+    flat_validate_origin_decision_v1(current, &session.state)?;
+    let ref_count_u32 = u32::try_from(ref_count)
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+
+    let mut object_count = 0_usize;
+    for (object_id, _) in session.state.objects.iter() {
+        let Some(row) = flat_current_ref_for_object_v1(current, &session.state, object_id)? else {
+            continue;
+        };
+        for (prior_id, _) in session.state.objects.iter() {
+            if prior_id >= object_id {
+                break;
+            }
+            if flat_current_ref_for_object_v1(current, &session.state, prior_id)?
+                .is_some_and(|prior| prior.canonical_key() == row.canonical_key())
+            {
+                return Err(FlatActionDecisionSliceErrorV1::DuplicateCanonicalObject);
+            }
+        }
+        object_count = object_count
+            .checked_add(1)
+            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    }
+    let object_count_u16 = u16::try_from(object_count)
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+
+    let mut commitment =
+        FlatActionCommitmentHasherV1::new(actor, action_count_u32, ref_count_u32, object_count_u16);
+    flat_for_each_canonical_object_v1(
+        current,
+        &session.state,
+        object_count,
+        |object_index, object| {
+            commitment.update_object(object_index, object);
+            Ok(())
+        },
+    )?;
+    let mut ref_cursor = 0_usize;
+    for (action_index, candidate) in current.candidates.iter().enumerate() {
+        let action_index_u32 = u32::try_from(action_index)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let ref_start = u32::try_from(ref_cursor)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+        let core = flat_action_core_and_refs_v1(
+            &candidate.semantic,
+            actor,
+            ref_start,
+            |role, order_index, associated_order, reference| {
+                let object =
+                    flat_visible_action_object_v1(&session.state, current.actor, reference)?;
+                let object_index = flat_canonical_object_index_v1(current, &session.state, object)?;
+                commitment.update_ref(
+                    FlatActionRefV1 {
+                        action_index: action_index_u32,
+                        role,
+                        order_index,
+                        associated_order,
+                        card_token: object.card_token,
+                        object_index,
+                    },
+                    object,
+                );
+                ref_cursor = ref_cursor
+                    .checked_add(1)
+                    .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+                Ok(())
+            },
+        )?;
+        commitment.update_action(action_index_u32, core);
+    }
+    if ref_cursor != ref_count {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
+    }
+
+    Ok(FlatActionPreflightV1 {
+        binding: FlatActionDecisionBindingV1 {
+            slice_version: FLAT_ACTION_DECISION_SLICE_VERSION_V1,
+            ref_role_mapping_version: FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V1,
+            card_token_mapping_version: FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V1,
+            candidate_commitment_version: FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V1,
+            card_db_hash: KERNEL_CARDDB_HASH,
+            episode_id: session.episode_id,
+            environment_revision: session.environment_revision,
+            bound_policy_step_count: current.bound_policy_step_count,
+            physical_decision_id: current.physical_decision_id,
+            bound_physical_decision_count: current.bound_physical_decision_count,
+            substep_index: current.substep_index,
+            substep_count: current.substep_count,
+            acting_player: current.actor.0,
+            decision_kind: flat_decision_kind_id_v1(current.decision_kind),
+            legal_action_count: action_count_u32,
+            candidate_order_commitment: commitment.finish(),
+        },
+        action_count,
+        ref_count,
+        object_count,
+    })
+}
+
+fn flat_validate_expected_decision_v1(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    expected: FastActorDecisionV1,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if expected.episode_id != session.episode_id {
+        return Err(FlatActionDecisionSliceErrorV1::StaleEpisodeBinding);
+    }
+    if expected.environment_revision != session.environment_revision {
+        return Err(FlatActionDecisionSliceErrorV1::StaleEnvironmentRevision);
+    }
+    let legal_action_count = u32::try_from(current.candidates.len())
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    if expected.step != session.policy_step_count
+        || expected.physical_decision_id != current.physical_decision_id
+        || expected.substep_index != current.substep_index
+        || expected.substep_count != current.substep_count
+        || expected.acting_player != PlayerSeatV1::from(current.actor)
+        || expected.decision_kind != current.decision_kind
+        || expected.legal_action_count != legal_action_count
+    {
+        return Err(FlatActionDecisionSliceErrorV1::DecisionMetadataMismatch);
+    }
+    Ok(())
 }
 
 /// One-use proof that an action came from the private fast actor's exact
@@ -935,6 +3152,7 @@ impl FastActorSessionV1 {
         FastActorResponseV1::Decision(FastActorDecisionV1 {
             episode_id: self.episode_id,
             step: self.policy_step_count,
+            environment_revision: self.environment_revision,
             physical_decision_id: current.physical_decision_id,
             substep_index: current.substep_index,
             substep_count: current.substep_count,
@@ -943,6 +3161,145 @@ impl FastActorSessionV1 {
             legal_action_count: u32::try_from(current.candidates.len())
                 .expect("fast actor candidate count was checked when bound"),
         })
+    }
+
+    /// Encodes only the exact current executable action binding and ordered
+    /// action semantics. Full state globals, object features, relations, and
+    /// scorer inputs are deliberately outside this partial contract. The
+    /// schema-only `ChooseEffectColor`, `ChooseEffectNumber`, and
+    /// `FinishTargetSelection` rows fail closed until policy-v5 has matching
+    /// executable actions.
+    pub fn encode_current_flat_action_slice_v1(
+        &self,
+        expected: FastActorDecisionV1,
+        buffers: &mut FlatActionDecisionSliceBuffersV1<'_>,
+    ) -> Result<FlatActionDecisionSliceV1, FlatActionDecisionSliceErrorV1> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        flat_validate_expected_decision_v1(self, current, expected)?;
+        // Pass one validates every semantic, relationship, actor-visible
+        // reference, compact row, commitment byte, and exact capacity before
+        // caller storage is touched.
+        let preflight = flat_action_preflight_v1(self, current)?;
+        let action_count = preflight.action_count;
+        let ref_count = preflight.ref_count;
+        let object_count = preflight.object_count;
+        let actor: PlayerSeatV1 = current.actor.into();
+
+        if buffers.actions.len() < action_count {
+            return Err(FlatActionDecisionSliceErrorV1::InsufficientActionCapacity {
+                required: action_count,
+                available: buffers.actions.len(),
+            });
+        }
+        if buffers.refs.len() < ref_count {
+            return Err(FlatActionDecisionSliceErrorV1::InsufficientRefCapacity {
+                required: ref_count,
+                available: buffers.refs.len(),
+            });
+        }
+        if buffers.objects.len() < object_count {
+            return Err(FlatActionDecisionSliceErrorV1::InsufficientObjectCapacity {
+                required: object_count,
+                available: buffers.objects.len(),
+            });
+        }
+
+        // Pass two: the immutable session and every conversion/reference were
+        // validated above, so all writes are confined to admitted active
+        // prefixes. Tails remain byte-for-byte caller owned.
+        let mut object_cursor = 0_usize;
+        for (object_id, _) in self.state.objects.iter() {
+            if let Some(row) = flat_current_ref_for_object_v1(current, &self.state, object_id)
+                .expect("flat action preflight validated every referenced object")
+            {
+                buffers.objects[object_cursor] = row;
+                object_cursor += 1;
+            }
+        }
+        buffers.objects[..object_count].sort_unstable_by_key(|row| row.canonical_key());
+
+        let mut ref_cursor = 0_usize;
+        for (action_index, candidate) in current.candidates.iter().enumerate() {
+            let action_index_u32 =
+                u32::try_from(action_index).expect("flat action count passed u32 preflight");
+            let ref_start =
+                u32::try_from(ref_cursor).expect("flat reference count passed u32 preflight");
+            let core = flat_action_core_and_refs_v1(
+                &candidate.semantic,
+                actor,
+                ref_start,
+                |role, order_index, associated_order, reference| {
+                    let row = flat_visible_action_object_v1(&self.state, current.actor, reference)
+                        .expect("flat action preflight validated the immutable reference");
+                    let object_index = buffers.objects[..object_count]
+                        .iter()
+                        .position(|candidate| *candidate == row)
+                        .expect("flat action preflight admitted the canonical object");
+                    buffers.refs[ref_cursor] = FlatActionRefV1 {
+                        action_index: action_index_u32,
+                        role,
+                        order_index,
+                        associated_order,
+                        card_token: row.card_token,
+                        object_index: u16::try_from(object_index)
+                            .expect("flat object count passed u16 preflight"),
+                    };
+                    ref_cursor += 1;
+                    Ok(())
+                },
+            )
+            .expect("flat action preflight validated the immutable semantic");
+            buffers.actions[action_index] = core;
+        }
+        debug_assert_eq!(object_cursor, object_count);
+        debug_assert_eq!(ref_cursor, ref_count);
+
+        Ok(FlatActionDecisionSliceV1 {
+            binding: preflight.binding,
+            active_action_count: preflight.binding.legal_action_count,
+            active_ref_count: u32::try_from(ref_count)
+                .expect("flat reference count passed u32 preflight"),
+            active_object_count: u16::try_from(object_count)
+                .expect("flat object count passed u16 preflight"),
+        })
+    }
+
+    /// Applies an index only if the complete flat action binding, including
+    /// the ordered 128-bit compact-candidate commitment, still matches this
+    /// session's private current decision. This correctness checkpoint
+    /// recomputes the expensive preflight; cached consume validation is a
+    /// declared future performance redesign, not a property of this slice.
+    pub fn consume_current_flat_action_slice_v1(
+        &mut self,
+        binding: FlatActionDecisionBindingV1,
+        selected_index: u32,
+    ) -> Result<FastActorResponseV1, RlSessionError> {
+        let current = self.current.as_ref().ok_or_else(|| {
+            session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "flat action result has no active decision to consume",
+            )
+        })?;
+        let recomputed = flat_action_preflight_v1(self, current).map_err(|_| {
+            session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "active decision cannot reproduce the flat action binding",
+            )
+        })?;
+        if binding != recomputed.binding {
+            return Err(session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "flat action result does not match the complete active decision binding",
+            ));
+        }
+        self.step(
+            binding.episode_id,
+            binding.bound_policy_step_count,
+            selected_index,
+        )
     }
 
     pub fn policy_step_count(&self) -> u64 {
@@ -1296,7 +3653,7 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        let decision_kind = match surfaced {
+        let decision_kind = match &surfaced {
             PolicyDecisionV5::Surface(_) => FastActorDecisionKindV1::Surface,
             PolicyDecisionV5::AttackerInclusion { .. } => {
                 FastActorDecisionKindV1::AttackerInclusion
@@ -1306,6 +3663,7 @@ impl FastActorSessionV1 {
         self.current = Some(FastActorCurrentDecisionV1 {
             actor,
             decision_kind,
+            origin_decision: surfaced,
             physical_decision_id: self.physical_decision_count,
             substep_index,
             substep_count,
@@ -3152,5 +5510,2048 @@ mod tests {
                 .unwrap_err();
             assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
         }
+    }
+
+    fn flat_test_ref(state: &GameState, id: ObjectId) -> CardStableRefV1 {
+        let object = state.objects.get(id);
+        CardStableRefV1 {
+            arena_id: id.0,
+            card_db_id: object.card_def,
+            owner: object.owner.into(),
+            controller: object.controller.into(),
+            zone: object.zone,
+            zone_change_count: object.zone_change_count,
+        }
+    }
+
+    fn flat_current_decision(session: &FastActorSessionV1) -> FastActorDecisionV1 {
+        match session.current_response() {
+            FastActorResponseV1::Decision(decision) => decision,
+            FastActorResponseV1::Terminal(_) => {
+                panic!("flat action fixture unexpectedly terminated")
+            }
+        }
+    }
+
+    fn flat_install_origin_decision(
+        session: &mut FastActorSessionV1,
+        origin_decision: PolicyDecisionV5,
+    ) {
+        let actor = origin_decision
+            .actor(&session.state)
+            .expect("flat origin fixture must be nonterminal");
+        let (substep_index, substep_count) = origin_decision.substep();
+        let decision_kind = match &origin_decision {
+            PolicyDecisionV5::Surface(_) => FastActorDecisionKindV1::Surface,
+            PolicyDecisionV5::AttackerInclusion { .. } => {
+                FastActorDecisionKindV1::AttackerInclusion
+            }
+            PolicyDecisionV5::BlockerInclusion { .. } => FastActorDecisionKindV1::BlockerInclusion,
+        };
+        let candidates = core_policy_action_candidates_v5(&origin_decision, &session.state)
+            .expect("flat origin fixture must produce canonical candidates");
+        let current = session.current.as_mut().expect("flat fixture is active");
+        current.actor = actor;
+        current.decision_kind = decision_kind;
+        current.origin_decision = origin_decision;
+        current.substep_index = substep_index;
+        current.substep_count = substep_count;
+        current.candidates = candidates;
+    }
+
+    fn flat_test_core(
+        semantic: &ActionSemanticV1,
+        actor: PlayerSeatV1,
+    ) -> Result<FlatActionCoreV1, FlatActionDecisionSliceErrorV1> {
+        flat_action_core_and_refs_v1(semantic, actor, 0, |_, _, _, _| Ok(()))
+    }
+
+    fn poison_flat_action() -> FlatActionCoreV1 {
+        FlatActionCoreV1 {
+            kind: FlatActionKindV1::OrderTriggers,
+            flags: u16::MAX,
+            ability_index: u8::MAX,
+            remaining: u8::MAX,
+            mode_index: u8::MAX,
+            mode_count: u8::MAX,
+            option_index: u16::MAX,
+            option_count: u16::MAX,
+            selected_count: u16::MAX,
+            min_targets: u16::MAX,
+            max_targets: u16::MAX,
+            number: i32::MIN,
+            minimum: i32::MIN,
+            maximum: i32::MAX,
+            mana_choice: u8::MAX,
+            color: u8::MAX,
+            cast_mode: u8::MAX,
+            cost_kind: u8::MAX,
+            optional_cost_choice: u8::MAX,
+            target_kind: u8::MAX,
+            target_player: u8::MAX,
+            ref_start: u32::MAX,
+            ref_len: u16::MAX,
+        }
+    }
+
+    fn poison_flat_ref() -> FlatActionRefV1 {
+        FlatActionRefV1 {
+            action_index: u32::MAX,
+            role: FlatActionRefRoleV1::PendingSources,
+            order_index: u16::MAX,
+            associated_order: u16::MAX,
+            card_token: u16::MAX,
+            object_index: u16::MAX,
+        }
+    }
+
+    fn poison_flat_object() -> FlatActionObjectV1 {
+        FlatActionObjectV1 {
+            card_token: u16::MAX,
+            group: FlatActionObjectGroupV1::Command,
+            actor_visible_ordinal: u16::MAX,
+            owner_relative: u8::MAX,
+            controller_relative: u8::MAX,
+            zone: u8::MAX,
+            zone_change_count: u32::MAX,
+        }
+    }
+
+    #[test]
+    fn flat_action_slice_preflights_capacity_and_preserves_poisoned_tails() {
+        let session = FastActorSessionV1::reset_with_limits(81_001, 91, 128, 16_384);
+        let decision = flat_current_decision(&session);
+        let mut actions = vec![poison_flat_action(); 64];
+        let mut refs = vec![poison_flat_ref(); 256];
+        let mut objects = vec![poison_flat_object(); 128];
+        let action_before = actions.clone();
+        let refs_before = refs.clone();
+        let objects_before = objects.clone();
+        let mut buffers = FlatActionDecisionSliceBuffersV1 {
+            actions: &mut actions,
+            refs: &mut refs,
+            objects: &mut objects,
+        };
+        let mut stale_episode = decision;
+        stale_episode.episode_id -= 1;
+        assert_eq!(
+            session.encode_current_flat_action_slice_v1(stale_episode, &mut buffers),
+            Err(FlatActionDecisionSliceErrorV1::StaleEpisodeBinding)
+        );
+        assert_eq!(actions, action_before);
+        assert_eq!(refs, refs_before);
+        assert_eq!(objects, objects_before);
+
+        let mut wrong_step = decision;
+        wrong_step.step += 1;
+        let mut wrong_physical_id = decision;
+        wrong_physical_id.physical_decision_id += 1;
+        let mut wrong_substep_index = decision;
+        wrong_substep_index.substep_index += 1;
+        let mut wrong_substep_count = decision;
+        wrong_substep_count.substep_count += 1;
+        let mut wrong_actor = decision;
+        wrong_actor.acting_player = match wrong_actor.acting_player {
+            PlayerSeatV1::P0 => PlayerSeatV1::P1,
+            PlayerSeatV1::P1 => PlayerSeatV1::P0,
+        };
+        let mut wrong_kind = decision;
+        wrong_kind.decision_kind = FastActorDecisionKindV1::AttackerInclusion;
+        let mut wrong_legal_count = decision;
+        wrong_legal_count.legal_action_count += 1;
+        for mismatch in [
+            wrong_step,
+            wrong_physical_id,
+            wrong_substep_index,
+            wrong_substep_count,
+            wrong_actor,
+            wrong_kind,
+            wrong_legal_count,
+        ] {
+            assert_eq!(
+                session.encode_current_flat_action_slice_v1(
+                    mismatch,
+                    &mut FlatActionDecisionSliceBuffersV1 {
+                        actions: &mut actions,
+                        refs: &mut refs,
+                        objects: &mut objects,
+                    },
+                ),
+                Err(FlatActionDecisionSliceErrorV1::DecisionMetadataMismatch)
+            );
+            assert_eq!(actions, action_before);
+            assert_eq!(refs, refs_before);
+            assert_eq!(objects, objects_before);
+        }
+
+        let mut buffers = FlatActionDecisionSliceBuffersV1 {
+            actions: &mut actions,
+            refs: &mut refs,
+            objects: &mut objects,
+        };
+        let mut stale_revision = decision;
+        stale_revision.environment_revision += 1;
+        assert_eq!(
+            session.encode_current_flat_action_slice_v1(stale_revision, &mut buffers),
+            Err(FlatActionDecisionSliceErrorV1::StaleEnvironmentRevision)
+        );
+        assert_eq!(actions, action_before);
+        assert_eq!(refs, refs_before);
+        assert_eq!(objects, objects_before);
+
+        let mut buffers = FlatActionDecisionSliceBuffersV1 {
+            actions: &mut actions,
+            refs: &mut refs,
+            objects: &mut objects,
+        };
+        let encoded = session
+            .encode_current_flat_action_slice_v1(decision, &mut buffers)
+            .unwrap();
+        assert!(encoded.active_action_count > 0);
+        assert!(encoded.active_ref_count > 0);
+        assert!(encoded.active_object_count > 0);
+        assert_eq!(
+            &actions[encoded.active_action_count as usize..],
+            &action_before[encoded.active_action_count as usize..]
+        );
+        assert_eq!(
+            &refs[encoded.active_ref_count as usize..],
+            &refs_before[encoded.active_ref_count as usize..]
+        );
+        assert_eq!(
+            &objects[usize::from(encoded.active_object_count)..],
+            &objects_before[usize::from(encoded.active_object_count)..]
+        );
+
+        let action_required = encoded.active_action_count as usize;
+        let ref_required = encoded.active_ref_count as usize;
+        let object_required = usize::from(encoded.active_object_count);
+        for missing in 0..3 {
+            let mut short_actions = vec![poison_flat_action(); action_required];
+            let mut short_refs = vec![poison_flat_ref(); ref_required];
+            let mut short_objects = vec![poison_flat_object(); object_required];
+            match missing {
+                0 => {
+                    short_actions.pop();
+                }
+                1 => {
+                    short_refs.pop();
+                }
+                2 => {
+                    short_objects.pop();
+                }
+                _ => unreachable!(),
+            };
+            let actions_before = short_actions.clone();
+            let refs_before = short_refs.clone();
+            let objects_before = short_objects.clone();
+            let mut buffers = FlatActionDecisionSliceBuffersV1 {
+                actions: &mut short_actions,
+                refs: &mut short_refs,
+                objects: &mut short_objects,
+            };
+            let error = session
+                .encode_current_flat_action_slice_v1(decision, &mut buffers)
+                .unwrap_err();
+            assert!(matches!(
+                (missing, error),
+                (
+                    0,
+                    FlatActionDecisionSliceErrorV1::InsufficientActionCapacity { .. }
+                ) | (
+                    1,
+                    FlatActionDecisionSliceErrorV1::InsufficientRefCapacity { .. }
+                ) | (
+                    2,
+                    FlatActionDecisionSliceErrorV1::InsufficientObjectCapacity { .. }
+                )
+            ));
+            assert_eq!(short_actions, actions_before);
+            assert_eq!(short_refs, refs_before);
+            assert_eq!(short_objects, objects_before);
+        }
+    }
+
+    #[test]
+    fn flat_action_slice_consume_binds_every_field_and_snapshot_revision() {
+        let mut session = FastActorSessionV1::reset_with_limits(81_029, 129, 128, 16_384);
+        let decision_a = flat_current_decision(&session);
+        let mut actions = [FlatActionCoreV1::default(); 64];
+        let mut refs = [FlatActionRefV1::default(); 256];
+        let mut objects = [FlatActionObjectV1::default(); 128];
+        let encoded_a = session
+            .encode_current_flat_action_slice_v1(
+                decision_a,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap();
+        let binding_a = encoded_a.binding;
+        let response_before = session.current_response();
+        let state_hash_before = session.diagnostic_state_hash();
+        let environment_hash_before = session.privileged_core_environment_hash();
+
+        let mut corruptions = Vec::new();
+        macro_rules! corrupt_binding {
+            ($field:ident) => {{
+                let mut binding = binding_a;
+                binding.$field = binding.$field.wrapping_add(1);
+                corruptions.push(binding);
+            }};
+        }
+        corrupt_binding!(slice_version);
+        corrupt_binding!(ref_role_mapping_version);
+        corrupt_binding!(card_token_mapping_version);
+        corrupt_binding!(candidate_commitment_version);
+        corrupt_binding!(card_db_hash);
+        corrupt_binding!(episode_id);
+        corrupt_binding!(environment_revision);
+        corrupt_binding!(bound_policy_step_count);
+        corrupt_binding!(physical_decision_id);
+        corrupt_binding!(bound_physical_decision_count);
+        corrupt_binding!(substep_index);
+        corrupt_binding!(substep_count);
+        corrupt_binding!(acting_player);
+        corrupt_binding!(decision_kind);
+        corrupt_binding!(legal_action_count);
+        let mut corrupt_commitment = binding_a;
+        corrupt_commitment.candidate_order_commitment[7] ^= 0x80;
+        corruptions.push(corrupt_commitment);
+
+        for binding in corruptions {
+            let error = session
+                .consume_current_flat_action_slice_v1(binding, 0)
+                .unwrap_err();
+            assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+            assert_eq!(session.current_response(), response_before);
+            assert_eq!(session.diagnostic_state_hash(), state_hash_before);
+            assert_eq!(
+                session.privileged_core_environment_hash(),
+                environment_hash_before
+            );
+        }
+
+        let error = session
+            .consume_current_flat_action_slice_v1(binding_a, binding_a.legal_action_count)
+            .unwrap_err();
+        assert_eq!(error.code, RlSessionErrorCode::SelectedIndexOutOfRange);
+        assert_eq!(session.current_response(), response_before);
+        assert_eq!(session.diagnostic_state_hash(), state_hash_before);
+
+        let snapshot_a = session.snapshot_v1();
+        let selected_pass = binding_a.legal_action_count - 1;
+        let expected_after_a = session
+            .consume_current_flat_action_slice_v1(binding_a, selected_pass)
+            .unwrap();
+        let FastActorResponseV1::Decision(decision_b) = session.current_response() else {
+            panic!("pass fixture unexpectedly terminated")
+        };
+        let encoded_b = session
+            .encode_current_flat_action_slice_v1(
+                decision_b,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap();
+        assert_ne!(encoded_b.binding, binding_a);
+
+        session.restore_v1(&snapshot_a);
+        let restored_hash = session.privileged_core_environment_hash();
+        let error = session
+            .consume_current_flat_action_slice_v1(encoded_b.binding, 0)
+            .unwrap_err();
+        assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        assert_eq!(session.privileged_core_environment_hash(), restored_hash);
+        assert_eq!(
+            session
+                .consume_current_flat_action_slice_v1(binding_a, selected_pass)
+                .unwrap(),
+            expected_after_a
+        );
+    }
+
+    #[test]
+    fn flat_action_slice_rejects_origin_context_drift_before_publish() {
+        use crate::effect::EffectOp;
+        use crate::trigger::PendingTrigger;
+
+        let assert_rejected = |session: &FastActorSessionV1| {
+            let mut actions = [poison_flat_action(); 16];
+            let mut refs = [poison_flat_ref(); 32];
+            let mut objects = [poison_flat_object(); 16];
+            let actions_before = actions;
+            let refs_before = refs;
+            let objects_before = objects;
+            assert_eq!(
+                session.encode_current_flat_action_slice_v1(
+                    flat_current_decision(session),
+                    &mut FlatActionDecisionSliceBuffersV1 {
+                        actions: &mut actions,
+                        refs: &mut refs,
+                        objects: &mut objects,
+                    },
+                ),
+                Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+            );
+            assert_eq!(actions, actions_before);
+            assert_eq!(refs, refs_before);
+            assert_eq!(objects, objects_before);
+        };
+
+        let mut target_base = FastActorSessionV1::reset_with_limits(81_030, 130, 128, 16_384);
+        let actor_id = target_base.current.as_ref().unwrap().actor;
+        let opponent = actor_id.opponent();
+        let hand = target_base.state.players[actor_id.index()].hand.clone();
+        flat_install_origin_decision(
+            &mut target_base,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseTargets {
+                player: actor_id,
+                spell: hand[0],
+                remaining: 1,
+                legal_targets: vec![Target::Player(opponent)],
+            })),
+        );
+        let mut wrong_target_source = target_base.clone();
+        let wrong_source = flat_test_ref(&wrong_target_source.state, hand[1]);
+        let ActionSemanticV1::ChooseTarget { source, .. } =
+            &mut wrong_target_source.current.as_mut().unwrap().candidates[0].semantic
+        else {
+            unreachable!()
+        };
+        *source = wrong_source;
+        assert_rejected(&wrong_target_source);
+
+        let mut wrong_remaining = target_base;
+        let ActionSemanticV1::ChooseTarget { remaining, .. } =
+            &mut wrong_remaining.current.as_mut().unwrap().candidates[0].semantic
+        else {
+            unreachable!()
+        };
+        *remaining = 2;
+        assert_rejected(&wrong_remaining);
+
+        let mut effect_base = FastActorSessionV1::reset_with_limits(81_031, 131, 128, 16_384);
+        let actor_id = effect_base.current.as_ref().unwrap().actor;
+        let hand = effect_base.state.players[actor_id.index()].hand.clone();
+        flat_install_origin_decision(
+            &mut effect_base,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
+                player: actor_id,
+                source: hand[0],
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 2,
+                legal_targets: vec![Target::Player(actor_id)],
+                can_finish: false,
+            })),
+        );
+        let mut wrong_effect_counts = effect_base.clone();
+        let ActionSemanticV1::ChooseEffectTarget {
+            selected_count,
+            max_targets,
+            ..
+        } = &mut wrong_effect_counts.current.as_mut().unwrap().candidates[0].semantic
+        else {
+            unreachable!()
+        };
+        *selected_count = 1;
+        *max_targets = 3;
+        assert_rejected(&wrong_effect_counts);
+
+        let mut wrong_effect_source = effect_base;
+        let replacement = flat_test_ref(&wrong_effect_source.state, hand[1]);
+        let ActionSemanticV1::ChooseEffectTarget { source, .. } =
+            &mut wrong_effect_source.current.as_mut().unwrap().candidates[0].semantic
+        else {
+            unreachable!()
+        };
+        *source = replacement;
+        assert_rejected(&wrong_effect_source);
+
+        for (episode_id, retarget) in [(81_032, false), (81_033, true)] {
+            let mut copy = FastActorSessionV1::reset_with_limits(episode_id, 132, 128, 16_384);
+            let actor_id = copy.current.as_ref().unwrap().actor;
+            let hand = copy.state.players[actor_id.index()].hand.clone();
+            let origin = if retarget {
+                Decision::ChooseSpellCopyRetarget {
+                    player: actor_id,
+                    copy: hand[0],
+                }
+            } else {
+                Decision::ChooseSpellCopyPayment {
+                    player: actor_id,
+                    spell: hand[0],
+                }
+            };
+            flat_install_origin_decision(
+                &mut copy,
+                PolicyDecisionV5::Surface(SurfaceDecision::Decision(origin)),
+            );
+            let replacement = flat_test_ref(&copy.state, hand[1]);
+            match &mut copy.current.as_mut().unwrap().candidates[0].semantic {
+                ActionSemanticV1::ChooseSpellCopyPayment { source, .. }
+                | ActionSemanticV1::ChooseSpellCopyRetarget { source, .. } => {
+                    *source = replacement;
+                }
+                _ => unreachable!(),
+            }
+            assert_rejected(&copy);
+        }
+
+        let mut madness = FastActorSessionV1::reset_with_limits(81_034, 134, 128, 16_384);
+        let actor_id = madness.current.as_ref().unwrap().actor;
+        let exiled = madness.state.players[actor_id.index()].hand[..2].to_vec();
+        for object_id in &exiled {
+            madness.state.players[actor_id.index()]
+                .hand
+                .retain(|candidate| candidate != object_id);
+            madness.state.exile.push(*object_id);
+            let object = madness.state.objects.get_mut(*object_id);
+            object.zone = Zone::Exile;
+            object.zone_change_count += 1;
+        }
+        flat_install_origin_decision(
+            &mut madness,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseMadnessCast {
+                player: actor_id,
+                card: exiled[0],
+            })),
+        );
+        let replacement = flat_test_ref(&madness.state, exiled[1]);
+        for candidate in &mut madness.current.as_mut().unwrap().candidates {
+            let ActionSemanticV1::ChooseMadnessCast { card, .. } = &mut candidate.semantic else {
+                unreachable!()
+            };
+            *card = replacement.clone();
+        }
+        assert_rejected(&madness);
+
+        let mut triggers = FastActorSessionV1::reset_with_limits(81_035, 135, 128, 16_384);
+        let actor_id = triggers.current.as_ref().unwrap().actor;
+        let hand = triggers.state.players[actor_id.index()].hand.clone();
+        let pending = hand[..3]
+            .iter()
+            .map(|source| PendingTrigger {
+                controller: actor_id,
+                source: *source,
+                effect: EffectOp::Sequence(Vec::new()),
+                is_madness_offer: false,
+                kicked: false,
+            })
+            .collect();
+        flat_install_origin_decision(
+            &mut triggers,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::OrderTriggers {
+                player: actor_id,
+                pending,
+            })),
+        );
+        let replacement = flat_test_ref(&triggers.state, hand[3]);
+        let ActionSemanticV1::OrderTriggers {
+            pending_sources, ..
+        } = &mut triggers.current.as_mut().unwrap().candidates[5].semantic
+        else {
+            unreachable!()
+        };
+        *pending_sources.first_mut().unwrap() = replacement;
+        assert_eq!(
+            flat_trigger_order_rank_v1(&[2, 0, 1]),
+            Some(5),
+            "fixture must exercise a non-self-inverse permutation"
+        );
+        assert_rejected(&triggers);
+    }
+
+    #[test]
+    fn flat_action_slice_failure_preserves_a_prior_successful_encoding() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_036, 136, 128, 16_384);
+        let actor = session.current.as_ref().unwrap().actor;
+        let spell = session.state.players[actor.index()].hand[0];
+        flat_install_origin_decision(
+            &mut session,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseSpellMode {
+                player: actor,
+                spell,
+                mode_count: 2,
+            })),
+        );
+        let mut actions = [poison_flat_action(); 8];
+        let mut refs = [poison_flat_ref(); 8];
+        let mut objects = [poison_flat_object(); 8];
+        session
+            .encode_current_flat_action_slice_v1(
+                flat_current_decision(&session),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap();
+        let actions_after_success = actions;
+        let refs_after_success = refs;
+        let objects_after_success = objects;
+
+        let mut malformed_range = session.clone();
+        let ActionSemanticV1::ChooseSpellMode { mode_count, .. } =
+            &mut malformed_range.current.as_mut().unwrap().candidates[0].semantic
+        else {
+            unreachable!()
+        };
+        *mode_count = 0;
+        assert_eq!(
+            malformed_range.encode_current_flat_action_slice_v1(
+                flat_current_decision(&malformed_range),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            ),
+            Err(FlatActionDecisionSliceErrorV1::InvalidActionRange)
+        );
+        assert_eq!(actions, actions_after_success);
+        assert_eq!(refs, refs_after_success);
+        assert_eq!(objects, objects_after_success);
+
+        let mut mismatched_pair = session;
+        mismatched_pair.current.as_mut().unwrap().candidates[0].policy_action =
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::Pass));
+        assert_eq!(
+            mismatched_pair.encode_current_flat_action_slice_v1(
+                flat_current_decision(&mismatched_pair),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            ),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+        assert_eq!(actions, actions_after_success);
+        assert_eq!(refs, refs_after_success);
+        assert_eq!(objects, objects_after_success);
+    }
+
+    #[test]
+    fn flat_action_slice_reuses_long_buffers_across_actor_and_episode_without_tail_leakage() {
+        let mut long = FastActorSessionV1::reset_with_limits(81_037, 137, 128, 16_384);
+        let long_actor = long.current.as_ref().unwrap().actor;
+        let hand = long.state.players[long_actor.index()].hand.clone();
+        flat_install_origin_decision(
+            &mut long,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
+                player: long_actor,
+                source: hand[0],
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 5,
+                legal_targets: hand[1..5].iter().copied().map(Target::Object).collect(),
+                can_finish: false,
+            })),
+        );
+        let mut actions = [poison_flat_action(); 16];
+        let mut refs = [poison_flat_ref(); 32];
+        let mut objects = [poison_flat_object(); 16];
+        let encoded_long = long
+            .encode_current_flat_action_slice_v1(
+                flat_current_decision(&long),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap();
+        assert_eq!(encoded_long.active_action_count, 4);
+        assert_eq!(encoded_long.active_ref_count, 8);
+        assert_eq!(encoded_long.active_object_count, 5);
+        let actions_after_long = actions;
+        let refs_after_long = refs;
+        let objects_after_long = objects;
+
+        let mut short = FastActorSessionV1::reset_with_limits(81_038, 138, 128, 16_384);
+        let short_actor = long_actor.opponent();
+        flat_install_origin_decision(
+            &mut short,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::CastSpellOrPass {
+                player: short_actor,
+                castable_spells: Vec::new(),
+                mana_abilities: Vec::new(),
+                land_drops: Vec::new(),
+                activatable_abilities: Vec::new(),
+                plot_actions: Vec::new(),
+            })),
+        );
+        let encoded_short = short
+            .encode_current_flat_action_slice_v1(
+                flat_current_decision(&short),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap();
+        assert_eq!(encoded_short.active_action_count, 1);
+        assert_eq!(encoded_short.active_ref_count, 0);
+        assert_eq!(encoded_short.active_object_count, 0);
+        assert_ne!(
+            encoded_short.binding.episode_id,
+            encoded_long.binding.episode_id
+        );
+        assert_ne!(
+            encoded_short.binding.acting_player,
+            encoded_long.binding.acting_player
+        );
+        assert_eq!(&actions[1..], &actions_after_long[1..]);
+        assert_eq!(refs, refs_after_long);
+        assert_eq!(objects, objects_after_long);
+
+        let mut fresh_actions = [FlatActionCoreV1::default(); 16];
+        let mut fresh_refs = [FlatActionRefV1::default(); 32];
+        let mut fresh_objects = [FlatActionObjectV1::default(); 16];
+        let fresh = short
+            .encode_current_flat_action_slice_v1(
+                flat_current_decision(&short),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut fresh_actions,
+                    refs: &mut fresh_refs,
+                    objects: &mut fresh_objects,
+                },
+            )
+            .unwrap();
+        assert_eq!(fresh, encoded_short);
+        assert_eq!(fresh_actions[0], actions[0]);
+    }
+
+    #[test]
+    fn flat_action_slice_rejects_hidden_reference_before_publish() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_005, 95, 128, 16_384);
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let actor: PlayerSeatV1 = actor_id.into();
+        let hidden_id = session.state.players[actor_id.opponent().index()].library[0];
+        let hidden = flat_test_ref(&session.state, hidden_id);
+        session.current.as_mut().unwrap().candidates = vec![CorePolicyActionCandidateV1 {
+            semantic: ActionSemanticV1::CastSpell {
+                actor,
+                source: hidden,
+            },
+            policy_action: PolicyActionV5::Surface(SurfaceAction::Action(Action::CastSpell(
+                hidden_id,
+            ))),
+        }];
+        let decision = flat_current_decision(&session);
+
+        let mut actions = [poison_flat_action(); 2];
+        let mut refs = [poison_flat_ref(); 2];
+        let mut objects = [poison_flat_object(); 2];
+        let actions_before = actions;
+        let refs_before = refs;
+        let objects_before = objects;
+        let error = session
+            .encode_current_flat_action_slice_v1(
+                decision,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error, FlatActionDecisionSliceErrorV1::HiddenActionReference);
+        assert_eq!(actions, actions_before);
+        assert_eq!(refs, refs_before);
+        assert_eq!(objects, objects_before);
+    }
+
+    #[test]
+    fn flat_action_slice_rejects_every_stable_ref_identity_mismatch_before_publish() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        let base_session = FastActorSessionV1::reset_with_limits(81_010, 104, 128, 16_384);
+        let actor_id = base_session.current.as_ref().unwrap().actor;
+        let actor: PlayerSeatV1 = actor_id.into();
+        let object_id = base_session.state.players[actor_id.index()].hand[0];
+        let base = flat_test_ref(&base_session.state, object_id);
+        let mut bad_arena = base.clone();
+        bad_arena.arena_id = u32::MAX;
+        let mut bad_card = base.clone();
+        bad_card.card_db_id = bad_card.card_db_id.wrapping_add(1);
+        let mut bad_owner = base.clone();
+        bad_owner.owner = actor_id.opponent().into();
+        let mut bad_controller = base.clone();
+        bad_controller.controller = actor_id.opponent().into();
+        let mut bad_zone = base.clone();
+        bad_zone.zone = Zone::Battlefield;
+        let mut bad_incarnation = base;
+        bad_incarnation.zone_change_count += 1;
+
+        for reference in [
+            bad_arena,
+            bad_card,
+            bad_owner,
+            bad_controller,
+            bad_zone,
+            bad_incarnation,
+        ] {
+            let mut session = base_session.clone();
+            session.current.as_mut().unwrap().candidates = vec![CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::CastSpell {
+                    actor,
+                    source: reference.clone(),
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(Action::CastSpell(
+                    ObjectId(reference.arena_id),
+                ))),
+            }];
+            let mut actions = [poison_flat_action(); 2];
+            let mut refs = [poison_flat_ref(); 2];
+            let mut objects = [poison_flat_object(); 2];
+            let actions_before = actions;
+            let refs_before = refs;
+            let objects_before = objects;
+            assert_eq!(
+                session.encode_current_flat_action_slice_v1(
+                    flat_current_decision(&session),
+                    &mut FlatActionDecisionSliceBuffersV1 {
+                        actions: &mut actions,
+                        refs: &mut refs,
+                        objects: &mut objects,
+                    },
+                ),
+                Err(FlatActionDecisionSliceErrorV1::InvalidActionReference)
+            );
+            assert_eq!(actions, actions_before);
+            assert_eq!(refs, refs_before);
+            assert_eq!(objects, objects_before);
+        }
+    }
+
+    #[test]
+    fn flat_action_slice_preserves_candidate_order_and_canonical_object_order() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_006, 96, 128, 16_384);
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let actor: PlayerSeatV1 = actor_id.into();
+        let hand = &session.state.players[actor_id.index()].hand;
+        let first = flat_test_ref(&session.state, hand[0]);
+        let second = flat_test_ref(&session.state, hand[1]);
+        session.current.as_mut().unwrap().candidates = vec![
+            CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::CastSpell {
+                    actor,
+                    source: first,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(Action::CastSpell(
+                    hand[0],
+                ))),
+            },
+            CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::CastSpell {
+                    actor,
+                    source: second,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(Action::CastSpell(
+                    hand[1],
+                ))),
+            },
+            CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::Pass { actor },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(Action::Pass)),
+            },
+        ];
+        session.current.as_mut().unwrap().origin_decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::CastSpellOrPass {
+                player: actor_id,
+                castable_spells: vec![hand[0], hand[1]],
+                mana_abilities: Vec::new(),
+                land_drops: Vec::new(),
+                activatable_abilities: Vec::new(),
+                plot_actions: Vec::new(),
+            }));
+        let mut reordered = session.clone();
+        reordered.current.as_mut().unwrap().candidates.swap(0, 1);
+        let PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::CastSpellOrPass {
+            castable_spells,
+            ..
+        })) = &mut reordered.current.as_mut().unwrap().origin_decision
+        else {
+            unreachable!()
+        };
+        castable_spells.swap(0, 1);
+        let decision = flat_current_decision(&session);
+        let reordered_decision = flat_current_decision(&reordered);
+
+        let mut actions_a = [FlatActionCoreV1::default(); 3];
+        let mut refs_a = [FlatActionRefV1::default(); 2];
+        let mut objects_a = [FlatActionObjectV1::default(); 2];
+        let mut actions_b = actions_a;
+        let mut refs_b = refs_a;
+        let mut objects_b = objects_a;
+        let encoded_a = session
+            .encode_current_flat_action_slice_v1(
+                decision,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions_a,
+                    refs: &mut refs_a,
+                    objects: &mut objects_a,
+                },
+            )
+            .unwrap();
+        let encoded_b = reordered
+            .encode_current_flat_action_slice_v1(
+                reordered_decision,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions_b,
+                    refs: &mut refs_b,
+                    objects: &mut objects_b,
+                },
+            )
+            .unwrap();
+
+        assert_ne!(
+            encoded_a.binding.candidate_order_commitment,
+            encoded_b.binding.candidate_order_commitment
+        );
+        let mut binding_a = encoded_a.binding;
+        let mut binding_b = encoded_b.binding;
+        binding_a.candidate_order_commitment = [0; 16];
+        binding_b.candidate_order_commitment = [0; 16];
+        assert_eq!(binding_a, binding_b);
+        assert_eq!(encoded_a.active_action_count, encoded_b.active_action_count);
+        assert_eq!(encoded_a.active_ref_count, encoded_b.active_ref_count);
+        assert_eq!(encoded_a.active_object_count, encoded_b.active_object_count);
+        assert_eq!(objects_a, objects_b);
+        assert_eq!(
+            [actions_a[0].kind, actions_a[1].kind, actions_a[2].kind],
+            [
+                FlatActionKindV1::CastSpell,
+                FlatActionKindV1::CastSpell,
+                FlatActionKindV1::Pass
+            ]
+        );
+        assert_eq!(
+            [actions_b[0].kind, actions_b[1].kind, actions_b[2].kind],
+            [
+                FlatActionKindV1::CastSpell,
+                FlatActionKindV1::CastSpell,
+                FlatActionKindV1::Pass
+            ]
+        );
+        assert_eq!([refs_a[0].object_index, refs_a[1].object_index], [0, 1]);
+        assert_eq!([refs_b[0].object_index, refs_b[1].object_index], [1, 0]);
+        assert_eq!([refs_a[0].action_index, refs_a[1].action_index], [0, 1]);
+        assert_eq!([refs_b[0].action_index, refs_b[1].action_index], [0, 1]);
+
+        let state_hash_before = session.diagnostic_state_hash();
+        let environment_hash_before = session.privileged_core_environment_hash();
+        let error = session
+            .consume_current_flat_action_slice_v1(encoded_b.binding, 0)
+            .unwrap_err();
+        assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        assert_eq!(session.diagnostic_state_hash(), state_hash_before);
+        assert_eq!(
+            session.privileged_core_environment_hash(),
+            environment_hash_before
+        );
+    }
+
+    #[test]
+    fn flat_action_slice_is_inert_to_unknown_opponent_library_identity() {
+        let session = FastActorSessionV1::reset_with_decks_and_limits(
+            81_002,
+            92,
+            128,
+            16_384,
+            [
+                CANONICAL_RALLY_DECK_ID.to_string(),
+                CANONICAL_RALLY_DECK_ID.to_string(),
+            ],
+        )
+        .unwrap();
+        let actor = session.current.as_ref().unwrap().actor;
+        let opponent = actor.opponent();
+        assert!(
+            session.state.library_knowledge[actor.index()][opponent.index()].is_empty(),
+            "reset fixture unexpectedly knows opponent library identities"
+        );
+        let mut mutated = session.clone();
+        let first = mutated.state.players[opponent.index()].library[0];
+        let second = mutated.state.players[opponent.index()].library[1];
+        let first_card = mutated.state.objects.get(first).card_def;
+        let second_card = mutated.state.objects.get(second).card_def;
+        mutated.state.objects.get_mut(first).card_def = second_card;
+        mutated.state.objects.get_mut(second).card_def = first_card;
+
+        let mut actions_a = vec![FlatActionCoreV1::default(); 64];
+        let mut refs_a = vec![FlatActionRefV1::default(); 256];
+        let mut objects_a = vec![FlatActionObjectV1::default(); 128];
+        let mut actions_b = actions_a.clone();
+        let mut refs_b = refs_a.clone();
+        let mut objects_b = objects_a.clone();
+        let decision_a = flat_current_decision(&session);
+        let decision_b = flat_current_decision(&mutated);
+        let encoded_a = session
+            .encode_current_flat_action_slice_v1(
+                decision_a,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions_a,
+                    refs: &mut refs_a,
+                    objects: &mut objects_a,
+                },
+            )
+            .unwrap();
+        let encoded_b = mutated
+            .encode_current_flat_action_slice_v1(
+                decision_b,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions_b,
+                    refs: &mut refs_b,
+                    objects: &mut objects_b,
+                },
+            )
+            .unwrap();
+        assert_eq!(encoded_a, encoded_b);
+        assert_eq!(
+            &actions_a[..encoded_a.active_action_count as usize],
+            &actions_b[..encoded_b.active_action_count as usize]
+        );
+        assert_eq!(
+            &refs_a[..encoded_a.active_ref_count as usize],
+            &refs_b[..encoded_b.active_ref_count as usize]
+        );
+        assert_eq!(
+            &objects_a[..usize::from(encoded_a.active_object_count)],
+            &objects_b[..usize::from(encoded_b.active_object_count)]
+        );
+    }
+
+    #[test]
+    fn flat_action_slice_is_inert_to_unknown_opponent_hand_identity() {
+        let session = FastActorSessionV1::reset_with_limits(81_008, 102, 128, 16_384);
+        let actor = session.current.as_ref().unwrap().actor;
+        let opponent = actor.opponent();
+        assert!(session.state.hand_knowledge[actor.index()][opponent.index()].is_empty());
+        let mut mutated = session.clone();
+        let first = mutated.state.players[opponent.index()].hand[0];
+        let second = mutated.state.players[opponent.index()].hand[1];
+        let first_card = mutated.state.objects.get(first).card_def;
+        let second_card = mutated.state.objects.get(second).card_def;
+        mutated.state.objects.get_mut(first).card_def = second_card;
+        mutated.state.objects.get_mut(second).card_def = first_card;
+
+        let mut actions_a = [FlatActionCoreV1::default(); 64];
+        let mut refs_a = [FlatActionRefV1::default(); 256];
+        let mut objects_a = [FlatActionObjectV1::default(); 128];
+        let mut actions_b = actions_a;
+        let mut refs_b = refs_a;
+        let mut objects_b = objects_a;
+        let encoded_a = session
+            .encode_current_flat_action_slice_v1(
+                flat_current_decision(&session),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions_a,
+                    refs: &mut refs_a,
+                    objects: &mut objects_a,
+                },
+            )
+            .unwrap();
+        let encoded_b = mutated
+            .encode_current_flat_action_slice_v1(
+                flat_current_decision(&mutated),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions_b,
+                    refs: &mut refs_b,
+                    objects: &mut objects_b,
+                },
+            )
+            .unwrap();
+        assert_eq!(encoded_a, encoded_b);
+        assert_eq!(
+            &actions_a[..encoded_a.active_action_count as usize],
+            &actions_b[..encoded_b.active_action_count as usize]
+        );
+        assert_eq!(
+            &refs_a[..encoded_a.active_ref_count as usize],
+            &refs_b[..encoded_b.active_ref_count as usize]
+        );
+        assert_eq!(
+            &objects_a[..usize::from(encoded_a.active_object_count)],
+            &objects_b[..usize::from(encoded_b.active_object_count)]
+        );
+    }
+
+    #[test]
+    fn flat_action_slice_admits_only_actor_known_hand_and_library_refs() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_009, 103, 128, 16_384);
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let opponent = actor_id.opponent();
+        let actor: PlayerSeatV1 = actor_id.into();
+        let source_id = session.state.players[actor_id.index()].hand[0];
+        let known_hand_id = session.state.players[opponent.index()].hand[0];
+        let known_opponent_library_id = session.state.players[opponent.index()].library[0];
+        let known_self_library_id = session.state.players[actor_id.index()].library[0];
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, known_hand_id)
+            .unwrap();
+        session.state.reveal_library_top(actor_id, opponent, 1);
+        session.state.reveal_library_top(actor_id, actor_id, 1);
+        let source = flat_test_ref(&session.state, source_id);
+        let known_hand = flat_test_ref(&session.state, known_hand_id);
+        let known_opponent_library = flat_test_ref(&session.state, known_opponent_library_id);
+        let known_self_library = flat_test_ref(&session.state, known_self_library_id);
+        session.current.as_mut().unwrap().candidates = vec![
+            CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseEffectTarget {
+                    actor,
+                    source: source.clone(),
+                    target: TargetRefV1::Object { object: known_hand },
+                    selected_count: 0,
+                    min_targets: 1,
+                    max_targets: 4,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::ChooseEffectTarget(Target::Object(known_hand_id)),
+                )),
+            },
+            CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseEffectTarget {
+                    actor,
+                    source: source.clone(),
+                    target: TargetRefV1::Object {
+                        object: known_self_library,
+                    },
+                    selected_count: 0,
+                    min_targets: 1,
+                    max_targets: 4,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::ChooseEffectTarget(Target::Object(known_self_library_id)),
+                )),
+            },
+            CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseEffectTarget {
+                    actor,
+                    source,
+                    target: TargetRefV1::Object {
+                        object: known_opponent_library,
+                    },
+                    selected_count: 0,
+                    min_targets: 1,
+                    max_targets: 4,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::ChooseEffectTarget(Target::Object(known_opponent_library_id)),
+                )),
+            },
+        ];
+        session.current.as_mut().unwrap().origin_decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
+                player: actor_id,
+                source: source_id,
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 4,
+                legal_targets: vec![
+                    Target::Object(known_hand_id),
+                    Target::Object(known_self_library_id),
+                    Target::Object(known_opponent_library_id),
+                ],
+                can_finish: false,
+            }));
+        let mut actions = [FlatActionCoreV1::default(); 3];
+        let mut refs = [FlatActionRefV1::default(); 6];
+        let mut objects = [FlatActionObjectV1::default(); 4];
+        let encoded = session
+            .encode_current_flat_action_slice_v1(
+                flat_current_decision(&session),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap();
+        assert_eq!(encoded.active_ref_count, 6);
+        assert_eq!(encoded.active_object_count, 4);
+        assert_eq!(
+            objects.map(|object| object.group),
+            [
+                FlatActionObjectGroupV1::SelfHand,
+                FlatActionObjectGroupV1::KnownOpponentHand,
+                FlatActionObjectGroupV1::KnownSelfLibrary,
+                FlatActionObjectGroupV1::KnownOpponentLibrary,
+            ]
+        );
+        assert!(objects
+            .iter()
+            .all(|object| object.actor_visible_ordinal == 0));
+        assert_eq!(encoded.binding.card_db_hash, KERNEL_CARDDB_HASH);
+        assert_eq!(
+            encoded.binding.card_token_mapping_version,
+            FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V1
+        );
+    }
+
+    #[test]
+    fn flat_action_slice_supports_every_order_trigger_length_one_through_seven() {
+        for count in 1..=7 {
+            let session =
+                FastActorSessionV1::reset_with_limits(81_003 + count as u64, 93, 128, 16_384);
+            let actor_id = session.current.as_ref().unwrap().actor;
+            let actor: PlayerSeatV1 = actor_id.into();
+            let pending_sources: Vec<_> = session.state.players[actor_id.index()].hand[..count]
+                .iter()
+                .map(|&id| flat_test_ref(&session.state, id))
+                .collect();
+            let order: Vec<_> = if count == 3 {
+                vec![2, 0, 1]
+            } else {
+                (0..count).rev().collect()
+            };
+            let expected_order = order.clone();
+            let semantic = ActionSemanticV1::OrderTriggers {
+                actor,
+                pending_sources: pending_sources.clone(),
+                order,
+            };
+            let mut refs = Vec::new();
+            let core = flat_action_core_and_refs_v1(
+                &semantic,
+                actor,
+                0,
+                |role, order_index, associated_order, reference| {
+                    refs.push((role, order_index, associated_order, reference.clone()));
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(core.kind, FlatActionKindV1::OrderTriggers);
+            assert_eq!(core.ref_len, count as u16);
+            for (index, (role, order_index, associated_order, reference)) in refs.iter().enumerate()
+            {
+                assert_eq!(*role, FlatActionRefRoleV1::PendingSources);
+                assert_eq!(*order_index, index as u16);
+                // `associated_order` is the raw permutation entry aligned to
+                // this pending-source index, not the inverse placement.
+                assert_eq!(*associated_order, expected_order[index] as u16);
+                assert_eq!(reference, &pending_sources[index]);
+            }
+            assert!(flat_trigger_order_rank_v1(&expected_order).is_some());
+        }
+        assert_eq!(flat_trigger_order_rank_v1(&[2, 0, 1]), Some(5));
+    }
+
+    #[test]
+    fn flat_action_slice_rejects_every_malformed_trigger_order_before_publish() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        let cases = [
+            (0_usize, Vec::new()),
+            (1, Vec::new()),
+            (3, vec![0, 0, 2]),
+            (3, vec![0, 1, 3]),
+            (8, (0..8).collect()),
+        ];
+        for (case_index, (pending_count, order)) in cases.into_iter().enumerate() {
+            let mut session =
+                FastActorSessionV1::reset_with_limits(81_020 + case_index as u64, 98, 128, 16_384);
+            let actor_id = session.current.as_ref().unwrap().actor;
+            let actor: PlayerSeatV1 = actor_id.into();
+            let hand = &session.state.players[actor_id.index()].hand;
+            let pending_sources = (0..pending_count)
+                .map(|index| flat_test_ref(&session.state, hand[index % hand.len()]))
+                .collect();
+            session.current.as_mut().unwrap().candidates = vec![CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::OrderTriggers {
+                    actor,
+                    pending_sources,
+                    order: order.clone(),
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::OrderTriggers(order),
+                )),
+            }];
+            let decision = flat_current_decision(&session);
+            let mut actions = [poison_flat_action(); 2];
+            let mut refs = [poison_flat_ref(); 8];
+            let mut objects = [poison_flat_object(); 8];
+            let actions_before = actions;
+            let refs_before = refs;
+            let objects_before = objects;
+            assert_eq!(
+                session.encode_current_flat_action_slice_v1(
+                    decision,
+                    &mut FlatActionDecisionSliceBuffersV1 {
+                        actions: &mut actions,
+                        refs: &mut refs,
+                        objects: &mut objects,
+                    },
+                ),
+                Err(FlatActionDecisionSliceErrorV1::InvalidTriggerOrder)
+            );
+            assert_eq!(actions, actions_before);
+            assert_eq!(refs, refs_before);
+            assert_eq!(objects, objects_before);
+        }
+    }
+
+    #[test]
+    fn flat_action_slice_encodes_policy_v5_inclusion_actions() {
+        for (session, expected_kind, expected_ref_len) in [
+            (
+                fast_attacker_session(3, 8, 8),
+                FlatActionKindV1::ChooseAttackerInclusion,
+                1,
+            ),
+            (
+                fast_blocker_session(2, 8, 8),
+                FlatActionKindV1::ChooseBlockerInclusion,
+                2,
+            ),
+        ] {
+            let response = session.current_response();
+            let FastActorResponseV1::Decision(decision) = response else {
+                panic!("inclusion fixture unexpectedly terminated");
+            };
+            let mut actions = [FlatActionCoreV1::default(); 2];
+            let mut refs = [FlatActionRefV1::default(); 4];
+            let mut objects = [FlatActionObjectV1::default(); 4];
+            let encoded = session
+                .encode_current_flat_action_slice_v1(
+                    decision,
+                    &mut FlatActionDecisionSliceBuffersV1 {
+                        actions: &mut actions,
+                        refs: &mut refs,
+                        objects: &mut objects,
+                    },
+                )
+                .unwrap();
+            assert_eq!(encoded.active_action_count, 2);
+            assert_eq!(actions[0].kind, expected_kind);
+            assert_eq!(actions[1].kind, expected_kind);
+            assert_eq!(actions[0].ref_len, expected_ref_len);
+            assert_eq!(actions[1].ref_len, expected_ref_len);
+            assert_eq!(actions[0].flags & FLAT_ACTION_FLAG_INCLUDE_V1, 0);
+            assert_eq!(
+                actions[1].flags & FLAT_ACTION_FLAG_INCLUDE_V1,
+                FLAT_ACTION_FLAG_INCLUDE_V1
+            );
+        }
+    }
+
+    #[test]
+    fn flat_action_core_matches_hand_authored_all_kind_golden() {
+        let session = FastActorSessionV1::reset_with_limits(81_004, 94, 128, 16_384);
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let actor: PlayerSeatV1 = actor_id.into();
+        let hand = &session.state.players[actor_id.index()].hand;
+        let a = flat_test_ref(&session.state, hand[0]);
+        let b = flat_test_ref(&session.state, hand[1]);
+        let semantics = vec![
+            ActionSemanticV1::Pass { actor },
+            ActionSemanticV1::PlayLand {
+                actor,
+                source: a.clone(),
+            },
+            ActionSemanticV1::CastSpell {
+                actor,
+                source: a.clone(),
+            },
+            ActionSemanticV1::ActivateManaAbility {
+                actor,
+                source: a.clone(),
+                mana_choice: Some(ManaColor::R),
+            },
+            ActionSemanticV1::ActivateAbility {
+                actor,
+                source: a.clone(),
+                ability_index: 7,
+            },
+            ActionSemanticV1::PlotSpell {
+                actor,
+                source: a.clone(),
+            },
+            ActionSemanticV1::ChooseTarget {
+                actor,
+                source: a.clone(),
+                remaining: 2,
+                target: TargetRefV1::Player { player: actor },
+            },
+            ActionSemanticV1::ChooseCostTarget {
+                actor,
+                source: a.clone(),
+                cost_kind: CostKind::SacrificeLands,
+                remaining: 3,
+                candidate: b.clone(),
+            },
+            ActionSemanticV1::ChooseCastMode {
+                actor,
+                source: a.clone(),
+                mode: CastMode::Alternative,
+            },
+            ActionSemanticV1::ChooseKicker {
+                actor,
+                source: a.clone(),
+                pay: true,
+            },
+            ActionSemanticV1::ChooseSpellMode {
+                actor,
+                source: a.clone(),
+                mode_index: 1,
+                mode_count: 2,
+            },
+            ActionSemanticV1::ChooseEffectOption {
+                actor,
+                source: a.clone(),
+                option_index: 3,
+                option_count: 5,
+            },
+            ActionSemanticV1::ChooseEffectTarget {
+                actor,
+                source: a.clone(),
+                target: TargetRefV1::Object { object: b.clone() },
+                selected_count: 1,
+                min_targets: 1,
+                max_targets: 3,
+            },
+            ActionSemanticV1::FinishEffectSelection {
+                actor,
+                source: a.clone(),
+                selected_count: 2,
+            },
+            ActionSemanticV1::ChooseEffectColor {
+                actor,
+                source: a.clone(),
+                color: ManaColor::G,
+            },
+            ActionSemanticV1::ChooseEffectNumber {
+                actor,
+                source: a.clone(),
+                number: 5,
+                minimum: -2,
+                maximum: 9,
+            },
+            ActionSemanticV1::ChooseEffectBoolean {
+                actor,
+                source: a.clone(),
+                value: true,
+            },
+            ActionSemanticV1::FinishTargetSelection {
+                actor,
+                source: a.clone(),
+                selected_count: 4,
+            },
+            ActionSemanticV1::ChooseOptionalCostUse {
+                actor,
+                use_cost: true,
+            },
+            ActionSemanticV1::ChooseOptionalCostWhich {
+                actor,
+                choice: OptionalCostChoice::SacrificeLand,
+            },
+            ActionSemanticV1::ChooseSpellCopyPayment {
+                actor,
+                source: a.clone(),
+                pay: true,
+            },
+            ActionSemanticV1::ChooseSpellCopyRetarget {
+                actor,
+                source: a.clone(),
+                change_target: true,
+            },
+            ActionSemanticV1::ChooseMadnessCast {
+                actor,
+                card: a.clone(),
+                cast_it: true,
+            },
+            ActionSemanticV1::Discard {
+                actor,
+                cards: vec![a.clone()],
+            },
+            ActionSemanticV1::ChooseAttackerInclusion {
+                actor,
+                attacker: a.clone(),
+                include: true,
+            },
+            ActionSemanticV1::ChooseBlockerInclusion {
+                actor,
+                attacker: a.clone(),
+                blocker: b.clone(),
+                include: true,
+            },
+            ActionSemanticV1::OrderTriggers {
+                actor,
+                pending_sources: vec![a.clone(), b.clone()],
+                order: vec![1, 0],
+            },
+        ];
+        let mut actual_actions = Vec::new();
+        let mut actual_refs = Vec::new();
+        let mut ref_start = 0_u32;
+        for semantic in &semantics {
+            let core = flat_action_core_and_refs_v1(
+                semantic,
+                actor,
+                ref_start,
+                |role, order_index, associated_order, reference| {
+                    actual_refs.push((role, order_index, associated_order, reference.clone()));
+                    Ok(())
+                },
+            )
+            .unwrap();
+            ref_start += u32::from(core.ref_len);
+            actual_actions.push(core);
+        }
+
+        let expected_actions = vec![
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::Pass,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::PlayLand,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::CastSpell,
+                ref_start: 1,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ActivateManaAbility,
+                mana_choice: 4,
+                ref_start: 2,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ActivateAbility,
+                ability_index: 7,
+                ref_start: 3,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::PlotSpell,
+                ref_start: 4,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseTarget,
+                remaining: 2,
+                target_kind: 1,
+                target_player: 1,
+                ref_start: 5,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseCostTarget,
+                remaining: 3,
+                cost_kind: 1,
+                ref_start: 6,
+                ref_len: 2,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseCastMode,
+                cast_mode: 2,
+                ref_start: 8,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseKicker,
+                flags: 1,
+                ref_start: 9,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseSpellMode,
+                mode_index: 1,
+                mode_count: 2,
+                ref_start: 10,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseEffectOption,
+                option_index: 3,
+                option_count: 5,
+                ref_start: 11,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseEffectTarget,
+                selected_count: 1,
+                min_targets: 1,
+                max_targets: 3,
+                target_kind: 2,
+                ref_start: 12,
+                ref_len: 2,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::FinishEffectSelection,
+                selected_count: 2,
+                ref_start: 14,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseEffectColor,
+                color: 5,
+                ref_start: 15,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseEffectNumber,
+                number: 5,
+                minimum: -2,
+                maximum: 9,
+                ref_start: 16,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseEffectBoolean,
+                flags: 16,
+                ref_start: 17,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::FinishTargetSelection,
+                selected_count: 4,
+                ref_start: 18,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseOptionalCostUse,
+                flags: 4,
+                ref_start: 19,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseOptionalCostWhich,
+                optional_cost_choice: 3,
+                ref_start: 19,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseSpellCopyPayment,
+                flags: 1,
+                ref_start: 19,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseSpellCopyRetarget,
+                flags: 2,
+                ref_start: 20,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseMadnessCast,
+                flags: 8,
+                ref_start: 21,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::Discard,
+                ref_start: 22,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseAttackerInclusion,
+                flags: 32,
+                ref_start: 23,
+                ref_len: 1,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::ChooseBlockerInclusion,
+                flags: 32,
+                ref_start: 24,
+                ref_len: 2,
+                ..FlatActionCoreV1::default()
+            },
+            FlatActionCoreV1 {
+                kind: FlatActionKindV1::OrderTriggers,
+                ref_start: 26,
+                ref_len: 2,
+                ..FlatActionCoreV1::default()
+            },
+        ];
+        assert_eq!(actual_actions, expected_actions);
+
+        let expected_refs = vec![
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Candidate, 0, 0, b.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::TargetObject, 0, 0, b.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Source, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Card, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Cards, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Attacker, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Attacker, 0, 0, a.clone()),
+            (FlatActionRefRoleV1::Blocker, 0, 0, b.clone()),
+            (FlatActionRefRoleV1::PendingSources, 0, 1, a),
+            (FlatActionRefRoleV1::PendingSources, 1, 0, b),
+        ];
+        assert_eq!(actual_refs, expected_refs);
+    }
+
+    #[test]
+    fn flat_action_enum_optional_and_false_encodings_match_fixed_ids() {
+        let session = FastActorSessionV1::reset_with_limits(81_007, 97, 128, 16_384);
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let actor: PlayerSeatV1 = actor_id.into();
+        let hand = &session.state.players[actor_id.index()].hand;
+        let a = flat_test_ref(&session.state, hand[0]);
+        let b = flat_test_ref(&session.state, hand[1]);
+
+        let kinds = [
+            FlatActionKindV1::Pass,
+            FlatActionKindV1::PlayLand,
+            FlatActionKindV1::CastSpell,
+            FlatActionKindV1::ActivateManaAbility,
+            FlatActionKindV1::ActivateAbility,
+            FlatActionKindV1::PlotSpell,
+            FlatActionKindV1::ChooseTarget,
+            FlatActionKindV1::ChooseCostTarget,
+            FlatActionKindV1::ChooseCastMode,
+            FlatActionKindV1::ChooseKicker,
+            FlatActionKindV1::ChooseSpellMode,
+            FlatActionKindV1::ChooseEffectOption,
+            FlatActionKindV1::ChooseEffectTarget,
+            FlatActionKindV1::FinishEffectSelection,
+            FlatActionKindV1::ChooseEffectColor,
+            FlatActionKindV1::ChooseEffectNumber,
+            FlatActionKindV1::ChooseEffectBoolean,
+            FlatActionKindV1::FinishTargetSelection,
+            FlatActionKindV1::ChooseOptionalCostUse,
+            FlatActionKindV1::ChooseOptionalCostWhich,
+            FlatActionKindV1::ChooseSpellCopyPayment,
+            FlatActionKindV1::ChooseSpellCopyRetarget,
+            FlatActionKindV1::ChooseMadnessCast,
+            FlatActionKindV1::Discard,
+            FlatActionKindV1::ChooseAttackerInclusion,
+            FlatActionKindV1::ChooseBlockerInclusion,
+            FlatActionKindV1::OrderTriggers,
+        ];
+        assert_eq!(
+            kinds.map(flat_action_kind_id_v1),
+            std::array::from_fn::<_, 27, _>(|index| index as u8)
+        );
+        let roles = [
+            FlatActionRefRoleV1::Source,
+            FlatActionRefRoleV1::Candidate,
+            FlatActionRefRoleV1::Card,
+            FlatActionRefRoleV1::Attacker,
+            FlatActionRefRoleV1::Blocker,
+            FlatActionRefRoleV1::TargetObject,
+            FlatActionRefRoleV1::Cards,
+            FlatActionRefRoleV1::PendingSources,
+        ];
+        assert_eq!(
+            roles.map(flat_action_ref_role_id_v1),
+            [0, 1, 2, 3, 4, 5, 6, 7]
+        );
+
+        for (choice, expected) in [
+            (None, 0),
+            (Some(ManaColor::W), 1),
+            (Some(ManaColor::U), 2),
+            (Some(ManaColor::B), 3),
+            (Some(ManaColor::R), 4),
+            (Some(ManaColor::G), 5),
+            (Some(ManaColor::C), 6),
+        ] {
+            let core = flat_test_core(
+                &ActionSemanticV1::ActivateManaAbility {
+                    actor,
+                    source: a.clone(),
+                    mana_choice: choice,
+                },
+                actor,
+            )
+            .unwrap();
+            assert_eq!(core.mana_choice, expected);
+        }
+        for (color, expected) in [
+            (ManaColor::W, 1),
+            (ManaColor::U, 2),
+            (ManaColor::B, 3),
+            (ManaColor::R, 4),
+            (ManaColor::G, 5),
+            (ManaColor::C, 6),
+        ] {
+            let core = flat_test_core(
+                &ActionSemanticV1::ChooseEffectColor {
+                    actor,
+                    source: a.clone(),
+                    color,
+                },
+                actor,
+            )
+            .unwrap();
+            assert_eq!(core.color, expected);
+        }
+        for (mode, expected) in [(CastMode::Normal, 1), (CastMode::Alternative, 2)] {
+            let core = flat_test_core(
+                &ActionSemanticV1::ChooseCastMode {
+                    actor,
+                    source: a.clone(),
+                    mode,
+                },
+                actor,
+            )
+            .unwrap();
+            assert_eq!(core.cast_mode, expected);
+        }
+        for (kind, expected) in [
+            (CostKind::SacrificeLands, 1),
+            (CostKind::SacrificePermanents, 2),
+            (CostKind::SacrificeCreatures, 3),
+            (CostKind::SacrificeArtifacts, 4),
+            (CostKind::DiscardCards, 5),
+            (CostKind::ExileFromGraveyard, 6),
+            (CostKind::TapPermanents, 7),
+            (CostKind::ReturnPermanentsToHand, 8),
+            (CostKind::PayLife, 9),
+            (CostKind::RemoveCounters, 10),
+            (CostKind::PutCounters, 11),
+        ] {
+            let core = flat_test_core(
+                &ActionSemanticV1::ChooseCostTarget {
+                    actor,
+                    source: a.clone(),
+                    cost_kind: kind,
+                    remaining: 1,
+                    candidate: b.clone(),
+                },
+                actor,
+            )
+            .unwrap();
+            assert_eq!(core.cost_kind, expected);
+        }
+        for (choice, expected) in [
+            (OptionalCostChoice::Decline, 1),
+            (OptionalCostChoice::Discard, 2),
+            (OptionalCostChoice::SacrificeLand, 3),
+        ] {
+            let core = flat_test_core(
+                &ActionSemanticV1::ChooseOptionalCostWhich { actor, choice },
+                actor,
+            )
+            .unwrap();
+            assert_eq!(core.optional_cost_choice, expected);
+        }
+        let opponent: PlayerSeatV1 = actor_id.opponent().into();
+        let opponent_target = flat_test_core(
+            &ActionSemanticV1::ChooseTarget {
+                actor,
+                source: a.clone(),
+                remaining: 1,
+                target: TargetRefV1::Player { player: opponent },
+            },
+            actor,
+        )
+        .unwrap();
+        assert_eq!(
+            (opponent_target.target_kind, opponent_target.target_player),
+            (1, 2)
+        );
+
+        let false_semantics = [
+            ActionSemanticV1::ChooseKicker {
+                actor,
+                source: a.clone(),
+                pay: false,
+            },
+            ActionSemanticV1::ChooseEffectBoolean {
+                actor,
+                source: a.clone(),
+                value: false,
+            },
+            ActionSemanticV1::ChooseOptionalCostUse {
+                actor,
+                use_cost: false,
+            },
+            ActionSemanticV1::ChooseSpellCopyPayment {
+                actor,
+                source: a.clone(),
+                pay: false,
+            },
+            ActionSemanticV1::ChooseSpellCopyRetarget {
+                actor,
+                source: a.clone(),
+                change_target: false,
+            },
+            ActionSemanticV1::ChooseMadnessCast {
+                actor,
+                card: a.clone(),
+                cast_it: false,
+            },
+            ActionSemanticV1::ChooseAttackerInclusion {
+                actor,
+                attacker: a.clone(),
+                include: false,
+            },
+            ActionSemanticV1::ChooseBlockerInclusion {
+                actor,
+                attacker: a,
+                blocker: b,
+                include: false,
+            },
+        ];
+        for semantic in false_semantics {
+            assert_eq!(flat_test_core(&semantic, actor).unwrap().flags, 0);
+        }
+    }
+
+    #[test]
+    fn flat_action_slice_rejects_schema_only_unexecutable_kinds_before_publish() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        let base = FastActorSessionV1::reset_with_limits(81_039, 139, 128, 16_384);
+        let actor_id = base.current.as_ref().unwrap().actor;
+        let actor: PlayerSeatV1 = actor_id.into();
+        let source = flat_test_ref(&base.state, base.state.players[actor_id.index()].hand[0]);
+        let semantics = [
+            ActionSemanticV1::ChooseEffectColor {
+                actor,
+                source: source.clone(),
+                color: ManaColor::R,
+            },
+            ActionSemanticV1::ChooseEffectNumber {
+                actor,
+                source: source.clone(),
+                number: 2,
+                minimum: 1,
+                maximum: 3,
+            },
+            ActionSemanticV1::FinishTargetSelection {
+                actor,
+                source,
+                selected_count: 1,
+            },
+        ];
+        for semantic in semantics {
+            let mut session = base.clone();
+            session.current.as_mut().unwrap().candidates = vec![CorePolicyActionCandidateV1 {
+                semantic,
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(Action::Pass)),
+            }];
+            let mut actions = [poison_flat_action(); 2];
+            let mut refs = [poison_flat_ref(); 2];
+            let mut objects = [poison_flat_object(); 2];
+            let actions_before = actions;
+            let refs_before = refs;
+            let objects_before = objects;
+            assert_eq!(
+                session.encode_current_flat_action_slice_v1(
+                    flat_current_decision(&session),
+                    &mut FlatActionDecisionSliceBuffersV1 {
+                        actions: &mut actions,
+                        refs: &mut refs,
+                        objects: &mut objects,
+                    },
+                ),
+                Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+            );
+            assert_eq!(actions, actions_before);
+            assert_eq!(refs, refs_before);
+            assert_eq!(objects, objects_before);
+        }
+    }
+
+    #[test]
+    fn flat_action_candidate_commitment_matches_independent_pass_vector() {
+        let mut session = FastActorSessionV1::reset_with_limits(81_040, 140, 128, 16_384);
+        flat_install_origin_decision(
+            &mut session,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                castable_spells: Vec::new(),
+                mana_abilities: Vec::new(),
+                land_drops: Vec::new(),
+                activatable_abilities: Vec::new(),
+                plot_actions: Vec::new(),
+            })),
+        );
+        let mut actions = [FlatActionCoreV1::default(); 1];
+        let mut refs = [];
+        let mut objects = [];
+        let encoded = session
+            .encode_current_flat_action_slice_v1(
+                flat_current_decision(&session),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap();
+        assert_eq!(actions, [FlatActionCoreV1::default()]);
+        // Independently generated with Python hashlib/struct over the
+        // documented little-endian v1 byte stream and frozen CardDB hash.
+        assert_eq!(
+            encoded.binding.candidate_order_commitment,
+            [
+                0xf1, 0xe2, 0x01, 0xba, 0xcd, 0x3d, 0xff, 0x30, 0x6f, 0x30, 0x7d, 0xc7, 0xa8, 0x6d,
+                0x17, 0xa2,
+            ]
+        );
     }
 }
