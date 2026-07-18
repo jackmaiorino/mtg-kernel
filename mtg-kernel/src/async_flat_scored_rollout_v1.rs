@@ -23,12 +23,12 @@ use crate::fast_sampler::{
 };
 use crate::flat_policy_v1::{
     FlatCompletedDungeonV1, FlatContextElementKindV1, FlatContextKindV1, FlatContextPathElementV1,
-    FlatDecisionBuffersV1, FlatDecisionEncoderV1, FlatDecisionErrorV1, FlatDecisionV1,
-    FlatEffectSubtypeChangeKindV1, FlatEffectSubtypeChangeV1, FlatGlobalsV1,
-    FlatObjectAbilityUseV1, FlatObjectCoreV1, FlatObjectGoadV1, FlatObjectGroupV1,
-    FlatObjectSourceKindV1, FlatObjectSubtypeV1, FlatPendingEffectChoiceV1,
-    FlatPolicyContractDigestsV1, FlatRelationV1, FlatRelativePlayerV1, FlatScorerActionCoreV1,
-    FlatScorerActionRefV1, FlatScoringDecisionViewV1, FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1,
+    FlatDecisionEncoderV1, FlatDecisionErrorV1, FlatDecisionV1, FlatEffectSubtypeChangeKindV1,
+    FlatEffectSubtypeChangeV1, FlatGlobalsV1, FlatObjectAbilityUseV1, FlatObjectCoreV1,
+    FlatObjectGoadV1, FlatObjectGroupV1, FlatObjectSourceKindV1, FlatObjectSubtypeV1,
+    FlatPendingEffectChoiceV1, FlatPolicyContractDigestsV1, FlatRelationV1, FlatRelativePlayerV1,
+    FlatScorerActionCoreV1, FlatScorerActionRefV1, FlatScoringDecisionViewV1,
+    FlatScoringOwnedBuffersV1, FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1,
     FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1,
     FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1, FLAT_POLICY_CONTRACT_DIGESTS_V1,
     FLAT_POLICY_ENUM_MAPPING_VERSION_V1, FLAT_POLICY_FEATURE_INVENTORY_VERSION_V1,
@@ -42,9 +42,9 @@ use crate::rl::{
 };
 use crate::rl_session::{
     FastActorDecisionKindV1, FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1,
-    FlatActionCoreV1, FlatActionObjectV1, FlatActionRefV1, RlSessionTerminalV1,
-    FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V1, FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V1,
-    FLAT_ACTION_DECISION_SLICE_VERSION_V1, FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V1,
+    RlSessionTerminalV1, FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V1,
+    FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V1, FLAT_ACTION_DECISION_SLICE_VERSION_V1,
+    FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V1,
 };
 use crate::state::SplitMix64;
 use std::fmt;
@@ -463,6 +463,26 @@ impl OwnedFlatScoringDecisionV1 {
     }
 }
 
+struct ValidatedOwnedFlatScoringDecisionV1(OwnedFlatScoringDecisionV1);
+
+impl ValidatedOwnedFlatScoringDecisionV1 {
+    fn decision(&self) -> &FlatDecisionV1 {
+        &self.0.decision
+    }
+
+    fn scorer_contract(&self) -> FlatScorerContractV1 {
+        self.0.scorer_contract()
+    }
+
+    fn scorer_view(&self) -> FlatScoringDecisionViewV1<'_> {
+        self.0.scorer_view()
+    }
+
+    fn into_inner(self) -> OwnedFlatScoringDecisionV1 {
+        self.0
+    }
+}
+
 fn active_prefix<T>(buffer: &[T], count: u32) -> &[T] {
     let end = usize::try_from(count).expect("u32 active count must fit usize");
     debug_assert!(end <= buffer.len());
@@ -508,7 +528,7 @@ struct RoundDecisionV1 {
     worker_id: usize,
     logical_lane_id: usize,
     expected: FastActorDecisionV1,
-    packet: OwnedFlatScoringDecisionV1,
+    packet: ValidatedOwnedFlatScoringDecisionV1,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -524,6 +544,21 @@ struct WorkerRoundV1 {
     worker_id: usize,
     decisions: Vec<RoundDecisionV1>,
     terminals: Vec<RoundTerminalV1>,
+    reply: WorkerReplyV1,
+}
+
+impl WorkerRoundV1 {
+    fn with_capacity(worker_id: usize, capacity: usize) -> Self {
+        Self {
+            worker_id,
+            decisions: Vec::with_capacity(capacity),
+            terminals: Vec::with_capacity(capacity),
+            reply: WorkerReplyV1 {
+                actions: Vec::with_capacity(capacity),
+                terminal_acks: Vec::with_capacity(capacity),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -544,7 +579,7 @@ struct ActionReplyV1 {
     logical_lane_id: usize,
     binding: crate::flat_policy_v1::FlatDecisionBindingV1,
     selected_index: u32,
-    packet: OwnedFlatScoringDecisionV1,
+    packet: ValidatedOwnedFlatScoringDecisionV1,
 }
 
 #[derive(Default)]
@@ -556,7 +591,7 @@ struct WorkerReplyV1 {
 enum WorkerControlV1 {
     Continue {
         release_epoch: u64,
-        reply: WorkerReplyV1,
+        round: WorkerRoundV1,
     },
     Cancel,
 }
@@ -576,9 +611,6 @@ struct LocalLaneV1 {
     response: Option<FastActorResponseV1>,
     encoder: FlatDecisionEncoderV1,
     packet: Option<OwnedFlatScoringDecisionV1>,
-    operational_actions: Vec<FlatActionCoreV1>,
-    operational_action_refs: Vec<FlatActionRefV1>,
-    operational_action_objects: Vec<FlatActionObjectV1>,
     waiting_decision: Option<WaitingDecisionV1>,
     waiting_terminal: bool,
     opponent_policy: SplitMix64,
@@ -605,9 +637,6 @@ impl LocalLaneV1 {
             response: None,
             encoder: FlatDecisionEncoderV1::default(),
             packet: Some(OwnedFlatScoringDecisionV1::default()),
-            operational_actions: Vec::new(),
-            operational_action_refs: Vec::new(),
-            operational_action_objects: Vec::new(),
             waiting_decision: None,
             waiting_terminal: false,
             opponent_policy: SplitMix64::seed(0),
@@ -642,7 +671,7 @@ impl LocalLaneV1 {
                 .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
             let action = reply.actions.swap_remove(index);
             if action.binding != waiting.binding
-                || action.packet.decision.binding != waiting.binding
+                || action.packet.decision().binding != waiting.binding
                 || action.selected_index >= waiting.expected.legal_action_count
             {
                 return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
@@ -669,7 +698,7 @@ impl LocalLaneV1 {
                         selected_index: action.selected_index,
                     });
             }
-            self.packet = Some(action.packet);
+            self.packet = Some(action.packet.into_inner());
             self.response = Some(response);
             self.waiting_decision = None;
             #[cfg(test)]
@@ -786,23 +815,20 @@ impl LocalLaneV1 {
                     {
                         return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Encode));
                     }
-                    let mut packet = self
+                    let packet = self
                         .packet
                         .take()
                         .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
-                    encode_packet(
+                    let packet = encode_packet(
                         self.session
                             .as_ref()
                             .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?,
                         expected,
                         &mut self.encoder,
-                        &mut packet,
-                        &mut self.operational_actions,
-                        &mut self.operational_action_refs,
-                        &mut self.operational_action_objects,
+                        packet,
                     )
                     .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Encode))?;
-                    let binding = packet.decision.binding;
+                    let binding = packet.decision().binding;
                     self.waiting_decision = Some(WaitingDecisionV1 { expected, binding });
                     decisions.push(RoundDecisionV1 {
                         worker_id: self.worker_id,
@@ -829,133 +855,31 @@ impl LocalLaneV1 {
     }
 }
 
-fn writable<T: Copy + Default>(buffer: &mut Vec<T>) {
-    buffer.resize(buffer.capacity(), T::default());
-}
-
-fn resize_required<T: Copy + Default>(buffer: &mut Vec<T>, required: usize) {
-    buffer.resize(required, T::default());
-}
-
 fn encode_packet(
     session: &FastActorSessionV1,
     expected: FastActorDecisionV1,
     encoder: &mut FlatDecisionEncoderV1,
-    packet: &mut OwnedFlatScoringDecisionV1,
-    operational_actions: &mut Vec<FlatActionCoreV1>,
-    operational_action_refs: &mut Vec<FlatActionRefV1>,
-    operational_action_objects: &mut Vec<FlatActionObjectV1>,
-) -> Result<(), FlatDecisionErrorV1> {
-    loop {
-        writable(&mut packet.objects);
-        writable(&mut packet.relations);
-        writable(&mut packet.object_subtypes);
-        writable(&mut packet.ability_uses);
-        writable(&mut packet.goads);
-        writable(&mut packet.completed_dungeons);
-        writable(&mut packet.effect_subtype_changes);
-        writable(&mut packet.context_path_elements);
-        writable(operational_actions);
-        writable(operational_action_refs);
-        writable(operational_action_objects);
-        let result = session.encode_current_flat_decision_v1(
-            expected,
-            encoder,
-            &mut FlatDecisionBuffersV1 {
-                objects: &mut packet.objects,
-                relations: &mut packet.relations,
-                object_subtypes: &mut packet.object_subtypes,
-                ability_uses: &mut packet.ability_uses,
-                goads: &mut packet.goads,
-                completed_dungeons: &mut packet.completed_dungeons,
-                effect_subtype_changes: &mut packet.effect_subtype_changes,
-                context_path_elements: &mut packet.context_path_elements,
-                actions: operational_actions,
-                action_refs: operational_action_refs,
-                action_objects: operational_action_objects,
-            },
-        );
-        let decision = match result {
-            Ok(decision) => decision,
-            Err(FlatDecisionErrorV1::InsufficientObjectCapacity { required, .. }) => {
-                resize_required(&mut packet.objects, required);
-                continue;
-            }
-            Err(FlatDecisionErrorV1::InsufficientRelationCapacity { required, .. }) => {
-                resize_required(&mut packet.relations, required);
-                continue;
-            }
-            Err(FlatDecisionErrorV1::InsufficientObjectSubtypeCapacity { required, .. }) => {
-                resize_required(&mut packet.object_subtypes, required);
-                continue;
-            }
-            Err(FlatDecisionErrorV1::InsufficientAbilityUseCapacity { required, .. }) => {
-                resize_required(&mut packet.ability_uses, required);
-                continue;
-            }
-            Err(FlatDecisionErrorV1::InsufficientGoadCapacity { required, .. }) => {
-                resize_required(&mut packet.goads, required);
-                continue;
-            }
-            Err(FlatDecisionErrorV1::InsufficientCompletedDungeonCapacity { required, .. }) => {
-                resize_required(&mut packet.completed_dungeons, required);
-                continue;
-            }
-            Err(FlatDecisionErrorV1::InsufficientEffectSubtypeCapacity { required, .. }) => {
-                resize_required(&mut packet.effect_subtype_changes, required);
-                continue;
-            }
-            Err(FlatDecisionErrorV1::InsufficientContextPathCapacity { required, .. }) => {
-                resize_required(&mut packet.context_path_elements, required);
-                continue;
-            }
-            Err(FlatDecisionErrorV1::InsufficientActionCapacity { required, .. }) => {
-                resize_required(operational_actions, required);
-                continue;
-            }
-            Err(FlatDecisionErrorV1::InsufficientActionRefCapacity { required, .. }) => {
-                resize_required(operational_action_refs, required);
-                continue;
-            }
-            Err(FlatDecisionErrorV1::InsufficientActionObjectCapacity { required, .. }) => {
-                resize_required(operational_action_objects, required);
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
-        let active_action_count = usize::try_from(decision.active_action_count)
-            .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?;
-        let operational_actions = operational_actions
-            .get(..active_action_count)
-            .ok_or(FlatDecisionErrorV1::InvalidReference)?;
-        packet.actions.clear();
-        packet
-            .actions
-            .try_reserve(operational_actions.len())
-            .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?;
-        packet.actions.extend(
-            operational_actions
-                .iter()
-                .copied()
-                .map(FlatScorerActionCoreV1::from),
-        );
-        let scorer_action_refs =
-            encoder.cached_scorer_action_refs_v1(decision.binding.action_binding)?;
-        packet.scorer_action_refs.clear();
-        packet
-            .scorer_action_refs
-            .try_reserve(scorer_action_refs.len())
-            .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?;
-        packet
-            .scorer_action_refs
-            .extend_from_slice(scorer_action_refs);
-        // Keep initialized high-water lengths so the next decision does not
-        // default-fill every stale tail after a smaller state. Active prefixes
-        // are the only rows validated or exposed to the scorer.
-        packet.decision = decision;
-        validate_packet(packet).map_err(|_| FlatDecisionErrorV1::InvalidReference)?;
-        return Ok(());
-    }
+    mut packet: OwnedFlatScoringDecisionV1,
+) -> Result<ValidatedOwnedFlatScoringDecisionV1, FlatDecisionErrorV1> {
+    let decision = session.encode_current_flat_scoring_decision_owned_v1(
+        expected,
+        encoder,
+        &mut FlatScoringOwnedBuffersV1 {
+            objects: &mut packet.objects,
+            relations: &mut packet.relations,
+            object_subtypes: &mut packet.object_subtypes,
+            ability_uses: &mut packet.ability_uses,
+            goads: &mut packet.goads,
+            completed_dungeons: &mut packet.completed_dungeons,
+            effect_subtype_changes: &mut packet.effect_subtype_changes,
+            context_path_elements: &mut packet.context_path_elements,
+            actions: &mut packet.actions,
+            action_refs: &mut packet.scorer_action_refs,
+        },
+    )?;
+    packet.decision = decision;
+    validate_packet(&packet).map_err(|_| FlatDecisionErrorV1::InvalidReference)?;
+    Ok(ValidatedOwnedFlatScoringDecisionV1(packet))
 }
 
 fn expected_scorer_contract(card_db_hash: u64) -> FlatScorerContractV1 {
@@ -1356,35 +1280,39 @@ fn worker_loop(
             )
         })
         .collect();
-    let mut pending_reply: Option<WorkerReplyV1> = None;
+    let mut round = WorkerRoundV1::with_capacity(worker_id, config.sessions_per_worker);
     loop {
         if runtime.cancel.load(Ordering::Acquire) || Instant::now() >= runtime.deadline {
             return Ok(());
         }
-        if let Some(mut reply) = pending_reply.take() {
-            for lane in &mut lanes {
-                lane.apply_reply(&mut reply)?;
-            }
-            if !reply.actions.is_empty() || !reply.terminal_acks.is_empty() {
-                return Err(WorkerFailureV1 {
-                    worker_id,
-                    logical_lane_id: first_lane,
-                    episode_id: u64::MAX,
-                    phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
-                });
-            }
+        for lane in &mut lanes {
+            lane.apply_reply(&mut round.reply)?;
+        }
+        if !round.reply.actions.is_empty() || !round.reply.terminal_acks.is_empty() {
+            return Err(WorkerFailureV1 {
+                worker_id,
+                logical_lane_id: first_lane,
+                episode_id: u64::MAX,
+                phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
+            });
+        }
+        if !round.decisions.is_empty() || !round.terminals.is_empty() {
+            return Err(WorkerFailureV1 {
+                worker_id,
+                logical_lane_id: first_lane,
+                episode_id: u64::MAX,
+                phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
+            });
         }
 
-        let mut decisions = Vec::with_capacity(config.sessions_per_worker);
-        let mut terminals = Vec::with_capacity(config.sessions_per_worker);
         for lane in &mut lanes {
             lane.fill(config, runtime.end_episode_id, runtime.logical_lane_count)?;
             lane.advance_to_event(
                 config,
                 runtime.deadline,
                 &runtime.cancel,
-                &mut decisions,
-                &mut terminals,
+                &mut round.decisions,
+                &mut round.terminals,
             )?;
             if runtime.cancel.load(Ordering::Acquire) || Instant::now() >= runtime.deadline {
                 return Ok(());
@@ -1403,7 +1331,7 @@ fn worker_loop(
                 })?;
             return Ok(());
         }
-        if decisions.is_empty() && terminals.is_empty() {
+        if round.decisions.is_empty() && round.terminals.is_empty() {
             return Err(WorkerFailureV1 {
                 worker_id,
                 logical_lane_id: first_lane,
@@ -1412,11 +1340,7 @@ fn worker_loop(
             });
         }
         message_tx
-            .send(WorkerMessageV1::Round(WorkerRoundV1 {
-                worker_id,
-                decisions,
-                terminals,
-            }))
+            .send(WorkerMessageV1::Round(round))
             .map_err(|_| WorkerFailureV1 {
                 worker_id,
                 logical_lane_id: first_lane,
@@ -1435,7 +1359,7 @@ fn worker_loop(
         match control_rx.recv_timeout(remaining) {
             Ok(WorkerControlV1::Continue {
                 release_epoch,
-                reply,
+                round: returned_round,
             }) => {
                 while runtime.released_epoch.load(Ordering::Acquire) < release_epoch {
                     if runtime.cancel.load(Ordering::Acquire) || Instant::now() >= runtime.deadline
@@ -1444,7 +1368,15 @@ fn worker_loop(
                     }
                     thread::yield_now();
                 }
-                pending_reply = Some(reply);
+                if returned_round.worker_id != worker_id {
+                    return Err(WorkerFailureV1 {
+                        worker_id,
+                        logical_lane_id: first_lane,
+                        episode_id: u64::MAX,
+                        phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
+                    });
+                }
+                round = returned_round;
             }
             Ok(WorkerControlV1::Cancel) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
             Err(RecvTimeoutError::Timeout) => return Ok(()),
@@ -1708,6 +1640,12 @@ pub fn run_async_flat_scored_rollout_v1(
     let mut round_values = Vec::<f32>::new();
     let mut round_action_offsets = Vec::<usize>::new();
     let mut chunk_action_offsets = Vec::<usize>::new();
+    let mut seen = vec![false; config.worker_count];
+    let mut done_this_round = vec![false; config.worker_count];
+    let mut round_decisions = Vec::with_capacity(logical_lane_count);
+    let mut round_terminals = Vec::with_capacity(logical_lane_count);
+    let mut worker_rounds: Vec<Option<WorkerRoundV1>> =
+        (0..config.worker_count).map(|_| None).collect();
 
     let broker_result = (|| -> Result<(), AsyncFlatScoredRolloutErrorV1> {
         while active_workers.iter().any(|active| *active) {
@@ -1716,10 +1654,11 @@ pub fn run_async_flat_scored_rollout_v1(
             }
             let round_index = metrics.complete_round_count;
             checked_add(&mut metrics.complete_round_count, 1)?;
-            let mut seen = vec![false; config.worker_count];
-            let mut done_this_round = vec![false; config.worker_count];
-            let mut round_decisions = Vec::with_capacity(logical_lane_count);
-            let mut round_terminals = Vec::with_capacity(logical_lane_count);
+            seen.fill(false);
+            done_this_round.fill(false);
+            round_decisions.clear();
+            round_terminals.clear();
+            debug_assert!(worker_rounds.iter().all(Option::is_none));
             let active_count = active_workers.iter().filter(|active| **active).count();
             for _ in 0..active_count {
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -1762,7 +1701,11 @@ pub fn run_async_flat_scored_rollout_v1(
                         done_this_round[worker_id] = true;
                     }
                     WorkerMessageV1::Round(mut round) => {
-                        if round.decisions.is_empty() && round.terminals.is_empty() {
+                        if (round.decisions.is_empty() && round.terminals.is_empty())
+                            || !round.reply.actions.is_empty()
+                            || !round.reply.terminal_acks.is_empty()
+                            || worker_rounds[worker_id].is_some()
+                        {
                             return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                         }
                         if round.decisions.iter().any(|decision| {
@@ -1780,6 +1723,7 @@ pub fn run_async_flat_scored_rollout_v1(
                         }
                         round_decisions.append(&mut round.decisions);
                         round_terminals.append(&mut round.terminals);
+                        worker_rounds[worker_id] = Some(round);
                     }
                 }
             }
@@ -1800,10 +1744,8 @@ pub fn run_async_flat_scored_rollout_v1(
                 .first()
                 .map(|decision| decision.packet.scorer_contract());
             for decision in &round_decisions {
-                validate_packet(&decision.packet)
-                    .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
                 if decision.packet.scorer_contract() != round_contract.expect("nonempty round")
-                    || !expected_matches_binding(decision.expected, decision.packet.decision)
+                    || !expected_matches_binding(decision.expected, *decision.packet.decision())
                 {
                     return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                 }
@@ -1817,7 +1759,7 @@ pub fn run_async_flat_scored_rollout_v1(
                     .copied()
                     .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
                     .checked_add(
-                        usize::try_from(decision.packet.decision.active_action_count)
+                        usize::try_from(decision.packet.decision().active_action_count)
                             .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?,
                     )
                     .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
@@ -1933,10 +1875,7 @@ pub fn run_async_flat_scored_rollout_v1(
             digest.update([0x52]);
             digest.update(round_index.to_le_bytes());
             digest.update((round_decisions.len() as u64).to_le_bytes());
-            let mut replies: Vec<WorkerReplyV1> = (0..config.worker_count)
-                .map(|_| WorkerReplyV1::default())
-                .collect();
-            for (decision_index, decision) in round_decisions.into_iter().enumerate() {
+            for (decision_index, decision) in round_decisions.drain(..).enumerate() {
                 let logit_start = round_action_offsets[decision_index];
                 let logit_end = round_action_offsets[decision_index + 1];
                 let broker_episode = broker_episodes
@@ -1961,17 +1900,22 @@ pub fn run_async_flat_scored_rollout_v1(
                 digest.update(ordinal.to_le_bytes());
                 digest.update(action_seed.to_le_bytes());
                 digest.update(selected_index.to_le_bytes());
-                replies[decision.worker_id].actions.push(ActionReplyV1 {
-                    logical_lane_id: decision.logical_lane_id,
-                    binding: decision.packet.decision.binding,
-                    selected_index,
-                    packet: decision.packet,
-                });
+                worker_rounds[decision.worker_id]
+                    .as_mut()
+                    .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
+                    .reply
+                    .actions
+                    .push(ActionReplyV1 {
+                        logical_lane_id: decision.logical_lane_id,
+                        binding: decision.packet.decision().binding,
+                        selected_index,
+                        packet: decision.packet,
+                    });
                 checked_add(&mut metrics.sampled_action_count, 1)?;
             }
 
             digest.update((round_terminals.len() as u64).to_le_bytes());
-            for terminal in round_terminals {
+            for terminal in round_terminals.drain(..) {
                 if episodes.len() == episode_count_usize {
                     return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                 }
@@ -1982,7 +1926,10 @@ pub fn run_async_flat_scored_rollout_v1(
                     terminal.learner_action_count,
                     terminal.learner_trace_hash,
                 )?);
-                replies[terminal.worker_id]
+                worker_rounds[terminal.worker_id]
+                    .as_mut()
+                    .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
+                    .reply
                     .terminal_acks
                     .push(terminal.logical_lane_id);
                 checked_add(&mut metrics.terminal_notification_count, 1)?;
@@ -1999,16 +1946,16 @@ pub fn run_async_flat_scored_rollout_v1(
                 if !active_workers[worker_id] || done_this_round[worker_id] {
                     continue;
                 }
-                if replies[worker_id].actions.is_empty()
-                    && replies[worker_id].terminal_acks.is_empty()
-                {
+                let round = worker_rounds[worker_id]
+                    .take()
+                    .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+                if round.reply.actions.is_empty() && round.reply.terminal_acks.is_empty() {
                     return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                 }
-                let reply = std::mem::take(&mut replies[worker_id]);
                 control_txs[worker_id]
                     .send(WorkerControlV1::Continue {
                         release_epoch,
-                        reply,
+                        round,
                     })
                     .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
             }
@@ -2347,9 +2294,6 @@ mod tests {
         let mut events = Vec::new();
         let mut encoder = FlatDecisionEncoderV1::default();
         let mut packet = OwnedFlatScoringDecisionV1::default();
-        let mut operational_actions = Vec::new();
-        let mut operational_action_refs = Vec::new();
-        let mut operational_action_objects = Vec::new();
         let mut sampler = FastCategoricalScratch::default();
         let mut logits = Vec::new();
         let mut scored_action_logit_count = 0u64;
@@ -2382,20 +2326,14 @@ mod tests {
                     FastActorResponseV1::Decision(expected)
                         if expected.acting_player == config.learner_seat =>
                     {
-                        encode_packet(
-                            &session,
-                            expected,
-                            &mut encoder,
-                            &mut packet,
-                            &mut operational_actions,
-                            &mut operational_action_refs,
-                            &mut operational_action_objects,
-                        )
-                        .unwrap();
+                        let validated_packet =
+                            encode_packet(&session, expected, &mut encoder, packet).unwrap();
                         let width = usize::try_from(expected.legal_action_count).unwrap();
                         logits.resize(width, 0.0);
-                        let payload =
-                            test_content_sensitive_logits(packet.scorer_view(), &mut logits);
+                        let payload = test_content_sensitive_logits(
+                            validated_packet.scorer_view(),
+                            &mut logits,
+                        );
                         let action_seed = derive_async_flat_scored_action_seed_v1(
                             config.learner_policy_seed,
                             episode_id,
@@ -2417,10 +2355,11 @@ mod tests {
                             .unwrap();
                         response = session
                             .consume_current_flat_action_slice_v1(
-                                packet.decision.binding.action_binding,
+                                validated_packet.decision().binding.action_binding,
                                 selected_index,
                             )
                             .unwrap();
+                        packet = validated_packet.into_inner();
                     }
                     FastActorResponseV1::Decision(decision) => {
                         let selected_index =
@@ -3110,7 +3049,7 @@ mod tests {
         );
         assert_eq!(
             digest,
-            "582cb191e1fd0c8835e1e85a45d6f7077bdf77a5b52e0d39701c5e27f5949df7"
+            "e1aa12d2736f4c52fed56fc89defb9f16bcda852631b2eee8c2e8bb707943981"
         );
     }
 }

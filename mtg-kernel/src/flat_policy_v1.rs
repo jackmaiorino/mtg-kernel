@@ -981,6 +981,22 @@ pub struct FlatDecisionBuffersV1<'a> {
     pub action_objects: &'a mut [FlatActionObjectV1],
 }
 
+/// Crate-private ownership bridge for the scored rollout. Unlike
+/// [`FlatDecisionBuffersV1`], these destinations are swapped with the
+/// encoder's already-validated scorer-safe tables instead of copied.
+pub(crate) struct FlatScoringOwnedBuffersV1<'a> {
+    pub objects: &'a mut Vec<FlatObjectCoreV1>,
+    pub relations: &'a mut Vec<FlatRelationV1>,
+    pub object_subtypes: &'a mut Vec<FlatObjectSubtypeV1>,
+    pub ability_uses: &'a mut Vec<FlatObjectAbilityUseV1>,
+    pub goads: &'a mut Vec<FlatObjectGoadV1>,
+    pub completed_dungeons: &'a mut Vec<FlatCompletedDungeonV1>,
+    pub effect_subtype_changes: &'a mut Vec<FlatEffectSubtypeChangeV1>,
+    pub context_path_elements: &'a mut Vec<FlatContextPathElementV1>,
+    pub actions: &'a mut Vec<FlatScorerActionCoreV1>,
+    pub action_refs: &'a mut Vec<FlatScorerActionRefV1>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlatDecisionErrorV1 {
     Action(FlatActionDecisionSliceErrorV1),
@@ -1038,6 +1054,7 @@ pub struct FlatDecisionEncoderV1 {
     action_objects: Vec<FlatActionObjectV1>,
     action_object_to_model_object: Vec<u32>,
     claimed_model_objects: Vec<bool>,
+    scorer_actions: Vec<FlatScorerActionCoreV1>,
     scorer_action_refs: Vec<FlatScorerActionRefV1>,
 }
 
@@ -1287,6 +1304,7 @@ impl FlatDecisionEncoderV1 {
         self.action_objects.clear();
         self.action_object_to_model_object.clear();
         self.claimed_model_objects.clear();
+        self.scorer_actions.clear();
         self.scorer_action_refs.clear();
     }
 
@@ -3493,9 +3511,20 @@ impl FlatDecisionEncoderV1 {
         action_object_to_model_object.clear();
         let mut claimed_model_objects = std::mem::take(&mut self.claimed_model_objects);
         claimed_model_objects.clear();
+        let mut scorer_actions = std::mem::take(&mut self.scorer_actions);
+        scorer_actions.clear();
         let mut scorer_action_refs = std::mem::take(&mut self.scorer_action_refs);
         scorer_action_refs.clear();
         let scorer_validation = (|| -> Result<(), FlatDecisionErrorV1> {
+            scorer_actions
+                .try_reserve(self.actions.len())
+                .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?;
+            scorer_actions.extend(
+                self.actions
+                    .iter()
+                    .copied()
+                    .map(FlatScorerActionCoreV1::from),
+            );
             action_object_to_model_object
                 .try_reserve(self.action_objects.len())
                 .map_err(|_| FlatDecisionErrorV1::CheckedIntegerRange)?;
@@ -3612,11 +3641,13 @@ impl FlatDecisionEncoderV1 {
         })();
         self.action_object_to_model_object = action_object_to_model_object;
         self.claimed_model_objects = claimed_model_objects;
+        self.scorer_actions = scorer_actions;
         self.scorer_action_refs = scorer_action_refs;
         scorer_validation
     }
 
-    pub(crate) fn cached_scorer_action_refs_v1(
+    #[cfg(test)]
+    fn cached_scorer_action_refs_v1(
         &self,
         binding: FlatActionDecisionBindingV1,
     ) -> Result<&[FlatScorerActionRefV1], FlatDecisionErrorV1> {
@@ -3652,6 +3683,41 @@ impl FlatDecisionEncoderV1 {
         self.build_cache(session, expected)?;
         self.cached_binding
             .ok_or(FlatDecisionErrorV1::ObservationContract)
+    }
+
+    fn cached_decision_v1(
+        &self,
+        action_binding: FlatActionDecisionBindingV1,
+    ) -> Result<FlatDecisionV1, FlatDecisionErrorV1> {
+        if self.cached_binding != Some(action_binding) {
+            return Err(FlatDecisionErrorV1::ScorerBindingMismatch);
+        }
+        Ok(FlatDecisionV1 {
+            binding: FlatDecisionBindingV1 {
+                action_binding,
+                typed_layout_version: FLAT_POLICY_TYPED_LAYOUT_VERSION_V1,
+                feature_inventory_version: FLAT_POLICY_FEATURE_INVENTORY_VERSION_V1,
+                enum_mapping_version: FLAT_POLICY_ENUM_MAPPING_VERSION_V1,
+                object_group_mapping_version: FLAT_POLICY_OBJECT_GROUP_MAPPING_VERSION_V1,
+                relation_role_mapping_version: FLAT_POLICY_RELATION_ROLE_MAPPING_VERSION_V1,
+                context_subrole_mapping_version: FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1,
+                action_ref_projection_role_mapping_version:
+                    FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1,
+                contract_digests: FLAT_POLICY_CONTRACT_DIGESTS_V1,
+            },
+            globals: self.globals,
+            active_object_count: usize_u32(self.objects.len())?,
+            active_relation_count: usize_u32(self.relations.len())?,
+            active_object_subtype_count: usize_u32(self.object_subtypes.len())?,
+            active_ability_use_count: usize_u32(self.ability_uses.len())?,
+            active_goad_count: usize_u32(self.goads.len())?,
+            active_completed_dungeon_count: usize_u32(self.completed_dungeons.len())?,
+            active_effect_subtype_change_count: usize_u32(self.effect_subtype_changes.len())?,
+            active_context_path_element_count: usize_u32(self.context_path_elements.len())?,
+            active_action_count: usize_u32(self.actions.len())?,
+            active_action_ref_count: usize_u32(self.action_refs.len())?,
+            active_action_object_count: usize_u32(self.action_objects.len())?,
+        })
     }
 }
 
@@ -3727,32 +3793,7 @@ impl FastActorSessionV1 {
             InsufficientActionObjectCapacity
         );
 
-        let decision = FlatDecisionV1 {
-            binding: FlatDecisionBindingV1 {
-                action_binding,
-                typed_layout_version: FLAT_POLICY_TYPED_LAYOUT_VERSION_V1,
-                feature_inventory_version: FLAT_POLICY_FEATURE_INVENTORY_VERSION_V1,
-                enum_mapping_version: FLAT_POLICY_ENUM_MAPPING_VERSION_V1,
-                object_group_mapping_version: FLAT_POLICY_OBJECT_GROUP_MAPPING_VERSION_V1,
-                relation_role_mapping_version: FLAT_POLICY_RELATION_ROLE_MAPPING_VERSION_V1,
-                context_subrole_mapping_version: FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1,
-                action_ref_projection_role_mapping_version:
-                    FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1,
-                contract_digests: FLAT_POLICY_CONTRACT_DIGESTS_V1,
-            },
-            globals: encoder.globals,
-            active_object_count: usize_u32(encoder.objects.len())?,
-            active_relation_count: usize_u32(encoder.relations.len())?,
-            active_object_subtype_count: usize_u32(encoder.object_subtypes.len())?,
-            active_ability_use_count: usize_u32(encoder.ability_uses.len())?,
-            active_goad_count: usize_u32(encoder.goads.len())?,
-            active_completed_dungeon_count: usize_u32(encoder.completed_dungeons.len())?,
-            active_effect_subtype_change_count: usize_u32(encoder.effect_subtype_changes.len())?,
-            active_context_path_element_count: usize_u32(encoder.context_path_elements.len())?,
-            active_action_count: usize_u32(encoder.actions.len())?,
-            active_action_ref_count: usize_u32(encoder.action_refs.len())?,
-            active_action_object_count: usize_u32(encoder.action_objects.len())?,
-        };
+        let decision = encoder.cached_decision_v1(action_binding)?;
 
         buffers.objects[..encoder.objects.len()].copy_from_slice(&encoder.objects);
         buffers.relations[..encoder.relations.len()].copy_from_slice(&encoder.relations);
@@ -3770,6 +3811,47 @@ impl FastActorSessionV1 {
         buffers.action_refs[..encoder.action_refs.len()].copy_from_slice(&encoder.action_refs);
         buffers.action_objects[..encoder.action_objects.len()]
             .copy_from_slice(&encoder.action_objects);
+        Ok(decision)
+    }
+
+    /// Builds the exact same decision as [`Self::encode_current_flat_decision_v1`]
+    /// but transfers only scorer-visible tables by ownership. All validation
+    /// completes before the first swap, so an error leaves every destination
+    /// untouched. The operational action authority tables stay encoder-local.
+    pub(crate) fn encode_current_flat_scoring_decision_owned_v1(
+        &self,
+        expected: FastActorDecisionV1,
+        encoder: &mut FlatDecisionEncoderV1,
+        buffers: &mut FlatScoringOwnedBuffersV1<'_>,
+    ) -> Result<FlatDecisionV1, FlatDecisionErrorV1> {
+        let action_binding = encoder.ensure_cache(self, expected)?;
+        if encoder.scorer_actions.len() != encoder.actions.len()
+            || encoder.scorer_action_refs.len() != encoder.action_refs.len()
+        {
+            return Err(FlatDecisionErrorV1::ScorerBindingMismatch);
+        }
+        let decision = encoder.cached_decision_v1(action_binding)?;
+
+        std::mem::swap(&mut encoder.objects, buffers.objects);
+        std::mem::swap(&mut encoder.relations, buffers.relations);
+        std::mem::swap(&mut encoder.object_subtypes, buffers.object_subtypes);
+        std::mem::swap(&mut encoder.ability_uses, buffers.ability_uses);
+        std::mem::swap(&mut encoder.goads, buffers.goads);
+        std::mem::swap(&mut encoder.completed_dungeons, buffers.completed_dungeons);
+        std::mem::swap(
+            &mut encoder.effect_subtype_changes,
+            buffers.effect_subtype_changes,
+        );
+        std::mem::swap(
+            &mut encoder.context_path_elements,
+            buffers.context_path_elements,
+        );
+        std::mem::swap(&mut encoder.scorer_actions, buffers.actions);
+        std::mem::swap(&mut encoder.scorer_action_refs, buffers.action_refs);
+
+        // The cached authority describes tables that are now packet-owned.
+        // Force a full rebuild before any subsequent encode or cache read.
+        encoder.cached_binding = None;
         Ok(decision)
     }
 }
@@ -3824,6 +3906,7 @@ mod tests {
             action_objects: vec![FlatActionObjectV1::default()],
             action_object_to_model_object: Vec::new(),
             claimed_model_objects: Vec::new(),
+            scorer_actions: vec![FlatScorerActionCoreV1::default()],
             scorer_action_refs: Vec::new(),
         }
     }
@@ -5043,6 +5126,329 @@ mod tests {
             assert_eq!(FlatScorerActionKindV1::from(operational), scorer);
             assert_eq!(scorer as usize, index);
         }
+    }
+
+    #[test]
+    fn owned_scoring_encode_swaps_validated_tables_and_reuses_allocations() {
+        let session = FastActorSessionV1::reset_with_limits(90_030, 130, 128, 16_384);
+        let expected = expected(&session);
+        let mut encoder = FlatDecisionEncoderV1::default();
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+
+        let first = session
+            .encode_current_flat_scoring_decision_owned_v1(
+                expected,
+                &mut encoder,
+                &mut FlatScoringOwnedBuffersV1 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .unwrap();
+        assert!(!objects.is_empty());
+        assert!(!actions.is_empty());
+        let first_object_allocation = objects.as_ptr();
+        let first_action_allocation = actions.as_ptr();
+        assert_eq!(
+            encoder.cached_scorer_action_refs_v1(first.binding.action_binding),
+            Err(FlatDecisionErrorV1::ScorerBindingMismatch)
+        );
+
+        let second = session
+            .encode_current_flat_scoring_decision_owned_v1(
+                expected,
+                &mut encoder,
+                &mut FlatScoringOwnedBuffersV1 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .unwrap();
+        assert_eq!(second, first);
+        assert_eq!(encoder.objects.as_ptr(), first_object_allocation);
+        assert_eq!(encoder.scorer_actions.as_ptr(), first_action_allocation);
+
+        let third = session
+            .encode_current_flat_scoring_decision_owned_v1(
+                expected,
+                &mut encoder,
+                &mut FlatScoringOwnedBuffersV1 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .unwrap();
+        assert_eq!(third, first);
+        assert_eq!(objects.as_ptr(), first_object_allocation);
+        assert_eq!(actions.as_ptr(), first_action_allocation);
+    }
+
+    #[test]
+    fn owned_scoring_encode_matches_copy_path_after_poisoned_reuse() {
+        let session = FastActorSessionV1::reset_with_limits(90_031, 131, 128, 16_384);
+        let expected = expected(&session);
+        let mut copy_encoder = FlatDecisionEncoderV1::default();
+        let mut copy_objects = vec![FlatObjectCoreV1::default(); 512];
+        let mut copy_relations = vec![FlatRelationV1::default(); 2_048];
+        let mut copy_object_subtypes = vec![FlatObjectSubtypeV1::default(); 2_048];
+        let mut copy_ability_uses = vec![FlatObjectAbilityUseV1::default(); 512];
+        let mut copy_goads = vec![FlatObjectGoadV1::default(); 512];
+        let mut copy_completed_dungeons = vec![FlatCompletedDungeonV1::default(); 128];
+        let mut copy_effect_subtype_changes = vec![FlatEffectSubtypeChangeV1::default(); 512];
+        let mut copy_context_path_elements = vec![FlatContextPathElementV1::default(); 512];
+        let mut copy_actions = vec![FlatActionCoreV1::default(); 128];
+        let mut copy_action_refs = vec![FlatActionRefV1::default(); 1_024];
+        let mut copy_action_objects = vec![FlatActionObjectV1::default(); 1_024];
+        let copy_decision = session
+            .encode_current_flat_decision_v1(
+                expected,
+                &mut copy_encoder,
+                &mut FlatDecisionBuffersV1 {
+                    objects: &mut copy_objects,
+                    relations: &mut copy_relations,
+                    object_subtypes: &mut copy_object_subtypes,
+                    ability_uses: &mut copy_ability_uses,
+                    goads: &mut copy_goads,
+                    completed_dungeons: &mut copy_completed_dungeons,
+                    effect_subtype_changes: &mut copy_effect_subtype_changes,
+                    context_path_elements: &mut copy_context_path_elements,
+                    actions: &mut copy_actions,
+                    action_refs: &mut copy_action_refs,
+                    action_objects: &mut copy_action_objects,
+                },
+            )
+            .unwrap();
+
+        let expected_objects = copy_objects[..copy_decision.active_object_count as usize].to_vec();
+        let expected_relations =
+            copy_relations[..copy_decision.active_relation_count as usize].to_vec();
+        let expected_object_subtypes =
+            copy_object_subtypes[..copy_decision.active_object_subtype_count as usize].to_vec();
+        let expected_ability_uses =
+            copy_ability_uses[..copy_decision.active_ability_use_count as usize].to_vec();
+        let expected_goads = copy_goads[..copy_decision.active_goad_count as usize].to_vec();
+        let expected_completed_dungeons = copy_completed_dungeons
+            [..copy_decision.active_completed_dungeon_count as usize]
+            .to_vec();
+        let expected_effect_subtype_changes = copy_effect_subtype_changes
+            [..copy_decision.active_effect_subtype_change_count as usize]
+            .to_vec();
+        let expected_context_path_elements = copy_context_path_elements
+            [..copy_decision.active_context_path_element_count as usize]
+            .to_vec();
+        let expected_actions = copy_actions[..copy_decision.active_action_count as usize]
+            .iter()
+            .copied()
+            .map(FlatScorerActionCoreV1::from)
+            .collect::<Vec<_>>();
+        let expected_action_refs = copy_encoder
+            .cached_scorer_action_refs_v1(copy_decision.binding.action_binding)
+            .unwrap()
+            .to_vec();
+
+        let mut owned_encoder = FlatDecisionEncoderV1::default();
+        let mut objects = vec![FlatObjectCoreV1::default()];
+        let mut relations = vec![FlatRelationV1::default()];
+        let mut object_subtypes = vec![FlatObjectSubtypeV1::default()];
+        let mut ability_uses = vec![FlatObjectAbilityUseV1::default()];
+        let mut goads = vec![FlatObjectGoadV1::default()];
+        let mut completed_dungeons = vec![FlatCompletedDungeonV1::default()];
+        let mut effect_subtype_changes = vec![FlatEffectSubtypeChangeV1::default()];
+        let mut context_path_elements = vec![FlatContextPathElementV1::default()];
+        let mut actions = vec![FlatScorerActionCoreV1::default()];
+        let mut action_refs = vec![FlatScorerActionRefV1::default()];
+
+        macro_rules! encode_owned {
+            () => {
+                session.encode_current_flat_scoring_decision_owned_v1(
+                    expected,
+                    &mut owned_encoder,
+                    &mut FlatScoringOwnedBuffersV1 {
+                        objects: &mut objects,
+                        relations: &mut relations,
+                        object_subtypes: &mut object_subtypes,
+                        ability_uses: &mut ability_uses,
+                        goads: &mut goads,
+                        completed_dungeons: &mut completed_dungeons,
+                        effect_subtype_changes: &mut effect_subtype_changes,
+                        context_path_elements: &mut context_path_elements,
+                        actions: &mut actions,
+                        action_refs: &mut action_refs,
+                    },
+                )
+            };
+        }
+
+        let owned_decision = encode_owned!().unwrap();
+        assert_eq!(owned_decision, copy_decision);
+        assert_eq!(
+            (
+                &objects,
+                &relations,
+                &object_subtypes,
+                &ability_uses,
+                &goads,
+                &completed_dungeons,
+                &effect_subtype_changes,
+                &context_path_elements,
+                &actions,
+                &action_refs,
+            ),
+            (
+                &expected_objects,
+                &expected_relations,
+                &expected_object_subtypes,
+                &expected_ability_uses,
+                &expected_goads,
+                &expected_completed_dungeons,
+                &expected_effect_subtype_changes,
+                &expected_context_path_elements,
+                &expected_actions,
+                &expected_action_refs,
+            )
+        );
+
+        objects.push(FlatObjectCoreV1::default());
+        relations.push(FlatRelationV1::default());
+        object_subtypes.push(FlatObjectSubtypeV1::default());
+        ability_uses.push(FlatObjectAbilityUseV1::default());
+        goads.push(FlatObjectGoadV1::default());
+        completed_dungeons.push(FlatCompletedDungeonV1::default());
+        effect_subtype_changes.push(FlatEffectSubtypeChangeV1::default());
+        context_path_elements.push(FlatContextPathElementV1::default());
+        actions.push(FlatScorerActionCoreV1::default());
+        action_refs.push(FlatScorerActionRefV1::default());
+
+        let reused_decision = encode_owned!().unwrap();
+        assert_eq!(reused_decision, copy_decision);
+        assert_eq!(
+            (
+                &objects,
+                &relations,
+                &object_subtypes,
+                &ability_uses,
+                &goads,
+                &completed_dungeons,
+                &effect_subtype_changes,
+                &context_path_elements,
+                &actions,
+                &action_refs,
+            ),
+            (
+                &expected_objects,
+                &expected_relations,
+                &expected_object_subtypes,
+                &expected_ability_uses,
+                &expected_goads,
+                &expected_completed_dungeons,
+                &expected_effect_subtype_changes,
+                &expected_context_path_elements,
+                &expected_actions,
+                &expected_action_refs,
+            )
+        );
+    }
+
+    #[test]
+    fn owned_scoring_encode_is_destination_atomic_on_late_binding_error() {
+        let session = FastActorSessionV1::reset_with_limits(90_032, 132, 128, 16_384);
+        let expected = expected(&session);
+        let mut encoder = FlatDecisionEncoderV1::default();
+        encoder.ensure_cache(&session, expected).unwrap();
+        assert!(encoder.scorer_actions.pop().is_some());
+
+        let mut objects = vec![FlatObjectCoreV1::default()];
+        let mut relations = vec![FlatRelationV1::default()];
+        let mut object_subtypes = vec![FlatObjectSubtypeV1::default()];
+        let mut ability_uses = vec![FlatObjectAbilityUseV1::default()];
+        let mut goads = vec![FlatObjectGoadV1::default()];
+        let mut completed_dungeons = vec![FlatCompletedDungeonV1::default()];
+        let mut effect_subtype_changes = vec![FlatEffectSubtypeChangeV1::default()];
+        let mut context_path_elements = vec![FlatContextPathElementV1::default()];
+        let mut actions = vec![FlatScorerActionCoreV1::default()];
+        let mut action_refs = vec![FlatScorerActionRefV1::default()];
+        let before = (
+            objects.clone(),
+            relations.clone(),
+            object_subtypes.clone(),
+            ability_uses.clone(),
+            goads.clone(),
+            completed_dungeons.clone(),
+            effect_subtype_changes.clone(),
+            context_path_elements.clone(),
+            actions.clone(),
+            action_refs.clone(),
+        );
+
+        assert_eq!(
+            session
+                .encode_current_flat_scoring_decision_owned_v1(
+                    expected,
+                    &mut encoder,
+                    &mut FlatScoringOwnedBuffersV1 {
+                        objects: &mut objects,
+                        relations: &mut relations,
+                        object_subtypes: &mut object_subtypes,
+                        ability_uses: &mut ability_uses,
+                        goads: &mut goads,
+                        completed_dungeons: &mut completed_dungeons,
+                        effect_subtype_changes: &mut effect_subtype_changes,
+                        context_path_elements: &mut context_path_elements,
+                        actions: &mut actions,
+                        action_refs: &mut action_refs,
+                    },
+                )
+                .unwrap_err(),
+            FlatDecisionErrorV1::ScorerBindingMismatch
+        );
+        assert_eq!(
+            (
+                objects,
+                relations,
+                object_subtypes,
+                ability_uses,
+                goads,
+                completed_dungeons,
+                effect_subtype_changes,
+                context_path_elements,
+                actions,
+                action_refs,
+            ),
+            before
+        );
     }
 
     #[test]

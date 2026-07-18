@@ -3907,9 +3907,10 @@ impl FastActorSessionV1 {
 
     /// Builds the authoritative schema-v5 actor observation for the complete
     /// typed flat-policy producer after validating the exact fast-actor
-    /// decision binding.  This crate-private bridge deliberately returns the
-    /// typed observation, not JSON, and does not expose session state or
-    /// surface authority to sibling modules.
+    /// decision binding. This crate-private bridge deliberately returns the
+    /// typed observation, not JSON, elides only model-forbidden human-readable
+    /// text, and does not expose session state or surface authority to sibling
+    /// modules.
     pub(crate) fn flat_policy_observation_v1(
         &self,
         expected: FastActorDecisionV1,
@@ -5763,6 +5764,11 @@ mod tests {
         let decision = flat_current_decision(&session);
         let observation = session.flat_policy_observation_v1(decision).unwrap();
         assert_eq!(observation.visible_projection_hash, 0);
+        assert!(observation.kernel_version.is_empty());
+        assert!(observation
+            .own_hand
+            .iter()
+            .all(|card| card.card_name.is_empty()));
         assert_eq!(crate::rl::test_visible_projection_hash_calls(), (0, 0));
     }
 
