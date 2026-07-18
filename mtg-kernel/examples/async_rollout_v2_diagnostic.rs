@@ -187,7 +187,7 @@ fn run_one(args: Args, run: usize) {
     .expect("multi-session measurement succeeds");
     verify_known(&result, args.games);
     println!(
-        "run={run} workers={} sessions_per_worker={} logical_lanes={} batch_target={} natural_games={} games_per_second={:.3} total_wall_ns={} policy_steps={} physical_decisions={} learner_actions={} complete_rounds={} batches={} mean_batch_width={:.3} max_batch_width={} full_target_chunks={} short_round_chunks={} worker_park_attempts={} broker_park_attempts={} batch_membership_digest_v1={} mean_broker_service_ns={:.1}",
+        "run={run} workers={} sessions_per_worker={} logical_lanes={} batch_target={} natural_games={} games_per_second={:.3} total_wall_ns={} policy_steps={} physical_decisions={} learner_actions={} complete_rounds={} batches={} mean_batch_width={:.3} max_batch_width={} full_target_chunks={} short_round_chunks={} worker_park_attempts={} broker_park_attempts={} batch_membership_digest_v2={} mean_broker_service_ns={:.1}",
         args.workers,
         args.sessions_per_worker,
         args.workers * args.sessions_per_worker,

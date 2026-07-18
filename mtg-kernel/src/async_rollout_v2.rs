@@ -54,7 +54,7 @@ const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
 const WORKER_SPIN_BEFORE_PARK_V2: usize = 2_048;
 const SCHEDULER_PARK_POLL_V2: Duration = Duration::from_millis(10);
-const BATCH_DIGEST_DOMAIN_V2: &[u8] = b"mtg-kernel/async-rollout-v2/batch-membership/v1";
+const BATCH_DIGEST_DOMAIN_V2: &[u8] = b"mtg-kernel/async-rollout-v2/batch-membership/v2";
 
 #[derive(Debug, Clone)]
 struct BatchMembershipDigestV2 {
@@ -304,6 +304,7 @@ enum WorkerMessageV2 {
 struct ActionEnvelopeV2 {
     episode_id: u64,
     revision: u64,
+    environment_revision: u64,
     physical_decision_id: u64,
     substep_index: u32,
     substep_count: u32,
@@ -1016,14 +1017,18 @@ struct RoundTerminalV2 {
     learner_trace_hash: u64,
 }
 
-fn stable_decision_key(request: &RoundDecisionV2) -> (u64, u64, u64, u32, u32, u8, u32, usize) {
+fn stable_decision_key(
+    request: &RoundDecisionV2,
+) -> (u64, u64, u64, u64, u32, u32, u8, u8, u32, usize) {
     let decision = request.decision;
     (
         decision.episode_id,
         decision.step,
+        decision.environment_revision,
         decision.physical_decision_id,
         decision.substep_index,
         decision.substep_count,
+        player_seat_code(decision.acting_player),
         decision_kind_code(decision.decision_kind),
         decision.legal_action_count,
         request.logical_lane_id,
@@ -1321,6 +1326,7 @@ pub fn run_seeded_uniform_async_rollout_v2(
                     action: ActionEnvelopeV2 {
                         episode_id: decision.episode_id,
                         revision: decision.step,
+                        environment_revision: decision.environment_revision,
                         physical_decision_id: decision.physical_decision_id,
                         substep_index: decision.substep_index,
                         substep_count: decision.substep_count,
@@ -1492,6 +1498,13 @@ fn decision_kind_code(kind: FastActorDecisionKindV1) -> u8 {
     }
 }
 
+fn player_seat_code(seat: PlayerSeatV1) -> u8 {
+    match seat {
+        PlayerSeatV1::P0 => 0,
+        PlayerSeatV1::P1 => 1,
+    }
+}
+
 fn checked_metric_add(target: &mut u64, value: u64) -> Result<(), AsyncRolloutErrorV2> {
     *target = target
         .checked_add(value)
@@ -1544,9 +1557,11 @@ fn digest_complete_round(
             digest_u64(digest, request.logical_lane_id as u64);
             digest_u64(digest, decision.episode_id);
             digest_u64(digest, decision.step);
+            digest_u64(digest, decision.environment_revision);
             digest_u64(digest, decision.physical_decision_id);
             digest_u32(digest, decision.substep_index);
             digest_u32(digest, decision.substep_count);
+            digest.update([player_seat_code(decision.acting_player)]);
             digest.update([decision_kind_code(decision.decision_kind)]);
             digest_u32(digest, decision.legal_action_count);
             digest_u32(digest, request.action.selected_index);
@@ -1557,6 +1572,7 @@ fn digest_complete_round(
 fn validate_action_binding(decision: FastActorDecisionV1, action: ActionEnvelopeV2) -> bool {
     action.episode_id == decision.episode_id
         && action.revision == decision.step
+        && action.environment_revision == decision.environment_revision
         && action.physical_decision_id == decision.physical_decision_id
         && action.substep_index == decision.substep_index
         && action.substep_count == decision.substep_count
@@ -1876,6 +1892,7 @@ mod tests {
         shared.lanes[0].broker_write_action(ActionEnvelopeV2 {
             episode_id: decision.episode_id,
             revision: decision.step,
+            environment_revision: decision.environment_revision,
             physical_decision_id: decision.physical_decision_id,
             substep_index: decision.substep_index,
             substep_count: decision.substep_count,
@@ -1917,6 +1934,7 @@ mod tests {
         let decision_a = FastActorDecisionV1 {
             episode_id: 1,
             step: 7,
+            environment_revision: 11,
             physical_decision_id: 6,
             substep_index: 0,
             substep_count: 1,
@@ -1943,6 +1961,7 @@ mod tests {
                 action: ActionEnvelopeV2 {
                     episode_id: 1,
                     revision: 7,
+                    environment_revision: 11,
                     physical_decision_id: 6,
                     substep_index: 0,
                     substep_count: 1,
@@ -1956,6 +1975,7 @@ mod tests {
                 action: ActionEnvelopeV2 {
                     episode_id: 2,
                     revision: 8,
+                    environment_revision: 11,
                     physical_decision_id: 6,
                     substep_index: 0,
                     substep_count: 1,
@@ -1964,6 +1984,13 @@ mod tests {
                 },
             },
         ];
+        assert!(!validate_action_binding(
+            decision_a,
+            ActionEnvelopeV2 {
+                environment_revision: 12,
+                ..requests[0].action
+            }
+        ));
         assert!(matches!(
             validate_action_batch(&shared, &requests),
             Err(AsyncRolloutErrorV2::ActionBindingMismatch {
