@@ -71,6 +71,46 @@ cargo run --release --locked --example bench_kernel -- \
   --seed 71501
 ```
 
+After the H2 continuation gate, `--three-lane-ceiling-json-v1` attributes the
+remaining in-process boundary tax without changing the legacy ceiling
+contract. It emits `kernel_rl_three_lane_ceiling/v1` with sequential
+`engine_raw`, `harness_surface_v2`, and `rl_session_v5_inproc` lanes. H2 and
+V5 share collision-free episode/environment/policy seed prefixes and the
+`seeded_uniform_h2_semantics/v1` policy; V5 pre-samples each combat group so
+its Boolean scan commits the same aggregate H2 action. Raw-engine and H2
+trajectories are explicitly non-equivalent. The production-boundary lane
+calls `current_response` once after reset and thereafter carries each response
+returned by `step`, avoiding duplicate response materialization.
+
+```bash
+cargo run --release --locked --example bench_kernel -- \
+  --three-lane-ceiling-json-v1 \
+  --git-commit 0123456789abcdef0123456789abcdef01234567 \
+  --deck Rally \
+  --actors 1,4,8,16 \
+  --warmup-ms 1000 \
+  --measure-ms 10000 \
+  --seed 71501
+```
+
+All three lanes stop before JSONL, IPC, Python, model inference, learning, and
+artifact persistence. Their rates locate Rust boundary costs; none is an
+end-to-end training rate or an XMage speedup claim. Each lane divides natural
+terminals by the slowest actor's finish offset from one shared start, records
+overshoot, and reports every non-natural outcome separately.
+Any raw-lane halt makes that trial invalid and opens a separate raw-engine
+correctness investigation; it is never discarded from the denominator or
+silently treated as H2/V5 evidence.
+
+H2 suppression auditing is explicit and policy-inert. `HarnessSurfaceV2::new`
+and the legacy raw-ceiling v1 retain `Full` ordered suppression records for
+replay diagnostics; `CountOnly` retains fixed reason counters; production
+RL sessions and the paired three-lane H2/V5 lanes select `Off`, which performs
+no suppression state hashing, action-text construction, or log retention.
+The three-lane artifact records `not_applicable/off/off` for its three lanes,
+and fixed Burn/Rally regressions require all modes to produce identical public
+contexts, response bytes, stable action IDs, state hashes, and terminal results.
+
 `kernel_rl_env --phase-profile-v1` leaves stdout protocol bytes unchanged and emits exactly one aggregate `MTG_KERNEL_PROFILE_V1` record on stderr after graceful EOF. The separate end-to-end harness collects that Rust record plus external Python `perf_counter_ns` phases into `kernel_rl_training_benchmark/v1`; timings never enter the deterministic training store:
 
 ```bash

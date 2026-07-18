@@ -21,7 +21,7 @@ use crate::rl::{
     TerminalSafeCodeV2,
 };
 use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition};
-use crate::surface_v2::{SurfaceDecision, H2_PREDICATE_VERSION};
+use crate::surface_v2::{SuppressionAuditMode, SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -155,7 +155,9 @@ struct CurrentDecisionV1 {
     substep_count: u32,
     observation: ObservationV5,
     candidates: Vec<PolicyLegalActionCandidateV5>,
-    environment_hash: u64,
+    environment_revision: u64,
+    bound_policy_step_count: u64,
+    bound_physical_decision_count: u64,
 }
 
 #[derive(Clone)]
@@ -167,6 +169,7 @@ pub struct RlEpisodeSessionV1 {
     max_policy_steps: u64,
     state: crate::state::GameState,
     surface: PolicySurfaceV5,
+    environment_revision: u64,
     policy_step_count: u64,
     physical_decision_count: u64,
     current: Option<CurrentDecisionV1>,
@@ -242,7 +245,27 @@ impl RlEpisodeSessionV1 {
         max_physical_decisions: u64,
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
+        profile: Option<&mut RlPhaseProfileV1>,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_profiled_in_audit_mode(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            profile,
+            SuppressionAuditMode::Off,
+        )
+    }
+
+    fn reset_with_decks_and_limits_profiled_in_audit_mode(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
         mut profile: Option<&mut RlPhaseProfileV1>,
+        suppression_audit_mode: SuppressionAuditMode,
     ) -> Result<Self, RlSessionError> {
         let mut session = measure_optional(&mut profile, RlPhaseV1::Reset, || {
             let resolved_decks = resolve_runtime_decks(&deck_ids)?;
@@ -265,7 +288,12 @@ impl RlEpisodeSessionV1 {
                 max_physical_decisions,
                 max_policy_steps,
                 state,
-                surface: PolicySurfaceV5::new(),
+                surface: if suppression_audit_mode == SuppressionAuditMode::Off {
+                    PolicySurfaceV5::new_for_session()
+                } else {
+                    PolicySurfaceV5::new_with_suppression_audit_mode(suppression_audit_mode)
+                },
+                environment_revision: 0,
                 policy_step_count: 0,
                 physical_decision_count: 0,
                 current: None,
@@ -379,21 +407,24 @@ impl RlEpisodeSessionV1 {
             .current
             .as_ref()
             .expect("nonterminal session has current decision");
-        measure_optional(&mut profile, RlPhaseV1::StepIntegrity, || {
-            let rebound = self.compute_environment_hash(Some(current)).map_err(|_| {
-                session_error(
-                    RlSessionErrorCode::StaleEnvironmentBinding,
-                    "active decision integrity validation failed",
-                )
+        let next_environment_revision =
+            measure_optional(&mut profile, RlPhaseV1::StepIntegrity, || {
+                if current.environment_revision != self.environment_revision
+                    || current.bound_policy_step_count != self.policy_step_count
+                    || current.bound_physical_decision_count != self.physical_decision_count
+                {
+                    return Err(session_error(
+                        RlSessionErrorCode::StaleEnvironmentBinding,
+                        "active decision no longer matches its owned environment binding",
+                    ));
+                }
+                self.environment_revision.checked_add(1).ok_or_else(|| {
+                    session_error(
+                        RlSessionErrorCode::StaleEnvironmentBinding,
+                        "owned environment revision exhausted",
+                    )
+                })
             })?;
-            if rebound != current.environment_hash {
-                return Err(session_error(
-                    RlSessionErrorCode::StaleEnvironmentBinding,
-                    "active decision no longer matches its privileged environment binding",
-                ));
-            }
-            Ok(())
-        })?;
         let (policy_action, completes_physical) = measure_optional(
             &mut profile,
             RlPhaseV1::StepSelection,
@@ -427,7 +458,12 @@ impl RlEpisodeSessionV1 {
             },
         )?;
         measure_optional(&mut profile, RlPhaseV1::StepApply, || {
-            self.surface.apply(&mut self.state, policy_action)
+            self.surface.apply_owned(
+                &mut self.state,
+                policy_action,
+                self.environment_revision,
+                next_environment_revision,
+            )
         })
         .map_err(|_| {
             session_error(
@@ -436,6 +472,7 @@ impl RlEpisodeSessionV1 {
             )
         })?;
         self.current = None;
+        self.environment_revision = next_environment_revision;
         self.policy_step_count += 1;
         if completes_physical {
             self.physical_decision_count += 1;
@@ -455,7 +492,8 @@ impl RlEpisodeSessionV1 {
     ) {
         self.current = None;
         let surfaced = match measure_optional(&mut profile, RlPhaseV1::Advance, || {
-            self.surface.next_decision(&mut self.state)
+            self.surface
+                .next_decision_owned(&mut self.state, self.environment_revision)
         }) {
             Ok(decision) => decision,
             Err(_) => {
@@ -592,35 +630,25 @@ impl RlEpisodeSessionV1 {
             ));
             return;
         }
-        let mut current = CurrentDecisionV1 {
-            actor,
-            physical_decision_id: self.physical_decision_count,
-            substep_index,
-            substep_count,
-            observation,
-            candidates,
-            environment_hash: 0,
-        };
-        current.environment_hash = match measure_optional(&mut profile, RlPhaseV1::Postbind, || {
-            self.compute_environment_hash(Some(&current))
-        }) {
-            Ok(hash) => hash,
-            Err(_) => {
-                self.terminal = Some(halted_terminal(
-                    &self.deck_ids,
-                    self.deck_hashes,
-                    self.episode_id,
-                    "fail_closed:session_integrity".to_string(),
-                    self.policy_step_count,
-                    self.physical_decision_count,
-                ));
-                return;
-            }
-        };
-        self.current = Some(current);
+        measure_optional(&mut profile, RlPhaseV1::Postbind, || {
+            self.current = Some(CurrentDecisionV1 {
+                actor,
+                physical_decision_id: self.physical_decision_count,
+                substep_index,
+                substep_count,
+                observation,
+                candidates,
+                environment_revision: self.environment_revision,
+                bound_policy_step_count: self.policy_step_count,
+                bound_physical_decision_count: self.physical_decision_count,
+            });
+        });
     }
 
     fn compute_environment_hash(&self, current: Option<&CurrentDecisionV1>) -> Result<u64, String> {
+        #[cfg(test)]
+        TEST_EXACT_ENVIRONMENT_HASH_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
+
         #[derive(Serialize)]
         struct PolicyEnvironmentEnvelopeV1 {
             schema_version: u32,
@@ -676,6 +704,21 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_EXACT_ENVIRONMENT_HASH_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_test_exact_environment_hash_calls() {
+    TEST_EXACT_ENVIRONMENT_HASH_CALLS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+fn test_exact_environment_hash_calls() -> u64 {
+    TEST_EXACT_ENVIRONMENT_HASH_CALLS.with(std::cell::Cell::get)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -1211,8 +1254,11 @@ fn truncated_terminal(
 mod tests {
     use super::*;
     use crate::card_def::card_id_by_name;
+    use crate::policy_surface_v5::{
+        reset_test_exact_surface_hash_calls, test_exact_surface_hash_calls,
+    };
     use crate::rl::card_name;
-    use crate::state::{Counters, GameObject, GameState, ObjectStateV4, Step, Zone};
+    use crate::state::{Counters, GameObject, GameState, ObjectStateV4, SplitMix64, Step, Zone};
 
     fn attacker_state(count: usize) -> GameState {
         let mut state = GameState::new_from_libraries(&[], &[], card_name, 91);
@@ -1252,6 +1298,7 @@ mod tests {
             RlEpisodeSessionV1::reset_with_limits(23, 91, max_physical_decisions, max_policy_steps);
         session.state = attacker_state(count);
         session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
         session.policy_step_count = 0;
         session.physical_decision_count = 0;
         session.current = None;
@@ -1294,6 +1341,7 @@ mod tests {
         let mut exact_fit = attacker_session(3, 8, 3);
         assert!(exact_fit.surface.scan_active());
         for expected_substep in 0..3 {
+            let revision_before = exact_fit.environment_revision;
             let response = exact_fit.current_response();
             let RlSessionResponseV1::Decision(decision) = &response else {
                 panic!("exact-fit cap must admit every combat substep");
@@ -1305,6 +1353,19 @@ mod tests {
             assert_eq!(decision.legal_actions.len(), 2);
             let (step, index, id) = first_action(&response);
             exact_fit.step(23, step, index, &id).unwrap();
+            assert_eq!(
+                exact_fit.environment_revision,
+                revision_before + 1,
+                "every successful policy step advances exactly one owned revision"
+            );
+            if let Some(current) = &exact_fit.current {
+                assert_eq!(current.environment_revision, exact_fit.environment_revision);
+                assert_eq!(current.bound_policy_step_count, exact_fit.policy_step_count);
+                assert_eq!(
+                    current.bound_physical_decision_count,
+                    exact_fit.physical_decision_count
+                );
+            }
         }
         assert_eq!(exact_fit.policy_step_count(), 3);
         assert_eq!(exact_fit.physical_decision_count(), 1);
@@ -1332,6 +1393,7 @@ mod tests {
         session.step(23, step, index, &id).unwrap();
 
         let snapshot = session.snapshot_v5();
+        let revision_before = session.environment_revision;
         let response_before = serde_json::to_vec(&session.current_response()).unwrap();
         let environment_before = session.privileged_environment_hash();
         assert_eq!(session.policy_step_count(), 1);
@@ -1348,6 +1410,7 @@ mod tests {
         let advanced = session.step(23, step, index, &id).unwrap();
         let advanced_bytes = serde_json::to_vec(&advanced).unwrap();
         let advanced_environment = session.privileged_environment_hash();
+        assert_eq!(session.environment_revision, revision_before + 1);
         let RlSessionResponseV1::Decision(advanced_decision) = &advanced else {
             panic!("second answer must advance within the same combat group");
         };
@@ -1358,6 +1421,7 @@ mod tests {
         assert_ne!(advanced_environment, environment_before);
 
         session.restore_v5(&snapshot);
+        assert_eq!(session.environment_revision, revision_before);
         assert_eq!(
             serde_json::to_vec(&session.current_response()).unwrap(),
             response_before
@@ -1397,40 +1461,318 @@ mod tests {
     }
 
     #[test]
-    fn privileged_binding_rejects_state_surface_and_counter_drift_then_restores() {
+    fn privileged_exact_audit_detects_private_state_surface_and_counter_drift_then_restores() {
+        let mut session = RlEpisodeSessionV1::reset(5, 1234, 64);
+        let snapshot = session.snapshot_v5();
+        let exact = session.privileged_environment_hash();
+
+        session.state.players[0].life -= 1;
+        assert_ne!(session.privileged_environment_hash(), exact);
+
+        session.restore_v5(&snapshot);
+        session.policy_step_count += 1;
+        assert_ne!(session.privileged_environment_hash(), exact);
+
+        session.restore_v5(&snapshot);
+        session.surface.reset_harness_context_for_test();
+        assert_ne!(session.privileged_environment_hash(), exact);
+
+        session.restore_v5(&snapshot);
+        assert_eq!(session.privileged_environment_hash(), exact);
+    }
+
+    #[test]
+    fn owned_revision_and_counter_poisoning_precede_invalid_selection_then_restore() {
         let mut session = RlEpisodeSessionV1::reset(5, 1234, 64);
         let snapshot = session.snapshot_v5();
         let (step, index, id) = first_action(&session.current_response());
 
-        session.state.players[0].life -= 1;
-        let err = session.step(5, step, index, &id).unwrap_err();
-        assert_eq!(err.code, RlSessionErrorCode::StaleEnvironmentBinding);
-        assert_eq!(
-            err.message,
-            "active decision no longer matches its privileged environment binding"
-        );
-        assert!(!err.message.contains("0x"));
-
+        session.current.as_mut().unwrap().environment_revision += 1;
         let err = session
             .step(5, step, u32::MAX, "unknown-action")
             .unwrap_err();
+        assert_eq!(err.code, RlSessionErrorCode::StaleEnvironmentBinding);
         assert_eq!(
-            err.code,
-            RlSessionErrorCode::StaleEnvironmentBinding,
-            "privileged integrity failure retains precedence over invalid selection"
+            err.message,
+            "active decision no longer matches its owned environment binding"
         );
+        assert!(!err.message.contains("0x"));
 
         session.restore_v5(&snapshot);
         session.policy_step_count += 1;
-        let err = session.step(5, step + 1, index, &id).unwrap_err();
+        let err = session
+            .step(5, step + 1, u32::MAX, "unknown-action")
+            .unwrap_err();
         assert_eq!(err.code, RlSessionErrorCode::StaleEnvironmentBinding);
 
         session.restore_v5(&snapshot);
-        session.surface.reset_harness_context_for_test();
-        let err = session.step(5, step, index, &id).unwrap_err();
+        session.physical_decision_count += 1;
+        let err = session
+            .step(5, step, u32::MAX, "unknown-action")
+            .unwrap_err();
         assert_eq!(err.code, RlSessionErrorCode::StaleEnvironmentBinding);
 
         session.restore_v5(&snapshot);
         assert!(session.step(5, step, index, &id).is_ok());
+    }
+
+    #[test]
+    fn owned_revision_overflow_fails_before_selection_and_is_nonmutating() {
+        let mut session = RlEpisodeSessionV1::reset(5, 1234, 64);
+        session.environment_revision = u64::MAX;
+        session.current.as_mut().unwrap().environment_revision = u64::MAX;
+        let response_before = serde_json::to_vec(&session.current_response()).unwrap();
+        let state_before = session.state.clone();
+        let harness_before = session.surface.harness_public_context();
+        let scan_before = session.surface.privileged_scan_context().unwrap();
+
+        let err = session
+            .step(5, session.policy_step_count, u32::MAX, "unknown-action")
+            .unwrap_err();
+        assert_eq!(err.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        assert_eq!(err.message, "owned environment revision exhausted");
+        assert_eq!(session.environment_revision, u64::MAX);
+        assert_eq!(session.policy_step_count, 0);
+        assert_eq!(session.physical_decision_count, 0);
+        assert_eq!(session.state, state_before);
+        assert_eq!(session.surface.harness_public_context(), harness_before);
+        assert_eq!(
+            session.surface.privileged_scan_context().unwrap(),
+            scan_before
+        );
+        assert_eq!(
+            serde_json::to_vec(&session.current_response()).unwrap(),
+            response_before
+        );
+    }
+
+    #[test]
+    fn owned_reset_and_combat_steps_compute_no_exact_hashes_but_audit_remains_available() {
+        reset_test_exact_environment_hash_calls();
+        reset_test_exact_surface_hash_calls();
+
+        let mut session = attacker_session(3, 8, 8);
+        assert_eq!(test_exact_environment_hash_calls(), 0);
+        assert_eq!(test_exact_surface_hash_calls(), 0);
+
+        for _ in 0..3 {
+            let response = session.current_response();
+            let (step, index, id) = first_action(&response);
+            session.step(23, step, index, &id).unwrap();
+        }
+        assert_eq!(test_exact_environment_hash_calls(), 0);
+        assert_eq!(
+            test_exact_surface_hash_calls(),
+            0,
+            "owned combat scans must never enter the standalone exact-hash path"
+        );
+
+        let _ = session.privileged_environment_hash();
+        assert_eq!(test_exact_environment_hash_calls(), 1);
+        assert_eq!(test_exact_surface_hash_calls(), 0);
+    }
+
+    #[test]
+    fn failed_final_owned_combat_commit_does_not_advance_revision_or_counters() {
+        let mut session = attacker_session(1, 8, 8);
+        let snapshot = session.snapshot_v5();
+        let response = session.current_response();
+        let (step, include_index, include_id) = action_at(&response, 1);
+
+        session.state.players[0].battlefield.clear();
+        let tampered_state = session.state.clone();
+        let response_before = serde_json::to_vec(&session.current_response()).unwrap();
+        let revision_before = session.environment_revision;
+        let error = session
+            .step(23, step, include_index, &include_id)
+            .unwrap_err();
+        assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        assert_eq!(session.environment_revision, revision_before);
+        assert_eq!(session.policy_step_count, 0);
+        assert_eq!(session.physical_decision_count, 0);
+        assert_eq!(session.state, tampered_state);
+        assert_eq!(
+            serde_json::to_vec(&session.current_response()).unwrap(),
+            response_before
+        );
+
+        session.restore_v5(&snapshot);
+        assert!(session.step(23, step, include_index, &include_id).is_ok());
+    }
+
+    fn reset_in_suppression_audit_mode(
+        episode_id: u64,
+        env_seed: u64,
+        deck_id: &str,
+        mode: SuppressionAuditMode,
+    ) -> RlEpisodeSessionV1 {
+        RlEpisodeSessionV1::reset_with_decks_and_limits_profiled_in_audit_mode(
+            episode_id,
+            env_seed,
+            4_096,
+            524_288,
+            [deck_id.to_string(), deck_id.to_string()],
+            None,
+            mode,
+        )
+        .unwrap()
+    }
+
+    fn prove_suppression_audit_mode_equivalence(deck_id: &str, seed: u64) {
+        let episode_id = seed ^ 0xA11D_1700_0000_0001;
+        let mut sessions = [
+            reset_in_suppression_audit_mode(episode_id, seed, deck_id, SuppressionAuditMode::Full),
+            reset_in_suppression_audit_mode(
+                episode_id,
+                seed,
+                deck_id,
+                SuppressionAuditMode::CountOnly,
+            ),
+            reset_in_suppression_audit_mode(episode_id, seed, deck_id, SuppressionAuditMode::Off),
+        ];
+        let mut policy_rng = SplitMix64::seed(seed ^ 0x50A1_CE00_0000_0005);
+        let mut reached_terminal = false;
+        let mut policy_steps_seen = 0u64;
+        let mut midrun_hash_checkpoint_seen = false;
+
+        for _ in 0..524_289 {
+            let reference = sessions[0].current_response();
+            let reference_bytes = serde_json::to_vec(&reference).unwrap();
+            let reference_context = sessions[0].surface.harness_public_context();
+            let compare_privileged_hashes = policy_steps_seen == 0
+                || policy_steps_seen == 32
+                || matches!(&reference, RlSessionResponseV1::Terminal(_));
+            let reference_hashes = compare_privileged_hashes.then(|| {
+                (
+                    sessions[0].diagnostic_state_hash(),
+                    sessions[0].privileged_environment_hash(),
+                )
+            });
+            midrun_hash_checkpoint_seen |= policy_steps_seen == 32;
+
+            for (index, session) in sessions.iter().enumerate().skip(1) {
+                assert_eq!(
+                    serde_json::to_vec(&session.current_response()).unwrap(),
+                    reference_bytes,
+                    "{deck_id} profile-off session response bytes diverged in audit mode {index}"
+                );
+                assert_eq!(
+                    session.surface.harness_public_context(),
+                    reference_context,
+                    "{deck_id} public H2 context diverged in audit mode {index}"
+                );
+                if let Some((reference_state_hash, reference_environment_hash)) = reference_hashes {
+                    assert_eq!(
+                        session.diagnostic_state_hash(),
+                        reference_state_hash,
+                        "{deck_id} diagnostic state hash diverged in audit mode {index}"
+                    );
+                    assert_eq!(
+                        session.privileged_environment_hash(),
+                        reference_environment_hash,
+                        "{deck_id} stable action/environment binding diverged in audit mode {index}"
+                    );
+                }
+            }
+
+            let RlSessionResponseV1::Decision(decision) = reference else {
+                reached_terminal = true;
+                break;
+            };
+            assert!(!decision.legal_actions.is_empty());
+            let selected_index =
+                (policy_rng.next_u64() % decision.legal_actions.len() as u64) as usize;
+            let selected = &decision.legal_actions[selected_index];
+            let expected_next = sessions[0]
+                .step(
+                    episode_id,
+                    decision.step,
+                    selected.selected_index,
+                    &selected.stable_id,
+                )
+                .unwrap();
+            let expected_next_bytes = serde_json::to_vec(&expected_next).unwrap();
+            for (index, session) in sessions.iter_mut().enumerate().skip(1) {
+                let next = session
+                    .step(
+                        episode_id,
+                        decision.step,
+                        selected.selected_index,
+                        &selected.stable_id,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    serde_json::to_vec(&next).unwrap(),
+                    expected_next_bytes,
+                    "{deck_id} decisions, actions, or stable ids diverged in audit mode {index}"
+                );
+            }
+            policy_steps_seen = policy_steps_seen.saturating_add(1);
+        }
+        assert!(
+            reached_terminal,
+            "{deck_id} fixture did not reach a terminal response"
+        );
+        assert!(
+            midrun_hash_checkpoint_seen,
+            "{deck_id} fixture did not reach its privileged mid-run hash checkpoint"
+        );
+
+        let full_surface = sessions[0].surface.harness_surface();
+        let count_surface = sessions[1].surface.harness_surface();
+        let off_surface = sessions[2].surface.harness_surface();
+        assert_eq!(
+            count_surface.suppression_counts(),
+            full_surface.suppression_counts(),
+            "{deck_id} CountOnly reason counts must exactly match Full records"
+        );
+        assert_eq!(
+            full_surface.suppression_counts().total(),
+            full_surface.suppressions().len() as u64
+        );
+        assert!(
+            !full_surface.suppressions().is_empty(),
+            "{deck_id} fixture must exercise at least one suppression"
+        );
+        assert!(count_surface.suppressions().is_empty());
+        assert_eq!(off_surface.suppression_counts().total(), 0);
+        assert!(off_surface.suppressions().is_empty());
+        assert_eq!(
+            sessions[1].diagnostic_state_hash(),
+            sessions[0].diagnostic_state_hash(),
+            "{deck_id} terminal state hash differs for CountOnly"
+        );
+        assert_eq!(
+            sessions[2].diagnostic_state_hash(),
+            sessions[0].diagnostic_state_hash(),
+            "{deck_id} terminal state hash differs for Off"
+        );
+    }
+
+    #[test]
+    fn suppression_audit_modes_are_byte_and_semantics_inert_for_burn_and_rally() {
+        prove_suppression_audit_mode_equivalence(CANONICAL_BURN_DECK_ID, 71_501);
+        prove_suppression_audit_mode_equivalence(CANONICAL_RALLY_DECK_ID, 71_502);
+    }
+
+    #[test]
+    fn suppression_audit_mode_does_not_change_integrity_error_precedence() {
+        for mode in [
+            SuppressionAuditMode::Full,
+            SuppressionAuditMode::CountOnly,
+            SuppressionAuditMode::Off,
+        ] {
+            let episode_id = 71_503;
+            let mut session =
+                reset_in_suppression_audit_mode(episode_id, 19_991, CANONICAL_RALLY_DECK_ID, mode);
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("Rally fixture must begin with a decision");
+            };
+            session.current.as_mut().unwrap().environment_revision += 1;
+            let error = session
+                .step(episode_id, decision.step, u32::MAX, "unknown-action")
+                .unwrap_err();
+            assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        }
     }
 }
