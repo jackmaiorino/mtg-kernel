@@ -44,6 +44,8 @@ pub(crate) mod native_policy_value_net_v1;
 #[allow(dead_code)]
 pub(crate) mod native_policy_train_step_v1;
 #[allow(dead_code)]
+pub(crate) mod native_flat_tensorizer_v1;
+#[allow(dead_code)]
 pub(crate) mod native_trainer_schedule_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
