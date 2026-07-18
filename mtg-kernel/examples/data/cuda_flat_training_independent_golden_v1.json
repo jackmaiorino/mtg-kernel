@@ -1,0 +1,2137 @@
+{
+  "batch": {
+    "action_owner": [
+      0,
+      0,
+      1,
+      1,
+      1,
+      2,
+      2,
+      2,
+      2
+    ],
+    "counts": [
+      2,
+      3,
+      4
+    ],
+    "offsets": [
+      0,
+      2,
+      5,
+      9
+    ],
+    "selected_global": [
+      0,
+      4,
+      6
+    ],
+    "terminal_returns": [
+      1.0,
+      -1.0,
+      0.0
+    ]
+  },
+  "contract": {
+    "action_dim": 128,
+    "adam_step": 1,
+    "advantage_detached": true,
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "epsilon": 1e-05,
+    "hidden_dim": 64,
+    "learning_rate": 0.001,
+    "model_contract_version": "cuda-flat-training-capacity-v1",
+    "optimizer_contract_version": "native-adam-epsilon-1e-5-v1",
+    "parameter_count": 156097,
+    "state_dim": 2048,
+    "value_coefficient": 0.5,
+    "weight_seed": 4757983592956563465
+  },
+  "expected": {
+    "detached_loss": {
+      "loss": 0.3245141625234754,
+      "policy_sum": -0.1304851136354922,
+      "value_sum": 2.208055202411837
+    },
+    "forward": {
+      "logits": [
+        -0.1442256865283808,
+        0.15721525609671666,
+        0.030510176085812787,
+        0.2428228820977555,
+        0.13985734856312537,
+        0.11722481059331173,
+        0.5627311560775281,
+        0.5443632428161425,
+        0.2649348039028486
+      ],
+      "values": [
+        -0.11967593791478942,
+        -0.02313663316479769,
+        0.010906832806397083
+      ]
+    },
+    "output_gradients": {
+      "d_logits": [
+        -0.21452794257237986,
+        0.21452794257237984,
+        -0.0971399033285018,
+        -0.12011684144250885,
+        0.21725674477101067,
+        -0.0006920594034329411,
+        0.002555112054234455,
+        -0.0010608335301220996,
+        -0.0008022191206794151
+      ],
+      "d_values": [
+        -0.37322531263826314,
+        0.3256211222784008,
+        0.003635610935465694
+      ]
+    },
+    "tensors": [
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.02587112782499641
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.5025629055275933
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.09456560866135277
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "cf85bd17e81ab8cc9ac65cbfda1436721c43648f2d1502b4b7f6a85caa720522"
+        },
+        "first_moment_summary": {
+          "length": 131072,
+          "maximum": 0.0062302971793349645,
+          "mean": -3.1505138764399736e-07,
+          "mean_abs": 0.0007064438830898388,
+          "minimum": -0.006231493294684106,
+          "rms": 0.0011456134541121628
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.25871127824997775
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 5.025629055276063
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.9456560866135172
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "affa2a5f28b899905a6462e82ec22f0b72b72aa28eeae919cf8bfc850b74dc5e"
+        },
+        "gradient_summary": {
+          "length": 131072,
+          "maximum": 0.06230297179334966,
+          "mean": -3.1505138764399744e-06,
+          "mean_abs": 0.007064438830898389,
+          "minimum": -0.062314932946841074,
+          "rms": 0.01145613454112163
+        },
+        "length": 131072,
+        "name": "state_w1",
+        "representatives": [
+          {
+            "first_moment": 0.00025367165307768597,
+            "gradient": 0.00253671653077686,
+            "index": 0,
+            "initial_value": 0.025069601833820343,
+            "second_moment": 6.434930757516594e-09,
+            "updated_value": 0.024073528458507132
+          },
+          {
+            "first_moment": -0.00018712972506171728,
+            "gradient": -0.0018712972506171733,
+            "index": 65536,
+            "initial_value": 0.019000034779310226,
+            "second_moment": 3.5017534001673954e-09,
+            "updated_value": 0.019994719298199137
+          },
+          {
+            "first_moment": -0.0009742391394045131,
+            "gradient": -0.009742391394045133,
+            "index": 131071,
+            "initial_value": -0.01325309369713068,
+            "second_moment": 9.491419007476475e-08,
+            "updated_value": -0.012254119086657817
+          },
+          {
+            "first_moment": -0.006231493294684106,
+            "gradient": -0.062314932946841074,
+            "index": 18635,
+            "initial_value": 0.025938011705875397,
+            "second_moment": 3.883150868169303e-06,
+            "updated_value": 0.026937851256444854
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -6.118189232564931e-05
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 5.972489396953854e-05
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 6.087814198217751e-05
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "fa43239bcee7b97ca62f007cc68487560a39e19f74f3dde7486db3f98df8e471"
+        },
+        "second_moment_summary": {
+          "length": 131072,
+          "maximum": 3.883150868169303e-06,
+          "mean": 1.3124301862428024e-07,
+          "mean_abs": 1.3124301862428024e-07,
+          "minimum": 0.0,
+          "rms": 3.224034523506576e-07
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 3.7453353525045667
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -7.621281235448611
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -3.549761965580707
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "56637c061cbc0f7e250deff64453f2a2dc3d117c41e70e02c9227f6531397d37"
+        },
+        "updated_value_summary": {
+          "length": 131072,
+          "maximum": 0.05429876340309293,
+          "mean": -9.585271250486159e-05,
+          "mean_abs": 0.026625265070461847,
+          "minimum": -0.05429696544899106,
+          "rms": 0.03076562746823007
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.010708330126512356
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.009718092467967374
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.002131307792759836
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "fba610b1655721e3bd3090c5fb11cf66d4cf46af2409880fe17e928b93ceedff"
+        },
+        "first_moment_summary": {
+          "length": 64,
+          "maximum": 0.005615319947586524,
+          "mean": 2.808619261990346e-05,
+          "mean_abs": 0.0018416462913151152,
+          "minimum": -0.008602017562749191,
+          "rms": 0.0026301059824745993
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.10708330126512358
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.09718092467967376
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.02131307792759838
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "b268d152f56da46a8b262e670127d078c2ef86da7f882a4ca04921a9993d1786"
+        },
+        "gradient_summary": {
+          "length": 64,
+          "maximum": 0.05615319947586525,
+          "mean": 0.00028086192619903466,
+          "mean_abs": 0.018416462913151153,
+          "minimum": -0.08602017562749192,
+          "rms": 0.026301059824745995
+        },
+        "length": 64,
+        "name": "state_b1",
+        "representatives": [
+          {
+            "first_moment": -0.00042958034300806834,
+            "gradient": -0.0042958034300806846,
+            "index": 0,
+            "initial_value": 0.006187993101775646,
+            "second_moment": 1.8453927109892993e-08,
+            "updated_value": 0.007185670654835746
+          },
+          {
+            "first_moment": 5.7950607165634094e-05,
+            "gradient": 0.000579506071656341,
+            "index": 32,
+            "initial_value": -0.002411887515336275,
+            "second_moment": 3.358272870865646e-10,
+            "updated_value": -0.0033949241616393353
+          },
+          {
+            "first_moment": 0.0029271330978813868,
+            "gradient": 0.029271330978813872,
+            "index": 63,
+            "initial_value": -0.008902964182198048,
+            "second_moment": 8.568108172712693e-07,
+            "updated_value": -0.009902622667667603
+          },
+          {
+            "first_moment": -0.008602017562749191,
+            "gradient": -0.08602017562749192,
+            "index": 11,
+            "initial_value": 0.0032417988404631615,
+            "second_moment": 7.399470614984562e-06,
+            "updated_value": 0.0042416826021790125
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -5.669048018634935e-06
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -5.163291961750081e-07
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 9.248288451585172e-06
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+        },
+        "second_moment_summary": {
+          "length": 64,
+          "maximum": 7.399470614984562e-06,
+          "mean": 6.917457479048685e-07,
+          "mean_abs": 6.917457479048685e-07,
+          "minimum": 0.0,
+          "rms": 1.36414688719699e-06
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.017776891921551814
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.052001742181684636
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.01516889119886728
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "a8498ac69696228bafde215c1ab05a3878a4b521245b58679b5ecb208882c297"
+        },
+        "updated_value_summary": {
+          "length": 64,
+          "maximum": 0.010741487114247187,
+          "mean": 0.00018085439077303414,
+          "mean_abs": 0.004777240937278091,
+          "minimum": -0.010142814645714477,
+          "rms": 0.005655832435100903
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.08159722441803599
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.0488980859848579
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.015650664849436162
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "a2da5e96975ea4c8752817cb1f0c97dd01e67498725b7373fa5e166a3dda64fc"
+        },
+        "first_moment_summary": {
+          "length": 4096,
+          "maximum": 0.013266835382601188,
+          "mean": 2.381344662078849e-05,
+          "mean_abs": 0.0006342123895968267,
+          "minimum": -0.014053241982586675,
+          "rms": 0.0016399421417497254
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.8159722441803635
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.4889808598485789
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.15650664849436183
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "e3f43bd60de16a4576ff2a5c6085627bf7dfcd6194378b713bcabb2c1c129b12"
+        },
+        "gradient_summary": {
+          "length": 4096,
+          "maximum": 0.13266835382601191,
+          "mean": 0.00023813446620788497,
+          "mean_abs": 0.006342123895968268,
+          "minimum": -0.14053241982586678,
+          "rms": 0.016399421417497256
+        },
+        "length": 4096,
+        "name": "state_w2",
+        "representatives": [
+          {
+            "first_moment": -9.478198262884408e-06,
+            "gradient": -9.47819826288441e-05,
+            "index": 0,
+            "initial_value": -0.056153129786252975,
+            "second_moment": 8.983624231054511e-12,
+            "updated_value": -0.05524856604112345
+          },
+          {
+            "first_moment": -1.3382123658683272e-05,
+            "gradient": -0.00013382123658683276,
+            "index": 2048,
+            "initial_value": 0.040701791644096375,
+            "second_moment": 1.790812336162908e-11,
+            "updated_value": 0.04163226088328997
+          },
+          {
+            "first_moment": 0.0,
+            "gradient": 0.0,
+            "index": 4095,
+            "initial_value": -0.16226720809936523,
+            "second_moment": 0.0,
+            "updated_value": -0.16226720809936523
+          },
+          {
+            "first_moment": -0.014053241982586675,
+            "gradient": -0.14053241982586678,
+            "index": 2915,
+            "initial_value": 0.16850638389587402,
+            "second_moment": 1.9749361022113693e-05,
+            "updated_value": 0.1695063127429793
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 8.124960367716555e-07
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -3.513703457880556e-05
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 3.634980610849063e-05
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7"
+        },
+        "second_moment_summary": {
+          "length": 4096,
+          "maximum": 1.9749361022113693e-05,
+          "mean": 2.68941022828668e-07,
+          "mean_abs": 2.68941022828668e-07,
+          "minimum": 0.0,
+          "rms": 1.1563072219878582e-06
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 2.297450518205649
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -3.286684482623306
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -1.815393361928366
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "274d926d21750e5272f4714f95ef883b34d17ec9cc203c444d89223942e7e95c"
+        },
+        "updated_value_summary": {
+          "length": 4096,
+          "maximum": 0.2171390739013573,
+          "mean": -0.003462519904151177,
+          "mean_abs": 0.10918014516265058,
+          "minimum": -0.21694623863561863,
+          "rms": 0.12586993961910584
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.0036806565256610863
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.00855605291638463
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.005222861934323566
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "88d67fd63663927dadaff87535fb5bf791d6fece9c9b4b4ee70206d73f09ca46"
+        },
+        "first_moment_summary": {
+          "length": 64,
+          "maximum": 0.011064968884792683,
+          "mean": 5.5507001724860186e-05,
+          "mean_abs": 0.0022564840437337475,
+          "minimum": -0.009875010402013338,
+          "rms": 0.003706073531303996
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.036806565256610815
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.08556052916384632
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.05222861934323571
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "c57784e05efe96f8c0b6b27867b14f2c04f852582069a24b5793cac4fa14b730"
+        },
+        "gradient_summary": {
+          "length": 64,
+          "maximum": 0.11064968884792686,
+          "mean": 0.000555070017248602,
+          "mean_abs": 0.02256484043733748,
+          "minimum": -0.0987501040201334,
+          "rms": 0.037060735313039966
+        },
+        "length": 64,
+        "name": "state_b2",
+        "representatives": [
+          {
+            "first_moment": -7.490314838951523e-05,
+            "gradient": -0.0007490314838951525,
+            "index": 0,
+            "initial_value": 0.001607326208613813,
+            "second_moment": 5.610481638661747e-10,
+            "updated_value": 0.0025941515245431566
+          },
+          {
+            "first_moment": -0.001999915428377073,
+            "gradient": -0.019999154283770734,
+            "index": 32,
+            "initial_value": -0.006903663743287325,
+            "second_moment": 3.999661720660657e-07,
+            "updated_value": -0.005904163514534934
+          },
+          {
+            "first_moment": -0.0007134413458659265,
+            "gradient": -0.007134413458659266,
+            "index": 63,
+            "initial_value": -0.006125444080680609,
+            "second_moment": 5.0899855399098515e-08,
+            "updated_value": -0.00512684377570916
+          },
+          {
+            "first_moment": 0.011064968884792683,
+            "gradient": 0.11064968884792686,
+            "index": 51,
+            "initial_value": 0.007150554563850164,
+            "second_moment": 1.2243353642143042e-05,
+            "updated_value": 0.006150644930993829
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 3.993845678968031e-06
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -1.722745591841857e-05
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -2.7771462043441215e-06
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+        },
+        "second_moment_summary": {
+          "length": 64,
+          "maximum": 1.2243353642143042e-05,
+          "mean": 1.3734981019432087e-06,
+          "mean_abs": 1.3734981019432087e-06,
+          "minimum": 0.0,
+          "rms": 2.9626033004618133e-06
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.03520023337955653
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.01714268348474127
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.011171405356882096
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "57f0603fa0947815fd507a02fde0428c32a1c06e9493dd47d587da9379a2cdef"
+        },
+        "updated_value_summary": {
+          "length": 64,
+          "maximum": 0.01086347808074845,
+          "mean": -0.0010655265091196746,
+          "mean_abs": 0.005150297653509527,
+          "minimum": -0.010893109612235417,
+          "rms": 0.005882004814740405
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.01688059039172013
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.10094403101685566
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.07521147499785215
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "5e2a39277a87c29262dda4d89fbc3efa7a0a54d78bb997eaf77c3f99ebfb45a8"
+        },
+        "first_moment_summary": {
+          "length": 8192,
+          "maximum": 0.00794979367488828,
+          "mean": -6.655539708086095e-06,
+          "mean_abs": 0.0009787379722302092,
+          "minimum": -0.008387763643318424,
+          "rms": 0.0013914283289140224
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.16880590391720188
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 1.0094403101685583
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.752114749978513
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "603f3ecc6732100c882b59f1478a3416d60dfc423819c29cbedeb817ffe33904"
+        },
+        "gradient_summary": {
+          "length": 8192,
+          "maximum": 0.07949793674888282,
+          "mean": -6.655539708086097e-05,
+          "mean_abs": 0.009787379722302094,
+          "minimum": -0.08387763643318426,
+          "rms": 0.013914283289140227
+        },
+        "length": 8192,
+        "name": "action_w",
+        "representatives": [
+          {
+            "first_moment": -0.0016774547153249816,
+            "gradient": -0.01677454715324982,
+            "index": 0,
+            "initial_value": 0.015811769291758537,
+            "second_moment": 2.8138543219660186e-07,
+            "updated_value": 0.016811173505651908
+          },
+          {
+            "first_moment": 0.000652475742686896,
+            "gradient": 0.006524757426868962,
+            "index": 4096,
+            "initial_value": -0.022920804098248482,
+            "second_moment": 4.257245947948172e-08,
+            "updated_value": -0.023919273819563786
+          },
+          {
+            "first_moment": 0.0009852724817259195,
+            "gradient": 0.009852724817259196,
+            "index": 8191,
+            "initial_value": -0.11454516649246216,
+            "second_moment": 9.707618632463534e-08,
+            "updated_value": -0.11554415257387624
+          },
+          {
+            "first_moment": -0.008387763643318424,
+            "gradient": -0.08387763643318426,
+            "index": 3790,
+            "initial_value": 0.0006337410886771977,
+            "second_moment": 7.035457893617446e-06,
+            "updated_value": 0.0016336218815994304
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -5.600041765766671e-06
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 3.499548688316503e-05
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 6.962488515191289e-06
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "9f1dcbc35c350d6027f98be0f5c8b43b42ca52b7604459c0c42be3aa88913d47"
+        },
+        "second_moment_summary": {
+          "length": 8192,
+          "maximum": 7.035457893617446e-06,
+          "mean": 1.9360727945044717e-07,
+          "mean_abs": 1.9360727945044717e-07,
+          "minimum": 0.0,
+          "rms": 4.6000788782484287e-07
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 2.624619141540458
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -3.145387703306119
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -7.918115256697217
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "34c23ef87b8e132dd6844edf4cf0e09b61a2ecf69e79311c10343ed2ccba1268"
+        },
+        "updated_value_summary": {
+          "length": 8192,
+          "maximum": 0.1776945088586353,
+          "mean": -0.001209182053902623,
+          "mean_abs": 0.08753905822665597,
+          "minimum": -0.1777460277703506,
+          "rms": 0.10147752550155907
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.008854370443463945
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.01701786257254246
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.015134989190174721
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "609e4c2cc5f4b9825ee68d9b6c2bfc93b7cfc38ef31cca4276219691beb61d48"
+        },
+        "first_moment_summary": {
+          "length": 64,
+          "maximum": 0.007142904976778363,
+          "mean": 0.0002644549400223456,
+          "mean_abs": 0.0024215068359489562,
+          "minimum": -0.007751601797896686,
+          "rms": 0.0030748982322716533
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.08854370443463952
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.17017862572542464
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.15134989190174725
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "86d49b235be81f971282d997ff9760618f83a8b8f8f29be15841351b8de3bce5"
+        },
+        "gradient_summary": {
+          "length": 64,
+          "maximum": 0.07142904976778365,
+          "mean": 0.002644549400223457,
+          "mean_abs": 0.02421506835948957,
+          "minimum": -0.07751601797896687,
+          "rms": 0.030748982322716535
+        },
+        "length": 64,
+        "name": "action_b",
+        "representatives": [
+          {
+            "first_moment": -0.004561468070570324,
+            "gradient": -0.04561468070570325,
+            "index": 0,
+            "initial_value": 0.00790341105312109,
+            "second_moment": 2.0806990958832585e-06,
+            "updated_value": 0.008903191873505028
+          },
+          {
+            "first_moment": 0.004685034902730874,
+            "gradient": 0.04685034902730875,
+            "index": 32,
+            "initial_value": -0.005476613994687796,
+            "second_moment": 2.194955203980652e-06,
+            "updated_value": -0.00647640059465541
+          },
+          {
+            "first_moment": -0.0035062575569279734,
+            "gradient": -0.03506257556927974,
+            "index": 63,
+            "initial_value": 0.003451416501775384,
+            "second_moment": 1.2293842055514534e-06,
+            "updated_value": 0.004451131378717334
+          },
+          {
+            "first_moment": -0.007751601797896686,
+            "gradient": -0.07751601797896687,
+            "index": 14,
+            "initial_value": -0.009458929300308228,
+            "second_moment": 6.008733043315521e-06,
+            "updated_value": -0.008459058289262654
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -5.833426472157255e-06
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 1.0961881868251728e-06
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -6.899459734743228e-06
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+        },
+        "second_moment_summary": {
+          "length": 64,
+          "maximum": 6.008733043315521e-06,
+          "mean": 9.45499913882735e-07,
+          "mean_abs": 9.45499913882735e-07,
+          "minimum": 0.0,
+          "rms": 1.5877130876423383e-06
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.020143822054496958
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.017211507903986085
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.031524996209147976
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "3c4389e029fbd62f822e33923ee8201e98a4f7a3b30a40d791b1e6af1e46adf1"
+        },
+        "updated_value_summary": {
+          "length": 64,
+          "maximum": 0.010663010052098675,
+          "mean": -0.0004201649642989609,
+          "mean_abs": 0.005169138079589938,
+          "minimum": -0.010858982534564693,
+          "rms": 0.005840791309607945
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.040152781301867
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.01254993540513711
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.07612416800715949
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "3bd88eecef815cd4a6aafe3924a9555f5a249d80cae9a730d430d46e6a00e4d4"
+        },
+        "first_moment_summary": {
+          "length": 4096,
+          "maximum": 0.0073615607445519935,
+          "mean": 4.8438513718526254e-05,
+          "mean_abs": 0.0003280236032929029,
+          "minimum": -0.006265968142709337,
+          "rms": 0.0008975434268855649
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.4015278130186701
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.12549935405137094
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.7612416800715973
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "a4d02e40510677812e11c7b36b7a9055fe48fdc6229851b7719f5d8eac0590fb"
+        },
+        "gradient_summary": {
+          "length": 4096,
+          "maximum": 0.07361560744551995,
+          "mean": 0.00048438513718526265,
+          "mean_abs": 0.0032802360329290303,
+          "minimum": -0.06265968142709338,
+          "rms": 0.00897543426885565
+        },
+        "length": 4096,
+        "name": "scorer_state_w",
+        "representatives": [
+          {
+            "first_moment": -2.7105054312137605e-21,
+            "gradient": -2.710505431213761e-20,
+            "index": 0,
+            "initial_value": -0.09167034178972244,
+            "second_moment": 7.346839692639303e-43,
+            "updated_value": -0.09167034178972244
+          },
+          {
+            "first_moment": 1.7347234759768067e-19,
+            "gradient": 1.734723475976807e-18,
+            "index": 2048,
+            "initial_value": 0.09543980658054352,
+            "second_moment": 3.009265538105059e-39,
+            "updated_value": 0.09543980658054335
+          },
+          {
+            "first_moment": 0.0,
+            "gradient": 0.0,
+            "index": 4095,
+            "initial_value": -0.051888607442379,
+            "second_moment": 0.0,
+            "updated_value": -0.051888607442379
+          },
+          {
+            "first_moment": 0.0073615607445519935,
+            "gradient": 0.07361560744551995,
+            "index": 314,
+            "initial_value": 0.05267106369137764,
+            "second_moment": 5.419257659572898e-06,
+            "updated_value": 0.05167119951368657
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 1.5347462534607921e-06
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 2.1484746276913248e-05
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 1.2785886600430901e-05
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7"
+        },
+        "second_moment_summary": {
+          "length": 4096,
+          "maximum": 5.419257659572898e-06,
+          "mean": 8.055842031454844e-08,
+          "mean_abs": 8.055842031454844e-08,
+          "minimum": 0.0,
+          "rms": 3.343227497772466e-07
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 7.984198731094878
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.9765171159385385
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -7.790262274223122
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "f326ffc81de6ad319ba01d47bbf5d24052a5b1a63ee6475d6d3fb5bbf623de40"
+        },
+        "updated_value_summary": {
+          "length": 4096,
+          "maximum": 0.17690131620895394,
+          "mean": -0.0011117291751423532,
+          "mean_abs": 0.08693725515974952,
+          "minimum": -0.17670072615146637,
+          "rms": 0.10045284539288889
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.004302247112829273
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.09668872168040722
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.06299906669680651
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "6a2d4311a2a989923bc4f1bd8bb3699d0f185f4e6d3efe15b921adc62bf0b683"
+        },
+        "first_moment_summary": {
+          "length": 4096,
+          "maximum": 0.015429772373918363,
+          "mean": 9.820602240460199e-05,
+          "mean_abs": 0.0010907971099230736,
+          "minimum": -0.011343448140414363,
+          "rms": 0.0019359375128876056
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.04302247112829269
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.9668872168040747
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.6299906669680667
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "8b0df2a9df3f28a4ceb552bd5f0bd5ccc9596a1e6d30c8bce300b9a63712cc43"
+        },
+        "gradient_summary": {
+          "length": 4096,
+          "maximum": 0.15429772373918366,
+          "mean": 0.0009820602240460201,
+          "mean_abs": 0.010907971099230737,
+          "minimum": -0.11343448140414365,
+          "rms": 0.01935937512887606
+        },
+        "length": 4096,
+        "name": "scorer_action_w",
+        "representatives": [
+          {
+            "first_moment": -0.0016264735308003618,
+            "gradient": -0.01626473530800362,
+            "index": 0,
+            "initial_value": 0.1460379809141159,
+            "second_moment": 2.6454161463941987e-07,
+            "updated_value": 0.14703736646479856
+          },
+          {
+            "first_moment": -0.004209847645788388,
+            "gradient": -0.04209847645788389,
+            "index": 2048,
+            "initial_value": 0.07297853380441666,
+            "second_moment": 1.772281720075006e-06,
+            "updated_value": 0.0739782963225403
+          },
+          {
+            "first_moment": -0.0006050406856081644,
+            "gradient": -0.006050406856081645,
+            "index": 4095,
+            "initial_value": 0.01513156108558178,
+            "second_moment": 3.660742312411981e-08,
+            "updated_value": 0.016129911031346564
+          },
+          {
+            "first_moment": 0.015429772373918363,
+            "gradient": 0.15429772373918366,
+            "index": 2646,
+            "initial_value": 0.015405052341520786,
+            "second_moment": 2.380778755109346e-05,
+            "updated_value": 0.014405117147090836
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -1.6881832085954333e-06
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 1.8922870881148157e-05
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 7.716695830194966e-05
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7"
+        },
+        "second_moment_summary": {
+          "length": 4096,
+          "maximum": 2.380778755109346e-05,
+          "mean": 3.747854053805453e-07,
+          "mean_abs": 3.747854053805453e-07,
+          "minimum": 0.0,
+          "rms": 1.1488324511875873e-06
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -4.966936833317794
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -4.77555581978511
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -2.210757051122704
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "50bc4b10749c028d717142c6b9f21a63afd84daee5577cc64d64352096df19ca"
+        },
+        "updated_value_summary": {
+          "length": 4096,
+          "maximum": 0.1772176981864825,
+          "mean": -0.0017109002115964901,
+          "mean_abs": 0.08771378441946623,
+          "minimum": -0.1772289639096421,
+          "rms": 0.10135598206995702
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.004553211377519824
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.005753172333115071
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.007829661167963298
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "9f1aa9ee526715194da08e5607df07ccdc8db48aea569decab50456e1d0c9756"
+        },
+        "first_moment_summary": {
+          "length": 64,
+          "maximum": 0.008996422601376461,
+          "mean": 0.0003543770470918477,
+          "mean_abs": 0.0019943806220626722,
+          "minimum": -0.006428548103646849,
+          "rms": 0.0030261531226499104
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.04553211377519823
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.057531723331150725
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.07829661167963299
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "9970a829cacb5c244de24e17aa921818c57079f2421e0fcf02904914d2d08b75"
+        },
+        "gradient_summary": {
+          "length": 64,
+          "maximum": 0.08996422601376464,
+          "mean": 0.0035437704709184777,
+          "mean_abs": 0.019943806220626727,
+          "minimum": -0.0642854810364685,
+          "rms": 0.030261531226499112
+        },
+        "length": 64,
+        "name": "scorer_b",
+        "representatives": [
+          {
+            "first_moment": -1.8295911660692883e-19,
+            "gradient": -1.8295911660692887e-18,
+            "index": 0,
+            "initial_value": -0.00203642132692039,
+            "second_moment": 3.3474038349587825e-39,
+            "updated_value": -0.002036421326920207
+          },
+          {
+            "first_moment": 1.3011708400455242e-05,
+            "gradient": 0.00013011708400455246,
+            "index": 32,
+            "initial_value": 0.00377008062787354,
+            "second_moment": 1.6930455549847776e-11,
+            "updated_value": 0.002841449512482037
+          },
+          {
+            "first_moment": 1.5329909021640972e-05,
+            "gradient": 0.00015329909021640975,
+            "index": 63,
+            "initial_value": -0.0029957580845803022,
+            "second_moment": 2.3500611061178957e-11,
+            "updated_value": -0.00393452075627218
+          },
+          {
+            "first_moment": 0.008996422601376461,
+            "gradient": 0.08996422601376464,
+            "index": 58,
+            "initial_value": 0.0015101837925612926,
+            "second_moment": 8.093561962255733e-06,
+            "updated_value": 0.0005102949355012549
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 9.204950962893135e-06
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -3.1934089553735472e-06
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -1.3613297606267373e-05
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+        },
+        "second_moment_summary": {
+          "length": 64,
+          "maximum": 8.093561962255733e-06,
+          "mean": 9.157602721723817e-07,
+          "mean_abs": 9.157602721723817e-07,
+          "minimum": 0.0,
+          "rms": 1.8315863714347746e-06
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.008363137903313143
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.017984382242241834
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.00500808466641357
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "30464bde58cb2e37340ba6087f6640a753afaf5227139eb57b4263c4cad73a16"
+        },
+        "updated_value_summary": {
+          "length": 64,
+          "maximum": 0.010874292060215049,
+          "mean": 3.713786547694854e-05,
+          "mean_abs": 0.00458339987919496,
+          "minimum": -0.010824768925527327,
+          "rms": 0.00546117562953527
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.01705830510500078
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.019429498114028464
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.056177887569487335
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "b748b68b3b2101ab683a50748966c70e49ebcf715a89aa5e279e3fb9a2e1a0b1"
+        },
+        "first_moment_summary": {
+          "length": 64,
+          "maximum": 0.033736635279291376,
+          "mean": 0.00011004655744174,
+          "mean_abs": 0.005479919988675715,
+          "minimum": -0.016201361143856334,
+          "rms": 0.008232680645016683
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.17058305105000782
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.19429498114028487
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.5617788756948734
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "ed8e4e2c728f10870f6758cd175f6c5f51028a7d1127db2e6a05caa319332fa9"
+        },
+        "gradient_summary": {
+          "length": 64,
+          "maximum": 0.3373663527929138,
+          "mean": 0.0011004655744174003,
+          "mean_abs": 0.05479919988675717,
+          "minimum": -0.16201361143856338,
+          "rms": 0.08232680645016686
+        },
+        "length": 64,
+        "name": "scorer_out_w",
+        "representatives": [
+          {
+            "first_moment": -0.004551186016798395,
+            "gradient": -0.04551186016798396,
+            "index": 0,
+            "initial_value": 0.13760468363761902,
+            "second_moment": 2.0713294159501267e-06,
+            "updated_value": 0.13860446396294046
+          },
+          {
+            "first_moment": -1.791689418696961e-05,
+            "gradient": -0.00017916894186969614,
+            "index": 32,
+            "initial_value": -0.18801432847976685,
+            "second_moment": 3.2101509730706586e-11,
+            "updated_value": -0.1870671912800826
+          },
+          {
+            "first_moment": 0.011405992699554647,
+            "gradient": 0.1140599269955465,
+            "index": 63,
+            "initial_value": 0.1910937875509262,
+            "second_moment": 1.3009666946229408e-05,
+            "updated_value": 0.19009387521645088
+          },
+          {
+            "first_moment": 0.033736635279291376,
+            "gradient": 0.3373663527929138,
+            "index": 48,
+            "initial_value": -0.06923911720514297,
+            "second_moment": 0.00011381605599679289,
+            "updated_value": -0.07023908756465419
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -7.60804692833311e-05
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.00012426689095054798
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -1.211431787867171e-05
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "c7369912a28787eaa421384e7526e59514244343797b53382ec3666aa8890d44"
+        },
+        "second_moment_summary": {
+          "length": 64,
+          "maximum": 0.00011381605599679289,
+          "mean": 6.777703060283241e-06,
+          "mean_abs": 6.777703060283241e-06,
+          "minimum": 0.0,
+          "rms": 1.6901569888435077e-05
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.8464701395714898
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.9144746148979994
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -1.5950749779910913
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "113905375364dc280dc3014dc655387300693f26e882a48c9243075d2fe99a93"
+        },
+        "updated_value_summary": {
+          "length": 64,
+          "maximum": 0.30102545171630946,
+          "mean": 0.04062160163769664,
+          "mean_abs": 0.1734765615965444,
+          "minimum": -0.296639266244998,
+          "rms": 0.19119606419721352
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.0066163197651545064
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.048636731031706765
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.0699535062646278
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "aef22ccea07ca35c24ab80db27a535f624e998005ab0564dcdac21107cfebf21"
+        },
+        "first_moment_summary": {
+          "length": 4096,
+          "maximum": 0.009939208651770164,
+          "mean": -6.0990814214247566e-06,
+          "mean_abs": 0.0006537579438765692,
+          "minimum": -0.010786225546093674,
+          "rms": 0.0015704715320200616
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.06616319765154581
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.48636731031706737
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.6995350626462782
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "5051c1925e11560b60067dea542b5f68cb0ae3ee307467c3fb4c6a3ea3c1b45e"
+        },
+        "gradient_summary": {
+          "length": 4096,
+          "maximum": 0.09939208651770166,
+          "mean": -6.099081421424759e-05,
+          "mean_abs": 0.006537579438765693,
+          "minimum": -0.10786225546093677,
+          "rms": 0.015704715320200617
+        },
+        "length": 4096,
+        "name": "value_w1",
+        "representatives": [
+          {
+            "first_moment": -2.7261405278361483e-06,
+            "gradient": -2.7261405278361488e-05,
+            "index": 0,
+            "initial_value": -0.11838879436254501,
+            "second_moment": 7.431842177510762e-13,
+            "updated_value": -0.11765716856704146
+          },
+          {
+            "first_moment": -0.0003632136192305106,
+            "gradient": -0.0036321361923051065,
+            "index": 2048,
+            "initial_value": 0.12094301730394363,
+            "second_moment": 1.3192413319452649e-08,
+            "updated_value": 0.12194027166252003
+          },
+          {
+            "first_moment": 0.0,
+            "gradient": 0.0,
+            "index": 4095,
+            "initial_value": -0.1708482950925827,
+            "second_moment": 0.0,
+            "updated_value": -0.1708482950925827
+          },
+          {
+            "first_moment": -0.010786225546093674,
+            "gradient": -0.10786225546093677,
+            "index": 142,
+            "initial_value": 0.19128763675689697,
+            "second_moment": 1.1634266153120394e-05,
+            "updated_value": 0.19228754405465434
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -1.8108286431034713e-05
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -2.8416427128656182e-05
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 1.332813697183483e-05
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7"
+        },
+        "second_moment_summary": {
+          "length": 4096,
+          "maximum": 1.1634266153120394e-05,
+          "mean": 2.4663808328854423e-07,
+          "mean_abs": 2.4663808328854423e-07,
+          "minimum": 0.0,
+          "rms": 8.664810637645541e-07
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 5.1557197143459454
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 1.913561170046056
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.8542277071840487
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "f7099e2de9d80392e930a4a7b849fefc5478caa79ccda2381125d1eefae244a0"
+        },
+        "updated_value_summary": {
+          "length": 4096,
+          "maximum": 0.21726734874633985,
+          "mean": 0.0016376211355157793,
+          "mean_abs": 0.10931127617819417,
+          "minimum": -0.2165708405977759,
+          "rms": 0.1260352763818634
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.03871197038172941
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.011140844029107418
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.0386239795801292
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "8eac61a333482a593acd5c7733bc588896d14285b38d13add2e26dfcca728021"
+        },
+        "first_moment_summary": {
+          "length": 64,
+          "maximum": 0.010097765809901516,
+          "mean": -1.2949507006481082e-05,
+          "mean_abs": 0.002853242861244351,
+          "minimum": -0.010958294905885997,
+          "rms": 0.004261605173562802
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.38711970381729416
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.11140844029107415
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.3862397958012921
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "e3e7fc8a603f2cb671386054a4ee5ff5afad76c275776b48979e0873836aecff"
+        },
+        "gradient_summary": {
+          "length": 64,
+          "maximum": 0.10097765809901517,
+          "mean": -0.0001294950700648113,
+          "mean_abs": 0.028532428612443518,
+          "minimum": -0.10958294905885999,
+          "rms": 0.04261605173562803
+        },
+        "length": 64,
+        "name": "value_b1",
+        "representatives": [
+          {
+            "first_moment": 0.00010671943219175755,
+            "gradient": 0.0010671943219175758,
+            "index": 0,
+            "initial_value": 0.005631411913782358,
+            "second_moment": 1.1389037207331154e-09,
+            "updated_value": 0.004640695289860872
+          },
+          {
+            "first_moment": 0.0012291086510323246,
+            "gradient": 0.012291086510323249,
+            "index": 32,
+            "initial_value": -0.008978009223937988,
+            "second_moment": 1.5107080760425025e-07,
+            "updated_value": -0.009977196287617965
+          },
+          {
+            "first_moment": 0.0,
+            "gradient": 0.0,
+            "index": 63,
+            "initial_value": -0.003444963600486517,
+            "second_moment": 0.0,
+            "updated_value": -0.003444963600486517
+          },
+          {
+            "first_moment": -0.010958294905885997,
+            "gradient": -0.10958294905885999,
+            "index": 14,
+            "initial_value": -0.0038095926865935326,
+            "second_moment": 1.2008422724436714e-05,
+            "updated_value": -0.0028096839333396585
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -1.4274625462068134e-06
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 1.118641745049145e-05
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -1.0127302528575794e-05
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+        },
+        "second_moment_summary": {
+          "length": 64,
+          "maximum": 1.2008422724436714e-05,
+          "mean": 1.8161278655337267e-06,
+          "mean_abs": 1.8161278655337267e-06,
+          "minimum": 0.0,
+          "rms": 3.305400855641322e-06
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.0058243825974751235
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.00964546866599464
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.010421589108546325
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "8cce5839a683aa835f891cdc9fddb6ca7d29b70e799d1d7b570b3c75e48ccf4e"
+        },
+        "updated_value_summary": {
+          "length": 64,
+          "maximum": 0.010910765865004833,
+          "mean": 0.00021415502335882448,
+          "mean_abs": 0.005238691500051659,
+          "minimum": -0.010753264564142379,
+          "rms": 0.005977062449943065
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.008091349813726533
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.011474657026850188
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.047647008478400504
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "b65fa73700c37933f8daab1f603dd832529e6de6db3f1d188b42cf4902c15579"
+        },
+        "first_moment_summary": {
+          "length": 64,
+          "maximum": 0.013708595016003754,
+          "mean": -0.0017366658627546272,
+          "mean_abs": 0.005573651863762668,
+          "minimum": -0.03105561533403419,
+          "rms": 0.008559459034893278
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.08091349813726541
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.11474657026850182
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.4764700847840051
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "3a407014d091d0ca8472c4edf5b82723e2101664a955df8337698ceaeabd01cb"
+        },
+        "gradient_summary": {
+          "length": 64,
+          "maximum": 0.13708595016003758,
+          "mean": -0.017366658627546275,
+          "mean_abs": 0.055736518637626686,
+          "minimum": -0.310556153340342,
+          "rms": 0.0855945903489328
+        },
+        "length": 64,
+        "name": "value_out_w",
+        "representatives": [
+          {
+            "first_moment": 0.01068240817094228,
+            "gradient": 0.10682408170942283,
+            "index": 0,
+            "initial_value": -0.024271748960018158,
+            "second_moment": 1.1411384433061454e-05,
+            "updated_value": -0.025271655356929705
+          },
+          {
+            "first_moment": -0.012775125572775539,
+            "gradient": -0.12775125572775542,
+            "index": 32,
+            "initial_value": -0.25819337368011475,
+            "second_moment": 1.632038334001838e-05,
+            "updated_value": -0.257193451951105
+          },
+          {
+            "first_moment": 0.0,
+            "gradient": 0.0,
+            "index": 63,
+            "initial_value": -0.24662411212921143,
+            "second_moment": 0.0,
+            "updated_value": -0.24662411212921143
+          },
+          {
+            "first_moment": -0.03105561533403419,
+            "gradient": -0.310556153340342,
+            "index": 25,
+            "initial_value": 0.05452597513794899,
+            "second_moment": 9.644512437755008e-05,
+            "updated_value": 0.055525942938690016
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -2.5665774829845446e-05
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -5.742703625927054e-06
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -1.112506839127122e-05
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+        },
+        "second_moment_summary": {
+          "length": 64,
+          "maximum": 9.644512437755008e-05,
+          "mean": 7.326433897001626e-06,
+          "mean_abs": 7.326433897001626e-06,
+          "minimum": 0.0,
+          "rms": 1.7039935676577912e-05
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.6284451174629507
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.9506703105197145
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.23785777346665418
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "6d7f3d3039c300badad1999e50e8a65ad666b6a5a1c3c106693e54523510f755"
+        },
+        "updated_value_summary": {
+          "length": 64,
+          "maximum": 0.29749885869961695,
+          "mean": 0.00682349559244618,
+          "mean_abs": 0.14057993846277542,
+          "minimum": -0.2722157047816386,
+          "rms": 0.16128404947320107
+        }
+      },
+      {
+        "first_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.001018210519126516
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.0035515553839712694
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.0013360616056945125
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+        },
+        "first_moment_summary": {
+          "length": 1,
+          "maximum": -0.004396857942439665,
+          "mean": -0.004396857942439665,
+          "mean_abs": 0.004396857942439665,
+          "minimum": -0.004396857942439665,
+          "rms": 0.004396857942439665
+        },
+        "gradient_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": -0.01018210519126516
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": -0.0355155538397127
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": 0.013360616056945126
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+        },
+        "gradient_summary": {
+          "length": 1,
+          "maximum": -0.04396857942439666,
+          "mean": -0.04396857942439666,
+          "mean_abs": 0.04396857942439666,
+          "minimum": -0.04396857942439666,
+          "rms": 0.04396857942439666
+        },
+        "length": 1,
+        "name": "value_out_b",
+        "representatives": [
+          {
+            "first_moment": -0.004396857942439665,
+            "gradient": -0.04396857942439666,
+            "index": 0,
+            "initial_value": 0.006034935358911753,
+            "second_moment": 1.9332359765994787e-06,
+            "updated_value": 0.00703470797548712
+          }
+        ],
+        "second_moment_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 4.476927008097041e-07
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 1.5615684498028447e-06
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -5.874473082586616e-07
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+        },
+        "second_moment_summary": {
+          "length": 1,
+          "maximum": 1.9332359765994787e-06,
+          "mean": 1.9332359765994787e-06,
+          "mean_abs": 1.9332359765994787e-06,
+          "minimum": 1.9332359765994787e-06,
+          "rms": 1.9332359765994787e-06
+        },
+        "updated_value_order_evidence": {
+          "projection_contract": "sum(value[i] * signed_unit(mix64((i+1)*golden_ratio xor seed))) in index order",
+          "projections": [
+            {
+              "seed": 2611923443488327891,
+              "value": 0.001629075524702939
+            },
+            {
+              "seed": 1376283091369227076,
+              "value": 0.005682274777143257
+            },
+            {
+              "seed": 11820040416388919760,
+              "value": -0.0021376181255713354
+            }
+          ],
+          "quantized_fingerprint_contract": "sha256(sign with abs(value)<=1e-4 encoded as zero)",
+          "quantized_fingerprint_sha256": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        },
+        "updated_value_summary": {
+          "length": 1,
+          "maximum": 0.00703470797548712,
+          "mean": 0.00703470797548712,
+          "mean_abs": 0.00703470797548712,
+          "minimum": 0.00703470797548712,
+          "rms": 0.00703470797548712
+        }
+      }
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "UTF-8 JSON, sorted keys, indent=2, trailing LF, integrity field omitted",
+    "payload_sha256": "b12ce5404fe6d346d59dafa538de0c1976bf393154bb21acf9aa40b18782f23c"
+  },
+  "provenance": {
+    "arithmetic": "contract inputs and parameters rounded to binary32 storage; forward, detached loss, backward, and Adam evaluated in Python float64",
+    "check_command": "python python/tools/generate_cuda_flat_training_golden_v1.py --check",
+    "claim_scope": "small synthetic correctness oracle only; no production or performance claim",
+    "configured_python_version_file": ".python-version",
+    "fixture_relative_path": "mtg-kernel/examples/data/cuda_flat_training_independent_golden_v1.json",
+    "generation_command": "python python/tools/generate_cuda_flat_training_golden_v1.py",
+    "generator_language": "Python 3 standard library only",
+    "generator_relative_path": "python/tools/generate_cuda_flat_training_golden_v1.py",
+    "generator_sha256": "0df81f73ba47fbd24f2cf8978b3e4931774f64e507fe76fd4a7d6182d68bb1db",
+    "python_implementation": "CPython",
+    "python_version": "3.13.14",
+    "third_party_dependencies": []
+  },
+  "schema_version": "cuda-flat-training-independent-golden-v1"
+}
