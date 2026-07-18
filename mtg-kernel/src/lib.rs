@@ -36,6 +36,7 @@ pub(crate) mod native_flat_cpu_reference_v1;
 pub(crate) mod native_trainer_schedule_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
+pub(crate) mod private_physical_trajectory_v1;
 pub mod rl;
 pub mod rl_session;
 pub mod runtime_decks;

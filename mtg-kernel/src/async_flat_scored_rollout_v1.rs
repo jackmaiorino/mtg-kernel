@@ -91,6 +91,8 @@ static TEST_CAPTURE_ACTION_EVENTS_V1: std::sync::atomic::AtomicBool =
 #[cfg(test)]
 static TEST_ACTION_EVENTS_V1: std::sync::Mutex<Vec<TestScoredActionEventV1>> =
     std::sync::Mutex::new(Vec::new());
+#[cfg(test)]
+pub(crate) static ASYNC_FLAT_SCORED_TEST_LOCK_V1: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -925,7 +927,7 @@ impl LocalLaneV1 {
                 .learner_action_count
                 .checked_add(1)
                 .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
-            self.learner_trace_hash = record_trace(
+            self.learner_trace_hash = record_learner_trace_v1(
                 self.learner_trace_hash,
                 waiting.expected,
                 action.scored.selected_index,
@@ -991,7 +993,7 @@ impl LocalLaneV1 {
         self.opponent_policy =
             SplitMix64::seed(derive_policy_seed(config.opponent_policy_seed, episode_id));
         self.learner_action_count = 0;
-        self.learner_trace_hash = hash_bytes(FNV1A64_OFFSET, &episode_id.to_le_bytes());
+        self.learner_trace_hash = initial_learner_trace_hash_v1(episode_id);
         Ok(())
     }
 
@@ -2547,7 +2549,15 @@ fn player_seat_code(seat: PlayerSeatV1) -> u8 {
     }
 }
 
-fn record_trace(mut trace_hash: u64, decision: FastActorDecisionV1, selected_index: u32) -> u64 {
+pub(crate) fn initial_learner_trace_hash_v1(episode_id: u64) -> u64 {
+    hash_bytes(FNV1A64_OFFSET, &episode_id.to_le_bytes())
+}
+
+pub(crate) fn record_learner_trace_v1(
+    mut trace_hash: u64,
+    decision: FastActorDecisionV1,
+    selected_index: u32,
+) -> u64 {
     trace_hash = hash_bytes(trace_hash, &decision.step.to_le_bytes());
     trace_hash = hash_bytes(trace_hash, &decision.physical_decision_id.to_le_bytes());
     trace_hash = hash_bytes(trace_hash, &decision.substep_index.to_le_bytes());
@@ -2571,10 +2581,9 @@ mod tests {
     use crate::fast_sampler::splitmix64_first;
     use sha2::{Digest, Sha256};
     use std::collections::BTreeSet;
-    use std::sync::Mutex;
     use std::time::Duration;
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    use super::ASYNC_FLAT_SCORED_TEST_LOCK_V1 as TEST_LOCK;
     const TEST_LEARNER_POLICY_SEED: u64 = 83_501;
 
     #[derive(Default)]
@@ -3046,7 +3055,7 @@ mod tests {
             let mut opponent_policy =
                 SplitMix64::seed(derive_policy_seed(config.opponent_policy_seed, episode_id));
             let mut learner_ordinal = 0u64;
-            let mut learner_trace_hash = hash_bytes(FNV1A64_OFFSET, &episode_id.to_le_bytes());
+            let mut learner_trace_hash = initial_learner_trace_hash_v1(episode_id);
 
             loop {
                 match response {
@@ -3084,7 +3093,7 @@ mod tests {
                             selected_index,
                         });
                         learner_trace_hash =
-                            record_trace(learner_trace_hash, expected, selected_index);
+                            record_learner_trace_v1(learner_trace_hash, expected, selected_index);
                         learner_ordinal = learner_ordinal.checked_add(1).unwrap();
                         scored_action_logit_count = scored_action_logit_count
                             .checked_add(u64::from(expected.legal_action_count))
