@@ -3,7 +3,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import unittest
 
 
@@ -52,7 +55,7 @@ class FlatPolicyV1GoldenTests(unittest.TestCase):
         self.assertFalse(
             any(
                 entry["classification"] == "model_input"
-                and "FlatActionObjectV1" in entry["destination"]
+                and entry["destination"].startswith("FlatActionObjectV1")
                 for entry in entries
             )
         )
@@ -63,6 +66,110 @@ class FlatPolicyV1GoldenTests(unittest.TestCase):
                 if entry["path"].endswith(".legal_action.semantic.actor")
             )
         )
+
+    def test_destination_registry_is_exact_exhaustive_and_fail_closed(self) -> None:
+        authoritative = GENERATOR.classification_registry()
+        declared = GENERATOR.DESTINATION_REGISTRY
+        self.assertEqual(len(authoritative), 964)
+        self.assertEqual(len(declared), 964)
+        self.assertEqual(set(declared), set(authoritative))
+        for path, classification in authoritative.items():
+            declared_classification, destination = declared[path]
+            self.assertEqual(declared_classification, classification, path)
+            self.assertTrue(destination, path)
+            self.assertEqual(
+                GENERATOR._destination(path, classification)[0], destination, path
+            )
+
+        with self.assertRaisesRegex(AssertionError, "duplicate destination"):
+            GENERATOR._build_destination_registry(
+                (
+                    ("observation.example", GENERATOR.MODEL_INPUT, "FlatGlobalsV1"),
+                    ("observation.example", GENERATOR.MODEL_INPUT, "FlatGlobalsV1"),
+                )
+            )
+        with self.assertRaisesRegex(AssertionError, "missing="):
+            GENERATOR._assert_destination_coverage(
+                authoritative, {k: v for k, v in declared.items() if k != next(iter(declared))}
+            )
+        with self.assertRaisesRegex(AssertionError, "extra="):
+            GENERATOR._assert_destination_coverage(
+                authoritative,
+                {**declared, "observation.not_authoritative": (GENERATOR.MODEL_INPUT, "x")},
+            )
+        with self.assertRaisesRegex(AssertionError, "classification drift"):
+            GENERATOR._destination(
+                "observation.projection.life_totals.[]", GENERATOR.OPERATIONAL_ONLY
+            )
+        with self.assertRaisesRegex(AssertionError, "undeclared normalized semantic path"):
+            GENERATOR._destination("observation.not_authoritative", GENERATOR.MODEL_INPUT)
+
+    def test_fail_closed_registry_checks_survive_optimized_python(self) -> None:
+        script = f"""
+import importlib.util
+from pathlib import Path
+import sys
+
+path = Path({str(GENERATOR_PATH)!r})
+spec = importlib.util.spec_from_file_location('optimized_flat_policy_goldens', path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+sys.argv = [str(path), '--check']
+if module.main() != 0:
+    raise SystemExit('optimized generator check did not succeed')
+try:
+    module._build_destination_registry((
+        ('observation.bad', module.MODEL_INPUT, 'FlatActionObjectV1.card_token'),
+    ))
+except AssertionError:
+    pass
+else:
+    raise SystemExit('optimized registry accepted a private action-object destination')
+try:
+    module._validate_inventory_entries([
+        {{'path': 'observation.bad', 'classification': module.FORBIDDEN,
+          'destination': 'FlatGlobalsV1'}}
+    ])
+except AssertionError:
+    pass
+else:
+    raise SystemExit('optimized inventory accepted a forbidden/destination mismatch')
+"""
+        env = os.environ.copy()
+        python_root = str(ROOT / "python")
+        env["PYTHONPATH"] = python_root + (
+            os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+        )
+        result = subprocess.run(
+            [sys.executable, "-O", "-c", script],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"optimized registry check failed:\nstdout={result.stdout}\nstderr={result.stderr}",
+        )
+
+    def test_known_semantic_paths_name_their_concrete_typed_derivations(self) -> None:
+        expected = {
+            "observation.projection.life_totals.[]": "FlatGlobalsV1.players[].life",
+            "observation.projection.battlefield.[].[].characteristics.effective_subtype_ids.[]": "FlatObjectSubtypeV1.subtype_id",
+            "observation.projection.continuous_effects.[].power_delta": "FlatEffectRelationDataV1.power_delta",
+            "<variant:options>.observation.projection.engine_context.pending_effect.choice.structural_path.[]": "FlatContextPathElementV1.value(kind=StructuralPath)",
+            "<variant:object>.observation.projection.stack.[].targets.[].object.controller": "FlatStackRelationDataV1.target_object_controller",
+            "observation.projection.engine_context.pending_triggers.[].controller": "FlatContextRelationDataV1.controller",
+            "observation.projection.engine_context.pending_triggers.[].source.controller": "pending_trigger_source_relation_derivation",
+            "<variant:choose_target>.legal_action.semantic.source.card_db_id": "FlatActionRefV1.card_token",
+            "<variant:choose_target>.legal_action.semantic.source.owner": "FlatActionRefV1.object_index via FlatActionObjectV1.canonical_key",
+            "<variant:order_triggers>.legal_action.semantic.order.[]": "FlatActionRefV1.associated_order",
+            "<variant:pass>.legal_action.semantic.actor": "actor_relative_self_constant",
+        }
+        for path, destination in expected.items():
+            self.assertEqual(GENERATOR.DESTINATION_REGISTRY[path][1], destination, path)
 
     def test_enum_and_payload_goldens_are_recomputable(self) -> None:
         inventory = GENERATOR._inventory()
