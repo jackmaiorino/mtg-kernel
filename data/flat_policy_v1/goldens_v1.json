@@ -1,0 +1,394 @@
+{
+  "card_catalog_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+  "encoding_contract_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+  "enum_maps": {
+    "action_kind": {
+      "activate_ability": 4,
+      "activate_mana_ability": 3,
+      "cast_spell": 2,
+      "choose_attacker_inclusion": 24,
+      "choose_blocker_inclusion": 25,
+      "choose_cast_mode": 8,
+      "choose_cost_target": 7,
+      "choose_effect_boolean": 16,
+      "choose_effect_color": 14,
+      "choose_effect_number": 15,
+      "choose_effect_option": 11,
+      "choose_effect_target": 12,
+      "choose_kicker": 9,
+      "choose_madness_cast": 22,
+      "choose_optional_cost_use": 18,
+      "choose_optional_cost_which": 19,
+      "choose_spell_copy_payment": 20,
+      "choose_spell_copy_retarget": 21,
+      "choose_spell_mode": 10,
+      "choose_target": 6,
+      "discard": 23,
+      "finish_effect_selection": 13,
+      "finish_target_selection": 17,
+      "order_triggers": 26,
+      "pass": 0,
+      "play_land": 1,
+      "plot_spell": 5
+    },
+    "action_ref_role": {
+      "attacker": 3,
+      "attackers": 7,
+      "blocker": 4,
+      "blockers": 8,
+      "candidate": 1,
+      "card": 2,
+      "cards": 6,
+      "pending_sources": 9,
+      "source": 0,
+      "target_object": 5
+    },
+    "boolean_purpose": {
+      "optional_effect": 0,
+      "pay_cost": 2,
+      "shuffle": 1
+    },
+    "cast_method": {
+      "alternative": 2,
+      "bestow": 7,
+      "escape": 6,
+      "flashback": 3,
+      "madness": 4,
+      "normal": 1,
+      "omen": 8,
+      "plotted": 5
+    },
+    "cast_mode": {
+      "Alternative": 2,
+      "Normal": 1
+    },
+    "cost_kind": {
+      "DiscardCards": 4,
+      "ExileFromGraveyard": 5,
+      "PayLife": 8,
+      "PutCounters": 10,
+      "RemoveCounters": 9,
+      "ReturnPermanentsToHand": 7,
+      "SacrificeArtifacts": 3,
+      "SacrificeCreatures": 2,
+      "SacrificeLands": 0,
+      "SacrificePermanents": 1,
+      "TapPermanents": 6
+    },
+    "engine_stage": {
+      "halted": 9,
+      "pending_activation": 2,
+      "pending_cast": 1,
+      "pending_discard": 3,
+      "pending_effect": 7,
+      "pending_optional_cost": 4,
+      "pending_optional_cost_sacrifice": 5,
+      "pending_spell_copy": 6,
+      "pending_triggers": 8,
+      "priority": 0
+    },
+    "expiry": {
+      "end_of_turn": 0,
+      "until_holders_next_turn": 1
+    },
+    "mana_color": {
+      "B": 2,
+      "C": 5,
+      "G": 4,
+      "R": 3,
+      "U": 1,
+      "W": 0
+    },
+    "object_group": {
+      "attachment": 10,
+      "combat": 7,
+      "combat_block": 12,
+      "effect": 8,
+      "exile": 5,
+      "known_hand_opponent": 18,
+      "known_hand_self": 17,
+      "known_library_opponent": 16,
+      "known_library_self": 15,
+      "opponent_battlefield": 2,
+      "opponent_graveyard": 4,
+      "paid_cost": 19,
+      "pending_context": 13,
+      "permission": 9,
+      "private_context": 14,
+      "self_battlefield": 1,
+      "self_graveyard": 3,
+      "self_hand": 0,
+      "stack": 6,
+      "stack_target": 11
+    },
+    "object_source_kind": {
+      "attachment": 5,
+      "card": 0,
+      "combat": 2,
+      "effect": 3,
+      "known_hand": 10,
+      "known_library": 9,
+      "paid_cost": 11,
+      "pending": 7,
+      "permission": 4,
+      "private": 8,
+      "stack": 1,
+      "target": 6
+    },
+    "optional_cost_choice": {
+      "Decline": 0,
+      "Discard": 1,
+      "SacrificeLand": 2
+    },
+    "phase": {
+      "begin_combat": 4,
+      "cleanup": 11,
+      "combat_damage": 7,
+      "declare_attackers": 5,
+      "declare_blockers": 6,
+      "draw": 2,
+      "end": 10,
+      "end_combat": 8,
+      "main1": 3,
+      "main2": 9,
+      "untap": 0,
+      "upkeep": 1
+    },
+    "play_or_cast": {
+      "cast": 1,
+      "play": 0
+    },
+    "policy_surface_stage": {
+      "attacker_inclusion": 1,
+      "blocker_inclusion": 2,
+      "surface": 0
+    },
+    "relation_role": {
+      "attached_to": 11,
+      "attachment": 0,
+      "combat_attacker": 2,
+      "combat_blocker": 3,
+      "effect_affected": 4,
+      "effect_source": 5,
+      "exiled_by": 12,
+      "known_hand": 10,
+      "known_library": 9,
+      "paid_cost": 13,
+      "pending_context": 7,
+      "permission": 6,
+      "private_context": 8,
+      "stack_target": 1
+    },
+    "spell_copy_stage": {
+      "payment": 0,
+      "retarget": 1,
+      "target": 2
+    },
+    "stack_kind": {
+      "activated_ability": 1,
+      "madness_offer": 3,
+      "spell": 0,
+      "triggered_ability": 2
+    },
+    "surface_stage": {
+      "declare_blockers_for_attacker": 1,
+      "discard_pick": 2,
+      "optional_cost_use": 3,
+      "optional_cost_which": 4,
+      "priority": 0
+    },
+    "target_kind": {
+      "none": 0,
+      "object": 2,
+      "player": 1
+    },
+    "target_purpose": {
+      "card_selection": 1,
+      "cost_payment": 5,
+      "damage_division": 4,
+      "effect_targets": 0,
+      "library_order": 6,
+      "permanent_selection": 2,
+      "player_selection": 3,
+      "search_result": 7
+    },
+    "zone": {
+      "Battlefield": 2,
+      "Command": 6,
+      "Exile": 5,
+      "Graveyard": 3,
+      "Hand": 1,
+      "Library": 0,
+      "Stack": 4
+    }
+  },
+  "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+  "hand_authored_vectors": {
+    "empty_counts": {
+      "ability_uses": 0,
+      "completed_dungeons": 0,
+      "context_path_elements": 0,
+      "effect_subtype_changes": 0,
+      "goads": 0,
+      "objects": 0,
+      "relations": 0,
+      "subtypes": 0
+    },
+    "optional_presence": [
+      null,
+      false,
+      true
+    ],
+    "relative_players": {
+      "none": 2,
+      "opponent": 1,
+      "self": 0
+    },
+    "trigger_order_lengths": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "turn_relation": {
+      "absent": 0,
+      "earlier_turn": 2,
+      "this_turn": 1
+    }
+  },
+  "inventory_sha256": "84cb92ff4511782f256293ef7409f4d313835990c02681a6f1e01734a17db24c",
+  "payload_sha256": "1f6760d3028759350097398aa0d1054d3f6d0d55644bc5247273c833e494311a",
+  "producer_parent_commit": "13644f30d33c7ab80f01c9d7c71fe59980f0c285",
+  "runtime_fixture_cases": [
+    {
+      "action_objects_operational_debug_sha256": "caea06d6b76d7d8238d5fc4a426b81b10cef34afe2177821fcc4c7486725c9c7",
+      "counts": [
+        7,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        3,
+        2,
+        2
+      ],
+      "decision_index": 0,
+      "deck_ids": [
+        "Burn",
+        "Burn"
+      ],
+      "episode_id": 90001,
+      "model_typed_debug_sha256": "5efd11f47b80fae409f90778dffca4d079a9e9a15cee8c6a71feab34cb3c1bb9",
+      "name": "burn_seed_11_initial",
+      "seed": 11
+    },
+    {
+      "action_objects_operational_debug_sha256": "56e018d1a0e72785d71fc253b172c141005cb2c2e1aae017976d7079b231c42c",
+      "counts": [
+        7,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        5,
+        4,
+        4
+      ],
+      "decision_index": 0,
+      "deck_ids": [
+        "Rally",
+        "Rally"
+      ],
+      "episode_id": 90002,
+      "model_typed_debug_sha256": "e640d6cfc88f288d537fffc512f7a1e485a917620bed440592eb865b7c91e76d",
+      "name": "rally_seed_23_initial",
+      "seed": 23
+    },
+    {
+      "action_objects_operational_debug_sha256": "5ead8f61d3257c0d290675d820fe494e60d9745a63225907b37dd4a11d3c2963",
+      "counts": [
+        7,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        4,
+        3,
+        3
+      ],
+      "decision_index": 0,
+      "deck_ids": [
+        "Burn",
+        "Rally"
+      ],
+      "episode_id": 90003,
+      "model_typed_debug_sha256": "d9ef784b79b942edac11f46d6a181b1ce48d872b95fe874fa009007b50ce70b2",
+      "name": "burn_rally_seed_37_initial",
+      "seed": 37
+    },
+    {
+      "counts": [
+        12,
+        7,
+        5,
+        0,
+        0,
+        0,
+        0,
+        0,
+        6,
+        6,
+        6
+      ],
+      "decision_index": 6,
+      "deck_ids": [
+        "Burn",
+        "Burn"
+      ],
+      "episode_id": 90101,
+      "model_typed_debug_sha256": "3e9ccf68fdeb68b4f75ca25e4a6cfccdbe608f97418ae6cac2aeb7579ef680a1",
+      "name": "burn_seed_81701_first_relation",
+      "seed": 81701,
+      "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1"
+    },
+    {
+      "counts": [
+        9,
+        2,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        2,
+        2,
+        1
+      ],
+      "decision_index": 4,
+      "deck_ids": [
+        "Rally",
+        "Rally"
+      ],
+      "episode_id": 90102,
+      "model_typed_debug_sha256": "d457fa1a69ab80e568e5fb43beacaff1618b82b2b5c996d9f5866612436e1284",
+      "name": "rally_seed_81702_first_relation",
+      "seed": 81702,
+      "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1"
+    }
+  ],
+  "schema": "flat-policy-v1-independent-goldens-v1"
+}

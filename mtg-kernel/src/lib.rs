@@ -25,6 +25,7 @@ pub mod effect;
 pub mod engine;
 pub mod event;
 pub mod fast_sampler;
+pub mod flat_policy_v1;
 pub mod ids;
 pub mod mana;
 pub mod phase_profile;

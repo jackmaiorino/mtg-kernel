@@ -3905,6 +3905,67 @@ impl FastActorSessionV1 {
         })
     }
 
+    /// Builds the authoritative schema-v5 actor observation for the complete
+    /// typed flat-policy producer after validating the exact fast-actor
+    /// decision binding.  This crate-private bridge deliberately returns the
+    /// typed observation, not JSON, and does not expose session state or
+    /// surface authority to sibling modules.
+    pub(crate) fn flat_policy_observation_v1(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<ObservationV5, FlatActionDecisionSliceErrorV1> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        flat_validate_expected_decision_v1(self, current, expected)?;
+        if let Some(error) = current.flat_action_cache_error {
+            return Err(error);
+        }
+        let cache = current
+            .flat_action_cache
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        flat_validate_action_cache_v1(self, current, cache)?;
+        observe_policy_v5(
+            &self.state,
+            &self.surface,
+            current.actor,
+            self.policy_step_count,
+            current.physical_decision_id,
+            current.substep_index,
+            current.substep_count,
+        )
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
+    }
+
+    /// Revalidates a memoized full-policy encoder cache without rebuilding an
+    /// allocating observation.  Equality with the session-owned action
+    /// binding is necessary but does not grant consume authority.
+    pub(crate) fn flat_policy_validate_cached_binding_v1(
+        &self,
+        expected: FastActorDecisionV1,
+        binding: FlatActionDecisionBindingV1,
+    ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        flat_validate_expected_decision_v1(self, current, expected)?;
+        if let Some(error) = current.flat_action_cache_error {
+            return Err(error);
+        }
+        let cache = current
+            .flat_action_cache
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        flat_validate_action_cache_v1(self, current, cache)?;
+        if cache.binding != binding {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        Ok(())
+    }
+
     /// Applies an index only if the complete flat action binding, including
     /// the ordered 128-bit compact-candidate commitment, still matches this
     /// session's private current decision. Live semantics and referenced

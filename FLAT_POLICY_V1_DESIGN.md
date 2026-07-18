@@ -1,11 +1,12 @@
 # Flat policy v1 design candidate
 
-Status: partial action-slice performance candidate only. This document does
-not admit a full state encoder, model, checkpoint, training, evaluation, or
-performance contract. All diagnostic timings remain noncanonical until a
-clean-source audit. Passing that source audit does not promote or canonicalize
-environment-only timings; canonical performance promotion remains a separate
-gate.
+Status: typed full-state record implementation candidate. The checked-in
+`FlatDecisionV1` producer now covers globals, objects, relations, variable
+auxiliary rows, and the pre-existing action slice, but it does not admit an
+accelerator projection, model, checkpoint, training, evaluation, or performance
+contract. See `FLAT_POLICY_V1_VALIDATION.md` for the bounded engineering
+evidence and explicit limitations. All diagnostic timings remain noncanonical
+until their separate source and measurement gates pass.
 
 ## Purpose
 
@@ -464,12 +465,15 @@ workloads and interference bounds.
    tails, semantic parity, and zero allocation with admitted capacities. The
    refs-only private cache is a source candidate; promote it only after the
    clean validation matrix and diagnostic provenance pass.
-3. Inventory every schema-v5 model-input field formerly represented explicitly
-   or through canonical digest bytes. Add typed globals and the lossless object
-   core; do not freeze 128/16 until the inventory and range proof pass.
-4. Add the required role-specific relation union and parity/privacy fixtures.
-   Only this globals+objects+relations+actions record may be named a full flat
-   policy encoder.
+3. The implementation candidate inventories all 964 authoritative semantic
+   leaves, including 778 model inputs, 176 operational-only leaves, and ten
+   forbidden leaves. It adds typed globals, the lossless object core, and
+   variable auxiliary rows. Independent semantic-destination audit remains a
+   promotion gate; no provisional float width is frozen.
+4. The implementation candidate adds the required role-specific relation union
+   and bounded parity/privacy/actor-relative fixtures. It may be named a full
+   typed state-record candidate, but not yet a scorer or production trainer
+   input.
 5. Generate and validate the accelerator projection, then measure full encoding
    shapes/rate on all ordered Burn/Rally matchups plus synthetic structural tails.
    Revise candidate dimensions with a new contract identifier if a mapping or
