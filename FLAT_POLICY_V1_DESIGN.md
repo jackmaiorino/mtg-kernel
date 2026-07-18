@@ -1,7 +1,11 @@
 # Flat policy v1 design candidate
 
-Status: design candidate only. This document does not admit a new feature,
-model, checkpoint, training, evaluation, or performance contract.
+Status: partial action-slice performance candidate only. This document does
+not admit a full state encoder, model, checkpoint, training, evaluation, or
+performance contract. All diagnostic timings remain noncanonical until a
+clean-source audit. Passing that source audit does not promote or canonicalize
+environment-only timings; canonical performance promotion remains a separate
+gate.
 
 ## Purpose
 
@@ -116,8 +120,9 @@ SHA-256 over the exact ordered compact actions, references, and referenced
 object meanings. That truncated digest is a versioned stale-result guard, not
 an authorization primitive or a collision-proof artifact commitment. A scored
 index is executable only through `consume_current_flat_action_slice_v1`, which
-recomputes and compares the complete binding before calling the ordinary step
-path.
+revalidates the live private decision and referenced object meanings against
+the private cached rows, compares the complete binding, and then calls the
+ordinary step path. It does not recompute the consumed decision's SHA-256.
 
 Reference roles have an explicit v1 mapping independent of Rust discriminant
 layout: source=0, candidate=1, card=2, attacker=3, blocker=4,
@@ -131,11 +136,36 @@ is the fixed disambiguating test.
 `FastActorSessionV1` owns the only production entry point. It reads its private
 `GameState`, private current candidate vector, and current revision directly;
 there is no public `(GameState, caller-provided semantics)` encoder. Caller-owned
-buffers hold the ragged rows. Encoding is two-pass: pass one validates every
-enum, range, actor-visible reference, unique object mapping, row count, and
-capacity without writing a row or publishing a length; pass two is infallible
-for that unchanged session revision and publishes active lengths only after all
-rows are complete. Capacity-sufficient calls allocate nothing.
+buffers hold the ragged rows. A new private decision resolves only references
+emitted by its candidate semantics, rejects distinct arena objects with the
+same public canonical meaning, canonical-sorts the unique referenced rows,
+materializes the exact public v1 action/reference/object rows, and computes the
+unchanged v1 SHA-256 commitment once. Encoding is two-pass: pass one revalidates
+every enum, range, semantic/executable pair, exact private origin context, and
+actor-visible reference against those cached rows without writing caller
+storage; pass two copies only the admitted active prefixes. Capacity-sufficient
+calls allocate nothing and never hash. Publishing a new decision reuses the
+consumed decision cache's action, reference, object, and resolver scratch-vector
+capacities before growing them when required. Remaining once-per-decision
+allocation and hash cost is part of live consume/combined diagnostics and is
+not hidden by the encoder-only rate.
+
+A `Stack` reference normally requires exactly one matching stack item. The
+only detached form admitted by v1 is the exact resolving-spell source carried
+by `pending_optional_cost` or `pending_optional_cost_sacrifice` with a matching
+`spell_resume`, controller, and Graveyard/Exile destination. Resolution popped
+that source from the prior stack top, so its canonical Stack ordinal is the
+remaining `state.stack.len()`. A duplicate stack item, simultaneous detached
+and indexed source, mismatched continuation, or ordinary-zone duplicate fails
+closed. This fills a previously unencodable Highway Robbery cost-target state;
+it does not change rows or commitments for any previously admitted decision.
+
+Private cache construction errors remain local to this deliberately partial
+slice rather than halting the generic FastActor environment. A flat encode of
+that unchanged decision returns the exact cached v1 construction error, and no
+flat binding exists for consume. This fallback is a reliability boundary, not
+permission to treat a reachable unencodable trainer decision as complete
+coverage.
 
 Encoding fails closed on insufficient capacity, an unknown enum value, a
 non-finite projected feature, a stale decision binding, an object reference
@@ -144,14 +174,77 @@ conversion failure, or any session revision change. Legal actions never encode
 a hidden object using an absent/private sentinel. Optional absence is represented
 by the typed action variant; a hidden or unresolved legal reference is an error.
 
-The current implementation is correctness-first and is not yet a performance
-candidate. Preflight repeatedly scans the complete arena, performs nested
-canonical-index searches, repeats resolution during emission, and recomputes
-the same work during consume. This is at least quadratic in relevant paths and
-can scale with total arena size rather than referenced-object count. The direct
-encoding throughput gate remains blocked until a later refs-only resolver and
-private cached binding/commitment redesign is independently validated. This
-document does not authorize that redesign in the present slice.
+The current implementation is a performance candidate for this partial action
+slice. Its production path no longer calls the frozen whole-arena/nested-scan
+preflight; that implementation remains test-only and is compared against the
+refs-only cache over live Rally decisions and adversarial drift. Cache lookup
+uses binary search over the unique referenced public rows. Encode still
+performs two refs-only validation passes to preserve its public fail-closed
+error precedence before touching caller buffers. Consume maps every validation
+failure to a stale binding, so it validates and compares rows in one refs-only
+pass. The public v1 rows, mapping versions,
+commitment preimage, commitment bytes, and binding meaning are unchanged, so
+there is no public version bump; changing any of them still requires one.
+
+`flat_action_encoder_diagnostic` binds the exact checked-in
+`data/rally_all_policy_legal_action_width_histogram_v1.json` bytes. Its
+shape, cached-binding, hash, and cache-rebuild probes are compiled only with
+the off-by-default `flat-action-diagnostic` feature, so a default production
+build cannot obtain a consumable binding without encoding. Its
+encode/hash fixture set consists of independently generated valid Rally states
+repeated to match that width histogram and is labeled
+synthetic-state/Rally-width-shaped; it is not the upstream set of 2,048 state
+snapshots. Live consume and combined phases instead report the actual action,
+arena-object, action-reference, and referenced-object histograms they reach.
+The tool reports one and sixteen workers, allocation events, SHA-only cost,
+invalid counts, and common-window rates. It is environment-only, noncanonical,
+and cannot close the full production-state encoder or training gate. A source
+audit can accept the implementation for checkpointing, but cannot promote
+these timings; canonical performance promotion remains a separate controlled
+measurement and evidence gate.
+
+### Deferred O(1) consume contract (not implemented)
+
+The safe one-pass v1 consume path remains below the advisory 2.5-million
+aggregate decisions/second continuation floor. It must not be silently changed
+to trust the cache. A future O(1) path therefore requires a new, reviewed
+control-plane contract, provisionally `FlatActionConsumeLeaseV2`, while keeping
+the model-visible action/reference/object rows byte-identical to v1.
+
+The lease would be a non-serializable, non-model-input Rust capability owned by
+the actor service. It would bind the complete public v1 binding plus a private
+process-local session-instance generation, checked decision/cache generation,
+and the exact current cache identity. A new decision increments its generation;
+reset creates a distinct session instance; a checked overflow halts. The
+inference service receives tensor rows and returns only a dense selected index;
+the actor retains the lease beside its pending request. Neither the private
+session discriminator nor cache identity enters tensors, trajectory records,
+checkpoints, logical digests, seeds, or evaluator output, so independently
+scheduled equivalent actors remain model- and artifact-deterministic.
+
+Construction of the immutable private cache remains the semantic/state
+validation boundary. Encode must still revalidate the live session before it
+publishes rows and a lease. O(1) consume would then check, without hashing or
+walking candidates: active session identity, decision/cache generation,
+environment revision, policy and physical counters, complete cached v1
+binding, and selected-index range. This proof relies on Rust privacy and
+exclusive mutation: every in-module mutation capable of changing state,
+candidate order, origin decision, or referenced-object meaning must first
+invalidate the lease generation. An independent audit must inventory those
+mutation sites; a raw internal mutation that bypasses invalidation is a contract
+violation, not something an O(1) check can discover.
+
+Promotion tests must cover every v1 binding-field tamper, selected-index tails,
+candidate reorder, referenced-state tamper through the sanctioned invalidation
+hook, reset with reused episode/seed values, two independently reset identical
+sessions, cross-session lease replay, next-decision replay, snapshot before and
+after encode, restore of the same snapshot, restore of a different snapshot,
+clone/reference parity, and concurrent delayed inference results. Same-snapshot
+restore may deliberately restore the same lease authority; an independently
+reset or different-generation session must reject it. Tests must also prove
+that rows, model inputs, logical trajectory commitments, and checkpoint bytes
+are identical with the lease mechanism enabled. Until this versioned contract
+and audit pass, v1 retains refs-only consume validation.
 
 CPU encoding may use array-of-struct caller buffers, but the batched inference
 boundary is versioned structure-of-arrays storage with explicit decision and
@@ -361,13 +454,16 @@ workloads and interference bounds.
 1. Preserve the reproducible old-encoder artifact and its workload-only Rally
    width/shape record. Its performance gate is still invalid under the declared
    timing/interference bounds and must not be relabeled as closed.
-2. Implement a deliberately partial `FlatActionDecisionSliceV1`: exact private
+2. Preserve and independently audit the deliberately partial
+   `FlatActionDecisionSliceV1`: exact private
    session binding, ordered typed action scalars, canonical actor-visible
    referenced-object resolver, and ragged action references. It is not a state
    encoder or scorer input. Validate every reachable policy-v5 action variant,
    `OrderTriggers` lengths through seven, inclusion actions, stale/reorder and
    insufficient-capacity failures, hidden-identity noninterference, poisoned
-   tails, semantic parity, and zero allocation with admitted capacities.
+   tails, semantic parity, and zero allocation with admitted capacities. The
+   refs-only private cache is a source candidate; promote it only after the
+   clean validation matrix and diagnostic provenance pass.
 3. Inventory every schema-v5 model-input field formerly represented explicitly
    or through canonical digest bytes. Add typed globals and the lossless object
    core; do not freeze 128/16 until the inventory and range proof pass.

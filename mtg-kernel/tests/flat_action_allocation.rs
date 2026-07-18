@@ -1,6 +1,6 @@
 use mtg_kernel::rl_session::{
     FastActorResponseV1, FastActorSessionV1, FlatActionCoreV1, FlatActionDecisionSliceBuffersV1,
-    FlatActionObjectV1, FlatActionRefV1,
+    FlatActionObjectV1, FlatActionRefV1, CANONICAL_RALLY_DECK_ID,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -40,9 +40,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 }
 
-#[test]
-fn admitted_flat_action_slice_encode_allocates_nothing() {
-    let mut session = FastActorSessionV1::reset_with_limits(82_001, 101, 256, 32_768);
+fn assert_admitted_flat_action_slice_encode_allocates_nothing(mut session: FastActorSessionV1) {
     let mut actions = [FlatActionCoreV1::default(); 64];
     let mut refs = [FlatActionRefV1::default(); 256];
     let mut objects = [FlatActionObjectV1::default(); 128];
@@ -75,6 +73,25 @@ fn admitted_flat_action_slice_encode_allocates_nothing() {
         std::hint::black_box((&actions, &refs, &objects));
         assert!(encoded.active_action_count > 0);
         assert_eq!(allocation_count, 0, "decision {encoded_decisions}");
+
+        #[cfg(feature = "flat-action-diagnostic")]
+        {
+            ALLOCATION_COUNT.store(0, Ordering::SeqCst);
+            TRACK_ALLOCATIONS.store(true, Ordering::SeqCst);
+            let rebuilt_commitment = std::hint::black_box(&mut session)
+                .diagnostic_rebuild_current_flat_action_cache_v1()
+                .unwrap();
+            TRACK_ALLOCATIONS.store(false, Ordering::SeqCst);
+            assert_eq!(
+                ALLOCATION_COUNT.load(Ordering::SeqCst),
+                0,
+                "cache rebuild at decision {encoded_decisions}"
+            );
+            assert_eq!(
+                rebuilt_commitment,
+                encoded.binding.candidate_order_commitment
+            );
+        }
         encoded_decisions += 1;
         observed_later_revision |= decision.environment_revision > 1;
 
@@ -90,4 +107,24 @@ fn admitted_flat_action_slice_encode_allocates_nothing() {
 
     assert!(encoded_decisions > 1);
     assert!(observed_later_revision);
+}
+
+#[test]
+fn admitted_burn_and_rally_flat_action_slice_encode_allocates_nothing() {
+    assert_admitted_flat_action_slice_encode_allocates_nothing(
+        FastActorSessionV1::reset_with_limits(82_001, 101, 256, 32_768),
+    );
+    assert_admitted_flat_action_slice_encode_allocates_nothing(
+        FastActorSessionV1::reset_with_decks_and_limits(
+            82_002,
+            102,
+            256,
+            32_768,
+            [
+                CANONICAL_RALLY_DECK_ID.to_string(),
+                CANONICAL_RALLY_DECK_ID.to_string(),
+            ],
+        )
+        .unwrap(),
+    );
 }
