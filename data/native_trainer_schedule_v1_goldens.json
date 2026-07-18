@@ -1,0 +1,103 @@
+{
+  "schema": "mtg_kernel_native_trainer_schedule_goldens/v1",
+  "schedule_version": "mtg-kernel-native-trainer-schedule-sha256-v1",
+  "python_reference_seed_version": "kernel-python-rl-trainer-sha256-v2",
+  "str_atom_probe": {
+    "namespace": "native-trainer-str-atom-probe",
+    "field_name": "role",
+    "field_value": "learner",
+    "seed": 1078374678725429269
+  },
+  "vectors": [
+    {
+      "base_seed": 0,
+      "episode_index": 0,
+      "learner_seat": "p0",
+      "pair_index": 0,
+      "model_init_seed": 6443515232517447393,
+      "environment_seed": 5182208303884170270,
+      "learner_physical_decision_index": 0,
+      "opponent_physical_decision_index": 0,
+      "substep_index": 0,
+      "learner_group_seed": 4494092149190443164,
+      "learner_action_seed": 7113938242246415356,
+      "opponent_group_seed": 4309151770061087236,
+      "opponent_action_seed": 3578451545765970597
+    },
+    {
+      "base_seed": 0,
+      "episode_index": 1,
+      "learner_seat": "p1",
+      "pair_index": 0,
+      "model_init_seed": 6443515232517447393,
+      "environment_seed": 5182208303884170270,
+      "learner_physical_decision_index": 0,
+      "opponent_physical_decision_index": 0,
+      "substep_index": 1,
+      "learner_group_seed": 6283175383795775526,
+      "learner_action_seed": 4508657612313206816,
+      "opponent_group_seed": 4239917485001146801,
+      "opponent_action_seed": 7474319794898732204
+    },
+    {
+      "base_seed": 71501,
+      "episode_index": 2,
+      "learner_seat": "p0",
+      "pair_index": 1,
+      "model_init_seed": 4755442154187158375,
+      "environment_seed": 7386941714276895345,
+      "learner_physical_decision_index": 1,
+      "opponent_physical_decision_index": 1,
+      "substep_index": 0,
+      "learner_group_seed": 8503581531902746222,
+      "learner_action_seed": 3260999174466300870,
+      "opponent_group_seed": 3416131230697157225,
+      "opponent_action_seed": 3256993002588227856
+    },
+    {
+      "base_seed": 71501,
+      "episode_index": 3,
+      "learner_seat": "p1",
+      "pair_index": 1,
+      "model_init_seed": 4755442154187158375,
+      "environment_seed": 7386941714276895345,
+      "learner_physical_decision_index": 1,
+      "opponent_physical_decision_index": 1,
+      "substep_index": 1,
+      "learner_group_seed": 8542701070003131509,
+      "learner_action_seed": 1980156664124546108,
+      "opponent_group_seed": 3817025372775955343,
+      "opponent_action_seed": 1218391422883854982
+    },
+    {
+      "base_seed": 9223372036854775807,
+      "episode_index": 9223372036854775807,
+      "learner_seat": "p1",
+      "pair_index": 4611686018427387903,
+      "model_init_seed": 2931914905754092861,
+      "environment_seed": 967112751505484967,
+      "learner_physical_decision_index": 9223372036854775807,
+      "opponent_physical_decision_index": 9223372036854775807,
+      "substep_index": 4294967295,
+      "learner_group_seed": 1005831319086188075,
+      "learner_action_seed": 1800915878232230590,
+      "opponent_group_seed": 2094222908641412931,
+      "opponent_action_seed": 5124311776151755758
+    },
+    {
+      "base_seed": 1,
+      "episode_index": 4611686018427387904,
+      "learner_seat": "p0",
+      "pair_index": 2305843009213693952,
+      "model_init_seed": 5064892638238490279,
+      "environment_seed": 5500341145236363899,
+      "learner_physical_decision_index": 1,
+      "opponent_physical_decision_index": 2,
+      "substep_index": 1,
+      "learner_group_seed": 5546862838953037217,
+      "learner_action_seed": 7449094465900386549,
+      "opponent_group_seed": 2896234473814205439,
+      "opponent_action_seed": 9012587912440845861
+    }
+  ]
+}

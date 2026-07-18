@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 import unittest
+from pathlib import Path
 
 import torch
 
@@ -11,6 +14,7 @@ from mtg_kernel_rl.determinism import (
     TRAINER_SEED_DERIVATION_VERSION,
     EvaluatorSeedDerivation,
     TrainerSeedDerivation,
+    _trainer_seed,
     configure_torch_determinism,
     derive_evaluation_action_seed,
     derive_evaluation_bootstrap_seed,
@@ -27,6 +31,113 @@ from fixtures import legal_actions, observation
 
 
 class TrainerDeterminismTest(unittest.TestCase):
+    def test_native_trainer_schedule_cross_language_goldens(self) -> None:
+        path = Path(__file__).resolve().parents[2] / "data" / "native_trainer_schedule_v1_goldens.json"
+        raw = path.read_bytes()
+        self.assertEqual(
+            hashlib.sha256(raw).hexdigest(),
+            "6b2e1edbbe49b4e02f98794f9057f5c2bb8e3079d2ba8cb3e2a4b9ea6c34867c",
+        )
+        payload = json.loads(raw)
+        self.assertEqual(payload["schema"], "mtg_kernel_native_trainer_schedule_goldens/v1")
+        self.assertEqual(
+            payload["schedule_version"],
+            "mtg-kernel-native-trainer-schedule-sha256-v1",
+        )
+        self.assertEqual(payload["python_reference_seed_version"], TRAINER_SEED_DERIVATION_VERSION)
+        str_probe = payload["str_atom_probe"]
+        self.assertEqual(
+            _trainer_seed(
+                str_probe["namespace"],
+                [(str_probe["field_name"], str_probe["field_value"])],
+            ),
+            str_probe["seed"],
+        )
+        self.assertTrue({0, 1, 71_501, (1 << 63) - 1}.issubset({row["base_seed"] for row in payload["vectors"]}))
+        self.assertTrue(set(range(4)).issubset({row["episode_index"] for row in payload["vectors"]}))
+        self.assertTrue(any(row["episode_index"] == 1 << 62 for row in payload["vectors"]))
+        self.assertTrue(
+            any(
+                row["base_seed"] == (1 << 63) - 1
+                and row["episode_index"] == (1 << 63) - 1
+                and row["learner_physical_decision_index"] == (1 << 63) - 1
+                and row["opponent_physical_decision_index"] == (1 << 63) - 1
+                and row["substep_index"] == (1 << 32) - 1
+                for row in payload["vectors"]
+            )
+        )
+        self.assertTrue(
+            any(
+                row["learner_physical_decision_index"]
+                != row["opponent_physical_decision_index"]
+                for row in payload["vectors"]
+            )
+        )
+        for vector in payload["vectors"]:
+            with self.subTest(vector=vector):
+                episode = vector["episode_index"]
+                expected_seat = "p0" if episode % 2 == 0 else "p1"
+                self.assertIn(vector["learner_seat"], ("p0", "p1"))
+                self.assertEqual(vector["learner_seat"], expected_seat)
+                self.assertEqual(vector["pair_index"], episode // 2)
+                self.assertEqual(derive_model_init_seed(vector["base_seed"]), vector["model_init_seed"])
+                self.assertEqual(
+                    derive_train_env_seed(vector["base_seed"], vector["pair_index"]),
+                    vector["environment_seed"],
+                )
+                self.assertEqual(
+                    _trainer_seed(
+                        "train-learner-action-group",
+                        [
+                            ("base_seed", vector["base_seed"]),
+                            ("episode_index", episode),
+                            (
+                                "learner_physical_decision_index",
+                                vector["learner_physical_decision_index"],
+                            ),
+                        ],
+                    ),
+                    vector["learner_group_seed"],
+                )
+                self.assertEqual(
+                    derive_train_learner_action_seed(
+                        vector["base_seed"],
+                        episode,
+                        vector["learner_physical_decision_index"],
+                        vector["substep_index"],
+                    ),
+                    vector["learner_action_seed"],
+                )
+                self.assertEqual(
+                    _trainer_seed(
+                        "train-opponent-action-group",
+                        [
+                            ("base_seed", vector["base_seed"]),
+                            ("episode_index", episode),
+                            (
+                                "opponent_physical_decision_index",
+                                vector["opponent_physical_decision_index"],
+                            ),
+                        ],
+                    ),
+                    vector["opponent_group_seed"],
+                )
+                self.assertEqual(
+                    derive_train_opponent_action_seed(
+                        vector["base_seed"],
+                        episode,
+                        vector["opponent_physical_decision_index"],
+                        vector["substep_index"],
+                    ),
+                    vector["opponent_action_seed"],
+                )
+                if (
+                    vector["learner_physical_decision_index"]
+                    == vector["opponent_physical_decision_index"]
+                ):
+                    self.assertNotEqual(vector["learner_group_seed"], vector["opponent_group_seed"])
+                    self.assertNotEqual(vector["learner_action_seed"], vector["opponent_action_seed"])
+
     def test_sha256_evaluator_action_seed_goldens_and_separation(self) -> None:
         self.assertEqual(
             EVALUATOR_ACTION_SEED_DERIVATION_VERSION,
@@ -126,6 +237,78 @@ class TrainerDeterminismTest(unittest.TestCase):
             derive_train_learner_action_seed(71501, 4, 0, 0),
             derive_train_learner_action_seed(71501, 4, 0, 1),
         )
+        self.assertNotEqual(
+            derive_train_learner_action_seed(71501, 4, 7, 0),
+            derive_train_opponent_action_seed(71501, 4, 7, 0),
+        )
+        later_learner = _trainer_seed(
+            "train-learner-action-group",
+            [
+                ("base_seed", 71501),
+                ("episode_index", 4),
+                ("learner_physical_decision_index", 7),
+            ],
+        )
+        later_opponent = _trainer_seed(
+            "train-opponent-action-group",
+            [
+                ("base_seed", 71501),
+                ("episode_index", 4),
+                ("opponent_physical_decision_index", 7),
+            ],
+        )
+        for prior_width in (1, 2, 3, 17, (1 << 32) - 1):
+            derive_train_learner_action_seed(71501, 4, 6, prior_width - 1)
+            derive_train_opponent_action_seed(71501, 4, 6, prior_width - 1)
+            self.assertEqual(
+                _trainer_seed(
+                    "train-learner-action-group",
+                    [
+                        ("base_seed", 71501),
+                        ("episode_index", 4),
+                        ("learner_physical_decision_index", 7),
+                    ],
+                ),
+                later_learner,
+            )
+            self.assertEqual(
+                _trainer_seed(
+                    "train-opponent-action-group",
+                    [
+                        ("base_seed", 71501),
+                        ("episode_index", 4),
+                        ("opponent_physical_decision_index", 7),
+                    ],
+                ),
+                later_opponent,
+            )
+
+    def test_trainer_schedule_raw_domains_fail_closed(self) -> None:
+        invalid_u63 = (True, -1, 1 << 63)
+        for bad in invalid_u63:
+            with self.subTest(base_seed=bad), self.assertRaises((TypeError, ValueError)):
+                derive_train_env_seed(bad, 0)  # type: ignore[arg-type]
+            with self.subTest(pair_index=bad), self.assertRaises((TypeError, ValueError)):
+                derive_train_env_seed(0, bad)  # type: ignore[arg-type]
+            for derive in (derive_train_learner_action_seed, derive_train_opponent_action_seed):
+                with self.subTest(derive=derive.__name__, base_seed=bad), self.assertRaises(
+                    (TypeError, ValueError)
+                ):
+                    derive(bad, 0, 0, 0)  # type: ignore[arg-type]
+                with self.subTest(derive=derive.__name__, episode_index=bad), self.assertRaises(
+                    (TypeError, ValueError)
+                ):
+                    derive(0, bad, 0, 0)  # type: ignore[arg-type]
+                with self.subTest(derive=derive.__name__, group_index=bad), self.assertRaises(
+                    (TypeError, ValueError)
+                ):
+                    derive(0, 0, bad, 0)  # type: ignore[arg-type]
+        for bad in (True, -1, 1 << 32):
+            for derive in (derive_train_learner_action_seed, derive_train_opponent_action_seed):
+                with self.subTest(derive=derive.__name__, substep_index=bad), self.assertRaises(
+                    (TypeError, ValueError)
+                ):
+                    derive(0, 0, 0, bad)  # type: ignore[arg-type]
 
     def test_seeded_model_init_repeats_differs_and_ignores_global_rng(self) -> None:
         configure_torch_determinism()
