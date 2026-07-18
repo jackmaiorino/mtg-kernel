@@ -231,7 +231,9 @@ The safe one-pass v1 consume path remains below the advisory 2.5-million
 aggregate decisions/second continuation floor. It must not be silently changed
 to trust the cache. A future O(1) path therefore requires a new, reviewed
 control-plane contract, provisionally `FlatActionConsumeLeaseV2`, while keeping
-the model-visible action/reference/object rows byte-identical to v1.
+the model-visible action/reference and typed-state rows byte-identical to v1.
+The separate `FlatActionObjectV1` table remains operational and actor-side; it
+is never a scorer input.
 
 The lease would be a non-serializable, non-model-input Rust capability owned by
 the actor service. It would bind the complete public v1 binding plus a private
