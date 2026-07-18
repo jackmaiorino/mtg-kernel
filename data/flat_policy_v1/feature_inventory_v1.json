@@ -5796,6 +5796,6 @@
   "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
   "feature_registry_version": "rust-observation-v5-action-v5-registry-4",
   "feature_schema_version": "actor-relative-v5-python-4",
-  "rust_typed_layout_sha256": "965fdc79789c2284462ecf1f4165ff5030d52b2a0974404fabdc4e81384baaff",
+  "rust_typed_layout_sha256": "23f86296739be02e55451e21e504a5066af51f57053ec9ba9e00574a6adcf1e9",
   "schema": "flat-policy-feature-inventory-v1"
 }

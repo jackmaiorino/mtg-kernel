@@ -24,7 +24,8 @@ use crate::rl::{
 use crate::rl_session::{
     FastActorDecisionV1, FastActorSessionV1, FlatActionCoreV1, FlatActionDecisionBindingV1,
     FlatActionDecisionSliceBuffersV1, FlatActionDecisionSliceErrorV1, FlatActionObjectGroupV1,
-    FlatActionObjectV1, FlatActionRefV1, FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1,
+    FlatActionObjectV1, FlatActionRefRoleV1, FlatActionRefV1,
+    FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1,
 };
 use crate::state::{AbilityKindV4, CastMethodV4};
 use crate::{mana::ManaColor, state::Zone};
@@ -35,6 +36,8 @@ pub const FLAT_POLICY_ENUM_MAPPING_VERSION_V1: u32 = 1;
 pub const FLAT_POLICY_OBJECT_GROUP_MAPPING_VERSION_V1: u32 = 1;
 pub const FLAT_POLICY_RELATION_ROLE_MAPPING_VERSION_V1: u32 = 1;
 pub const FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1: u32 = 1;
+
+include!(concat!(env!("OUT_DIR"), "/flat_policy_contract_v1.rs"));
 
 const HISTORICAL_STACK_TARGET_KIND_V1: u8 = 1;
 const HISTORICAL_PAID_COST_KIND_V1: u8 = 2;
@@ -620,6 +623,47 @@ pub struct FlatRelationV1 {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlatPolicyContractDigestsV1 {
+    /// Canonical SHA-256 over every generated enum map and the action-reference
+    /// role crosswalk. This is semantic identity, not a source-control hash.
+    pub mapping_sha256: [u8; 32],
+    /// Canonical SHA-256 over the complete classified feature inventory. The
+    /// inventory transitively binds the Python feature/encoding contracts and
+    /// their authoritative source digest.
+    pub feature_inventory_sha256: [u8; 32],
+    /// Byte-for-byte SHA-256 over this typed-layout Rust source file.
+    pub typed_layout_sha256: [u8; 32],
+}
+
+pub const FLAT_POLICY_CONTRACT_DIGESTS_V1: FlatPolicyContractDigestsV1 =
+    FlatPolicyContractDigestsV1 {
+        mapping_sha256: FLAT_POLICY_MAPPING_SHA256_V1,
+        feature_inventory_sha256: FLAT_POLICY_FEATURE_INVENTORY_SHA256_V1,
+        typed_layout_sha256: FLAT_POLICY_TYPED_LAYOUT_SHA256_V1,
+    };
+
+/// Converts the Rust action-slice's compact eight-role vocabulary into the
+/// Python feature projection's ten-role vocabulary.
+///
+/// The internal map has no plural `attackers` or `blockers` rows. Those remain
+/// projection-only ids 7 and 8, so internal `PendingSources` 7 maps to
+/// projection `pending_sources` 9. The exhaustive match deliberately makes a
+/// new Rust role a compile-time update point rather than silently reusing its
+/// discriminant.
+pub const fn flat_action_ref_projection_role_id_v1(role: FlatActionRefRoleV1) -> u8 {
+    match role {
+        FlatActionRefRoleV1::Source => FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1[0],
+        FlatActionRefRoleV1::Candidate => FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1[1],
+        FlatActionRefRoleV1::Card => FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1[2],
+        FlatActionRefRoleV1::Attacker => FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1[3],
+        FlatActionRefRoleV1::Blocker => FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1[4],
+        FlatActionRefRoleV1::TargetObject => FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1[5],
+        FlatActionRefRoleV1::Cards => FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1[6],
+        FlatActionRefRoleV1::PendingSources => FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1[7],
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FlatDecisionBindingV1 {
     pub action_binding: FlatActionDecisionBindingV1,
     pub typed_layout_version: u32,
@@ -628,6 +672,8 @@ pub struct FlatDecisionBindingV1 {
     pub object_group_mapping_version: u32,
     pub relation_role_mapping_version: u32,
     pub context_subrole_mapping_version: u32,
+    pub action_ref_projection_role_mapping_version: u32,
+    pub contract_digests: FlatPolicyContractDigestsV1,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -3310,6 +3356,9 @@ impl FastActorSessionV1 {
                 object_group_mapping_version: FLAT_POLICY_OBJECT_GROUP_MAPPING_VERSION_V1,
                 relation_role_mapping_version: FLAT_POLICY_RELATION_ROLE_MAPPING_VERSION_V1,
                 context_subrole_mapping_version: FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1,
+                action_ref_projection_role_mapping_version:
+                    FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1,
+                contract_digests: FLAT_POLICY_CONTRACT_DIGESTS_V1,
             },
             globals: encoder.globals,
             active_object_count: usize_u32(encoder.objects.len())?,

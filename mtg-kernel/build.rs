@@ -22,6 +22,7 @@
 //! compilation.
 
 use serde::Deserialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::env;
@@ -376,6 +377,362 @@ fn configure_commit_tree_binding(repo_root: &Path) {
     println!("cargo:rustc-env=MTG_KERNEL_BUILD_TRACKED_TREE_CONTRACT={TRACKED_TREE_HASH_CONTRACT}");
 }
 
+fn canonical_json(value: &Value, output: &mut String) {
+    match value {
+        Value::Null => output.push_str("null"),
+        Value::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
+        Value::Number(value) => output.push_str(&value.to_string()),
+        Value::String(value) => output
+            .push_str(&serde_json::to_string(value).expect("JSON strings serialize canonically")),
+        Value::Array(values) => {
+            output.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index != 0 {
+                    output.push(',');
+                }
+                canonical_json(value, output);
+            }
+            output.push(']');
+        }
+        Value::Object(values) => {
+            output.push('{');
+            let mut keys: Vec<_> = values.keys().collect();
+            keys.sort_unstable();
+            for (index, key) in keys.into_iter().enumerate() {
+                if index != 0 {
+                    output.push(',');
+                }
+                output.push_str(
+                    &serde_json::to_string(key).expect("JSON object keys serialize canonically"),
+                );
+                output.push(':');
+                canonical_json(&values[key], output);
+            }
+            output.push('}');
+        }
+    }
+}
+
+fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
+fn canonical_json_sha256(value: &Value) -> [u8; 32] {
+    let mut canonical = String::new();
+    canonical_json(value, &mut canonical);
+    sha256_bytes(canonical.as_bytes())
+}
+
+fn sha256_hex(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn json_string<'a>(value: &'a Value, field: &str, source: &Path) -> &'a str {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("{}: {field} must be a string", source.display()))
+}
+
+fn json_u64(value: &Value, field: &str, source: &Path) -> u64 {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("{}: {field} must be an unsigned integer", source.display()))
+}
+
+fn parse_sha256(value: &str, label: &str) -> [u8; 32] {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        panic!("{label} must be a 64-character lowercase SHA-256");
+    }
+    let mut digest = [0_u8; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
+            .expect("validated SHA-256 pairs parse as hexadecimal");
+    }
+    digest
+}
+
+fn require_digest(actual: [u8; 32], expected: [u8; 32], label: &str) {
+    if actual != expected {
+        panic!(
+            "flat-policy-v1 {label} mismatch: generated {}, recomputed {}",
+            sha256_hex(expected),
+            sha256_hex(actual)
+        );
+    }
+}
+
+fn rust_byte_array(bytes: [u8; 32]) -> String {
+    let mut output = String::from("[");
+    for (index, byte) in bytes.iter().enumerate() {
+        if index != 0 {
+            output.push_str(", ");
+        }
+        write!(output, "0x{byte:02x}").expect("writing generated Rust to a String cannot fail");
+    }
+    output.push(']');
+    output
+}
+
+fn flat_policy_contract_codegen(repo_root: &Path) -> String {
+    const INVENTORY_SCHEMA: &str = "flat-policy-feature-inventory-v1";
+    const GOLDENS_SCHEMA: &str = "flat-policy-v1-independent-goldens-v1";
+    const CROSSWALK_SCHEMA: &str = "flat-policy-action-ref-role-crosswalk-v1";
+    const CROSSWALK_VERSION: u64 = 1;
+    const INTERNAL_ROLES: [(&str, u64, u64); 8] = [
+        ("source", 0, 0),
+        ("candidate", 1, 1),
+        ("card", 2, 2),
+        ("attacker", 3, 3),
+        ("blocker", 4, 4),
+        ("target_object", 5, 5),
+        ("cards", 6, 6),
+        ("pending_sources", 7, 9),
+    ];
+    const PROJECTION_ROLES: [(&str, u64); 10] = [
+        ("source", 0),
+        ("candidate", 1),
+        ("card", 2),
+        ("attacker", 3),
+        ("blocker", 4),
+        ("target_object", 5),
+        ("cards", 6),
+        ("attackers", 7),
+        ("blockers", 8),
+        ("pending_sources", 9),
+    ];
+    const PROJECTION_ONLY: [(&str, u64); 2] = [("attackers", 7), ("blockers", 8)];
+
+    let inventory_path = repo_root.join("data/flat_policy_v1/feature_inventory_v1.json");
+    let goldens_path = repo_root.join("data/flat_policy_v1/goldens_v1.json");
+    let typed_layout_path = repo_root.join("mtg-kernel/src/flat_policy_v1.rs");
+    let features_path = repo_root.join("python/mtg_kernel_rl/features.py");
+    let cards_path = repo_root.join("data/cards_v1.json");
+    for path in [
+        &inventory_path,
+        &goldens_path,
+        &typed_layout_path,
+        &features_path,
+        &cards_path,
+    ] {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+
+    let inventory_bytes = fs::read(&inventory_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", inventory_path.display()));
+    let inventory: Value = serde_json::from_slice(&inventory_bytes)
+        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", inventory_path.display()));
+    let goldens_bytes = fs::read(&goldens_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", goldens_path.display()));
+    let goldens: Value = serde_json::from_slice(&goldens_bytes)
+        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", goldens_path.display()));
+
+    if json_string(&inventory, "schema", &inventory_path) != INVENTORY_SCHEMA {
+        panic!("{}: unsupported schema", inventory_path.display());
+    }
+    if json_string(&goldens, "schema", &goldens_path) != GOLDENS_SCHEMA {
+        panic!("{}: unsupported schema", goldens_path.display());
+    }
+
+    let inventory_digest = canonical_json_sha256(&inventory);
+    require_digest(
+        inventory_digest,
+        parse_sha256(
+            json_string(&goldens, "inventory_sha256", &goldens_path),
+            "goldens inventory_sha256",
+        ),
+        "canonical inventory digest",
+    );
+
+    let typed_layout_digest = parse_sha256(
+        json_string(&inventory, "rust_typed_layout_sha256", &inventory_path),
+        "inventory rust_typed_layout_sha256",
+    );
+    require_digest(
+        sha256_bytes(&fs::read(&typed_layout_path).unwrap_or_else(|error| {
+            panic!("failed to read {}: {error}", typed_layout_path.display())
+        })),
+        typed_layout_digest,
+        "Rust typed-layout source digest",
+    );
+    require_digest(
+        sha256_bytes(
+            &fs::read(&features_path).unwrap_or_else(|error| {
+                panic!("failed to read {}: {error}", features_path.display())
+            }),
+        ),
+        parse_sha256(
+            json_string(&inventory, "authoritative_features_sha256", &inventory_path),
+            "inventory authoritative_features_sha256",
+        ),
+        "authoritative Python features source digest",
+    );
+    require_digest(
+        sha256_bytes(
+            &fs::read(&cards_path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", cards_path.display())),
+        ),
+        parse_sha256(
+            json_string(&goldens, "card_catalog_sha256", &goldens_path),
+            "goldens card_catalog_sha256",
+        ),
+        "card catalog source digest",
+    );
+    for field in ["feature_contract_digest", "encoding_contract_digest"] {
+        let inventory_value = parse_sha256(
+            json_string(&inventory, field, &inventory_path),
+            &format!("inventory {field}"),
+        );
+        let golden_value = parse_sha256(
+            json_string(&goldens, field, &goldens_path),
+            &format!("goldens {field}"),
+        );
+        require_digest(inventory_value, golden_value, field);
+    }
+
+    let enum_maps = goldens
+        .get("enum_maps")
+        .and_then(Value::as_object)
+        .unwrap_or_else(|| panic!("{}: enum_maps must be an object", goldens_path.display()));
+    let projection_map = enum_maps
+        .get("action_ref_role")
+        .and_then(Value::as_object)
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: enum_maps.action_ref_role must be an object",
+                goldens_path.display()
+            )
+        });
+    if projection_map.len() != PROJECTION_ROLES.len() {
+        panic!("flat-policy-v1 projection action-ref role width changed without a V1 update");
+    }
+    for (role, expected_id) in PROJECTION_ROLES {
+        if projection_map.get(role).and_then(Value::as_u64) != Some(expected_id) {
+            panic!("flat-policy-v1 projection role {role:?} changed without a V1 update");
+        }
+    }
+
+    let crosswalk = goldens.get("action_ref_role_crosswalk").unwrap_or_else(|| {
+        panic!(
+            "{}: missing action_ref_role_crosswalk",
+            goldens_path.display()
+        )
+    });
+    let crosswalk_object = crosswalk.as_object().unwrap_or_else(|| {
+        panic!(
+            "{}: action_ref_role_crosswalk must be an object",
+            goldens_path.display()
+        )
+    });
+    if crosswalk_object.len() != 6
+        || json_string(crosswalk, "schema", &goldens_path) != CROSSWALK_SCHEMA
+        || json_u64(crosswalk, "mapping_version", &goldens_path) != CROSSWALK_VERSION
+        || json_u64(crosswalk, "rust_internal_width", &goldens_path) != INTERNAL_ROLES.len() as u64
+        || json_u64(crosswalk, "python_projection_width", &goldens_path)
+            != PROJECTION_ROLES.len() as u64
+    {
+        panic!("flat-policy-v1 action-ref role crosswalk envelope changed without a V1 update");
+    }
+    let entries = crosswalk
+        .get("entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: crosswalk entries must be an array",
+                goldens_path.display()
+            )
+        });
+    if entries.len() != INTERNAL_ROLES.len() {
+        panic!("flat-policy-v1 internal action-ref role width changed without a V1 update");
+    }
+    for (entry, (role, internal_id, projection_id)) in entries.iter().zip(INTERNAL_ROLES) {
+        if entry.as_object().is_none_or(|entry| entry.len() != 3)
+            || json_string(entry, "role", &goldens_path) != role
+            || json_u64(entry, "rust_internal_id", &goldens_path) != internal_id
+            || json_u64(entry, "python_projection_id", &goldens_path) != projection_id
+        {
+            panic!("flat-policy-v1 internal role {role:?} crosswalk changed without a V1 update");
+        }
+    }
+    let projection_only = crosswalk
+        .get("projection_only")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: crosswalk projection_only must be an array",
+                goldens_path.display()
+            )
+        });
+    if projection_only.len() != PROJECTION_ONLY.len() {
+        panic!("flat-policy-v1 projection-only action-ref roles changed without a V1 update");
+    }
+    for (entry, (role, projection_id)) in projection_only.iter().zip(PROJECTION_ONLY) {
+        if entry.as_object().is_none_or(|entry| entry.len() != 2)
+            || json_string(entry, "role", &goldens_path) != role
+            || json_u64(entry, "python_projection_id", &goldens_path) != projection_id
+        {
+            panic!("flat-policy-v1 projection-only role {role:?} changed without a V1 update");
+        }
+    }
+
+    let mapping_contract = serde_json::json!({
+        "action_ref_role_crosswalk": crosswalk,
+        "enum_maps": Value::Object(enum_maps.clone()),
+    });
+    let mapping_digest = canonical_json_sha256(&mapping_contract);
+    require_digest(
+        mapping_digest,
+        parse_sha256(
+            json_string(&goldens, "mapping_sha256", &goldens_path),
+            "goldens mapping_sha256",
+        ),
+        "mapping digest",
+    );
+
+    let payload_digest = parse_sha256(
+        json_string(&goldens, "payload_sha256", &goldens_path),
+        "goldens payload_sha256",
+    );
+    let mut payload_without_digest = goldens.clone();
+    payload_without_digest
+        .as_object_mut()
+        .expect("goldens root was validated as an object")
+        .remove("payload_sha256");
+    require_digest(
+        canonical_json_sha256(&payload_without_digest),
+        payload_digest,
+        "goldens payload digest",
+    );
+
+    let internal_to_projection = INTERNAL_ROLES
+        .iter()
+        .map(|(_, _, projection_id)| projection_id.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "// @generated by mtg-kernel/build.rs from data/flat_policy_v1; do not edit.\n\
+pub const FLAT_POLICY_MAPPING_SHA256_V1: [u8; 32] = {};\n\
+pub const FLAT_POLICY_FEATURE_INVENTORY_SHA256_V1: [u8; 32] = {};\n\
+pub const FLAT_POLICY_TYPED_LAYOUT_SHA256_V1: [u8; 32] = {};\n\
+pub const FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1: u32 = {CROSSWALK_VERSION};\n\
+pub const FLAT_ACTION_REF_INTERNAL_ROLE_WIDTH_V1: u8 = {};\n\
+pub const FLAT_ACTION_REF_PROJECTION_ROLE_WIDTH_V1: u8 = {};\n\
+pub const FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1: [u8; {}] = [{}];\n",
+        rust_byte_array(mapping_digest),
+        rust_byte_array(inventory_digest),
+        rust_byte_array(typed_layout_digest),
+        INTERNAL_ROLES.len(),
+        PROJECTION_ROLES.len(),
+        INTERNAL_ROLES.len(),
+        internal_to_projection,
+    )
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let repo_root = Path::new(&manifest_dir).join("..");
@@ -428,6 +785,7 @@ fn main() {
 
     let out = codegen(&data.cards);
     let runtime_decks_out = runtime_decks_codegen(&runtime_decks, &data.cards);
+    let flat_policy_contract_out = flat_policy_contract_codegen(&repo_root);
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let dest = Path::new(&out_dir).join("card_defs.rs");
@@ -435,6 +793,13 @@ fn main() {
     let runtime_decks_dest = Path::new(&out_dir).join("runtime_decks.rs");
     fs::write(&runtime_decks_dest, runtime_decks_out)
         .unwrap_or_else(|e| panic!("failed to write {}: {e}", runtime_decks_dest.display()));
+    let flat_policy_contract_dest = Path::new(&out_dir).join("flat_policy_contract_v1.rs");
+    fs::write(&flat_policy_contract_dest, flat_policy_contract_out).unwrap_or_else(|error| {
+        panic!(
+            "failed to write {}: {error}",
+            flat_policy_contract_dest.display()
+        )
+    });
 }
 
 fn runtime_decks_codegen(catalog: &RuntimeDeckCatalogJson, cards: &[CardJson]) -> String {

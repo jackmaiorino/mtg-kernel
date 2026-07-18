@@ -1,16 +1,19 @@
 use mtg_kernel::flat_policy_v1::{
-    FlatCompletedDungeonV1, FlatContextPathElementV1, FlatDecisionBuffersV1, FlatDecisionEncoderV1,
-    FlatDecisionErrorV1, FlatDecisionV1, FlatEffectSubtypeChangeV1, FlatObjectAbilityUseV1,
-    FlatObjectCoreV1, FlatObjectGoadV1, FlatObjectGroupV1, FlatObjectSubtypeV1, FlatRelationRoleV1,
-    FlatRelationV1, FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1,
+    flat_action_ref_projection_role_id_v1, FlatCompletedDungeonV1, FlatContextPathElementV1,
+    FlatDecisionBuffersV1, FlatDecisionEncoderV1, FlatDecisionErrorV1, FlatDecisionV1,
+    FlatEffectSubtypeChangeV1, FlatObjectAbilityUseV1, FlatObjectCoreV1, FlatObjectGoadV1,
+    FlatObjectGroupV1, FlatObjectSubtypeV1, FlatRelationRoleV1, FlatRelationV1,
+    FLAT_ACTION_REF_INTERNAL_ROLE_WIDTH_V1, FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1,
+    FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1, FLAT_ACTION_REF_PROJECTION_ROLE_WIDTH_V1,
+    FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1, FLAT_POLICY_CONTRACT_DIGESTS_V1,
     FLAT_POLICY_ENUM_MAPPING_VERSION_V1, FLAT_POLICY_FEATURE_INVENTORY_VERSION_V1,
     FLAT_POLICY_OBJECT_GROUP_MAPPING_VERSION_V1, FLAT_POLICY_RELATION_ROLE_MAPPING_VERSION_V1,
     FLAT_POLICY_TYPED_LAYOUT_VERSION_V1,
 };
 use mtg_kernel::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1, FlatActionCoreV1,
-    FlatActionDecisionSliceBuffersV1, FlatActionKindV1, FlatActionObjectV1, FlatActionRefV1,
-    CANONICAL_BURN_DECK_ID, CANONICAL_RALLY_DECK_ID,
+    FlatActionDecisionSliceBuffersV1, FlatActionKindV1, FlatActionObjectV1, FlatActionRefRoleV1,
+    FlatActionRefV1, CANONICAL_BURN_DECK_ID, CANONICAL_RALLY_DECK_ID,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -114,6 +117,14 @@ fn complete_binding_and_actions_are_exactly_the_existing_action_slice() {
     assert_eq!(
         full.binding.context_subrole_mapping_version,
         FLAT_POLICY_CONTEXT_SUBROLE_MAPPING_VERSION_V1
+    );
+    assert_eq!(
+        full.binding.action_ref_projection_role_mapping_version,
+        FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1
+    );
+    assert_eq!(
+        full.binding.contract_digests,
+        FLAT_POLICY_CONTRACT_DIGESTS_V1
     );
     assert!(full.active_object_count > 0);
     assert_eq!(full.active_action_count, expected.legal_action_count);
@@ -296,6 +307,94 @@ fn generated_enum_inventory_and_privacy_shape_are_exact() {
     }
 }
 
+fn digest_from_json(value: &Value) -> [u8; 32] {
+    let text = value.as_str().expect("digest is a JSON string");
+    assert_eq!(text.len(), 64);
+    let mut digest = [0_u8; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).unwrap();
+    }
+    digest
+}
+
+#[test]
+fn compiled_contract_digests_and_action_ref_projection_crosswalk_are_exact() {
+    let golden: Value =
+        serde_json::from_str(include_str!("../../data/flat_policy_v1/goldens_v1.json")).unwrap();
+    let inventory: Value = serde_json::from_str(include_str!(
+        "../../data/flat_policy_v1/feature_inventory_v1.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        FLAT_POLICY_CONTRACT_DIGESTS_V1.mapping_sha256,
+        digest_from_json(&golden["mapping_sha256"])
+    );
+    assert_eq!(
+        FLAT_POLICY_CONTRACT_DIGESTS_V1.feature_inventory_sha256,
+        digest_from_json(&golden["inventory_sha256"])
+    );
+    assert_eq!(
+        FLAT_POLICY_CONTRACT_DIGESTS_V1.typed_layout_sha256,
+        digest_from_json(&inventory["rust_typed_layout_sha256"])
+    );
+
+    let roles = [
+        (FlatActionRefRoleV1::Source, "source", 0_u8),
+        (FlatActionRefRoleV1::Candidate, "candidate", 1),
+        (FlatActionRefRoleV1::Card, "card", 2),
+        (FlatActionRefRoleV1::Attacker, "attacker", 3),
+        (FlatActionRefRoleV1::Blocker, "blocker", 4),
+        (FlatActionRefRoleV1::TargetObject, "target_object", 5),
+        (FlatActionRefRoleV1::Cards, "cards", 6),
+        (FlatActionRefRoleV1::PendingSources, "pending_sources", 9),
+    ];
+    assert_eq!(
+        usize::from(FLAT_ACTION_REF_INTERNAL_ROLE_WIDTH_V1),
+        roles.len()
+    );
+    assert_eq!(FLAT_ACTION_REF_PROJECTION_ROLE_WIDTH_V1, 10);
+    assert_eq!(
+        FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1,
+        [0, 1, 2, 3, 4, 5, 6, 9]
+    );
+    let entries = golden["action_ref_role_crosswalk"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), roles.len());
+    let projection_map = golden["enum_maps"]["action_ref_role"].as_object().unwrap();
+    let mut occupied_projection_ids = [false; 10];
+    for (internal_id, ((role, name, expected_projection_id), entry)) in
+        roles.into_iter().zip(entries).enumerate()
+    {
+        assert_eq!(u8::try_from(internal_id).unwrap(), role as u8);
+        assert_eq!(entry["role"], name);
+        assert_eq!(entry["rust_internal_id"], internal_id);
+        assert_eq!(
+            entry["python_projection_id"].as_u64(),
+            Some(u64::from(expected_projection_id))
+        );
+        assert_eq!(
+            projection_map[name].as_u64(),
+            Some(u64::from(expected_projection_id))
+        );
+        assert_eq!(
+            flat_action_ref_projection_role_id_v1(role),
+            expected_projection_id
+        );
+        assert!(!occupied_projection_ids[usize::from(expected_projection_id)]);
+        occupied_projection_ids[usize::from(expected_projection_id)] = true;
+    }
+    assert!(!occupied_projection_ids[7]);
+    assert!(!occupied_projection_ids[8]);
+    assert_eq!(
+        golden["action_ref_role_crosswalk"]["projection_only"],
+        serde_json::json!([
+            {"role": "attackers", "python_projection_id": 7},
+            {"role": "blockers", "python_projection_id": 8},
+        ])
+    );
+}
+
 fn next_splitmix(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let mut value = *state;
@@ -391,6 +490,7 @@ fn runtime_typed_row_count_and_digest_goldens_are_exact() {
             .find(|case| case["name"] == name)
             .unwrap()
     };
+    let mut digest_mismatches = Vec::new();
     for (name, decks, seed, episode_id) in [
         ("burn_seed_11_initial", ["Burn", "Burn"], 11, 90_001),
         ("rally_seed_23_initial", ["Rally", "Rally"], 23, 90_002),
@@ -443,7 +543,12 @@ fn runtime_typed_row_count_and_digest_goldens_are_exact() {
         ];
         let fixture = fixture_case(name);
         assert_eq!(fixture["counts"], serde_json::json!(counts));
-        assert_eq!(fixture["model_typed_debug_sha256"], model_digest);
+        let expected_model_digest = fixture["model_typed_debug_sha256"].as_str().unwrap();
+        if expected_model_digest != model_digest {
+            digest_mismatches.push(format!(
+                "{name}: expected {expected_model_digest}, actual {model_digest}"
+            ));
+        }
         assert_eq!(
             fixture["action_objects_operational_debug_sha256"],
             operational_digest
@@ -508,7 +613,12 @@ fn runtime_typed_row_count_and_digest_goldens_are_exact() {
                 let fixture = fixture_case(&name);
                 assert_eq!(fixture["decision_index"], decision_index);
                 assert_eq!(fixture["counts"], serde_json::json!(counts));
-                assert_eq!(fixture["model_typed_debug_sha256"], model_digest);
+                let expected_model_digest = fixture["model_typed_debug_sha256"].as_str().unwrap();
+                if expected_model_digest != model_digest {
+                    digest_mismatches.push(format!(
+                        "{name}: expected {expected_model_digest}, actual {model_digest}"
+                    ));
+                }
                 break;
             }
             let action_count = usize::try_from(encoded.active_action_count).unwrap();
@@ -532,4 +642,9 @@ fn runtime_typed_row_count_and_digest_goldens_are_exact() {
                 .unwrap();
         }
     }
+    assert!(
+        digest_mismatches.is_empty(),
+        "runtime typed digest mismatches:\n{}",
+        digest_mismatches.join("\n")
+    );
 }

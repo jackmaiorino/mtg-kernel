@@ -57,6 +57,18 @@ GOLDENS_PATH = ROOT / "data" / "flat_policy_v1" / "goldens_v1.json"
 RUST_SOURCE = ROOT / "mtg-kernel" / "src" / "flat_policy_v1.rs"
 CARDS_PATH = ROOT / "data" / "cards_v1.json"
 
+RUST_INTERNAL_ACTION_REF_ROLES = [
+    "source",
+    "candidate",
+    "card",
+    "attacker",
+    "blocker",
+    "target_object",
+    "cards",
+    "pending_sources",
+]
+ACTION_REF_ROLE_CROSSWALK_VERSION = 1
+
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -2260,6 +2272,40 @@ def _indexed(values: list[str]) -> dict[str, int]:
     return {value: index for index, value in enumerate(values)}
 
 
+def _action_ref_role_crosswalk() -> dict[str, Any]:
+    projection_ids = _indexed(ACTION_REF_ROLES)
+    assert ACTION_REF_ROLES == [
+        "source",
+        "candidate",
+        "card",
+        "attacker",
+        "blocker",
+        "target_object",
+        "cards",
+        "attackers",
+        "blockers",
+        "pending_sources",
+    ]
+    return {
+        "schema": "flat-policy-action-ref-role-crosswalk-v1",
+        "mapping_version": ACTION_REF_ROLE_CROSSWALK_VERSION,
+        "rust_internal_width": len(RUST_INTERNAL_ACTION_REF_ROLES),
+        "python_projection_width": len(ACTION_REF_ROLES),
+        "entries": [
+            {
+                "role": role,
+                "rust_internal_id": internal_id,
+                "python_projection_id": projection_ids[role],
+            }
+            for internal_id, role in enumerate(RUST_INTERNAL_ACTION_REF_ROLES)
+        ],
+        "projection_only": [
+            {"role": role, "python_projection_id": projection_ids[role]}
+            for role in ("attackers", "blockers")
+        ],
+    }
+
+
 def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
     enum_maps = {
         "phase": _indexed(PHASES),
@@ -2285,6 +2331,11 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
         "play_or_cast": _indexed(PLAY_OR_CAST),
         "expiry": _indexed(EXPIRY_KINDS),
     }
+    action_ref_role_crosswalk = _action_ref_role_crosswalk()
+    mapping_contract = {
+        "action_ref_role_crosswalk": action_ref_role_crosswalk,
+        "enum_maps": enum_maps,
+    }
     fixture_cases = [
         {
             "name": "burn_seed_11_initial",
@@ -2293,7 +2344,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "episode_id": 90001,
             "decision_index": 0,
             "counts": [7, 0, 0, 0, 0, 0, 0, 0, 3, 2, 2],
-            "model_typed_debug_sha256": "5efd11f47b80fae409f90778dffca4d079a9e9a15cee8c6a71feab34cb3c1bb9",
+            "model_typed_debug_sha256": "8998b6e1cdec83d52a3d1d5fc47a19195eb938a7580b0728dabffc4b9d5f0749",
             "action_objects_operational_debug_sha256": "caea06d6b76d7d8238d5fc4a426b81b10cef34afe2177821fcc4c7486725c9c7",
         },
         {
@@ -2303,7 +2354,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "episode_id": 90002,
             "decision_index": 0,
             "counts": [7, 0, 0, 0, 0, 0, 0, 0, 5, 4, 4],
-            "model_typed_debug_sha256": "e640d6cfc88f288d537fffc512f7a1e485a917620bed440592eb865b7c91e76d",
+            "model_typed_debug_sha256": "73b41a8669de8ca0492a29edabab26ecb88955249e7714cc37bde7f69795ecc9",
             "action_objects_operational_debug_sha256": "56e018d1a0e72785d71fc253b172c141005cb2c2e1aae017976d7079b231c42c",
         },
         {
@@ -2313,7 +2364,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "episode_id": 90003,
             "decision_index": 0,
             "counts": [7, 0, 0, 0, 0, 0, 0, 0, 4, 3, 3],
-            "model_typed_debug_sha256": "d9ef784b79b942edac11f46d6a181b1ce48d872b95fe874fa009007b50ce70b2",
+            "model_typed_debug_sha256": "743c23d4ba6dfd083e6a306c57515a4ab265469888509beabf3cc2c7e1032f4c",
             "action_objects_operational_debug_sha256": "5ead8f61d3257c0d290675d820fe494e60d9745a63225907b37dd4a11d3c2963",
         },
         {
@@ -2324,7 +2375,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "decision_index": 6,
             "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1",
             "counts": [12, 7, 5, 0, 0, 0, 0, 0, 6, 6, 6],
-            "model_typed_debug_sha256": "3e9ccf68fdeb68b4f75ca25e4a6cfccdbe608f97418ae6cac2aeb7579ef680a1",
+            "model_typed_debug_sha256": "10dee73c86f363a8a235a16ccdbdb40f1834ff70cb59101cfb6b6f28d65d6ef6",
         },
         {
             "name": "rally_seed_81702_first_relation",
@@ -2334,19 +2385,23 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "decision_index": 4,
             "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1",
             "counts": [9, 2, 1, 0, 0, 0, 0, 0, 2, 2, 1],
-            "model_typed_debug_sha256": "d457fa1a69ab80e568e5fb43beacaff1618b82b2b5c996d9f5866612436e1284",
+            "model_typed_debug_sha256": "16257d501d29e2e778cf55150b1644c922fd07ea81a199fce134cb3f5f75ffd8",
         },
     ]
     payload: dict[str, Any] = {
         "schema": "flat-policy-v1-independent-goldens-v1",
-        "producer_parent_commit": "13644f30d33c7ab80f01c9d7c71fe59980f0c285",
+        "producer_parent_commit": "3de6d2c450d4d32f120f70034324bfc72e1e3339",
         "feature_contract_digest": inventory["feature_contract_digest"],
         "encoding_contract_digest": inventory["encoding_contract_digest"],
+        "mapping_sha256": hashlib.sha256(
+            json.dumps(mapping_contract, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
         "inventory_sha256": hashlib.sha256(
             json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
         "card_catalog_sha256": _sha256(CARDS_PATH),
         "enum_maps": enum_maps,
+        "action_ref_role_crosswalk": action_ref_role_crosswalk,
         "hand_authored_vectors": {
             "relative_players": {"self": 0, "opponent": 1, "none": 2},
             "turn_relation": {"absent": 0, "this_turn": 1, "earlier_turn": 2},

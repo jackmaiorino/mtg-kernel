@@ -107,12 +107,33 @@ FlatActionRefV1
   card_token: u16
   object_index: u16
 
+FlatPolicyContractDigestsV1
+  mapping_sha256: [u8; 32]
+  feature_inventory_sha256: [u8; 32]
+  typed_layout_sha256: [u8; 32]
+
 AcceleratorProjectionCandidateV1
   globals: [f32; 128]
   object_features: [f32; 16]
   relation_features: [f32; 8]
   action_features: [f32; 64]
 ```
+
+`FlatDecisionBindingV1` carries all three digests plus the independent
+action-reference projection-role mapping version. Consumers compare the full
+version-and-digest binding: regenerating an enum map, classified inventory, or
+typed layout under an unchanged numeric V1 therefore changes semantic identity
+instead of being accepted silently. Build-time codegen recomputes the canonical
+inventory and mapping digests, validates the source hashes recorded by the
+inventory/goldens, and fails closed on a stale or malformed generated file.
+
+The Rust action slice and Python projection intentionally use different role
+widths. Rust's internal `FlatActionRefRoleV1` is eight-wide, with
+`pending_sources` at internal id 7. Python's `action_ref_role` projection is
+ten-wide: plural `attackers` and `blockers` occupy projection ids 7 and 8, and
+`pending_sources` occupies projection id 9. The generated, versioned crosswalk
+is identity for internal ids 0 through 6 and maps internal 7 to projection 9.
+The projection-only plural roles are not emitted by the Rust action slice.
 
 The checked-in partial slice uses `FlatActionDecisionBindingV1`, which also
 binds the slice, reference-role, card-token, and commitment versions;

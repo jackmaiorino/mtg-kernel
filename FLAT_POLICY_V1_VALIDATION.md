@@ -30,6 +30,10 @@ The accepted engineering slice includes:
 - exact versioned bindings for the typed layout, feature inventory, enum maps,
   object groups, relation roles, context subroles, card catalog, and existing
   action slice;
+- compiled SHA-256 identities for the generated mapping contract, canonical
+  feature inventory, and Rust typed-layout source, plus a separately versioned
+  exhaustive Rust-internal-to-Python-projection action-reference role
+  crosswalk;
 - two-pass publication: authoritative construction and validation plus every
   capacity check complete before any caller buffer is written;
 - reusable encoder storage and a zero-allocation warmed path for repeated
@@ -55,6 +59,9 @@ The focused Rust tests validate:
 
 - exact equality between the complete encoder's action binding/actions/refs/
   operational action objects and the pre-existing action-slice producer;
+- exact runtime binding of the three generated contract digests and every
+  entry in the eight-wide Rust to ten-wide Python action-reference role
+  crosswalk, including the nonidentity `pending_sources` 7-to-9 mapping;
 - exact row counts and typed debug digests for Burn/Burn, Rally/Rally, and
   Burn/Rally initial decisions, plus the first relation-bearing Burn and Rally
   decisions;
@@ -75,9 +82,13 @@ The focused Rust tests validate:
   zero allocations.
 
 The generated Python tests independently recompute the enum maps, inventory,
-source hashes, payload digest, and checked-in outputs. The inventory test
-rejects missing, duplicate, or differently classified authoritative leaves and
-requires all forbidden leaves to map to `absent`.
+source hashes, mapping digest, payload digest, checked-in outputs, and the exact
+named action-reference crosswalk. The inventory test rejects missing,
+duplicate, or differently classified authoritative leaves and requires all
+forbidden leaves to map to `absent`. The Rust build independently recomputes
+the same canonical mapping/inventory digests, validates recorded Rust/Python/
+card source hashes, and refuses stale or malformed generated artifacts before
+compilation.
 
 ## Validation commands
 

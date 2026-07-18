@@ -189,8 +189,69 @@ else:
         )
         self.assertEqual(len(goldens["enum_maps"]["object_group"]), 20)
         self.assertEqual(len(goldens["enum_maps"]["relation_role"]), 14)
+        mapping_contract = {
+            "action_ref_role_crosswalk": goldens["action_ref_role_crosswalk"],
+            "enum_maps": goldens["enum_maps"],
+        }
+        self.assertEqual(
+            goldens["mapping_sha256"],
+            hashlib.sha256(
+                json.dumps(mapping_contract, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+        )
         self.assertEqual(
             goldens["hand_authored_vectors"]["trigger_order_lengths"], list(range(8))
+        )
+
+    def test_action_ref_role_crosswalk_is_explicit_and_exhaustive(self) -> None:
+        goldens = GENERATOR._goldens(GENERATOR._inventory())
+        crosswalk = goldens["action_ref_role_crosswalk"]
+        self.assertEqual(
+            crosswalk,
+            {
+                "schema": "flat-policy-action-ref-role-crosswalk-v1",
+                "mapping_version": 1,
+                "rust_internal_width": 8,
+                "python_projection_width": 10,
+                "entries": [
+                    {
+                        "role": role,
+                        "rust_internal_id": internal_id,
+                        "python_projection_id": projection_id,
+                    }
+                    for internal_id, (role, projection_id) in enumerate(
+                        [
+                            ("source", 0),
+                            ("candidate", 1),
+                            ("card", 2),
+                            ("attacker", 3),
+                            ("blocker", 4),
+                            ("target_object", 5),
+                            ("cards", 6),
+                            ("pending_sources", 9),
+                        ]
+                    )
+                ],
+                "projection_only": [
+                    {"role": "attackers", "python_projection_id": 7},
+                    {"role": "blockers", "python_projection_id": 8},
+                ],
+            },
+        )
+        self.assertEqual(
+            goldens["enum_maps"]["action_ref_role"],
+            {
+                "source": 0,
+                "candidate": 1,
+                "card": 2,
+                "attacker": 3,
+                "blocker": 4,
+                "target_object": 5,
+                "cards": 6,
+                "attackers": 7,
+                "blockers": 8,
+                "pending_sources": 9,
+            },
         )
 
 
