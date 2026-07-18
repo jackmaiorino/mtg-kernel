@@ -126,6 +126,8 @@ name = "mtg-kernel-rl"
 version = "0.5.0"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
 ]
@@ -138,6 +140,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy", specifier = ">=1.26,<3" },
     { name = "numpy", marker = "extra == 'test'", specifier = ">=1.26,<3" },
     { name = "torch", specifier = ">=2.2,<3", index = "https://download.pytorch.org/whl/cpu" },
 ]
