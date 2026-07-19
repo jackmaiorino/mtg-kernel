@@ -2117,6 +2117,9 @@ mod tests {
     use crate::native_policy_value_net_v1::{
         NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
     };
+    use crate::native_train_state_payload_v1::{
+        decode_native_train_state_payload_verified_v1, encode_native_train_state_payload_v1,
+    };
     use crate::native_trainer_schedule_v1::derive_native_trainer_model_init_seed_v1;
     use std::fs;
     use std::path::PathBuf;
@@ -2763,7 +2766,28 @@ mod tests {
         uninterrupted.run_even_batch_update_v2(&config).unwrap();
 
         let persisted_progress = uninterrupted.progress_v2();
-        let persisted_train_state = uninterrupted.train_state_v1().clone();
+        let persisted_snapshot = uninterrupted.train_state_v1().snapshot_v1().unwrap();
+        let encoded = encode_native_train_state_payload_v1(&persisted_snapshot).unwrap();
+        let decoded = decode_native_train_state_payload_verified_v1(
+            &encoded.bytes,
+            persisted_snapshot.adam_step,
+            persisted_snapshot.scorer_bias_anchor_bits,
+            &encoded.digests,
+        )
+        .unwrap();
+        assert_eq!(decoded.snapshot, persisted_snapshot);
+        assert_eq!(decoded.digests, encoded.digests);
+
+        // Reconstruct from only the frozen model contract plus decoded payload
+        // state. This deliberately does not clone the live trainer model.
+        let mut template =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        template
+            .replace_parameter_snapshot_v1(&decoded.snapshot.parameters)
+            .unwrap();
+        let persisted_train_state =
+            NativePolicyValueTrainStateV1::from_snapshot_v1(template, &decoded.snapshot).unwrap();
         let persisted_state_sha = persisted_train_state.state_sha256_v1().unwrap();
         let mut resumed = NativeTrainerStateV2::from_resumed_parts_v2(
             uninterrupted.base_seed_v2(),
