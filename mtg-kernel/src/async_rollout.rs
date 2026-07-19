@@ -319,6 +319,8 @@ struct SharedRolloutV1 {
     next_episode_id: EpisodeCounterV1,
     end_episode_id: u64,
     control: WorkerControlV1,
+    #[cfg(test)]
+    test_instrumentation: Arc<TestRunInstrumentationV1>,
 }
 
 impl SharedRolloutV1 {
@@ -333,6 +335,8 @@ impl SharedRolloutV1 {
                 start: AtomicBool::new(false),
                 cancel: AtomicBool::new(false),
             },
+            #[cfg(test)]
+            test_instrumentation: current_test_run_instrumentation_v1(),
         }
     }
 
@@ -383,23 +387,87 @@ struct WorkerFailureV1 {
 }
 
 #[cfg(test)]
-static TEST_ACTIVE_WORKERS_V1: AtomicUsize = AtomicUsize::new(0);
+#[derive(Debug, Default)]
+struct TestRunInstrumentationV1 {
+    active_workers: AtomicUsize,
+}
 
 #[cfg(test)]
-struct TestActiveWorkerGuardV1;
+std::thread_local! {
+    static ACTIVE_TEST_RUN_INSTRUMENTATION_V1:
+        std::cell::RefCell<Option<Arc<TestRunInstrumentationV1>>> = const {
+            std::cell::RefCell::new(None)
+        };
+}
+
+#[cfg(test)]
+struct AsyncRolloutTestGuardV1 {
+    instrumentation: Arc<TestRunInstrumentationV1>,
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl AsyncRolloutTestGuardV1 {
+    fn active_workers(&self) -> usize {
+        self.instrumentation.active_workers.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+fn acquire_async_rollout_test_guard_v1() -> AsyncRolloutTestGuardV1 {
+    let instrumentation = Arc::new(TestRunInstrumentationV1::default());
+    ACTIVE_TEST_RUN_INSTRUMENTATION_V1.with(|active| {
+        assert!(
+            active.replace(Some(Arc::clone(&instrumentation))).is_none(),
+            "nested async-rollout-v1 test instrumentation is unsupported"
+        );
+    });
+    AsyncRolloutTestGuardV1 {
+        instrumentation,
+        thread_bound: std::marker::PhantomData,
+    }
+}
+
+#[cfg(test)]
+fn current_test_run_instrumentation_v1() -> Arc<TestRunInstrumentationV1> {
+    ACTIVE_TEST_RUN_INSTRUMENTATION_V1
+        .with(|active| active.borrow().clone())
+        .unwrap_or_else(|| Arc::new(TestRunInstrumentationV1::default()))
+}
+
+#[cfg(test)]
+impl Drop for AsyncRolloutTestGuardV1 {
+    fn drop(&mut self) {
+        ACTIVE_TEST_RUN_INSTRUMENTATION_V1.with(|active| {
+            let installed = active.replace(None);
+            debug_assert!(installed
+                .as_ref()
+                .is_some_and(|installed| Arc::ptr_eq(installed, &self.instrumentation)));
+        });
+    }
+}
+
+#[cfg(test)]
+struct TestActiveWorkerGuardV1 {
+    instrumentation: Arc<TestRunInstrumentationV1>,
+}
 
 #[cfg(test)]
 impl TestActiveWorkerGuardV1 {
-    fn enter() -> Self {
-        TEST_ACTIVE_WORKERS_V1.fetch_add(1, Ordering::SeqCst);
-        Self
+    fn enter(instrumentation: Arc<TestRunInstrumentationV1>) -> Self {
+        instrumentation
+            .active_workers
+            .fetch_add(1, Ordering::SeqCst);
+        Self { instrumentation }
     }
 }
 
 #[cfg(test)]
 impl Drop for TestActiveWorkerGuardV1 {
     fn drop(&mut self) {
-        TEST_ACTIVE_WORKERS_V1.fetch_sub(1, Ordering::SeqCst);
+        self.instrumentation
+            .active_workers
+            .fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -610,7 +678,7 @@ fn worker_loop(
 
 fn worker_entry(shared: Arc<SharedRolloutV1>, config: AsyncRolloutConfigV1, lane_id: usize) {
     #[cfg(test)]
-    let _active_worker = TestActiveWorkerGuardV1::enter();
+    let _active_worker = TestActiveWorkerGuardV1::enter(Arc::clone(&shared.test_instrumentation));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         worker_loop(&shared, &config, lane_id)
     }));
@@ -1017,9 +1085,6 @@ pub fn run_seeded_uniform_async_rollout_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn config(worker_count: usize) -> AsyncRolloutConfigV1 {
         AsyncRolloutConfigV1 {
@@ -1039,7 +1104,6 @@ mod tests {
 
     #[test]
     fn asynchronous_n1_and_n16_are_exact_episode_invariant_and_natural() {
-        let _lock = TEST_LOCK.lock().unwrap();
         let n1 = run_seeded_uniform_async_rollout_v1(config(1)).unwrap();
         let n16 = run_seeded_uniform_async_rollout_v1(config(16)).unwrap();
         assert!(n1.all_natural());
@@ -1054,7 +1118,6 @@ mod tests {
 
     #[test]
     fn rejected_snapshot_publishes_no_action_epoch() {
-        let _lock = TEST_LOCK.lock().unwrap();
         let shared = SharedRolloutV1::new(1, 3);
         let decision_a = FastActorDecisionV1 {
             episode_id: 1,
@@ -1122,8 +1185,8 @@ mod tests {
 
     #[test]
     fn impossible_result_capacity_fails_before_spawning_workers() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        let baseline = TEST_ACTIVE_WORKERS_V1.load(Ordering::SeqCst);
+        let test_state = acquire_async_rollout_test_guard_v1();
+        assert_eq!(test_state.active_workers(), 0);
         let mut huge = config(1);
         huge.first_episode_id = 0;
         huge.episode_count = u64::MAX;
@@ -1135,14 +1198,14 @@ mod tests {
                 requested: u64::MAX
             })
         ));
-        assert_eq!(TEST_ACTIVE_WORKERS_V1.load(Ordering::SeqCst), baseline);
+        assert_eq!(test_state.active_workers(), 0);
     }
 
     #[test]
     fn unwind_guard_cancels_starts_and_joins_spawned_worker() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        let baseline = TEST_ACTIVE_WORKERS_V1.load(Ordering::SeqCst);
+        let test_state = acquire_async_rollout_test_guard_v1();
         let shared = Arc::new(SharedRolloutV1::new(70_000, 70_001));
+        let worker_state = Arc::clone(&test_state.instrumentation);
         let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe({
             let shared = Arc::clone(&shared);
             move || {
@@ -1153,21 +1216,45 @@ mod tests {
                     0,
                     thread::spawn(move || worker_entry(worker_shared, worker_config, 0)),
                 );
-                while TEST_ACTIVE_WORKERS_V1.load(Ordering::SeqCst) == baseline {
+                while worker_state.active_workers.load(Ordering::SeqCst) == 0 {
                     std::hint::spin_loop();
                 }
                 panic!("exercise asynchronous rollout unwind cleanup");
             }
         }));
         assert!(unwind.is_err());
-        assert_eq!(TEST_ACTIVE_WORKERS_V1.load(Ordering::SeqCst), baseline);
+        assert_eq!(test_state.active_workers(), 0);
         assert!(shared.control.cancel.load(Ordering::Acquire));
         assert!(shared.control.start.load(Ordering::Acquire));
     }
 
     #[test]
+    fn unscoped_parallel_v1_run_cannot_contaminate_owned_worker_count() {
+        let test_state = acquire_async_rollout_test_guard_v1();
+        let shared = Arc::new(SharedRolloutV1::new(70_000, 70_001));
+        let mut guard = WorkerJoinGuardV1::new(Arc::clone(&shared));
+        let worker_shared = Arc::clone(&shared);
+        let worker_config = config(1);
+        guard.install(
+            0,
+            thread::spawn(move || worker_entry(worker_shared, worker_config, 0)),
+        );
+        while test_state.active_workers() == 0 {
+            std::hint::spin_loop();
+        }
+
+        let unrelated = thread::spawn(|| run_seeded_uniform_async_rollout_v1(config(1)));
+        assert!(unrelated.join().unwrap().is_ok());
+        assert_eq!(test_state.active_workers(), 1);
+
+        shared.control.cancel.store(true, Ordering::Release);
+        shared.control.start.store(true, Ordering::Release);
+        guard.join_every_worker().unwrap();
+        assert_eq!(test_state.active_workers(), 0);
+    }
+
+    #[test]
     fn join_guard_reports_first_panic_only_after_joining_every_handle() {
-        let _lock = TEST_LOCK.lock().unwrap();
         let shared = Arc::new(SharedRolloutV1::new(1, 2));
         let completed = Arc::new(AtomicBool::new(false));
         let mut guard = WorkerJoinGuardV1::new(shared);
