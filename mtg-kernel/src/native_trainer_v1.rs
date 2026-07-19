@@ -2249,7 +2249,7 @@ mod tests {
         }
 
         let error = trainer
-            .run_two_episode_update_with_mutation_v1(
+            .run_even_batch_update_with_mutation_v2(
                 &config,
                 NativePolicyAssociationTestMutationV1::ModelGeneration,
             )
