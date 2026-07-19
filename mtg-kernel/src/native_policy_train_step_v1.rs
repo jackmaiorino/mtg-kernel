@@ -666,6 +666,7 @@ impl NativePolicyValueTrainStateV1 {
         finite_scalar("loss", 2, loss)?;
 
         let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
+        let mut reverse_workspace = ReverseWorkspaceV1::default();
         // Torch autograd walks the independently constructed physical-decision
         // and substep graphs in reverse construction order.  Preserve that
         // accumulation order for shared parameter gradients. The scorer's
@@ -681,19 +682,30 @@ impl NativePolicyValueTrainStateV1 {
                 // following final scalar-bias accumulation use the pinned
                 // reverse graph/action order. The raw f32 residual is retained
                 // for the fail-closed gauge-bound record below.
-                let mut grad_output = vec![0.0; selected.log_probabilities.len()];
-                grad_output[selected.selected_action_index] = d_joint_log_probability;
-                let grad_output_sum = grad_output
+                resize_zeroed_v1(
+                    &mut reverse_workspace.grad_output,
+                    selected.log_probabilities.len(),
+                );
+                reverse_workspace.grad_output[selected.selected_action_index] =
+                    d_joint_log_probability;
+                let grad_output_sum = reverse_workspace
+                    .grad_output
                     .iter()
                     .copied()
                     .fold(0.0f32, |sum, value| sum + value);
-                let d_logits = grad_output
+                reverse_workspace.d_logits.clear();
+                reverse_workspace
+                    .d_logits
+                    .reserve(selected.log_probabilities.len());
+                for (gradient, log_probability) in reverse_workspace
+                    .grad_output
                     .iter()
                     .zip(&selected.log_probabilities)
-                    .map(|(gradient, log_probability)| {
-                        *gradient - log_probability.exp() * grad_output_sum
-                    })
-                    .collect::<Vec<_>>();
+                {
+                    reverse_workspace
+                        .d_logits
+                        .push(*gradient - log_probability.exp() * grad_output_sum);
+                }
                 gauge_accumulator.observe(
                     &selected.tape.logits,
                     selected.selected_action_index,
@@ -703,8 +715,9 @@ impl NativePolicyValueTrainStateV1 {
                     &parameters,
                     &mut gradients,
                     &selected.tape,
-                    &d_logits,
+                    &reverse_workspace.d_logits,
                     if substep_index == 0 { d_value } else { 0.0 },
+                    &mut reverse_workspace.decision,
                 )?;
             }
         }
@@ -1090,6 +1103,41 @@ struct GroupTapeV1<'a> {
     value_error: f32,
 }
 
+/// Update-local scratch only. Buffers are zeroed or overwritten before every
+/// use; no activation, gradient contribution, or optimizer state crosses a
+/// decision. Reuse removes allocator traffic without changing any arithmetic
+/// loop or the pinned reverse group/substep/action accumulation order.
+#[derive(Default)]
+struct ReverseWorkspaceV1 {
+    grad_output: Vec<f32>,
+    d_logits: Vec<f32>,
+    decision: ReverseDecisionWorkspaceV1,
+}
+
+#[derive(Default)]
+struct ReverseDecisionWorkspaceV1 {
+    d_scorer_hidden: Vec<f32>,
+    d_scorer_input: Vec<f32>,
+    d_state_hidden: Vec<f32>,
+    d_action_hidden: Vec<f32>,
+    d_value_hidden: Vec<f32>,
+    d_state_value: Vec<f32>,
+    d_action_input: Vec<f32>,
+    d_action_ref_pooled: Vec<f32>,
+    d_object_hidden: Vec<f32>,
+    d_action_ref_hidden: Vec<f32>,
+    d_action_ref_input: Vec<f32>,
+    d_state_input: Vec<f32>,
+    d_node_input: Vec<f32>,
+    d_object_base: Vec<f32>,
+    d_edge_pooled: Vec<f32>,
+    d_edge_hidden: Vec<f32>,
+    d_edge_input: Vec<f32>,
+    d_object_input: Vec<f32>,
+    two_layer_second_pre: Vec<f32>,
+    two_layer_first_output: Vec<f32>,
+}
+
 fn forward_with_tape(
     parameters: &[NativeNamedParameterV1],
     config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
@@ -1309,14 +1357,37 @@ fn reverse_decision(
     tape: &DecisionTapeV1,
     d_logits: &[f32],
     d_value: f32,
+    workspace: &mut ReverseDecisionWorkspaceV1,
 ) -> Result<(), NativePolicyTrainErrorV1> {
     let action_count = tape.logits.len();
     if d_logits.len() != action_count {
         return Err(NativePolicyTrainErrorV1::ParameterManifest);
     }
     let object_count = tape.object_card_ids.len();
+    let ReverseDecisionWorkspaceV1 {
+        d_scorer_hidden,
+        d_scorer_input,
+        d_state_hidden,
+        d_action_hidden,
+        d_value_hidden,
+        d_state_value,
+        d_action_input,
+        d_action_ref_pooled,
+        d_object_hidden,
+        d_action_ref_hidden,
+        d_action_ref_input,
+        d_state_input,
+        d_node_input,
+        d_object_base,
+        d_edge_pooled,
+        d_edge_hidden,
+        d_edge_input,
+        d_object_input,
+        two_layer_second_pre,
+        two_layer_first_output,
+    } = workspace;
 
-    let mut d_scorer_hidden = linear_backward(
+    linear_backward_into(
         parameters,
         gradients,
         SCORER_SECOND_WEIGHT,
@@ -1326,9 +1397,10 @@ fn reverse_decision(
         HIDDEN_DIM_V1,
         1,
         d_logits,
+        d_scorer_hidden,
     )?;
-    apply_tanh_gradient(&tape.scorer_hidden, &mut d_scorer_hidden)?;
-    let d_scorer_input = linear_backward(
+    apply_tanh_gradient(&tape.scorer_hidden, d_scorer_hidden)?;
+    linear_backward_into(
         parameters,
         gradients,
         SCORER_FIRST_WEIGHT,
@@ -1337,10 +1409,11 @@ fn reverse_decision(
         action_count,
         SCORER_INPUT,
         HIDDEN_DIM_V1,
-        &d_scorer_hidden,
+        d_scorer_hidden,
+        d_scorer_input,
     )?;
-    let mut d_state_hidden = vec![0.0; HIDDEN_DIM_V1];
-    let mut d_action_hidden = vec![0.0; action_count * HIDDEN_DIM_V1];
+    resize_zeroed_v1(d_state_hidden, HIDDEN_DIM_V1);
+    resize_zeroed_v1(d_action_hidden, action_count * HIDDEN_DIM_V1);
     for action in 0..action_count {
         let source = action * SCORER_INPUT;
         for hidden in 0..HIDDEN_DIM_V1 {
@@ -1351,7 +1424,7 @@ fn reverse_decision(
     }
 
     let d_value_output = [d_value];
-    let mut d_value_hidden = linear_backward(
+    linear_backward_into(
         parameters,
         gradients,
         VALUE_SECOND_WEIGHT,
@@ -1361,9 +1434,10 @@ fn reverse_decision(
         HIDDEN_DIM_V1,
         1,
         &d_value_output,
+        d_value_hidden,
     )?;
-    apply_tanh_gradient(&tape.value_hidden, &mut d_value_hidden)?;
-    let d_state_value = linear_backward(
+    apply_tanh_gradient(&tape.value_hidden, d_value_hidden)?;
+    linear_backward_into(
         parameters,
         gradients,
         VALUE_FIRST_WEIGHT,
@@ -1372,18 +1446,22 @@ fn reverse_decision(
         1,
         HIDDEN_DIM_V1,
         HIDDEN_DIM_V1,
-        &d_value_hidden,
+        d_value_hidden,
+        d_state_value,
     )?;
-    add_slices(&mut d_state_hidden, &d_state_value)?;
+    add_slices(d_state_hidden, d_state_value)?;
 
-    let d_action_input = two_layer_backward(
+    two_layer_backward_into(
         parameters,
         gradients,
         ACTION_SPEC,
         &tape.action_encoder,
-        &d_action_hidden,
+        d_action_hidden,
+        two_layer_second_pre,
+        two_layer_first_output,
+        d_action_input,
     )?;
-    let mut d_action_ref_pooled = vec![0.0; action_count * HIDDEN_DIM_V1];
+    resize_zeroed_v1(d_action_ref_pooled, action_count * HIDDEN_DIM_V1);
     for action in 0..action_count {
         let source = action * ACTION_ENCODER_INPUT + ACTION_FEATURE_DIM_V1;
         let destination = action * HIDDEN_DIM_V1;
@@ -1391,22 +1469,25 @@ fn reverse_decision(
             .copy_from_slice(&d_action_input[source..source + HIDDEN_DIM_V1]);
     }
 
-    let mut d_object_hidden = vec![0.0; object_count * HIDDEN_DIM_V1];
+    resize_zeroed_v1(d_object_hidden, object_count * HIDDEN_DIM_V1);
     if let Some(action_ref_tape) = &tape.action_ref_encoder {
         let action_ref_count = tape.action_ref_action_indices.len();
-        let mut d_action_ref_hidden = vec![0.0; action_ref_count * HIDDEN_DIM_V1];
+        resize_zeroed_v1(d_action_ref_hidden, action_ref_count * HIDDEN_DIM_V1);
         for action_ref in 0..action_ref_count {
             let source = tape.action_ref_action_indices[action_ref] * HIDDEN_DIM_V1;
             let destination = action_ref * HIDDEN_DIM_V1;
             d_action_ref_hidden[destination..destination + HIDDEN_DIM_V1]
                 .copy_from_slice(&d_action_ref_pooled[source..source + HIDDEN_DIM_V1]);
         }
-        let d_action_ref_input = two_layer_backward(
+        two_layer_backward_into(
             parameters,
             gradients,
             ACTION_REF_SPEC,
             action_ref_tape,
-            &d_action_ref_hidden,
+            d_action_ref_hidden,
+            two_layer_second_pre,
+            two_layer_first_output,
+            d_action_ref_input,
         )?;
         for action_ref in 0..action_ref_count {
             let source = action_ref * ACTION_REF_ENCODER_INPUT + ACTION_REF_FEATURE_DIM_V1;
@@ -1417,12 +1498,15 @@ fn reverse_decision(
         }
     }
 
-    let d_state_input = two_layer_backward(
+    two_layer_backward_into(
         parameters,
         gradients,
         STATE_SPEC,
         &tape.state_encoder,
-        &d_state_hidden,
+        d_state_hidden,
+        two_layer_second_pre,
+        two_layer_first_output,
+        d_state_input,
     )?;
     for (object, group) in tape.object_groups.iter().copied().enumerate() {
         let source = STATE_DIM_V1 + group * HIDDEN_DIM_V1;
@@ -1432,15 +1516,18 @@ fn reverse_decision(
         }
     }
 
-    let d_node_input = two_layer_backward(
+    two_layer_backward_into(
         parameters,
         gradients,
         NODE_SPEC,
         &tape.node_update,
-        &d_object_hidden,
+        d_object_hidden,
+        two_layer_second_pre,
+        two_layer_first_output,
+        d_node_input,
     )?;
-    let mut d_object_base = vec![0.0; object_count * HIDDEN_DIM_V1];
-    let mut d_edge_pooled = vec![0.0; object_count * HIDDEN_DIM_V1];
+    resize_zeroed_v1(d_object_base, object_count * HIDDEN_DIM_V1);
+    resize_zeroed_v1(d_edge_pooled, object_count * HIDDEN_DIM_V1);
     for object in 0..object_count {
         let source = object * NODE_UPDATE_INPUT;
         let destination = object * HIDDEN_DIM_V1;
@@ -1452,7 +1539,7 @@ fn reverse_decision(
 
     if let Some(edge_tape) = &tape.edge_encoder {
         let edge_count = tape.edge_source_indices.len();
-        let mut d_edge_hidden = vec![0.0; edge_count * HIDDEN_DIM_V1];
+        resize_zeroed_v1(d_edge_hidden, edge_count * HIDDEN_DIM_V1);
         for edge in 0..edge_count {
             let destination = edge * HIDDEN_DIM_V1;
             let source_row = tape.edge_source_indices[edge] * HIDDEN_DIM_V1;
@@ -1462,8 +1549,16 @@ fn reverse_decision(
                     d_edge_pooled[source_row + hidden] + d_edge_pooled[target_row + hidden];
             }
         }
-        let d_edge_input =
-            two_layer_backward(parameters, gradients, EDGE_SPEC, edge_tape, &d_edge_hidden)?;
+        two_layer_backward_into(
+            parameters,
+            gradients,
+            EDGE_SPEC,
+            edge_tape,
+            d_edge_hidden,
+            two_layer_second_pre,
+            two_layer_first_output,
+            d_edge_input,
+        )?;
         for edge in 0..edge_count {
             let source = edge * EDGE_ENCODER_INPUT + EDGE_FEATURE_DIM_V1;
             let source_destination = tape.edge_source_indices[edge] * HIDDEN_DIM_V1;
@@ -1476,12 +1571,15 @@ fn reverse_decision(
         }
     }
 
-    let d_object_input = two_layer_backward(
+    two_layer_backward_into(
         parameters,
         gradients,
         OBJECT_SPEC,
         &tape.object_encoder,
-        &d_object_base,
+        d_object_base,
+        two_layer_second_pre,
+        two_layer_first_output,
+        d_object_input,
     )?;
     for (object, token) in tape.object_card_ids.iter().copied().enumerate() {
         if token == 0 {
@@ -1531,16 +1629,21 @@ fn two_layer_forward(
     })
 }
 
-fn two_layer_backward(
+#[allow(clippy::too_many_arguments)]
+fn two_layer_backward_into(
     parameters: &[NativeNamedParameterV1],
     gradients: &mut [Vec<f32>],
     spec: TwoLayerSpecV1,
     tape: &TwoLayerTapeV1,
     d_output: &[f32],
-) -> Result<Vec<f32>, NativePolicyTrainErrorV1> {
-    let mut d_second_pre = d_output.to_vec();
-    apply_tanh_gradient(&tape.second_output, &mut d_second_pre)?;
-    let mut d_first_output = linear_backward(
+    d_second_pre: &mut Vec<f32>,
+    d_first_output: &mut Vec<f32>,
+    d_input: &mut Vec<f32>,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    d_second_pre.clear();
+    d_second_pre.extend_from_slice(d_output);
+    apply_tanh_gradient(&tape.second_output, d_second_pre)?;
+    linear_backward_into(
         parameters,
         gradients,
         spec.second_weight,
@@ -1549,10 +1652,11 @@ fn two_layer_backward(
         tape.rows,
         HIDDEN_DIM_V1,
         HIDDEN_DIM_V1,
-        &d_second_pre,
+        d_second_pre,
+        d_first_output,
     )?;
-    apply_tanh_gradient(&tape.first_output, &mut d_first_output)?;
-    linear_backward(
+    apply_tanh_gradient(&tape.first_output, d_first_output)?;
+    linear_backward_into(
         parameters,
         gradients,
         spec.first_weight,
@@ -1561,7 +1665,8 @@ fn two_layer_backward(
         tape.rows,
         spec.input_dim,
         HIDDEN_DIM_V1,
-        &d_first_output,
+        d_first_output,
+        d_input,
     )
 }
 
@@ -1600,7 +1705,7 @@ fn linear_forward(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn linear_backward(
+fn linear_backward_into(
     parameters: &[NativeNamedParameterV1],
     gradients: &mut [Vec<f32>],
     weight_index: usize,
@@ -1610,7 +1715,8 @@ fn linear_backward(
     input_dim: usize,
     output_dim: usize,
     d_output: &[f32],
-) -> Result<Vec<f32>, NativePolicyTrainErrorV1> {
+    d_input: &mut Vec<f32>,
+) -> Result<(), NativePolicyTrainErrorV1> {
     let weight = &parameters[weight_index].values;
     if input.len() != rows * input_dim
         || d_output.len() != rows * output_dim
@@ -1620,7 +1726,7 @@ fn linear_backward(
     {
         return Err(NativePolicyTrainErrorV1::ParameterManifest);
     }
-    let mut d_input = vec![0.0; rows * input_dim];
+    resize_zeroed_v1(d_input, rows * input_dim);
     for row in 0..rows {
         let input_begin = row * input_dim;
         let output_begin = row * output_dim;
@@ -1650,7 +1756,12 @@ fn linear_backward(
             }
         }
     }
-    Ok(d_input)
+    Ok(())
+}
+
+fn resize_zeroed_v1(values: &mut Vec<f32>, len: usize) {
+    values.clear();
+    values.resize(len, 0.0);
 }
 
 fn selected_log_softmax(
