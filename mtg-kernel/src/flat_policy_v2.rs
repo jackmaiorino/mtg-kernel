@@ -1194,10 +1194,7 @@ fn canonical_zone_string_order(zone: Zone) -> u8 {
     }
 }
 
-fn canonical_known_hand_cards<'a>(
-    cards: &'a [CardPrivateV1],
-    actor: PlayerSeatV1,
-) -> Vec<&'a CardPrivateV1> {
+fn canonical_known_hand_cards(cards: &[CardPrivateV1], actor: PlayerSeatV1) -> Vec<&CardPrivateV1> {
     let mut canonical: Vec<_> = cards.iter().collect();
     canonical.sort_by_key(|card| {
         (
@@ -3541,24 +3538,30 @@ impl FlatDecisionEncoderV2 {
             match (relation.role, relation.payload) {
                 (
                     FlatRelationRoleV2::CombatAttacker,
-                    FlatRelationPayloadV2::CombatAttacker { blocked_order },
+                    FlatRelationPayloadV2::CombatAttacker {
+                        blocked_order: Some(order),
+                    },
                 ) => {
-                    if let Some(order) = blocked_order {
-                        if self.relations[..relation_index].iter().any(|prior| {
-                            matches!(
-                                prior.payload,
-                                FlatRelationPayloadV2::CombatAttacker {
-                                    blocked_order: Some(prior_order)
-                                } if prior_order == order
-                            )
-                        }) {
-                            return Err(FlatDecisionErrorV2::InconsistentReference);
-                        }
-                        blocked_mapping_count = blocked_mapping_count
-                            .checked_add(1)
-                            .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+                    if self.relations[..relation_index].iter().any(|prior| {
+                        matches!(
+                            prior.payload,
+                            FlatRelationPayloadV2::CombatAttacker {
+                                blocked_order: Some(prior_order)
+                            } if prior_order == order
+                        )
+                    }) {
+                        return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
+                    blocked_mapping_count = blocked_mapping_count
+                        .checked_add(1)
+                        .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
                 }
+                (
+                    FlatRelationRoleV2::CombatAttacker,
+                    FlatRelationPayloadV2::CombatAttacker {
+                        blocked_order: None,
+                    },
+                ) => {}
                 (FlatRelationRoleV2::CombatAttacker, _)
                 | (_, FlatRelationPayloadV2::CombatAttacker { .. }) => {
                     return Err(FlatDecisionErrorV2::InconsistentReference);
