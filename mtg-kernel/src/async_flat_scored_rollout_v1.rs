@@ -291,6 +291,7 @@ impl<E> FlatScoredObserverInterruptionV1<E> {
     }
 }
 
+#[cfg(any())]
 fn observe_selected_v1<O: FlatScoredTrajectoryObserverV1>(
     observer: &mut O,
     event: FlatScoredSelectedEventV1<'_>,
@@ -309,6 +310,7 @@ fn observe_selected_v1<O: FlatScoredTrajectoryObserverV1>(
     }
 }
 
+#[cfg(any())]
 fn observe_terminal_v1<O: FlatScoredTrajectoryObserverV1>(
     observer: &mut O,
     event: FlatScoredTerminalEventV1,
@@ -577,7 +579,7 @@ impl fmt::Display for AsyncFlatScoredRolloutErrorV1 {
 impl std::error::Error for AsyncFlatScoredRolloutErrorV1 {}
 
 #[derive(Default)]
-struct OwnedFlatScoringDecisionV1 {
+pub(crate) struct OwnedFlatScoringDecisionV1 {
     decision: FlatDecisionV1,
     objects: Vec<FlatObjectCoreV1>,
     relations: Vec<FlatRelationV1>,
@@ -649,7 +651,7 @@ impl OwnedFlatScoringDecisionV1 {
     }
 }
 
-struct ValidatedOwnedFlatScoringDecisionV1(OwnedFlatScoringDecisionV1);
+pub(crate) struct ValidatedOwnedFlatScoringDecisionV1(OwnedFlatScoringDecisionV1);
 
 impl ValidatedOwnedFlatScoringDecisionV1 {
     fn decision(&self) -> &FlatDecisionV1 {
@@ -718,11 +720,208 @@ fn test_content_sensitive_value(payload: &str) -> f32 {
     value_q8 as f32 / 256.0
 }
 
-struct RoundDecisionV1 {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FlatScoredFamilyV1;
+
+pub(crate) trait FlatScoredFamilyCore: Copy + Send + Sync + 'static {
+    type Encoder: Default + Send + 'static;
+    type OwnedPacket: Default + Send + 'static;
+    type ValidatedPacket: Send + 'static;
+    type Binding: Copy + Eq + Send + 'static;
+    type Contract: Copy + Eq + Send + 'static;
+    type Decision: Copy + Send + 'static;
+    type DecisionView<'a>: Copy
+    where
+        Self: 'a;
+
+    const WORKER_NAME: &'static str;
+    const MEMBERSHIP_DIGEST_DOMAIN: &'static [u8];
+
+    fn reset_session(
+        config: &AsyncRolloutConfigV2,
+        episode_id: u64,
+    ) -> Result<FastActorSessionV1, ()>;
+
+    fn encode_packet(
+        session: &FastActorSessionV1,
+        expected: FastActorDecisionV1,
+        encoder: &mut Self::Encoder,
+        packet: Self::OwnedPacket,
+    ) -> Result<Self::ValidatedPacket, ()>;
+
+    fn packet_contract(packet: &Self::ValidatedPacket) -> Self::Contract;
+    fn packet_binding(packet: &Self::ValidatedPacket) -> Self::Binding;
+    fn packet_decision(packet: &Self::ValidatedPacket) -> Self::Decision;
+    fn packet_view(packet: &Self::ValidatedPacket) -> Self::DecisionView<'_>;
+    fn packet_action_count(packet: &Self::ValidatedPacket) -> u32;
+    fn into_owned_packet(packet: Self::ValidatedPacket) -> Self::OwnedPacket;
+    fn expected_matches_binding(expected: FastActorDecisionV1, decision: Self::Decision) -> bool;
+
+    #[cfg(test)]
+    fn test_safe_packet_payload(packet: &Self::ValidatedPacket) -> String;
+
+    fn consume(
+        session: &mut FastActorSessionV1,
+        binding: Self::Binding,
+        selected_index: u32,
+    ) -> Result<FastActorResponseV1, ()>;
+}
+
+pub(crate) trait FlatBatchScorerCore<F: FlatScoredFamilyCore> {
+    fn score_batch_core(
+        &mut self,
+        contract: F::Contract,
+        decisions: &[RoundDecisionCore<F>],
+        action_offsets: &[usize],
+        action_logits: &mut [f32],
+        values: &mut [f32],
+    ) -> Result<(), FlatBatchScorerErrorV1>;
+}
+
+pub(crate) struct FlatScoredSelectedEventCore<'a, F: FlatScoredFamilyCore> {
+    pub(crate) expected: FastActorDecisionV1,
+    pub(crate) binding: F::Binding,
+    pub(crate) learner_ordinal: u64,
+    pub(crate) action_seed: u64,
+    pub(crate) selected_index: u32,
+    pub(crate) raw_action_logits: &'a [f32],
+    pub(crate) predicted_value_bits: u32,
+    pub(crate) decision: F::DecisionView<'a>,
+}
+
+pub(crate) trait FlatScoredTrajectoryObserverCore<F: FlatScoredFamilyCore>: Sized {
+    type Error;
+    type Output;
+
+    const OBSERVES_TRAJECTORY: bool = true;
+
+    fn observe_selected_core(
+        &mut self,
+        event: FlatScoredSelectedEventCore<'_, F>,
+    ) -> Result<(), Self::Error>;
+
+    fn observe_terminal_core(
+        &mut self,
+        event: FlatScoredTerminalEventV1,
+    ) -> Result<(), Self::Error>;
+
+    fn finish_core(self) -> Result<Self::Output, Self::Error>;
+}
+
+fn observe_selected_core<F, O>(
+    observer: &mut O,
+    event: FlatScoredSelectedEventCore<'_, F>,
+) -> Result<(), FlatScoredObserverInterruptionV1<O::Error>>
+where
+    F: FlatScoredFamilyCore,
+    O: FlatScoredTrajectoryObserverCore<F>,
+{
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        observer.observe_selected_core(event)
+    })) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(FlatScoredObserverInterruptionV1::Failed {
+            phase: FlatScoredObserverPhaseV1::Selected,
+            error,
+        }),
+        Err(_) => Err(FlatScoredObserverInterruptionV1::Panicked {
+            phase: FlatScoredObserverPhaseV1::Selected,
+        }),
+    }
+}
+
+fn observe_terminal_core<F, O>(
+    observer: &mut O,
+    event: FlatScoredTerminalEventV1,
+) -> Result<(), FlatScoredObserverInterruptionV1<O::Error>>
+where
+    F: FlatScoredFamilyCore,
+    O: FlatScoredTrajectoryObserverCore<F>,
+{
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        observer.observe_terminal_core(event)
+    })) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(FlatScoredObserverInterruptionV1::Failed {
+            phase: FlatScoredObserverPhaseV1::Terminal,
+            error,
+        }),
+        Err(_) => Err(FlatScoredObserverInterruptionV1::Panicked {
+            phase: FlatScoredObserverPhaseV1::Terminal,
+        }),
+    }
+}
+
+pub(crate) struct RoundDecisionCore<F: FlatScoredFamilyCore> {
     worker_id: usize,
     logical_lane_id: usize,
     expected: FastActorDecisionV1,
-    packet: ValidatedOwnedFlatScoringDecisionV1,
+    pub(crate) packet: F::ValidatedPacket,
+}
+
+type RoundDecisionV1 = RoundDecisionCore<FlatScoredFamilyV1>;
+
+struct FlatBatchScorerAdapterV1<'a, S: FlatBatchScorerV1>(&'a mut S);
+
+impl<S: FlatBatchScorerV1> FlatBatchScorerCore<FlatScoredFamilyV1>
+    for FlatBatchScorerAdapterV1<'_, S>
+{
+    fn score_batch_core(
+        &mut self,
+        contract: FlatScorerContractV1,
+        decisions: &[RoundDecisionV1],
+        action_offsets: &[usize],
+        action_logits: &mut [f32],
+        values: &mut [f32],
+    ) -> Result<(), FlatBatchScorerErrorV1> {
+        self.0.score_batch_v1(
+            &FlatScoringBatchViewV1 {
+                contract,
+                decisions,
+                action_offsets,
+            },
+            action_logits,
+            values,
+        )
+    }
+}
+
+struct FlatScoredTrajectoryObserverAdapterV1<O: FlatScoredTrajectoryObserverV1>(O);
+
+impl<O: FlatScoredTrajectoryObserverV1> FlatScoredTrajectoryObserverCore<FlatScoredFamilyV1>
+    for FlatScoredTrajectoryObserverAdapterV1<O>
+{
+    type Error = O::Error;
+    type Output = O::Output;
+
+    const OBSERVES_TRAJECTORY: bool = O::OBSERVES_TRAJECTORY;
+
+    fn observe_selected_core(
+        &mut self,
+        event: FlatScoredSelectedEventCore<'_, FlatScoredFamilyV1>,
+    ) -> Result<(), Self::Error> {
+        self.0.observe_selected_v1(FlatScoredSelectedEventV1 {
+            expected: event.expected,
+            binding: event.binding,
+            learner_ordinal: event.learner_ordinal,
+            action_seed: event.action_seed,
+            selected_index: event.selected_index,
+            raw_action_logits: event.raw_action_logits,
+            predicted_value_bits: event.predicted_value_bits,
+            decision: event.decision,
+        })
+    }
+
+    fn observe_terminal_core(
+        &mut self,
+        event: FlatScoredTerminalEventV1,
+    ) -> Result<(), Self::Error> {
+        self.0.observe_terminal_v1(event)
+    }
+
+    fn finish_core(self) -> Result<Self::Output, Self::Error> {
+        self.0.finish_v1()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -734,20 +933,20 @@ struct RoundTerminalV1 {
     learner_trace_hash: u64,
 }
 
-struct WorkerRoundV1 {
+struct WorkerRoundCore<F: FlatScoredFamilyCore> {
     worker_id: usize,
-    decisions: Vec<RoundDecisionV1>,
+    decisions: Vec<RoundDecisionCore<F>>,
     terminals: Vec<RoundTerminalV1>,
-    reply: WorkerReplyV1,
+    reply: WorkerReplyCore<F>,
 }
 
-impl WorkerRoundV1 {
+impl<F: FlatScoredFamilyCore> WorkerRoundCore<F> {
     fn with_capacity(worker_id: usize, capacity: usize) -> Self {
         Self {
             worker_id,
             decisions: Vec::with_capacity(capacity),
             terminals: Vec::with_capacity(capacity),
-            reply: WorkerReplyV1 {
+            reply: WorkerReplyCore {
                 actions: Vec::with_capacity(capacity),
                 terminal_acks: Vec::with_capacity(capacity),
             },
@@ -763,8 +962,8 @@ struct WorkerFailureV1 {
     phase: AsyncFlatScoredWorkerPhaseV1,
 }
 
-enum WorkerMessageV1 {
-    Round(WorkerRoundV1),
+enum WorkerMessageCore<F: FlatScoredFamilyCore> {
+    Round(WorkerRoundCore<F>),
     Done { worker_id: usize },
     Failed(WorkerFailureV1),
 }
@@ -779,12 +978,15 @@ impl FiniteScorerValueV1 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct BoundScoredActionV1 {
-    binding: crate::flat_policy_v1::FlatDecisionBindingV1,
+struct BoundScoredActionCore<F: FlatScoredFamilyCore> {
+    binding: F::Binding,
     learner_ordinal: u64,
     selected_index: u32,
     predicted_value: FiniteScorerValueV1,
 }
+
+#[cfg(test)]
+type BoundScoredActionV1 = BoundScoredActionCore<FlatScoredFamilyV1>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ValidatedRoundSampleV1 {
@@ -794,49 +996,66 @@ struct ValidatedRoundSampleV1 {
     predicted_value: FiniteScorerValueV1,
 }
 
-struct ActionReplyV1 {
+struct ActionReplyCore<F: FlatScoredFamilyCore> {
     logical_lane_id: usize,
-    scored: BoundScoredActionV1,
-    packet: ValidatedOwnedFlatScoringDecisionV1,
+    scored: BoundScoredActionCore<F>,
+    packet: F::ValidatedPacket,
 }
 
-#[derive(Default)]
-struct WorkerReplyV1 {
-    actions: Vec<ActionReplyV1>,
+#[cfg(test)]
+type ActionReplyV1 = ActionReplyCore<FlatScoredFamilyV1>;
+
+struct WorkerReplyCore<F: FlatScoredFamilyCore> {
+    actions: Vec<ActionReplyCore<F>>,
     terminal_acks: Vec<usize>,
 }
 
-enum WorkerControlV1 {
+impl<F: FlatScoredFamilyCore> Default for WorkerReplyCore<F> {
+    fn default() -> Self {
+        Self {
+            actions: Vec::new(),
+            terminal_acks: Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+type WorkerReplyV1 = WorkerReplyCore<FlatScoredFamilyV1>;
+
+enum WorkerControlCore<F: FlatScoredFamilyCore> {
     Continue {
         release_epoch: u64,
-        round: WorkerRoundV1,
+        round: WorkerRoundCore<F>,
     },
     Cancel,
 }
 
 #[derive(Debug, Clone, Copy)]
-struct WaitingDecisionV1 {
+struct WaitingDecisionCore<F: FlatScoredFamilyCore> {
     expected: FastActorDecisionV1,
-    binding: crate::flat_policy_v1::FlatDecisionBindingV1,
+    binding: F::Binding,
 }
 
-struct LocalLaneV1 {
+struct LocalLaneCore<F: FlatScoredFamilyCore> {
     worker_id: usize,
     logical_lane_id: usize,
     next_episode_id: Option<u64>,
     episode_id: u64,
     session: Option<FastActorSessionV1>,
     response: Option<FastActorResponseV1>,
-    encoder: FlatDecisionEncoderV1,
-    packet: Option<OwnedFlatScoringDecisionV1>,
-    waiting_decision: Option<WaitingDecisionV1>,
+    encoder: F::Encoder,
+    packet: Option<F::OwnedPacket>,
+    waiting_decision: Option<WaitingDecisionCore<F>>,
     waiting_terminal: bool,
     opponent_policy: SplitMix64,
     learner_action_count: u64,
     learner_trace_hash: u64,
 }
 
-impl LocalLaneV1 {
+#[cfg(test)]
+type LocalLaneV1 = LocalLaneCore<FlatScoredFamilyV1>;
+
+impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
     fn vacant(
         worker_id: usize,
         logical_lane_id: usize,
@@ -853,8 +1072,8 @@ impl LocalLaneV1 {
             episode_id: u64::MAX,
             session: None,
             response: None,
-            encoder: FlatDecisionEncoderV1::default(),
-            packet: Some(OwnedFlatScoringDecisionV1::default()),
+            encoder: F::Encoder::default(),
+            packet: Some(F::OwnedPacket::default()),
             waiting_decision: None,
             waiting_terminal: false,
             opponent_policy: SplitMix64::seed(0),
@@ -880,7 +1099,7 @@ impl LocalLaneV1 {
         }
     }
 
-    fn apply_reply(&mut self, reply: &mut WorkerReplyV1) -> Result<(), WorkerFailureV1> {
+    fn apply_reply(&mut self, reply: &mut WorkerReplyCore<F>) -> Result<(), WorkerFailureV1> {
         if let Some(waiting) = self.waiting_decision {
             let index = reply
                 .actions
@@ -889,21 +1108,15 @@ impl LocalLaneV1 {
                 .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
             let action = reply.actions.swap_remove(index);
             if action.scored.binding != waiting.binding
-                || action.packet.decision().binding != waiting.binding
+                || F::packet_binding(&action.packet) != waiting.binding
                 || action.scored.learner_ordinal != self.learner_action_count
                 || action.scored.selected_index >= waiting.expected.legal_action_count
             {
                 return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
             }
             let missing_session = self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol);
-            let response = self
-                .session
-                .as_mut()
-                .ok_or(missing_session)?
-                .consume_current_flat_action_slice_v1(
-                    action.scored.binding.action_binding,
-                    action.scored.selected_index,
-                )
+            let session = self.session.as_mut().ok_or(missing_session)?;
+            let response = F::consume(session, action.scored.binding, action.scored.selected_index)
                 .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerConsume))?;
             #[cfg(test)]
             if TEST_CAPTURE_ACTION_EVENTS_V1.load(std::sync::atomic::Ordering::SeqCst) {
@@ -913,12 +1126,12 @@ impl LocalLaneV1 {
                     .push(TestScoredActionEventV1 {
                         expected: waiting.expected,
                         learner_ordinal: action.scored.learner_ordinal,
-                        safe_packet_payload: test_safe_packet_payload(action.packet.scorer_view()),
+                        safe_packet_payload: F::test_safe_packet_payload(&action.packet),
                         scorer_value_bits: action.scored.predicted_value.0,
                         selected_index: action.scored.selected_index,
                     });
             }
-            self.packet = Some(action.packet.into_inner());
+            self.packet = Some(F::into_owned_packet(action.packet));
             self.response = Some(response);
             self.waiting_decision = None;
             #[cfg(test)]
@@ -974,14 +1187,7 @@ impl LocalLaneV1 {
         self.next_episode_id = episode_id
             .checked_add(logical_lane_count as u64)
             .filter(|next| *next < end_episode_id);
-        let session = FastActorSessionV1::reset_with_decks_and_limits(
-            episode_id,
-            derive_env_seed(config.environment_seed, episode_id),
-            config.max_physical_decisions,
-            config.max_policy_steps,
-            config.deck_ids.clone(),
-        )
-        .map_err(|_| {
+        let session = F::reset_session(config, episode_id).map_err(|_| {
             self.episode_id = episode_id;
             self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
         })?;
@@ -1002,7 +1208,7 @@ impl LocalLaneV1 {
         config: &AsyncRolloutConfigV2,
         deadline: Instant,
         cancel: &AtomicBool,
-        decisions: &mut Vec<RoundDecisionV1>,
+        decisions: &mut Vec<RoundDecisionCore<F>>,
         terminals: &mut Vec<RoundTerminalV1>,
     ) -> Result<(), WorkerFailureV1> {
         if self.session.is_none() {
@@ -1041,7 +1247,7 @@ impl LocalLaneV1 {
                         .packet
                         .take()
                         .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
-                    let packet = encode_packet(
+                    let packet = F::encode_packet(
                         self.session
                             .as_ref()
                             .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?,
@@ -1050,9 +1256,9 @@ impl LocalLaneV1 {
                         packet,
                     )
                     .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Encode))?;
-                    let binding = packet.decision().binding;
-                    self.waiting_decision = Some(WaitingDecisionV1 { expected, binding });
-                    decisions.push(RoundDecisionV1 {
+                    let binding = F::packet_binding(&packet);
+                    self.waiting_decision = Some(WaitingDecisionCore { expected, binding });
+                    decisions.push(RoundDecisionCore {
                         worker_id: self.worker_id,
                         logical_lane_id: self.logical_lane_id,
                         expected,
@@ -1462,6 +1668,86 @@ fn validate_packet(packet: &OwnedFlatScoringDecisionV1) -> Result<(), ()> {
     Ok(())
 }
 
+impl FlatScoredFamilyCore for FlatScoredFamilyV1 {
+    type Encoder = FlatDecisionEncoderV1;
+    type OwnedPacket = OwnedFlatScoringDecisionV1;
+    type ValidatedPacket = ValidatedOwnedFlatScoringDecisionV1;
+    type Binding = FlatDecisionBindingV1;
+    type Contract = FlatScorerContractV1;
+    type Decision = FlatDecisionV1;
+    type DecisionView<'a> = FlatScoringDecisionViewV1<'a>;
+
+    const WORKER_NAME: &'static str = "mtg-async-flat-scored-v1";
+    const MEMBERSHIP_DIGEST_DOMAIN: &'static [u8] =
+        b"mtg-kernel/async-flat-scored-rollout-v1/membership/v1";
+
+    fn reset_session(
+        config: &AsyncRolloutConfigV2,
+        episode_id: u64,
+    ) -> Result<FastActorSessionV1, ()> {
+        FastActorSessionV1::reset_with_decks_and_limits(
+            episode_id,
+            derive_env_seed(config.environment_seed, episode_id),
+            config.max_physical_decisions,
+            config.max_policy_steps,
+            config.deck_ids.clone(),
+        )
+        .map_err(|_| ())
+    }
+
+    fn encode_packet(
+        session: &FastActorSessionV1,
+        expected: FastActorDecisionV1,
+        encoder: &mut Self::Encoder,
+        packet: Self::OwnedPacket,
+    ) -> Result<Self::ValidatedPacket, ()> {
+        encode_packet(session, expected, encoder, packet).map_err(|_| ())
+    }
+
+    fn packet_contract(packet: &Self::ValidatedPacket) -> Self::Contract {
+        packet.scorer_contract()
+    }
+
+    fn packet_binding(packet: &Self::ValidatedPacket) -> Self::Binding {
+        packet.decision().binding
+    }
+
+    fn packet_decision(packet: &Self::ValidatedPacket) -> Self::Decision {
+        *packet.decision()
+    }
+
+    fn packet_view(packet: &Self::ValidatedPacket) -> Self::DecisionView<'_> {
+        packet.scorer_view()
+    }
+
+    fn packet_action_count(packet: &Self::ValidatedPacket) -> u32 {
+        packet.decision().active_action_count
+    }
+
+    fn into_owned_packet(packet: Self::ValidatedPacket) -> Self::OwnedPacket {
+        packet.into_inner()
+    }
+
+    fn expected_matches_binding(expected: FastActorDecisionV1, decision: Self::Decision) -> bool {
+        expected_matches_binding(expected, decision)
+    }
+
+    #[cfg(test)]
+    fn test_safe_packet_payload(packet: &Self::ValidatedPacket) -> String {
+        test_safe_packet_payload(packet.scorer_view())
+    }
+
+    fn consume(
+        session: &mut FastActorSessionV1,
+        binding: Self::Binding,
+        selected_index: u32,
+    ) -> Result<FastActorResponseV1, ()> {
+        session
+            .consume_current_flat_action_slice_v1(binding.action_binding, selected_index)
+            .map_err(|_| ())
+    }
+}
+
 #[derive(Clone)]
 struct WorkerRuntimeV1 {
     end_episode_id: u64,
@@ -1471,12 +1757,12 @@ struct WorkerRuntimeV1 {
     released_epoch: Arc<AtomicU64>,
 }
 
-fn worker_loop(
+fn worker_loop<F: FlatScoredFamilyCore>(
     worker_id: usize,
     config: &AsyncRolloutConfigV2,
     runtime: &WorkerRuntimeV1,
-    message_tx: &SyncSender<WorkerMessageV1>,
-    control_rx: &Receiver<WorkerControlV1>,
+    message_tx: &SyncSender<WorkerMessageCore<F>>,
+    control_rx: &Receiver<WorkerControlCore<F>>,
 ) -> Result<(), WorkerFailureV1> {
     #[cfg(test)]
     if TEST_DELAY_WORKER_ID_V1.load(std::sync::atomic::Ordering::SeqCst) == worker_id {
@@ -1492,9 +1778,9 @@ fn worker_loop(
             episode_id: u64::MAX,
             phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
         })?;
-    let mut lanes: Vec<LocalLaneV1> = (0..config.sessions_per_worker)
+    let mut lanes: Vec<LocalLaneCore<F>> = (0..config.sessions_per_worker)
         .map(|slot| {
-            LocalLaneV1::vacant(
+            LocalLaneCore::vacant(
                 worker_id,
                 first_lane + slot,
                 config.first_episode_id,
@@ -1502,7 +1788,7 @@ fn worker_loop(
             )
         })
         .collect();
-    let mut round = WorkerRoundV1::with_capacity(worker_id, config.sessions_per_worker);
+    let mut round = WorkerRoundCore::with_capacity(worker_id, config.sessions_per_worker);
     loop {
         if runtime.cancel.load(Ordering::Acquire) || Instant::now() >= runtime.deadline {
             return Ok(());
@@ -1540,11 +1826,11 @@ fn worker_loop(
                 return Ok(());
             }
         }
-        let any_active = lanes.iter().any(LocalLaneV1::is_active);
-        let has_future = lanes.iter().any(LocalLaneV1::has_future_episode);
+        let any_active = lanes.iter().any(LocalLaneCore::is_active);
+        let has_future = lanes.iter().any(LocalLaneCore::has_future_episode);
         if !any_active && !has_future {
             message_tx
-                .send(WorkerMessageV1::Done { worker_id })
+                .send(WorkerMessageCore::Done { worker_id })
                 .map_err(|_| WorkerFailureV1 {
                     worker_id,
                     logical_lane_id: first_lane,
@@ -1562,7 +1848,7 @@ fn worker_loop(
             });
         }
         message_tx
-            .send(WorkerMessageV1::Round(round))
+            .send(WorkerMessageCore::Round(round))
             .map_err(|_| WorkerFailureV1 {
                 worker_id,
                 logical_lane_id: first_lane,
@@ -1579,7 +1865,7 @@ fn worker_loop(
             return Ok(());
         }
         match control_rx.recv_timeout(remaining) {
-            Ok(WorkerControlV1::Continue {
+            Ok(WorkerControlCore::Continue {
                 release_epoch,
                 round: returned_round,
             }) => {
@@ -1600,18 +1886,18 @@ fn worker_loop(
                 }
                 round = returned_round;
             }
-            Ok(WorkerControlV1::Cancel) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
+            Ok(WorkerControlCore::Cancel) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
             Err(RecvTimeoutError::Timeout) => return Ok(()),
         }
     }
 }
 
-fn worker_entry(
+fn worker_entry<F: FlatScoredFamilyCore>(
     worker_id: usize,
     config: AsyncRolloutConfigV2,
     runtime: WorkerRuntimeV1,
-    message_tx: SyncSender<WorkerMessageV1>,
-    control_rx: Receiver<WorkerControlV1>,
+    message_tx: SyncSender<WorkerMessageCore<F>>,
+    control_rx: Receiver<WorkerControlCore<F>>,
 ) {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         worker_loop(worker_id, &config, &runtime, &message_tx, &control_rx)
@@ -1619,10 +1905,10 @@ fn worker_entry(
     match result {
         Ok(Ok(())) => {}
         Ok(Err(failure)) => {
-            let _ = message_tx.send(WorkerMessageV1::Failed(failure));
+            let _ = message_tx.send(WorkerMessageCore::Failed(failure));
         }
         Err(_) => {
-            let _ = message_tx.send(WorkerMessageV1::Failed(WorkerFailureV1 {
+            let _ = message_tx.send(WorkerMessageCore::Failed(WorkerFailureV1 {
                 worker_id,
                 logical_lane_id: worker_id.saturating_mul(config.sessions_per_worker),
                 episode_id: u64::MAX,
@@ -1718,7 +2004,7 @@ struct MembershipDigestV1 {
 }
 
 impl MembershipDigestV1 {
-    fn new() -> Self {
+    fn new(domain: &[u8]) -> Self {
         let mut digest = Self {
             states: [
                 FNV1A64_OFFSET,
@@ -1727,7 +2013,7 @@ impl MembershipDigestV1 {
                 FNV1A64_OFFSET ^ 0x94d0_49bb_1331_11eb,
             ],
         };
-        digest.update(b"mtg-kernel/async-flat-scored-rollout-v1/membership/v1");
+        digest.update(domain);
         digest
     }
 
@@ -1750,11 +2036,11 @@ impl MembershipDigestV1 {
     }
 }
 
-fn sample_validated_round_decision_v1(
+fn sample_validated_round_decision_v1<F: FlatScoredFamilyCore>(
     broker_episodes: &mut [BrokerEpisodeV1],
     sampler: &mut FastCategoricalScratch,
     learner_policy_seed: u64,
-    decision: &RoundDecisionV1,
+    decision: &RoundDecisionCore<F>,
     action_logits: &[f32],
     predicted_value: f32,
 ) -> Result<ValidatedRoundSampleV1, AsyncFlatScoredRolloutErrorV1> {
@@ -1782,9 +2068,9 @@ fn sample_validated_round_decision_v1(
     })
 }
 
-fn record_validated_round_sample_v1(
+fn record_validated_round_sample_v1<F: FlatScoredFamilyCore>(
     digest: &mut MembershipDigestV1,
-    decision: &RoundDecisionV1,
+    decision: &RoundDecisionCore<F>,
     sample: ValidatedRoundSampleV1,
 ) {
     digest.update((decision.logical_lane_id as u64).to_le_bytes());
@@ -1795,21 +2081,21 @@ fn record_validated_round_sample_v1(
     digest.update(sample.selected_index.to_le_bytes());
 }
 
-fn stage_validated_action_reply_v1(
-    worker_rounds: &mut [Option<WorkerRoundV1>],
-    decision: RoundDecisionV1,
+fn stage_validated_action_reply_v1<F: FlatScoredFamilyCore>(
+    worker_rounds: &mut [Option<WorkerRoundCore<F>>],
+    decision: RoundDecisionCore<F>,
     sample: ValidatedRoundSampleV1,
 ) -> Result<(), AsyncFlatScoredRolloutErrorV1> {
-    let binding = decision.packet.decision().binding;
+    let binding = F::packet_binding(&decision.packet);
     worker_rounds
         .get_mut(decision.worker_id)
         .and_then(Option::as_mut)
         .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
         .reply
         .actions
-        .push(ActionReplyV1 {
+        .push(ActionReplyCore {
             logical_lane_id: decision.logical_lane_id,
-            scored: BoundScoredActionV1 {
+            scored: BoundScoredActionCore {
                 binding,
                 learner_ordinal: sample.learner_ordinal,
                 selected_index: sample.selected_index,
@@ -1864,6 +2150,21 @@ pub fn run_async_flat_scored_rollout_v1(
 pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryObserverV1>(
     config: AsyncRolloutConfigV2,
     scorer: &mut impl FlatBatchScorerV1,
+    observer: O,
+) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
+{
+    let mut scorer = FlatBatchScorerAdapterV1(scorer);
+    let observer = FlatScoredTrajectoryObserverAdapterV1(observer);
+    run_async_flat_scored_rollout_core::<FlatScoredFamilyV1, _, _>(config, &mut scorer, observer)
+}
+
+pub(crate) fn run_async_flat_scored_rollout_core<
+    F: FlatScoredFamilyCore,
+    S: FlatBatchScorerCore<F>,
+    O: FlatScoredTrajectoryObserverCore<F>,
+>(
+    config: AsyncRolloutConfigV2,
+    scorer: &mut S,
     mut observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
 {
@@ -1934,9 +2235,9 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
         let worker_runtime = worker_runtime.clone();
         let worker_config = config.clone();
         let spawn = thread::Builder::new()
-            .name(format!("mtg-async-flat-scored-v1-{worker_id}"))
+            .name(format!("{}-{worker_id}", F::WORKER_NAME))
             .spawn(move || {
-                worker_entry(
+                worker_entry::<F>(
                     worker_id,
                     worker_config,
                     worker_runtime,
@@ -1952,7 +2253,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
             Err(_) => {
                 cancel.store(true, Ordering::Release);
                 for control in &control_txs {
-                    let _ = control.send(WorkerControlV1::Cancel);
+                    let _ = control.send(WorkerControlCore::Cancel);
                 }
                 let _ = join_every_worker(&mut handles);
                 return Err(AsyncFlatScoredRolloutErrorV1::WorkerSpawnFailed { worker_id }.into());
@@ -1964,7 +2265,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
     let mut active_workers = vec![true; config.worker_count];
     let mut broker_episodes = vec![BrokerEpisodeV1::empty(); logical_lane_count];
     let mut metrics = AsyncFlatScoredRolloutMetricsV1::default();
-    let mut digest = MembershipDigestV1::new();
+    let mut digest = MembershipDigestV1::new(F::MEMBERSHIP_DIGEST_DOMAIN);
     digest.update(config.first_episode_id.to_le_bytes());
     digest.update(config.episode_count.to_le_bytes());
     digest.update((logical_lane_count as u64).to_le_bytes());
@@ -1980,7 +2281,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
     let mut round_decisions = Vec::with_capacity(logical_lane_count);
     let mut round_terminals = Vec::with_capacity(logical_lane_count);
     let mut round_samples = O::OBSERVES_TRAJECTORY.then(|| Vec::with_capacity(logical_lane_count));
-    let mut worker_rounds: Vec<Option<WorkerRoundV1>> =
+    let mut worker_rounds: Vec<Option<WorkerRoundCore<F>>> =
         (0..config.worker_count).map(|_| None).collect();
     let mut observer_interruption = None;
 
@@ -2016,9 +2317,9 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
                     }
                 };
                 let worker_id = match &message {
-                    WorkerMessageV1::Round(round) => round.worker_id,
-                    WorkerMessageV1::Done { worker_id } => *worker_id,
-                    WorkerMessageV1::Failed(failure) => failure.worker_id,
+                    WorkerMessageCore::Round(round) => round.worker_id,
+                    WorkerMessageCore::Done { worker_id } => *worker_id,
+                    WorkerMessageCore::Failed(failure) => failure.worker_id,
                 };
                 if worker_id >= config.worker_count || !active_workers[worker_id] || seen[worker_id]
                 {
@@ -2026,7 +2327,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
                 }
                 seen[worker_id] = true;
                 match message {
-                    WorkerMessageV1::Failed(failure) => {
+                    WorkerMessageCore::Failed(failure) => {
                         return Err(AsyncFlatScoredRolloutErrorV1::WorkerFailed {
                             worker_id: failure.worker_id,
                             logical_lane_id: failure.logical_lane_id,
@@ -2034,10 +2335,10 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
                             phase: failure.phase,
                         });
                     }
-                    WorkerMessageV1::Done { worker_id } => {
+                    WorkerMessageCore::Done { worker_id } => {
                         done_this_round[worker_id] = true;
                     }
-                    WorkerMessageV1::Round(mut round) => {
+                    WorkerMessageCore::Round(mut round) => {
                         if (round.decisions.is_empty() && round.terminals.is_empty())
                             || !round.reply.actions.is_empty()
                             || !round.reply.terminal_acks.is_empty()
@@ -2079,10 +2380,13 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
             });
             let round_contract = round_decisions
                 .first()
-                .map(|decision| decision.packet.scorer_contract());
+                .map(|decision| F::packet_contract(&decision.packet));
             for decision in &round_decisions {
-                if decision.packet.scorer_contract() != round_contract.expect("nonempty round")
-                    || !expected_matches_binding(decision.expected, *decision.packet.decision())
+                if F::packet_contract(&decision.packet) != round_contract.expect("nonempty round")
+                    || !F::expected_matches_binding(
+                        decision.expected,
+                        F::packet_decision(&decision.packet),
+                    )
                 {
                     return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                 }
@@ -2096,7 +2400,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
                     .copied()
                     .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?
                     .checked_add(
-                        usize::try_from(decision.packet.decision().active_action_count)
+                        usize::try_from(F::packet_action_count(&decision.packet))
                             .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?,
                     )
                     .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
@@ -2126,16 +2430,13 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
                             .iter()
                             .map(|offset| offset - logit_start),
                     );
-                    let batch = FlatScoringBatchViewV1 {
-                        contract,
-                        decisions: &round_decisions[chunk_start..chunk_end],
-                        action_offsets: &chunk_action_offsets,
-                    };
                     let batch_index = metrics.scorer_batch_count;
                     let score_result =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            scorer.score_batch_v1(
-                                &batch,
+                            scorer.score_batch_core(
+                                contract,
+                                &round_decisions[chunk_start..chunk_end],
+                                &chunk_action_offsets,
                                 &mut round_logits[logit_start..logit_end],
                                 &mut round_values[chunk_start..chunk_end],
                             )
@@ -2239,17 +2540,17 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
                 {
                     let logit_start = round_action_offsets[decision_index];
                     let logit_end = round_action_offsets[decision_index + 1];
-                    if let Err(interruption) = observe_selected_v1(
+                    if let Err(interruption) = observe_selected_core::<F, O>(
                         &mut observer,
-                        FlatScoredSelectedEventV1 {
+                        FlatScoredSelectedEventCore {
                             expected: decision.expected,
-                            binding: decision.packet.decision().binding,
+                            binding: F::packet_binding(&decision.packet),
                             learner_ordinal: sample.learner_ordinal,
                             action_seed: sample.action_seed,
                             selected_index: sample.selected_index,
                             raw_action_logits: &round_logits[logit_start..logit_end],
                             predicted_value_bits: sample.predicted_value.0,
-                            decision: decision.packet.scorer_view(),
+                            decision: F::packet_view(&decision.packet),
                         },
                     ) {
                         observer_interruption = Some(interruption);
@@ -2293,7 +2594,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
                     terminal.learner_trace_hash,
                 )?;
                 if O::OBSERVES_TRAJECTORY {
-                    if let Err(interruption) = observe_terminal_v1(
+                    if let Err(interruption) = observe_terminal_core::<F, O>(
                         &mut observer,
                         FlatScoredTerminalEventV1 {
                             terminal: episode.terminal,
@@ -2335,7 +2636,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
                 }
                 ensure_before_deadline_v1(deadline)?;
                 control_txs[worker_id]
-                    .send(WorkerControlV1::Continue {
+                    .send(WorkerControlCore::Continue {
                         release_epoch,
                         round,
                     })
@@ -2365,7 +2666,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
     if broker_result.is_err() {
         cancel.store(true, Ordering::Release);
         for control in &control_txs {
-            let _ = control.send(WorkerControlV1::Cancel);
+            let _ = control.send(WorkerControlCore::Cancel);
         }
     }
     let join_result = join_every_worker(&mut handles);
@@ -2418,7 +2719,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
         return Err(AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded.into());
     }
     let observed_output =
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer.finish_v1())) {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer.finish_core())) {
             Ok(Ok(output)) => output,
             Ok(Err(error)) => {
                 return Err(AsyncFlatScoredObservedRunErrorV1::ObserverFailed {
@@ -2460,8 +2761,8 @@ fn join_every_worker(
     }
 }
 
-fn stable_decision_key(
-    decision: &RoundDecisionV1,
+fn stable_decision_key<F: FlatScoredFamilyCore>(
+    decision: &RoundDecisionCore<F>,
 ) -> (u64, u64, u64, u64, u32, u32, u8, u8, u32, usize) {
     let expected = decision.expected;
     (

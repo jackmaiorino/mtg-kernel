@@ -1,0 +1,141 @@
+{
+  "schema": "flat-action-contract-v2",
+  "source_digest_semantics": "raw_utf8_file_bytes_sha256",
+  "semantic_digest_semantics": "canonical_json_utf8_sha256",
+  "type_identities": {
+    "action_row": "FlatActionCoreV1_shared_by_v2",
+    "object_row": "FlatActionObjectV2",
+    "reference_row": "FlatActionRefV2",
+    "binding": "FlatActionDecisionBindingV2",
+    "slice": "FlatActionDecisionSliceV2",
+    "buffers": "FlatActionDecisionSliceBuffersV2"
+  },
+  "typed_layouts": {
+    "FlatActionDecisionBindingV2": [
+      ["slice_version", "u32"],
+      ["ref_role_mapping_version", "u32"],
+      ["card_token_mapping_version", "u32"],
+      ["candidate_commitment_version", "u32"],
+      ["card_db_hash", "u64"],
+      ["episode_id", "u64"],
+      ["environment_revision", "u64"],
+      ["bound_policy_step_count", "u64"],
+      ["physical_decision_id", "u64"],
+      ["bound_physical_decision_count", "u64"],
+      ["substep_index", "u32"],
+      ["substep_count", "u32"],
+      ["acting_player", "u8"],
+      ["decision_kind", "u8"],
+      ["legal_action_count", "u32"],
+      ["candidate_order_commitment", "[u8;16]"]
+    ],
+    "FlatActionDecisionSliceV2": [
+      ["binding", "FlatActionDecisionBindingV2"],
+      ["active_action_count", "u32"],
+      ["active_ref_count", "u32"],
+      ["active_object_count", "u16"]
+    ],
+    "FlatActionDecisionSliceBuffersV2": [
+      ["actions", "&mut[FlatActionCoreV1]"],
+      ["refs", "&mut[FlatActionRefV2]"],
+      ["objects", "&mut[FlatActionObjectV2]"]
+    ]
+  },
+  "versions": {
+    "slice": 2,
+    "reference_role_mapping": 1,
+    "card_token_mapping": 2,
+    "candidate_commitment": 2
+  },
+  "reference_role_mapping": {
+    "authority_path": "data/flat_policy_v1/goldens_v1.json#action_ref_role_crosswalk",
+    "authority_schema": "flat-policy-action-ref-role-crosswalk-v1",
+    "mapping_version": 1,
+    "canonical_sha256": "6bf7f82dc855da04a368fe53cba9411c5e8be07cfa8c450c2742a39bffbab958",
+    "compatibility": "v2_exactly_reuses_all_v1_internal_and_projection_role_ids"
+  },
+  "candidate_commitment": {
+    "domain_utf8": "mtg-kernel-flat-action-candidate-order-v2\u0000",
+    "stream_order": "header_then_objects_by_object_index_then_each_actions_refs_in_slice_order_then_action",
+    "digest": "sha256",
+    "published_bytes": "first_16",
+    "header_fields": [
+      ["slice_version", "u32_le"],
+      ["reference_role_mapping_version", "u32_le"],
+      ["card_token_mapping_version", "u32_le"],
+      ["candidate_commitment_version", "u32_le"],
+      ["card_db_hash", "u64_le"],
+      ["actor_seat", "u8_p0_0_p1_1"],
+      ["action_count", "u32_le"],
+      ["reference_count", "u32_le"],
+      ["object_count", "u16_le"]
+    ],
+    "object_row": {
+      "marker_ascii": "O",
+      "fields": [
+        ["object_index", "u16_le"],
+        ["card_token", "u32_le"],
+        ["group", "u8_discriminant"],
+        ["actor_visible_ordinal", "u16_le"],
+        ["owner_relative", "u8"],
+        ["controller_relative", "u8"],
+        ["zone", "u8"],
+        ["zone_change_count", "u32_le"]
+      ]
+    },
+    "action_row": {
+      "marker_ascii": "A",
+      "fields": [
+        ["action_index", "u32_le"],
+        ["kind", "u8_discriminant"],
+        ["flags", "u16_le"],
+        ["ability_index", "u8"],
+        ["remaining", "u8"],
+        ["mode_index", "u8"],
+        ["mode_count", "u8"],
+        ["option_index", "u16_le"],
+        ["option_count", "u16_le"],
+        ["selected_count", "u16_le"],
+        ["min_targets", "u16_le"],
+        ["max_targets", "u16_le"],
+        ["number", "i32_le_twos_complement"],
+        ["minimum", "i32_le_twos_complement"],
+        ["maximum", "i32_le_twos_complement"],
+        ["mana_choice", "u8"],
+        ["color", "u8"],
+        ["cast_mode", "u8"],
+        ["cost_kind", "u8"],
+        ["optional_cost_choice", "u8"],
+        ["target_kind", "u8"],
+        ["target_player", "u8"],
+        ["ref_start", "u32_le"],
+        ["ref_len", "u16_le"]
+      ]
+    },
+    "reference_row": {
+      "marker_ascii": "R",
+      "fields": [
+        ["action_index", "u32_le"],
+        ["role", "u8_discriminant"],
+        ["order_index", "u16_le"],
+        ["associated_order", "u16_le"],
+        ["card_token", "u32_le"],
+        ["object_index", "u16_le"],
+        ["bound_object.card_token", "u32_le"],
+        ["bound_object.group", "u8_discriminant"],
+        ["bound_object.actor_visible_ordinal", "u16_le"],
+        ["bound_object.owner_relative", "u8"],
+        ["bound_object.controller_relative", "u8"],
+        ["bound_object.zone", "u8"],
+        ["bound_object.zone_change_count", "u32_le"]
+      ]
+    }
+  },
+  "card_token_contract": {
+    "minimum": 1,
+    "maximum": 65536,
+    "encoding": "card_db_id_plus_one_u32",
+    "wire_encoding": "u32_le",
+    "zero_reserved_for_padding": true
+  }
+}

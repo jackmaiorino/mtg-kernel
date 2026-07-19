@@ -1,0 +1,62 @@
+{
+  "schema": "flat-policy-feature-inventory-v2",
+  "base_inventory": {
+    "schema": "flat-policy-feature-inventory-v1",
+    "source_sha256": "b24304163ec916e8a871f5fea0e5b25505251b6f275ed734033f79f9e0d95416",
+    "canonical_sha256": "f46c9fbbad3654c0d5f0f5b8ea89134b392a79b148d002dc35ab5bc3156a1220"
+  },
+  "typed_layout": {
+    "domain": "mtg-kernel-flat-policy-typed-layout-v2\u0000",
+    "base_sha256": "b4de06cab5644196111ab0f59bec454dd51cb1ec785b19386dc11709650d738b",
+    "overlay_sha256": "73f477529353fd4e7265863d0491f4722d5408fbccce92f4a9f79861a241c861",
+    "composite_sha256": "2ccc6e540f9d6f8cd662b17325a8120450d0c290be404448ae894e7154b92619"
+  },
+  "action_contract": {
+    "path": "data/flat_policy_v2/action_contract_v2.json",
+    "schema": "flat-action-contract-v2",
+    "source_sha256": "946f495d6ba029f01b781e05b6ee70f1fe2a83f4a13167d02363ad383fe64a75",
+    "canonical_sha256": "bbac470c2352819c53ea5772314d1966ba88c8235e918f8678cc78b27ec1a10f"
+  },
+  "unchanged_contracts": {
+    "mapping_sha256": "bf0347ab442bd1c81cade03899b0c1af93d9bc26468b1e8139dbfc562fa4c4b6",
+    "action_ref_role_crosswalk_sha256": "6bf7f82dc855da04a368fe53cba9411c5e8be07cfa8c450c2742a39bffbab958",
+    "authoritative_features_sha256": "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+    "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+    "encoding_contract_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c"
+  },
+  "versions": {
+    "typed_layout": 2,
+    "feature_inventory": 2,
+    "enum_mapping": 1,
+    "object_group_mapping": 1,
+    "relation_role_mapping": 1,
+    "context_subrole_mapping": 1,
+    "scorer_packet": 2,
+    "scorer_action_ref": 2,
+    "scorer_visible_manifest": 2,
+    "action_decision_slice": 2,
+    "action_card_token_mapping": 2,
+    "action_candidate_commitment": 2
+  },
+  "visible_manifest": "globals,objects,relations,object_subtypes,ability_uses,goads,completed_dungeons,effect_subtype_changes,context_path_elements,actions,action_refs",
+  "blocked_order_contract": {
+    "type": "Option<u32>",
+    "none": "attacker absent from attacker_to_ordered_blockers",
+    "some": "exact zero-based mapping index including present-empty",
+    "invariant": "present indices unique and contiguous",
+    "v1_redundant_field_removed": "was_blocked"
+  },
+  "semantic_delta": [
+    "explicit FlatActionObjectV2, FlatActionRefV2, and FlatActionDecisionBindingV2",
+    "u32 card tokens admit card_db_id 65535 as token 65536",
+    "candidate commitment domain and u32 token serialization are V2",
+    "CombatAttacker blocked_order repairs absent, present-empty, and outer mapping order",
+    "known-hand set rows use Python canonical-JSON ordering",
+    "V1 remains fail-closed and byte-bound to its original typed source"
+  ],
+  "topology_audit": {
+    "path": "data/flat_policy_v2/ordered_topology_audit_v2.md",
+    "source_sha256": "4799ba1307130cb74864f2f2757006078170c4a4697ed2e715799f47a6959a11"
+  },
+  "independent_goldens": "data/flat_policy_v2/goldens_v2.json"
+}
