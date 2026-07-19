@@ -1684,6 +1684,27 @@ fn adam_update(
     step: u64,
     learning_rate: f32,
 ) -> Result<AdamUpdateV1, NativePolicyTrainErrorV1> {
+    adam_update_impl(
+        parameters,
+        gradients,
+        first_moments,
+        second_moments,
+        step,
+        learning_rate,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn adam_update_impl(
+    parameters: &[NativeNamedParameterV1],
+    gradients: &[Vec<f32>],
+    first_moments: &[Vec<f32>],
+    second_moments: &[Vec<f32>],
+    step: u64,
+    learning_rate: f32,
+    skip_exact_zero_state: bool,
+) -> Result<AdamUpdateV1, NativePolicyTrainErrorV1> {
     let exponent = i32::try_from(step).map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
     let bias_correction1 = 1.0f64 - f64::from(ADAM_BETA1_V1).powi(exponent);
     let bias_correction2 = 1.0f64 - f64::from(ADAM_BETA2_V1).powi(exponent);
@@ -1699,9 +1720,21 @@ fn adam_update(
         for value_index in 0..parameters[parameter_index].values.len() {
             let gradient = gradients[parameter_index][value_index];
             let previous_first = first_moments[parameter_index][value_index];
+            let previous_second = second_moments[parameter_index][value_index];
+            // The dense Adam equations map this exact (+0,+0,+0) triple back
+            // to the already-cloned parameter and moment bits. This dominates
+            // untouched embedding rows; signed zero and every active state
+            // deliberately retain the dense arithmetic path.
+            if skip_exact_zero_state
+                && gradient.to_bits() == 0
+                && previous_first.to_bits() == 0
+                && previous_second.to_bits() == 0
+            {
+                continue;
+            }
             let first = previous_first + (gradient - previous_first) * (1.0 - ADAM_BETA1_V1);
-            let second = second_moments[parameter_index][value_index] * ADAM_BETA2_V1
-                + gradient * gradient * (1.0 - ADAM_BETA2_V1);
+            let second =
+                previous_second * ADAM_BETA2_V1 + gradient * gradient * (1.0 - ADAM_BETA2_V1);
             let denominator = second.sqrt() / bias_correction2_sqrt + ADAM_EPSILON_V1;
             let parameter = parameters[parameter_index].values[value_index]
                 + (-step_size) * first / denominator;
@@ -2682,6 +2715,7 @@ mod tests {
             let reference_substeps = substeps_for_step(&forward, step, &expected_outputs);
             let reference_groups = groups_for_step(step, &reference_substeps);
             let lifetime_probe = Rc::new(());
+            let packed_before = packed_state.snapshot_v1().unwrap();
 
             let packed_result = {
                 let builder =
@@ -2727,6 +2761,43 @@ mod tests {
                 1,
                 "packed tapes must not escape their update"
             );
+            let dense_gradients = packed_result
+                .gradients
+                .iter()
+                .map(|parameter| parameter.values.clone())
+                .collect::<Vec<_>>();
+            let dense_first_before = packed_before
+                .first_moments
+                .iter()
+                .map(|parameter| parameter.values.clone())
+                .collect::<Vec<_>>();
+            let dense_second_before = packed_before
+                .second_moments
+                .iter()
+                .map(|parameter| parameter.values.clone())
+                .collect::<Vec<_>>();
+            let (mut dense_parameters, mut dense_first, mut dense_second) = adam_update_impl(
+                &packed_before.parameters,
+                &dense_gradients,
+                &dense_first_before,
+                &dense_second_before,
+                packed_result.adam_step,
+                golden.optimizer.learning_rate,
+                false,
+            )
+            .unwrap();
+            dense_parameters[SCORER_SECOND_BIAS].values[0] =
+                packed_before.parameters[SCORER_SECOND_BIAS].values[0];
+            dense_first[SCORER_SECOND_BIAS][0] = 0.0;
+            dense_second[SCORER_SECOND_BIAS][0] = 0.0;
+            let dense_expected = NativePolicyValueTrainSnapshotV1 {
+                adam_step: packed_result.adam_step,
+                scorer_bias_anchor_bits: packed_before.scorer_bias_anchor_bits,
+                first_moments: named_state_snapshot(&dense_parameters, &dense_first),
+                second_moments: named_state_snapshot(&dense_parameters, &dense_second),
+                parameters: dense_parameters,
+            };
+            assert_eq!(packed_state.snapshot_v1().unwrap(), dense_expected);
 
             let calls_before_reference = forward_with_tape_call_count_for_test_v1();
             let reference_result = reference_state
@@ -2836,6 +2907,42 @@ mod tests {
             )
         );
         assert_eq!(stale_generation_state.snapshot_v1().unwrap(), before);
+    }
+
+    #[test]
+    fn exact_zero_adam_shortcut_matches_dense_bits_and_excludes_signed_zero() {
+        let parameters = vec![NativeNamedParameterV1 {
+            name: "shortcut.test",
+            shape: vec![8],
+            values: vec![1.0, -2.0, 3.0, 4.0, 5.0, 6.0, 0.0, -0.0],
+        }];
+        let gradients = vec![vec![0.0, -0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0]];
+        let first = vec![vec![0.0, 0.0, -0.0, 0.0, 0.0, 0.5, 0.0, 0.0]];
+        let second = vec![vec![0.0, 0.0, 0.0, -0.0, 0.0, 0.0, 0.5, 0.0]];
+        for step in [1, 2, 4_096] {
+            let dense =
+                adam_update_impl(&parameters, &gradients, &first, &second, step, 0.001, false)
+                    .unwrap();
+            let shortcut =
+                adam_update_impl(&parameters, &gradients, &first, &second, step, 0.001, true)
+                    .unwrap();
+            for (dense_values, shortcut_values) in [
+                (&dense.0[0].values, &shortcut.0[0].values),
+                (&dense.1[0], &shortcut.1[0]),
+                (&dense.2[0], &shortcut.2[0]),
+            ] {
+                assert_eq!(
+                    shortcut_values
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    dense_values
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
     }
 
     #[test]
