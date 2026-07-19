@@ -114,6 +114,7 @@ enum NativePolicyAssociationTestMutationV1 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativePolicyTrainRevalidationTestMutationV1 {
     ExpectedLogitCount { episode_offset: usize },
+    Logit { episode_offset: usize },
     Value { episode_offset: usize },
 }
 
@@ -1299,6 +1300,7 @@ fn mutate_grouped_train_revalidation_for_test_v1(
 ) -> Result<(), NativeTrainerErrorV1> {
     let episode_offset = match mutation {
         NativePolicyTrainRevalidationTestMutationV1::ExpectedLogitCount { episode_offset }
+        | NativePolicyTrainRevalidationTestMutationV1::Logit { episode_offset }
         | NativePolicyTrainRevalidationTestMutationV1::Value { episode_offset } => episode_offset,
     };
     let episode =
@@ -1308,6 +1310,28 @@ fn mutate_grouped_train_revalidation_for_test_v1(
             .ok_or(NativeTrainerErrorV1::GroupingInvariant(
                 "test mutation episode offset is out of range",
             ))?;
+    if matches!(
+        mutation,
+        NativePolicyTrainRevalidationTestMutationV1::Logit { .. }
+    ) {
+        for group in &mut episode.groups {
+            for substep in &mut group.substeps {
+                let selected = usize::try_from(substep.selected_index).map_err(|_| {
+                    NativeTrainerErrorV1::GroupingInvariant(
+                        "test mutation selected index is out of range",
+                    )
+                })?;
+                if substep.raw_action_logit_bits.len() > 1 {
+                    let action_index = if selected == 0 { 1 } else { 0 };
+                    substep.raw_action_logit_bits[action_index] ^= 1;
+                    return Ok(());
+                }
+            }
+        }
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "test requires a non-selected action row in the requested episode",
+        ));
+    }
     for group in &mut episode.groups {
         if let Some(substep) = group.substeps.first_mut() {
             match mutation {
@@ -1317,6 +1341,9 @@ fn mutate_grouped_train_revalidation_for_test_v1(
                             "test requires a nonempty expected-logit vector",
                         ),
                     )?;
+                }
+                NativePolicyTrainRevalidationTestMutationV1::Logit { .. } => {
+                    unreachable!("logit mutation returns before the first-substep mutation path")
                 }
                 NativePolicyTrainRevalidationTestMutationV1::Value { .. } => {
                     substep.predicted_value_bits ^= 1;
@@ -2026,6 +2053,12 @@ mod tests {
         );
 
         for evidence in [&narrow_evidence, &wide_evidence] {
+            // The update timer starts before validation and is captured only
+            // after the live model/progress commit. Rollout is a strict inner
+            // span, so every successful update must record both a nonzero
+            // duration and at least the rollout's own elapsed duration.
+            assert!(evidence.update_elapsed_ns > 0);
+            assert!(evidence.update_elapsed_ns >= evidence.rollout_metrics.total_elapsed_ns);
             assert_eq!(evidence.first_episode_index, 0);
             assert_eq!(evidence.episode_count, 2);
             assert_eq!(evidence.episodes[0].learner_seat, PlayerSeatV1::P0);
@@ -2186,7 +2219,8 @@ mod tests {
             NATIVE_TRAINER_CONTRACT_IDENTITY_V2,
             "mtg-kernel-native-even-batch-trainer-v2"
         );
-        for batch_episodes in [0, 1, 3, NATIVE_TRAINER_MAX_BATCH_EPISODES_V2 + 2] {
+        assert_eq!(NATIVE_TRAINER_MAX_BATCH_EPISODES_V2, 10_000);
+        for batch_episodes in [0, 1, 3, 10_001, NATIVE_TRAINER_MAX_BATCH_EPISODES_V2 + 2] {
             let config = burn_even_batch_config_v2(batch_episodes, 1, 1, 1);
             assert_eq!(
                 validate_update_config_v2(&config),
@@ -2520,6 +2554,35 @@ mod tests {
             ) if action_index != selected_action_index && expected_bits != actual_bits
         ));
         assert_eq!(exact_state_snapshot_v1(&trainer), before);
+    }
+
+    #[test]
+    fn even_batch_v2_recomputed_logit_corruption_is_transactional_at_each_batch_region() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let config = burn_even_batch_config_v2(4, 2, 2, 4);
+        for episode_offset in [0, 2, 3] {
+            let mut trainer = trainer_v2(4);
+            let before = exact_state_snapshot_v1(&trainer);
+            let error = trainer
+                .run_even_batch_update_with_train_revalidation_mutation_v2(
+                    &config,
+                    NativePolicyTrainRevalidationTestMutationV1::Logit { episode_offset },
+                )
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                NativeTrainerErrorV1::Train(
+                    NativePolicyTrainErrorV1::RecomputedLogitBitsMismatch {
+                        action_index,
+                        selected_action_index,
+                        expected_bits,
+                        actual_bits,
+                        ..
+                    }
+                ) if action_index != selected_action_index && expected_bits != actual_bits
+            ));
+            assert_eq!(exact_state_snapshot_v1(&trainer), before);
+        }
     }
 
     #[test]
