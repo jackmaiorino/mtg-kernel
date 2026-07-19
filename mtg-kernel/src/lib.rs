@@ -87,6 +87,9 @@ pub mod rl_session;
 pub mod runtime_decks;
 pub mod snapshot;
 pub mod state;
+/// Frozen committed-source-tree capture for science workload preflight and
+/// postflight binding.
+pub mod strict_source_tree_attestation_v1;
 pub mod surface;
 pub mod surface_v2;
 pub mod trace;
