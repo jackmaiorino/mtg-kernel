@@ -446,9 +446,9 @@ struct ValidatedSnapshotV1 {
     named_parameters: Vec<NativeNamedParameterV1>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CommonModelSnapshotRecordV1 {
+pub struct CommonModelSnapshotRecordV1 {
     pub(crate) schema: String,
     pub(crate) identity: String,
     pub(crate) snapshot_sha256: String,
@@ -483,6 +483,36 @@ pub(crate) struct CommonModelSnapshotRecordV1 {
     pub(crate) snapshot_load_timed: bool,
     pub(crate) rust_seeded_initializer_reproduced: bool,
     pub(crate) nonclaim: String,
+}
+
+impl CommonModelSnapshotRecordV1 {
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    pub fn snapshot_sha256(&self) -> &str {
+        &self.snapshot_sha256
+    }
+
+    pub fn manifest_file_sha256(&self) -> &str {
+        &self.manifest_file_sha256
+    }
+
+    pub fn payload_sha256(&self) -> &str {
+        &self.payload_sha256
+    }
+
+    pub fn payload_byte_count(&self) -> u64 {
+        self.payload_byte_count
+    }
+
+    pub fn parameter_layout_sha256(&self) -> &str {
+        &self.parameter_layout_sha256
+    }
+
+    pub fn model_config_fingerprint(&self) -> &str {
+        &self.model_config_fingerprint
+    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
