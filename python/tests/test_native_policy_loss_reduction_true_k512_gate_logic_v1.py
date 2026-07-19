@@ -5,6 +5,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -39,7 +41,7 @@ class TrueK512LossGateLogicV1Tests(unittest.TestCase):
                         gate.EXPECTED_RUN_BASE_SEED, episode_index // 2
                     ),
                     "deck_hashes": [1, 1],
-                    "learner_seat": gate._learner_seat(episode_index),
+                    "learner_seat": gate._frozen_learner_seat(episode_index),
                     "learner_return": 0,
                     "terminal_outcome": "draw",
                     "learner_group_count": 1,
@@ -236,6 +238,17 @@ class TrueK512LossGateLogicV1Tests(unittest.TestCase):
             snapshot = capture["snapshot"]
             path = directory_path / "capture.json"
             path.write_text(json.dumps(capture), encoding="utf-8")
+            authority_fixture = mock.Mock(
+                AUTHORITY_PLATFORM_SYSTEM="Windows",
+                AUTHORITY_PLATFORM_MACHINE="AMD64",
+                AUTHORITY_PYTHON_VERSION="3.12.10",
+                AUTHORITY_TORCH_VERSION="2.13.0+cpu",
+                TORCH_NUM_THREADS=1,
+                TORCH_NUM_INTEROP_THREADS=1,
+            )
+            authority_fixture._validate_authorities.return_value = {
+                "trainer_sha256": gate._sha256(gate.TRAINER_SOURCE)
+            }
             with (
                 mock.patch.object(
                     gate,
@@ -266,11 +279,13 @@ class TrueK512LossGateLogicV1Tests(unittest.TestCase):
                     wraps=gate._comparison_record,
                 ) as comparison,
                 mock.patch.object(
-                    gate.train_fixture,
-                    "_validate_authorities",
-                    return_value={
-                        "trainer_sha256": gate._sha256(gate.TRAINER_SOURCE)
-                    },
+                    gate,
+                    "_load_torch_authority",
+                    return_value=(
+                        mock.sentinel.torch,
+                        authority_fixture,
+                        mock.sentinel.compute_loss_tensors,
+                    ),
                 ),
             ):
                 payload = gate._payload(path, executable)
@@ -306,6 +321,67 @@ class TrueK512LossGateLogicV1Tests(unittest.TestCase):
                 term_values.assert_not_called()
                 authority_reduction.assert_not_called()
                 comparison.assert_not_called()
+
+    def test_cli_rejects_executable_before_loading_torch_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            directory_path = Path(directory).resolve()
+            expected_executable = b"expected-capture-executable\x00"
+            executable = directory_path / "capture-executable.exe"
+            executable.write_bytes(b"wrong-capture-executable\x00")
+            capture = {
+                "source": {
+                    "executable_sha256": hashlib.sha256(
+                        expected_executable
+                    ).hexdigest()
+                }
+            }
+            capture_path = directory_path / "capture.json"
+            capture_path.write_text(json.dumps(capture), encoding="utf-8")
+            output_path = directory_path / "gate.json"
+
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(gate.GENERATOR),
+                        "--capture",
+                        str(capture_path),
+                        "--capture-executable",
+                        str(executable),
+                        "--output",
+                        str(output_path),
+                    ],
+                ),
+                mock.patch.object(gate, "_load_torch_authority") as load_authority,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "capture executable SHA-256 binding failed"
+                ):
+                    gate.main()
+            load_authority.assert_not_called()
+            self.assertFalse(output_path.exists())
+
+    def test_module_import_does_not_load_torch_before_cli_preflight(self) -> None:
+        script = "\n".join(
+            [
+                "import importlib.util",
+                "import sys",
+                f"path = {str(MODULE_PATH)!r}",
+                "spec = importlib.util.spec_from_file_location('k512_preflight_probe', path)",
+                "module = importlib.util.module_from_spec(spec)",
+                "assert spec.loader is not None",
+                "spec.loader.exec_module(module)",
+                "assert 'torch' not in sys.modules, 'Torch loaded before executable preflight'",
+            ]
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_python_git_lookup_strips_ambient_git_routing(self) -> None:
         with mock.patch.dict(

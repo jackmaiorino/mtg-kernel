@@ -25,8 +25,6 @@ import subprocess
 import sys
 from typing import Any
 
-import torch
-
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "python" / "tools"
@@ -34,15 +32,6 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 if str(ROOT / "python") not in sys.path:
     sys.path.insert(0, str(ROOT / "python"))
-
-# This import establishes and verifies the previously frozen single-thread
-# deterministic authority topology and gives us the exact production Python
-# loss function whose stack/sum order is authoritative.
-import generate_native_policy_train_step_v1_goldens as train_fixture  # noqa: E402
-from mtg_kernel_rl.determinism import derive_train_env_seed  # noqa: E402
-from mtg_kernel_rl.trainer import _compute_loss_tensors  # noqa: E402
-from mtg_kernel_rl.training_store import _learner_seat  # noqa: E402
-
 
 SCHEMA = "native-policy-loss-reduction-true-k512-gate-v1"
 IDENTITY = "torch-stack-vs-rust-production-sequential-genuine-rally-k512-v1"
@@ -114,6 +103,30 @@ EPISODE_STREAM_FRAMING = "for episode ordinal in production order: u64be(ordinal
 SELECTED_STREAM_FRAMING = "for selected output in production order: u64be(group_index)||u64be(substep_index)||u64be(selected_action_index)||u32be(selected_logit_f32_bits)||u32be(value_f32_bits)||u32be(selected_log_probability_f32_bits)"
 
 
+def _load_torch_authority() -> tuple[Any, Any, Any]:
+    """Load deterministic Torch authority only after executable preflight."""
+    import torch
+
+    # Importing the checked-in generator configures the frozen single-thread
+    # deterministic authority topology. Keep that side effect behind the
+    # capture-executable SHA-256 gate.
+    import generate_native_policy_train_step_v1_goldens as train_fixture
+    from mtg_kernel_rl.trainer import _compute_loss_tensors
+
+    return torch, train_fixture, _compute_loss_tensors
+
+
+def _frozen_learner_seat(episode_index: int) -> str:
+    return "p0" if episode_index % 2 == 0 else "p1"
+
+
+def derive_train_env_seed(base_seed: int, pair_index: int) -> int:
+    """Load the production seed derivation only after CLI preflight."""
+    from mtg_kernel_rl.determinism import derive_train_env_seed as production_derive
+
+    return production_derive(base_seed, pair_index)
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -150,6 +163,33 @@ def _require_hex(value: Any, length: int, context: str) -> str:
     ):
         raise RuntimeError(f"{context} is not canonical lowercase hex")
     return value
+
+
+def _rederive_capture_executable_sha256(
+    source: dict[str, Any], capture_executable: Path
+) -> str:
+    recorded = _require_hex(
+        source.get("executable_sha256"), 64, "capture executable sha256"
+    )
+    if not capture_executable.is_absolute() or not capture_executable.is_file():
+        raise RuntimeError("capture executable must be an existing absolute file path")
+    rederived = _sha256(capture_executable)
+    if rederived != recorded:
+        raise RuntimeError("capture executable SHA-256 binding failed")
+    return rederived
+
+
+def _preflight_capture_executable_binding(
+    capture_path: Path, capture_executable: Path
+) -> str:
+    """Reject a wrong executable before importing or configuring Torch."""
+    if not capture_path.is_file():
+        raise RuntimeError(f"K512 capture is missing: {capture_path}")
+    capture = _load_strict(capture_path)
+    source = capture.get("source")
+    if not isinstance(source, dict):
+        raise RuntimeError("capture source record is missing")
+    return _rederive_capture_executable_sha256(source, capture_executable)
 
 
 def _require_f32_bits(value: Any, context: str) -> str:
@@ -403,7 +443,7 @@ def _episode_schedule_proof(records: list[dict[str, Any]]) -> dict[str, Any]:
         if type(environment_seed) is not int or not 0 <= environment_seed < 1 << 64:
             raise RuntimeError("capture episode environment seed is invalid")
         expected_seed = derive_train_env_seed(EXPECTED_RUN_BASE_SEED, episode_index // 2)
-        expected_seat = _learner_seat(episode_index)
+        expected_seat = _frozen_learner_seat(episode_index)
         environment_seeds_recomputed &= environment_seed == expected_seed
         learner_seats_recomputed &= learner_seat == expected_seat
         occurrences.setdefault(environment_seed, []).append(ordinal)
@@ -638,18 +678,12 @@ def _validate_capture(
         != CAPTURE_HARNESS.relative_to(ROOT).as_posix()
     ):
         raise RuntimeError("capture source preflight/postflight record drifted")
-    recorded_executable_sha256 = _require_hex(
-        source.get("executable_sha256"), 64, "capture executable sha256"
-    )
+    _require_hex(source.get("executable_sha256"), 64, "capture executable sha256")
     rederived_executable_sha256: str | None = None
     if capture_executable is not None:
-        if not capture_executable.is_absolute() or not capture_executable.is_file():
-            raise RuntimeError(
-                "capture executable must be an existing absolute file path"
-            )
-        rederived_executable_sha256 = _sha256(capture_executable)
-        if rederived_executable_sha256 != recorded_executable_sha256:
-            raise RuntimeError("capture executable SHA-256 binding failed")
+        rederived_executable_sha256 = _rederive_capture_executable_sha256(
+            source, capture_executable
+        )
 
     workload = capture["workload"]
     expected_workload = {
@@ -806,7 +840,7 @@ def _validate_capture(
     )
 
 
-def _tensor_bits(value: torch.Tensor) -> str:
+def _tensor_bits(value: Any, torch: Any) -> str:
     if value.numel() != 1 or value.dtype != torch.float32 or value.device.type != "cpu":
         raise RuntimeError("Torch authority scalar shape/dtype/device drifted")
     bits = int(value.detach().contiguous().view(torch.int32).item()) & 0xFFFFFFFF
@@ -816,9 +850,10 @@ def _tensor_bits(value: torch.Tensor) -> str:
 def _authority_reduction(
     capture: dict[str, Any],
 ) -> tuple[tuple[float, float, float], int, int, int]:
+    torch, _train_fixture, compute_loss_tensors = _load_torch_authority()
     terms = capture["term_stream"]["terms"]
     policy_portable, value_portable, raw_terms = _term_values(terms)
-    torch_terms: list[tuple[torch.Tensor, torch.Tensor, int]] = []
+    torch_terms: list[tuple[Any, Any, int]] = []
     with torch.no_grad():
         for joint, value, terminal_return in raw_terms:
             torch_terms.append(
@@ -828,7 +863,7 @@ def _authority_reduction(
                     terminal_return,
                 )
             )
-        policy_sum, value_sum, loss = _compute_loss_tensors(torch_terms, VALUE_COEFFICIENT)
+        policy_sum, value_sum, loss = compute_loss_tensors(torch_terms, VALUE_COEFFICIENT)
         policy_terms = []
         value_terms = []
         for joint, value, terminal_return in torch_terms:
@@ -843,17 +878,17 @@ def _authority_reduction(
     for ordinal, (torch_term, portable) in enumerate(
         zip(policy_terms, policy_portable, strict=True)
     ):
-        if _tensor_bits(torch_term) != _bits_hex(portable):
+        if _tensor_bits(torch_term, torch) != _bits_hex(portable):
             raise RuntimeError(f"policy term bits differ before reduction at {ordinal}")
     for ordinal, (torch_term, portable) in enumerate(
         zip(value_terms, value_portable, strict=True)
     ):
-        if _tensor_bits(torch_term) != _bits_hex(portable):
+        if _tensor_bits(torch_term, torch) != _bits_hex(portable):
             raise RuntimeError(f"value term bits differ before reduction at {ordinal}")
     if (
-        _tensor_bits(policy_sum) != _tensor_bits(direct_policy_sum)
-        or _tensor_bits(value_sum) != _tensor_bits(direct_value_sum)
-        or _tensor_bits(loss) != _tensor_bits(direct_loss)
+        _tensor_bits(policy_sum, torch) != _tensor_bits(direct_policy_sum, torch)
+        or _tensor_bits(value_sum, torch) != _tensor_bits(direct_value_sum, torch)
+        or _tensor_bits(loss, torch) != _tensor_bits(direct_loss, torch)
     ):
         raise RuntimeError("pinned trainer no longer uses direct stack/sum reduction")
     values = (float(policy_sum.item()), float(value_sum.item()), float(loss.item()))
@@ -941,6 +976,7 @@ def _payload(capture_path: Path, capture_executable: Path) -> dict[str, Any]:
         )
     }
     gate = _gate_record(comparisons)
+    _torch, train_fixture, _compute_loss_tensors = _load_torch_authority()
     authority_hashes = train_fixture._validate_authorities()
     return {
         "schema": SCHEMA,
@@ -1185,6 +1221,8 @@ def main() -> int:
         parser.error(
             "--capture-executable is required outside portable --check mode"
         )
+    _preflight_capture_executable_binding(args.capture, args.capture_executable)
+    _torch, train_fixture, _compute_loss_tensors = _load_torch_authority()
     train_fixture._assert_exact_authority_environment()
     payload = _payload(args.capture, args.capture_executable)
     encoded = _encoded_payload(payload)
