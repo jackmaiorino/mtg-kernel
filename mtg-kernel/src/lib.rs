@@ -23,6 +23,9 @@ pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
 pub mod card_def;
+// Fail-closed canonical JSON codec shared by the native training store's
+// records. Schema validation remains a separate layer.
+pub mod canonical_json_v1;
 // Schema-neutral, no-overwrite filesystem publication building blocks for the
 // future native trainer store. This module does not define record identities,
 // CLI behavior, or latest-pointer semantics.
