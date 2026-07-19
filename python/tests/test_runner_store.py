@@ -257,7 +257,10 @@ class RunnerStoreTest(unittest.TestCase):
                 os.symlink(sentinel, target / "run.json")
             except (NotImplementedError, OSError) as exc:
                 self.skipTest(f"file symlink unavailable: {exc}")
-            with self.assertRaisesRegex(ValueError, "link/reparse point"):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"^artifact tree contains link/reparse entry: run\.json$",
+            ):
                 validate_runner_artifacts(target)
             self.assertEqual(sentinel.read_bytes(), expected_sentinel)
 
