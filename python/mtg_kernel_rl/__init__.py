@@ -19,6 +19,7 @@ from .evaluation_store import ValidatedEvaluation, validate_evaluation
 from .evaluator import EvaluationResult, evaluate
 from .sampled_evaluation_store import validate_sampled_evaluation
 from .sampled_evaluator import evaluate_sampled
+from .runner_store import ValidatedRunnerArtifacts, validate_runner_artifacts
 from .training_store import (
     PolicySnapshot,
     ResumeSnapshot,
@@ -40,6 +41,7 @@ __all__ = [
     "TrainingStore",
     "ValidatedChain",
     "ValidatedEvaluation",
+    "ValidatedRunnerArtifacts",
     "ScoreSummary",
     "SignTestResult",
     "WilsonInterval",
@@ -51,6 +53,7 @@ __all__ = [
     "score_pair_half_points",
     "summarize_paired_game_points",
     "validate_evaluation",
+    "validate_runner_artifacts",
     "validate_sampled_evaluation",
     "wilson_interval",
 ]
