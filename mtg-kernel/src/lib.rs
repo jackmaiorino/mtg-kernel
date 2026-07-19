@@ -50,6 +50,10 @@ pub(crate) mod native_flat_tensorizer_v2;
 pub mod native_opponent_sampler_v1;
 #[allow(dead_code)]
 pub(crate) mod native_policy_train_step_v1;
+// Headerless, deterministic full model/Adam state payload codec. Store and CLI
+// publication remain separate, later layers.
+#[allow(dead_code)]
+pub(crate) mod native_train_state_payload_v1;
 #[allow(dead_code)]
 pub(crate) mod native_trainer_schedule_v1;
 pub mod phase_profile;
