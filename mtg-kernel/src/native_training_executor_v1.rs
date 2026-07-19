@@ -18,6 +18,7 @@ pub use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryRec
 pub use crate::native_policy_train_step_v1::{
     NativeGaugeSubstepBoundV1 as NativeTrainingGaugeSubstepObservationV1,
     NativeScorerBiasGaugeRecordV1 as NativeTrainingScorerBiasGaugeObservationV1,
+    NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1 as NATIVE_TRAINING_NUMERICAL_BACKEND_IDENTITY_V1,
 };
 use crate::native_policy_train_step_v1::{
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
@@ -27,6 +28,7 @@ use crate::native_train_state_payload_v1::{
     decode_native_train_state_payload_verified_v1, encode_native_train_state_payload_v1,
     NativeTrainStatePayloadDigestsV1, NativeTrainStatePayloadErrorV1,
 };
+use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_trainer_v1::{
     validate_resumed_parts_v2, validate_update_config_v2, NativeTrainerBootstrapErrorV1,
     NativeTrainerErrorV1, NativeTrainerProgressV2, NativeTrainerStateV2,
@@ -39,6 +41,7 @@ pub use crate::native_trainer_v1::{
     NativeTrainerUpdateEvidenceV2 as NativeTrainingUpdateObservationV2,
 };
 use crate::native_training_store_v2::NativeTrainingPersistenceReceiptV2;
+use crate::rl::PlayerSeatV1;
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -67,6 +70,38 @@ pub struct NativeTrainingExecutionConfigV1 {
     pub measure_broker_service_time: bool,
     pub value_coefficient_bits: u32,
     pub learning_rate_bits: u32,
+}
+
+/// Public read-only projection of the frozen production seed/seat schedule.
+///
+/// Evidence harnesses use this projection to recompute episode provenance
+/// without duplicating the schedule algorithm outside the trainer crate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeTrainingEpisodeScheduleV1 {
+    pub episode_index: u64,
+    pub pair_index: u64,
+    pub learner_seat: PlayerSeatV1,
+    pub environment_seed: u64,
+}
+
+pub fn native_training_episode_schedule_v1(
+    base_seed: u64,
+    episode_index: u64,
+) -> Result<NativeTrainingEpisodeScheduleV1, NativeTrainingExecutorErrorV1> {
+    let schedule =
+        native_trainer_episode_schedule_v1(base_seed, episode_index).map_err(|error| {
+            NativeTrainingExecutorErrorV1::with_diagnostic(
+                NativeTrainingExecutorErrorKindV1::Schedule,
+                "trainer_schedule_rejected",
+                error,
+            )
+        })?;
+    Ok(NativeTrainingEpisodeScheduleV1 {
+        episode_index: schedule.episode_index,
+        pair_index: schedule.pair_index,
+        learner_seat: schedule.learner_seat,
+        environment_seed: schedule.environment_seed,
+    })
 }
 
 /// Non-serializing projection of the validated common-snapshot loader receipt.
