@@ -540,8 +540,7 @@ fn encode_objects_v2(
     let mut node_ids = try_vec_capacity(output_count)?;
     for (node, &raw) in projection.node_to_raw.iter().enumerate() {
         let object = &decision.objects()[raw];
-        let row = object_features_v2(decision, raw, object)?;
-        features.extend_from_slice(&row);
+        append_object_features_v2(decision, raw, object, &mut features)?;
         card_ids.push(i64::from(object.card_token));
         groups.push(i64::from(object.group as u8));
         node_ids
@@ -732,16 +731,115 @@ fn relation_pairs_v2(
     Ok(pairs)
 }
 
-fn object_features_v2(
+struct PendingObjectFeatureRowV2<'a> {
+    output: &'a mut Vec<f32>,
+    row_ptr: *mut f32,
+    start_len: usize,
+    len: usize,
+    overflowed: bool,
+}
+
+impl<'a> PendingObjectFeatureRowV2<'a> {
+    fn new(output: &'a mut Vec<f32>) -> Result<Self, NativeFlatTensorErrorV2> {
+        if output.capacity().saturating_sub(output.len()) < NATIVE_FLAT_OBJECT_FEATURE_DIM_V2 {
+            return Err(NativeFlatTensorErrorV2::OutputInvariant);
+        }
+        let start_len = output.len();
+        // SAFETY: the capacity check above proves that start_len is inside the
+        // allocation with room for one complete object row. The exclusive Vec
+        // borrow held by Self prevents reallocation while row_ptr is live.
+        let row_ptr = unsafe { output.as_mut_ptr().add(start_len) };
+        Ok(Self {
+            start_len,
+            output,
+            row_ptr,
+            len: 0,
+            overflowed: false,
+        })
+    }
+
+    #[inline(always)]
+    fn push(&mut self, value: f32) {
+        if self.len < NATIVE_FLAT_OBJECT_FEATURE_DIM_V2 {
+            // SAFETY: construction proves one complete row of spare capacity.
+            // The bound above stays within it, and each slot is written once
+            // while the Vec's published length remains unchanged.
+            unsafe {
+                self.row_ptr.add(self.len).write(value);
+            }
+            self.len += 1;
+        } else {
+            self.overflowed = true;
+        }
+    }
+
+    #[inline(always)]
+    fn extend(&mut self, values: impl IntoIterator<Item = f32>) {
+        for value in values {
+            self.push(value);
+        }
+    }
+
+    fn finish(self) -> Result<(), NativeFlatTensorErrorV2> {
+        if self.overflowed || self.len != NATIVE_FLAT_OBJECT_FEATURE_DIM_V2 {
+            Err(NativeFlatTensorErrorV2::OutputInvariant)
+        } else {
+            let published_len = self
+                .start_len
+                .checked_add(NATIVE_FLAT_OBJECT_FEATURE_DIM_V2)
+                .ok_or(NativeFlatTensorErrorV2::CheckedIntegerRange)?;
+            // SAFETY: success proves every newly exposed f32 slot was written
+            // exactly once, and construction proved the capacity bound.
+            unsafe {
+                self.output.set_len(published_len);
+            }
+            Ok(())
+        }
+    }
+}
+
+fn append_object_one_hot_v2(
+    output: &mut PendingObjectFeatureRowV2<'_>,
+    index: usize,
+    width: usize,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    if index >= width {
+        return Err(NativeFlatTensorErrorV2::EnumRange);
+    }
+    output.extend((0..width).map(|candidate| f32::from(candidate == index)));
+    Ok(())
+}
+
+fn append_object_mask_v2(
+    output: &mut PendingObjectFeatureRowV2<'_>,
+    value: u32,
+    width: usize,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    if width >= 32 || value >= (1_u32 << width) {
+        return Err(NativeFlatTensorErrorV2::ObjectShape);
+    }
+    output.extend((0..width).map(|bit| f32::from(value & (1_u32 << bit) != 0)));
+    Ok(())
+}
+
+fn append_object_turn_relation_v2(
+    relation: FlatTurnRelationV2,
+    output: &mut PendingObjectFeatureRowV2<'_>,
+) {
+    output.extend((0..3).map(|index| f32::from(index == relation as usize)));
+}
+
+fn append_object_features_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     raw: usize,
     object: &FlatObjectCoreV1,
-) -> Result<[f32; NATIVE_FLAT_OBJECT_FEATURE_DIM_V2], NativeFlatTensorErrorV2> {
-    let mut row = Vec::with_capacity(NATIVE_FLAT_OBJECT_FEATURE_DIM_V2);
+    output: &mut Vec<f32>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let mut row = PendingObjectFeatureRowV2::new(output)?;
     row.extend(required_relative_features_v2(object.owner)?);
     row.extend(required_relative_features_v2(object.controller)?);
     let zone = object.zone.ok_or(NativeFlatTensorErrorV2::ObjectShape)? as usize;
-    append_one_hot_v2(&mut row, zone, 7)?;
+    append_object_one_hot_v2(&mut row, zone, 7)?;
     let subtypes = object_subtypes_v2(decision, raw, object)?;
     let uses = object_ability_uses_v2(decision, raw, object)?;
     let goads = object_goads_v2(decision, raw, object)?;
@@ -804,7 +902,7 @@ fn object_features_v2(
             .map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)?,
         8.0,
     ));
-    turn_relation_features_v2(object.plotted_turn, &mut row);
+    append_object_turn_relation_v2(object.plotted_turn, &mut row);
     row.push(f32::from(object.card_details_present && object.is_token));
     row.push(scaled_i64_v2(
         if object.card_details_present {
@@ -818,11 +916,11 @@ fn object_features_v2(
         object.card_details_present && object.chosen_color.is_some(),
     ));
     if let Some(color) = object.chosen_color.filter(|_| object.card_details_present) {
-        append_one_hot_v2(&mut row, color as usize, 6)?;
+        append_object_one_hot_v2(&mut row, color as usize, 6)?;
     } else {
         row.extend([0.0; 6]);
     }
-    turn_relation_features_v2(object.entered_battlefield_turn, &mut row);
+    append_object_turn_relation_v2(object.entered_battlefield_turn, &mut row);
     row.push(scaled_u64_v2(uses.len() as u64, 8.0));
     row.push(scaled_u64_v2(
         uses.iter().map(|entry| u64::from(entry.uses)).sum(),
@@ -878,18 +976,15 @@ fn object_features_v2(
     ] {
         row.push(scaled_i64_v2(i64::from(value.unwrap_or(0)), 20.0));
     }
-    append_mask_v2(&mut row, u32::from(object.effective_color_mask), 6)?;
+    append_object_mask_v2(&mut row, u32::from(object.effective_color_mask), 6)?;
     row.push(scaled_u64_v2(subtypes.len() as u64, 16.0));
     row.extend(object.keyword_flags.into_iter().map(f32::from));
     row.push(scaled_i64_v2(i64::from(object.ward_generic), 16.0));
     row.push(scaled_i64_v2(i64::from(object.minimum_blockers), 8.0));
-    append_mask_v2(&mut row, u32::from(object.landwalk_mask), 6)?;
-    append_one_hot_v2(&mut row, object.source_kind as usize, 12)?;
+    append_object_mask_v2(&mut row, u32::from(object.landwalk_mask), 6)?;
+    append_object_one_hot_v2(&mut row, object.source_kind as usize, 12)?;
     row.push(scaled_i64_v2(i64::from(object.visible_ordinal), 64.0));
-    let row: [f32; NATIVE_FLAT_OBJECT_FEATURE_DIM_V2] = row
-        .try_into()
-        .map_err(|_| NativeFlatTensorErrorV2::OutputInvariant)?;
-    Ok(row)
+    row.finish()
 }
 
 fn validate_auxiliary_tables_v2(
@@ -6306,6 +6401,39 @@ mod tests {
             action_ref_action_indices: vec![-13],
             action_ref_node_indices: vec![-14],
         }
+    }
+
+    #[test]
+    fn failed_object_row_does_not_publish_spare_capacity() {
+        let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            71_002,
+            0x71_002,
+            256,
+            32_768,
+            ["Burn".to_string(), "Burn".to_string()],
+        )
+        .unwrap();
+        let mut malformed = OwnedScoringDecisionV2::from_session(&session);
+        let projection = build_object_projection_v2(&malformed.objects).unwrap();
+        let raw = *projection
+            .node_to_raw
+            .last()
+            .expect("fixture must include a projected object");
+        malformed.objects[raw].card_details_present = true;
+        malformed.objects[raw].effective_color_mask = 1 << 6;
+
+        let decision = malformed.view();
+        let mut output = Vec::with_capacity(NATIVE_FLAT_OBJECT_FEATURE_DIM_V2 + 1);
+        output.push(31_337.0);
+        assert_eq!(
+            append_object_features_v2(decision, raw, &decision.objects()[raw], &mut output),
+            Err(NativeFlatTensorErrorV2::ObjectShape)
+        );
+        assert_eq!(
+            output,
+            [31_337.0],
+            "failed row exposed partially initialized spare capacity"
+        );
     }
 
     #[test]
