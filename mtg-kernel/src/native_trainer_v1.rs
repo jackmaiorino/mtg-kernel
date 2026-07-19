@@ -33,7 +33,7 @@ use crate::native_flat_tensorizer_v2::{
 };
 use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1;
 #[cfg(test)]
-use crate::native_policy_train_step_v1::packed_independent_recompute_call_count_for_test_v1;
+use crate::native_policy_train_step_v1::packed_actual_recompute_call_count_for_test_v1;
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPackedForwardBuilderV1,
     NativePolicyPackedForwardTapeV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
@@ -1422,6 +1422,7 @@ impl NativeTrainerStateV2 {
             &full_trajectory_receipts,
             f32::from_bits(config.value_coefficient_bits),
             f32::from_bits(config.learning_rate_bits),
+            config.worker_count,
         )?;
         let parameters_after = candidate_train_state.model_v1().parameter_snapshot_v1();
         let model_digest_after = candidate_train_state
@@ -1880,6 +1881,7 @@ fn train_grouped_candidate_v1(
     full_trajectory_receipts: &[NativeFullEpisodeTrajectoryReceiptV1],
     value_coefficient: f32,
     learning_rate: f32,
+    recompute_worker_limit: usize,
 ) -> Result<
     (
         crate::native_policy_train_step_v1::NativePolicyTrainStepResultV1,
@@ -1991,7 +1993,12 @@ fn train_grouped_candidate_v1(
         )
         .collect::<Vec<_>>();
     let result = candidate
-        .train_step_v1(&borrowed_groups, value_coefficient, learning_rate)
+        .train_step_with_recompute_workers_v1(
+            &borrowed_groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+        )
         .map_err(NativeTrainerErrorV1::Train)?;
     verify_recomputed_outputs_v1(&source_groups, &terminal_returns, &result)?;
     if episode_evidence.len() != episode_capacity {
@@ -2520,16 +2527,16 @@ mod tests {
         let mut narrow = initial.clone();
         let mut wide = initial;
 
-        let narrow_recompute_count_before = packed_independent_recompute_call_count_for_test_v1();
+        let narrow_recompute_count_before = packed_actual_recompute_call_count_for_test_v1();
         let narrow_evidence = narrow
             .run_even_batch_update_v2(&burn_pair_config_v2(1, 1, 1))
             .unwrap();
-        let narrow_recompute_count_after = packed_independent_recompute_call_count_for_test_v1();
+        let narrow_recompute_count_after = packed_actual_recompute_call_count_for_test_v1();
         let wide_recompute_count_before = narrow_recompute_count_after;
         let wide_evidence = wide
             .run_even_batch_update_v2(&burn_pair_config_v2(2, 2, 3))
             .unwrap();
-        let wide_recompute_count_after = packed_independent_recompute_call_count_for_test_v1();
+        let wide_recompute_count_after = packed_actual_recompute_call_count_for_test_v1();
 
         for (before, after, evidence) in [
             (

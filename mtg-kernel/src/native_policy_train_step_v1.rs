@@ -1,8 +1,9 @@
 //! Auditable CPU backward and Adam reference for `KernelPolicyValueNet`.
 //!
 //! This is the numerical reference for the frozen
-//! `terminal_reinforce_value/v3` loss.  It deliberately does not provide a
-//! runtime scheduler, checkpoint format, seeded initializer, CUDA backend, or
+//! `terminal_reinforce_value/v3` loss. It provides only bounded internal
+//! packed-recompute scheduling; it does not provide a general runtime
+//! scheduler, checkpoint format, seeded initializer, CUDA backend, or
 //! performance claim.
 //!
 //! The scorer's final scalar bias is an exact gauge: adding it to every legal
@@ -22,24 +23,27 @@
 
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionViewV1, NativeNamedParameterV1, NativePolicyValueErrorV1,
-    NativePolicyValueNetV1, ACTION_FEATURE_DIM_V1, ACTION_REF_FEATURE_DIM_V1,
-    CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1, EDGE_FEATURE_DIM_V1, HIDDEN_DIM_V1,
-    OBJECT_FEATURE_DIM_V1, OBJECT_GROUP_COUNT_V1, PARAMETER_COUNT_V1, STATE_DIM_V1,
+    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, ACTION_FEATURE_DIM_V1,
+    ACTION_REF_FEATURE_DIM_V1, CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1, EDGE_FEATURE_DIM_V1,
+    HIDDEN_DIM_V1, OBJECT_FEATURE_DIM_V1, OBJECT_GROUP_COUNT_V1, PARAMETER_COUNT_V1, STATE_DIM_V1,
 };
 use sha2::{Digest, Sha256};
 #[cfg(test)]
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 #[cfg(test)]
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::thread;
 
 #[cfg(test)]
 thread_local! {
     static FORWARD_WITH_TAPE_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
-    static PACKED_INDEPENDENT_RECOMPUTE_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
+    static PACKED_ACTUAL_RECOMPUTE_CALL_COUNT_V1: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    static ACTIVE_PACKED_RECOMPUTE_TEST_CONTROL_V1: RefCell<Option<Arc<PackedRecomputeTestControlV1>>> = const { RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -48,8 +52,162 @@ pub(crate) fn forward_with_tape_call_count_for_test_v1() -> u64 {
 }
 
 #[cfg(test)]
-pub(crate) fn packed_independent_recompute_call_count_for_test_v1() -> u64 {
-    PACKED_INDEPENDENT_RECOMPUTE_CALL_COUNT_V1.with(Cell::get)
+pub(crate) fn packed_actual_recompute_call_count_for_test_v1() -> u64 {
+    PACKED_ACTUAL_RECOMPUTE_CALL_COUNT_V1.with(|count| count.load(Ordering::SeqCst))
+}
+
+#[cfg(test)]
+struct PackedRecomputeTestControlV1 {
+    force_spawn_failure_worker_index: Option<usize>,
+    panic_ordinals: Vec<usize>,
+    spawn_attempt_count: AtomicUsize,
+    spawn_success_count: AtomicUsize,
+    inline_fallback_chunk_count: AtomicUsize,
+    reconstructed_outcome_count: AtomicUsize,
+}
+
+#[cfg(test)]
+impl PackedRecomputeTestControlV1 {
+    fn new_v1(
+        force_spawn_failure_worker_index: Option<usize>,
+        panic_ordinals: Vec<usize>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            force_spawn_failure_worker_index,
+            panic_ordinals,
+            spawn_attempt_count: AtomicUsize::new(0),
+            spawn_success_count: AtomicUsize::new(0),
+            inline_fallback_chunk_count: AtomicUsize::new(0),
+            reconstructed_outcome_count: AtomicUsize::new(0),
+        })
+    }
+
+    fn spawn_counts_v1(&self) -> (usize, usize, usize) {
+        (
+            self.spawn_attempt_count.load(Ordering::SeqCst),
+            self.spawn_success_count.load(Ordering::SeqCst),
+            self.inline_fallback_chunk_count.load(Ordering::SeqCst),
+        )
+    }
+
+    fn reconstructed_outcome_count_v1(&self) -> usize {
+        self.reconstructed_outcome_count.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+struct PackedRecomputeTestControlGuardV1 {
+    previous: Option<Arc<PackedRecomputeTestControlV1>>,
+}
+
+#[cfg(test)]
+impl Drop for PackedRecomputeTestControlGuardV1 {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        ACTIVE_PACKED_RECOMPUTE_TEST_CONTROL_V1.with(|active| active.replace(previous));
+    }
+}
+
+#[cfg(test)]
+fn install_packed_recompute_test_control_v1(
+    control: Arc<PackedRecomputeTestControlV1>,
+) -> PackedRecomputeTestControlGuardV1 {
+    let previous =
+        ACTIVE_PACKED_RECOMPUTE_TEST_CONTROL_V1.with(|active| active.replace(Some(control)));
+    PackedRecomputeTestControlGuardV1 { previous }
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct PackedRecomputeExecutionContextV1 {
+    actual_recompute_count: Arc<AtomicU64>,
+    test_control: Option<Arc<PackedRecomputeTestControlV1>>,
+}
+
+#[cfg(not(test))]
+#[derive(Clone, Copy, Default)]
+struct PackedRecomputeExecutionContextV1;
+
+impl PackedRecomputeExecutionContextV1 {
+    fn current_v1() -> Self {
+        #[cfg(test)]
+        {
+            Self {
+                actual_recompute_count: PACKED_ACTUAL_RECOMPUTE_CALL_COUNT_V1.with(Arc::clone),
+                test_control: ACTIVE_PACKED_RECOMPUTE_TEST_CONTROL_V1
+                    .with(|active| active.borrow().clone()),
+            }
+        }
+        #[cfg(not(test))]
+        {
+            Self
+        }
+    }
+
+    fn record_actual_recompute_v1(&self) {
+        #[cfg(test)]
+        self.actual_recompute_count.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn record_spawn_attempt_v1(&self) {
+        #[cfg(test)]
+        if let Some(control) = self.test_control.as_ref() {
+            control.spawn_attempt_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn record_spawn_success_v1(&self) {
+        #[cfg(test)]
+        if let Some(control) = self.test_control.as_ref() {
+            control.spawn_success_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn record_inline_fallback_v1(&self) {
+        #[cfg(test)]
+        if let Some(control) = self.test_control.as_ref() {
+            control
+                .inline_fallback_chunk_count
+                .fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn record_reconstructed_outcome_v1(&self) {
+        #[cfg(test)]
+        if let Some(control) = self.test_control.as_ref() {
+            control
+                .reconstructed_outcome_count
+                .fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn force_spawn_failure_v1(&self, worker_index: usize) -> bool {
+        #[cfg(test)]
+        {
+            self.test_control.as_ref().is_some_and(|control| {
+                control.force_spawn_failure_worker_index == Some(worker_index)
+            })
+        }
+        #[cfg(not(test))]
+        {
+            let _ = worker_index;
+            false
+        }
+    }
+
+    fn force_panic_v1(&self, ordinal: usize) -> bool {
+        #[cfg(test)]
+        {
+            self.test_control
+                .as_ref()
+                .is_some_and(|control| control.panic_ordinals.contains(&ordinal))
+        }
+        #[cfg(not(test))]
+        {
+            let _ = ordinal;
+            false
+        }
+    }
 }
 
 pub(crate) const TRAINER_ALGORITHM_V1: &str = "terminal_reinforce_value/v3";
@@ -74,6 +232,8 @@ const STATE_ENCODER_INPUT: usize = STATE_DIM_V1 + HIDDEN_DIM_V1 * OBJECT_GROUP_C
 const ACTION_REF_ENCODER_INPUT: usize = ACTION_REF_FEATURE_DIM_V1 + HIDDEN_DIM_V1;
 const ACTION_ENCODER_INPUT: usize = ACTION_FEATURE_DIM_V1 + HIDDEN_DIM_V1;
 const SCORER_INPUT: usize = HIDDEN_DIM_V1 * 2;
+const PACKED_RECOMPUTE_MAX_WORKERS_V1: usize = 4;
+const PACKED_RECOMPUTE_MIN_SUBSTEPS_V1: usize = 64;
 
 const CARD_EMBEDDING: usize = 0;
 const OBJECT_FIRST_WEIGHT: usize = 1;
@@ -538,6 +698,21 @@ impl NativePolicyValueTrainStateV1 {
         value_coefficient: f32,
         learning_rate: f32,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_with_recompute_workers_v1(groups, value_coefficient, learning_rate, 1)
+    }
+
+    /// Production entry point for bounded independent packed-tape
+    /// recomputation. The scalar entry point above remains the numerical
+    /// reference. Every worker result is consumed at its original ordinal
+    /// before that substep's packed-tape validation and loss work; backward
+    /// begins only after the complete ordered pass succeeds.
+    pub(crate) fn train_step_with_recompute_workers_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         if groups.is_empty() {
             return Err(NativePolicyTrainErrorV1::EmptyBatch);
         }
@@ -588,6 +763,15 @@ impl NativePolicyValueTrainStateV1 {
         let mut group_tapes = Vec::with_capacity(groups.len());
         let mut policy_sum = 0.0f32;
         let mut value_sum = 0.0f32;
+        let recompute_execution_context = PackedRecomputeExecutionContextV1::current_v1();
+        let mut parallel_packed_recomputes = collect_parallel_packed_recomputes_v1(
+            &parameters,
+            self.model.config_v1(),
+            groups,
+            recompute_worker_limit,
+            &recompute_execution_context,
+        )
+        .map(Vec::into_iter);
 
         for (group_index, group) in groups.iter().enumerate() {
             if group.substeps.is_empty() {
@@ -620,18 +804,32 @@ impl NativePolicyValueTrainStateV1 {
                         DecisionTapeSourceV1::Owned(recomputed)
                     }
                     NativePolicyForwardInputV1::Packed { encoded, tape } => {
-                        #[cfg(test)]
-                        PACKED_INDEPENDENT_RECOMPUTE_CALL_COUNT_V1
-                            .with(|count| count.set(count.get() + 1));
-                        let independently_recomputed =
-                            forward_with_tape(&parameters, self.model.config_v1(), **encoded)?;
-                        validate_forward_output_bits_v1(
-                            &independently_recomputed,
-                            substep,
-                            group_index,
-                            substep_index,
-                            ForwardOutputSourceV1::IndependentRecompute,
-                        )?;
+                        if let Some(recomputes) = parallel_packed_recomputes.as_mut() {
+                            match recomputes
+                                .next()
+                                .expect("parallel packed recompute cardinality checked")
+                            {
+                                PackedIndependentRecomputeOutcomeV1::Completed(result) => result?,
+                                PackedIndependentRecomputeOutcomeV1::Panicked(payload) => {
+                                    resume_unwind(payload)
+                                }
+                            }
+                        } else {
+                            recompute_execution_context.record_actual_recompute_v1();
+                            let independently_recomputed =
+                                forward_with_tape(&parameters, self.model.config_v1(), **encoded)?;
+                            validate_forward_output_bits_v1(
+                                &independently_recomputed,
+                                substep,
+                                group_index,
+                                substep_index,
+                                ForwardOutputSourceV1::IndependentRecompute,
+                            )?;
+                            // The independent tape is intentionally dropped at
+                            // this branch boundary. Only the rollout-time packed
+                            // tape can reach the backward work staged below.
+                            drop(independently_recomputed);
+                        }
                         validate_forward_output_bits_v1(
                             &tape.tape,
                             substep,
@@ -639,10 +837,6 @@ impl NativePolicyValueTrainStateV1 {
                             substep_index,
                             ForwardOutputSourceV1::PackedBackwardTape,
                         )?;
-                        // The independent tape is intentionally dropped at
-                        // this branch boundary. Only the rollout-time packed
-                        // tape can reach the backward work staged below.
-                        drop(independently_recomputed);
                         DecisionTapeSourceV1::Packed(&tape.tape)
                     }
                 };
@@ -694,6 +888,9 @@ impl NativePolicyValueTrainStateV1 {
                 advantage,
                 value_error,
             });
+        }
+        if let Some(recomputes) = parallel_packed_recomputes.as_mut() {
+            debug_assert!(recomputes.next().is_none());
         }
 
         let group_count = exact_group_count_f32(groups.len())?;
@@ -810,6 +1007,136 @@ impl NativePolicyValueTrainStateV1 {
             scorer_bias_gauge,
         })
     }
+}
+
+enum PackedIndependentRecomputeOutcomeV1 {
+    Completed(Result<(), NativePolicyTrainErrorV1>),
+    Panicked(Box<dyn std::any::Any + Send + 'static>),
+}
+
+fn collect_parallel_packed_recomputes_v1(
+    parameters: &[NativeNamedParameterV1],
+    config: NativePolicyValueModelConfigV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    recompute_worker_limit: usize,
+    execution_context: &PackedRecomputeExecutionContextV1,
+) -> Option<Vec<PackedIndependentRecomputeOutcomeV1>> {
+    let worker_count = recompute_worker_limit.min(PACKED_RECOMPUTE_MAX_WORKERS_V1);
+    if worker_count < 2
+        || groups.iter().any(|group| {
+            group.substeps.is_empty()
+                || !matches!(group.terminal_return, -1..=1)
+                || group.substeps.iter().any(|substep| {
+                    !matches!(&substep.forward, NativePolicyForwardInputV1::Packed { .. })
+                })
+        })
+    {
+        return None;
+    }
+    let task_count = groups.iter().try_fold(0usize, |count, group| {
+        count.checked_add(group.substeps.len())
+    })?;
+    if task_count < PACKED_RECOMPUTE_MIN_SUBSTEPS_V1 {
+        return None;
+    }
+
+    let mut tasks = Vec::with_capacity(task_count);
+    for (group_index, group) in groups.iter().enumerate() {
+        for substep_index in 0..group.substeps.len() {
+            tasks.push((tasks.len(), group_index, substep_index));
+        }
+    }
+    let chunk_size = tasks.len().div_ceil(worker_count);
+    Some(thread::scope(|scope| {
+        let mut jobs = Vec::with_capacity(worker_count);
+        for (worker_index, chunk) in tasks.chunks(chunk_size).enumerate() {
+            execution_context.record_spawn_attempt_v1();
+            let spawned = if execution_context.force_spawn_failure_v1(worker_index) {
+                Err(std::io::Error::other(
+                    "injected packed recompute worker spawn failure",
+                ))
+            } else {
+                thread::Builder::new()
+                    .name(format!("native-packed-recompute-{worker_index}"))
+                    .spawn_scoped(scope, move || {
+                        recompute_packed_chunk_v1(
+                            parameters,
+                            config,
+                            groups,
+                            chunk,
+                            execution_context,
+                        )
+                    })
+            };
+            if spawned.is_ok() {
+                execution_context.record_spawn_success_v1();
+            }
+            jobs.push((spawned, chunk));
+        }
+
+        let mut outcomes = Vec::with_capacity(tasks.len());
+        for (spawned, chunk) in jobs {
+            match spawned {
+                Ok(worker) => match worker.join() {
+                    Ok(mut worker_outcomes) => outcomes.append(&mut worker_outcomes),
+                    Err(payload) => resume_unwind(payload),
+                },
+                Err(_) => {
+                    execution_context.record_inline_fallback_v1();
+                    outcomes.extend(recompute_packed_chunk_v1(
+                        parameters,
+                        config,
+                        groups,
+                        chunk,
+                        execution_context,
+                    ));
+                }
+            }
+        }
+        outcomes
+    }))
+}
+
+fn recompute_packed_chunk_v1(
+    parameters: &[NativeNamedParameterV1],
+    config: NativePolicyValueModelConfigV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    tasks: &[(usize, usize, usize)],
+    execution_context: &PackedRecomputeExecutionContextV1,
+) -> Vec<PackedIndependentRecomputeOutcomeV1> {
+    tasks
+        .iter()
+        .map(|&(ordinal, group_index, substep_index)| {
+            let substep = &groups[group_index].substeps[substep_index];
+            let completed = catch_unwind(AssertUnwindSafe(|| {
+                let NativePolicyForwardInputV1::Packed { encoded, .. } = &substep.forward else {
+                    unreachable!("parallel packed recompute eligibility checked")
+                };
+                execution_context.record_actual_recompute_v1();
+                let independently_recomputed = forward_with_tape(parameters, config, **encoded)?;
+                if execution_context.force_panic_v1(ordinal) {
+                    panic!("injected packed recompute panic at ordinal {ordinal}");
+                }
+                validate_forward_output_bits_v1(
+                    &independently_recomputed,
+                    substep,
+                    group_index,
+                    substep_index,
+                    ForwardOutputSourceV1::IndependentRecompute,
+                )?;
+                // Retain only the validation outcome. The duplicate tape must
+                // not survive into loss or backward staging.
+                drop(independently_recomputed);
+                Ok(())
+            }));
+            let outcome = match completed {
+                Ok(result) => PackedIndependentRecomputeOutcomeV1::Completed(result),
+                Err(payload) => PackedIndependentRecomputeOutcomeV1::Panicked(payload),
+            };
+            execution_context.record_reconstructed_outcome_v1();
+            outcome
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -3121,6 +3448,453 @@ mod tests {
     }
 
     #[test]
+    fn packed_parallel_recompute_is_bit_identical_to_scalar_reference() {
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut scalar_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        let mut parallel_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        let mut spawn_fallback_state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let builder =
+            NativePolicyPackedForwardBuilderV1::from_model_v1(scalar_state.model_v1()).unwrap();
+        let case = case_by_name(&forward, "ordered_edges_and_action_refs");
+        let packed_tape = builder.forward_v1(encoded(case)).unwrap();
+        let expected_logit_bits = packed_tape
+            .logits_v1()
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>();
+        let expected_value_bits = packed_tape.value_v1().to_bits();
+        let substeps = (0..PACKED_RECOMPUTE_MIN_SUBSTEPS_V1)
+            .map(|_| NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Packed {
+                    encoded: Box::new(encoded(case)),
+                    tape: &packed_tape,
+                },
+                selected_action_index: 0,
+                expected_raw_action_logit_bits: &expected_logit_bits,
+                expected_value_bits,
+            })
+            .collect::<Vec<_>>();
+        let groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 1,
+        }];
+
+        let scalar_count_before = packed_actual_recompute_call_count_for_test_v1();
+        let scalar_result = scalar_state
+            .train_step_v1(
+                &groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        assert_eq!(
+            packed_actual_recompute_call_count_for_test_v1() - scalar_count_before,
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1 as u64
+        );
+        let parallel_count_before = packed_actual_recompute_call_count_for_test_v1();
+        let parallel_result = parallel_state
+            .train_step_with_recompute_workers_v1(
+                &groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+                PACKED_RECOMPUTE_MAX_WORKERS_V1,
+            )
+            .unwrap();
+        assert_eq!(
+            packed_actual_recompute_call_count_for_test_v1() - parallel_count_before,
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1 as u64
+        );
+        assert_eq!(parallel_result, scalar_result);
+        assert_eq!(
+            parallel_state.snapshot_v1().unwrap(),
+            scalar_state.snapshot_v1().unwrap()
+        );
+
+        let spawn_failure_control = PackedRecomputeTestControlV1::new_v1(Some(1), Vec::new());
+        let fallback_count_before = packed_actual_recompute_call_count_for_test_v1();
+        let spawn_fallback_result = {
+            let _guard =
+                install_packed_recompute_test_control_v1(Arc::clone(&spawn_failure_control));
+            spawn_fallback_state
+                .train_step_with_recompute_workers_v1(
+                    &groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                    PACKED_RECOMPUTE_MAX_WORKERS_V1,
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            packed_actual_recompute_call_count_for_test_v1() - fallback_count_before,
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1 as u64,
+            "actual forwards include the inline fallback chunk"
+        );
+        assert_eq!(
+            spawn_failure_control.spawn_counts_v1(),
+            (PACKED_RECOMPUTE_MAX_WORKERS_V1, 3, 1),
+            "exactly one of four bounded worker chunks falls back inline"
+        );
+        assert_eq!(
+            spawn_failure_control.reconstructed_outcome_count_v1(),
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1
+        );
+        assert_eq!(spawn_fallback_result, scalar_result);
+        assert_eq!(
+            spawn_fallback_state.snapshot_v1().unwrap(),
+            scalar_state.snapshot_v1().unwrap()
+        );
+    }
+
+    #[test]
+    fn packed_parallel_recompute_preserves_validation_precedence_and_invalid_shape_fallback() {
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let baseline = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let before = baseline.snapshot_v1().unwrap();
+        let builder =
+            NativePolicyPackedForwardBuilderV1::from_model_v1(baseline.model_v1()).unwrap();
+        let case = case_by_name(&forward, "ordered_edges_and_action_refs");
+        let valid_tape = builder.forward_v1(encoded(case)).unwrap();
+        let expected_logit_bits = valid_tape
+            .logits_v1()
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>();
+        let mut later_bad_expected_logit_bits = expected_logit_bits.clone();
+        later_bad_expected_logit_bits[0] ^= 1;
+        let expected_value_bits = valid_tape.value_v1().to_bits();
+        let substeps = (0..PACKED_RECOMPUTE_MIN_SUBSTEPS_V1)
+            .map(|substep_index| NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Packed {
+                    encoded: Box::new(encoded(case)),
+                    tape: &valid_tape,
+                },
+                selected_action_index: 0,
+                expected_raw_action_logit_bits: if substep_index == 1 {
+                    &later_bad_expected_logit_bits
+                } else {
+                    &expected_logit_bits
+                },
+                expected_value_bits,
+            })
+            .collect::<Vec<_>>();
+        let valid_shape_groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 1,
+        }];
+
+        let mut first_error_state = baseline.clone();
+        let later_panic_control =
+            PackedRecomputeTestControlV1::new_v1(None, vec![PACKED_RECOMPUTE_MIN_SUBSTEPS_V1 - 1]);
+        let count_before = packed_actual_recompute_call_count_for_test_v1();
+        let error = {
+            let _guard = install_packed_recompute_test_control_v1(Arc::clone(&later_panic_control));
+            first_error_state
+                .train_step_with_recompute_workers_v1(
+                    &valid_shape_groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                    PACKED_RECOMPUTE_MAX_WORKERS_V1,
+                )
+                .unwrap_err()
+        };
+        assert!(matches!(
+            error,
+            NativePolicyTrainErrorV1::RecomputedLogitBitsMismatch {
+                group_index: 0,
+                substep_index: 1,
+                action_index: 0,
+                selected_action_index: 0,
+                expected_bits,
+                actual_bits,
+            } if expected_bits != actual_bits
+        ));
+        assert_eq!(
+            packed_actual_recompute_call_count_for_test_v1() - count_before,
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1 as u64,
+            "the counter records actual worker forwards, not consumed outcomes"
+        );
+        assert_eq!(
+            later_panic_control.reconstructed_outcome_count_v1(),
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1,
+            "all worker outcomes are reconstructed before ordinal consumption"
+        );
+        assert_eq!(
+            later_panic_control.spawn_counts_v1(),
+            (
+                PACKED_RECOMPUTE_MAX_WORKERS_V1,
+                PACKED_RECOMPUTE_MAX_WORKERS_V1,
+                0
+            )
+        );
+        assert_eq!(first_error_state.snapshot_v1().unwrap(), before);
+
+        let mut panic_first_state = baseline.clone();
+        let earlier_panic_control = PackedRecomputeTestControlV1::new_v1(None, vec![0]);
+        let panic_count_before = packed_actual_recompute_call_count_for_test_v1();
+        let panic_payload = {
+            let _guard =
+                install_packed_recompute_test_control_v1(Arc::clone(&earlier_panic_control));
+            match catch_unwind(AssertUnwindSafe(|| {
+                panic_first_state.train_step_with_recompute_workers_v1(
+                    &valid_shape_groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                    PACKED_RECOMPUTE_MAX_WORKERS_V1,
+                )
+            })) {
+                Ok(result) => panic!("expected injected worker panic, got {result:?}"),
+                Err(payload) => payload,
+            }
+        };
+        let panic_message = if let Some(message) = panic_payload.downcast_ref::<String>() {
+            message.as_str()
+        } else if let Some(message) = panic_payload.downcast_ref::<&'static str>() {
+            message
+        } else {
+            panic!("injected worker panic payload must be a string")
+        };
+        assert_eq!(
+            panic_message, "injected packed recompute panic at ordinal 0",
+            "an earlier worker panic must outrank a later ordinary validation error"
+        );
+        assert_eq!(
+            packed_actual_recompute_call_count_for_test_v1() - panic_count_before,
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1 as u64
+        );
+        assert_eq!(
+            earlier_panic_control.reconstructed_outcome_count_v1(),
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1,
+            "all worker outcomes are reconstructed before ordinal precedence is applied"
+        );
+        assert_eq!(
+            earlier_panic_control.spawn_counts_v1(),
+            (
+                PACKED_RECOMPUTE_MAX_WORKERS_V1,
+                PACKED_RECOMPUTE_MAX_WORKERS_V1,
+                0
+            )
+        );
+        assert_eq!(panic_first_state.snapshot_v1().unwrap(), before);
+
+        let fallback_order_substeps = (0..PACKED_RECOMPUTE_MIN_SUBSTEPS_V1)
+            .map(|ordinal| NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Packed {
+                    encoded: Box::new(encoded(case)),
+                    tape: &valid_tape,
+                },
+                selected_action_index: 0,
+                expected_raw_action_logit_bits: if matches!(ordinal, 17 | 32) {
+                    &later_bad_expected_logit_bits
+                } else {
+                    &expected_logit_bits
+                },
+                expected_value_bits,
+            })
+            .collect::<Vec<_>>();
+        let fallback_order_groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &fallback_order_substeps,
+            terminal_return: 1,
+        }];
+        let fallback_order_control = PackedRecomputeTestControlV1::new_v1(Some(1), Vec::new());
+        let mut fallback_order_state = baseline.clone();
+        let fallback_order_count_before = packed_actual_recompute_call_count_for_test_v1();
+        let fallback_order_error = {
+            let _guard =
+                install_packed_recompute_test_control_v1(Arc::clone(&fallback_order_control));
+            fallback_order_state
+                .train_step_with_recompute_workers_v1(
+                    &fallback_order_groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                    PACKED_RECOMPUTE_MAX_WORKERS_V1 + 3,
+                )
+                .unwrap_err()
+        };
+        assert!(matches!(
+            fallback_order_error,
+            NativePolicyTrainErrorV1::RecomputedLogitBitsMismatch {
+                group_index: 0,
+                substep_index: 17,
+                action_index: 0,
+                selected_action_index: 0,
+                expected_bits,
+                actual_bits,
+            } if expected_bits != actual_bits
+        ));
+        assert_eq!(
+            packed_actual_recompute_call_count_for_test_v1() - fallback_order_count_before,
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1 as u64
+        );
+        assert_eq!(
+            fallback_order_control.reconstructed_outcome_count_v1(),
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1,
+            "inline and spawned chunks must both reconstruct before ordered consumption"
+        );
+        assert_eq!(
+            fallback_order_control.spawn_counts_v1(),
+            (PACKED_RECOMPUTE_MAX_WORKERS_V1, 3, 1),
+            "a worker request above the cap must attempt only four chunks, with worker 1 inline"
+        );
+        assert_eq!(fallback_order_state.snapshot_v1().unwrap(), before);
+
+        let invalid_shape_groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 2,
+        }];
+        let mut invalid_shape_state = baseline;
+        let fallback_count_before = packed_actual_recompute_call_count_for_test_v1();
+        assert_eq!(
+            invalid_shape_state.train_step_with_recompute_workers_v1(
+                &invalid_shape_groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+                PACKED_RECOMPUTE_MAX_WORKERS_V1,
+            ),
+            Err(NativePolicyTrainErrorV1::InvalidTerminalReturn {
+                group_index: 0,
+                value: 2,
+            })
+        );
+        assert_eq!(
+            packed_actual_recompute_call_count_for_test_v1() - fallback_count_before,
+            0,
+            "invalid structural inputs must stay on the scalar first-error path"
+        );
+        assert_eq!(invalid_shape_state.snapshot_v1().unwrap(), before);
+
+        let empty_substeps = [];
+        let empty_groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &empty_substeps,
+            terminal_return: 0,
+        }];
+        assert_eq!(
+            invalid_shape_state.train_step_with_recompute_workers_v1(
+                &empty_groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+                PACKED_RECOMPUTE_MAX_WORKERS_V1,
+            ),
+            Err(NativePolicyTrainErrorV1::EmptyPhysicalDecision { group_index: 0 })
+        );
+        assert_eq!(invalid_shape_state.snapshot_v1().unwrap(), before);
+    }
+
+    #[test]
+    fn packed_parallel_recompute_rethrows_earliest_worker_panic_and_retries_cleanly() {
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let baseline = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let before = baseline.snapshot_v1().unwrap();
+        let mut scalar_state = baseline.clone();
+        let mut panicking_state = baseline;
+        let builder =
+            NativePolicyPackedForwardBuilderV1::from_model_v1(scalar_state.model_v1()).unwrap();
+        let case = case_by_name(&forward, "ordered_edges_and_action_refs");
+        let packed_tape = builder.forward_v1(encoded(case)).unwrap();
+        let expected_logit_bits = packed_tape
+            .logits_v1()
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>();
+        let expected_value_bits = packed_tape.value_v1().to_bits();
+        let substeps = (0..PACKED_RECOMPUTE_MIN_SUBSTEPS_V1)
+            .map(|_| NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Packed {
+                    encoded: Box::new(encoded(case)),
+                    tape: &packed_tape,
+                },
+                selected_action_index: 0,
+                expected_raw_action_logit_bits: &expected_logit_bits,
+                expected_value_bits,
+            })
+            .collect::<Vec<_>>();
+        let groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 1,
+        }];
+        let scalar_result = scalar_state
+            .train_step_v1(
+                &groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+
+        let panic_control = PackedRecomputeTestControlV1::new_v1(None, vec![63, 17, 3]);
+        let panic_count_before = packed_actual_recompute_call_count_for_test_v1();
+        let panic_payload = {
+            let _guard = install_packed_recompute_test_control_v1(Arc::clone(&panic_control));
+            match catch_unwind(AssertUnwindSafe(|| {
+                panicking_state.train_step_with_recompute_workers_v1(
+                    &groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                    PACKED_RECOMPUTE_MAX_WORKERS_V1,
+                )
+            })) {
+                Ok(result) => panic!("expected injected worker panic, got {result:?}"),
+                Err(payload) => payload,
+            }
+        };
+        let panic_message = if let Some(message) = panic_payload.downcast_ref::<String>() {
+            message.as_str()
+        } else if let Some(message) = panic_payload.downcast_ref::<&'static str>() {
+            message
+        } else {
+            panic!("injected worker panic payload must be a string")
+        };
+        assert_eq!(
+            panic_message, "injected packed recompute panic at ordinal 3",
+            "ordered reconstruction must rethrow the earliest input ordinal"
+        );
+        assert_eq!(
+            packed_actual_recompute_call_count_for_test_v1() - panic_count_before,
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1 as u64
+        );
+        assert_eq!(
+            panic_control.reconstructed_outcome_count_v1(),
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1,
+            "every worker outcome is reconstructed before the earliest panic is resumed"
+        );
+        assert_eq!(
+            panic_control.spawn_counts_v1(),
+            (
+                PACKED_RECOMPUTE_MAX_WORKERS_V1,
+                PACKED_RECOMPUTE_MAX_WORKERS_V1,
+                0
+            )
+        );
+        assert_eq!(panicking_state.snapshot_v1().unwrap(), before);
+
+        let retry_count_before = packed_actual_recompute_call_count_for_test_v1();
+        let retry_result = panicking_state
+            .train_step_with_recompute_workers_v1(
+                &groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+                PACKED_RECOMPUTE_MAX_WORKERS_V1,
+            )
+            .unwrap();
+        assert_eq!(
+            packed_actual_recompute_call_count_for_test_v1() - retry_count_before,
+            PACKED_RECOMPUTE_MIN_SUBSTEPS_V1 as u64
+        );
+        assert_eq!(retry_result, scalar_result);
+        assert_eq!(
+            panicking_state.snapshot_v1().unwrap(),
+            scalar_state.snapshot_v1().unwrap()
+        );
+    }
+
+    #[test]
     fn scorer_packed_tapes_are_exact_with_independent_recompute_and_drop_with_the_update() {
         let (forward, golden) = fixtures();
         let model =
@@ -3143,7 +3917,7 @@ mod tests {
                         .unwrap()
                         .with_lifetime_probe_for_test_v1(Arc::clone(&lifetime_probe));
                 let calls_before_scorer = builder.forward_call_count_for_test_v1();
-                let recompute_calls_before = packed_independent_recompute_call_count_for_test_v1();
+                let recompute_calls_before = packed_actual_recompute_call_count_for_test_v1();
                 let packed_tapes = packed_tapes_for_step(&builder, &forward, step);
                 let expected_forward_count = step
                     .groups
@@ -3155,8 +3929,7 @@ mod tests {
                     calls_after_scorer - calls_before_scorer,
                     expected_forward_count
                 );
-                let recompute_calls_before_train =
-                    packed_independent_recompute_call_count_for_test_v1();
+                let recompute_calls_before_train = packed_actual_recompute_call_count_for_test_v1();
                 assert_eq!(recompute_calls_before_train, recompute_calls_before);
                 assert_eq!(
                     Arc::strong_count(&lifetime_probe),
@@ -3179,8 +3952,7 @@ mod tests {
                     "learning must not use the scorer-owned forward builder"
                 );
                 assert_eq!(
-                    packed_independent_recompute_call_count_for_test_v1()
-                        - recompute_calls_before_train,
+                    packed_actual_recompute_call_count_for_test_v1() - recompute_calls_before_train,
                     expected_forward_count,
                     "packed learning must independently recompute every substep exactly once"
                 );
