@@ -34,6 +34,14 @@ pub(crate) const NATIVE_FLAT_ACTION_FEATURE_DIM_V2: usize = 195;
 pub(crate) const NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2: usize = 25;
 pub(crate) const NATIVE_FLAT_OBJECT_GROUP_COUNT_V2: usize = 20;
 pub(crate) const NATIVE_FLAT_MAX_CARD_TOKEN_V2: u32 = (u16::MAX as u32) + 1;
+pub(crate) const NATIVE_FLAT_TENSORIZER_IDENTITY_V2: &str =
+    "mtg-kernel-python-encoded-decision-tensor-contract-v2";
+pub(crate) const NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2: &str =
+    "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb";
+pub(crate) const NATIVE_FLAT_TENSORIZER_FIXTURE_SHA256_V2: &str =
+    "5dbece4f903a09260a499295d866c7e6ff4283f9de83f842224511f977ae8a97";
+pub(crate) const NATIVE_FLAT_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2: &str =
+    "2f87d49106806a402148fc8b115a54ac94713eb717f45f897eff57a3bd1184ec";
 
 // The action encoder below was mechanically migrated from the reviewed V1
 // implementation. These private aliases keep that byte-sensitive logic small
@@ -6792,6 +6800,18 @@ mod tests {
     #[test]
     fn production_v2_full_decision_matches_python_all_thirteen_tensors() {
         let document = full_golden();
+        assert_eq!(
+            hex(&Sha256::digest(FEATURES_PY)),
+            NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2
+        );
+        assert_eq!(
+            hex(&Sha256::digest(FULL_GOLDEN.as_bytes())),
+            NATIVE_FLAT_TENSORIZER_FIXTURE_SHA256_V2
+        );
+        assert_eq!(
+            document.payload_sha256,
+            NATIVE_FLAT_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
+        );
         assert_eq!(document.dimensions.state, NATIVE_FLAT_STATE_FEATURE_DIM_V2);
         assert_eq!(
             document.dimensions.object,
@@ -6810,7 +6830,10 @@ mod tests {
             document.dimensions.object_groups,
             NATIVE_FLAT_OBJECT_GROUP_COUNT_V2
         );
-        assert_eq!(hex(&Sha256::digest(FEATURES_PY)), document.authority_sha256);
+        assert_eq!(
+            document.authority_sha256,
+            NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2
+        );
         let mut payload: Value = serde_json::from_str(FULL_GOLDEN).unwrap();
         payload.as_object_mut().unwrap().remove("payload_sha256");
         assert_eq!(

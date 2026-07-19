@@ -1,5 +1,7 @@
 use mtg_kernel::fast_sampler::{
-    splitmix64_first, FastCategoricalError, FastCategoricalScratch, FAST_CATEGORICAL_EXP_TABLE_Q63,
+    splitmix64_first, FastCategoricalError, FastCategoricalScratch,
+    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256,
+    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256, FAST_CATEGORICAL_EXP_TABLE_Q63,
     FAST_CATEGORICAL_EXP_TABLE_SHA256, FAST_CATEGORICAL_MASS_TOTAL, FAST_CATEGORICAL_MAX_ACTIONS,
     FAST_CATEGORICAL_SAMPLER_CONTRACT_JSON, FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
     FAST_CATEGORICAL_SAMPLER_VERSION,
@@ -12,8 +14,6 @@ const ORACLE_BYTES: &[u8] = include_bytes!("../../data/fast_sampler_decimal_orac
 const ORACLE_SHA256: &str = "bb42f0cacae9902d67851941678cf2fb34a90cb8459403126a8026085dcae033";
 const CANDIDATE_VECTOR_BYTES: &[u8] =
     include_bytes!("../../data/fast_sampler_candidate_vectors_v1.json");
-const CANDIDATE_VECTOR_SHA256: &str =
-    "407a08fb9b9bb5012f14d779d0878c986ce0f16530820a89f5bd54c33d5e7456";
 
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -138,7 +138,10 @@ fn exact_candidate_mass_and_selection_goldens_are_pinned() {
 
 #[test]
 fn cross_language_candidate_vectors_match_production_sampler_exactly() {
-    assert_eq!(sha256_hex(CANDIDATE_VECTOR_BYTES), CANDIDATE_VECTOR_SHA256);
+    assert_eq!(
+        sha256_hex(CANDIDATE_VECTOR_BYTES),
+        FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256
+    );
     let fixture: serde_json::Value = serde_json::from_slice(CANDIDATE_VECTOR_BYTES).unwrap();
     assert_eq!(
         fixture["schema"],
@@ -310,6 +313,10 @@ fn cross_language_candidate_vectors_match_production_sampler_exactly() {
     assert_eq!(
         sha256_hex(&stream),
         fixture["vector_stream_sha256"].as_str().unwrap()
+    );
+    assert_eq!(
+        fixture["vector_stream_sha256"].as_str().unwrap(),
+        FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256
     );
 }
 
