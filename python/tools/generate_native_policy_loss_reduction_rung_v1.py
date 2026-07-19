@@ -56,6 +56,8 @@ OUTPUT = (
     / "loss_reduction_intermediate_rung_v1.json"
 )
 GENERATOR = Path(__file__).resolve()
+TRAIN_FIXTURE_GENERATOR = Path(train_fixture.__file__).resolve()
+FORWARD_FIXTURE_GENERATOR = Path(forward_fixture.__file__).resolve()
 BASE_ARTIFACT = train_fixture.OUTPUT
 EXPECTED_BASE_ARTIFACT_SHA256 = (
     "7672c87912b6015f393d66921a3e78cb5623dd76582a9513f2d87c560c0f4aa7"
@@ -377,6 +379,10 @@ def _payload() -> dict[str, Any]:
         "authority": {
             "generator_path": GENERATOR.relative_to(ROOT).as_posix(),
             "generator_sha256": _sha256(GENERATOR),
+            "train_fixture_generator_path": TRAIN_FIXTURE_GENERATOR.relative_to(ROOT).as_posix(),
+            "train_fixture_generator_sha256": _sha256(TRAIN_FIXTURE_GENERATOR),
+            "forward_fixture_generator_path": FORWARD_FIXTURE_GENERATOR.relative_to(ROOT).as_posix(),
+            "forward_fixture_generator_sha256": _sha256(FORWARD_FIXTURE_GENERATOR),
             "base_artifact_path": BASE_ARTIFACT.relative_to(ROOT).as_posix(),
             "base_artifact_sha256": EXPECTED_BASE_ARTIFACT_SHA256,
             "model_path": train_fixture.MODEL_AUTHORITY.relative_to(ROOT).as_posix(),
@@ -475,6 +481,10 @@ def _portable_check() -> None:
     expected_pins = {
         "generator_path": GENERATOR.relative_to(ROOT).as_posix(),
         "generator_sha256": _sha256(GENERATOR),
+        "train_fixture_generator_path": TRAIN_FIXTURE_GENERATOR.relative_to(ROOT).as_posix(),
+        "train_fixture_generator_sha256": _sha256(TRAIN_FIXTURE_GENERATOR),
+        "forward_fixture_generator_path": FORWARD_FIXTURE_GENERATOR.relative_to(ROOT).as_posix(),
+        "forward_fixture_generator_sha256": _sha256(FORWARD_FIXTURE_GENERATOR),
         "base_artifact_path": BASE_ARTIFACT.relative_to(ROOT).as_posix(),
         "base_artifact_sha256": EXPECTED_BASE_ARTIFACT_SHA256,
         "model_path": train_fixture.MODEL_AUTHORITY.relative_to(ROOT).as_posix(),

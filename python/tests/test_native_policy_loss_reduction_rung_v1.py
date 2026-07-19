@@ -16,10 +16,10 @@ ARTIFACT = (
     / "loss_reduction_intermediate_rung_v1.json"
 )
 EXPECTED_GENERATOR_SHA256 = (
-    "486ef731d60cc7fa6044c4c3b2b00823915bc8b6179cd87a251de0c2c6bbf2a4"
+    "ad73d06792605703a071dda5fb6366fbc0f4f866841faec12480dc9f7a4a787b"
 )
 EXPECTED_ARTIFACT_SHA256 = (
-    "472b0b56eb772b7b78401d2ea676121f215ab970ef62e012adb611f7c9f0adc1"
+    "537f86c8f09b3529fb985efc46306dc139b9ce1cfee1fb32515886d6a7fe2cd7"
 )
 
 

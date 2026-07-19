@@ -2,10 +2,12 @@
   "authority": {
     "base_artifact_path": "data/native_policy_train_step_v1/runner_fixed_train_step_goldens_v1.json",
     "base_artifact_sha256": "7672c87912b6015f393d66921a3e78cb5623dd76582a9513f2d87c560c0f4aa7",
+    "forward_fixture_generator_path": "python/tools/generate_native_policy_value_net_v1_goldens.py",
+    "forward_fixture_generator_sha256": "293d4a399035a9a97c23799f4c6f0ece67ac3db678e72ae277bf77b69c991852",
     "forward_fixture_path": "data/native_policy_value_net_v1/runner_fixed_forward_goldens_v1.json",
     "forward_fixture_sha256": "c3c5e864f9666cba73b15dc5a038cd57c7d9a46aaccc2b8d3c3c16e956efe9ec",
     "generator_path": "python/tools/generate_native_policy_loss_reduction_rung_v1.py",
-    "generator_sha256": "486ef731d60cc7fa6044c4c3b2b00823915bc8b6179cd87a251de0c2c6bbf2a4",
+    "generator_sha256": "ad73d06792605703a071dda5fb6366fbc0f4f866841faec12480dc9f7a4a787b",
     "model_path": "python/mtg_kernel_rl/model.py",
     "model_sha256": "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59",
     "platform_machine": "AMD64",
@@ -16,6 +18,8 @@
     "torch_num_interop_threads": 1,
     "torch_num_threads": 1,
     "torch_version": "2.13.0+cpu",
+    "train_fixture_generator_path": "python/tools/generate_native_policy_train_step_v1_goldens.py",
+    "train_fixture_generator_sha256": "51c89f1fe6fc46dc6151a9bfaca15e7d0c78b8f731ce537305860a224dedcb53",
     "trainer_path": "python/mtg_kernel_rl/trainer.py",
     "trainer_sha256": "47cd76a243f1b58a695cc0ffe257e8737dcd7bea0b68140349b80139409683ad"
   },

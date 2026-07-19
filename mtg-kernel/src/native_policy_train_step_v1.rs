@@ -2319,11 +2319,15 @@ mod tests {
         "../../data/native_policy_train_step_v1/loss_reduction_intermediate_rung_v1.json"
     );
     const LOSS_REDUCTION_FIXTURE_SHA256: &str =
-        "472b0b56eb772b7b78401d2ea676121f215ab970ef62e012adb611f7c9f0adc1";
+        "537f86c8f09b3529fb985efc46306dc139b9ce1cfee1fb32515886d6a7fe2cd7";
     const LOSS_REDUCTION_GENERATOR: &[u8] =
         include_bytes!("../../python/tools/generate_native_policy_loss_reduction_rung_v1.py");
     const LOSS_REDUCTION_GENERATOR_SHA256: &str =
-        "486ef731d60cc7fa6044c4c3b2b00823915bc8b6179cd87a251de0c2c6bbf2a4";
+        "ad73d06792605703a071dda5fb6366fbc0f4f866841faec12480dc9f7a4a787b";
+    const TRAIN_FIXTURE_GENERATOR_AUTHORITY: &[u8] =
+        include_bytes!("../../python/tools/generate_native_policy_train_step_v1_goldens.py");
+    const FORWARD_FIXTURE_GENERATOR_AUTHORITY: &[u8] =
+        include_bytes!("../../python/tools/generate_native_policy_value_net_v1_goldens.py");
     const MODEL_AUTHORITY: &[u8] = include_bytes!("../../python/mtg_kernel_rl/model.py");
     const TRAINER_AUTHORITY: &[u8] = include_bytes!("../../python/mtg_kernel_rl/trainer.py");
     const FORWARD_AUTHORITY: &[u8] = include_bytes!(
@@ -2345,6 +2349,10 @@ mod tests {
     struct LossReductionAuthority {
         generator_path: String,
         generator_sha256: String,
+        train_fixture_generator_path: String,
+        train_fixture_generator_sha256: String,
+        forward_fixture_generator_path: String,
+        forward_fixture_generator_sha256: String,
         base_artifact_path: String,
         base_artifact_sha256: String,
         model_path: String,
@@ -3369,6 +3377,22 @@ mod tests {
         assert_eq!(
             rung.authority.generator_sha256,
             LOSS_REDUCTION_GENERATOR_SHA256
+        );
+        assert_eq!(
+            rung.authority.train_fixture_generator_path,
+            "python/tools/generate_native_policy_train_step_v1_goldens.py"
+        );
+        assert_eq!(
+            rung.authority.train_fixture_generator_sha256,
+            digest_bytes(TRAIN_FIXTURE_GENERATOR_AUTHORITY)
+        );
+        assert_eq!(
+            rung.authority.forward_fixture_generator_path,
+            "python/tools/generate_native_policy_value_net_v1_goldens.py"
+        );
+        assert_eq!(
+            rung.authority.forward_fixture_generator_sha256,
+            digest_bytes(FORWARD_FIXTURE_GENERATOR_AUTHORITY)
         );
         assert_eq!(
             rung.authority.base_artifact_path,
