@@ -44,6 +44,8 @@ pub(crate) mod native_flat_cpu_reference_v1;
 pub(crate) mod native_policy_value_net_v1;
 // Exact CPU loss/backward/Adam reference for terminal_reinforce_value/v3;
 // deliberately not a scheduler, checkpoint format, or performance backend.
+#[cfg(feature = "native-flat-tensorizer-diagnostic")]
+pub mod native_flat_tensorizer_diagnostic_v1;
 #[allow(dead_code)]
 pub(crate) mod native_flat_tensorizer_v2;
 #[allow(dead_code)]
