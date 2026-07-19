@@ -35,6 +35,10 @@ pub mod mana;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
 pub(crate) mod native_flat_cpu_reference_v1;
+// Auditable CPU inference reference for Python kernel-policy-value-net-8;
+// deliberately not a production or performance backend.
+#[allow(dead_code)]
+pub(crate) mod native_policy_value_net_v1;
 #[allow(dead_code)]
 pub(crate) mod native_trainer_schedule_v1;
 pub mod phase_profile;
