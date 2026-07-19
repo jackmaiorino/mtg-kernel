@@ -41,8 +41,9 @@ use crate::native_full_episode_trajectory_v1::{
     NativeFullEpisodeTrajectoryAccumulatorV1, NativeFullEpisodeTrajectoryDecisionRowV1,
     NativeFullEpisodeTrajectoryReceiptV1, NativeTrajectoryActorRoleV1,
 };
+use crate::native_opponent_sampler_v1::select_native_trainer_opponent_action_v1;
 use crate::native_trainer_schedule_v1::{
-    derive_native_trainer_learner_action_seed_v1, derive_native_trainer_opponent_action_seed_v1,
+    derive_native_trainer_learner_action_seed_v1, derive_native_trainer_opponent_group_seed_v1,
     native_trainer_episode_schedule_v1,
 };
 use crate::rl::{
@@ -92,12 +93,14 @@ struct NativeOpenPhysicalGroupV1 {
     next_substep_index: u32,
     next_policy_step: u64,
     actor_group_ordinal: u64,
+    opponent_group_seed: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NativeActionPreflightV1 {
     action_seed: u64,
     actor_physical_decision_ordinal: u64,
+    opponent_selected_index: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,7 +164,7 @@ impl NativeLaneScheduleStateV1 {
         {
             return Err(());
         }
-        match self.open_group {
+        let (open, begins_group) = match self.open_group {
             None => {
                 if decision.substep_index != 0
                     || self.completed_group_count() != Some(decision.physical_decision_id)
@@ -181,44 +184,81 @@ impl NativeLaneScheduleStateV1 {
                 // action. This keeps ordinal overflow on the preflight side of
                 // the engine-mutation boundary.
                 actor_group_ordinal.checked_add(1).ok_or(())?;
-                self.open_group = Some(NativeOpenPhysicalGroupV1 {
-                    physical_decision_id: decision.physical_decision_id,
-                    acting_player: decision.acting_player,
-                    substep_count: decision.substep_count,
-                    next_substep_index: 0,
-                    next_policy_step: decision.step,
-                    actor_group_ordinal,
-                });
+                let opponent_group_seed = if decision.acting_player == self.learner_seat {
+                    None
+                } else {
+                    Some(
+                        derive_native_trainer_opponent_group_seed_v1(
+                            self.base_seed,
+                            self.episode_index,
+                            actor_group_ordinal,
+                        )
+                        .map_err(|_| ())?,
+                    )
+                };
+                (
+                    NativeOpenPhysicalGroupV1 {
+                        physical_decision_id: decision.physical_decision_id,
+                        acting_player: decision.acting_player,
+                        substep_count: decision.substep_count,
+                        next_substep_index: 0,
+                        next_policy_step: decision.step,
+                        actor_group_ordinal,
+                        opponent_group_seed,
+                    },
+                    true,
+                )
             }
             Some(open)
                 if open.physical_decision_id == decision.physical_decision_id
                     && open.acting_player == decision.acting_player
                     && open.substep_count == decision.substep_count
                     && open.next_substep_index == decision.substep_index
-                    && open.next_policy_step == decision.step => {}
+                    && open.next_policy_step == decision.step =>
+            {
+                (open, false)
+            }
             Some(_) => return Err(()),
-        }
-        let open = self.open_group.ok_or(())?;
-        let action_seed = if decision.acting_player == self.learner_seat {
-            derive_native_trainer_learner_action_seed_v1(
-                self.base_seed,
-                self.episode_index,
-                open.actor_group_ordinal,
-                decision.substep_index,
+        };
+        let (action_seed, opponent_selected_index) = if decision.acting_player == self.learner_seat
+        {
+            if open.opponent_group_seed.is_some() {
+                return Err(());
+            }
+            (
+                derive_native_trainer_learner_action_seed_v1(
+                    self.base_seed,
+                    self.episode_index,
+                    open.actor_group_ordinal,
+                    decision.substep_index,
+                )
+                .map_err(|_| ())?,
+                None,
             )
-            .map_err(|_| ())
         } else {
-            derive_native_trainer_opponent_action_seed_v1(
+            // The group seed is derived exactly when the physical group
+            // opens. Every declared substep then enters the frozen native
+            // opponent sampler, including legal width one.
+            open.opponent_group_seed.ok_or(())?;
+            let selected = select_native_trainer_opponent_action_v1(
                 self.base_seed,
                 self.episode_index,
                 open.actor_group_ordinal,
                 decision.substep_index,
+                decision.legal_action_count,
             )
-            .map_err(|_| ())
-        }?;
+            .map_err(|_| ())?;
+            (selected.action_seed, Some(selected.selected_index))
+        };
+        // Opening a group is transactional with seed derivation and opponent
+        // selection. A failed preflight cannot leave a partial open group.
+        if begins_group {
+            self.open_group = Some(open);
+        }
         Ok(NativeActionPreflightV1 {
             action_seed,
             actor_physical_decision_ordinal: open.actor_group_ordinal,
+            opponent_selected_index,
         })
     }
 
@@ -1795,10 +1835,9 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         None
                     };
                     let selected_index = if let Some(preflight) = native_preflight {
-                        u32::try_from(
-                            preflight.action_seed % u64::from(decision.legal_action_count),
-                        )
-                        .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?
+                        preflight
+                            .opponent_selected_index
+                            .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?
                     } else {
                         uniform_index(&mut self.opponent_policy, decision.legal_action_count)
                     };
@@ -2561,7 +2600,9 @@ impl BrokerEpisodeV1 {
             (FlatScoredExecutionScheduleV1::Legacy, None) => {
                 derive_async_flat_scored_action_seed_v1(learner_policy_seed, episode_id, ordinal)
             }
-            (FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. }, Some(preflight)) => {
+            (FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. }, Some(preflight))
+                if preflight.opponent_selected_index.is_none() =>
+            {
                 preflight.action_seed
             }
             _ => return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation),
@@ -3546,6 +3587,11 @@ fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
     use crate::fast_sampler::splitmix64_first;
+    use crate::native_opponent_sampler_v1::UNIFORM_INDEX_MODULO_U64_IDENTITY_V1;
+    use crate::native_trainer_schedule_v1::{
+        derive_native_trainer_opponent_action_seed_v1, NATIVE_TRAINER_SCHEDULE_CONTRACT_V1,
+        NATIVE_TRAINER_SCHEDULE_VERSION_V1, PYTHON_REFERENCE_SEED_VERSION_V1,
+    };
     use sha2::{Digest, Sha256};
     use std::collections::BTreeSet;
     use std::time::Duration;
@@ -5256,6 +5302,233 @@ mod tests {
             acting_player,
             decision_kind: FastActorDecisionKindV1::Surface,
             legal_action_count: 3,
+        }
+    }
+
+    fn native_schedule_decision_with_width(
+        episode_id: u64,
+        step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        acting_player: PlayerSeatV1,
+        legal_action_count: u32,
+    ) -> FastActorDecisionV1 {
+        FastActorDecisionV1 {
+            legal_action_count,
+            ..native_schedule_decision(
+                episode_id,
+                step,
+                physical_decision_id,
+                substep_index,
+                substep_count,
+                acting_player,
+            )
+        }
+    }
+
+    #[test]
+    fn native_opponent_preflight_calls_frozen_sampler_for_practical_widths() {
+        assert_eq!(
+            NATIVE_TRAINER_SCHEDULE_CONTRACT_V1.trainer_schedule_version,
+            NATIVE_TRAINER_SCHEDULE_VERSION_V1
+        );
+        assert_eq!(
+            NATIVE_TRAINER_SCHEDULE_VERSION_V1,
+            "mtg-kernel-native-trainer-schedule-sha256-v1"
+        );
+        assert_eq!(
+            PYTHON_REFERENCE_SEED_VERSION_V1,
+            "kernel-python-rl-trainer-sha256-v2"
+        );
+        assert_eq!(
+            UNIFORM_INDEX_MODULO_U64_IDENTITY_V1,
+            "mtg-kernel-uniform-index-modulo-u64-v1"
+        );
+
+        let base_seed = 71_501;
+        let episode_index = 1;
+        let opponent = PlayerSeatV1::P0;
+        for legal_action_count in [1, 2, 64] {
+            let decision = native_schedule_decision_with_width(
+                episode_index,
+                0,
+                0,
+                0,
+                1,
+                opponent,
+                legal_action_count,
+            );
+            let mut schedule =
+                NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1);
+            let actual = schedule
+                .preflight_action_seed(decision, 4, 8)
+                .expect("valid opponent preflight");
+            let expected = select_native_trainer_opponent_action_v1(
+                base_seed,
+                episode_index,
+                0,
+                0,
+                legal_action_count,
+            )
+            .expect("frozen opponent sampler accepts nonzero width");
+            assert_eq!(actual.action_seed, expected.action_seed);
+            assert_eq!(
+                actual.opponent_selected_index,
+                Some(expected.selected_index)
+            );
+            assert!(expected.selected_index < legal_action_count);
+            assert_eq!(
+                schedule
+                    .open_group
+                    .expect("preflight opens the physical group")
+                    .opponent_group_seed,
+                Some(
+                    derive_native_trainer_opponent_group_seed_v1(base_seed, episode_index, 0)
+                        .unwrap()
+                )
+            );
+
+            let state_after_first = schedule;
+            assert_eq!(
+                schedule.preflight_action_seed(decision, 4, 8),
+                Ok(actual),
+                "repeat preflight must be deterministic"
+            );
+            assert_eq!(
+                schedule, state_after_first,
+                "repeat preflight must be inert"
+            );
+        }
+    }
+
+    #[test]
+    fn native_opponent_width_one_consumes_leaf_without_shifting_later_group() {
+        fn run_prefix(
+            first_width: u32,
+            second_width: u32,
+        ) -> (
+            NativeActionPreflightV1,
+            NativeActionPreflightV1,
+            NativeActionPreflightV1,
+            u64,
+            u64,
+        ) {
+            let base_seed = 71_501;
+            let episode_index = 1;
+            let opponent = PlayerSeatV1::P0;
+            let mut schedule =
+                NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1);
+
+            let first = native_schedule_decision_with_width(
+                episode_index,
+                0,
+                0,
+                0,
+                2,
+                opponent,
+                first_width,
+            );
+            let first_preflight = schedule.preflight_action_seed(first, 8, 16).unwrap();
+            let first_group_seed = schedule
+                .open_group
+                .expect("first group is open")
+                .opponent_group_seed
+                .expect("opponent group carries its seed");
+            schedule.commit_action(first).unwrap();
+            assert_eq!(
+                schedule
+                    .open_group
+                    .expect("non-final substep retains the group")
+                    .opponent_group_seed,
+                Some(first_group_seed)
+            );
+
+            let second = native_schedule_decision_with_width(
+                episode_index,
+                1,
+                0,
+                1,
+                2,
+                opponent,
+                second_width,
+            );
+            let second_preflight = schedule.preflight_action_seed(second, 8, 16).unwrap();
+            schedule.commit_action(second).unwrap();
+            assert!(schedule.open_group.is_none());
+
+            let later =
+                native_schedule_decision_with_width(episode_index, 2, 1, 0, 1, opponent, 64);
+            let later_preflight = schedule.preflight_action_seed(later, 8, 16).unwrap();
+            let later_group_seed = schedule
+                .open_group
+                .expect("later group is open")
+                .opponent_group_seed
+                .expect("later opponent group carries its seed");
+            (
+                first_preflight,
+                second_preflight,
+                later_preflight,
+                first_group_seed,
+                later_group_seed,
+            )
+        }
+
+        let (width_one, successor, later, first_group_seed, later_group_seed) = run_prefix(1, 2);
+        assert_eq!(width_one.opponent_selected_index, Some(0));
+        assert_eq!(
+            width_one.action_seed,
+            derive_native_trainer_opponent_action_seed_v1(71_501, 1, 0, 0).unwrap()
+        );
+        assert_eq!(
+            successor.action_seed,
+            derive_native_trainer_opponent_action_seed_v1(71_501, 1, 0, 1).unwrap()
+        );
+        assert_ne!(
+            width_one.action_seed, successor.action_seed,
+            "a width-one substep must not reuse its leaf seed at the successor"
+        );
+        assert_eq!(
+            first_group_seed,
+            derive_native_trainer_opponent_group_seed_v1(71_501, 1, 0).unwrap()
+        );
+        assert_eq!(
+            later_group_seed,
+            derive_native_trainer_opponent_group_seed_v1(71_501, 1, 1).unwrap()
+        );
+        assert_ne!(first_group_seed, later_group_seed);
+
+        let (counterfactual_first, counterfactual_second, counterfactual_later, _, cf_later_seed) =
+            run_prefix(64, 1);
+        assert_eq!(width_one.action_seed, counterfactual_first.action_seed);
+        assert_eq!(successor.action_seed, counterfactual_second.action_seed);
+        assert_eq!(later.action_seed, counterfactual_later.action_seed);
+        assert_eq!(later_group_seed, cf_later_seed);
+        assert!(later
+            .opponent_selected_index
+            .is_some_and(|index| index < 64));
+    }
+
+    #[test]
+    fn native_opponent_zero_width_is_transactional_and_positions_are_distinct() {
+        let base_seed = 71_501;
+        let mut zero = NativeLaneScheduleStateV1::new(base_seed, 1, PlayerSeatV1::P1);
+        let before = zero;
+        let empty = native_schedule_decision_with_width(1, 0, 0, 0, 1, PlayerSeatV1::P0, 0);
+        assert_eq!(zero.preflight_action_seed(empty, 4, 8), Err(()));
+        assert_eq!(zero, before);
+
+        let episode_one = select_native_trainer_opponent_action_v1(base_seed, 1, 0, 0, 2)
+            .expect("episode-one selection");
+        let episode_three = select_native_trainer_opponent_action_v1(base_seed, 3, 0, 0, 2)
+            .expect("episode-three selection");
+        let later_decision = select_native_trainer_opponent_action_v1(base_seed, 1, 1, 0, 2)
+            .expect("later physical-decision selection");
+        assert_ne!(episode_one.action_seed, episode_three.action_seed);
+        assert_ne!(episode_one.action_seed, later_decision.action_seed);
+        assert_ne!(episode_three.action_seed, later_decision.action_seed);
+        for selected in [episode_one, episode_three, later_decision] {
+            assert!(selected.selected_index < 2);
         }
     }
 
