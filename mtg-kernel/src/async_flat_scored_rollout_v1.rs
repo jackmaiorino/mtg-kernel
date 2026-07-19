@@ -66,35 +66,6 @@ const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 #[cfg(test)]
-static TEST_DELAY_WORKER_ID_V1: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(usize::MAX);
-#[cfg(test)]
-static TEST_DELAY_WORKER_MS_V1: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-static TEST_DELAY_FINAL_REDUCTION_MS_V1: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-static TEST_ENTERED_FINAL_REDUCTION_V1: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-static TEST_EXIT_AFTER_ROUND_WORKER_ID_V1: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(usize::MAX);
-#[cfg(test)]
-static TEST_CONSUMED_ACTION_COUNT_V1: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-static TEST_TERMINAL_ACK_COUNT_V1: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-static TEST_CAPTURE_ACTION_EVENTS_V1: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-static TEST_ACTION_EVENTS_V1: std::sync::Mutex<Vec<TestScoredActionEventV1>> =
-    std::sync::Mutex::new(Vec::new());
-#[cfg(test)]
-pub(crate) static ASYNC_FLAT_SCORED_TEST_LOCK_V1: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TestScoredActionEventV1 {
     expected: FastActorDecisionV1,
@@ -102,6 +73,139 @@ struct TestScoredActionEventV1 {
     safe_packet_payload: String,
     scorer_value_bits: u32,
     selected_index: u32,
+}
+
+#[cfg(test)]
+struct TestRunInstrumentationV1 {
+    delay_worker_id: std::sync::atomic::AtomicUsize,
+    delay_worker_ms: AtomicU64,
+    delay_final_reduction_ms: AtomicU64,
+    entered_final_reduction: AtomicBool,
+    fail_reply_send_worker_id: std::sync::atomic::AtomicUsize,
+    consumed_action_count: AtomicU64,
+    terminal_ack_count: AtomicU64,
+    capture_action_events: AtomicBool,
+    action_events: std::sync::Mutex<Vec<TestScoredActionEventV1>>,
+}
+
+#[cfg(test)]
+impl Default for TestRunInstrumentationV1 {
+    fn default() -> Self {
+        Self {
+            delay_worker_id: std::sync::atomic::AtomicUsize::new(usize::MAX),
+            delay_worker_ms: AtomicU64::new(0),
+            delay_final_reduction_ms: AtomicU64::new(0),
+            entered_final_reduction: AtomicBool::new(false),
+            fail_reply_send_worker_id: std::sync::atomic::AtomicUsize::new(usize::MAX),
+            consumed_action_count: AtomicU64::new(0),
+            terminal_ack_count: AtomicU64::new(0),
+            capture_action_events: AtomicBool::new(false),
+            action_events: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static ACTIVE_TEST_RUN_INSTRUMENTATION_V1:
+        std::cell::RefCell<Option<Arc<TestRunInstrumentationV1>>> = const {
+            std::cell::RefCell::new(None)
+        };
+}
+
+// Retained for downstream tests that coordinate their own expensive rollout
+// calls. Fault and capture state no longer depends on this process-global lock.
+#[cfg(test)]
+pub(crate) static ASYNC_FLAT_SCORED_TEST_LOCK_V1: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Installs fault/capture instrumentation for runs started by this test
+/// thread. Each run clones the `Arc` into its broker and workers, so unrelated
+/// parallel tests receive neutral state and an unwinding test cannot reset
+/// hooks while its worker threads still hold them.
+#[cfg(test)]
+pub(crate) struct AsyncFlatScoredTestGuardV1 {
+    instrumentation: Arc<TestRunInstrumentationV1>,
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl AsyncFlatScoredTestGuardV1 {
+    fn delay_worker(&self, worker_id: usize, milliseconds: u64) {
+        self.instrumentation
+            .delay_worker_id
+            .store(worker_id, Ordering::SeqCst);
+        self.instrumentation
+            .delay_worker_ms
+            .store(milliseconds, Ordering::SeqCst);
+    }
+
+    fn delay_final_reduction(&self, milliseconds: u64) {
+        self.instrumentation
+            .delay_final_reduction_ms
+            .store(milliseconds, Ordering::SeqCst);
+    }
+
+    fn fail_reply_send(&self, worker_id: usize) {
+        self.instrumentation
+            .fail_reply_send_worker_id
+            .store(worker_id, Ordering::SeqCst);
+    }
+
+    fn consumed_action_count(&self) -> u64 {
+        self.instrumentation
+            .consumed_action_count
+            .load(Ordering::SeqCst)
+    }
+
+    fn terminal_ack_count(&self) -> u64 {
+        self.instrumentation
+            .terminal_ack_count
+            .load(Ordering::SeqCst)
+    }
+
+    fn entered_final_reduction(&self) -> bool {
+        self.instrumentation
+            .entered_final_reduction
+            .load(Ordering::SeqCst)
+    }
+
+    fn instrumentation_arc(&self) -> Arc<TestRunInstrumentationV1> {
+        Arc::clone(&self.instrumentation)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn acquire_async_flat_scored_test_guard_v1() -> AsyncFlatScoredTestGuardV1 {
+    let instrumentation = Arc::new(TestRunInstrumentationV1::default());
+    ACTIVE_TEST_RUN_INSTRUMENTATION_V1.with(|active| {
+        assert!(
+            active.replace(Some(Arc::clone(&instrumentation))).is_none(),
+            "nested async-flat-scored test instrumentation is unsupported"
+        );
+    });
+    AsyncFlatScoredTestGuardV1 {
+        instrumentation,
+        thread_bound: std::marker::PhantomData,
+    }
+}
+
+#[cfg(test)]
+fn current_test_run_instrumentation_v1() -> Arc<TestRunInstrumentationV1> {
+    ACTIVE_TEST_RUN_INSTRUMENTATION_V1
+        .with(|active| active.borrow().clone())
+        .unwrap_or_else(|| Arc::new(TestRunInstrumentationV1::default()))
+}
+
+#[cfg(test)]
+impl Drop for AsyncFlatScoredTestGuardV1 {
+    fn drop(&mut self) {
+        ACTIVE_TEST_RUN_INSTRUMENTATION_V1.with(|active| {
+            let installed = active.replace(None);
+            debug_assert!(installed
+                .as_ref()
+                .is_some_and(|installed| Arc::ptr_eq(installed, &self.instrumentation)));
+        });
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1050,6 +1154,8 @@ struct LocalLaneCore<F: FlatScoredFamilyCore> {
     opponent_policy: SplitMix64,
     learner_action_count: u64,
     learner_trace_hash: u64,
+    #[cfg(test)]
+    test_instrumentation: Arc<TestRunInstrumentationV1>,
 }
 
 #[cfg(test)]
@@ -1079,6 +1185,8 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             opponent_policy: SplitMix64::seed(0),
             learner_action_count: 0,
             learner_trace_hash: FNV1A64_OFFSET,
+            #[cfg(test)]
+            test_instrumentation: Arc::new(TestRunInstrumentationV1::default()),
         }
     }
 
@@ -1119,8 +1227,13 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             let response = F::consume(session, action.scored.binding, action.scored.selected_index)
                 .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerConsume))?;
             #[cfg(test)]
-            if TEST_CAPTURE_ACTION_EVENTS_V1.load(std::sync::atomic::Ordering::SeqCst) {
-                TEST_ACTION_EVENTS_V1
+            if self
+                .test_instrumentation
+                .capture_action_events
+                .load(Ordering::SeqCst)
+            {
+                self.test_instrumentation
+                    .action_events
                     .lock()
                     .expect("test action-event sink mutex poisoned")
                     .push(TestScoredActionEventV1 {
@@ -1135,7 +1248,9 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             self.response = Some(response);
             self.waiting_decision = None;
             #[cfg(test)]
-            TEST_CONSUMED_ACTION_COUNT_V1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.test_instrumentation
+                .consumed_action_count
+                .fetch_add(1, Ordering::SeqCst);
             self.learner_action_count = self
                 .learner_action_count
                 .checked_add(1)
@@ -1161,7 +1276,9 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                 .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
             reply.terminal_acks.swap_remove(index);
             #[cfg(test)]
-            TEST_TERMINAL_ACK_COUNT_V1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.test_instrumentation
+                .terminal_ack_count
+                .fetch_add(1, Ordering::SeqCst);
             self.session = None;
             self.response = None;
             self.waiting_terminal = false;
@@ -1755,6 +1872,8 @@ struct WorkerRuntimeV1 {
     deadline: Instant,
     cancel: Arc<AtomicBool>,
     released_epoch: Arc<AtomicU64>,
+    #[cfg(test)]
+    test_instrumentation: Arc<TestRunInstrumentationV1>,
 }
 
 fn worker_loop<F: FlatScoredFamilyCore>(
@@ -1765,9 +1884,17 @@ fn worker_loop<F: FlatScoredFamilyCore>(
     control_rx: &Receiver<WorkerControlCore<F>>,
 ) -> Result<(), WorkerFailureV1> {
     #[cfg(test)]
-    if TEST_DELAY_WORKER_ID_V1.load(std::sync::atomic::Ordering::SeqCst) == worker_id {
+    if runtime
+        .test_instrumentation
+        .delay_worker_id
+        .load(Ordering::SeqCst)
+        == worker_id
+    {
         thread::sleep(std::time::Duration::from_millis(
-            TEST_DELAY_WORKER_MS_V1.load(std::sync::atomic::Ordering::SeqCst),
+            runtime
+                .test_instrumentation
+                .delay_worker_ms
+                .load(Ordering::SeqCst),
         ));
     }
     let first_lane = worker_id
@@ -1780,12 +1907,18 @@ fn worker_loop<F: FlatScoredFamilyCore>(
         })?;
     let mut lanes: Vec<LocalLaneCore<F>> = (0..config.sessions_per_worker)
         .map(|slot| {
-            LocalLaneCore::vacant(
+            let lane = LocalLaneCore::vacant(
                 worker_id,
                 first_lane + slot,
                 config.first_episode_id,
                 runtime.end_episode_id,
-            )
+            );
+            #[cfg(test)]
+            let lane = LocalLaneCore {
+                test_instrumentation: Arc::clone(&runtime.test_instrumentation),
+                ..lane
+            };
+            lane
         })
         .collect();
     let mut round = WorkerRoundCore::with_capacity(worker_id, config.sessions_per_worker);
@@ -1855,11 +1988,6 @@ fn worker_loop<F: FlatScoredFamilyCore>(
                 episode_id: u64::MAX,
                 phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
             })?;
-        #[cfg(test)]
-        if TEST_EXIT_AFTER_ROUND_WORKER_ID_V1.load(std::sync::atomic::Ordering::SeqCst) == worker_id
-        {
-            return Ok(());
-        }
         let remaining = runtime.deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Ok(());
@@ -2122,6 +2250,23 @@ fn protocol_or_deadline_error_v1(deadline: Instant) -> AsyncFlatScoredRolloutErr
     }
 }
 
+#[cfg(test)]
+fn send_worker_control_v1<F: FlatScoredFamilyCore>(
+    sender: &mpsc::Sender<WorkerControlCore<F>>,
+    worker_id: usize,
+    control: WorkerControlCore<F>,
+    test_instrumentation: &TestRunInstrumentationV1,
+) -> Result<(), mpsc::SendError<WorkerControlCore<F>>> {
+    if test_instrumentation
+        .fail_reply_send_worker_id
+        .load(Ordering::SeqCst)
+        == worker_id
+    {
+        return Err(mpsc::SendError(control));
+    }
+    sender.send(control)
+}
+
 /// Runs the finite multi-session scored rollout. The scorer remains on the
 /// calling thread; worker threads own every game session, private action
 /// cache, consume binding, and operational action-object buffer.
@@ -2169,6 +2314,8 @@ pub(crate) fn run_async_flat_scored_rollout_core<
 ) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
 {
     let api_started = Instant::now();
+    #[cfg(test)]
+    let test_instrumentation = current_test_run_instrumentation_v1();
     if !(1..=ASYNC_ROLLOUT_MAX_WORKERS_V2).contains(&config.worker_count) {
         return Err(AsyncFlatScoredRolloutErrorV1::InvalidWorkerCount {
             requested: config.worker_count,
@@ -2226,6 +2373,8 @@ pub(crate) fn run_async_flat_scored_rollout_core<
         deadline,
         cancel: Arc::clone(&cancel),
         released_epoch: Arc::clone(&released_epoch),
+        #[cfg(test)]
+        test_instrumentation: Arc::clone(&test_instrumentation),
     };
     let mut control_txs = Vec::with_capacity(config.worker_count);
     let mut handles: Vec<Option<JoinHandle<()>>> = Vec::with_capacity(config.worker_count);
@@ -2635,12 +2784,20 @@ pub(crate) fn run_async_flat_scored_rollout_core<
                     return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                 }
                 ensure_before_deadline_v1(deadline)?;
-                control_txs[worker_id]
-                    .send(WorkerControlCore::Continue {
-                        release_epoch,
-                        round,
-                    })
-                    .map_err(|_| protocol_or_deadline_error_v1(deadline))?;
+                let control = WorkerControlCore::Continue {
+                    release_epoch,
+                    round,
+                };
+                #[cfg(test)]
+                let send_result = send_worker_control_v1(
+                    &control_txs[worker_id],
+                    worker_id,
+                    control,
+                    &test_instrumentation,
+                );
+                #[cfg(not(test))]
+                let send_result = control_txs[worker_id].send(control);
+                send_result.map_err(|_| protocol_or_deadline_error_v1(deadline))?;
                 ensure_before_deadline_v1(deadline)?;
             }
             ensure_before_deadline_v1(deadline)?;
@@ -2680,9 +2837,13 @@ pub(crate) fn run_async_flat_scored_rollout_core<
     }
     #[cfg(test)]
     {
-        TEST_ENTERED_FINAL_REDUCTION_V1.store(true, std::sync::atomic::Ordering::SeqCst);
+        test_instrumentation
+            .entered_final_reduction
+            .store(true, Ordering::SeqCst);
         thread::sleep(std::time::Duration::from_millis(
-            TEST_DELAY_FINAL_REDUCTION_MS_V1.load(std::sync::atomic::Ordering::SeqCst),
+            test_instrumentation
+                .delay_final_reduction_ms
+                .load(Ordering::SeqCst),
         ));
     }
 
@@ -2884,7 +3045,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::time::Duration;
 
-    use super::ASYNC_FLAT_SCORED_TEST_LOCK_V1 as TEST_LOCK;
+    use super::acquire_async_flat_scored_test_guard_v1;
     const TEST_LEARNER_POLICY_SEED: u64 = 83_501;
 
     #[derive(Default)]
@@ -3293,17 +3454,24 @@ mod tests {
     fn capture_async_action_events<T>(
         run: impl FnOnce() -> T,
     ) -> (T, Vec<TestScoredActionEventV1>) {
-        TEST_ACTION_EVENTS_V1
+        let instrumentation = current_test_run_instrumentation_v1();
+        instrumentation
+            .action_events
             .lock()
-            .expect("test action-event sink mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
-        TEST_CAPTURE_ACTION_EVENTS_V1.store(true, std::sync::atomic::Ordering::SeqCst);
+        instrumentation
+            .capture_action_events
+            .store(true, Ordering::SeqCst);
         let result = run();
-        TEST_CAPTURE_ACTION_EVENTS_V1.store(false, std::sync::atomic::Ordering::SeqCst);
+        instrumentation
+            .capture_action_events
+            .store(false, Ordering::SeqCst);
         let mut events = std::mem::take(
-            &mut *TEST_ACTION_EVENTS_V1
+            &mut *instrumentation
+                .action_events
                 .lock()
-                .expect("test action-event sink mutex poisoned"),
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
         events.sort_unstable_by_key(|event| (event.expected.episode_id, event.learner_ordinal));
         (result, events)
@@ -3760,7 +3928,7 @@ mod tests {
 
     #[test]
     fn scored_rollout_is_natural_exact_and_repeatable() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut first_scorer = ZeroScorer::default();
         let first =
             run_async_flat_scored_rollout_v1(config(2, 2, 4, 16), &mut first_scorer).unwrap();
@@ -3808,7 +3976,7 @@ mod tests {
 
     #[test]
     fn public_noop_path_matches_private_noop_core() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let shaped = config(2, 2, 3, 8);
         let mut public_scorer = ZeroScorer::default();
         let public = run_async_flat_scored_rollout_v1(shaped.clone(), &mut public_scorer).unwrap();
@@ -3848,7 +4016,7 @@ mod tests {
 
     #[test]
     fn logical_transcript_is_schedule_invariant() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut base = config(1, 1, 1, 9);
         base.first_episode_id = 37;
         let reference = synchronous_content_sensitive_reference(&base);
@@ -3903,7 +4071,7 @@ mod tests {
 
     #[test]
     fn observed_selected_and_terminal_stream_is_canonical_and_schedule_invariant() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut base = config(1, 1, 1, 9);
         base.first_episode_id = 37;
         let shapes = [(1, 1, 1), (1, 4, 3), (4, 1, 3), (4, 2, 5)];
@@ -3959,7 +4127,7 @@ mod tests {
 
     #[test]
     fn synchronous_reference_oracle_rejects_packet_misassociation() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut config = config(1, 1, 1, 9);
         config.first_episode_id = 37;
         let reference = synchronous_content_sensitive_reference(&config);
@@ -3984,7 +4152,7 @@ mod tests {
 
     #[test]
     fn synchronous_reference_oracle_rejects_value_misassociation() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut config = config(1, 1, 1, 9);
         config.first_episode_id = 37;
         let reference = synchronous_content_sensitive_reference(&config);
@@ -4009,7 +4177,7 @@ mod tests {
 
     #[test]
     fn asynchronous_oracle_rejects_scorer_value_row_swap() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut config = config(1, 4, 4, 9);
         config.first_episode_id = 37;
         let reference = synchronous_content_sensitive_reference(&config);
@@ -4049,7 +4217,7 @@ mod tests {
 
     #[test]
     fn later_chunk_scorer_failure_cancels_without_hanging() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = FailingScorer {
             calls: 0,
             fail_on: 2,
@@ -4066,8 +4234,7 @@ mod tests {
 
     #[test]
     fn first_selected_observer_error_releases_no_multi_lane_action_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let callback_count = Arc::new(AtomicU64::new(0));
         let finished = Arc::new(AtomicBool::new(false));
         let observer = FailingFirstSelectedObserverV1 {
@@ -4091,13 +4258,12 @@ mod tests {
         assert_eq!(scorer.decisions, 4);
         assert_eq!(callback_count.load(Ordering::SeqCst), 1);
         assert!(!finished.load(Ordering::SeqCst));
-        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert_eq!(_test_state.consumed_action_count(), 0);
     }
 
     #[test]
     fn first_selected_observer_panic_releases_no_multi_lane_action_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let callback_count = Arc::new(AtomicU64::new(0));
         let finished = Arc::new(AtomicBool::new(false));
         let observer = PanickingFirstSelectedObserverV1 {
@@ -4120,13 +4286,12 @@ mod tests {
         assert_eq!(scorer.decisions, 4);
         assert_eq!(callback_count.load(Ordering::SeqCst), 1);
         assert!(!finished.load(Ordering::SeqCst));
-        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert_eq!(_test_state.consumed_action_count(), 0);
     }
 
     #[test]
     fn slow_first_selected_observer_deadline_releases_no_action_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let callback_count = Arc::new(AtomicU64::new(0));
         let finished = Arc::new(AtomicBool::new(false));
         let observer = SlowFirstSelectedObserverV1 {
@@ -4151,14 +4316,12 @@ mod tests {
         assert_eq!(scorer.decisions, 4);
         assert_eq!(callback_count.load(Ordering::SeqCst), 1);
         assert!(!finished.load(Ordering::SeqCst));
-        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert_eq!(_test_state.consumed_action_count(), 0);
     }
 
     #[test]
     fn terminal_observer_error_maps_phase_and_releases_no_terminal_ack_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
-        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = ZeroScorer::default();
 
         let error = run_async_flat_scored_rollout_observed_v1(
@@ -4175,15 +4338,13 @@ mod tests {
                 error: 92,
             }
         ));
-        assert!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst) > 0);
-        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert!(_test_state.consumed_action_count() > 0);
+        assert_eq!(_test_state.terminal_ack_count(), 0);
     }
 
     #[test]
     fn terminal_observer_panic_maps_phase_and_releases_no_terminal_ack_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
-        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = ZeroScorer::default();
 
         let error = run_async_flat_scored_rollout_observed_v1(
@@ -4199,14 +4360,13 @@ mod tests {
                 phase: FlatScoredObserverPhaseV1::Terminal,
             }
         ));
-        assert!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst) > 0);
-        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert!(_test_state.consumed_action_count() > 0);
+        assert_eq!(_test_state.terminal_ack_count(), 0);
     }
 
     #[test]
     fn finish_observer_error_maps_phase_and_returns_no_result_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = ZeroScorer::default();
 
         let error = run_async_flat_scored_rollout_observed_v1(
@@ -4223,13 +4383,12 @@ mod tests {
                 error: 93,
             }
         ));
-        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 1);
+        assert_eq!(_test_state.terminal_ack_count(), 1);
     }
 
     #[test]
     fn finish_observer_panic_maps_phase_and_returns_no_result_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = ZeroScorer::default();
 
         let error = run_async_flat_scored_rollout_observed_v1(
@@ -4245,7 +4404,7 @@ mod tests {
                 phase: FlatScoredObserverPhaseV1::Finish,
             }
         ));
-        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 1);
+        assert_eq!(_test_state.terminal_ack_count(), 1);
     }
 
     struct UnwrittenScorer;
@@ -4263,7 +4422,7 @@ mod tests {
 
     #[test]
     fn unwritten_scorer_output_fails_closed() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let error =
             run_async_flat_scored_rollout_v1(config(1, 1, 1, 1), &mut UnwrittenScorer).unwrap_err();
         assert!(matches!(
@@ -4296,7 +4455,7 @@ mod tests {
 
     #[test]
     fn non_finite_scorer_value_fails_closed_with_exact_bits() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         for value_bits in [0x7fc0_1234, f32::INFINITY.to_bits()] {
             let error = run_async_flat_scored_rollout_v1(
                 config(1, 1, 1, 1),
@@ -4317,7 +4476,7 @@ mod tests {
 
     #[test]
     fn finite_scorer_value_wrapper_rejects_every_non_finite_class() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         assert_eq!(
             FiniteScorerValueV1::new(-0.0),
             Some(FiniteScorerValueV1(0x8000_0000))
@@ -4329,11 +4488,11 @@ mod tests {
 
     #[test]
     fn apply_reply_rejects_corrupted_learner_ordinal_before_consume() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let shaped = config(1, 1, 1, 1);
         let end_episode_id = shaped.first_episode_id + shaped.episode_count;
         let mut lane = LocalLaneV1::vacant(0, 0, shaped.first_episode_id, end_episode_id);
+        lane.test_instrumentation = _test_state.instrumentation_arc();
         lane.fill(&shaped, end_episode_id, 1).unwrap();
         let mut decisions = Vec::new();
         let mut terminals = Vec::new();
@@ -4369,21 +4528,18 @@ mod tests {
             AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding
         );
         assert_eq!(lane.learner_action_count, 0);
-        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert_eq!(_test_state.consumed_action_count(), 0);
     }
 
     #[test]
     fn partial_round_deadline_disconnects_senders_and_joins() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_DELAY_WORKER_ID_V1.store(1, std::sync::atomic::Ordering::SeqCst);
-        TEST_DELAY_WORKER_MS_V1.store(100, std::sync::atomic::Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
+        _test_state.delay_worker(1, 100);
         let mut delayed = config(2, 1, 2, 2);
         delayed.scheduler_timeout = Duration::from_millis(20);
         let started = Instant::now();
         let error =
             run_async_flat_scored_rollout_v1(delayed, &mut ZeroScorer::default()).unwrap_err();
-        TEST_DELAY_WORKER_ID_V1.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
-        TEST_DELAY_WORKER_MS_V1.store(0, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
             error,
             AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded
@@ -4393,15 +4549,12 @@ mod tests {
 
     #[test]
     fn worker_disconnect_at_deadline_has_stable_deadline_error() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_DELAY_WORKER_ID_V1.store(0, std::sync::atomic::Ordering::SeqCst);
-        TEST_DELAY_WORKER_MS_V1.store(50, std::sync::atomic::Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
+        _test_state.delay_worker(0, 50);
         let mut delayed = config(1, 1, 1, 1);
         delayed.scheduler_timeout = Duration::from_millis(10);
         let error =
             run_async_flat_scored_rollout_v1(delayed, &mut ZeroScorer::default()).unwrap_err();
-        TEST_DELAY_WORKER_ID_V1.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
-        TEST_DELAY_WORKER_MS_V1.store(0, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
             error,
             AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded
@@ -4410,15 +4563,13 @@ mod tests {
 
     #[test]
     fn final_reduction_cannot_return_success_after_public_deadline() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_ENTERED_FINAL_REDUCTION_V1.store(false, std::sync::atomic::Ordering::SeqCst);
-        TEST_DELAY_FINAL_REDUCTION_MS_V1.store(1_100, std::sync::atomic::Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
+        _test_state.delay_final_reduction(1_100);
         let mut delayed = config(1, 1, 1, 1);
         delayed.scheduler_timeout = Duration::from_secs(1);
         let error =
             run_async_flat_scored_rollout_v1(delayed, &mut ZeroScorer::default()).unwrap_err();
-        TEST_DELAY_FINAL_REDUCTION_MS_V1.store(0, std::sync::atomic::Ordering::SeqCst);
-        assert!(TEST_ENTERED_FINAL_REDUCTION_V1.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(_test_state.entered_final_reduction());
         assert_eq!(
             error,
             AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded
@@ -4427,21 +4578,68 @@ mod tests {
 
     #[test]
     fn late_reply_send_failure_releases_no_partial_round() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_EXIT_AFTER_ROUND_WORKER_ID_V1.store(1, std::sync::atomic::Ordering::SeqCst);
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, std::sync::atomic::Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
+        _test_state.fail_reply_send(1);
         let error =
             run_async_flat_scored_rollout_v1(config(2, 1, 2, 2), &mut ZeroScorer::default())
                 .unwrap_err();
-        TEST_EXIT_AFTER_ROUND_WORKER_ID_V1.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
             error,
             AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation
         );
+        assert_eq!(_test_state.consumed_action_count(), 0);
+    }
+
+    #[test]
+    fn fault_instrumentation_is_run_local_across_parallel_callers() {
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let finish = Arc::new(std::sync::Barrier::new(2));
+
+        let fault_start = Arc::clone(&start);
+        let fault_finish = Arc::clone(&finish);
+        let faulted = std::thread::spawn(move || {
+            let test_state = acquire_async_flat_scored_test_guard_v1();
+            test_state.fail_reply_send(0);
+            fault_start.wait();
+            let error =
+                run_async_flat_scored_rollout_v1(config(1, 1, 1, 1), &mut ZeroScorer::default())
+                    .unwrap_err();
+            fault_finish.wait();
+            (error, test_state.consumed_action_count())
+        });
+
+        let clean_start = Arc::clone(&start);
+        let clean_finish = Arc::clone(&finish);
+        let clean = std::thread::spawn(move || {
+            // Deliberately no test guard: this models V2/native-trainer callers
+            // that enter the same generic core while another test faults a run.
+            clean_start.wait();
+            let result =
+                run_async_flat_scored_rollout_v1(config(1, 1, 1, 1), &mut ZeroScorer::default());
+            clean_finish.wait();
+            result
+        });
+
+        let (fault_error, fault_consumed) = faulted.join().unwrap();
+        let clean_result = clean.join().unwrap().unwrap();
         assert_eq!(
-            TEST_CONSUMED_ACTION_COUNT_V1.load(std::sync::atomic::Ordering::SeqCst),
-            0
+            fault_error,
+            AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation
         );
+        assert_eq!(fault_consumed, 0);
+        assert!(clean_result.all_natural());
+        assert!(clean_result.metrics.sampled_action_count > 0);
+    }
+
+    #[test]
+    fn worker_owned_instrumentation_survives_caller_context_drop() {
+        let worker_owned = {
+            let test_state = acquire_async_flat_scored_test_guard_v1();
+            test_state.delay_worker(7, 123);
+            test_state.instrumentation_arc()
+        };
+        assert_eq!(worker_owned.delay_worker_id.load(Ordering::SeqCst), 7);
+        assert_eq!(worker_owned.delay_worker_ms.load(Ordering::SeqCst), 123);
     }
 
     #[derive(Default)]
@@ -4500,7 +4698,7 @@ mod tests {
 
     #[test]
     fn first_five_scorer_packets_have_exact_safe_golden() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = PacketGoldenScorer::default();
         let result = run_async_flat_scored_rollout_v1(config(1, 1, 1, 1), &mut scorer).unwrap();
         assert!(result.all_natural());
