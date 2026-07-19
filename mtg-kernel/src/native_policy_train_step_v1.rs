@@ -37,11 +37,21 @@ use std::rc::Rc;
 #[cfg(test)]
 thread_local! {
     static FORWARD_WITH_TAPE_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
+    static PACKED_SCORER_FORWARD_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
+    static PACKED_INDEPENDENT_RECOMPUTE_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
 }
 
 #[cfg(test)]
-fn forward_with_tape_call_count_for_test_v1() -> u64 {
+pub(crate) fn forward_with_tape_call_count_for_test_v1() -> u64 {
     FORWARD_WITH_TAPE_CALL_COUNT_V1.with(Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn packed_forward_call_counts_for_test_v1() -> (u64, u64) {
+    (
+        PACKED_SCORER_FORWARD_CALL_COUNT_V1.with(Cell::get),
+        PACKED_INDEPENDENT_RECOMPUTE_CALL_COUNT_V1.with(Cell::get),
+    )
 }
 
 pub(crate) const TRAINER_ALGORITHM_V1: &str = "terminal_reinforce_value/v3";
@@ -184,7 +194,10 @@ pub(crate) fn native_train_state_parameter_layout_v1(
 #[derive(Clone, Debug)]
 pub(crate) enum NativePolicyForwardInputV1<'a> {
     Encoded(Box<NativeEncodedDecisionViewV1<'a>>),
-    Packed(&'a NativePolicyPackedForwardTapeV1),
+    Packed {
+        encoded: Box<NativeEncodedDecisionViewV1<'a>>,
+        tape: &'a NativePolicyPackedForwardTapeV1,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -192,8 +205,9 @@ pub(crate) struct NativePolicySubstepV1<'a> {
     pub(crate) forward: NativePolicyForwardInputV1<'a>,
     pub(crate) selected_action_index: usize,
     /// Complete scorer output captured when this exact encoded decision was
-    /// sampled. Either the reference recompute or the scorer-owned packed tape
-    /// must reproduce every row bit-exactly before backward or optimizer work.
+    /// sampled. The train-time forward must independently reproduce every row
+    /// bit-exactly. A packed backward tape, when present, must separately match
+    /// the same transported bits before backward or optimizer work.
     pub(crate) expected_raw_action_logit_bits: &'a [u32],
     pub(crate) expected_value_bits: u32,
 }
@@ -300,6 +314,26 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     PackedForwardModelGenerationMismatch {
         group_index: usize,
         substep_index: usize,
+    },
+    PackedForwardLogitCountMismatch {
+        group_index: usize,
+        substep_index: usize,
+        expected: usize,
+        actual: usize,
+    },
+    PackedForwardLogitBitsMismatch {
+        group_index: usize,
+        substep_index: usize,
+        action_index: usize,
+        selected_action_index: usize,
+        expected_bits: u32,
+        actual_bits: u32,
+    },
+    PackedForwardValueBitsMismatch {
+        group_index: usize,
+        substep_index: usize,
+        expected_bits: u32,
+        actual_bits: u32,
     },
     InvalidValueCoefficient,
     InvalidLearningRate,
@@ -519,13 +553,13 @@ impl NativePolicyValueTrainStateV1 {
         let packed_model_generation_sha256 = groups
             .iter()
             .flat_map(|group| group.substeps)
-            .any(|substep| matches!(&substep.forward, NativePolicyForwardInputV1::Packed(_)))
+            .any(|substep| matches!(&substep.forward, NativePolicyForwardInputV1::Packed { .. }))
             .then(|| self.model.parameter_manifest_sha256_v1());
         if let Some(expected_generation) = packed_model_generation_sha256.as_deref() {
             for (group_index, group) in groups.iter().enumerate() {
                 for (substep_index, substep) in group.substeps.iter().enumerate() {
-                    if let NativePolicyForwardInputV1::Packed(packed) = &substep.forward {
-                        if packed.model_generation_sha256.as_ref() != expected_generation {
+                    if let NativePolicyForwardInputV1::Packed { tape, .. } = &substep.forward {
+                        if tape.model_generation_sha256.as_ref() != expected_generation {
                             return Err(
                                 NativePolicyTrainErrorV1::PackedForwardModelGenerationMismatch {
                                     group_index,
@@ -564,51 +598,47 @@ impl NativePolicyValueTrainStateV1 {
             for (substep_index, substep) in group.substeps.iter().enumerate() {
                 let tape = match &substep.forward {
                     NativePolicyForwardInputV1::Encoded(encoded) => {
-                        DecisionTapeSourceV1::Owned(Box::new(forward_with_tape(
+                        let recomputed = Box::new(forward_with_tape(
                             &parameters,
                             self.model.config_v1(),
                             **encoded,
-                        )?))
-                    }
-                    NativePolicyForwardInputV1::Packed(packed) => {
-                        DecisionTapeSourceV1::Packed(&packed.tape)
-                    }
-                };
-                if substep.expected_raw_action_logit_bits.len() != tape.logits.len() {
-                    return Err(NativePolicyTrainErrorV1::ExpectedLogitCountMismatch {
-                        group_index,
-                        substep_index,
-                        expected: substep.expected_raw_action_logit_bits.len(),
-                        actual: tape.logits.len(),
-                    });
-                }
-                for (action_index, (&expected_bits, actual)) in substep
-                    .expected_raw_action_logit_bits
-                    .iter()
-                    .zip(&tape.logits)
-                    .enumerate()
-                {
-                    let actual_bits = actual.to_bits();
-                    if actual_bits != expected_bits {
-                        return Err(NativePolicyTrainErrorV1::RecomputedLogitBitsMismatch {
+                        )?);
+                        validate_forward_output_bits_v1(
+                            &recomputed,
+                            substep,
                             group_index,
                             substep_index,
-                            action_index,
-                            selected_action_index: substep.selected_action_index,
-                            expected_bits,
-                            actual_bits,
-                        });
+                            ForwardOutputSourceV1::IndependentRecompute,
+                        )?;
+                        DecisionTapeSourceV1::Owned(recomputed)
                     }
-                }
-                let actual_value_bits = tape.value.to_bits();
-                if actual_value_bits != substep.expected_value_bits {
-                    return Err(NativePolicyTrainErrorV1::RecomputedValueBitsMismatch {
-                        group_index,
-                        substep_index,
-                        expected_bits: substep.expected_value_bits,
-                        actual_bits: actual_value_bits,
-                    });
-                }
+                    NativePolicyForwardInputV1::Packed { encoded, tape } => {
+                        #[cfg(test)]
+                        PACKED_INDEPENDENT_RECOMPUTE_CALL_COUNT_V1
+                            .with(|count| count.set(count.get() + 1));
+                        let independently_recomputed =
+                            forward_with_tape(&parameters, self.model.config_v1(), **encoded)?;
+                        validate_forward_output_bits_v1(
+                            &independently_recomputed,
+                            substep,
+                            group_index,
+                            substep_index,
+                            ForwardOutputSourceV1::IndependentRecompute,
+                        )?;
+                        validate_forward_output_bits_v1(
+                            &tape.tape,
+                            substep,
+                            group_index,
+                            substep_index,
+                            ForwardOutputSourceV1::PackedBackwardTape,
+                        )?;
+                        // The independent tape is intentionally dropped at
+                        // this branch boundary. Only the rollout-time packed
+                        // tape can reach the backward work staged below.
+                        drop(independently_recomputed);
+                        DecisionTapeSourceV1::Packed(&tape.tape)
+                    }
+                };
                 if substep.selected_action_index >= tape.logits.len() {
                     return Err(NativePolicyTrainErrorV1::SelectedActionOutOfRange {
                         group_index,
@@ -773,6 +803,96 @@ impl NativePolicyValueTrainStateV1 {
             scorer_bias_gauge,
         })
     }
+}
+
+#[derive(Clone, Copy)]
+enum ForwardOutputSourceV1 {
+    IndependentRecompute,
+    PackedBackwardTape,
+}
+
+fn validate_forward_output_bits_v1(
+    tape: &DecisionTapeV1,
+    substep: &NativePolicySubstepV1<'_>,
+    group_index: usize,
+    substep_index: usize,
+    source: ForwardOutputSourceV1,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    let expected_count = substep.expected_raw_action_logit_bits.len();
+    if expected_count != tape.logits.len() {
+        return Err(match source {
+            ForwardOutputSourceV1::IndependentRecompute => {
+                NativePolicyTrainErrorV1::ExpectedLogitCountMismatch {
+                    group_index,
+                    substep_index,
+                    expected: expected_count,
+                    actual: tape.logits.len(),
+                }
+            }
+            ForwardOutputSourceV1::PackedBackwardTape => {
+                NativePolicyTrainErrorV1::PackedForwardLogitCountMismatch {
+                    group_index,
+                    substep_index,
+                    expected: expected_count,
+                    actual: tape.logits.len(),
+                }
+            }
+        });
+    }
+    for (action_index, (&expected_bits, actual)) in substep
+        .expected_raw_action_logit_bits
+        .iter()
+        .zip(&tape.logits)
+        .enumerate()
+    {
+        let actual_bits = actual.to_bits();
+        if actual_bits != expected_bits {
+            return Err(match source {
+                ForwardOutputSourceV1::IndependentRecompute => {
+                    NativePolicyTrainErrorV1::RecomputedLogitBitsMismatch {
+                        group_index,
+                        substep_index,
+                        action_index,
+                        selected_action_index: substep.selected_action_index,
+                        expected_bits,
+                        actual_bits,
+                    }
+                }
+                ForwardOutputSourceV1::PackedBackwardTape => {
+                    NativePolicyTrainErrorV1::PackedForwardLogitBitsMismatch {
+                        group_index,
+                        substep_index,
+                        action_index,
+                        selected_action_index: substep.selected_action_index,
+                        expected_bits,
+                        actual_bits,
+                    }
+                }
+            });
+        }
+    }
+    let actual_value_bits = tape.value.to_bits();
+    if actual_value_bits != substep.expected_value_bits {
+        return Err(match source {
+            ForwardOutputSourceV1::IndependentRecompute => {
+                NativePolicyTrainErrorV1::RecomputedValueBitsMismatch {
+                    group_index,
+                    substep_index,
+                    expected_bits: substep.expected_value_bits,
+                    actual_bits: actual_value_bits,
+                }
+            }
+            ForwardOutputSourceV1::PackedBackwardTape => {
+                NativePolicyTrainErrorV1::PackedForwardValueBitsMismatch {
+                    group_index,
+                    substep_index,
+                    expected_bits: substep.expected_value_bits,
+                    actual_bits: actual_value_bits,
+                }
+            }
+        });
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -1031,8 +1151,9 @@ impl NativePolicyPackedForwardTapeV1 {
 }
 
 /// One immutable parameter snapshot is shared by every scorer forward in an
-/// update.  This avoids both a second network evaluation during learning and
-/// a parameter clone per scored decision.
+/// update. This avoids a parameter clone per scored decision and retains the
+/// exact rollout-time activations for backward. Learning still performs its
+/// separately owned output-validation forward from canonical encoded input.
 pub(crate) struct NativePolicyPackedForwardBuilderV1 {
     parameters: Vec<NativeNamedParameterV1>,
     config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
@@ -1060,6 +1181,8 @@ impl NativePolicyPackedForwardBuilderV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyPackedForwardTapeV1, NativePolicyTrainErrorV1> {
+        #[cfg(test)]
+        PACKED_SCORER_FORWARD_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
         Ok(NativePolicyPackedForwardTapeV1 {
             model_generation_sha256: self.model_generation_sha256.clone(),
             tape: forward_with_tape(&self.parameters, self.config, encoded)?,
@@ -2500,6 +2623,7 @@ mod tests {
     }
 
     fn packed_substeps_for_step<'a>(
+        forward: &'a ForwardFixture,
         step: &GoldenStep,
         expected_outputs: &'a [Vec<ExpectedOutputBits>],
         packed_tapes: &'a [Vec<NativePolicyPackedForwardTapeV1>],
@@ -2519,7 +2643,10 @@ mod tests {
                     .zip(expected_group)
                     .zip(packed_group)
                     .map(|((substep, expected), packed)| NativePolicySubstepV1 {
-                        forward: NativePolicyForwardInputV1::Packed(packed),
+                        forward: NativePolicyForwardInputV1::Packed {
+                            encoded: Box::new(encoded(case_by_name(forward, &substep.case))),
+                            tape: packed,
+                        },
                         selected_action_index: substep.selected_action_index,
                         expected_raw_action_logit_bits: &expected.raw_action_logit_bits,
                         expected_value_bits: expected.value_bits,
@@ -2812,7 +2939,7 @@ mod tests {
     }
 
     #[test]
-    fn scorer_packed_tapes_are_exact_zero_recompute_and_drop_with_the_update() {
+    fn scorer_packed_tapes_are_exact_with_independent_recompute_and_drop_with_the_update() {
         let (forward, golden) = fixtures();
         let model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -2834,6 +2961,8 @@ mod tests {
                         .unwrap()
                         .with_lifetime_probe_for_test_v1(Rc::clone(&lifetime_probe));
                 let calls_before_scorer = forward_with_tape_call_count_for_test_v1();
+                let (scorer_calls_before, recompute_calls_before) =
+                    packed_forward_call_counts_for_test_v1();
                 let packed_tapes = packed_tapes_for_step(&builder, &forward, step);
                 let expected_forward_count = step
                     .groups
@@ -2845,13 +2974,20 @@ mod tests {
                     calls_after_scorer - calls_before_scorer,
                     expected_forward_count
                 );
+                let (scorer_calls_after, recompute_calls_before_train) =
+                    packed_forward_call_counts_for_test_v1();
+                assert_eq!(
+                    scorer_calls_after - scorer_calls_before,
+                    expected_forward_count
+                );
+                assert_eq!(recompute_calls_before_train, recompute_calls_before);
                 assert_eq!(
                     Rc::strong_count(&lifetime_probe),
                     2 + expected_forward_count as usize,
                     "one builder and one owner per packed tape"
                 );
                 let packed_substeps =
-                    packed_substeps_for_step(step, &expected_outputs, &packed_tapes);
+                    packed_substeps_for_step(&forward, step, &expected_outputs, &packed_tapes);
                 let packed_groups = groups_for_step(step, &packed_substeps);
                 let result = packed_state
                     .train_step_v1(
@@ -2861,9 +2997,16 @@ mod tests {
                     )
                     .unwrap();
                 assert_eq!(
-                    forward_with_tape_call_count_for_test_v1(),
-                    calls_after_scorer,
-                    "packed learning must not run a second forward"
+                    forward_with_tape_call_count_for_test_v1() - calls_after_scorer,
+                    expected_forward_count,
+                    "packed learning must independently recompute every substep exactly once"
+                );
+                let (scorer_calls_after_train, recompute_calls_after_train) =
+                    packed_forward_call_counts_for_test_v1();
+                assert_eq!(scorer_calls_after_train, scorer_calls_after);
+                assert_eq!(
+                    recompute_calls_after_train - recompute_calls_before_train,
+                    expected_forward_count
                 );
                 result
             };
@@ -2973,7 +3116,8 @@ mod tests {
         }
         let (corrupt_group, corrupt_substep, selected_action_index) =
             corruption.expect("fixture contains a multi-action packed tape");
-        let corrupt_substeps = packed_substeps_for_step(step, &expected_outputs, &corrupt_tapes);
+        let corrupt_substeps =
+            packed_substeps_for_step(&forward, step, &expected_outputs, &corrupt_tapes);
         let corrupt_groups = groups_for_step(step, &corrupt_substeps);
         let error = corrupt_tape_state
             .train_step_v1(
@@ -2984,7 +3128,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             error,
-            NativePolicyTrainErrorV1::RecomputedLogitBitsMismatch {
+            NativePolicyTrainErrorV1::PackedForwardLogitBitsMismatch {
                 group_index,
                 substep_index,
                 action_index,
@@ -3002,7 +3146,8 @@ mod tests {
         let mut stale_generation_state = baseline;
         let mut stale_tapes = packed_tapes_for_step(&builder, &forward, step);
         stale_tapes[0][0].corrupt_model_generation_for_test_v1();
-        let stale_substeps = packed_substeps_for_step(step, &expected_outputs, &stale_tapes);
+        let stale_substeps =
+            packed_substeps_for_step(&forward, step, &expected_outputs, &stale_tapes);
         let stale_groups = groups_for_step(step, &stale_substeps);
         assert_eq!(
             stale_generation_state.train_step_v1(
