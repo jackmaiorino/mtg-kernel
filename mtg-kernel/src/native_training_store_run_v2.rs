@@ -17,12 +17,29 @@ use crate::common_model_snapshot_v1::{
     RUST_LOADER_IDENTITY_V1, SNAPSHOT_IDENTITY_V1, SNAPSHOT_SCHEMA_V1,
 };
 use crate::fast_sampler::{
-    FAST_CATEGORICAL_EXP_TABLE_SHA256, FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
-    FAST_CATEGORICAL_SAMPLER_VERSION,
+    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256,
+    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256, FAST_CATEGORICAL_EXP_TABLE_SHA256,
+    FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
 };
-use crate::native_full_episode_trajectory_v1::NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1;
+use crate::native_flat_tensorizer_v2::{
+    NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
+    NATIVE_FLAT_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2, NATIVE_FLAT_TENSORIZER_FIXTURE_SHA256_V2,
+    NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+};
+use crate::native_full_episode_trajectory_v1::{
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
+};
 use crate::native_opponent_sampler_v1::{
-    UNIFORM_INDEX_MODULO_U64_ALGORITHM_V1, UNIFORM_INDEX_MODULO_U64_IDENTITY_V1,
+    NATIVE_OPPONENT_SAMPLER_VECTORS_FILE_SHA256_V1,
+    NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1,
+    NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_IDENTITY_V1,
+    NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_MODEL_RULE_V1, UNIFORM_INDEX_MODULO_U64_ALGORITHM_V1,
+    UNIFORM_INDEX_MODULO_U64_IDENTITY_V1,
 };
 use crate::native_policy_train_step_v1::{
     ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1, ADAM_WEIGHT_DECAY_V1,
@@ -51,9 +68,11 @@ use crate::rl_session::{
     RL_SESSION_SCHEMA_VERSION,
 };
 use crate::runtime_decks::{
-    runtime_deck_by_id, RUNTIME_DECK_CATALOG_SCHEMA, RUNTIME_DECK_PROTOCOL,
+    runtime_deck_by_id, RUNTIME_DECK_CATALOG_FILE_SHA256, RUNTIME_DECK_CATALOG_SCHEMA,
+    RUNTIME_DECK_PROTOCOL,
 };
 use crate::strict_source_tree_attestation_v1::{
+    STRICT_SOURCE_TREE_RECIPE_BYTE_COUNT_V1,
     STRICT_SOURCE_TREE_RECIPE_IDENTITY_V1 as SOURCE_TREE_RECIPE_IDENTITY_V1,
     STRICT_SOURCE_TREE_RECIPE_SHA256_V1 as SOURCE_TREE_RECIPE_SHA256_V1,
 };
@@ -77,11 +96,21 @@ const MAX_SUCCESSFUL_UPDATES_V2: u64 = 99_999_999;
 const MAX_POLICY_STEPS_V2: u64 = 131_072;
 
 const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+// These literals freeze the revision-3 RunV2 grammar. Production modules own
+// the live algorithms and artifacts; validation independently requires both
+// each owner constant and each record field to equal the corresponding frozen
+// literal so owner drift cannot silently reinterpret an existing RunV2.
+const FROZEN_SOURCE_TREE_RECIPE_IDENTITY_V2: &str = "mtg-kernel-strict-source-tree-sha256-v1";
+const FROZEN_SOURCE_TREE_RECIPE_SHA256_V2: &str =
+    "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece";
+const FROZEN_SOURCE_TREE_RECIPE_BYTE_COUNT_V2: u64 = 5_847;
+
 const FROZEN_CARD_DB_HASH_U64_V2: u64 = 0xa06f_a956_6106_f0ea;
 const FROZEN_CARD_DB_HASH_U64_HEX_V2: &str = "a06fa9566106f0ea";
 const FROZEN_RUNTIME_CATALOG_SCHEMA_V2: &str = "kernel_runtime_decks/v1";
 const FROZEN_RUNTIME_CATALOG_PROTOCOL_V2: &str = "canonical-mainboard-bo1/v1";
-const RUNTIME_CATALOG_SHA256_V1: &str =
+const FROZEN_RUNTIME_CATALOG_SHA256_V2: &str =
     "5ea19e8a08f0e9c9657e9a6a90382329785f27eeabbbe066e80e7025e8ee62c0";
 const FROZEN_RALLY_DECK_ID_V2: &str = "Rally";
 const FROZEN_RALLY_DECK_HASH_U64_V2: u64 = 0x0c9f_01c2_5444_12bf;
@@ -92,37 +121,98 @@ const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
 const FROZEN_KERNEL_VERSION_V2: &str = "0.0.4-spike";
 const FROZEN_SURFACE_VERSION_V2: u32 = 2;
 const FROZEN_POLICY_SURFACE_VERSION_V2: u32 = 5;
-const PARAMETER_LAYOUT_SHA256_V1: &str =
-    "266966ba3f3c49dd758f694aaef65234e01e8c077ab85a7b1058efedd8e5b887";
-const SNAPSHOT_SHA256_V1: &str = "33455d0fedc5aea8abd4deeaf37c5480f1832dbea34b9391c9a942d95f040771";
-const SNAPSHOT_MANIFEST_FILE_SHA256_V1: &str =
+
+const FROZEN_SNAPSHOT_SCHEMA_V2: &str = "mtg-kernel-common-model-snapshot/v1";
+const FROZEN_SNAPSHOT_IDENTITY_V2: &str =
+    "mtg-kernel-python-authoritative-common-model-snapshot-v1";
+const FROZEN_SNAPSHOT_SHA256_V2: &str =
+    "33455d0fedc5aea8abd4deeaf37c5480f1832dbea34b9391c9a942d95f040771";
+const FROZEN_SNAPSHOT_MANIFEST_FILE_SHA256_V2: &str =
     "d5d296f5d4ee1f7e40a6005f1e1dd328b2885f6b95f0c6968c6bf1b87351c7cc";
-const SNAPSHOT_MANIFEST_CORE_SHA256_V1: &str =
+const FROZEN_SNAPSHOT_MANIFEST_CORE_SHA256_V2: &str =
     "456a5f8d2c3973c88e47b9d8c8a6ce6069561c4b5aa6582c73e31d837c13816d";
-const SNAPSHOT_PAYLOAD_SHA256_V1: &str =
+const FROZEN_SNAPSHOT_PAYLOAD_SHA256_V2: &str =
     "79f715b11ccce80ac66cc832bfdc0c963a8a20f27f7b492fdfbb433c008a90a5";
-const SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1: &str =
+const FROZEN_SNAPSHOT_PAYLOAD_BYTE_COUNT_V2: u64 = 4_923_976;
+const FROZEN_PARAMETER_LAYOUT_SHA256_V2: &str =
+    "266966ba3f3c49dd758f694aaef65234e01e8c077ab85a7b1058efedd8e5b887";
+const FROZEN_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V2: &str =
     "36157c71b9fd736d4913e6c5722dcb9c1e4f119b7b28b108bde9d74f18862d54";
-const SNAPSHOT_AUTHORITY_SOURCE_BUNDLE_SHA256_V1: &str =
+const FROZEN_PARAMETER_TENSOR_COUNT_V2: u64 = 33;
+const FROZEN_PARAMETER_ELEMENT_COUNT_V2: u64 = 1_230_994;
+const FROZEN_MODEL_CONFIG_FINGERPRINT_V2: &str =
+    "f3836afa17acc74b4856fe18222345116f27c12fa5ad18c34b4dec3f04855251";
+const FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2: &str = "kernel-policy-value-net-8";
+const FROZEN_FEATURE_CONTRACT_DIGEST_V2: &str =
+    "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396";
+const FROZEN_FEATURE_ENCODING_DIGEST_V2: &str =
+    "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c";
+const FROZEN_INITIALIZER_IDENTITY_V2: &str = "trainer-seeded-v1";
+const FROZEN_BASE_SEED_V2: u64 = 0;
+const FROZEN_MODEL_INIT_SEED_V2: u64 = 6_443_515_232_517_447_393;
+const FROZEN_TRAINER_SCHEDULE_IDENTITY_V2: &str = "mtg-kernel-native-trainer-schedule-sha256-v1";
+const FROZEN_PYTHON_REFERENCE_SEED_IDENTITY_V2: &str = "kernel-python-rl-trainer-sha256-v2";
+const FROZEN_TRAINER_SCHEDULE_GOLDENS_SHA256_V2: &str =
+    "6b2e1edbbe49b4e02f98794f9057f5c2bb8e3079d2ba8cb3e2a4b9ea6c34867c";
+const FROZEN_SNAPSHOT_AUTHORITY_SOURCE_BUNDLE_SHA256_V2: &str =
     "78f0a0409b91df169ab895d4328ba525564cf62135e8fb0be9f0f3ece9e77e87";
-const TENSORIZER_IDENTITY_V2: &str = "mtg-kernel-python-encoded-decision-tensor-contract-v2";
-const TENSORIZER_AUTHORITY_SOURCE_SHA256_V2: &str =
+const FROZEN_SNAPSHOT_AUTHORITY_RUNTIME_IDENTITY_V2: &str =
+    "python-torch-windows-amd64-python3.13.14-torch2.13.0+cpu-cpu-f32-deterministic-threads1-v1";
+const FROZEN_SNAPSHOT_LOADER_IDENTITY_V2: &str = "mtg-kernel-rust-common-model-snapshot-loader-v1";
+const FROZEN_ADAM_STEP_INITIAL_V2: u64 = 0;
+const FROZEN_MOMENT_INITIALIZATION_V2: &str = "positive-zero-f32";
+const FROZEN_CANONICAL_GAUGE_PARAMETERS_V2: [&str; 1] = ["scorer.2.bias"];
+const FROZEN_SCORER_BIAS_ANCHOR_F32_BITS_V2: u64 = 3_141_403_366;
+const FROZEN_SNAPSHOT_NONCLAIM_V2: &str =
+    "Rust does not reproduce the Python trainer-seeded-v1 initializer in this snapshot configuration; the snapshot proves bit-exact initial parameters only and does not establish seeded-initializer parity, cross-runtime numerical bit parity, learning parity, or speedup.";
+
+const FROZEN_TRAINER_IDENTITY_V2: &str = "mtg-kernel-native-even-batch-trainer-v2";
+const FROZEN_TENSORIZER_IDENTITY_V2: &str = "mtg-kernel-python-encoded-decision-tensor-contract-v2";
+const FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2: &str =
     "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb";
-const TENSORIZER_FIXTURE_SHA256_V2: &str =
+const FROZEN_TENSORIZER_FIXTURE_SHA256_V2: &str =
     "5dbece4f903a09260a499295d866c7e6ff4283f9de83f842224511f977ae8a97";
-const TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2: &str =
+const FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2: &str =
     "2f87d49106806a402148fc8b115a54ac94713eb717f45f897eff57a3bd1184ec";
-const LEARNER_VECTORS_FILE_SHA256_V1: &str =
+const FROZEN_LOSS_IDENTITY_V2: &str = "terminal_reinforce_value/v3";
+const FROZEN_TRAIN_STEP_IDENTITY_V2: &str = "native-policy-value-cpu-train-step-v1";
+const FROZEN_NUMERICAL_BACKEND_IDENTITY_V2: &str =
+    "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-sequential";
+const FROZEN_OPTIMIZER_IDENTITY_V2: &str = "native-adam-canonical-scorer-bias-gauge-v1";
+const FROZEN_GAUGE_EVIDENCE_IDENTITY_V2: &str = "mtg-kernel-native-scorer-bias-gauge-evidence-v1";
+const FROZEN_ENVIRONMENT_SEED_DERIVATION_IDENTITY_V2: &str = "train-env/base_seed/pair_index";
+const FROZEN_LEARNER_ACTION_SEED_DERIVATION_IDENTITY_V2: &str =
+    "train-learner-action-group/base_seed/episode_index/learner_physical_decision_index -> train-learner-action-substep/group_seed/substep_index";
+const FROZEN_OPPONENT_ACTION_SEED_DERIVATION_IDENTITY_V2: &str =
+    "train-opponent-action-group/base_seed/episode_index/opponent_physical_decision_index -> train-opponent-action-substep/group_seed/substep_index";
+const FROZEN_LEARNER_SAMPLER_IDENTITY_V2: &str = "f32-q8-expq63-hamilton-splitmix64-v1";
+const FROZEN_LEARNER_SAMPLER_CONTRACT_SHA256_V2: &str =
+    "276407494966b195b7c011caf984d2354484f7532161107b19ecc83388de92b6";
+const FROZEN_LEARNER_SAMPLER_EXP_TABLE_SHA256_V2: &str =
+    "2cdd19abdec245d7a9f892e8757c299a282ae097361baecc46cfd6a57c476e2a";
+const FROZEN_LEARNER_VECTORS_FILE_SHA256_V2: &str =
     "407a08fb9b9bb5012f14d779d0878c986ce0f16530820a89f5bd54c33d5e7456";
-const LEARNER_VECTOR_STREAM_SHA256_V1: &str =
+const FROZEN_LEARNER_VECTOR_STREAM_SHA256_V2: &str =
     "69fe3e72dd8fdb245e59e1959359aff3cb6c326fab9f7f2b2ab56e3744d4f3de";
-const OPPONENT_VECTORS_FILE_SHA256_V1: &str =
+const FROZEN_OPPONENT_POLICY_IDENTITY_V2: &str = "mtg-kernel-trainer-uniform-policy-v1";
+const FROZEN_OPPONENT_POLICY_MODEL_RULE_V2: &str = "no-model-uniform-legal-index";
+const FROZEN_OPPONENT_SAMPLER_IDENTITY_V2: &str = "mtg-kernel-uniform-index-modulo-u64-v1";
+const FROZEN_OPPONENT_SAMPLER_ALGORITHM_V2: &str =
+    "selected-index-equals-action-seed-mod-legal-count";
+const FROZEN_OPPONENT_VECTORS_FILE_SHA256_V2: &str =
     "9e5898308d30614a4a09cecb584200521b1a3b727606d8cf78dbe70b51106e18";
-const OPPONENT_VECTOR_STREAM_SHA256_V1: &str =
+const FROZEN_OPPONENT_VECTOR_STREAM_SHA256_V2: &str =
     "2b65520a528dcf9eba8d7baded50cc9ad50cf507704c2b4410e2afb4b34d7fad";
-const TRAJECTORY_GOLDENS_FILE_SHA256_V1: &str =
+const FROZEN_TRAJECTORY_IDENTITY_V2: &str = "mtg-kernel-native-full-episode-trajectory-sha256-v1";
+const FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2: &str =
+    "mtg_kernel_native_full_episode_trajectory_goldens/v1";
+const FROZEN_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2: &str =
+    "mtg-kernel-native-full-episode-trajectory-goldens-stdlib-python-v1";
+const FROZEN_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2: &str =
+    "mtg-kernel-native-full-episode-trajectory-golden-vector-stream-sha256-v1";
+const FROZEN_TRAJECTORY_GOLDENS_FILE_SHA256_V2: &str =
     "502a1b4ba296fdc4b2f4e8fd61cc5b4d64f152c9b84b4e11a85967f76c3bde8b";
-const TRAJECTORY_GOLDEN_STREAM_SHA256_V1: &str =
+const FROZEN_TRAJECTORY_GOLDEN_STREAM_SHA256_V2: &str =
     "f5230cbbc0b87735e7aa14c89ce31e41ce769de3f4292cafe63dad4733168d7a";
 
 /// Stable, input-independent failure categories for the run/v2 authority.
@@ -855,6 +945,7 @@ fn validate_decoded_train_run_v2(
     record: TrainRunV2,
     canonical_bytes: Vec<u8>,
 ) -> Result<ValidatedTrainRunV2> {
+    validate_frozen_rev3_authorities_v2()?;
     validate_package_v2(&record.package)?;
     validate_toolchain_v2(&record.toolchain)?;
     validate_source_v2(&record.source)?;
@@ -911,6 +1002,88 @@ fn validate_decoded_train_run_v2(
     })
 }
 
+fn validate_frozen_rev3_authorities_v2() -> Result<()> {
+    let rally = runtime_deck_by_id(CANONICAL_RALLY_DECK_ID)
+        .ok_or_else(|| TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral))?;
+    if SOURCE_TREE_RECIPE_IDENTITY_V1 != FROZEN_SOURCE_TREE_RECIPE_IDENTITY_V2
+        || SOURCE_TREE_RECIPE_SHA256_V1 != FROZEN_SOURCE_TREE_RECIPE_SHA256_V2
+        || STRICT_SOURCE_TREE_RECIPE_BYTE_COUNT_V1 != FROZEN_SOURCE_TREE_RECIPE_BYTE_COUNT_V2
+        || KERNEL_CARDDB_HASH != FROZEN_CARD_DB_HASH_U64_V2
+        || RUNTIME_DECK_CATALOG_SCHEMA != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
+        || RUNTIME_DECK_PROTOCOL != FROZEN_RUNTIME_CATALOG_PROTOCOL_V2
+        || RUNTIME_DECK_CATALOG_FILE_SHA256 != FROZEN_RUNTIME_CATALOG_SHA256_V2
+        || CANONICAL_RALLY_DECK_ID != FROZEN_RALLY_DECK_ID_V2
+        || rally.runtime_deck_hash != FROZEN_RALLY_DECK_HASH_U64_V2
+        || RL_SESSION_PROTOCOL_NAME != FROZEN_PROTOCOL_V2
+        || RL_SESSION_PROTOCOL_VERSION != FROZEN_PROTOCOL_VERSION_V2
+        || RL_SESSION_SCHEMA_VERSION != FROZEN_SCHEMA_VERSION_V2
+        || KERNEL_VERSION != FROZEN_KERNEL_VERSION_V2
+        || H2_PREDICATE_VERSION != FROZEN_SURFACE_VERSION_V2
+        || POLICY_SURFACE_VERSION != FROZEN_POLICY_SURFACE_VERSION_V2
+        || SNAPSHOT_SCHEMA_V1 != FROZEN_SNAPSHOT_SCHEMA_V2
+        || SNAPSHOT_IDENTITY_V1 != FROZEN_SNAPSHOT_IDENTITY_V2
+        || u64::try_from(PAYLOAD_BYTE_COUNT_V1).ok() != Some(FROZEN_SNAPSHOT_PAYLOAD_BYTE_COUNT_V2)
+        || u64::try_from(PARAMETER_TENSOR_COUNT_V1).ok() != Some(FROZEN_PARAMETER_TENSOR_COUNT_V2)
+        || u64::try_from(PARAMETER_ELEMENT_COUNT_V1).ok() != Some(FROZEN_PARAMETER_ELEMENT_COUNT_V2)
+        || MODEL_CONFIG_FINGERPRINT_V1 != FROZEN_MODEL_CONFIG_FINGERPRINT_V2
+        || MODEL_ARCHITECTURE_VERSION_V1 != FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2
+        || FEATURE_CONTRACT_DIGEST_V1 != FROZEN_FEATURE_CONTRACT_DIGEST_V2
+        || FEATURE_ENCODING_DIGEST_V1 != FROZEN_FEATURE_ENCODING_DIGEST_V2
+        || INITIALIZER_IDENTITY_V1 != FROZEN_INITIALIZER_IDENTITY_V2
+        || BASE_SEED_V1 != FROZEN_BASE_SEED_V2
+        || MODEL_INIT_SEED_V1 != FROZEN_MODEL_INIT_SEED_V2
+        || NATIVE_TRAINER_SCHEDULE_VERSION_V1 != FROZEN_TRAINER_SCHEDULE_IDENTITY_V2
+        || PYTHON_REFERENCE_SEED_VERSION_V1 != FROZEN_PYTHON_REFERENCE_SEED_IDENTITY_V2
+        || NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1 != FROZEN_TRAINER_SCHEDULE_GOLDENS_SHA256_V2
+        || AUTHORITY_RUNTIME_IDENTITY_V1 != FROZEN_SNAPSHOT_AUTHORITY_RUNTIME_IDENTITY_V2
+        || RUST_LOADER_IDENTITY_V1 != FROZEN_SNAPSHOT_LOADER_IDENTITY_V2
+        || NONCLAIM_V1 != FROZEN_SNAPSHOT_NONCLAIM_V2
+        || NATIVE_TRAINER_CONTRACT_IDENTITY_V2 != FROZEN_TRAINER_IDENTITY_V2
+        || NATIVE_FLAT_TENSORIZER_IDENTITY_V2 != FROZEN_TENSORIZER_IDENTITY_V2
+        || NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2
+            != FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
+        || NATIVE_FLAT_TENSORIZER_FIXTURE_SHA256_V2 != FROZEN_TENSORIZER_FIXTURE_SHA256_V2
+        || NATIVE_FLAT_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
+            != FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
+        || u64::try_from(PARAMETER_COUNT_V1).ok() != Some(FROZEN_PARAMETER_ELEMENT_COUNT_V2)
+        || TRAINER_ALGORITHM_V1 != FROZEN_LOSS_IDENTITY_V2
+        || TRAIN_STEP_IDENTITY_V1 != FROZEN_TRAIN_STEP_IDENTITY_V2
+        || NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1
+            != FROZEN_NUMERICAL_BACKEND_IDENTITY_V2
+        || NATIVE_OPTIMIZER_IDENTITY_V1 != FROZEN_OPTIMIZER_IDENTITY_V2
+        || NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1 != FROZEN_GAUGE_EVIDENCE_IDENTITY_V2
+        || CANONICAL_GAUGE_PARAMETERS_V1 != FROZEN_CANONICAL_GAUGE_PARAMETERS_V2
+        || FAST_CATEGORICAL_SAMPLER_VERSION != FROZEN_LEARNER_SAMPLER_IDENTITY_V2
+        || FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256 != FROZEN_LEARNER_SAMPLER_CONTRACT_SHA256_V2
+        || FAST_CATEGORICAL_EXP_TABLE_SHA256 != FROZEN_LEARNER_SAMPLER_EXP_TABLE_SHA256_V2
+        || FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256
+            != FROZEN_LEARNER_VECTORS_FILE_SHA256_V2
+        || FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256
+            != FROZEN_LEARNER_VECTOR_STREAM_SHA256_V2
+        || NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_IDENTITY_V1 != FROZEN_OPPONENT_POLICY_IDENTITY_V2
+        || NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_MODEL_RULE_V1
+            != FROZEN_OPPONENT_POLICY_MODEL_RULE_V2
+        || UNIFORM_INDEX_MODULO_U64_IDENTITY_V1 != FROZEN_OPPONENT_SAMPLER_IDENTITY_V2
+        || UNIFORM_INDEX_MODULO_U64_ALGORITHM_V1 != FROZEN_OPPONENT_SAMPLER_ALGORITHM_V2
+        || NATIVE_OPPONENT_SAMPLER_VECTORS_FILE_SHA256_V1 != FROZEN_OPPONENT_VECTORS_FILE_SHA256_V2
+        || NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1
+            != FROZEN_OPPONENT_VECTOR_STREAM_SHA256_V2
+        || NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1 != FROZEN_TRAJECTORY_IDENTITY_V2
+        || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1 != FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2
+        || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1
+            != FROZEN_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2
+        || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1
+            != FROZEN_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2
+        || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1
+            != FROZEN_TRAJECTORY_GOLDENS_FILE_SHA256_V2
+        || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1
+            != FROZEN_TRAJECTORY_GOLDEN_STREAM_SHA256_V2
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    Ok(())
+}
+
 fn validate_package_v2(package: &TrainRunPackageV2) -> Result<()> {
     if package.name != "mtg-kernel"
         || package.version != env!("CARGO_PKG_VERSION")
@@ -964,9 +1137,9 @@ fn validate_toolchain_v2(toolchain: &TrainRunToolchainV2) -> Result<()> {
 
 fn validate_source_v2(source: &TrainRunSourceV2) -> Result<()> {
     if !is_lower_hex(&source.git_commit, 40)
-        || source.source_tree_recipe_identity != SOURCE_TREE_RECIPE_IDENTITY_V1
-        || source.source_tree_recipe_sha256 != SOURCE_TREE_RECIPE_SHA256_V1
-        || source.source_tree_recipe_byte_count != 5_847
+        || source.source_tree_recipe_identity != FROZEN_SOURCE_TREE_RECIPE_IDENTITY_V2
+        || source.source_tree_recipe_sha256 != FROZEN_SOURCE_TREE_RECIPE_SHA256_V2
+        || source.source_tree_recipe_byte_count != FROZEN_SOURCE_TREE_RECIPE_BYTE_COUNT_V2
         || !is_sha256(&source.source_tree_sha256)
         || !source.worktree_clean
         || source.git_status_sha256 != EMPTY_SHA256
@@ -998,8 +1171,7 @@ fn validate_runtime_v2(runtime: &TrainRunRuntimeV2, toolchain: &TrainRunToolchai
         || !matches!(runtime.native_architecture.as_str(), "amd64" | "arm64")
         || !matches!(runtime.process_architecture.as_str(), "amd64" | "arm64")
         || runtime.byte_order != "little"
-        || runtime.numerical_backend_identity
-            != NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1
+        || runtime.numerical_backend_identity != FROZEN_NUMERICAL_BACKEND_IDENTITY_V2
         || runtime.build_profile != "release"
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
@@ -1027,6 +1199,7 @@ fn validate_environment_v2(environment: &TrainRunEnvironmentV2) -> Result<()> {
     if KERNEL_CARDDB_HASH != FROZEN_CARD_DB_HASH_U64_V2
         || RUNTIME_DECK_CATALOG_SCHEMA != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
         || RUNTIME_DECK_PROTOCOL != FROZEN_RUNTIME_CATALOG_PROTOCOL_V2
+        || RUNTIME_DECK_CATALOG_FILE_SHA256 != FROZEN_RUNTIME_CATALOG_SHA256_V2
         || CANONICAL_RALLY_DECK_ID != FROZEN_RALLY_DECK_ID_V2
         || rally.runtime_deck_hash != FROZEN_RALLY_DECK_HASH_U64_V2
         || RL_SESSION_PROTOCOL_NAME != FROZEN_PROTOCOL_V2
@@ -1041,7 +1214,7 @@ fn validate_environment_v2(environment: &TrainRunEnvironmentV2) -> Result<()> {
     if environment.card_db_hash_u64_hex != FROZEN_CARD_DB_HASH_U64_HEX_V2
         || environment.runtime_catalog_schema != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
         || environment.runtime_catalog_protocol != FROZEN_RUNTIME_CATALOG_PROTOCOL_V2
-        || environment.runtime_catalog_sha256 != RUNTIME_CATALOG_SHA256_V1
+        || environment.runtime_catalog_sha256 != FROZEN_RUNTIME_CATALOG_SHA256_V2
         || environment.deck_ids != [FROZEN_RALLY_DECK_ID_V2, FROZEN_RALLY_DECK_ID_V2]
         || environment.deck_hashes_u64_hex
             != [
@@ -1061,41 +1234,43 @@ fn validate_environment_v2(environment: &TrainRunEnvironmentV2) -> Result<()> {
 }
 
 fn validate_snapshot_v1(snapshot: &CommonModelSnapshotRecordV1) -> Result<()> {
-    if snapshot.schema != SNAPSHOT_SCHEMA_V1
-        || snapshot.identity != SNAPSHOT_IDENTITY_V1
-        || snapshot.snapshot_sha256 != SNAPSHOT_SHA256_V1
-        || snapshot.manifest_file_sha256 != SNAPSHOT_MANIFEST_FILE_SHA256_V1
-        || snapshot.manifest_core_sha256 != SNAPSHOT_MANIFEST_CORE_SHA256_V1
-        || snapshot.payload_sha256 != SNAPSHOT_PAYLOAD_SHA256_V1
-        || snapshot.payload_byte_count != PAYLOAD_BYTE_COUNT_V1 as u64
-        || snapshot.parameter_layout_sha256 != PARAMETER_LAYOUT_SHA256_V1
-        || snapshot.named_parameter_stream_sha256 != SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1
+    if snapshot.schema != FROZEN_SNAPSHOT_SCHEMA_V2
+        || snapshot.identity != FROZEN_SNAPSHOT_IDENTITY_V2
+        || snapshot.snapshot_sha256 != FROZEN_SNAPSHOT_SHA256_V2
+        || snapshot.manifest_file_sha256 != FROZEN_SNAPSHOT_MANIFEST_FILE_SHA256_V2
+        || snapshot.manifest_core_sha256 != FROZEN_SNAPSHOT_MANIFEST_CORE_SHA256_V2
+        || snapshot.payload_sha256 != FROZEN_SNAPSHOT_PAYLOAD_SHA256_V2
+        || snapshot.payload_byte_count != FROZEN_SNAPSHOT_PAYLOAD_BYTE_COUNT_V2
+        || snapshot.parameter_layout_sha256 != FROZEN_PARAMETER_LAYOUT_SHA256_V2
+        || snapshot.named_parameter_stream_sha256
+            != FROZEN_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V2
         || snapshot.loaded_named_parameter_stream_sha256
-            != SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1
-        || snapshot.parameter_tensor_count != PARAMETER_TENSOR_COUNT_V1 as u64
-        || snapshot.parameter_element_count != PARAMETER_ELEMENT_COUNT_V1 as u64
-        || snapshot.model_config_fingerprint != MODEL_CONFIG_FINGERPRINT_V1
-        || snapshot.model_architecture_version != MODEL_ARCHITECTURE_VERSION_V1
-        || snapshot.feature_contract_digest != FEATURE_CONTRACT_DIGEST_V1
-        || snapshot.feature_encoding_digest != FEATURE_ENCODING_DIGEST_V1
-        || snapshot.initializer_identity != INITIALIZER_IDENTITY_V1
-        || snapshot.base_seed != BASE_SEED_V1
-        || snapshot.model_init_seed != MODEL_INIT_SEED_V1
-        || snapshot.trainer_schedule_version != NATIVE_TRAINER_SCHEDULE_VERSION_V1
-        || snapshot.python_reference_seed_version != PYTHON_REFERENCE_SEED_VERSION_V1
-        || snapshot.schedule_goldens_sha256 != NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1
-        || snapshot.authority_source_bundle_sha256 != SNAPSHOT_AUTHORITY_SOURCE_BUNDLE_SHA256_V1
-        || snapshot.authority_runtime_identity != AUTHORITY_RUNTIME_IDENTITY_V1
-        || snapshot.loader_identity != RUST_LOADER_IDENTITY_V1
-        || snapshot.optimizer_identity != NATIVE_OPTIMIZER_IDENTITY_V1
-        || snapshot.adam_step_initial != 0
-        || snapshot.moment_initialization != "positive-zero-f32"
-        || snapshot.canonical_gauge_parameters != CANONICAL_GAUGE_PARAMETERS_V1
-        || snapshot.scorer_bias_anchor_f32_bits != 3_141_403_366
+            != FROZEN_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V2
+        || snapshot.parameter_tensor_count != FROZEN_PARAMETER_TENSOR_COUNT_V2
+        || snapshot.parameter_element_count != FROZEN_PARAMETER_ELEMENT_COUNT_V2
+        || snapshot.model_config_fingerprint != FROZEN_MODEL_CONFIG_FINGERPRINT_V2
+        || snapshot.model_architecture_version != FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2
+        || snapshot.feature_contract_digest != FROZEN_FEATURE_CONTRACT_DIGEST_V2
+        || snapshot.feature_encoding_digest != FROZEN_FEATURE_ENCODING_DIGEST_V2
+        || snapshot.initializer_identity != FROZEN_INITIALIZER_IDENTITY_V2
+        || snapshot.base_seed != FROZEN_BASE_SEED_V2
+        || snapshot.model_init_seed != FROZEN_MODEL_INIT_SEED_V2
+        || snapshot.trainer_schedule_version != FROZEN_TRAINER_SCHEDULE_IDENTITY_V2
+        || snapshot.python_reference_seed_version != FROZEN_PYTHON_REFERENCE_SEED_IDENTITY_V2
+        || snapshot.schedule_goldens_sha256 != FROZEN_TRAINER_SCHEDULE_GOLDENS_SHA256_V2
+        || snapshot.authority_source_bundle_sha256
+            != FROZEN_SNAPSHOT_AUTHORITY_SOURCE_BUNDLE_SHA256_V2
+        || snapshot.authority_runtime_identity != FROZEN_SNAPSHOT_AUTHORITY_RUNTIME_IDENTITY_V2
+        || snapshot.loader_identity != FROZEN_SNAPSHOT_LOADER_IDENTITY_V2
+        || snapshot.optimizer_identity != FROZEN_OPTIMIZER_IDENTITY_V2
+        || snapshot.adam_step_initial != FROZEN_ADAM_STEP_INITIAL_V2
+        || snapshot.moment_initialization != FROZEN_MOMENT_INITIALIZATION_V2
+        || snapshot.canonical_gauge_parameters != FROZEN_CANONICAL_GAUGE_PARAMETERS_V2
+        || snapshot.scorer_bias_anchor_f32_bits != FROZEN_SCORER_BIAS_ANCHOR_F32_BITS_V2
         || !snapshot.snapshot_load_completed_before_trial_start
         || snapshot.snapshot_load_timed
         || snapshot.rust_seeded_initializer_reproduced
-        || snapshot.nonclaim != NONCLAIM_V1
+        || snapshot.nonclaim != FROZEN_SNAPSHOT_NONCLAIM_V2
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
@@ -1113,84 +1288,91 @@ fn validate_snapshot_v1(snapshot: &CommonModelSnapshotRecordV1) -> Result<()> {
 }
 
 fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
-    if contracts.trainer_identity != NATIVE_TRAINER_CONTRACT_IDENTITY_V2
+    if contracts.trainer_identity != FROZEN_TRAINER_IDENTITY_V2
         || contracts.identity_bundle_identity != IDENTITY_BUNDLE_IDENTITY_V2
         || !is_sha256(&contracts.identity_bundle_sha256)
-        || contracts.tensorizer.identity != TENSORIZER_IDENTITY_V2
-        || contracts.tensorizer.feature_contract_digest != FEATURE_CONTRACT_DIGEST_V1
-        || contracts.tensorizer.feature_encoding_digest != FEATURE_ENCODING_DIGEST_V1
+        || contracts.tensorizer.identity != FROZEN_TENSORIZER_IDENTITY_V2
+        || contracts.tensorizer.feature_contract_digest != FROZEN_FEATURE_CONTRACT_DIGEST_V2
+        || contracts.tensorizer.feature_encoding_digest != FROZEN_FEATURE_ENCODING_DIGEST_V2
         || contracts.tensorizer.authoritative_features_source_sha256
-            != TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
-        || contracts.tensorizer.fixture_sha256 != TENSORIZER_FIXTURE_SHA256_V2
+            != FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
+        || contracts.tensorizer.fixture_sha256 != FROZEN_TENSORIZER_FIXTURE_SHA256_V2
         || contracts.tensorizer.fixture_payload_sha256
-            != TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
-        || contracts.model.architecture_identity != MODEL_ARCHITECTURE_VERSION_V1
-        || contracts.model.config_fingerprint != MODEL_CONFIG_FINGERPRINT_V1
-        || contracts.model.parameter_layout_sha256 != PARAMETER_LAYOUT_SHA256_V1
-        || contracts.model.parameter_tensor_count != PARAMETER_TENSOR_COUNT_V1 as u64
-        || contracts.model.parameter_element_count != PARAMETER_COUNT_V1 as u64
-        || contracts.loss.identity != TRAINER_ALGORITHM_V1
-        || contracts.train_step.identity != TRAIN_STEP_IDENTITY_V1
-        || contracts.train_step.numerical_backend_identity
-            != NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1
-        || contracts.optimizer.identity != NATIVE_OPTIMIZER_IDENTITY_V1
-        || contracts.optimizer.gauge_identity != NATIVE_OPTIMIZER_IDENTITY_V1
-        || contracts.optimizer.gauge_evidence_identity
-            != NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1
+            != FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
+        || contracts.model.architecture_identity != FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2
+        || contracts.model.config_fingerprint != FROZEN_MODEL_CONFIG_FINGERPRINT_V2
+        || contracts.model.parameter_layout_sha256 != FROZEN_PARAMETER_LAYOUT_SHA256_V2
+        || contracts.model.parameter_tensor_count != FROZEN_PARAMETER_TENSOR_COUNT_V2
+        || contracts.model.parameter_element_count != FROZEN_PARAMETER_ELEMENT_COUNT_V2
+        || contracts.loss.identity != FROZEN_LOSS_IDENTITY_V2
+        || contracts.train_step.identity != FROZEN_TRAIN_STEP_IDENTITY_V2
+        || contracts.train_step.numerical_backend_identity != FROZEN_NUMERICAL_BACKEND_IDENTITY_V2
+        || contracts.optimizer.identity != FROZEN_OPTIMIZER_IDENTITY_V2
+        || contracts.optimizer.gauge_identity != FROZEN_OPTIMIZER_IDENTITY_V2
+        || contracts.optimizer.gauge_evidence_identity != FROZEN_GAUGE_EVIDENCE_IDENTITY_V2
         || contracts.optimizer.canonical_gauge_parameters
-            != CANONICAL_GAUGE_PARAMETERS_V1.map(str::to_owned)
-        || contracts.trainer_schedule.identity != NATIVE_TRAINER_SCHEDULE_VERSION_V1
+            != FROZEN_CANONICAL_GAUGE_PARAMETERS_V2.map(str::to_owned)
+        || contracts.trainer_schedule.identity != FROZEN_TRAINER_SCHEDULE_IDENTITY_V2
         || contracts.trainer_schedule.python_reference_seed_identity
-            != PYTHON_REFERENCE_SEED_VERSION_V1
-        || contracts.trainer_schedule.environment_seed_derivation_identity
-            != "train-env/base_seed/pair_index"
-        || contracts.trainer_schedule.learner_action_seed_derivation_identity
-            != "train-learner-action-group/base_seed/episode_index/learner_physical_decision_index -> train-learner-action-substep/group_seed/substep_index"
-        || contracts.trainer_schedule.opponent_action_seed_derivation_identity
-            != "train-opponent-action-group/base_seed/episode_index/opponent_physical_decision_index -> train-opponent-action-substep/group_seed/substep_index"
-        || contracts.trainer_schedule.goldens_sha256
-            != NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1
-        || contracts.learner_sampler.identity != FAST_CATEGORICAL_SAMPLER_VERSION
-        || contracts.learner_sampler.contract_sha256
-            != FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256
-        || contracts.learner_sampler.exp_table_sha256 != FAST_CATEGORICAL_EXP_TABLE_SHA256
+            != FROZEN_PYTHON_REFERENCE_SEED_IDENTITY_V2
+        || contracts
+            .trainer_schedule
+            .environment_seed_derivation_identity
+            != FROZEN_ENVIRONMENT_SEED_DERIVATION_IDENTITY_V2
+        || contracts
+            .trainer_schedule
+            .learner_action_seed_derivation_identity
+            != FROZEN_LEARNER_ACTION_SEED_DERIVATION_IDENTITY_V2
+        || contracts
+            .trainer_schedule
+            .opponent_action_seed_derivation_identity
+            != FROZEN_OPPONENT_ACTION_SEED_DERIVATION_IDENTITY_V2
+        || contracts.trainer_schedule.goldens_sha256 != FROZEN_TRAINER_SCHEDULE_GOLDENS_SHA256_V2
+        || contracts.learner_sampler.identity != FROZEN_LEARNER_SAMPLER_IDENTITY_V2
+        || contracts.learner_sampler.contract_sha256 != FROZEN_LEARNER_SAMPLER_CONTRACT_SHA256_V2
+        || contracts.learner_sampler.exp_table_sha256 != FROZEN_LEARNER_SAMPLER_EXP_TABLE_SHA256_V2
         || contracts.learner_sampler.cross_language_vectors_file_sha256
-            != LEARNER_VECTORS_FILE_SHA256_V1
-        || contracts.learner_sampler.cross_language_vector_stream_sha256
-            != LEARNER_VECTOR_STREAM_SHA256_V1
-        || contracts.opponent_policy.identity != "mtg-kernel-trainer-uniform-policy-v1"
-        || contracts.opponent_policy.model_rule != "no-model-uniform-legal-index"
-        || contracts.opponent_sampler.identity != UNIFORM_INDEX_MODULO_U64_IDENTITY_V1
-        || contracts.opponent_sampler.algorithm != UNIFORM_INDEX_MODULO_U64_ALGORITHM_V1
+            != FROZEN_LEARNER_VECTORS_FILE_SHA256_V2
+        || contracts
+            .learner_sampler
+            .cross_language_vector_stream_sha256
+            != FROZEN_LEARNER_VECTOR_STREAM_SHA256_V2
+        || contracts.opponent_policy.identity != FROZEN_OPPONENT_POLICY_IDENTITY_V2
+        || contracts.opponent_policy.model_rule != FROZEN_OPPONENT_POLICY_MODEL_RULE_V2
+        || contracts.opponent_sampler.identity != FROZEN_OPPONENT_SAMPLER_IDENTITY_V2
+        || contracts.opponent_sampler.algorithm != FROZEN_OPPONENT_SAMPLER_ALGORITHM_V2
+        || contracts.opponent_sampler.seed_derivation_identity
+            != FROZEN_OPPONENT_ACTION_SEED_DERIVATION_IDENTITY_V2
         || contracts.opponent_sampler.seed_derivation_identity
             != contracts
                 .trainer_schedule
                 .opponent_action_seed_derivation_identity
         || contracts.opponent_sampler.seed_goldens_sha256
-            != NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1
-        || contracts.opponent_sampler.cross_language_vectors_file_sha256
-            != OPPONENT_VECTORS_FILE_SHA256_V1
-        || contracts.opponent_sampler.cross_language_vector_stream_sha256
-            != OPPONENT_VECTOR_STREAM_SHA256_V1
+            != FROZEN_TRAINER_SCHEDULE_GOLDENS_SHA256_V2
+        || contracts
+            .opponent_sampler
+            .cross_language_vectors_file_sha256
+            != FROZEN_OPPONENT_VECTORS_FILE_SHA256_V2
+        || contracts
+            .opponent_sampler
+            .cross_language_vector_stream_sha256
+            != FROZEN_OPPONENT_VECTOR_STREAM_SHA256_V2
         || !contracts.opponent_sampler.width_one_consumes_seed
-        || contracts.trajectory.identity != NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1
-        || contracts.trajectory.cross_language_goldens_schema
-            != "mtg_kernel_native_full_episode_trajectory_goldens/v1"
+        || contracts.trajectory.identity != FROZEN_TRAJECTORY_IDENTITY_V2
+        || contracts.trajectory.cross_language_goldens_schema != FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2
         || contracts.trajectory.cross_language_generator_identity
-            != "mtg-kernel-native-full-episode-trajectory-goldens-stdlib-python-v1"
+            != FROZEN_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2
         || contracts.trajectory.cross_language_golden_stream_identity
-            != "mtg-kernel-native-full-episode-trajectory-golden-vector-stream-sha256-v1"
+            != FROZEN_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2
         || contracts.trajectory.cross_language_goldens_file_sha256
-            != TRAJECTORY_GOLDENS_FILE_SHA256_V1
+            != FROZEN_TRAJECTORY_GOLDENS_FILE_SHA256_V2
         || contracts.trajectory.cross_language_golden_stream_sha256
-            != TRAJECTORY_GOLDEN_STREAM_SHA256_V1
+            != FROZEN_TRAJECTORY_GOLDEN_STREAM_SHA256_V2
         || contracts.standalone_semantics.identity != STANDALONE_SEMANTICS_IDENTITY_V2
         || contracts.standalone_semantics.core.identity != STANDALONE_SEMANTICS_IDENTITY_V2
         || !is_sha256(&contracts.standalone_semantics.sha256)
     {
-        return Err(TrainRunV2Error::new(
-            TrainRunV2ErrorKind::InvalidLiteral,
-        ));
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
     Ok(())
 }
@@ -1884,9 +2066,9 @@ mod tests {
             },
             "source": {
                 "git_commit": "6666666666666666666666666666666666666666",
-                "source_tree_recipe_identity": SOURCE_TREE_RECIPE_IDENTITY_V1,
-                "source_tree_recipe_sha256": SOURCE_TREE_RECIPE_SHA256_V1,
-                "source_tree_recipe_byte_count": 5847,
+                "source_tree_recipe_identity": FROZEN_SOURCE_TREE_RECIPE_IDENTITY_V2,
+                "source_tree_recipe_sha256": FROZEN_SOURCE_TREE_RECIPE_SHA256_V2,
+                "source_tree_recipe_byte_count": FROZEN_SOURCE_TREE_RECIPE_BYTE_COUNT_V2,
                 "source_tree_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
                 "worktree_clean": true,
                 "git_status_sha256": EMPTY_SHA256,
@@ -1913,91 +2095,91 @@ mod tests {
                 "native_architecture": "amd64",
                 "process_architecture": "amd64",
                 "byte_order": "little",
-                "numerical_backend_identity": NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1,
+                "numerical_backend_identity": FROZEN_NUMERICAL_BACKEND_IDENTITY_V2,
                 "rustc_release": "1.94.1",
                 "rustc_commit_hash": "4444444444444444444444444444444444444444",
                 "target_triple": "x86_64-pc-windows-msvc",
                 "build_profile": "release"
             },
             "environment": {
-                "card_db_hash_u64_hex": "a06fa9566106f0ea",
-                "runtime_catalog_schema": "kernel_runtime_decks/v1",
-                "runtime_catalog_protocol": "canonical-mainboard-bo1/v1",
-                "runtime_catalog_sha256": RUNTIME_CATALOG_SHA256_V1,
-                "deck_ids": ["Rally", "Rally"],
-                "deck_hashes_u64_hex": ["0c9f01c2544412bf", "0c9f01c2544412bf"],
-                "protocol": "kernel_rl_jsonl",
-                "protocol_version": 5,
-                "schema_version": 5,
-                "kernel_version": "0.0.4-spike",
-                "surface_version": 2,
-                "policy_surface_version": 5
+                "card_db_hash_u64_hex": FROZEN_CARD_DB_HASH_U64_HEX_V2,
+                "runtime_catalog_schema": FROZEN_RUNTIME_CATALOG_SCHEMA_V2,
+                "runtime_catalog_protocol": FROZEN_RUNTIME_CATALOG_PROTOCOL_V2,
+                "runtime_catalog_sha256": FROZEN_RUNTIME_CATALOG_SHA256_V2,
+                "deck_ids": [FROZEN_RALLY_DECK_ID_V2, FROZEN_RALLY_DECK_ID_V2],
+                "deck_hashes_u64_hex": [FROZEN_RALLY_DECK_HASH_U64_HEX_V2, FROZEN_RALLY_DECK_HASH_U64_HEX_V2],
+                "protocol": FROZEN_PROTOCOL_V2,
+                "protocol_version": FROZEN_PROTOCOL_VERSION_V2,
+                "schema_version": FROZEN_SCHEMA_VERSION_V2,
+                "kernel_version": FROZEN_KERNEL_VERSION_V2,
+                "surface_version": FROZEN_SURFACE_VERSION_V2,
+                "policy_surface_version": FROZEN_POLICY_SURFACE_VERSION_V2
             },
             "contracts": {
-                "trainer_identity": "mtg-kernel-native-even-batch-trainer-v2",
+                "trainer_identity": FROZEN_TRAINER_IDENTITY_V2,
                 "identity_bundle_identity": IDENTITY_BUNDLE_IDENTITY_V2,
                 "identity_bundle_sha256": ZERO_SHA256,
                 "tensorizer": {
-                    "identity": TENSORIZER_IDENTITY_V2,
-                    "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V1,
-                    "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V1,
-                    "authoritative_features_source_sha256": TENSORIZER_AUTHORITY_SOURCE_SHA256_V2,
-                    "fixture_sha256": TENSORIZER_FIXTURE_SHA256_V2,
-                    "fixture_payload_sha256": TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
+                    "identity": FROZEN_TENSORIZER_IDENTITY_V2,
+                    "feature_contract_digest": FROZEN_FEATURE_CONTRACT_DIGEST_V2,
+                    "feature_encoding_digest": FROZEN_FEATURE_ENCODING_DIGEST_V2,
+                    "authoritative_features_source_sha256": FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2,
+                    "fixture_sha256": FROZEN_TENSORIZER_FIXTURE_SHA256_V2,
+                    "fixture_payload_sha256": FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
                 },
                 "model": {
-                    "architecture_identity": MODEL_ARCHITECTURE_VERSION_V1,
-                    "config_fingerprint": MODEL_CONFIG_FINGERPRINT_V1,
-                    "parameter_layout_sha256": PARAMETER_LAYOUT_SHA256_V1,
-                    "parameter_tensor_count": 33,
-                    "parameter_element_count": 1230994
+                    "architecture_identity": FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2,
+                    "config_fingerprint": FROZEN_MODEL_CONFIG_FINGERPRINT_V2,
+                    "parameter_layout_sha256": FROZEN_PARAMETER_LAYOUT_SHA256_V2,
+                    "parameter_tensor_count": FROZEN_PARAMETER_TENSOR_COUNT_V2,
+                    "parameter_element_count": FROZEN_PARAMETER_ELEMENT_COUNT_V2
                 },
-                "loss": {"identity": TRAINER_ALGORITHM_V1},
+                "loss": {"identity": FROZEN_LOSS_IDENTITY_V2},
                 "train_step": {
-                    "identity": TRAIN_STEP_IDENTITY_V1,
-                    "numerical_backend_identity": NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1
+                    "identity": FROZEN_TRAIN_STEP_IDENTITY_V2,
+                    "numerical_backend_identity": FROZEN_NUMERICAL_BACKEND_IDENTITY_V2
                 },
                 "optimizer": {
-                    "identity": NATIVE_OPTIMIZER_IDENTITY_V1,
-                    "gauge_identity": NATIVE_OPTIMIZER_IDENTITY_V1,
-                    "gauge_evidence_identity": "mtg-kernel-native-scorer-bias-gauge-evidence-v1",
-                    "canonical_gauge_parameters": ["scorer.2.bias"]
+                    "identity": FROZEN_OPTIMIZER_IDENTITY_V2,
+                    "gauge_identity": FROZEN_OPTIMIZER_IDENTITY_V2,
+                    "gauge_evidence_identity": FROZEN_GAUGE_EVIDENCE_IDENTITY_V2,
+                    "canonical_gauge_parameters": FROZEN_CANONICAL_GAUGE_PARAMETERS_V2
                 },
                 "trainer_schedule": {
-                    "identity": NATIVE_TRAINER_SCHEDULE_VERSION_V1,
-                    "python_reference_seed_identity": PYTHON_REFERENCE_SEED_VERSION_V1,
-                    "environment_seed_derivation_identity": "train-env/base_seed/pair_index",
-                    "learner_action_seed_derivation_identity": "train-learner-action-group/base_seed/episode_index/learner_physical_decision_index -> train-learner-action-substep/group_seed/substep_index",
-                    "opponent_action_seed_derivation_identity": "train-opponent-action-group/base_seed/episode_index/opponent_physical_decision_index -> train-opponent-action-substep/group_seed/substep_index",
-                    "goldens_sha256": NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1
+                    "identity": FROZEN_TRAINER_SCHEDULE_IDENTITY_V2,
+                    "python_reference_seed_identity": FROZEN_PYTHON_REFERENCE_SEED_IDENTITY_V2,
+                    "environment_seed_derivation_identity": FROZEN_ENVIRONMENT_SEED_DERIVATION_IDENTITY_V2,
+                    "learner_action_seed_derivation_identity": FROZEN_LEARNER_ACTION_SEED_DERIVATION_IDENTITY_V2,
+                    "opponent_action_seed_derivation_identity": FROZEN_OPPONENT_ACTION_SEED_DERIVATION_IDENTITY_V2,
+                    "goldens_sha256": FROZEN_TRAINER_SCHEDULE_GOLDENS_SHA256_V2
                 },
                 "learner_sampler": {
-                    "identity": FAST_CATEGORICAL_SAMPLER_VERSION,
-                    "contract_sha256": FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
-                    "exp_table_sha256": FAST_CATEGORICAL_EXP_TABLE_SHA256,
-                    "cross_language_vectors_file_sha256": LEARNER_VECTORS_FILE_SHA256_V1,
-                    "cross_language_vector_stream_sha256": LEARNER_VECTOR_STREAM_SHA256_V1
+                    "identity": FROZEN_LEARNER_SAMPLER_IDENTITY_V2,
+                    "contract_sha256": FROZEN_LEARNER_SAMPLER_CONTRACT_SHA256_V2,
+                    "exp_table_sha256": FROZEN_LEARNER_SAMPLER_EXP_TABLE_SHA256_V2,
+                    "cross_language_vectors_file_sha256": FROZEN_LEARNER_VECTORS_FILE_SHA256_V2,
+                    "cross_language_vector_stream_sha256": FROZEN_LEARNER_VECTOR_STREAM_SHA256_V2
                 },
                 "opponent_policy": {
-                    "identity": "mtg-kernel-trainer-uniform-policy-v1",
-                    "model_rule": "no-model-uniform-legal-index"
+                    "identity": FROZEN_OPPONENT_POLICY_IDENTITY_V2,
+                    "model_rule": FROZEN_OPPONENT_POLICY_MODEL_RULE_V2
                 },
                 "opponent_sampler": {
-                    "identity": UNIFORM_INDEX_MODULO_U64_IDENTITY_V1,
-                    "algorithm": UNIFORM_INDEX_MODULO_U64_ALGORITHM_V1,
-                    "seed_derivation_identity": "train-opponent-action-group/base_seed/episode_index/opponent_physical_decision_index -> train-opponent-action-substep/group_seed/substep_index",
-                    "seed_goldens_sha256": NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1,
-                    "cross_language_vectors_file_sha256": OPPONENT_VECTORS_FILE_SHA256_V1,
-                    "cross_language_vector_stream_sha256": OPPONENT_VECTOR_STREAM_SHA256_V1,
+                    "identity": FROZEN_OPPONENT_SAMPLER_IDENTITY_V2,
+                    "algorithm": FROZEN_OPPONENT_SAMPLER_ALGORITHM_V2,
+                    "seed_derivation_identity": FROZEN_OPPONENT_ACTION_SEED_DERIVATION_IDENTITY_V2,
+                    "seed_goldens_sha256": FROZEN_TRAINER_SCHEDULE_GOLDENS_SHA256_V2,
+                    "cross_language_vectors_file_sha256": FROZEN_OPPONENT_VECTORS_FILE_SHA256_V2,
+                    "cross_language_vector_stream_sha256": FROZEN_OPPONENT_VECTOR_STREAM_SHA256_V2,
                     "width_one_consumes_seed": true
                 },
                 "trajectory": {
-                    "identity": NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
-                    "cross_language_goldens_schema": "mtg_kernel_native_full_episode_trajectory_goldens/v1",
-                    "cross_language_generator_identity": "mtg-kernel-native-full-episode-trajectory-goldens-stdlib-python-v1",
-                    "cross_language_golden_stream_identity": "mtg-kernel-native-full-episode-trajectory-golden-vector-stream-sha256-v1",
-                    "cross_language_goldens_file_sha256": TRAJECTORY_GOLDENS_FILE_SHA256_V1,
-                    "cross_language_golden_stream_sha256": TRAJECTORY_GOLDEN_STREAM_SHA256_V1
+                    "identity": FROZEN_TRAJECTORY_IDENTITY_V2,
+                    "cross_language_goldens_schema": FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2,
+                    "cross_language_generator_identity": FROZEN_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2,
+                    "cross_language_golden_stream_identity": FROZEN_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2,
+                    "cross_language_goldens_file_sha256": FROZEN_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
+                    "cross_language_golden_stream_sha256": FROZEN_TRAJECTORY_GOLDEN_STREAM_SHA256_V2
                 },
                 "standalone_semantics": {
                     "identity": STANDALONE_SEMANTICS_IDENTITY_V2,
@@ -2006,40 +2188,40 @@ mod tests {
                 }
             },
             "model_snapshot": {
-                "schema": SNAPSHOT_SCHEMA_V1,
-                "identity": SNAPSHOT_IDENTITY_V1,
-                "snapshot_sha256": SNAPSHOT_SHA256_V1,
-                "manifest_file_sha256": SNAPSHOT_MANIFEST_FILE_SHA256_V1,
-                "manifest_core_sha256": SNAPSHOT_MANIFEST_CORE_SHA256_V1,
-                "payload_sha256": SNAPSHOT_PAYLOAD_SHA256_V1,
-                "payload_byte_count": 4923976,
-                "parameter_layout_sha256": PARAMETER_LAYOUT_SHA256_V1,
-                "named_parameter_stream_sha256": SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1,
-                "loaded_named_parameter_stream_sha256": SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1,
-                "parameter_tensor_count": 33,
-                "parameter_element_count": 1230994,
-                "model_config_fingerprint": MODEL_CONFIG_FINGERPRINT_V1,
-                "model_architecture_version": MODEL_ARCHITECTURE_VERSION_V1,
-                "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V1,
-                "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V1,
-                "initializer_identity": INITIALIZER_IDENTITY_V1,
-                "base_seed": 0,
-                "model_init_seed": 6443515232517447393_u64,
-                "trainer_schedule_version": NATIVE_TRAINER_SCHEDULE_VERSION_V1,
-                "python_reference_seed_version": PYTHON_REFERENCE_SEED_VERSION_V1,
-                "schedule_goldens_sha256": NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1,
-                "authority_source_bundle_sha256": SNAPSHOT_AUTHORITY_SOURCE_BUNDLE_SHA256_V1,
-                "authority_runtime_identity": AUTHORITY_RUNTIME_IDENTITY_V1,
-                "loader_identity": RUST_LOADER_IDENTITY_V1,
-                "optimizer_identity": NATIVE_OPTIMIZER_IDENTITY_V1,
-                "adam_step_initial": 0,
-                "moment_initialization": "positive-zero-f32",
-                "canonical_gauge_parameters": ["scorer.2.bias"],
-                "scorer_bias_anchor_f32_bits": 3141403366_u64,
+                "schema": FROZEN_SNAPSHOT_SCHEMA_V2,
+                "identity": FROZEN_SNAPSHOT_IDENTITY_V2,
+                "snapshot_sha256": FROZEN_SNAPSHOT_SHA256_V2,
+                "manifest_file_sha256": FROZEN_SNAPSHOT_MANIFEST_FILE_SHA256_V2,
+                "manifest_core_sha256": FROZEN_SNAPSHOT_MANIFEST_CORE_SHA256_V2,
+                "payload_sha256": FROZEN_SNAPSHOT_PAYLOAD_SHA256_V2,
+                "payload_byte_count": FROZEN_SNAPSHOT_PAYLOAD_BYTE_COUNT_V2,
+                "parameter_layout_sha256": FROZEN_PARAMETER_LAYOUT_SHA256_V2,
+                "named_parameter_stream_sha256": FROZEN_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V2,
+                "loaded_named_parameter_stream_sha256": FROZEN_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V2,
+                "parameter_tensor_count": FROZEN_PARAMETER_TENSOR_COUNT_V2,
+                "parameter_element_count": FROZEN_PARAMETER_ELEMENT_COUNT_V2,
+                "model_config_fingerprint": FROZEN_MODEL_CONFIG_FINGERPRINT_V2,
+                "model_architecture_version": FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2,
+                "feature_contract_digest": FROZEN_FEATURE_CONTRACT_DIGEST_V2,
+                "feature_encoding_digest": FROZEN_FEATURE_ENCODING_DIGEST_V2,
+                "initializer_identity": FROZEN_INITIALIZER_IDENTITY_V2,
+                "base_seed": FROZEN_BASE_SEED_V2,
+                "model_init_seed": FROZEN_MODEL_INIT_SEED_V2,
+                "trainer_schedule_version": FROZEN_TRAINER_SCHEDULE_IDENTITY_V2,
+                "python_reference_seed_version": FROZEN_PYTHON_REFERENCE_SEED_IDENTITY_V2,
+                "schedule_goldens_sha256": FROZEN_TRAINER_SCHEDULE_GOLDENS_SHA256_V2,
+                "authority_source_bundle_sha256": FROZEN_SNAPSHOT_AUTHORITY_SOURCE_BUNDLE_SHA256_V2,
+                "authority_runtime_identity": FROZEN_SNAPSHOT_AUTHORITY_RUNTIME_IDENTITY_V2,
+                "loader_identity": FROZEN_SNAPSHOT_LOADER_IDENTITY_V2,
+                "optimizer_identity": FROZEN_OPTIMIZER_IDENTITY_V2,
+                "adam_step_initial": FROZEN_ADAM_STEP_INITIAL_V2,
+                "moment_initialization": FROZEN_MOMENT_INITIALIZATION_V2,
+                "canonical_gauge_parameters": FROZEN_CANONICAL_GAUGE_PARAMETERS_V2,
+                "scorer_bias_anchor_f32_bits": FROZEN_SCORER_BIAS_ANCHOR_F32_BITS_V2,
                 "snapshot_load_completed_before_trial_start": true,
                 "snapshot_load_timed": false,
                 "rust_seeded_initializer_reproduced": false,
-                "nonclaim": NONCLAIM_V1
+                "nonclaim": FROZEN_SNAPSHOT_NONCLAIM_V2
             },
             "optimization": {
                 "learning_rate_f32_bits": format!("{:08x}", 0.001_f32.to_bits()),
@@ -2257,7 +2439,7 @@ mod tests {
         assert_eq!(validated.record().schema(), TRAIN_RUN_SCHEMA_V2);
         assert_eq!(
             validated.record().model_snapshot().identity(),
-            SNAPSHOT_IDENTITY_V1
+            FROZEN_SNAPSHOT_IDENTITY_V2
         );
         assert_eq!(
             validated.record().environment().deck_ids(),
@@ -2277,6 +2459,93 @@ mod tests {
             validated.standalone_semantics_sha256()
         );
         assert!(!String::from_utf8(bytes).unwrap().contains("run_sha256"));
+    }
+
+    #[test]
+    fn production_owners_and_record_are_independently_pinned_to_frozen_rev3() {
+        validate_frozen_rev3_authorities_v2().unwrap();
+
+        // The fixture is assembled from the frozen RunV2 literals, not from
+        // production owners. Successful decode therefore exercises the
+        // independent owner-to-frozen and record-to-frozen checks together.
+        let record = fixture_record();
+        assert_eq!(
+            record.source.source_tree_recipe_byte_count,
+            FROZEN_SOURCE_TREE_RECIPE_BYTE_COUNT_V2
+        );
+        assert_eq!(
+            record.environment.runtime_catalog_sha256,
+            FROZEN_RUNTIME_CATALOG_SHA256_V2
+        );
+        assert_eq!(
+            record.contracts.tensorizer,
+            TensorizerContractV2 {
+                identity: FROZEN_TENSORIZER_IDENTITY_V2.to_owned(),
+                feature_contract_digest: FROZEN_FEATURE_CONTRACT_DIGEST_V2.to_owned(),
+                feature_encoding_digest: FROZEN_FEATURE_ENCODING_DIGEST_V2.to_owned(),
+                authoritative_features_source_sha256: FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
+                    .to_owned(),
+                fixture_sha256: FROZEN_TENSORIZER_FIXTURE_SHA256_V2.to_owned(),
+                fixture_payload_sha256: FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2.to_owned(),
+            }
+        );
+        assert_eq!(
+            record
+                .contracts
+                .learner_sampler
+                .cross_language_vectors_file_sha256,
+            FROZEN_LEARNER_VECTORS_FILE_SHA256_V2
+        );
+        assert_eq!(
+            record
+                .contracts
+                .learner_sampler
+                .cross_language_vector_stream_sha256,
+            FROZEN_LEARNER_VECTOR_STREAM_SHA256_V2
+        );
+        assert_eq!(
+            record.contracts.opponent_policy.identity,
+            FROZEN_OPPONENT_POLICY_IDENTITY_V2
+        );
+        assert_eq!(
+            record.contracts.opponent_policy.model_rule,
+            FROZEN_OPPONENT_POLICY_MODEL_RULE_V2
+        );
+        assert_eq!(
+            record
+                .contracts
+                .opponent_sampler
+                .cross_language_vectors_file_sha256,
+            FROZEN_OPPONENT_VECTORS_FILE_SHA256_V2
+        );
+        assert_eq!(
+            record
+                .contracts
+                .opponent_sampler
+                .cross_language_vector_stream_sha256,
+            FROZEN_OPPONENT_VECTOR_STREAM_SHA256_V2
+        );
+        assert_eq!(
+            record.contracts.trajectory,
+            TrajectoryContractV2 {
+                identity: FROZEN_TRAJECTORY_IDENTITY_V2.to_owned(),
+                cross_language_goldens_schema: FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2.to_owned(),
+                cross_language_generator_identity: FROZEN_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2
+                    .to_owned(),
+                cross_language_golden_stream_identity: FROZEN_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2
+                    .to_owned(),
+                cross_language_goldens_file_sha256: FROZEN_TRAJECTORY_GOLDENS_FILE_SHA256_V2
+                    .to_owned(),
+                cross_language_golden_stream_sha256: FROZEN_TRAJECTORY_GOLDEN_STREAM_SHA256_V2
+                    .to_owned(),
+            }
+        );
+
+        let bytes = fixture_bytes();
+        decode_train_run_v2(&bytes).unwrap();
+        assert!(!bytes
+            .windows(b"membership".len())
+            .any(|window| window == b"membership"));
     }
 
     #[test]
@@ -2410,7 +2679,7 @@ mod tests {
     fn scalar_and_hex_corruption_matrix_fails_closed() {
         let mut cases = Vec::new();
         let mut record = fixture_record();
-        record.model_snapshot.snapshot_sha256 = SNAPSHOT_SHA256_V1.to_ascii_uppercase();
+        record.model_snapshot.snapshot_sha256 = FROZEN_SNAPSHOT_SHA256_V2.to_ascii_uppercase();
         cases.push(record);
         let mut record = fixture_record();
         record.source.binary_volume_serial_u64_hex = "0".repeat(15);
