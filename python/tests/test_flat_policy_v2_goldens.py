@@ -252,14 +252,23 @@ class FlatPolicyV2GoldenTests(unittest.TestCase):
                 "value_hex": "a06fa9566106f0ea",
             },
         )
-        full = golden["full_distinct_fields_v2"]
+        stress = golden["serializer_stress_v2"]
+        semantic = golden["production_semantic_ragged_v2"]
+        self.assertEqual(
+            stress["claim_scope"],
+            "raw serializer field-order stress only; rows are intentionally not production-semantic",
+        )
+        self.assertEqual(
+            semantic["claim_scope"],
+            "synthetic concatenation of individually production-derived rows; not one reachable FastActor decision",
+        )
 
         object_field_names = [row[0] for row in commitment_contract["object_row"]["fields"]]
         action_field_names = [row[0] for row in commitment_contract["action_row"]["fields"]]
         reference_field_names = [row[0] for row in commitment_contract["reference_row"]["fields"]]
-        self.assertEqual(object_field_names[1:], list(full["objects"][0]))
-        self.assertEqual(action_field_names[1:], list(full["actions"][0]))
-        self.assertEqual(reference_field_names[:6], list(full["references"][0]))
+        self.assertEqual(object_field_names[1:], list(stress["objects"][0]))
+        self.assertEqual(action_field_names[1:], list(stress["actions"][0]))
+        self.assertEqual(reference_field_names[:6], list(stress["references"][0]))
         self.assertEqual(
             [row[1] for row in commitment_contract["header_fields"][:4]],
             ["u32_le"] * 4,
@@ -269,36 +278,61 @@ class FlatPolicyV2GoldenTests(unittest.TestCase):
             "header_then_objects_by_object_index_then_each_actions_refs_in_slice_order_then_action",
         )
         self.assertEqual(
-            [full["action_count"], full["ref_count"], full["object_count"]],
+            [semantic["action_count"], semantic["ref_count"], semantic["object_count"]],
             [3, 4, 2],
         )
         self.assertEqual(
-            [(row["ref_start"], row["ref_len"]) for row in full["actions"]],
+            [(row["ref_start"], row["ref_len"]) for row in semantic["actions"]],
             [(0, 0), (0, 3), (3, 1)],
         )
 
-        reconstructed = bytes.fromhex(full["header_hex"])
-        reconstructed += b"".join(bytes.fromhex(row) for row in full["object_rows_hex"])
-        consumed_refs = 0
-        for action_index, (action, action_row) in enumerate(
-            zip(full["actions"], full["action_rows_hex"], strict=True)
-        ):
-            ref_start = action["ref_start"]
-            ref_end = ref_start + action["ref_len"]
-            self.assertEqual(ref_start, consumed_refs)
-            for ref_index in range(ref_start, ref_end):
-                self.assertEqual(full["references"][ref_index]["action_index"], action_index)
-                reconstructed += bytes.fromhex(full["reference_rows_hex"][ref_index])
-            reconstructed += bytes.fromhex(action_row)
-            consumed_refs = ref_end
-        self.assertEqual(consumed_refs, len(full["references"]))
-        self.assertEqual(reconstructed.hex(), full["stream_hex"])
-        digest = hashlib.sha256(reconstructed).digest()
-        self.assertEqual(digest.hex(), full["sha256_hex"])
-        self.assertEqual(digest[:16].hex(), full["commitment_hex"])
+        def reconstruct(fixture: dict[str, object]) -> bytes:
+            reconstructed = bytes.fromhex(fixture["header_hex"])
+            reconstructed += b"".join(
+                bytes.fromhex(row) for row in fixture["object_rows_hex"]
+            )
+            consumed_refs = 0
+            for action_index, (action, action_row) in enumerate(
+                zip(fixture["actions"], fixture["action_rows_hex"], strict=True)
+            ):
+                ref_start = action["ref_start"]
+                ref_end = ref_start + action["ref_len"]
+                self.assertEqual(ref_start, consumed_refs)
+                for ref_index in range(ref_start, ref_end):
+                    self.assertEqual(
+                        fixture["references"][ref_index]["action_index"], action_index
+                    )
+                    reconstructed += bytes.fromhex(fixture["reference_rows_hex"][ref_index])
+                reconstructed += bytes.fromhex(action_row)
+                consumed_refs = ref_end
+            self.assertEqual(consumed_refs, len(fixture["references"]))
+            self.assertEqual(reconstructed.hex(), fixture["stream_hex"])
+            digest = hashlib.sha256(reconstructed).digest()
+            self.assertEqual(digest.hex(), fixture["sha256_hex"])
+            self.assertEqual(digest[:16].hex(), fixture["commitment_hex"])
+            return reconstructed
+
+        reconstruct(stress)
+        reconstructed = reconstruct(semantic)
         self.assertEqual(
-            {row["card_token"] for row in full["objects"]},
+            {row["card_token"] for row in semantic["objects"]},
             {65_535, 65_536},
+        )
+        self.assertEqual(
+            [(row["group"], row["zone"]) for row in semantic["objects"]],
+            [(7, 4), (2, 2)],
+        )
+        self.assertEqual(
+            [(row["kind"], row["flags"]) for row in semantic["actions"]],
+            [(18, 4), (26, 0), (4, 0)],
+        )
+        self.assertEqual(
+            [row["role"] for row in semantic["references"]],
+            [7, 7, 7, 0],
+        )
+        self.assertEqual(
+            [row["associated_order"] for row in semantic["references"]],
+            [2, 0, 1, 0],
         )
         self.assertIn((65_535).to_bytes(4, "little"), reconstructed)
         self.assertIn((65_536).to_bytes(4, "little"), reconstructed)

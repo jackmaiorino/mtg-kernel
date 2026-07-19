@@ -5843,7 +5843,7 @@ mod tests {
     use crate::rl::{
         card_name, make_legal_action_v5, reset_test_policy_v5_materialization_calls,
         test_policy_v5_materialization_calls, validate_core_policy_action_candidates_v5,
-        ActionSemanticV1,
+        ActionSemanticV1, CardStableRefV1,
     };
     use crate::state::{Counters, GameObject, GameState, ObjectStateV4, SplitMix64, Step, Zone};
     use std::collections::HashSet;
@@ -9815,7 +9815,7 @@ mod tests {
     }
 
     #[test]
-    fn flat_action_v2_full_distinct_field_commitment_matches_python_authority() {
+    fn flat_action_v2_serializer_and_production_semantic_commitments_match_python_authority() {
         fn unsigned(row: &serde_json::Value, field: &str) -> u64 {
             row[field]
                 .as_u64()
@@ -9838,23 +9838,32 @@ mod tests {
         let golden: serde_json::Value =
             serde_json::from_str(include_str!("../../data/flat_policy_v2/goldens_v2.json"))
                 .unwrap();
-        let full = &golden["action_commitment"]["full_distinct_fields_v2"];
-        assert_eq!(full["card_db_hash"].as_u64(), Some(KERNEL_CARDDB_HASH));
-        assert_eq!(full["actor_seat"].as_u64(), Some(1));
-        let object_rows = full["objects"].as_array().unwrap();
-        let action_rows = full["actions"].as_array().unwrap();
-        let reference_rows = full["references"].as_array().unwrap();
+        let stress = &golden["action_commitment"]["serializer_stress_v2"];
+        assert_eq!(
+            stress["claim_scope"].as_str(),
+            Some(
+                "raw serializer field-order stress only; rows are intentionally not production-semantic"
+            )
+        );
+        assert_eq!(stress["card_db_hash"].as_u64(), Some(KERNEL_CARDDB_HASH));
+        assert_eq!(stress["actor_seat"].as_u64(), Some(1));
+        let object_rows = stress["objects"].as_array().unwrap();
+        let action_rows = stress["actions"].as_array().unwrap();
+        let reference_rows = stress["references"].as_array().unwrap();
         assert_eq!(object_rows.len(), 2);
         assert_eq!(action_rows.len(), 3);
         assert_eq!(reference_rows.len(), 4);
-        assert_eq!(full["action_count"].as_u64(), Some(3));
-        assert_eq!(full["ref_count"].as_u64(), Some(4));
-        assert_eq!(full["object_count"].as_u64(), Some(2));
+        assert_eq!(stress["action_count"].as_u64(), Some(3));
+        assert_eq!(stress["ref_count"].as_u64(), Some(4));
+        assert_eq!(stress["object_count"].as_u64(), Some(2));
 
         let object = |row: &serde_json::Value| FlatActionObjectV2 {
             card_token: u32::try_from(unsigned(row, "card_token")).unwrap(),
             group: match unsigned(row, "group") {
+                2 => FlatActionObjectGroupV1::SelfBattlefield,
+                3 => FlatActionObjectGroupV1::OpponentBattlefield,
                 6 => FlatActionObjectGroupV1::Exile,
+                7 => FlatActionObjectGroupV1::Stack,
                 8 => FlatActionObjectGroupV1::Command,
                 value => panic!("unexpected golden object group {value}"),
             },
@@ -9867,6 +9876,8 @@ mod tests {
         let action = |row: &serde_json::Value| FlatActionCoreV1 {
             kind: match unsigned(row, "kind") {
                 1 => FlatActionKindV1::PlayLand,
+                4 => FlatActionKindV1::ActivateAbility,
+                18 => FlatActionKindV1::ChooseOptionalCostUse,
                 26 => FlatActionKindV1::OrderTriggers,
                 value => panic!("unexpected golden action kind {value}"),
             },
@@ -9896,6 +9907,7 @@ mod tests {
         let reference = |row: &serde_json::Value| FlatActionRefV2 {
             action_index: u32::try_from(unsigned(row, "action_index")).unwrap(),
             role: match unsigned(row, "role") {
+                0 => FlatActionRefRoleV1::Source,
                 2 => FlatActionRefRoleV1::Card,
                 7 => FlatActionRefRoleV1::PendingSources,
                 value => panic!("unexpected golden reference role {value}"),
@@ -9920,7 +9932,7 @@ mod tests {
             [65_535, 65_536]
         );
 
-        let expected = hex_bytes(full["commitment_hex"].as_str().unwrap());
+        let expected = hex_bytes(stress["commitment_hex"].as_str().unwrap());
         assert_eq!(expected.len(), 16);
         assert_eq!(
             flat_action_commitment_from_rows_v2(PlayerSeatV1::P1, &actions, &references, &objects,)
@@ -9928,10 +9940,159 @@ mod tests {
                 .as_slice(),
             expected
         );
-        let stream = hex_bytes(full["stream_hex"].as_str().unwrap());
+        let stream = hex_bytes(stress["stream_hex"].as_str().unwrap());
         assert_eq!(
             format!("{:x}", Sha256::digest(stream)),
-            full["sha256_hex"].as_str().unwrap()
+            stress["sha256_hex"].as_str().unwrap()
+        );
+
+        let semantic = &golden["action_commitment"]["production_semantic_ragged_v2"];
+        assert_eq!(
+            semantic["claim_scope"].as_str(),
+            Some(
+                "synthetic concatenation of individually production-derived rows; not one reachable FastActor decision"
+            )
+        );
+        assert_eq!(semantic["card_db_hash"].as_u64(), Some(KERNEL_CARDDB_HASH));
+        assert_eq!(semantic["actor_seat"].as_u64(), Some(1));
+        let semantic_objects = semantic["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(object)
+            .collect::<Vec<_>>();
+        let semantic_actions = semantic["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(action)
+            .collect::<Vec<_>>();
+        let semantic_references = semantic["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(reference)
+            .collect::<Vec<_>>();
+        assert_eq!(semantic_actions.len(), 3);
+        assert_eq!(semantic_references.len(), 4);
+        assert_eq!(semantic_objects.len(), 2);
+        assert_eq!(
+            semantic_actions
+                .iter()
+                .map(|row| (row.ref_start, row.ref_len))
+                .collect::<Vec<_>>(),
+            [(0, 0), (0, 3), (3, 1)]
+        );
+        assert_eq!(
+            semantic_objects,
+            [
+                FlatActionObjectV2 {
+                    card_token: 65_535,
+                    group: FlatActionObjectGroupV1::Stack,
+                    actor_visible_ordinal: 0,
+                    owner_relative: 0,
+                    controller_relative: 0,
+                    zone: flat_zone_v1(Zone::Stack),
+                    zone_change_count: 0x12345678,
+                },
+                FlatActionObjectV2 {
+                    card_token: 65_536,
+                    group: FlatActionObjectGroupV1::SelfBattlefield,
+                    actor_visible_ordinal: 1,
+                    owner_relative: 0,
+                    controller_relative: 0,
+                    zone: flat_zone_v1(Zone::Battlefield),
+                    zone_change_count: 0x89abcdef,
+                },
+            ]
+        );
+
+        let stack_source = CardStableRefV1 {
+            arena_id: 1_001,
+            card_db_id: 65_534,
+            owner: PlayerSeatV1::P1,
+            controller: PlayerSeatV1::P1,
+            zone: Zone::Stack,
+            zone_change_count: 0x12345678,
+        };
+        let battlefield_source = CardStableRefV1 {
+            arena_id: 1_002,
+            card_db_id: 65_535,
+            owner: PlayerSeatV1::P1,
+            controller: PlayerSeatV1::P1,
+            zone: Zone::Battlefield,
+            zone_change_count: 0x89abcdef,
+        };
+        let semantics = [
+            ActionSemanticV1::ChooseOptionalCostUse {
+                actor: PlayerSeatV1::P1,
+                use_cost: true,
+            },
+            ActionSemanticV1::OrderTriggers {
+                actor: PlayerSeatV1::P1,
+                pending_sources: vec![
+                    stack_source.clone(),
+                    battlefield_source.clone(),
+                    stack_source.clone(),
+                ],
+                order: vec![2, 0, 1],
+            },
+            ActionSemanticV1::ActivateAbility {
+                actor: PlayerSeatV1::P1,
+                source: battlefield_source.clone(),
+                ability_index: 3,
+            },
+        ];
+        let mut derived_actions = Vec::new();
+        let mut derived_references = Vec::new();
+        for (action_index, semantic_row) in semantics.iter().enumerate() {
+            let ref_start = u32::try_from(derived_references.len()).unwrap();
+            let core = flat_action_core_and_refs_v1(
+                semantic_row,
+                PlayerSeatV1::P1,
+                ref_start,
+                |role, order_index, associated_order, stable| {
+                    let object_index = if stable == &stack_source {
+                        0
+                    } else if stable == &battlefield_source {
+                        1
+                    } else {
+                        panic!("production semantic emitted an unknown stable reference")
+                    };
+                    derived_references.push(FlatActionRefV2 {
+                        action_index: u32::try_from(action_index).unwrap(),
+                        role,
+                        order_index,
+                        associated_order,
+                        card_token: u32::from(stable.card_db_id) + 1,
+                        object_index,
+                    });
+                    Ok(())
+                },
+            )
+            .unwrap();
+            derived_actions.push(core);
+        }
+        assert_eq!(derived_actions, semantic_actions);
+        assert_eq!(derived_references, semantic_references);
+
+        let semantic_expected = hex_bytes(semantic["commitment_hex"].as_str().unwrap());
+        assert_eq!(semantic_expected.len(), 16);
+        assert_eq!(
+            flat_action_commitment_from_rows_v2(
+                PlayerSeatV1::P1,
+                &derived_actions,
+                &derived_references,
+                &semantic_objects,
+            )
+            .unwrap()
+            .as_slice(),
+            semantic_expected
+        );
+        let semantic_stream = hex_bytes(semantic["stream_hex"].as_str().unwrap());
+        assert_eq!(
+            format!("{:x}", Sha256::digest(semantic_stream)),
+            semantic["sha256_hex"].as_str().unwrap()
         );
         assert_eq!(
             golden["action_commitment"]["frozen_v1_comparison"]["commitment_hex"].as_str(),

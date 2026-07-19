@@ -369,9 +369,63 @@ def _commitment_record(stream: bytes) -> dict[str, str]:
     }
 
 
+def _assemble_v2_commitment_fixture(
+    domain: bytes,
+    card_db_hash: int,
+    actor_seat: int,
+    objects: list[dict[str, int]],
+    actions: list[dict[str, int]],
+    refs: list[dict[str, int]],
+    claim_scope: str,
+) -> dict[str, object]:
+    header = _header(
+        domain,
+        (2, 1, 2, 2),
+        card_db_hash,
+        actor_seat,
+        len(actions),
+        len(refs),
+        len(objects),
+    )
+    object_rows = [_serialize_object_v2(index, row) for index, row in enumerate(objects)]
+    action_rows = [_serialize_action(index, row) for index, row in enumerate(actions)]
+    reference_rows = [_serialize_ref_v2(row, objects[row["object_index"]]) for row in refs]
+    stream = header + b"".join(object_rows)
+    consumed_refs = 0
+    for action_index, action in enumerate(actions):
+        ref_start = action["ref_start"]
+        ref_end = ref_start + action["ref_len"]
+        if ref_start != consumed_refs or ref_end > len(refs):
+            raise RuntimeError("golden action reference slices must be contiguous and in bounds")
+        for ref_index in range(ref_start, ref_end):
+            if refs[ref_index]["action_index"] != action_index:
+                raise RuntimeError("golden reference action_index disagrees with its action slice")
+            stream += reference_rows[ref_index]
+        stream += action_rows[action_index]
+        consumed_refs = ref_end
+    if consumed_refs != len(refs):
+        raise RuntimeError("golden action reference slices must consume every reference")
+    return {
+        "claim_scope": claim_scope,
+        "actor_seat": actor_seat,
+        "card_db_hash": card_db_hash,
+        "action_count": len(actions),
+        "ref_count": len(refs),
+        "object_count": len(objects),
+        "objects": objects,
+        "actions": actions,
+        "references": refs,
+        "header_hex": header.hex(),
+        "object_rows_hex": [row.hex() for row in object_rows],
+        "reference_rows_hex": [row.hex() for row in reference_rows],
+        "action_rows_hex": [row.hex() for row in action_rows],
+        **_commitment_record(stream),
+    }
+
+
 def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: int) -> dict[str, object]:
     domain = action_contract["candidate_commitment"]["domain_utf8"].encode("utf-8")
-    objects = [
+    stress_objects = [
         {
             "card_token": 65_535,
             "group": 6,
@@ -391,7 +445,7 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
             "zone_change_count": 0x89ABCDEF,
         },
     ]
-    actions = [
+    stress_actions = [
         {
             "kind": 26,
             "flags": 0x1234,
@@ -468,7 +522,7 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
             "ref_len": 1,
         },
     ]
-    refs = [
+    stress_refs = [
         {
             "action_index": 1,
             "role": 2,
@@ -502,48 +556,128 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
             "object_index": 1,
         },
     ]
-    header = _header(
+    serializer_stress = _assemble_v2_commitment_fixture(
         domain,
-        (2, 1, 2, 2),
         card_db_hash,
         1,
-        len(actions),
-        len(refs),
-        len(objects),
+        stress_objects,
+        stress_actions,
+        stress_refs,
+        "raw serializer field-order stress only; rows are intentionally not production-semantic",
     )
-    object_rows = [_serialize_object_v2(index, row) for index, row in enumerate(objects)]
-    action_rows = [_serialize_action(index, row) for index, row in enumerate(actions)]
-    reference_rows = [_serialize_ref_v2(row, objects[row["object_index"]]) for row in refs]
-    stream = header + b"".join(object_rows)
-    consumed_refs = 0
-    for action_index, action in enumerate(actions):
-        ref_start = action["ref_start"]
-        ref_end = ref_start + action["ref_len"]
-        if ref_start != consumed_refs or ref_end > len(refs):
-            raise RuntimeError("golden action reference slices must be contiguous and in bounds")
-        for ref_index in range(ref_start, ref_end):
-            if refs[ref_index]["action_index"] != action_index:
-                raise RuntimeError("golden reference action_index disagrees with its action slice")
-            stream += reference_rows[ref_index]
-        stream += action_rows[action_index]
-        consumed_refs = ref_end
-    if consumed_refs != len(refs):
-        raise RuntimeError("golden action reference slices must consume every reference")
-    full = {
-        "actor_seat": 1,
-        "card_db_hash": card_db_hash,
-        "action_count": len(actions),
-        "ref_count": len(refs),
-        "object_count": len(objects),
-        "objects": objects,
-        "actions": actions,
-        "references": refs,
-        "header_hex": header.hex(),
-        "object_rows_hex": [row.hex() for row in object_rows],
-        "reference_rows_hex": [row.hex() for row in reference_rows],
-        "action_rows_hex": [row.hex() for row in action_rows],
-        **_commitment_record(stream),
+
+    # These rows are a synthetic concatenation of three independently valid
+    # production semantic mappings.  They deliberately are not claimed to be
+    # one homogeneous/reachable FastActor decision: the 0+3+1 slices exist to
+    # pin ragged stream ordering and the distinct 3/4/2 count fields.
+    semantic_objects = [
+        {
+            "card_token": 65_535,
+            "group": 7,
+            "actor_visible_ordinal": 0,
+            "owner_relative": 0,
+            "controller_relative": 0,
+            "zone": 4,
+            "zone_change_count": 0x12345678,
+        },
+        {
+            "card_token": 65_536,
+            "group": 2,
+            "actor_visible_ordinal": 1,
+            "owner_relative": 0,
+            "controller_relative": 0,
+            "zone": 2,
+            "zone_change_count": 0x89ABCDEF,
+        },
+    ]
+    zero_fields = {
+        "ability_index": 0,
+        "remaining": 0,
+        "mode_index": 0,
+        "mode_count": 0,
+        "option_index": 0,
+        "option_count": 0,
+        "selected_count": 0,
+        "min_targets": 0,
+        "max_targets": 0,
+        "number": 0,
+        "minimum": 0,
+        "maximum": 0,
+        "mana_choice": 0,
+        "color": 0,
+        "cast_mode": 0,
+        "cost_kind": 0,
+        "optional_cost_choice": 0,
+        "target_kind": 0,
+        "target_player": 0,
     }
+    semantic_actions = [
+        {
+            "kind": 18,
+            "flags": 4,
+            **zero_fields,
+            "ref_start": 0,
+            "ref_len": 0,
+        },
+        {
+            "kind": 26,
+            "flags": 0,
+            **zero_fields,
+            "ref_start": 0,
+            "ref_len": 3,
+        },
+        {
+            "kind": 4,
+            "flags": 0,
+            **zero_fields,
+            "ability_index": 3,
+            "ref_start": 3,
+            "ref_len": 1,
+        },
+    ]
+    semantic_refs = [
+        {
+            "action_index": 1,
+            "role": 7,
+            "order_index": 0,
+            "associated_order": 2,
+            "card_token": 65_535,
+            "object_index": 0,
+        },
+        {
+            "action_index": 1,
+            "role": 7,
+            "order_index": 1,
+            "associated_order": 0,
+            "card_token": 65_536,
+            "object_index": 1,
+        },
+        {
+            "action_index": 1,
+            "role": 7,
+            "order_index": 2,
+            "associated_order": 1,
+            "card_token": 65_535,
+            "object_index": 0,
+        },
+        {
+            "action_index": 2,
+            "role": 0,
+            "order_index": 0,
+            "associated_order": 0,
+            "card_token": 65_536,
+            "object_index": 1,
+        },
+    ]
+    production_semantic = _assemble_v2_commitment_fixture(
+        domain,
+        card_db_hash,
+        1,
+        semantic_objects,
+        semantic_actions,
+        semantic_refs,
+        "synthetic concatenation of individually production-derived rows; not one reachable FastActor decision",
+    )
 
     legacy_object = {
         "card_token": 65_535,
@@ -615,7 +749,8 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
             "source": "mtg-kernel/src/card_def.rs::card_db_hash_v5_is_frozen",
             "value_hex": f"{card_db_hash:016x}",
         },
-        "full_distinct_fields_v2": full,
+        "serializer_stress_v2": serializer_stress,
+        "production_semantic_ragged_v2": production_semantic,
         "frozen_v1_comparison": _commitment_record(v1_stream),
         "same_representable_rows_v2": _commitment_record(v2_stream),
     }
