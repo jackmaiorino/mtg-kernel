@@ -171,6 +171,11 @@ pub(crate) fn native_train_state_parameter_layout_v1(
 pub(crate) struct NativePolicySubstepV1<'a> {
     pub(crate) encoded: NativeEncodedDecisionViewV1<'a>,
     pub(crate) selected_action_index: usize,
+    /// Complete scorer output captured when this exact encoded decision was
+    /// sampled. The train-step forward must reproduce every row bit-exactly
+    /// before any backward or optimizer work begins.
+    pub(crate) expected_raw_action_logit_bits: &'a [u32],
+    pub(crate) expected_value_bits: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -251,6 +256,26 @@ pub(crate) enum NativePolicyTrainErrorV1 {
         substep_index: usize,
         selected: usize,
         action_count: usize,
+    },
+    ExpectedLogitCountMismatch {
+        group_index: usize,
+        substep_index: usize,
+        expected: usize,
+        actual: usize,
+    },
+    RecomputedLogitBitsMismatch {
+        group_index: usize,
+        substep_index: usize,
+        action_index: usize,
+        selected_action_index: usize,
+        expected_bits: u32,
+        actual_bits: u32,
+    },
+    RecomputedValueBitsMismatch {
+        group_index: usize,
+        substep_index: usize,
+        expected_bits: u32,
+        actual_bits: u32,
     },
     InvalidValueCoefficient,
     InvalidLearningRate,
@@ -493,6 +518,41 @@ impl NativePolicyValueTrainStateV1 {
             let mut joint_log_probability = None;
             for (substep_index, substep) in group.substeps.iter().enumerate() {
                 let tape = forward_with_tape(&parameters, self.model.config_v1(), substep.encoded)?;
+                if substep.expected_raw_action_logit_bits.len() != tape.logits.len() {
+                    return Err(NativePolicyTrainErrorV1::ExpectedLogitCountMismatch {
+                        group_index,
+                        substep_index,
+                        expected: substep.expected_raw_action_logit_bits.len(),
+                        actual: tape.logits.len(),
+                    });
+                }
+                for (action_index, (&expected_bits, actual)) in substep
+                    .expected_raw_action_logit_bits
+                    .iter()
+                    .zip(&tape.logits)
+                    .enumerate()
+                {
+                    let actual_bits = actual.to_bits();
+                    if actual_bits != expected_bits {
+                        return Err(NativePolicyTrainErrorV1::RecomputedLogitBitsMismatch {
+                            group_index,
+                            substep_index,
+                            action_index,
+                            selected_action_index: substep.selected_action_index,
+                            expected_bits,
+                            actual_bits,
+                        });
+                    }
+                }
+                let actual_value_bits = tape.value.to_bits();
+                if actual_value_bits != substep.expected_value_bits {
+                    return Err(NativePolicyTrainErrorV1::RecomputedValueBitsMismatch {
+                        group_index,
+                        substep_index,
+                        expected_bits: substep.expected_value_bits,
+                        actual_bits: actual_value_bits,
+                    });
+                }
                 if substep.selected_action_index >= tape.logits.len() {
                     return Err(NativePolicyTrainErrorV1::SelectedActionOutOfRange {
                         group_index,
@@ -2034,19 +2094,60 @@ mod tests {
             .expect("golden case exists")
     }
 
-    fn substeps_for_step<'a>(
-        forward: &'a ForwardFixture,
-        step: &'a GoldenStep,
-    ) -> Vec<Vec<NativePolicySubstepV1<'a>>> {
+    struct ExpectedOutputBits {
+        raw_action_logit_bits: Vec<u32>,
+        value_bits: u32,
+    }
+
+    fn expected_outputs_for_step(
+        model: &NativePolicyValueNetV1,
+        forward: &ForwardFixture,
+        step: &GoldenStep,
+    ) -> Vec<Vec<ExpectedOutputBits>> {
         step.groups
             .iter()
             .map(|group| {
                 group
                     .substeps
                     .iter()
-                    .map(|substep| NativePolicySubstepV1 {
+                    .map(|substep| {
+                        let output = model
+                            .forward_v1(encoded(case_by_name(forward, &substep.case)))
+                            .expect("authority-test scorer forward succeeds");
+                        ExpectedOutputBits {
+                            raw_action_logit_bits: output
+                                .logits
+                                .iter()
+                                .map(|value| value.to_bits())
+                                .collect(),
+                            value_bits: output.value.to_bits(),
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn substeps_for_step<'a>(
+        forward: &'a ForwardFixture,
+        step: &GoldenStep,
+        expected_outputs: &'a [Vec<ExpectedOutputBits>],
+    ) -> Vec<Vec<NativePolicySubstepV1<'a>>> {
+        assert_eq!(step.groups.len(), expected_outputs.len());
+        step.groups
+            .iter()
+            .zip(expected_outputs)
+            .map(|(group, expected_group)| {
+                assert_eq!(group.substeps.len(), expected_group.len());
+                group
+                    .substeps
+                    .iter()
+                    .zip(expected_group)
+                    .map(|(substep, expected)| NativePolicySubstepV1 {
                         encoded: encoded(case_by_name(forward, &substep.case)),
                         selected_action_index: substep.selected_action_index,
+                        expected_raw_action_logit_bits: &expected.raw_action_logit_bits,
+                        expected_value_bits: expected.value_bits,
                     })
                     .collect()
             })
@@ -2446,7 +2547,8 @@ mod tests {
             .any(|group| group.substeps.len() > 1));
 
         for step in &golden.steps {
-            let substeps = substeps_for_step(&forward, step);
+            let expected_outputs = expected_outputs_for_step(state.model_v1(), &forward, step);
+            let substeps = substeps_for_step(&forward, step, &expected_outputs);
             let groups = groups_for_step(step, &substeps);
             let result = state
                 .train_step_v1(&groups, golden.value_coefficient, optimizer.learning_rate)
@@ -2630,11 +2732,12 @@ mod tests {
     fn sampled_central_differences_cover_embedding_scatter_and_both_heads() {
         let (forward, golden) = fixtures();
         let step = &golden.steps[0];
-        let substeps = substeps_for_step(&forward, step);
-        let groups = groups_for_step(step, &substeps);
         let model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
                 .unwrap();
+        let expected_outputs = expected_outputs_for_step(&model, &forward, step);
+        let substeps = substeps_for_step(&forward, step, &expected_outputs);
+        let groups = groups_for_step(step, &substeps);
         let mut state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
         let result = state
             .train_step_v1(
@@ -2713,7 +2816,8 @@ mod tests {
                 .unwrap();
         let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
         let step = &golden.steps[0];
-        let substeps = substeps_for_step(&forward, step);
+        let expected_outputs = expected_outputs_for_step(state.model_v1(), &forward, step);
+        let substeps = substeps_for_step(&forward, step, &expected_outputs);
         let groups = groups_for_step(step, &substeps);
         state
             .train_step_v1(
@@ -2791,7 +2895,8 @@ mod tests {
 
         let (forward, golden) = fixtures();
         let step = &golden.steps[1];
-        let substeps = substeps_for_step(&forward, step);
+        let expected_outputs = expected_outputs_for_step(original.model_v1(), &forward, step);
+        let substeps = substeps_for_step(&forward, step, &expected_outputs);
         let groups = groups_for_step(step, &substeps);
         let original_result = original
             .train_step_v1(
@@ -3095,9 +3200,17 @@ mod tests {
         assert_state_unchanged(&state, &parameters, &first, &second, 0);
 
         let case = case_by_name(&forward, "ordered_edges_and_action_refs");
+        let case_output = state.model_v1().forward_v1(encoded(case)).unwrap();
+        let case_logit_bits = case_output
+            .logits
+            .iter()
+            .map(|logit| logit.to_bits())
+            .collect::<Vec<_>>();
         let bad_selected = [NativePolicySubstepV1 {
             encoded: encoded(case),
             selected_action_index: usize::MAX,
+            expected_raw_action_logit_bits: &case_logit_bits,
+            expected_value_bits: case_output.value.to_bits(),
         }];
         let bad_group = [NativePolicyPhysicalDecisionV1 {
             substeps: &bad_selected,
@@ -3132,6 +3245,8 @@ mod tests {
         let malformed_substeps = [NativePolicySubstepV1 {
             encoded: malformed,
             selected_action_index: 0,
+            expected_raw_action_logit_bits: &[],
+            expected_value_bits: 0,
         }];
         let malformed_groups = [NativePolicyPhysicalDecisionV1 {
             substeps: &malformed_substeps,
@@ -3150,6 +3265,8 @@ mod tests {
         let valid_substeps = [NativePolicySubstepV1 {
             encoded: encoded(case),
             selected_action_index: 1,
+            expected_raw_action_logit_bits: &case_logit_bits,
+            expected_value_bits: case_output.value.to_bits(),
         }];
         let invalid_return = [NativePolicyPhysicalDecisionV1 {
             substeps: &valid_substeps,

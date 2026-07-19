@@ -130,6 +130,17 @@ pub(crate) struct FlatPhysicalTrajectoryObserverV2 {
     core: FlatPhysicalTrajectoryObserverCore<FlatDecisionBindingV2, FlatOwnedScoringInputsV2>,
 }
 
+/// Native-only parity-seat observer. Keeping this as a distinct type prevents
+/// the legacy fixed-seat batch wrapper from accidentally representing a
+/// varying-seat batch with one misleading batch-level seat.
+#[derive(Debug)]
+pub(crate) struct NativeFlatPhysicalTrajectoryObserverV2 {
+    core: FlatPhysicalTrajectoryObserverCore<FlatDecisionBindingV2, FlatOwnedScoringInputsV2>,
+}
+
+pub(crate) type NativeFlatGroupedTrajectoryBatchV2 =
+    FlatGroupedTrajectoryBatchCore<FlatDecisionBindingV2, FlatOwnedScoringInputsV2>;
+
 impl FlatPhysicalTrajectoryObserverV2 {
     pub(crate) fn new(
         learner_seat: PlayerSeatV1,
@@ -139,6 +150,21 @@ impl FlatPhysicalTrajectoryObserverV2 {
         Ok(Self {
             core: FlatPhysicalTrajectoryObserverCore::new(
                 learner_seat,
+                first_episode_id,
+                episode_count,
+            )
+            .map_err(FlatPhysicalTrajectoryErrorV2::from)?,
+        })
+    }
+}
+
+impl NativeFlatPhysicalTrajectoryObserverV2 {
+    pub(crate) fn new(
+        first_episode_id: u64,
+        episode_count: u64,
+    ) -> Result<Self, FlatPhysicalTrajectoryErrorV2> {
+        Ok(Self {
+            core: FlatPhysicalTrajectoryObserverCore::new_episode_parity(
                 first_episode_id,
                 episode_count,
             )
@@ -193,12 +219,60 @@ impl FlatScoredTrajectoryObserverV2 for FlatPhysicalTrajectoryObserverV2 {
     }
 }
 
+impl FlatScoredTrajectoryObserverV2 for NativeFlatPhysicalTrajectoryObserverV2 {
+    type Error = FlatPhysicalTrajectoryErrorV2;
+    type Output = NativeFlatGroupedTrajectoryBatchV2;
+
+    fn observe_selected_v2(
+        &mut self,
+        event: FlatScoredSelectedEventV2<'_>,
+    ) -> Result<(), Self::Error> {
+        let binding_matches = selected_binding_matches(&event);
+        let decision = event.decision;
+        self.core
+            .observe_selected(
+                FlatSelectedSampleCore {
+                    expected: event.expected,
+                    binding: event.binding,
+                    binding_matches,
+                    learner_ordinal: event.learner_ordinal,
+                    action_seed: event.action_seed,
+                    selected_index: event.selected_index,
+                    raw_action_logits: event.raw_action_logits,
+                    scorer_action_count: decision.actions().len(),
+                    predicted_value_bits: event.predicted_value_bits,
+                },
+                || FlatOwnedScoringInputsV2::copy_from_view(decision),
+            )
+            .map_err(FlatPhysicalTrajectoryErrorV2::from)
+    }
+
+    fn observe_terminal_v2(&mut self, event: FlatScoredTerminalEventV2) -> Result<(), Self::Error> {
+        self.core
+            .observe_terminal(FlatTerminalSampleCore {
+                terminal: event.terminal,
+                learner_action_count: event.learner_action_count,
+                learner_trace_hash: event.learner_trace_hash,
+            })
+            .map_err(FlatPhysicalTrajectoryErrorV2::from)
+    }
+
+    fn finish_v2(self) -> Result<Self::Output, Self::Error> {
+        self.core
+            .finish()
+            .map_err(FlatPhysicalTrajectoryErrorV2::from)
+    }
+}
+
 impl FlatGroupedTrajectoryBatchV2 {
     fn from_core(
         batch: FlatGroupedTrajectoryBatchCore<FlatDecisionBindingV2, FlatOwnedScoringInputsV2>,
     ) -> Self {
         Self {
-            learner_seat: batch.learner_seat,
+            learner_seat: batch
+                .learner_seat_rule
+                .fixed_seat()
+                .expect("legacy V2 observer constructs a fixed seat rule"),
             first_episode_id: batch.first_episode_id,
             episode_count: batch.episode_count,
             learner_policy_step_count: batch.learner_policy_step_count,
@@ -284,7 +358,7 @@ impl FlatLearnerSubstepSampleV2 {
     }
 }
 
-fn selected_binding_matches(event: &FlatScoredSelectedEventV2<'_>) -> bool {
+pub(crate) fn selected_binding_matches(event: &FlatScoredSelectedEventV2<'_>) -> bool {
     let expected = event.expected;
     let binding = event.binding.action_binding;
     binding.episode_id == expected.episode_id
