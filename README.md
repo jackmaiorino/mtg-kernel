@@ -6,7 +6,7 @@ This repository is the independent extraction of the kernel work formerly develo
 
 ## Current status
 
-The deterministic engine, schema-v5 Rust/Python policy boundary, artifact integrity layer, and a substantial regression suite are implemented. A build-time-validated catalog freezes the exact canonical Burn and Rally 60-card mainboards. The runner admits all four ordered Burn/Rally seat pairings. Training and both paired-evaluation lanes have bounded mirror smoke coverage for `Burn`/`Burn` and `Rally`/`Rally`; training, greedy evaluation, and sampled evaluation deliberately reject mixed-deck pairings until the separately versioned multi-deck seat-swap and seed contract exists. Policy schema v5 layers canonical binary attacker/blocker scans and grouped physical-decision accounting over the preserved schema-v4 engine semantics and H2 surface, so wide combat has two legal actions per policy substep instead of an exponential subset list.
+The deterministic engine, schema-v5 Rust/Python policy boundary, artifact integrity layer, and a substantial regression suite are implemented. A build-time-validated catalog freezes the exact canonical Burn and Rally 60-card mainboards. The uniform runner admits all four ordered Burn/Rally seat pairings; checkpoint-backed greedy or sampled runs must exactly match their validated training run. Training and both paired-evaluation lanes have bounded mirror smoke coverage for `Burn`/`Burn` and `Rally`/`Rally`; training, greedy evaluation, and sampled evaluation deliberately reject mixed-deck pairings until the separately versioned multi-deck seat-swap and seed contract exists. Policy schema v5 layers canonical binary attacker/blocker scans and grouped physical-decision accounting over the preserved schema-v4 engine semantics and H2 surface, so wide combat has two legal actions per policy substep instead of an exponential subset list.
 
 These admission and smoke results are engineering evidence, not completion of the roadmap's 32-pair mirror gate, cross-deck gate, full-pool protocol, or science-release gate.
 
@@ -59,6 +59,15 @@ mtg-kernel-rl run \
 ```
 
 On Windows, use `target/release/kernel_rl_env.exe` for `--env-bin`. Run `mtg-kernel-rl --help` to see the `run`, `train`, `evaluate`, and `evaluate-sampled` interfaces.
+
+Uniform-only runs need no model. If either runner seat uses `greedy` or
+`sampled`, the runner requires `--training-store` and
+`--expected-policy-head`; it validates the complete store, requires the exact
+post-update head, and loads that frozen checkpoint instead of constructing a
+fresh model. The runner publishes canonical `episodes.jsonl` first and
+hash-bound `run.json` last. `validate_runner_artifacts` independently checks
+the snapshot identity, row semantics, aggregate, and file receipt without
+launching the environment.
 
 ## Performance evidence
 

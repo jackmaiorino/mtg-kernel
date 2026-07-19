@@ -34,6 +34,17 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-policy-steps", required=True, type=int)
     run.add_argument("--p0", required=True, choices=sorted(POLICIES))
     run.add_argument("--p1", required=True, choices=sorted(POLICIES))
+    run.add_argument(
+        "--training-store",
+        default=None,
+        type=Path,
+        help="validated training store required when either seat uses greedy or sampled policy",
+    )
+    run.add_argument(
+        "--expected-policy-head",
+        default=None,
+        help="exact validated training-store head required with --training-store",
+    )
     _add_deck_ids_argument(
         run,
         help_text=(
@@ -106,6 +117,8 @@ def main(argv: list[str] | None = None) -> int:
             p0=args.p0,
             p1=args.p1,
             deck_ids=tuple(args.deck_ids),
+            training_store=args.training_store,
+            expected_policy_head=args.expected_policy_head,
         )
         return 0
     if args.command == "train":
