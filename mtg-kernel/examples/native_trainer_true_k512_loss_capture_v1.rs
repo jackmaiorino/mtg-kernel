@@ -8,8 +8,9 @@
 
 use mtg_kernel::native_training_executor_v1::{
     native_training_episode_schedule_v1, NativeTrainingExecutionConfigV1,
-    NativeTrainingExecutorErrorV1, NativeTrainingExecutorV1, NativeTrainingSnapshotReceiptV1,
-    NativeTrainingUpdateObservationV2, NATIVE_TRAINING_NUMERICAL_BACKEND_IDENTITY_V1,
+    NativeTrainingExecutorErrorV1, NativeTrainingExecutorV1, NativeTrainingPhaseProfileV1,
+    NativeTrainingPhaseV1, NativeTrainingSnapshotReceiptV1, NativeTrainingUpdateObservationV2,
+    NATIVE_TRAINING_NUMERICAL_BACKEND_IDENTITY_V1,
 };
 use mtg_kernel::rl::{PlayerSeatV1, TerminalOutcomeV1};
 use mtg_kernel::strict_source_tree_attestation_v1::{
@@ -615,10 +616,11 @@ fn run_capture(args: Args) -> Result<(), AppError> {
         return Err(AppError::new("fresh executor progress is not zero"));
     }
     let outer_start = Instant::now();
-    let observation = executor
-        .run_update_v2()
+    let (observation, phase_profile) = executor
+        .run_update_with_phase_profile_v1()
         .map_err(|error| AppError::executor("true-K512 update failed", error))?;
     let outer_update_elapsed_ns = outer_start.elapsed().as_nanos();
+    emit_phase_profile(&phase_profile, observation.update_elapsed_ns)?;
     let source_after = capture_strict_source_tree_v1(&repo_root)
         .map_err(|error| AppError::source_attestation("source postflight capture failed", error))?;
     require_strict_source_postflight_equality_v1(&source_before, &source_after)
@@ -649,6 +651,40 @@ fn run_capture(args: Args) -> Result<(), AppError> {
         "PASS genuine Rally K=512 capture: {}",
         output_path.display()
     );
+    Ok(())
+}
+
+fn emit_phase_profile(
+    profile: &NativeTrainingPhaseProfileV1,
+    observation_update_elapsed_ns: u64,
+) -> Result<(), AppError> {
+    if profile.update_elapsed_ns_v1() != observation_update_elapsed_ns
+        || profile.accounted_elapsed_ns_v1() > profile.update_elapsed_ns_v1()
+    {
+        return Err(AppError::new("native phase profile accounting failed"));
+    }
+    eprintln!(
+        "NATIVE_TRAINER_PHASE_PROFILE_V1 update_elapsed_ns={} accounted_elapsed_ns={} unaccounted_elapsed_ns={}",
+        profile.update_elapsed_ns_v1(),
+        profile.accounted_elapsed_ns_v1(),
+        profile.unaccounted_elapsed_ns_v1(),
+    );
+    for phase in NativeTrainingPhaseV1::ALL {
+        eprintln!(
+            "NATIVE_TRAINER_PHASE_PROFILE_V1 phase={} elapsed_ns={} record_count={}",
+            phase.label_v1(),
+            profile.phase_elapsed_ns_v1(phase),
+            profile.phase_record_count_v1(phase),
+        );
+    }
+    for (ordinal, record) in profile.records_v1().iter().enumerate() {
+        eprintln!(
+            "NATIVE_TRAINER_PHASE_PROFILE_V1 timeline_ordinal={} phase={} elapsed_ns={}",
+            ordinal,
+            record.phase.label_v1(),
+            record.elapsed_ns,
+        );
+    }
     Ok(())
 }
 

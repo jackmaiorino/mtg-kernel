@@ -40,6 +40,9 @@ pub use crate::native_trainer_v1::{
     NativeTrainerSelectedOutputEvidenceV1 as NativeTrainingSelectedOutputObservationV1,
     NativeTrainerUpdateEvidenceV2 as NativeTrainingUpdateObservationV2,
 };
+pub use crate::native_training_phase_diagnostic_v1::{
+    NativeTrainingPhaseProfileV1, NativeTrainingPhaseRecordV1, NativeTrainingPhaseV1,
+};
 use crate::native_training_store_v2::NativeTrainingPersistenceReceiptV2;
 use crate::rl::PlayerSeatV1;
 use sha2::{Digest, Sha256};
@@ -956,6 +959,25 @@ impl NativeTrainingExecutorV1 {
     ) -> Result<NativeTrainingUpdateObservationV2, NativeTrainingExecutorErrorV1> {
         self.trainer
             .run_even_batch_update_v2(&self.update_config)
+            .map_err(trainer_executor_error_v1)
+    }
+
+    /// Runs one in-memory update while collecting non-authoritative phase wall
+    /// timings. The returned profile is diagnostic only: it has no serializer,
+    /// identity, Store mapping, or benchmark-record mapping. Training inputs,
+    /// arithmetic, validation, and the committed observation are shared with
+    /// [`Self::run_update_v2`].
+    pub fn run_update_with_phase_profile_v1(
+        &mut self,
+    ) -> Result<
+        (
+            NativeTrainingUpdateObservationV2,
+            NativeTrainingPhaseProfileV1,
+        ),
+        NativeTrainingExecutorErrorV1,
+    > {
+        self.trainer
+            .run_even_batch_update_profiled_v2(&self.update_config)
             .map_err(trainer_executor_error_v1)
     }
 

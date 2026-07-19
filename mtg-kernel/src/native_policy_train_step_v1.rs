@@ -28,6 +28,9 @@ use crate::native_policy_value_net_v1::{
     EDGE_FEATURE_DIM_V1, HIDDEN_DIM_V1, OBJECT_FEATURE_DIM_V1, OBJECT_GROUP_COUNT_V1,
     PARAMETER_COUNT_V1, STATE_DIM_V1,
 };
+use crate::native_training_phase_diagnostic_v1::{
+    NativeTrainingPhaseRecorderV1, NativeTrainingPhaseV1,
+};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
@@ -721,6 +724,42 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         recompute_worker_limit: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
+        self.train_step_with_recompute_workers_inner_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            &mut phase_recorder,
+        )
+    }
+
+    pub(crate) fn train_step_with_recompute_workers_profiled_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_with_recompute_workers_inner_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            phase_recorder,
+        )
+    }
+
+    fn train_step_with_recompute_workers_inner_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let forward_loss_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
         if groups.is_empty() {
             return Err(NativePolicyTrainErrorV1::EmptyBatch);
         }
@@ -908,7 +947,9 @@ impl NativePolicyValueTrainStateV1 {
         finite_scalar("loss", 0, policy_sum)?;
         finite_scalar("loss", 1, value_sum)?;
         finite_scalar("loss", 2, loss)?;
+        phase_recorder.finish_v1(forward_loss_timer);
 
+        let backward_gauge_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::BackwardGauge);
         let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
         let mut reverse_workspace = ReverseWorkspaceV1::default();
         // Torch autograd walks the independently constructed physical-decision
@@ -971,7 +1012,9 @@ impl NativePolicyValueTrainStateV1 {
         let mut scorer_bias_gauge =
             gauge_accumulator.finish(raw_scorer_bias_residual, scorer_bias_before_bits)?;
         gradients[SCORER_SECOND_BIAS][0] = 0.0;
+        phase_recorder.finish_v1(backward_gauge_timer);
 
+        let adam_math_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::AdamMath);
         let next_step = self
             .adam_step
             .checked_add(1)
@@ -990,7 +1033,10 @@ impl NativePolicyValueTrainStateV1 {
         next_second_moments[SCORER_SECOND_BIAS][0] = 0.0;
         scorer_bias_gauge.parameter_after_bits =
             next_parameters[SCORER_SECOND_BIAS].values[0].to_bits();
+        phase_recorder.finish_v1(adam_math_timer);
 
+        let finalization_timer =
+            phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
         let mut candidate_model = self.model.clone();
         candidate_model.replace_parameter_snapshot_v1(&next_parameters)?;
         validate_optimizer_state(&next_parameters, &next_first_moments, &next_second_moments)?;
@@ -1002,11 +1048,26 @@ impl NativePolicyValueTrainStateV1 {
         )?;
 
         let gradient_snapshot = named_state_snapshot(&parameters, &gradients);
+        phase_recorder.finish_v1(finalization_timer);
+
+        // These are the largest train-step temporaries not retained by the
+        // returned observation. Make their deallocation an explicit diagnostic
+        // boundary without changing any arithmetic or owned result bytes.
+        if phase_recorder.is_enabled_v1() {
+            let cleanup_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::CleanupDrop);
+            drop(reverse_workspace);
+            drop(parallel_packed_recomputes);
+            drop(gradients);
+            drop(parameters);
+            phase_recorder.finish_v1(cleanup_timer);
+        }
+
+        let commit_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
         self.model = candidate_model;
         self.adam_step = next_step;
         self.first_moments = next_first_moments;
         self.second_moments = next_second_moments;
-        Ok(NativePolicyTrainStepResultV1 {
+        let result = NativePolicyTrainStepResultV1 {
             policy_sum,
             value_sum,
             loss,
@@ -1015,7 +1076,9 @@ impl NativePolicyValueTrainStateV1 {
             physical_terms,
             gradients: gradient_snapshot,
             scorer_bias_gauge,
-        })
+        };
+        phase_recorder.finish_v1(commit_timer);
+        Ok(result)
     }
 }
 
