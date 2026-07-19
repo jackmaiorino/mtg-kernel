@@ -23,6 +23,13 @@ pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
 pub mod card_def;
+// Schema-neutral, no-overwrite filesystem publication building blocks for the
+// future native trainer store. This module does not define record identities,
+// CLI behavior, or latest-pointer semantics.
+pub mod durable_publication_v1;
+// Schema-neutral move-only publication building blocks. Immutable files use a
+// no-replace move; replaceable pointer files use a distinct receipt type.
+pub mod durable_move_publication_v2;
 // Strict Python-authoritative initial-model snapshot loader for matched trials.
 #[allow(dead_code)]
 pub(crate) mod common_model_snapshot_v1;
