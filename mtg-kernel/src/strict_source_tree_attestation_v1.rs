@@ -12,7 +12,7 @@ use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Frozen public recipe identity.
@@ -80,6 +80,7 @@ pub enum StrictSourceTreeAttestationErrorKindV1 {
     BlobBatchCommand,
     MalformedBlobBatch,
     LengthOverflow,
+    RepositoryRootCoherence,
     InvalidExpectation,
     RecipeIdentityMismatch,
     WorktreeDirty,
@@ -139,12 +140,29 @@ fn attestation_error(
     StrictSourceTreeAttestationErrorV1::new(kind, code)
 }
 
+fn is_git_environment_name(name: &OsStr) -> bool {
+    let bytes = name.as_encoded_bytes();
+    bytes.len() >= 4
+        && bytes[0].eq_ignore_ascii_case(&b'g')
+        && bytes[1].eq_ignore_ascii_case(&b'i')
+        && bytes[2].eq_ignore_ascii_case(&b't')
+        && bytes[3] == b'_'
+}
+
+fn sanitized_git_command(git_program: &OsStr) -> Command {
+    let mut command = Command::new(git_program);
+    command.env_clear();
+    command
+        .envs(std::env::vars_os().filter(|(name, _)| !is_git_environment_name(name.as_os_str())));
+    command
+}
+
 fn command_at_repo(
     git_program: &OsStr,
     repo_root: &Path,
     args: &[&str],
 ) -> Result<Vec<u8>, StrictSourceTreeAttestationErrorV1> {
-    let output = Command::new(git_program)
+    let output = sanitized_git_command(git_program)
         .arg("-C")
         .arg(repo_root)
         .args(args)
@@ -162,6 +180,70 @@ fn command_at_repo(
         ));
     }
     Ok(output.stdout)
+}
+
+fn parse_git_toplevel(bytes: &[u8]) -> Result<PathBuf, StrictSourceTreeAttestationErrorV1> {
+    let without_lf = bytes.strip_suffix(b"\n").ok_or_else(|| {
+        attestation_error(
+            StrictSourceTreeAttestationErrorKindV1::RepositoryRootCoherence,
+            "git_toplevel_missing_lf",
+        )
+    })?;
+    let candidate = without_lf.strip_suffix(b"\r").unwrap_or(without_lf);
+    if candidate.is_empty() || candidate.contains(&0) {
+        return Err(attestation_error(
+            StrictSourceTreeAttestationErrorKindV1::RepositoryRootCoherence,
+            "git_toplevel_malformed",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(
+            candidate.to_vec(),
+        )))
+    }
+    #[cfg(not(unix))]
+    {
+        let candidate = std::str::from_utf8(candidate).map_err(|_| {
+            attestation_error(
+                StrictSourceTreeAttestationErrorKindV1::RepositoryRootCoherence,
+                "git_toplevel_not_utf8",
+            )
+        })?;
+        Ok(PathBuf::from(candidate))
+    }
+}
+
+fn require_canonical_repository_root(
+    git_program: &OsStr,
+    repo_root: &Path,
+) -> Result<PathBuf, StrictSourceTreeAttestationErrorV1> {
+    let requested_root = std::fs::canonicalize(repo_root).map_err(|_| {
+        attestation_error(
+            StrictSourceTreeAttestationErrorKindV1::RepositoryRootCoherence,
+            "requested_repository_root_canonicalization_failed",
+        )
+    })?;
+    let reported_root = parse_git_toplevel(&command_at_repo(
+        git_program,
+        &requested_root,
+        &["rev-parse", "--show-toplevel"],
+    )?)?;
+    let reported_root = std::fs::canonicalize(reported_root).map_err(|_| {
+        attestation_error(
+            StrictSourceTreeAttestationErrorKindV1::RepositoryRootCoherence,
+            "reported_repository_root_canonicalization_failed",
+        )
+    })?;
+    if requested_root != reported_root {
+        return Err(attestation_error(
+            StrictSourceTreeAttestationErrorKindV1::RepositoryRootCoherence,
+            "requested_repository_root_mismatch",
+        ));
+    }
+    Ok(requested_root)
 }
 
 fn parse_head(bytes: &[u8]) -> Result<String, StrictSourceTreeAttestationErrorV1> {
@@ -283,7 +365,7 @@ fn blob_contents(
         return Ok(entries.iter().map(|_| None).collect());
     }
 
-    let mut child = Command::new(git_program)
+    let mut child = sanitized_git_command(git_program)
         .arg("-C")
         .arg(repo_root)
         .args(["cat-file", "--batch"])
@@ -489,27 +571,28 @@ fn capture_with_git_program(
     repo_root: &Path,
     git_program: &OsStr,
 ) -> Result<StrictSourceTreeCaptureV1, StrictSourceTreeAttestationErrorV1> {
+    let repo_root = require_canonical_repository_root(git_program, repo_root)?;
     let commit = parse_head(&command_at_repo(
         git_program,
-        repo_root,
+        &repo_root,
         &["rev-parse", "--verify", "HEAD^{commit}"],
     )?)?;
     let listing = command_at_repo(
         git_program,
-        repo_root,
+        &repo_root,
         &["ls-tree", "-r", "-z", "--full-tree", &commit],
     )?;
     let entries = parse_tree_entries(&listing)?;
-    let contents = blob_contents(git_program, repo_root, &entries)?;
+    let contents = blob_contents(git_program, &repo_root, &entries)?;
     let source_tree_sha256 = hash_tree_projection(&entries, &contents)?;
     let status_bytes = command_at_repo(
         git_program,
-        repo_root,
+        &repo_root,
         &["status", "--porcelain=v1", "--untracked-files=all"],
     )?;
     let final_commit = parse_head(&command_at_repo(
         git_program,
-        repo_root,
+        &repo_root,
         &["rev-parse", "--verify", "HEAD^{commit}"],
     )?)?;
     if final_commit != commit {
@@ -530,9 +613,11 @@ fn capture_with_git_program(
 
 /// Captures the frozen committed-tree and raw-status tuple for `repo_root`.
 ///
-/// Git is invoked directly as `git -C repo_root ...`; no shell is involved.
-/// Any process, repository, parsing, object, or coherence failure returns an
-/// error and no partial capture.
+/// Git is invoked directly as `git -C repo_root ...`; no shell is involved and
+/// every inherited `GIT_*` variable is stripped case-insensitively. The
+/// canonical requested root must equal Git's reported top level. Any process,
+/// repository, parsing, object, or coherence failure returns an error and no
+/// partial capture.
 pub fn capture_strict_source_tree_v1(
     repo_root: impl AsRef<Path>,
 ) -> Result<StrictSourceTreeCaptureV1, StrictSourceTreeAttestationErrorV1> {
@@ -609,11 +694,14 @@ pub fn require_strict_source_postflight_equality_v1(
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_REPO_ORDINAL: AtomicU64 = AtomicU64::new(0);
     const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const ROUTING_CHILD_MODE: &str = "MTG_KERNEL_STRICT_SOURCE_ROUTING_CHILD_V1";
+    const ROUTING_REQUESTED_ROOT: &str = "MTG_KERNEL_STRICT_SOURCE_REQUESTED_ROOT_V1";
+    const ROUTING_EXPECTED_COMMIT: &str = "MTG_KERNEL_STRICT_SOURCE_EXPECTED_COMMIT_V1";
+    const ROUTING_EXPECTED_TREE: &str = "MTG_KERNEL_STRICT_SOURCE_EXPECTED_TREE_V1";
 
     struct TestRepoV1 {
         root: PathBuf,
@@ -669,6 +757,78 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn inherited_git_routing_is_stripped_without_mutating_global_environment() {
+        if std::env::var_os(ROUTING_CHILD_MODE).is_some() {
+            let requested_root = PathBuf::from(
+                std::env::var_os(ROUTING_REQUESTED_ROOT)
+                    .expect("child receives requested repository root"),
+            );
+            let expected_commit =
+                std::env::var(ROUTING_EXPECTED_COMMIT).expect("child receives expected commit");
+            let expected_tree =
+                std::env::var(ROUTING_EXPECTED_TREE).expect("child receives expected tree");
+            let capture = capture_strict_source_tree_v1(requested_root).unwrap();
+            assert_eq!(capture.git_commit(), expected_commit);
+            assert_eq!(capture.source_tree_sha256(), expected_tree);
+            assert!(capture.worktree_clean());
+            return;
+        }
+
+        let requested = TestRepoV1::new("requested.txt", b"requested repository\n");
+        let redirected = TestRepoV1::new("redirected.txt", b"redirected repository\n");
+        let expected = requested.capture();
+        let redirected_capture = redirected.capture();
+        assert_ne!(expected.git_commit(), redirected_capture.git_commit());
+        assert_ne!(
+            expected.source_tree_sha256(),
+            redirected_capture.source_tree_sha256()
+        );
+
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("inherited_git_routing_is_stripped_without_mutating_global_environment")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .env(ROUTING_CHILD_MODE, "1")
+            .env(ROUTING_REQUESTED_ROOT, &requested.root)
+            .env(ROUTING_EXPECTED_COMMIT, expected.git_commit())
+            .env(ROUTING_EXPECTED_TREE, expected.source_tree_sha256())
+            .env("GIT_DIR", redirected.root.join(".git"))
+            .env("GIT_WORK_TREE", &redirected.root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated routing child failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn repository_root_must_be_the_canonical_git_toplevel() {
+        let repo = TestRepoV1::new("tracked.txt", b"committed\n");
+        let nested = repo.root.join("nested");
+        fs::create_dir(&nested).unwrap();
+        let error = capture_strict_source_tree_v1(&nested).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            StrictSourceTreeAttestationErrorKindV1::RepositoryRootCoherence
+        );
+        assert_eq!(error.code(), "requested_repository_root_mismatch");
+        assert!(!error.to_string().contains(&nested.display().to_string()));
+    }
+
+    #[test]
+    fn git_environment_prefix_detection_is_ascii_case_insensitive() {
+        assert!(is_git_environment_name(OsStr::new("GIT_DIR")));
+        assert!(is_git_environment_name(OsStr::new("gIt_work_tree")));
+        assert!(is_git_environment_name(OsStr::new("Git_")));
+        assert!(!is_git_environment_name(OsStr::new("GIT")));
+        assert!(!is_git_environment_name(OsStr::new("GITX_DIR")));
+        assert!(!is_git_environment_name(OsStr::new("MTG_GIT_DIR")));
     }
 
     #[test]
