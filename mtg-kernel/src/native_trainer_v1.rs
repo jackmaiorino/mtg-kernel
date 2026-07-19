@@ -23,6 +23,9 @@ use crate::async_flat_scored_rollout_v2::{
 use crate::async_rollout_v2::{
     AsyncRolloutConfigV2, ASYNC_ROLLOUT_MAX_SESSIONS_PER_WORKER_V2, ASYNC_ROLLOUT_MAX_WORKERS_V2,
 };
+use crate::common_model_snapshot_v1::{
+    load_common_model_snapshot_v1, CommonModelSnapshotErrorV1, CommonModelSnapshotRecordV1,
+};
 use crate::flat_policy_v2::FlatDecisionBindingV2;
 use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2, NativeFlatTensorizerV2,
@@ -35,7 +38,7 @@ use crate::native_policy_train_step_v1::{
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativeNamedParameterV1,
-    NativePolicyValueNetV1,
+    NativePolicyValueErrorV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
 };
 use crate::native_trainer_schedule_v1::{
     native_trainer_episode_schedule_v1, NativeTrainerScheduleErrorV1,
@@ -53,6 +56,7 @@ use crate::rl_session::{SessionDeckHashesV1, SessionDeckIdsV1};
 use crate::runtime_decks::runtime_deck_by_id;
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -765,6 +769,18 @@ pub(crate) enum NativeTrainerErrorV1 {
     CounterOverflow,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NativeTrainerBootstrapErrorV1 {
+    PlaceholderModel(NativePolicyValueErrorV1),
+    OptimizerBootstrap(NativePolicyTrainErrorV1),
+    Trainer(NativeTrainerErrorV1),
+    Snapshot(CommonModelSnapshotErrorV1),
+    RunSeedMatchesSnapshotAuthority {
+        run_base_seed: u64,
+        snapshot_base_seed: u64,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct NativeTrainerStateV2 {
     base_seed: u64,
@@ -780,6 +796,38 @@ pub(crate) struct NativeTrainerStateV2 {
 }
 
 impl NativeTrainerStateV2 {
+    /// Builds a new trainer around the validated Python-authoritative common
+    /// model snapshot. The runner-fixed model and zeroed optimizer are only a
+    /// function-local loader target: no trainer is returned unless snapshot
+    /// validation, private candidate replacement, optimizer bootstrap, and
+    /// run-seed provenance separation all succeed.
+    pub(crate) fn from_common_model_snapshot_v2(
+        run_base_seed: u64,
+        batch_episodes: u64,
+        manifest_path: &Path,
+        payload_path: &Path,
+    ) -> Result<(Self, CommonModelSnapshotRecordV1), NativeTrainerBootstrapErrorV1> {
+        let placeholder_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .map_err(NativeTrainerBootstrapErrorV1::PlaceholderModel)?;
+        let placeholder_train_state = NativePolicyValueTrainStateV1::new_v1(placeholder_model)
+            .map_err(NativeTrainerBootstrapErrorV1::OptimizerBootstrap)?;
+        let mut candidate = Self::new_v2(run_base_seed, batch_episodes, placeholder_train_state)
+            .map_err(NativeTrainerBootstrapErrorV1::Trainer)?;
+        let record =
+            load_common_model_snapshot_v1(manifest_path, payload_path, &mut candidate.train_state)
+                .map_err(NativeTrainerBootstrapErrorV1::Snapshot)?;
+        if run_base_seed == record.base_seed {
+            return Err(
+                NativeTrainerBootstrapErrorV1::RunSeedMatchesSnapshotAuthority {
+                    run_base_seed,
+                    snapshot_base_seed: record.base_seed,
+                },
+            );
+        }
+        Ok((candidate, record))
+    }
+
     pub(crate) fn new_v2(
         base_seed: u64,
         batch_episodes: u64,
@@ -1645,10 +1693,45 @@ fn changed_non_gauge_parameters_v1(
 mod tests {
     use super::*;
     use crate::async_flat_scored_rollout_v1::ASYNC_FLAT_SCORED_TEST_LOCK_V1 as TEST_LOCK;
+    use crate::common_model_snapshot_v1::{
+        common_model_snapshot_paths_v1, BASE_SEED_V1 as SNAPSHOT_AUTHORITY_BASE_SEED_V1,
+        MODEL_INIT_SEED_V1 as SNAPSHOT_MODEL_INIT_SEED_V1, SNAPSHOT_IDENTITY_V1,
+    };
     use crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1;
     use crate::native_policy_value_net_v1::{
         NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
     };
+    use crate::native_trainer_schedule_v1::derive_native_trainer_model_init_seed_v1;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SNAPSHOT_CORRUPTION_ORDINAL_V1: AtomicU64 = AtomicU64::new(0);
+
+    struct CorruptedSnapshotPayloadV1 {
+        path: PathBuf,
+    }
+
+    impl CorruptedSnapshotPayloadV1 {
+        fn new_v1() -> Self {
+            let ordinal = SNAPSHOT_CORRUPTION_ORDINAL_V1.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "mtg-kernel-native-trainer-corrupt-snapshot-v1-{}-{ordinal}.f32le",
+                std::process::id()
+            ));
+            let mut payload =
+                include_bytes!("../../data/common_model_snapshot_v1/parameters.f32le").to_vec();
+            payload[0] ^= 1;
+            fs::write(&path, payload).expect("write isolated corrupted snapshot payload");
+            Self { path }
+        }
+    }
+
+    impl Drop for CorruptedSnapshotPayloadV1 {
+        fn drop(&mut self) {
+            fs::remove_file(&self.path).expect("remove isolated corrupted snapshot payload");
+        }
+    }
 
     fn burn_pair_config_v2(
         worker_count: usize,
@@ -1726,6 +1809,158 @@ mod tests {
         evidence.rollout_metrics.total_elapsed_ns = 0;
         evidence.rollout_metrics.broker_service_ns = 0;
         evidence
+    }
+
+    #[test]
+    fn common_snapshot_bootstrap_keeps_authority_seed_separate_and_trains_rally_pair() {
+        const RUN_BASE_SEED_V1: u64 = 71_501;
+
+        let _lock = TEST_LOCK.lock().unwrap();
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        let (mut trainer, record) = NativeTrainerStateV2::from_common_model_snapshot_v2(
+            RUN_BASE_SEED_V1,
+            2,
+            &manifest_path,
+            &payload_path,
+        )
+        .unwrap();
+
+        assert_eq!(trainer.base_seed, RUN_BASE_SEED_V1);
+        assert_eq!(trainer.batch_episodes, 2);
+        assert_eq!(record.identity, SNAPSHOT_IDENTITY_V1);
+        assert_eq!(record.base_seed, SNAPSHOT_AUTHORITY_BASE_SEED_V1);
+        assert_eq!(record.model_init_seed, SNAPSHOT_MODEL_INIT_SEED_V1);
+        assert_eq!(
+            record.model_init_seed,
+            derive_native_trainer_model_init_seed_v1(record.base_seed).unwrap()
+        );
+        assert_ne!(trainer.base_seed, record.base_seed);
+        assert_ne!(
+            derive_native_trainer_model_init_seed_v1(trainer.base_seed).unwrap(),
+            record.model_init_seed
+        );
+        assert_eq!(record.adam_step_initial, 0);
+        assert_eq!(trainer.train_state_v1().adam_step_v1(), 0);
+        assert!(record.snapshot_load_completed_before_trial_start);
+        assert!(!record.snapshot_load_timed);
+        assert!(!record.rust_seeded_initializer_reproduced);
+        assert_eq!(
+            record.loaded_named_parameter_stream_sha256,
+            record.named_parameter_stream_sha256
+        );
+
+        let progress_before = trainer.progress_v2();
+        let parameters_before = trainer.train_state_v1().model_v1().parameter_snapshot_v1();
+        let first_moments_before = trainer.train_state_v1().first_moment_snapshot_v1();
+        let second_moments_before = trainer.train_state_v1().second_moment_snapshot_v1();
+        let model_digest_before = trainer
+            .train_state_v1()
+            .model_v1()
+            .parameter_manifest_sha256_v1();
+        assert_eq!(progress_before.next_episode_index, 0);
+        assert_eq!(progress_before.successful_update_count, 0);
+        assert!(first_moments_before
+            .iter()
+            .chain(&second_moments_before)
+            .flat_map(|parameter| &parameter.values)
+            .all(|value| value.to_bits() == 0));
+
+        let mut config = burn_even_batch_config_v2(2, 1, 1, 1);
+        config.deck_ids = ["Rally".to_owned(), "Rally".to_owned()];
+        let evidence = trainer.run_even_batch_update_v2(&config).unwrap();
+
+        assert_eq!(evidence.first_episode_index, 0);
+        assert_eq!(evidence.episode_count, 2);
+        assert_eq!(evidence.adam_step_before, 0);
+        assert_eq!(evidence.adam_step_after, 1);
+        assert_eq!(evidence.model_digest_before, model_digest_before);
+        assert_ne!(evidence.model_digest_after, evidence.model_digest_before);
+        assert!(evidence.changed_non_gauge_parameter_count > 0);
+        for episode in &evidence.episodes {
+            let schedule =
+                native_trainer_episode_schedule_v1(RUN_BASE_SEED_V1, episode.episode_index)
+                    .unwrap();
+            assert_eq!(episode.learner_seat, schedule.learner_seat);
+            assert_eq!(
+                episode.full_trajectory_receipt.environment_seed,
+                schedule.environment_seed
+            );
+        }
+
+        let progress_after = trainer.progress_v2();
+        assert_eq!(progress_after.next_episode_index, 2);
+        assert_eq!(progress_after.successful_update_count, 1);
+        assert_eq!(progress_after.completed_episode_count, 2);
+        assert_eq!(
+            progress_after.learner_physical_decision_count,
+            evidence.learner_group_count
+        );
+        assert_eq!(
+            progress_after.learner_policy_step_count,
+            evidence.learner_policy_step_count
+        );
+        assert_eq!(trainer.train_state_v1().adam_step_v1(), 1);
+        assert_eq!(
+            trainer
+                .train_state_v1()
+                .model_v1()
+                .parameter_manifest_sha256_v1(),
+            evidence.model_digest_after
+        );
+        assert_ne!(
+            trainer.train_state_v1().model_v1().parameter_snapshot_v1(),
+            parameters_before
+        );
+        assert_ne!(
+            trainer.train_state_v1().first_moment_snapshot_v1(),
+            first_moments_before
+        );
+        assert_ne!(
+            trainer.train_state_v1().second_moment_snapshot_v1(),
+            second_moments_before
+        );
+    }
+
+    #[test]
+    fn common_snapshot_bootstrap_rejects_corruption_and_seed_collision_without_live_drift() {
+        const RUN_BASE_SEED_V1: u64 = 71_501;
+
+        let _lock = TEST_LOCK.lock().unwrap();
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        let (trainer, _) = NativeTrainerStateV2::from_common_model_snapshot_v2(
+            RUN_BASE_SEED_V1,
+            2,
+            &manifest_path,
+            &payload_path,
+        )
+        .unwrap();
+        let before = exact_state_snapshot_v1(&trainer);
+        let corrupted = CorruptedSnapshotPayloadV1::new_v1();
+        let error = NativeTrainerStateV2::from_common_model_snapshot_v2(
+            RUN_BASE_SEED_V1,
+            2,
+            &manifest_path,
+            &corrupted.path,
+        )
+        .unwrap_err();
+        assert!(matches!(error, NativeTrainerBootstrapErrorV1::Snapshot(_)));
+        assert_eq!(exact_state_snapshot_v1(&trainer), before);
+
+        let error = NativeTrainerStateV2::from_common_model_snapshot_v2(
+            SNAPSHOT_AUTHORITY_BASE_SEED_V1,
+            2,
+            &manifest_path,
+            &payload_path,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            NativeTrainerBootstrapErrorV1::RunSeedMatchesSnapshotAuthority {
+                run_base_seed: SNAPSHOT_AUTHORITY_BASE_SEED_V1,
+                snapshot_base_seed: SNAPSHOT_AUTHORITY_BASE_SEED_V1,
+            }
+        );
+        assert_eq!(exact_state_snapshot_v1(&trainer), before);
     }
 
     #[test]
