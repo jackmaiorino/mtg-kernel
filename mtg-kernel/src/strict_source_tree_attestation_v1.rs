@@ -23,6 +23,9 @@ pub const STRICT_SOURCE_TREE_RECIPE_IDENTITY_V1: &str = "mtg-kernel-strict-sourc
 pub const STRICT_SOURCE_TREE_RECIPE_SHA256_V1: &str =
     "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece";
 
+/// Byte length of the same frozen recipe document whose digest is above.
+pub const STRICT_SOURCE_TREE_RECIPE_BYTE_COUNT_V1: u64 = 5_847;
+
 const TRACKED_TREE_HASH_CONTRACT_V1: &str =
     "git-ls-tree-r-z-path-mode-type-framed-blob-content-or-gitlink-oid-sha256/v1";
 

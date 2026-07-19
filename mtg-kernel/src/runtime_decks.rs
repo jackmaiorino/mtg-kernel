@@ -39,6 +39,10 @@ mod tests {
         assert_eq!(RUNTIME_DECK_CATALOG_SCHEMA, "kernel_runtime_decks/v1");
         assert_eq!(RUNTIME_DECK_PROTOCOL, "canonical-mainboard-bo1/v1");
         assert_eq!(
+            RUNTIME_DECK_CATALOG_FILE_SHA256,
+            "5ea19e8a08f0e9c9657e9a6a90382329785f27eeabbbe066e80e7025e8ee62c0"
+        );
+        assert_eq!(
             RUNTIME_DECK_MATERIALIZATION_PROTOCOL,
             "xmage_xml_row_then_copy_ordinal/v1"
         );

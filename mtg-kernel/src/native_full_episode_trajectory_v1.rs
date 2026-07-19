@@ -11,6 +11,16 @@ use sha2::{Digest, Sha256};
 
 pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1: &str =
     "mtg-kernel-native-full-episode-trajectory-sha256-v1";
+pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1: &str =
+    "mtg_kernel_native_full_episode_trajectory_goldens/v1";
+pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1: &str =
+    "mtg-kernel-native-full-episode-trajectory-goldens-stdlib-python-v1";
+pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1: &str =
+    "mtg-kernel-native-full-episode-trajectory-golden-vector-stream-sha256-v1";
+pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1: &str =
+    "502a1b4ba296fdc4b2f4e8fd61cc5b4d64f152c9b84b4e11a85967f76c3bde8b";
+pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1: &str =
+    "f5230cbbc0b87735e7aa14c89ce31e41ce769de3f4292cafe63dad4733168d7a";
 
 const MAX_DECK_ID_BYTES_V1: usize = 64;
 const MAX_LEGAL_ACTION_COUNT_V1: u32 = 64;

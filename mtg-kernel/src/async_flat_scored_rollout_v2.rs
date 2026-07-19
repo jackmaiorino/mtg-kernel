@@ -50,6 +50,10 @@ pub const ASYNC_FLAT_SCORED_ROLLOUT_VERSION_V2: u32 = 2;
 pub const ASYNC_FLAT_SCORED_SAMPLER_VERSION_V2: u32 = ASYNC_FLAT_SCORED_SAMPLER_VERSION_V1;
 pub const ASYNC_FLAT_SCORED_SPLITMIX_GAMMA_V2: u64 = ASYNC_FLAT_SCORED_SPLITMIX_GAMMA_V1;
 pub const ASYNC_FLAT_SCORED_SAMPLER_ID_V2: &str = ASYNC_FLAT_SCORED_SAMPLER_ID_V1;
+pub const ASYNC_FLAT_SCORED_MEMBERSHIP_DIGEST_IDENTITY_V1: &str =
+    "mtg-kernel-async-flat-scored-four-lane-membership-digest-v1";
+pub const ASYNC_FLAT_SCORED_MEMBERSHIP_DIGEST_DOMAIN_V2: &[u8] =
+    b"mtg-kernel/async-flat-scored-rollout-v2/membership/v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlatScorerContractV2 {
@@ -738,8 +742,7 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV2 {
     type DecisionView<'a> = FlatScoringDecisionViewV2<'a>;
 
     const WORKER_NAME: &'static str = "mtg-async-flat-scored-v2";
-    const MEMBERSHIP_DIGEST_DOMAIN: &'static [u8] =
-        b"mtg-kernel/async-flat-scored-rollout-v2/membership/v2";
+    const MEMBERSHIP_DIGEST_DOMAIN: &'static [u8] = ASYNC_FLAT_SCORED_MEMBERSHIP_DIGEST_DOMAIN_V2;
 
     fn reset_session(
         config: &AsyncRolloutConfigV2,
