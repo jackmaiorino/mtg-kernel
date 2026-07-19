@@ -80,7 +80,7 @@ EXPECTED_TRAINER_AUTHORITY_SHA256 = (
 EXPECTED_FORWARD_FIXTURE_SHA256 = (
     "c3c5e864f9666cba73b15dc5a038cd57c7d9a46aaccc2b8d3c3c16e956efe9ec"
 )
-EXPECTED_OUTPUT_SHA256 = "6b7444a3b9640e943d6127ecadaa71be8ac72b7d134cdcd24709db8578ff1769"
+EXPECTED_OUTPUT_SHA256 = "7672c87912b6015f393d66921a3e78cb5623dd76582a9513f2d87c560c0f4aa7"
 
 AUTHORITY_PLATFORM_SYSTEM = "Windows"
 AUTHORITY_PLATFORM_MACHINE = "AMD64"
@@ -92,6 +92,29 @@ VALUE_COEFFICIENT = 0.5
 GRADIENT_NONZERO_WITNESS_FLOOR = 3.0e-7
 OPTIMIZER_NONZERO_WITNESS_FLOOR = 5.0e-8
 F32_UNIT_ROUNDOFF = float(torch.finfo(torch.float32).eps) / 2.0
+LARGE_BATCH_GROUP_COUNT = 32
+
+
+def _large_batch_program_v1() -> list[dict[str, Any]]:
+    """Build one realistic-scale, deterministic cross-language train step."""
+    groups: list[dict[str, Any]] = []
+    terminal_returns = (-1, 0, 1)
+    for group_index in range(LARGE_BATCH_GROUP_COUNT):
+        if group_index % 2 == 0:
+            substeps = [("zero_edges_zero_action_refs", (group_index // 2) % 2)]
+        else:
+            substeps = [("ordered_edges_and_action_refs", group_index % 3)]
+        if group_index % 4 == 0:
+            substeps.append(
+                ("ordered_edges_and_action_refs", (group_index + 1) % 3)
+            )
+        groups.append(
+            {
+                "terminal_return": terminal_returns[group_index % len(terminal_returns)],
+                "substeps": substeps,
+            }
+        )
+    return groups
 
 # Each tuple is (fixture case name, selected action index).  A group is one
 # learner physical decision and may contain multiple policy substeps.
@@ -126,6 +149,7 @@ PROGRAM: list[list[dict[str, Any]]] = [
             "substeps": [("ordered_edges_and_action_refs", 2)],
         },
     ],
+    _large_batch_program_v1(),
 ]
 
 
@@ -620,6 +644,12 @@ def _validate_portable_gauge_records(payload: dict[str, Any]) -> None:
     steps = payload.get("steps")
     if not isinstance(steps, list) or len(steps) != len(PROGRAM):
         raise RuntimeError("checked train-step fixture has an invalid step program")
+    if not any(
+        isinstance(step.get("groups"), list)
+        and len(step["groups"]) == LARGE_BATCH_GROUP_COUNT
+        for step in steps
+    ):
+        raise RuntimeError("checked train-step fixture lacks the large-batch witness")
     for expected_step, step in enumerate(steps, start=1):
         if step.get("step") != expected_step:
             raise RuntimeError("checked train-step fixture has noncontiguous steps")
