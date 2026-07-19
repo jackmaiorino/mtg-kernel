@@ -3,8 +3,9 @@
 //! `build.rs` reads the checked-in `data/runtime_decks_v1.json`, resolves
 //! every materialized card copy against the stable `cards_v1.json` array,
 //! verifies the frozen deck hash, and emits the static definitions included
-//! below. The release environment never opens repository data files at
-//! runtime.
+//! below. Ordinary release execution uses only those generated definitions;
+//! the explicitly feature-gated Store V2 production capture guard reopens the
+//! raw catalog no-follow solely to prove its exact digest against them.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeDeckDefinition {

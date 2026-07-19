@@ -27,6 +27,11 @@ native-flat-tensorizer-diagnostic = []
 # build-capture tuple.
 native-training-store-v2-production = []
 
+[[bin]]
+name = "mtg-kernel-native"
+path = "src/bin/mtg-kernel-native.rs"
+required-features = ["native-training-store-v2-production"]
+
 [[example]]
 name = "cuda_flat_training_capacity_v1"
 required-features = ["cuda-flat-training-capacity-v1"]
