@@ -268,13 +268,30 @@ class FlatPolicyV2GoldenTests(unittest.TestCase):
             commitment_contract["stream_order"],
             "header_then_objects_by_object_index_then_each_actions_refs_in_slice_order_then_action",
         )
+        self.assertEqual(
+            [full["action_count"], full["ref_count"], full["object_count"]],
+            [3, 4, 2],
+        )
+        self.assertEqual(
+            [(row["ref_start"], row["ref_len"]) for row in full["actions"]],
+            [(0, 0), (0, 3), (3, 1)],
+        )
 
         reconstructed = bytes.fromhex(full["header_hex"])
         reconstructed += b"".join(bytes.fromhex(row) for row in full["object_rows_hex"])
-        for reference_row, action_row in zip(
-            full["reference_rows_hex"], full["action_rows_hex"], strict=True
+        consumed_refs = 0
+        for action_index, (action, action_row) in enumerate(
+            zip(full["actions"], full["action_rows_hex"], strict=True)
         ):
-            reconstructed += bytes.fromhex(reference_row) + bytes.fromhex(action_row)
+            ref_start = action["ref_start"]
+            ref_end = ref_start + action["ref_len"]
+            self.assertEqual(ref_start, consumed_refs)
+            for ref_index in range(ref_start, ref_end):
+                self.assertEqual(full["references"][ref_index]["action_index"], action_index)
+                reconstructed += bytes.fromhex(full["reference_rows_hex"][ref_index])
+            reconstructed += bytes.fromhex(action_row)
+            consumed_refs = ref_end
+        self.assertEqual(consumed_refs, len(full["references"]))
         self.assertEqual(reconstructed.hex(), full["stream_hex"])
         digest = hashlib.sha256(reconstructed).digest()
         self.assertEqual(digest.hex(), full["sha256_hex"])

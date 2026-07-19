@@ -415,7 +415,7 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
             "target_kind": 20,
             "target_player": 21,
             "ref_start": 0,
-            "ref_len": 1,
+            "ref_len": 0,
         },
         {
             "kind": 1,
@@ -439,15 +439,40 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
             "optional_cost_choice": 30,
             "target_kind": 31,
             "target_player": 32,
-            "ref_start": 1,
+            "ref_start": 0,
+            "ref_len": 3,
+        },
+        {
+            "kind": 1,
+            "flags": 0x2468,
+            "ability_index": 33,
+            "remaining": 34,
+            "mode_index": 35,
+            "mode_count": 36,
+            "option_index": 0x2021,
+            "option_count": 0x2223,
+            "selected_count": 0x2425,
+            "min_targets": 0x2627,
+            "max_targets": 0x2829,
+            "number": -789_012_345,
+            "minimum": 890_123_456,
+            "maximum": 901_234_567,
+            "mana_choice": 37,
+            "color": 38,
+            "cast_mode": 39,
+            "cost_kind": 40,
+            "optional_cost_choice": 41,
+            "target_kind": 42,
+            "target_player": 43,
+            "ref_start": 3,
             "ref_len": 1,
         },
     ]
     refs = [
         {
-            "action_index": 0,
+            "action_index": 1,
             "role": 2,
-            "order_index": 0x0102,
+            "order_index": 0,
             "associated_order": 0x0304,
             "card_token": 65_535,
             "object_index": 0,
@@ -455,22 +480,61 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
         {
             "action_index": 1,
             "role": 7,
-            "order_index": 0x1112,
+            "order_index": 1,
             "associated_order": 0x1314,
             "card_token": 65_536,
             "object_index": 1,
         },
+        {
+            "action_index": 1,
+            "role": 2,
+            "order_index": 2,
+            "associated_order": 0x2324,
+            "card_token": 65_535,
+            "object_index": 0,
+        },
+        {
+            "action_index": 2,
+            "role": 7,
+            "order_index": 0,
+            "associated_order": 0x3334,
+            "card_token": 65_536,
+            "object_index": 1,
+        },
     ]
-    header = _header(domain, (2, 1, 2, 2), card_db_hash, 1, 2, 2, 2)
+    header = _header(
+        domain,
+        (2, 1, 2, 2),
+        card_db_hash,
+        1,
+        len(actions),
+        len(refs),
+        len(objects),
+    )
     object_rows = [_serialize_object_v2(index, row) for index, row in enumerate(objects)]
     action_rows = [_serialize_action(index, row) for index, row in enumerate(actions)]
     reference_rows = [_serialize_ref_v2(row, objects[row["object_index"]]) for row in refs]
     stream = header + b"".join(object_rows)
-    for index in range(len(actions)):
-        stream += reference_rows[index] + action_rows[index]
+    consumed_refs = 0
+    for action_index, action in enumerate(actions):
+        ref_start = action["ref_start"]
+        ref_end = ref_start + action["ref_len"]
+        if ref_start != consumed_refs or ref_end > len(refs):
+            raise RuntimeError("golden action reference slices must be contiguous and in bounds")
+        for ref_index in range(ref_start, ref_end):
+            if refs[ref_index]["action_index"] != action_index:
+                raise RuntimeError("golden reference action_index disagrees with its action slice")
+            stream += reference_rows[ref_index]
+        stream += action_rows[action_index]
+        consumed_refs = ref_end
+    if consumed_refs != len(refs):
+        raise RuntimeError("golden action reference slices must consume every reference")
     full = {
         "actor_seat": 1,
         "card_db_hash": card_db_hash,
+        "action_count": len(actions),
+        "ref_count": len(refs),
+        "object_count": len(objects),
         "objects": objects,
         "actions": actions,
         "references": refs,

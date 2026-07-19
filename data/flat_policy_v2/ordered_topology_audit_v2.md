@@ -120,7 +120,7 @@ blocks plus all 96 binary32 feature bits. Rust tests independently drive the
 production V2 observation encoder and scorer-visible relation view for the
 same three blocked-order outcomes; the JSON payloads are not partial combat
 fragments and are not claimed to be decoded by a separate Rust JSON path.
-These full production-observation goldens supersede every earlier
+These full Python production-schema observation goldens supersede every earlier
 fragment-only red-pair artifact; fragment evidence is no longer normative.
 
 No other ordered observation list lacks a reconstruction mechanism under the

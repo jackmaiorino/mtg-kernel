@@ -1,6 +1,6 @@
 {
   "schema": "flat-policy-v2-independent-goldens-v1",
-  "inventory_sha256": "9d3a4a76c41624ae0ac6496fab18ac5ba9e9136dffa4cf31cbbfcd0979a7d461",
+  "inventory_sha256": "0883eb60a7993ccfa62c2bd14e28217fb12c76446e7f4fb6b511cbc6d042f869",
   "action_contract_binding": {
     "source_sha256": "946f495d6ba029f01b781e05b6ee70f1fe2a83f4a13167d02363ad383fe64a75",
     "canonical_sha256": "bbac470c2352819c53ea5772314d1966ba88c8235e918f8678cc78b27ec1a10f"
@@ -538,6 +538,9 @@
     "full_distinct_fields_v2": {
       "actor_seat": 1,
       "card_db_hash": 11560644956943479018,
+      "action_count": 3,
+      "ref_count": 4,
+      "object_count": 2,
       "objects": [
         {
           "card_token": 65535,
@@ -582,7 +585,7 @@
           "target_kind": 20,
           "target_player": 21,
           "ref_start": 0,
-          "ref_len": 1
+          "ref_len": 0
         },
         {
           "kind": 1,
@@ -606,15 +609,40 @@
           "optional_cost_choice": 30,
           "target_kind": 31,
           "target_player": 32,
-          "ref_start": 1,
+          "ref_start": 0,
+          "ref_len": 3
+        },
+        {
+          "kind": 1,
+          "flags": 9320,
+          "ability_index": 33,
+          "remaining": 34,
+          "mode_index": 35,
+          "mode_count": 36,
+          "option_index": 8225,
+          "option_count": 8739,
+          "selected_count": 9253,
+          "min_targets": 9767,
+          "max_targets": 10281,
+          "number": -789012345,
+          "minimum": 890123456,
+          "maximum": 901234567,
+          "mana_choice": 37,
+          "color": 38,
+          "cast_mode": 39,
+          "cost_kind": 40,
+          "optional_cost_choice": 41,
+          "target_kind": 42,
+          "target_player": 43,
+          "ref_start": 3,
           "ref_len": 1
         }
       ],
       "references": [
         {
-          "action_index": 0,
+          "action_index": 1,
           "role": 2,
-          "order_index": 258,
+          "order_index": 0,
           "associated_order": 772,
           "card_token": 65535,
           "object_index": 0
@@ -622,28 +650,47 @@
         {
           "action_index": 1,
           "role": 7,
-          "order_index": 4370,
+          "order_index": 1,
           "associated_order": 4884,
+          "card_token": 65536,
+          "object_index": 1
+        },
+        {
+          "action_index": 1,
+          "role": 2,
+          "order_index": 2,
+          "associated_order": 8996,
+          "card_token": 65535,
+          "object_index": 0
+        },
+        {
+          "action_index": 2,
+          "role": 7,
+          "order_index": 0,
+          "associated_order": 13108,
           "card_token": 65536,
           "object_index": 1
         }
       ],
-      "header_hex": "6d74672d6b65726e656c2d666c61742d616374696f6e2d63616e6469646174652d6f726465722d76320002000000010000000200000002000000eaf0066156a96fa00102000000020000000200",
+      "header_hex": "6d74672d6b65726e656c2d666c61742d616374696f6e2d63616e6469646174652d6f726465722d76320002000000010000000200000002000000eaf0066156a96fa00103000000040000000200",
       "object_rows_hex": [
         "4f0000ffff000006341200010578563412",
         "4f01000000010008cdab010007efcdab89"
       ],
       "reference_rows_hex": [
-        "52000000000202010403ffff00000000ffff000006341200010578563412",
-        "520100000007121114130000010001000000010008cdab010007efcdab89"
+        "52010000000200000403ffff00000000ffff000006341200010578563412",
+        "520100000007010014130000010001000000010008cdab010007efcdab89",
+        "52010000000202002423ffff00000000ffff000006341200010578563412",
+        "520200000007000034330000010001000000010008cdab010007efcdab89"
       ],
       "action_rows_hex": [
-        "41000000001a341201020304060508070a090c0b0e0deb32a4f82ec704f235a49a140f101112131415000000000100",
-        "410100000001cdab16171819171619181b1a1d1c1f1e140c3a1b35af26def23577281a1b1c1d1e1f20010000000100"
+        "41000000001a341201020304060508070a090c0b0e0deb32a4f82ec704f235a49a140f101112131415000000000000",
+        "410100000001cdab16171819171619181b1a1d1c1f1e140c3a1b35af26def23577281a1b1c1d1e1f20000000000300",
+        "4102000000016824212223242120232225242726292887a0f8d0c0340e3587bfb73525262728292a2b030000000100"
       ],
-      "stream_hex": "6d74672d6b65726e656c2d666c61742d616374696f6e2d63616e6469646174652d6f726465722d76320002000000010000000200000002000000eaf0066156a96fa001020000000200000002004f0000ffff0000063412000105785634124f01000000010008cdab010007efcdab8952000000000202010403ffff00000000ffff00000634120001057856341241000000001a341201020304060508070a090c0b0e0deb32a4f82ec704f235a49a140f101112131415000000000100520100000007121114130000010001000000010008cdab010007efcdab89410100000001cdab16171819171619181b1a1d1c1f1e140c3a1b35af26def23577281a1b1c1d1e1f20010000000100",
-      "sha256_hex": "3ddb4c9a348cb6a48342e1dd0caa52d5014d0f616072afcfed1a0d1d0331fda3",
-      "commitment_hex": "3ddb4c9a348cb6a48342e1dd0caa52d5"
+      "stream_hex": "6d74672d6b65726e656c2d666c61742d616374696f6e2d63616e6469646174652d6f726465722d76320002000000010000000200000002000000eaf0066156a96fa001030000000400000002004f0000ffff0000063412000105785634124f01000000010008cdab010007efcdab8941000000001a341201020304060508070a090c0b0e0deb32a4f82ec704f235a49a140f10111213141500000000000052010000000200000403ffff00000000ffff000006341200010578563412520100000007010014130000010001000000010008cdab010007efcdab8952010000000202002423ffff00000000ffff000006341200010578563412410100000001cdab16171819171619181b1a1d1c1f1e140c3a1b35af26def23577281a1b1c1d1e1f20000000000300520200000007000034330000010001000000010008cdab010007efcdab894102000000016824212223242120232225242726292887a0f8d0c0340e3587bfb73525262728292a2b030000000100",
+      "sha256_hex": "be0c0fc830a8d18e22051a00691506509957ad09d55a855c62a6297ed0a6a01c",
+      "commitment_hex": "be0c0fc830a8d18e22051a0069150650"
     },
     "frozen_v1_comparison": {
       "stream_hex": "6d74672d6b65726e656c2d666c61742d616374696f6e2d63616e6469646174652d6f726465722d76310001000000010000000100000001000000eaf0066156a96fa000010000000100000001004f0000ffff0607000001050900000052000000000203000400ffff0000ffff060700000105090000004100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100",
@@ -663,5 +710,5 @@
     "u16_max_v2_token": 65536,
     "v1_u16_max_card_db_id_disposition": "reject_checked_integer_range"
   },
-  "payload_sha256": "fcb1da7ab021d6987b32e063a27683c1bbd960290da30ce7f4269010cd0cd564"
+  "payload_sha256": "005e44d22d58d7398f67d22c11531f3bcfbc6819540b849badaa489cecb6162c"
 }

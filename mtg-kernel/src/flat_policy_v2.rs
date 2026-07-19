@@ -3827,6 +3827,17 @@ impl FlatDecisionEncoderV2 {
         scorer_validation
     }
 
+    #[cfg(test)]
+    fn cached_scorer_action_refs_v2(
+        &self,
+        binding: FlatActionDecisionBindingV2,
+    ) -> Result<&[FlatScorerActionRefV2], FlatDecisionErrorV2> {
+        if self.cached_binding != Some(binding) {
+            return Err(FlatDecisionErrorV2::ScorerBindingMismatch);
+        }
+        Ok(&self.scorer_action_refs)
+    }
+
     fn ensure_cache(
         &mut self,
         session: &FastActorSessionV1,
@@ -4026,20 +4037,34 @@ impl FastActorSessionV1 {
     }
 }
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::rl::{
         CardCharacteristicsV2, CardTypeFlagsV2, CountersV1, GoadPublicV4, KeywordFlagsV2,
         StackItemPublicV2,
     };
-    use crate::rl_session::FastActorResponseV1;
+    use crate::rl_session::{FastActorResponseV1, CANONICAL_BURN_DECK_ID};
 
     fn expected(session: &FastActorSessionV1) -> FastActorDecisionV1 {
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
             panic!("expected live decision");
         };
         expected
+    }
+
+    fn v2_session(episode_id: u64, environment_seed: u64) -> FastActorSessionV1 {
+        FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            episode_id,
+            environment_seed,
+            128,
+            16_384,
+            [
+                CANONICAL_BURN_DECK_ID.to_string(),
+                CANONICAL_BURN_DECK_ID.to_string(),
+            ],
+        )
+        .unwrap()
     }
 
     fn one_row_encoder(
@@ -4354,7 +4379,7 @@ mod tests {
         assert_eq!(historical_index, later_live_index);
         assert_eq!(coalescing.objects.len(), 1);
 
-        let session = FastActorSessionV1::reset_with_limits(90_024, 124, 128, 16_384);
+        let session = v2_session(90_024, 124);
         let expected = expected(&session);
         let mut observation = session.flat_policy_observation_v2(expected).unwrap();
         let actor = observation.acting_player;
@@ -4470,7 +4495,7 @@ mod tests {
 
     #[test]
     fn overlapping_stack_target_and_paid_cost_use_distinct_historical_rows() {
-        let session = FastActorSessionV1::reset_with_limits(90_026, 126, 128, 16_384);
+        let session = v2_session(90_026, 126);
         let expected = expected(&session);
         let mut observation = session.flat_policy_observation_v2(expected).unwrap();
         let actor = observation.acting_player;
@@ -4555,7 +4580,7 @@ mod tests {
 
     #[test]
     fn paid_cost_controller_conflict_with_live_object_fails_at_resolver() {
-        let session = FastActorSessionV1::reset_with_limits(90_027, 127, 128, 16_384);
+        let session = v2_session(90_027, 127);
         let expected = expected(&session);
         let mut observation = session.flat_policy_observation_v2(expected).unwrap();
         let actor = observation.acting_player;
@@ -4595,7 +4620,7 @@ mod tests {
 
     #[test]
     fn set_like_relation_inputs_have_one_canonical_typed_order() {
-        let session = FastActorSessionV1::reset_with_limits(90_025, 125, 128, 16_384);
+        let session = v2_session(90_025, 125);
         let expected = expected(&session);
         let mut observation = session.flat_policy_observation_v2(expected).unwrap();
         let actor = observation.acting_player;
@@ -4783,7 +4808,7 @@ mod tests {
 
     #[test]
     fn attachment_and_goad_rows_are_exact_under_valid_actor_seat_swap() {
-        let session = FastActorSessionV1::reset_with_limits(90_026, 126, 128, 16_384);
+        let session = v2_session(90_026, 126);
         let expected = expected(&session);
         let mut observation = session.flat_policy_observation_v2(expected).unwrap();
         let actor = observation.acting_player;
@@ -4824,7 +4849,7 @@ mod tests {
 
     #[test]
     fn forbidden_names_hashes_and_raw_reference_ids_never_reach_public_rows() {
-        let session = FastActorSessionV1::reset_with_limits(90_021, 121, 128, 16_384);
+        let session = v2_session(90_021, 121);
         let expected = expected(&session);
         let observation = session.flat_policy_observation_v2(expected).unwrap();
         let baseline = materialize_observation(&observation).unwrap();
@@ -4863,7 +4888,7 @@ mod tests {
 
     #[test]
     fn every_model_effect_field_is_explicit_while_timestamp_is_operational_only() {
-        let session = FastActorSessionV1::reset_with_limits(90_022, 122, 128, 16_384);
+        let session = v2_session(90_022, 122);
         let expected = expected(&session);
         let mut observation = session.flat_policy_observation_v2(expected).unwrap();
         let source = observation.own_hand[0].stable.clone();
@@ -4973,7 +4998,7 @@ mod tests {
 
     #[test]
     fn actor_seat_swap_preserves_the_actor_relative_initial_state_and_effect_rows() {
-        let session = FastActorSessionV1::reset_with_limits(90_023, 123, 128, 16_384);
+        let session = v2_session(90_023, 123);
         let expected = expected(&session);
         let mut observation = session.flat_policy_observation_v2(expected).unwrap();
         let actor = observation.acting_player;
@@ -5076,7 +5101,7 @@ mod tests {
 
     #[test]
     fn scorer_action_refs_are_exactly_remapped_and_binding_checked() {
-        let session = FastActorSessionV1::reset_with_limits(90_019, 119, 128, 16_384);
+        let session = v2_session(90_019, 119);
         let expected = expected(&session);
         let mut encoder = FlatDecisionEncoderV2::default();
         let mut objects = vec![FlatObjectCoreV2::default(); 512];
@@ -5124,7 +5149,7 @@ mod tests {
             assert_eq!(safe.order_index, operational.order_index);
             assert_eq!(safe.associated_order, operational.associated_order);
             assert_eq!(safe.card_token, operational.card_token);
-            assert_eq!(model_object.card_token, u32::from(safe.card_token));
+            assert_eq!(model_object.card_token, safe.card_token);
         }
 
         let mut stale = encoded.binding.action_binding;
@@ -5300,7 +5325,7 @@ mod tests {
 
     #[test]
     fn owned_scoring_encode_swaps_validated_tables_and_reuses_allocations() {
-        let session = FastActorSessionV1::reset_with_limits(90_030, 130, 128, 16_384);
+        let session = v2_session(90_030, 130);
         let expected = expected(&session);
         let mut encoder = FlatDecisionEncoderV2::default();
         let mut objects = Vec::new();
@@ -5388,7 +5413,7 @@ mod tests {
 
     #[test]
     fn owned_scoring_encode_matches_copy_path_after_poisoned_reuse() {
-        let session = FastActorSessionV1::reset_with_limits(90_031, 131, 128, 16_384);
+        let session = v2_session(90_031, 131);
         let expected = expected(&session);
         let mut copy_encoder = FlatDecisionEncoderV2::default();
         let mut copy_objects = vec![FlatObjectCoreV2::default(); 512];
@@ -5554,7 +5579,7 @@ mod tests {
 
     #[test]
     fn owned_scoring_encode_is_destination_atomic_on_late_binding_error() {
-        let session = FastActorSessionV1::reset_with_limits(90_032, 132, 128, 16_384);
+        let session = v2_session(90_032, 132);
         let expected = expected(&session);
         let mut encoder = FlatDecisionEncoderV2::default();
         encoder.ensure_cache(&session, expected).unwrap();
@@ -5623,7 +5648,7 @@ mod tests {
 
     #[test]
     fn every_table_reports_its_exact_capacity_before_any_publication() {
-        let session = FastActorSessionV1::reset_with_limits(90_020, 120, 128, 16_384);
+        let session = v2_session(90_020, 120);
         let expected = expected(&session);
         let mut encoder = one_row_encoder(&session, expected);
 
@@ -5672,7 +5697,7 @@ mod tests {
                     ..FlatActionRefV2::default()
                 }];
                 let mut action_objects = [FlatActionObjectV2 {
-                    card_token: u16::MAX,
+                    card_token: u32::MAX,
                     ..FlatActionObjectV2::default()
                 }];
                 let before = (
@@ -6074,7 +6099,7 @@ mod v2_tests {
     }
 
     #[test]
-    fn cross_language_red_pair_pins_sha512_words_and_f32_bits() {
+    fn rust_recomputes_python_authority_red_pair_sha512_words_and_f32_bits() {
         let golden: serde_json::Value =
             serde_json::from_str(include_str!("../../data/flat_policy_v2/goldens_v2.json"))
                 .unwrap();

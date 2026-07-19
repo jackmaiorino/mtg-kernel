@@ -9845,8 +9845,11 @@ mod tests {
         let action_rows = full["actions"].as_array().unwrap();
         let reference_rows = full["references"].as_array().unwrap();
         assert_eq!(object_rows.len(), 2);
-        assert_eq!(action_rows.len(), 2);
-        assert_eq!(reference_rows.len(), 2);
+        assert_eq!(action_rows.len(), 3);
+        assert_eq!(reference_rows.len(), 4);
+        assert_eq!(full["action_count"].as_u64(), Some(3));
+        assert_eq!(full["ref_count"].as_u64(), Some(4));
+        assert_eq!(full["object_count"].as_u64(), Some(2));
 
         let object = |row: &serde_json::Value| FlatActionObjectV2 {
             card_token: u32::try_from(unsigned(row, "card_token")).unwrap(),
@@ -9902,10 +9905,20 @@ mod tests {
             card_token: u32::try_from(unsigned(row, "card_token")).unwrap(),
             object_index: u16::try_from(unsigned(row, "object_index")).unwrap(),
         };
-        let objects = [object(&object_rows[0]), object(&object_rows[1])];
-        let actions = [action(&action_rows[0]), action(&action_rows[1])];
-        let references = [reference(&reference_rows[0]), reference(&reference_rows[1])];
-        assert_eq!(objects.map(|row| row.card_token), [65_535, 65_536]);
+        let objects = object_rows.iter().map(object).collect::<Vec<_>>();
+        let actions = action_rows.iter().map(action).collect::<Vec<_>>();
+        let references = reference_rows.iter().map(reference).collect::<Vec<_>>();
+        assert_eq!(
+            actions
+                .iter()
+                .map(|row| (row.ref_start, row.ref_len))
+                .collect::<Vec<_>>(),
+            [(0, 0), (0, 3), (3, 1)]
+        );
+        assert_eq!(
+            objects.iter().map(|row| row.card_token).collect::<Vec<_>>(),
+            [65_535, 65_536]
+        );
 
         let expected = hex_bytes(full["commitment_hex"].as_str().unwrap());
         assert_eq!(expected.len(), 16);
