@@ -47,6 +47,8 @@ pub(crate) mod native_policy_value_net_v1;
 #[allow(dead_code)]
 pub(crate) mod native_flat_tensorizer_v2;
 #[allow(dead_code)]
+pub mod native_opponent_sampler_v1;
+#[allow(dead_code)]
 pub(crate) mod native_policy_train_step_v1;
 #[allow(dead_code)]
 pub(crate) mod native_trainer_schedule_v1;
