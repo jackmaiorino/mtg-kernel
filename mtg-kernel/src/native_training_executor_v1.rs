@@ -30,7 +30,7 @@ use crate::native_train_state_payload_v1::{
 use crate::native_trainer_v1::{
     validate_resumed_parts_v2, validate_update_config_v2, NativeTrainerBootstrapErrorV1,
     NativeTrainerErrorV1, NativeTrainerProgressV2, NativeTrainerStateV2,
-    NativeTrainerUpdateConfigV2,
+    NativeTrainerUpdateConfigV2, NATIVE_TRAINER_CONTRACT_IDENTITY_V2,
 };
 pub use crate::native_trainer_v1::{
     NativeTrainerEpisodeEvidenceV1 as NativeTrainingEpisodeObservationV1,
@@ -705,6 +705,38 @@ impl NativeTrainingExecutorV1 {
             .map_err(trainer_executor_error_v1)
     }
 
+    /// Exports the current checkpoint only when `observation` is the exact
+    /// successful update that produced the executor's current live state.
+    ///
+    /// The caller retains the observation on every error and may retry this
+    /// method after a persistence-layer failure without running another update.
+    /// A stale, mutated, or topology-mismatched observation fails before the
+    /// 14.7 MiB payload is encoded.
+    ///
+    /// # Errors
+    ///
+    /// Rejects any observation/current-state mismatch or any checkpoint export
+    /// failure without mutating the executor or taking observation ownership.
+    pub fn checkpoint_candidate_for_observation_v2(
+        &self,
+        observation: &NativeTrainingUpdateObservationV2,
+    ) -> Result<NativeTrainingCheckpointCandidateV1, NativeTrainingExecutorErrorV1> {
+        self.validate_current_observation_v2(observation)?;
+        let checkpoint = self.checkpoint_candidate_v1()?;
+        if checkpoint.adam_step != observation.adam_step_after
+            || checkpoint.progress.successful_update_count != observation.adam_step_after
+            || checkpoint.progress.next_episode_index
+                != observation
+                    .first_episode_index
+                    .checked_add(observation.episode_count)
+                    .ok_or_else(checkpoint_observation_mismatch_v1)?
+            || checkpoint.model_parameter_sha256_hex() != observation.model_digest_after
+        {
+            return Err(checkpoint_observation_mismatch_v1());
+        }
+        Ok(checkpoint)
+    }
+
     /// Revalidates cross-component resume coherence, then exports a complete
     /// headerless train-state payload and raw digests.
     ///
@@ -745,6 +777,105 @@ impl NativeTrainingExecutorV1 {
             digests: encoded.digests,
         })
     }
+
+    fn validate_current_observation_v2(
+        &self,
+        observation: &NativeTrainingUpdateObservationV2,
+    ) -> Result<(), NativeTrainingExecutorErrorV1> {
+        let progress = self.progress();
+        let expected_first_episode_index = observation
+            .adam_step_before
+            .checked_mul(self.config.batch_episodes)
+            .ok_or_else(checkpoint_observation_mismatch_v1)?;
+        let expected_end_episode_index = observation
+            .first_episode_index
+            .checked_add(observation.episode_count)
+            .ok_or_else(checkpoint_observation_mismatch_v1)?;
+        let expected_logical_actor_count = self
+            .config
+            .worker_count
+            .checked_mul(self.config.sessions_per_worker)
+            .ok_or_else(checkpoint_observation_mismatch_v1)?;
+        let expected_episode_len = usize::try_from(self.config.batch_episodes)
+            .map_err(|_| checkpoint_observation_mismatch_v1())?;
+
+        if observation.trainer_contract_identity != NATIVE_TRAINER_CONTRACT_IDENTITY_V2
+            || observation.episode_count != self.config.batch_episodes
+            || observation.first_episode_index != expected_first_episode_index
+            || expected_end_episode_index != progress.next_episode_index
+            || progress.completed_episode_count != expected_end_episode_index
+            || observation.adam_step_before.checked_add(1) != Some(observation.adam_step_after)
+            || observation.adam_step_after != progress.successful_update_count
+            || observation.worker_count != self.config.worker_count
+            || observation.sessions_per_worker != self.config.sessions_per_worker
+            || observation.logical_actor_count != expected_logical_actor_count
+            || observation.broker_batch_target != self.config.broker_batch_target
+            || observation.episodes.len() != expected_episode_len
+            || observation.selected_outputs.len()
+                != usize::try_from(observation.learner_policy_step_count)
+                    .map_err(|_| checkpoint_observation_mismatch_v1())?
+            || observation.physical_terms.len()
+                != usize::try_from(observation.learner_group_count)
+                    .map_err(|_| checkpoint_observation_mismatch_v1())?
+            || self
+                .trainer
+                .train_state_v1()
+                .model_v1()
+                .parameter_manifest_sha256_v1()
+                != observation.model_digest_after
+        {
+            return Err(checkpoint_observation_mismatch_v1());
+        }
+
+        let mut physical_decision_count = 0u64;
+        let mut policy_step_count = 0u64;
+        let mut learner_group_count = 0u64;
+        let mut learner_policy_step_count = 0u64;
+        for (offset, episode) in observation.episodes.iter().enumerate() {
+            let expected_episode_index = observation
+                .first_episode_index
+                .checked_add(
+                    u64::try_from(offset).map_err(|_| checkpoint_observation_mismatch_v1())?,
+                )
+                .ok_or_else(checkpoint_observation_mismatch_v1)?;
+            let receipt = &episode.full_trajectory_receipt;
+            if episode.episode_index != expected_episode_index
+                || receipt.episode_index != expected_episode_index
+                || receipt.learner_seat != episode.learner_seat
+                || receipt.learner_policy_step_count != episode.learner_policy_step_count
+                || receipt.learner_physical_decision_count != episode.learner_group_count
+            {
+                return Err(checkpoint_observation_mismatch_v1());
+            }
+            physical_decision_count = physical_decision_count
+                .checked_add(receipt.physical_decision_count)
+                .ok_or_else(checkpoint_observation_mismatch_v1)?;
+            policy_step_count = policy_step_count
+                .checked_add(receipt.policy_step_count)
+                .ok_or_else(checkpoint_observation_mismatch_v1)?;
+            learner_group_count = learner_group_count
+                .checked_add(episode.learner_group_count)
+                .ok_or_else(checkpoint_observation_mismatch_v1)?;
+            learner_policy_step_count = learner_policy_step_count
+                .checked_add(episode.learner_policy_step_count)
+                .ok_or_else(checkpoint_observation_mismatch_v1)?;
+        }
+        if physical_decision_count != observation.physical_decision_count
+            || policy_step_count != observation.policy_step_count
+            || learner_group_count != observation.learner_group_count
+            || learner_policy_step_count != observation.learner_policy_step_count
+        {
+            return Err(checkpoint_observation_mismatch_v1());
+        }
+        Ok(())
+    }
+}
+
+fn checkpoint_observation_mismatch_v1() -> NativeTrainingExecutorErrorV1 {
+    NativeTrainingExecutorErrorV1::redacted(
+        NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+        "checkpoint_observation_mismatch",
+    )
 }
 
 fn validated_update_config_v1(
@@ -952,6 +1083,62 @@ mod tests {
             resumed.checkpoint_candidate_v1().unwrap(),
             uninterrupted.checkpoint_candidate_v1().unwrap()
         );
+    }
+
+    #[test]
+    fn observation_bound_checkpoint_is_retryable_and_rejects_stale_or_mutated_evidence() {
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let config = burn_config_v1(2);
+        let mut executor =
+            NativeTrainingExecutorV1::from_common_model_snapshot_v1(config, &manifest, &payload)
+                .unwrap();
+
+        let first_observation = executor.run_update_v2().unwrap();
+        let first_candidate = executor
+            .checkpoint_candidate_for_observation_v2(&first_observation)
+            .unwrap();
+
+        // A caller may fail after receiving the candidate but before durable
+        // publication. Repeating the export must not advance training or alter
+        // any byte of the candidate.
+        let retry_candidate = executor
+            .checkpoint_candidate_for_observation_v2(&first_observation)
+            .unwrap();
+        assert_eq!(retry_candidate, first_candidate);
+        assert_eq!(executor.progress().successful_update_count, 1);
+
+        let mut mutated_digest = first_observation.clone();
+        mutated_digest.model_digest_after.replace_range(0..1, "0");
+        if mutated_digest.model_digest_after == first_observation.model_digest_after {
+            mutated_digest.model_digest_after.replace_range(0..1, "1");
+        }
+        let error = executor
+            .checkpoint_candidate_for_observation_v2(&mutated_digest)
+            .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding
+        );
+        assert_eq!(error.code(), "checkpoint_observation_mismatch");
+
+        let mut mutated_episode = first_observation.clone();
+        mutated_episode.episodes[0].learner_group_count += 1;
+        let error = executor
+            .checkpoint_candidate_for_observation_v2(&mutated_episode)
+            .unwrap_err();
+        assert_eq!(error.code(), "checkpoint_observation_mismatch");
+        assert_eq!(executor.checkpoint_candidate_v1().unwrap(), first_candidate);
+
+        let second_observation = executor.run_update_v2().unwrap();
+        let error = executor
+            .checkpoint_candidate_for_observation_v2(&first_observation)
+            .unwrap_err();
+        assert_eq!(error.code(), "checkpoint_observation_mismatch");
+        let second_candidate = executor
+            .checkpoint_candidate_for_observation_v2(&second_observation)
+            .unwrap();
+        assert_eq!(second_candidate.progress().successful_update_count, 2);
+        assert_ne!(second_candidate, first_candidate);
     }
 
     #[test]
