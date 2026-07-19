@@ -23,15 +23,18 @@
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionViewV1, NativeNamedParameterV1, NativePolicyValueErrorV1,
     NativePolicyValueNetV1, ACTION_FEATURE_DIM_V1, ACTION_REF_FEATURE_DIM_V1,
-    CARD_EMBEDDING_DIM_V1, EDGE_FEATURE_DIM_V1, HIDDEN_DIM_V1, OBJECT_FEATURE_DIM_V1,
-    OBJECT_GROUP_COUNT_V1, PARAMETER_COUNT_V1, STATE_DIM_V1,
+    CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1, EDGE_FEATURE_DIM_V1, HIDDEN_DIM_V1,
+    OBJECT_FEATURE_DIM_V1, OBJECT_GROUP_COUNT_V1, PARAMETER_COUNT_V1, STATE_DIM_V1,
 };
+use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 pub(crate) const TRAINER_ALGORITHM_V1: &str = "terminal_reinforce_value/v3";
 pub(crate) const TRAIN_STEP_IDENTITY_V1: &str = "native-policy-value-cpu-train-step-v1";
 pub(crate) const NATIVE_OPTIMIZER_IDENTITY_V1: &str = "native-adam-canonical-scorer-bias-gauge-v1";
+pub(crate) const NATIVE_TRAIN_STATE_SHA256_IDENTITY_V1: &str =
+    "mtg-kernel-native-policy-value-train-state-sha256-v1";
 pub(crate) const LEGACY_GAUGE_NONCLAIM_V1: &str =
     "no exact optimizer-state parity claim for legacy terminal_reinforce_value/v3 scorer.2.bias f32 gauge drift";
 pub(crate) const CANONICAL_GAUGE_PARAMETERS_V1: [&str; 1] = ["scorer.2.bias"];
@@ -117,6 +120,42 @@ const EXPECTED_PARAMETER_NAMES: [&str; PARAMETER_TENSOR_COUNT] = [
     "value_head.0.bias",
     "value_head.2.weight",
     "value_head.2.bias",
+];
+
+const EXPECTED_PARAMETER_SHAPES: [&[usize]; PARAMETER_TENSOR_COUNT] = [
+    &[CARD_VOCAB_SIZE_V1, CARD_EMBEDDING_DIM_V1],
+    &[HIDDEN_DIM_V1, OBJECT_ENCODER_INPUT],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, EDGE_ENCODER_INPUT],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, NODE_UPDATE_INPUT],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, STATE_ENCODER_INPUT],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, ACTION_REF_ENCODER_INPUT],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, ACTION_ENCODER_INPUT],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1, SCORER_INPUT],
+    &[HIDDEN_DIM_V1],
+    &[1, HIDDEN_DIM_V1],
+    &[1],
+    &[HIDDEN_DIM_V1, HIDDEN_DIM_V1],
+    &[HIDDEN_DIM_V1],
+    &[1, HIDDEN_DIM_V1],
+    &[1],
 ];
 
 #[derive(Clone, Copy, Debug)]
@@ -208,6 +247,7 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     InvalidLearningRate,
     ParameterManifest,
     OptimizerState,
+    GaugeAnchor,
     AdamStepOverflow,
     GaugeBoundOverflow,
     GaugeResidualExceeded {
@@ -234,18 +274,41 @@ impl From<NativePolicyValueErrorV1> for NativePolicyTrainErrorV1 {
     }
 }
 
+/// Complete owned in-memory state of the native model and Adam optimizer.
+///
+/// This is deliberately not a persisted checkpoint or record schema.  Its
+/// ordered named tensors make the otherwise-private optimizer state movable
+/// without weakening the model manifest, padding-row, or gauge invariants.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativePolicyValueTrainSnapshotV1 {
+    pub(crate) adam_step: u64,
+    pub(crate) scorer_bias_anchor_bits: u32,
+    pub(crate) parameters: Vec<NativeNamedParameterV1>,
+    pub(crate) first_moments: Vec<NativeNamedParameterV1>,
+    pub(crate) second_moments: Vec<NativeNamedParameterV1>,
+}
+
+impl NativePolicyValueTrainSnapshotV1 {
+    pub(crate) fn state_sha256_v1(&self) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
+        validate_owned_train_snapshot_v1(self, None)?;
+        Ok(hash_owned_train_snapshot_v1(self))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct NativePolicyValueTrainStateV1 {
     model: NativePolicyValueNetV1,
     adam_step: u64,
     first_moments: Vec<Vec<f32>>,
     second_moments: Vec<Vec<f32>>,
+    scorer_bias_anchor_bits: u32,
 }
 
 impl NativePolicyValueTrainStateV1 {
     pub(crate) fn new_v1(model: NativePolicyValueNetV1) -> Result<Self, NativePolicyTrainErrorV1> {
         let parameters = model.parameter_snapshot_v1();
         validate_parameter_manifest(&parameters)?;
+        let scorer_bias_anchor_bits = parameters[SCORER_SECOND_BIAS].values[0].to_bits();
         let first_moments = parameters
             .iter()
             .map(|parameter| vec![0.0; parameter.values.len()])
@@ -254,12 +317,48 @@ impl NativePolicyValueTrainStateV1 {
             .iter()
             .map(|parameter| vec![0.0; parameter.values.len()])
             .collect();
-        Ok(Self {
+        let state = Self {
             model,
             adam_step: 0,
             first_moments,
             second_moments,
-        })
+            scorer_bias_anchor_bits,
+        };
+        state.validate_state_v1()?;
+        Ok(state)
+    }
+
+    /// Reconstructs a complete train state against a caller-provided model
+    /// template. The template supplies the frozen model contract and gauge
+    /// anchor; all snapshot data is validated before a candidate is returned.
+    pub(crate) fn from_snapshot_v1(
+        model: NativePolicyValueNetV1,
+        snapshot: &NativePolicyValueTrainSnapshotV1,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
+        let template_parameters = model.parameter_snapshot_v1();
+        validate_parameter_manifest(&template_parameters)?;
+        let scorer_bias_anchor_bits = template_parameters[SCORER_SECOND_BIAS].values[0].to_bits();
+        validate_owned_train_snapshot_v1(snapshot, Some(scorer_bias_anchor_bits))?;
+
+        let mut candidate_model = model;
+        candidate_model.replace_parameter_snapshot_v1(&snapshot.parameters)?;
+        let candidate = Self {
+            model: candidate_model,
+            adam_step: snapshot.adam_step,
+            first_moments: snapshot
+                .first_moments
+                .iter()
+                .map(|parameter| parameter.values.clone())
+                .collect(),
+            second_moments: snapshot
+                .second_moments
+                .iter()
+                .map(|parameter| parameter.values.clone())
+                .collect(),
+            scorer_bias_anchor_bits,
+        };
+        candidate.validate_state_v1()?;
+        Ok(candidate)
     }
 
     pub(crate) fn model_v1(&self) -> &NativePolicyValueNetV1 {
@@ -276,6 +375,55 @@ impl NativePolicyValueTrainStateV1 {
 
     pub(crate) fn second_moment_snapshot_v1(&self) -> Vec<NativeNamedParameterV1> {
         named_state_snapshot(&self.model.parameter_snapshot_v1(), &self.second_moments)
+    }
+
+    /// Returns a complete owned snapshot only after validating the live state.
+    pub(crate) fn snapshot_v1(
+        &self,
+    ) -> Result<NativePolicyValueTrainSnapshotV1, NativePolicyTrainErrorV1> {
+        self.validate_state_v1()?;
+        let parameters = self.model.parameter_snapshot_v1();
+        Ok(NativePolicyValueTrainSnapshotV1 {
+            adam_step: self.adam_step,
+            scorer_bias_anchor_bits: self.scorer_bias_anchor_bits,
+            first_moments: named_state_snapshot(&parameters, &self.first_moments),
+            second_moments: named_state_snapshot(&parameters, &self.second_moments),
+            parameters,
+        })
+    }
+
+    /// Domain-separated digest of every ordered parameter and moment bit plus
+    /// the Adam step. Invalid live state never receives a digest.
+    pub(crate) fn state_sha256_v1(&self) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
+        let snapshot = self.snapshot_v1()?;
+        Ok(hash_owned_train_snapshot_v1(&snapshot))
+    }
+
+    /// Atomically replaces model parameters, moments, and Adam step. The
+    /// existing state's separately remembered gauge anchor is authoritative.
+    pub(crate) fn replace_snapshot_v1(
+        &mut self,
+        snapshot: &NativePolicyValueTrainSnapshotV1,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        self.validate_state_v1()?;
+        let candidate = Self::from_snapshot_v1(self.model.clone(), snapshot)?;
+        *self = candidate;
+        Ok(())
+    }
+
+    fn validate_state_v1(&self) -> Result<(), NativePolicyTrainErrorV1> {
+        i32::try_from(self.adam_step)
+            .map(|_| ())
+            .map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
+        let parameters = self.model.parameter_snapshot_v1();
+        validate_parameter_manifest(&parameters)?;
+        validate_optimizer_state(&parameters, &self.first_moments, &self.second_moments)?;
+        validate_canonical_gauge_state(
+            &parameters,
+            &self.first_moments,
+            &self.second_moments,
+            self.scorer_bias_anchor_bits,
+        )
     }
 
     /// Applies one complete grouped loss/backward/Adam update.  Every input,
@@ -300,7 +448,12 @@ impl NativePolicyValueTrainStateV1 {
         let parameters = self.model.parameter_snapshot_v1();
         validate_parameter_manifest(&parameters)?;
         validate_optimizer_state(&parameters, &self.first_moments, &self.second_moments)?;
-        validate_canonical_gauge_state(&parameters, &self.first_moments, &self.second_moments)?;
+        validate_canonical_gauge_state(
+            &parameters,
+            &self.first_moments,
+            &self.second_moments,
+            self.scorer_bias_anchor_bits,
+        )?;
 
         let mut gradients = parameters
             .iter()
@@ -458,6 +611,7 @@ impl NativePolicyValueTrainStateV1 {
             &next_parameters,
             &next_first_moments,
             &next_second_moments,
+            self.scorer_bias_anchor_bits,
         )?;
 
         let gradient_snapshot = named_state_snapshot(&parameters, &gradients);
@@ -1319,10 +1473,15 @@ fn validate_parameter_manifest(
     if parameters.len() != PARAMETER_TENSOR_COUNT
         || parameters
             .iter()
-            .zip(EXPECTED_PARAMETER_NAMES)
-            .any(|(parameter, expected)| {
-                parameter.name != expected
-                    || parameter.shape.iter().product::<usize>() != parameter.values.len()
+            .zip(
+                EXPECTED_PARAMETER_NAMES
+                    .iter()
+                    .zip(EXPECTED_PARAMETER_SHAPES),
+            )
+            .any(|(parameter, (expected_name, expected_shape))| {
+                parameter.name != *expected_name
+                    || parameter.shape.as_slice() != expected_shape
+                    || expected_shape.iter().product::<usize>() != parameter.values.len()
                     || parameter.values.iter().any(|value| !value.is_finite())
             })
         || parameters
@@ -1330,6 +1489,9 @@ fn validate_parameter_manifest(
             .map(|parameter| parameter.values.len())
             .sum::<usize>()
             != PARAMETER_COUNT_V1
+        || parameters[CARD_EMBEDDING].values[..CARD_EMBEDDING_DIM_V1]
+            .iter()
+            .any(|value| value.to_bits() != 0)
     {
         return Err(NativePolicyTrainErrorV1::ParameterManifest);
     }
@@ -1355,6 +1517,12 @@ fn validate_optimizer_state(
                         .iter()
                         .any(|value| !value.is_finite() || *value < 0.0)
             })
+        || first_moments[CARD_EMBEDDING][..CARD_EMBEDDING_DIM_V1]
+            .iter()
+            .any(|value| value.to_bits() != 0)
+        || second_moments[CARD_EMBEDDING][..CARD_EMBEDDING_DIM_V1]
+            .iter()
+            .any(|value| value.to_bits() != 0)
     {
         return Err(NativePolicyTrainErrorV1::OptimizerState);
     }
@@ -1365,8 +1533,13 @@ fn validate_canonical_gauge_state(
     parameters: &[NativeNamedParameterV1],
     first_moments: &[Vec<f32>],
     second_moments: &[Vec<f32>],
+    scorer_bias_anchor_bits: u32,
 ) -> Result<(), NativePolicyTrainErrorV1> {
+    if parameters[SCORER_SECOND_BIAS].values[0].to_bits() != scorer_bias_anchor_bits {
+        return Err(NativePolicyTrainErrorV1::GaugeAnchor);
+    }
     if parameters[SCORER_SECOND_BIAS].name != CANONICAL_GAUGE_PARAMETERS_V1[0]
+        || parameters[SCORER_SECOND_BIAS].shape.as_slice() != [1]
         || parameters[SCORER_SECOND_BIAS].values.len() != 1
         || first_moments[SCORER_SECOND_BIAS].len() != 1
         || second_moments[SCORER_SECOND_BIAS].len() != 1
@@ -1376,6 +1549,127 @@ fn validate_canonical_gauge_state(
         return Err(NativePolicyTrainErrorV1::OptimizerState);
     }
     Ok(())
+}
+
+fn validate_owned_train_snapshot_v1(
+    snapshot: &NativePolicyValueTrainSnapshotV1,
+    expected_scorer_bias_anchor_bits: Option<u32>,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    i32::try_from(snapshot.adam_step)
+        .map(|_| ())
+        .map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
+    validate_parameter_manifest(&snapshot.parameters)?;
+
+    if snapshot.first_moments.len() != snapshot.parameters.len()
+        || snapshot.second_moments.len() != snapshot.parameters.len()
+        || snapshot
+            .parameters
+            .iter()
+            .zip(&snapshot.first_moments)
+            .zip(&snapshot.second_moments)
+            .any(|((parameter, first), second)| {
+                first.name != parameter.name
+                    || second.name != parameter.name
+                    || first.shape != parameter.shape
+                    || second.shape != parameter.shape
+                    || first.values.len() != parameter.values.len()
+                    || second.values.len() != parameter.values.len()
+                    || first.values.iter().any(|value| !value.is_finite())
+                    || second
+                        .values
+                        .iter()
+                        .any(|value| !value.is_finite() || *value < 0.0)
+            })
+        || snapshot.first_moments[CARD_EMBEDDING].values[..CARD_EMBEDDING_DIM_V1]
+            .iter()
+            .any(|value| value.to_bits() != 0)
+        || snapshot.second_moments[CARD_EMBEDDING].values[..CARD_EMBEDDING_DIM_V1]
+            .iter()
+            .any(|value| value.to_bits() != 0)
+        || snapshot.first_moments[SCORER_SECOND_BIAS].values[0].to_bits() != 0
+        || snapshot.second_moments[SCORER_SECOND_BIAS].values[0].to_bits() != 0
+    {
+        return Err(NativePolicyTrainErrorV1::OptimizerState);
+    }
+
+    let parameter_anchor_bits = snapshot.parameters[SCORER_SECOND_BIAS].values[0].to_bits();
+    if parameter_anchor_bits != snapshot.scorer_bias_anchor_bits
+        || expected_scorer_bias_anchor_bits
+            .is_some_and(|expected| snapshot.scorer_bias_anchor_bits != expected)
+    {
+        return Err(NativePolicyTrainErrorV1::GaugeAnchor);
+    }
+    Ok(())
+}
+
+fn hash_owned_train_snapshot_v1(snapshot: &NativePolicyValueTrainSnapshotV1) -> [u8; 32] {
+    fn atom(hasher: &mut Sha256, tag: &[u8], payload: &[u8]) {
+        hasher.update((tag.len() as u32).to_be_bytes());
+        hasher.update(tag);
+        hasher.update((payload.len() as u64).to_be_bytes());
+        hasher.update(payload);
+    }
+
+    fn tensor_section(
+        hasher: &mut Sha256,
+        section: &'static [u8],
+        tensors: &[NativeNamedParameterV1],
+    ) {
+        atom(hasher, b"section", section);
+        atom(
+            hasher,
+            b"tensor_count",
+            &(tensors.len() as u64).to_be_bytes(),
+        );
+        for (ordinal, tensor) in tensors.iter().enumerate() {
+            atom(hasher, b"tensor_ordinal", &(ordinal as u64).to_be_bytes());
+            atom(hasher, b"tensor_name", tensor.name.as_bytes());
+            atom(
+                hasher,
+                b"tensor_rank",
+                &(tensor.shape.len() as u64).to_be_bytes(),
+            );
+            let mut shape_bytes = Vec::with_capacity(tensor.shape.len() * 8);
+            for dimension in &tensor.shape {
+                shape_bytes.extend_from_slice(&(*dimension as u64).to_be_bytes());
+            }
+            atom(hasher, b"tensor_shape_u64be", &shape_bytes);
+            atom(
+                hasher,
+                b"tensor_element_count",
+                &(tensor.values.len() as u64).to_be_bytes(),
+            );
+            let mut value_bytes = Vec::with_capacity(tensor.values.len() * 4);
+            for value in &tensor.values {
+                value_bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            atom(hasher, b"tensor_f32le", &value_bytes);
+        }
+    }
+
+    let mut hasher = Sha256::new();
+    atom(
+        &mut hasher,
+        b"domain",
+        NATIVE_TRAIN_STATE_SHA256_IDENTITY_V1.as_bytes(),
+    );
+    atom(
+        &mut hasher,
+        b"adam_step_u64be",
+        &snapshot.adam_step.to_be_bytes(),
+    );
+    atom(
+        &mut hasher,
+        b"scorer_bias_anchor_f32le",
+        &snapshot.scorer_bias_anchor_bits.to_le_bytes(),
+    );
+    tensor_section(&mut hasher, b"parameters", &snapshot.parameters);
+    tensor_section(&mut hasher, b"first_moments", &snapshot.first_moments);
+    tensor_section(&mut hasher, b"second_moments", &snapshot.second_moments);
+    let digest = hasher.finalize();
+    let mut output = [0u8; 32];
+    output.copy_from_slice(&digest);
+    output
 }
 
 fn named_state_snapshot(
@@ -2396,6 +2690,319 @@ mod tests {
         assert_eq!(state.first_moment_snapshot_v1(), first);
         assert_eq!(state.second_moment_snapshot_v1(), second);
         assert_eq!(state.adam_step_v1(), step);
+    }
+
+    fn trained_state_after_first_golden_step() -> NativePolicyValueTrainStateV1 {
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let step = &golden.steps[0];
+        let substeps = substeps_for_step(&forward, step);
+        let groups = groups_for_step(step, &substeps);
+        state
+            .train_step_v1(
+                &groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        state
+    }
+
+    fn assert_snapshot_rejected_without_drift(
+        state: &mut NativePolicyValueTrainStateV1,
+        baseline: &NativePolicyValueTrainSnapshotV1,
+        standalone_validation_must_reject: bool,
+        corrupt: impl FnOnce(&mut NativePolicyValueTrainSnapshotV1),
+    ) {
+        let before_hash = state.state_sha256_v1().unwrap();
+        let mut candidate = baseline.clone();
+        corrupt(&mut candidate);
+        if standalone_validation_must_reject {
+            assert!(candidate.state_sha256_v1().is_err());
+        }
+        assert!(state.replace_snapshot_v1(&candidate).is_err());
+        assert_eq!(state.state_sha256_v1().unwrap(), before_hash);
+        assert_eq!(state.snapshot_v1().unwrap(), *baseline);
+    }
+
+    fn hex_sha256(digest: [u8; 32]) -> String {
+        digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    #[test]
+    fn complete_train_snapshot_roundtrips_and_continues_bit_exactly() {
+        let mut original = trained_state_after_first_golden_step();
+        let snapshot = original.snapshot_v1().unwrap();
+        let original_hash = original.state_sha256_v1().unwrap();
+        assert_eq!(snapshot.state_sha256_v1().unwrap(), original_hash);
+        assert_eq!(snapshot.adam_step, 1);
+        assert_eq!(snapshot.parameters.len(), PARAMETER_TENSOR_COUNT);
+        assert_eq!(snapshot.first_moments.len(), PARAMETER_TENSOR_COUNT);
+        assert_eq!(snapshot.second_moments.len(), PARAMETER_TENSOR_COUNT);
+        assert_eq!(
+            snapshot.scorer_bias_anchor_bits,
+            original.scorer_bias_anchor_bits
+        );
+        assert_eq!(
+            snapshot.parameters[SCORER_SECOND_BIAS].values[0].to_bits(),
+            snapshot.scorer_bias_anchor_bits
+        );
+        assert_eq!(
+            snapshot.first_moments[SCORER_SECOND_BIAS].values[0].to_bits(),
+            0
+        );
+        assert_eq!(
+            snapshot.second_moments[SCORER_SECOND_BIAS].values[0].to_bits(),
+            0
+        );
+
+        let template =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut restored =
+            NativePolicyValueTrainStateV1::from_snapshot_v1(template, &snapshot).unwrap();
+        assert_eq!(restored.snapshot_v1().unwrap(), snapshot);
+        assert_eq!(restored.state_sha256_v1().unwrap(), original_hash);
+
+        let replacement_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut replaced = NativePolicyValueTrainStateV1::new_v1(replacement_model).unwrap();
+        replaced.replace_snapshot_v1(&snapshot).unwrap();
+        assert_eq!(replaced.snapshot_v1().unwrap(), snapshot);
+        assert_eq!(replaced.state_sha256_v1().unwrap(), original_hash);
+
+        let (forward, golden) = fixtures();
+        let step = &golden.steps[1];
+        let substeps = substeps_for_step(&forward, step);
+        let groups = groups_for_step(step, &substeps);
+        let original_result = original
+            .train_step_v1(
+                &groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        let restored_result = restored
+            .train_step_v1(
+                &groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        let replaced_result = replaced
+            .train_step_v1(
+                &groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        assert_eq!(restored_result, original_result);
+        assert_eq!(replaced_result, original_result);
+        assert_eq!(
+            restored.snapshot_v1().unwrap(),
+            original.snapshot_v1().unwrap()
+        );
+        assert_eq!(
+            replaced.snapshot_v1().unwrap(),
+            original.snapshot_v1().unwrap()
+        );
+        assert_eq!(
+            restored.state_sha256_v1().unwrap(),
+            original.state_sha256_v1().unwrap()
+        );
+        assert_eq!(
+            replaced.state_sha256_v1().unwrap(),
+            original.state_sha256_v1().unwrap()
+        );
+    }
+
+    #[test]
+    fn train_state_hash_is_frozen_complete_and_domain_separated() {
+        assert_eq!(
+            NATIVE_TRAIN_STATE_SHA256_IDENTITY_V1,
+            "mtg-kernel-native-policy-value-train-state-sha256-v1"
+        );
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let baseline = state.snapshot_v1().unwrap();
+        let baseline_hash = baseline.state_sha256_v1().unwrap();
+        assert_eq!(
+            hex_sha256(baseline_hash),
+            "02450f0bbfc223c3f3dc925da11ff20190fc86bc9c6ac3f0519aace7706cdf31"
+        );
+
+        let mut step = baseline.clone();
+        step.adam_step = 1;
+        assert_ne!(step.state_sha256_v1().unwrap(), baseline_hash);
+
+        let mut parameter = baseline.clone();
+        parameter.parameters[OBJECT_FIRST_WEIGHT].values[0] += f32::EPSILON;
+        assert_ne!(parameter.state_sha256_v1().unwrap(), baseline_hash);
+
+        let mut first = baseline.clone();
+        first.first_moments[OBJECT_FIRST_WEIGHT].values[0] = 0.25;
+        assert_ne!(first.state_sha256_v1().unwrap(), baseline_hash);
+
+        let mut second = baseline.clone();
+        second.second_moments[OBJECT_FIRST_WEIGHT].values[0] = 0.5;
+        assert_ne!(second.state_sha256_v1().unwrap(), baseline_hash);
+
+        let mut section_a = baseline.clone();
+        section_a.first_moments[OBJECT_FIRST_WEIGHT].values[0] = 0.25;
+        section_a.second_moments[OBJECT_FIRST_WEIGHT].values[0] = 0.5;
+        let mut section_b = baseline;
+        section_b.first_moments[OBJECT_FIRST_WEIGHT].values[0] = 0.5;
+        section_b.second_moments[OBJECT_FIRST_WEIGHT].values[0] = 0.25;
+        assert_ne!(
+            section_a.state_sha256_v1().unwrap(),
+            section_b.state_sha256_v1().unwrap()
+        );
+    }
+
+    #[test]
+    fn snapshot_corruption_classes_fail_closed_without_state_or_hash_drift() {
+        let mut state = trained_state_after_first_golden_step();
+        let baseline = state.snapshot_v1().unwrap();
+
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.parameters.swap(1, 2);
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.parameters.pop();
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.parameters[1].name = "wrong.weight";
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.parameters[1].shape[0] += 1;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.parameters[1].values.pop();
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.parameters[1].values[0] = f32::NAN;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.parameters[CARD_EMBEDDING].values[0] = -0.0;
+        });
+
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.first_moments.swap(1, 2);
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.first_moments.pop();
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.first_moments[1].name = "wrong.weight";
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.first_moments[1].shape[0] += 1;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.first_moments[1].values.pop();
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.first_moments[1].values[0] = f32::INFINITY;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.first_moments[CARD_EMBEDDING].values[0] = -0.0;
+        });
+
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.second_moments.swap(1, 2);
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.second_moments.pop();
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.second_moments[1].name = "wrong.weight";
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.second_moments[1].shape[0] += 1;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.second_moments[1].values.pop();
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.second_moments[1].values[0] = f32::NEG_INFINITY;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.second_moments[1].values[0] = -f32::EPSILON;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.second_moments[CARD_EMBEDDING].values[0] = -0.0;
+        });
+
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.first_moments[SCORER_SECOND_BIAS].values[0] = -0.0;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.second_moments[SCORER_SECOND_BIAS].values[0] = f32::EPSILON;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.parameters[SCORER_SECOND_BIAS].values[0] += 0.25;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.scorer_bias_anchor_bits ^= 1;
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, false, |snapshot| {
+            snapshot.parameters[SCORER_SECOND_BIAS].values[0] += 0.25;
+            snapshot.scorer_bias_anchor_bits =
+                snapshot.parameters[SCORER_SECOND_BIAS].values[0].to_bits();
+        });
+        assert_snapshot_rejected_without_drift(&mut state, &baseline, true, |snapshot| {
+            snapshot.adam_step = i32::MAX as u64 + 1;
+        });
+
+        let template =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut moved_anchor = baseline.clone();
+        moved_anchor.parameters[SCORER_SECOND_BIAS].values[0] += 0.25;
+        moved_anchor.scorer_bias_anchor_bits =
+            moved_anchor.parameters[SCORER_SECOND_BIAS].values[0].to_bits();
+        assert_eq!(
+            NativePolicyValueTrainStateV1::from_snapshot_v1(template, &moved_anchor).unwrap_err(),
+            NativePolicyTrainErrorV1::GaugeAnchor
+        );
+    }
+
+    #[test]
+    fn invalid_live_gauge_anchor_or_padding_state_receives_no_snapshot_or_hash() {
+        let state = trained_state_after_first_golden_step();
+
+        let mut moved_anchor = state.clone();
+        let mut parameters = moved_anchor.model.parameter_snapshot_v1();
+        parameters[SCORER_SECOND_BIAS].values[0] += 0.25;
+        moved_anchor
+            .model
+            .replace_parameter_snapshot_v1(&parameters)
+            .unwrap();
+        assert_eq!(
+            moved_anchor.snapshot_v1().unwrap_err(),
+            NativePolicyTrainErrorV1::GaugeAnchor
+        );
+        assert_eq!(
+            moved_anchor.state_sha256_v1().unwrap_err(),
+            NativePolicyTrainErrorV1::GaugeAnchor
+        );
+
+        let mut bad_padding_moment = state;
+        bad_padding_moment.first_moments[CARD_EMBEDDING][0] = -0.0;
+        assert_eq!(
+            bad_padding_moment.snapshot_v1().unwrap_err(),
+            NativePolicyTrainErrorV1::OptimizerState
+        );
+        assert_eq!(
+            bad_padding_moment.state_sha256_v1().unwrap_err(),
+            NativePolicyTrainErrorV1::OptimizerState
+        );
     }
 
     #[test]
