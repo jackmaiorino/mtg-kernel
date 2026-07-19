@@ -215,6 +215,8 @@ pub(crate) const TRAIN_STEP_IDENTITY_V1: &str = "native-policy-value-cpu-train-s
 pub const NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1: &str =
     "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-sequential";
 pub(crate) const NATIVE_OPTIMIZER_IDENTITY_V1: &str = "native-adam-canonical-scorer-bias-gauge-v1";
+pub(crate) const NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1: &str =
+    "mtg-kernel-native-scorer-bias-gauge-evidence-v1";
 pub(crate) const NATIVE_TRAIN_STATE_SHA256_IDENTITY_V1: &str =
     "mtg-kernel-native-policy-value-train-state-sha256-v1";
 pub(crate) const LEGACY_GAUGE_NONCLAIM_V1: &str =

@@ -1,3 +1,5 @@
+#![cfg_attr(test, recursion_limit = "512")]
+
 //! Experimental, deterministic, resumable game core for a fixed Pauper pool.
 //!
 //! Scope: exactly the pinned nine-deck Pauper pool (150 unique roster names;
@@ -77,6 +79,9 @@ pub(crate) mod native_trainer_v1;
 // Public in-process execution facade for the native trainer. This deliberately
 // owns no CLI grammar, serialized record, or filesystem publication contract.
 pub mod native_training_executor_v1;
+// Pure typed run/v2 record validation and deterministic digest authority.
+// Capture, filesystem publication, and learning-quality claims live elsewhere.
+pub mod native_training_store_run_v2;
 // Private-construction persistence receipt and the strict native generation
 // store boundary. The high-level publisher/read/recovery path lands here.
 pub mod native_training_store_v2;
