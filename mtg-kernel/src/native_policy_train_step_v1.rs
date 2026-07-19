@@ -158,6 +158,15 @@ const EXPECTED_PARAMETER_SHAPES: [&[usize]; PARAMETER_TENSOR_COUNT] = [
     &[1],
 ];
 
+/// Frozen named-parameter order and shapes used by both the in-memory train
+/// state validator and the headerless persisted payload codec.
+pub(crate) fn native_train_state_parameter_layout_v1(
+) -> impl ExactSizeIterator<Item = (&'static str, &'static [usize])> {
+    EXPECTED_PARAMETER_NAMES
+        .into_iter()
+        .zip(EXPECTED_PARAMETER_SHAPES)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct NativePolicySubstepV1<'a> {
     pub(crate) encoded: NativeEncodedDecisionViewV1<'a>,
