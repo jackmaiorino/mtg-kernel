@@ -93,6 +93,15 @@ impl<'a> FlatScoringBatchViewV2<'a> {
             .map(|decision| FlatScoredFamilyV2::packet_view(&decision.packet))
     }
 
+    /// Crate-private scorer/trajectory association key. Public scorers need
+    /// only the typed decision view; the native trainer additionally binds an
+    /// owned tensor to the exact packet that produced it.
+    pub(crate) fn binding(&self, index: usize) -> Option<FlatDecisionBindingV2> {
+        self.decisions
+            .get(index)
+            .map(|decision| FlatScoredFamilyV2::packet_binding(&decision.packet))
+    }
+
     pub fn action_offsets(&self) -> &[usize] {
         self.action_offsets
     }
@@ -150,6 +159,8 @@ pub(crate) struct FlatScoredTerminalEventV2 {
     pub(crate) terminal: AsyncRolloutTerminalV1,
     pub(crate) learner_action_count: u64,
     pub(crate) learner_trace_hash: u64,
+    pub(crate) native_full_trajectory_receipt:
+        Option<crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1>,
 }
 
 pub(crate) trait FlatScoredTrajectoryObserverV2: Sized {
@@ -590,7 +601,7 @@ fn active_prefix<T>(buffer: &[T], count: u32) -> &[T] {
     &buffer[..end]
 }
 
-fn expected_scorer_contract(card_db_hash: u64) -> FlatScorerContractV2 {
+pub(crate) fn expected_scorer_contract(card_db_hash: u64) -> FlatScorerContractV2 {
     FlatScorerContractV2 {
         scorer_packet_version: FLAT_SCORER_PACKET_VERSION_V2,
         scorer_action_ref_version: FLAT_SCORER_ACTION_REF_VERSION_V2,
@@ -841,6 +852,20 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV2 {
             .consume_current_flat_action_slice_v2(binding.action_binding, selected_index)
             .map_err(|_| ())
     }
+
+    fn native_full_trajectory_commitment(binding: Self::Binding) -> Result<[u8; 16], ()> {
+        Ok(binding.action_binding.candidate_order_commitment)
+    }
+
+    fn native_full_trajectory_opponent_commitment(
+        session: &FastActorSessionV1,
+        expected: FastActorDecisionV1,
+    ) -> Result<[u8; 16], ()> {
+        session
+            .native_full_trajectory_current_binding_v2(expected)
+            .map(|binding| binding.candidate_order_commitment)
+            .map_err(|_| ())
+    }
 }
 
 fn player_seat_code(seat: crate::rl::PlayerSeatV1) -> u8 {
@@ -919,6 +944,7 @@ impl<O: FlatScoredTrajectoryObserverV2> FlatScoredTrajectoryObserverCore<FlatSco
             terminal: event.terminal,
             learner_action_count: event.learner_action_count,
             learner_trace_hash: event.learner_trace_hash,
+            native_full_trajectory_receipt: event.native_full_trajectory_receipt,
         })
     }
 

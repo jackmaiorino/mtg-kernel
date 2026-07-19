@@ -358,7 +358,7 @@ impl FlatLearnerSubstepSampleV2 {
     }
 }
 
-fn selected_binding_matches(event: &FlatScoredSelectedEventV2<'_>) -> bool {
+pub(crate) fn selected_binding_matches(event: &FlatScoredSelectedEventV2<'_>) -> bool {
     let expected = event.expected;
     let binding = event.binding.action_binding;
     binding.episode_id == expected.episode_id

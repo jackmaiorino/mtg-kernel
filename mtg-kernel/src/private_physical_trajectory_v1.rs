@@ -352,6 +352,7 @@ mod tests {
             },
             learner_action_count: u64::try_from(learner_actions.len()).unwrap(),
             learner_trace_hash,
+            native_full_trajectory_receipt: None,
         }
     }
 

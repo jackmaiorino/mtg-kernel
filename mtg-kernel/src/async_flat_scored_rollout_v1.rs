@@ -37,6 +37,10 @@ use crate::flat_policy_v1::{
     FLAT_SCORER_PACKET_VERSION_V1, FLAT_SCORER_VISIBLE_MANIFEST_V1,
     FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V1,
 };
+use crate::native_full_episode_trajectory_v1::{
+    NativeFullEpisodeTrajectoryAccumulatorV1, NativeFullEpisodeTrajectoryDecisionRowV1,
+    NativeFullEpisodeTrajectoryReceiptV1, NativeTrajectoryActorRoleV1,
+};
 use crate::native_trainer_schedule_v1::{
     derive_native_trainer_learner_action_seed_v1, derive_native_trainer_opponent_action_seed_v1,
     native_trainer_episode_schedule_v1,
@@ -91,6 +95,12 @@ struct NativeOpenPhysicalGroupV1 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeActionPreflightV1 {
+    action_seed: u64,
+    actor_physical_decision_ordinal: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NativeLaneScheduleStateV1 {
     base_seed: u64,
     episode_index: u64,
@@ -142,7 +152,7 @@ impl NativeLaneScheduleStateV1 {
         decision: FastActorDecisionV1,
         max_physical_decisions: u64,
         max_policy_steps: u64,
-    ) -> Result<u64, ()> {
+    ) -> Result<NativeActionPreflightV1, ()> {
         if decision.episode_id != self.episode_index
             || decision.legal_action_count == 0
             || decision.substep_count == 0
@@ -189,7 +199,7 @@ impl NativeLaneScheduleStateV1 {
             Some(_) => return Err(()),
         }
         let open = self.open_group.ok_or(())?;
-        if decision.acting_player == self.learner_seat {
+        let action_seed = if decision.acting_player == self.learner_seat {
             derive_native_trainer_learner_action_seed_v1(
                 self.base_seed,
                 self.episode_index,
@@ -205,7 +215,11 @@ impl NativeLaneScheduleStateV1 {
                 decision.substep_index,
             )
             .map_err(|_| ())
-        }
+        }?;
+        Ok(NativeActionPreflightV1 {
+            action_seed,
+            actor_physical_decision_ordinal: open.actor_group_ordinal,
+        })
     }
 
     /// Commit only after the selected action has been accepted by the engine.
@@ -530,6 +544,9 @@ pub(crate) struct FlatScoredTerminalEventV1 {
     pub(crate) terminal: AsyncRolloutTerminalV1,
     pub(crate) learner_action_count: u64,
     pub(crate) learner_trace_hash: u64,
+    /// Present only on the crate-private native Flat Action V2 schedule. The
+    /// public legacy observer path always supplies `None`.
+    pub(crate) native_full_trajectory_receipt: Option<NativeFullEpisodeTrajectoryReceiptV1>,
 }
 
 /// Crate-private staging boundary for a future native learner. Implementations
@@ -1082,6 +1099,24 @@ pub(crate) trait FlatScoredFamilyCore: Copy + Send + Sync + 'static {
         binding: Self::Binding,
         selected_index: u32,
     ) -> Result<FastActorResponseV1, ()>;
+
+    /// Native full-trajectory hook for a broker-scored learner binding. V1
+    /// deliberately keeps the default rejection: the frozen receipt commits
+    /// only explicit Flat Action V2 candidate orderings.
+    fn native_full_trajectory_commitment(_binding: Self::Binding) -> Result<[u8; 16], ()> {
+        Err(())
+    }
+
+    /// Native full-trajectory hook for the worker-local uniform opponent. A
+    /// supporting family must revalidate its private current V2 cache before
+    /// exposing the exact commitment which the immediately following engine
+    /// action will consume.
+    fn native_full_trajectory_opponent_commitment(
+        _session: &FastActorSessionV1,
+        _expected: FastActorDecisionV1,
+    ) -> Result<[u8; 16], ()> {
+        Err(())
+    }
 }
 
 pub(crate) trait FlatBatchScorerCore<F: FlatScoredFamilyCore> {
@@ -1173,7 +1208,7 @@ pub(crate) struct RoundDecisionCore<F: FlatScoredFamilyCore> {
     worker_id: usize,
     logical_lane_id: usize,
     expected: FastActorDecisionV1,
-    native_action_seed: Option<u64>,
+    native_preflight: Option<NativeActionPreflightV1>,
     pub(crate) packet: F::ValidatedPacket,
 }
 
@@ -1249,6 +1284,7 @@ struct RoundTerminalV1 {
     terminal: AsyncRolloutTerminalV1,
     learner_action_count: u64,
     learner_trace_hash: u64,
+    native_full_trajectory_receipt: Option<NativeFullEpisodeTrajectoryReceiptV1>,
 }
 
 struct WorkerRoundCore<F: FlatScoredFamilyCore> {
@@ -1353,7 +1389,7 @@ enum WorkerControlCore<F: FlatScoredFamilyCore> {
 struct WaitingDecisionCore<F: FlatScoredFamilyCore> {
     expected: FastActorDecisionV1,
     binding: F::Binding,
-    native_action_seed: Option<u64>,
+    native_preflight: Option<NativeActionPreflightV1>,
 }
 
 struct LocalLaneCore<F: FlatScoredFamilyCore> {
@@ -1370,6 +1406,7 @@ struct LocalLaneCore<F: FlatScoredFamilyCore> {
     opponent_policy: SplitMix64,
     learner_seat: PlayerSeatV1,
     native_schedule: Option<NativeLaneScheduleStateV1>,
+    native_full_trajectory: Option<NativeFullEpisodeTrajectoryAccumulatorV1>,
     learner_action_count: u64,
     learner_trace_hash: u64,
     #[cfg(test)]
@@ -1403,6 +1440,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             opponent_policy: SplitMix64::seed(0),
             learner_seat: PlayerSeatV1::P0,
             native_schedule: None,
+            native_full_trajectory: None,
             learner_action_count: 0,
             learner_trace_hash: FNV1A64_OFFSET,
             #[cfg(test)]
@@ -1439,12 +1477,45 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                 || F::packet_binding(&action.packet) != waiting.binding
                 || action.scored.learner_ordinal != self.learner_action_count
                 || waiting
-                    .native_action_seed
-                    .is_some_and(|seed| seed != action.scored.action_seed)
+                    .native_preflight
+                    .is_some_and(|preflight| preflight.action_seed != action.scored.action_seed)
                 || action.scored.selected_index >= waiting.expected.legal_action_count
             {
                 return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
             }
+
+            let native_trajectory_row = match (
+                self.native_full_trajectory.as_ref(),
+                waiting.native_preflight,
+            ) {
+                (Some(trajectory), Some(preflight)) => {
+                    let commitment = F::native_full_trajectory_commitment(action.scored.binding)
+                        .map_err(|_| {
+                            self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding)
+                        })?;
+                    let row = NativeFullEpisodeTrajectoryDecisionRowV1 {
+                        row_ordinal: waiting.expected.step,
+                        actor_seat: waiting.expected.acting_player,
+                        actor_role: NativeTrajectoryActorRoleV1::Learner,
+                        physical_decision_ordinal: waiting.expected.physical_decision_id,
+                        actor_physical_decision_ordinal: preflight.actor_physical_decision_ordinal,
+                        substep_index: waiting.expected.substep_index,
+                        substep_count: waiting.expected.substep_count,
+                        action_seed: preflight.action_seed,
+                        legal_action_count: waiting.expected.legal_action_count,
+                        selected_index: action.scored.selected_index,
+                        flat_action_v2_commitment: commitment,
+                    };
+                    trajectory.preflight_candidate_v1(row).map_err(|_| {
+                        self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding)
+                    })?;
+                    Some(row)
+                }
+                (None, None) => None,
+                _ => {
+                    return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
+                }
+            };
             let missing_session = self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol);
             let session = self.session.as_mut().ok_or(missing_session)?;
             let response = F::consume(session, action.scored.binding, action.scored.selected_index)
@@ -1474,6 +1545,14 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                 schedule.commit_action(waiting.expected).map_err(|_| {
                     self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding)
                 })?;
+            }
+            if let Some(row) = native_trajectory_row {
+                let Some(trajectory) = self.native_full_trajectory.as_mut() else {
+                    return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
+                };
+                if trajectory.record_accepted_v1(row).is_err() {
+                    return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
+                }
             }
             #[cfg(test)]
             self.test_instrumentation
@@ -1510,6 +1589,8 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             self.session = None;
             self.response = None;
             self.waiting_terminal = false;
+            self.native_schedule = None;
+            self.native_full_trajectory = None;
             self.episode_id = u64::MAX;
         } else if reply.terminal_acks.contains(&self.logical_lane_id) {
             return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
@@ -1560,6 +1641,23 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             self.episode_id = episode_id;
             self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
         })?;
+        let native_full_trajectory = if native_schedule.is_some() {
+            match NativeFullEpisodeTrajectoryAccumulatorV1::new_v1(
+                episode_id,
+                environment_seed,
+                &config.deck_ids,
+                session.native_full_trajectory_deck_hashes_v1(),
+                learner_seat,
+            ) {
+                Ok(trajectory) => Some(trajectory),
+                Err(_) => {
+                    self.episode_id = episode_id;
+                    return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Reset));
+                }
+            }
+        } else {
+            None
+        };
         self.response = Some(session.current_response());
         self.session = Some(session);
         self.episode_id = episode_id;
@@ -1569,6 +1667,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             SplitMix64::seed(derive_policy_seed(config.opponent_policy_seed, episode_id));
         self.learner_seat = learner_seat;
         self.native_schedule = native_schedule;
+        self.native_full_trajectory = native_full_trajectory;
         self.learner_action_count = 0;
         self.learner_trace_hash = initial_learner_trace_hash_v1(episode_id);
         Ok(())
@@ -1596,16 +1695,36 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             match response {
                 FastActorResponseV1::Terminal(terminal) => {
                     if let Some(schedule) = self.native_schedule {
+                        if terminal.deck_ids != config.deck_ids {
+                            return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                        }
                         schedule
                             .validate_terminal(&terminal)
                             .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
                     }
+                    let terminal_deck_hashes = terminal.deck_hashes;
+                    let compact_terminal = compact_terminal(&terminal);
+                    let native_full_trajectory_receipt =
+                        match (self.native_schedule, self.native_full_trajectory.take()) {
+                            (Some(_), Some(trajectory)) => Some(
+                                trajectory
+                                    .finish_natural_v1(compact_terminal, terminal_deck_hashes)
+                                    .map_err(|_| {
+                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                    })?,
+                            ),
+                            (None, None) => None,
+                            _ => {
+                                return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                            }
+                        };
                     terminals.push(RoundTerminalV1 {
                         worker_id: self.worker_id,
                         logical_lane_id: self.logical_lane_id,
-                        terminal: compact_terminal(&terminal),
+                        terminal: compact_terminal,
                         learner_action_count: self.learner_action_count,
                         learner_trace_hash: self.learner_trace_hash,
+                        native_full_trajectory_receipt,
                     });
                     self.waiting_terminal = true;
                     return Ok(());
@@ -1619,7 +1738,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                     {
                         return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Encode));
                     }
-                    let native_action_seed = self
+                    let native_preflight = self
                         .native_schedule
                         .as_mut()
                         .map(|schedule| {
@@ -1648,30 +1767,78 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                     self.waiting_decision = Some(WaitingDecisionCore {
                         expected,
                         binding,
-                        native_action_seed,
+                        native_preflight,
                     });
                     decisions.push(RoundDecisionCore {
                         worker_id: self.worker_id,
                         logical_lane_id: self.logical_lane_id,
                         expected,
-                        native_action_seed,
+                        native_preflight,
                         packet,
                     });
                     return Ok(());
                 }
                 FastActorResponseV1::Decision(decision) => {
-                    let selected_index = if let Some(schedule) = self.native_schedule.as_mut() {
-                        let seed = schedule
-                            .preflight_action_seed(
-                                decision,
-                                config.max_physical_decisions,
-                                config.max_policy_steps,
-                            )
-                            .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
-                        u32::try_from(seed % u64::from(decision.legal_action_count))
-                            .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?
+                    let native_preflight = if let Some(schedule) = self.native_schedule.as_mut() {
+                        Some(
+                            schedule
+                                .preflight_action_seed(
+                                    decision,
+                                    config.max_physical_decisions,
+                                    config.max_policy_steps,
+                                )
+                                .map_err(|_| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?,
+                        )
+                    } else {
+                        None
+                    };
+                    let selected_index = if let Some(preflight) = native_preflight {
+                        u32::try_from(
+                            preflight.action_seed % u64::from(decision.legal_action_count),
+                        )
+                        .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?
                     } else {
                         uniform_index(&mut self.opponent_policy, decision.legal_action_count)
+                    };
+                    let native_trajectory_row = if let Some(preflight) = native_preflight {
+                        let session = self
+                            .session
+                            .as_ref()
+                            .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                        let commitment =
+                            F::native_full_trajectory_opponent_commitment(session, decision)
+                                .map_err(|_| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?;
+                        let row = NativeFullEpisodeTrajectoryDecisionRowV1 {
+                            row_ordinal: decision.step,
+                            actor_seat: decision.acting_player,
+                            actor_role: NativeTrajectoryActorRoleV1::Opponent,
+                            physical_decision_ordinal: decision.physical_decision_id,
+                            actor_physical_decision_ordinal: preflight
+                                .actor_physical_decision_ordinal,
+                            substep_index: decision.substep_index,
+                            substep_count: decision.substep_count,
+                            action_seed: preflight.action_seed,
+                            legal_action_count: decision.legal_action_count,
+                            selected_index,
+                            flat_action_v2_commitment: commitment,
+                        };
+                        let trajectory = self
+                            .native_full_trajectory
+                            .as_ref()
+                            .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                        trajectory
+                            .preflight_candidate_v1(row)
+                            .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                        Some(row)
+                    } else {
+                        if self.native_full_trajectory.is_some() {
+                            return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                        }
+                        None
                     };
                     let missing_session = self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol);
                     let response = self
@@ -1684,6 +1851,14 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         schedule
                             .commit_action(decision)
                             .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                    }
+                    if let Some(row) = native_trajectory_row {
+                        let Some(trajectory) = self.native_full_trajectory.as_mut() else {
+                            return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                        };
+                        if trajectory.record_accepted_v1(row).is_err() {
+                            return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                        }
                     }
                     self.response = Some(response);
                 }
@@ -2378,15 +2553,17 @@ impl BrokerEpisodeV1 {
         execution_schedule: FlatScoredExecutionScheduleV1,
         learner_policy_seed: u64,
         episode_id: u64,
-        native_action_seed: Option<u64>,
+        native_preflight: Option<NativeActionPreflightV1>,
     ) -> Result<(u64, u64), AsyncFlatScoredRolloutErrorV1> {
         self.bind(episode_id)?;
         let ordinal = self.learner_decision_ordinal;
-        let seed = match (execution_schedule, native_action_seed) {
+        let seed = match (execution_schedule, native_preflight) {
             (FlatScoredExecutionScheduleV1::Legacy, None) => {
                 derive_async_flat_scored_action_seed_v1(learner_policy_seed, episode_id, ordinal)
             }
-            (FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. }, Some(seed)) => seed,
+            (FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. }, Some(preflight)) => {
+                preflight.action_seed
+            }
             _ => return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation),
         };
         Ok((ordinal, seed))
@@ -2486,7 +2663,7 @@ fn sample_validated_round_decision_v1<F: FlatScoredFamilyCore>(
         execution_schedule,
         learner_policy_seed,
         decision.expected.episode_id,
-        decision.native_action_seed,
+        decision.native_preflight,
     )?;
     let selected_index = sampler
         .sample(action_logits, action_seed)
@@ -3076,6 +3253,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
                             terminal: episode.terminal,
                             learner_action_count: episode.learner_action_count,
                             learner_trace_hash: episode.learner_trace_hash,
+                            native_full_trajectory_receipt: terminal.native_full_trajectory_receipt,
                         },
                     ) {
                         observer_interruption = Some(interruption);
@@ -4439,6 +4617,7 @@ mod tests {
                     terminal: episode.terminal,
                     learner_action_count: episode.learner_action_count,
                     learner_trace_hash: episode.learner_trace_hash,
+                    native_full_trajectory_receipt: None,
                 })
                 .collect::<Vec<_>>();
             assert_eq!(observed_terminals, expected_terminals);
@@ -5085,8 +5264,18 @@ mod tests {
         let mut schedule = NativeLaneScheduleStateV1::new(71_501, 0, PlayerSeatV1::P0);
         let first = native_schedule_decision(0, 0, 0, 0, 2, PlayerSeatV1::P0);
         assert_eq!(
-            schedule.preflight_action_seed(first, 2, 8).unwrap(),
+            schedule
+                .preflight_action_seed(first, 2, 8)
+                .unwrap()
+                .action_seed,
             derive_native_trainer_learner_action_seed_v1(71_501, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            schedule
+                .preflight_action_seed(first, 2, 8)
+                .unwrap()
+                .actor_physical_decision_ordinal,
+            0
         );
         schedule.commit_action(first).unwrap();
         assert_eq!(schedule.learner_completed_group_count, 0);
@@ -5144,7 +5333,8 @@ mod tests {
         assert_eq!(
             schedule
                 .preflight_action_seed(opponent_first, 10, 10)
-                .unwrap(),
+                .unwrap()
+                .action_seed,
             derive_native_trainer_opponent_action_seed_v1(71_501, 1, 0, 0).unwrap()
         );
         schedule.commit_action(opponent_first).unwrap();
@@ -5152,7 +5342,8 @@ mod tests {
         assert_eq!(
             schedule
                 .preflight_action_seed(opponent_last, 10, 10)
-                .unwrap(),
+                .unwrap()
+                .action_seed,
             derive_native_trainer_opponent_action_seed_v1(71_501, 1, 0, 1).unwrap()
         );
         schedule.commit_action(opponent_last).unwrap();
@@ -5161,7 +5352,10 @@ mod tests {
 
         let learner = native_schedule_decision(1, 2, 1, 0, 1, PlayerSeatV1::P1);
         assert_eq!(
-            schedule.preflight_action_seed(learner, 10, 10).unwrap(),
+            schedule
+                .preflight_action_seed(learner, 10, 10)
+                .unwrap()
+                .action_seed,
             derive_native_trainer_learner_action_seed_v1(71_501, 1, 0, 0).unwrap()
         );
         schedule.commit_action(learner).unwrap();

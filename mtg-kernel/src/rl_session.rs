@@ -4362,6 +4362,13 @@ impl FastActorSessionV1 {
         })
     }
 
+    /// Crate-private immutable provenance needed to seed the native full-
+    /// episode trajectory accumulator. These hashes were resolved and checked
+    /// when this session was constructed; callers cannot replace them.
+    pub(crate) fn native_full_trajectory_deck_hashes_v1(&self) -> SessionDeckHashesV1 {
+        self.deck_hashes
+    }
+
     /// Audit-only counts for the live flat-action cache and backing arena.
     #[cfg(any(test, feature = "flat-action-diagnostic"))]
     pub fn diagnostic_current_flat_action_shape_v1(
@@ -4703,6 +4710,33 @@ impl FastActorSessionV1 {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
         Ok(())
+    }
+
+    /// Returns the already-constructed V2 binding only after revalidating the
+    /// current private cache against the live decision. The native uniform
+    /// opponent uses this to commit the exact candidate ordering before the
+    /// accepted action advances and recycles that cache.
+    pub(crate) fn native_full_trajectory_current_binding_v2(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<FlatActionDecisionBindingV2, FlatActionDecisionSliceErrorV1> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        flat_validate_expected_decision_v1(self, current, expected)?;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V2 {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        if let Some(error) = current.flat_action_cache_error_v2 {
+            return Err(error);
+        }
+        let cache = current
+            .flat_action_cache_v2
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        flat_validate_action_cache_v2(self, current, cache)?;
+        Ok(cache.binding)
     }
 
     /// Applies an index only if the complete flat action binding, including
