@@ -13,6 +13,9 @@
 //! references before publication.
 
 use crate::engine::CastMode;
+use crate::flat_action_contract_v2::{
+    FLAT_ACTION_CONTRACT_SEMANTIC_SHA256_V2, FLAT_ACTION_CONTRACT_SOURCE_SHA256_V2,
+};
 use crate::policy_surface_v5::PolicySurfaceStageV5;
 use crate::rl::{
     BooleanChoicePurposeV4, CardPrivateV1, CardPublicV2, CardStableRefV1, ContinuousEffectPublicV2,
@@ -643,6 +646,10 @@ pub struct FlatPolicyContractDigestsV2 {
     pub overlay_typed_layout_sha256: [u8; 32],
     /// Domain-separated SHA-256 over base and overlay layout digests.
     pub typed_layout_sha256: [u8; 32],
+    /// Raw-file SHA-256 over the dedicated narrow V2 action-contract source.
+    pub action_contract_source_sha256: [u8; 32],
+    /// Canonical-JSON SHA-256 over the V2 action-contract semantics.
+    pub action_contract_sha256: [u8; 32],
 }
 
 pub const FLAT_POLICY_CONTRACT_DIGESTS_V2: FlatPolicyContractDigestsV2 =
@@ -652,6 +659,8 @@ pub const FLAT_POLICY_CONTRACT_DIGESTS_V2: FlatPolicyContractDigestsV2 =
         base_typed_layout_sha256: FLAT_POLICY_BASE_TYPED_LAYOUT_SHA256_V2,
         overlay_typed_layout_sha256: FLAT_POLICY_OVERLAY_TYPED_LAYOUT_SHA256_V2,
         typed_layout_sha256: FLAT_POLICY_TYPED_LAYOUT_SHA256_V2,
+        action_contract_source_sha256: FLAT_ACTION_CONTRACT_SOURCE_SHA256_V2,
+        action_contract_sha256: FLAT_ACTION_CONTRACT_SEMANTIC_SHA256_V2,
     };
 
 /// Converts the Rust action-slice's compact eight-role vocabulary into the
@@ -5801,6 +5810,10 @@ mod tests {
 #[cfg(test)]
 mod v2_tests {
     use super::*;
+    use crate::flat_policy_v1::{
+        flat_action_ref_projection_role_id_v1, FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1,
+        FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1,
+    };
     use crate::rl_session::{
         FastActorResponseV1, FlatActionDecisionSliceErrorV1, CANONICAL_BURN_DECK_ID,
         FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V2, FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V2,
@@ -5841,8 +5854,20 @@ mod v2_tests {
     }
 
     fn attacker_orders(encoder: &FlatDecisionEncoderV2) -> Vec<Option<u32>> {
-        encoder
-            .relations
+        let view = FlatScoringDecisionViewV2::new(
+            &encoder.globals,
+            &encoder.objects,
+            &encoder.relations,
+            &encoder.object_subtypes,
+            &encoder.ability_uses,
+            &encoder.goads,
+            &encoder.completed_dungeons,
+            &encoder.effect_subtype_changes,
+            &encoder.context_path_elements,
+            &encoder.scorer_actions,
+            &encoder.scorer_action_refs,
+        );
+        view.relations()
             .iter()
             .filter_map(|relation| match (relation.role, relation.payload) {
                 (
@@ -5855,7 +5880,47 @@ mod v2_tests {
     }
 
     #[test]
+    fn action_ref_role_crosswalk_exactly_reuses_the_v1_authority() {
+        const EXPECTED: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 9];
+        const ROLES: [FlatActionRefRoleV1; 8] = [
+            FlatActionRefRoleV1::Source,
+            FlatActionRefRoleV1::Candidate,
+            FlatActionRefRoleV1::Card,
+            FlatActionRefRoleV1::Attacker,
+            FlatActionRefRoleV1::Blocker,
+            FlatActionRefRoleV1::TargetObject,
+            FlatActionRefRoleV1::Cards,
+            FlatActionRefRoleV1::PendingSources,
+        ];
+
+        assert_eq!(FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V2, EXPECTED);
+        assert_eq!(FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1, EXPECTED);
+        assert_eq!(
+            FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V2,
+            FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V1
+        );
+        for (index, role) in ROLES.into_iter().enumerate() {
+            assert_eq!(flat_action_ref_projection_role_id_v2(role), EXPECTED[index]);
+            assert_eq!(
+                flat_action_ref_projection_role_id_v2(role),
+                flat_action_ref_projection_role_id_v1(role)
+            );
+        }
+    }
+
+    #[test]
     fn blocked_order_distinguishes_absent_present_empty_and_mapping_permutations() {
+        let golden: serde_json::Value =
+            serde_json::from_str(include_str!("../../data/flat_policy_v2/goldens_v2.json"))
+                .unwrap();
+        let expected_orders = |name: &str| {
+            golden["blocked_order_by_ordered_attacker"][name]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_u64().map(|order| u32::try_from(order).unwrap()))
+                .collect::<Vec<_>>()
+        };
         let session = v2_session(92_001);
         let mut observation = session
             .flat_policy_observation_v2(expected(&session))
@@ -5882,7 +5947,7 @@ mod v2_tests {
             .attacker_to_ordered_blockers = vec![(first.clone(), Vec::new())];
         assert_eq!(
             attacker_orders(&combat_encoder(&observation).unwrap()),
-            vec![Some(0), None]
+            expected_orders("absent")
         );
 
         observation
@@ -5892,7 +5957,7 @@ mod v2_tests {
             .attacker_to_ordered_blockers =
             vec![(first.clone(), Vec::new()), (second.clone(), Vec::new())];
         let forward = attacker_orders(&combat_encoder(&observation).unwrap());
-        assert_eq!(forward, vec![Some(0), Some(1)]);
+        assert_eq!(forward, expected_orders("present_empty_forward"));
 
         observation
             .projection
@@ -5901,7 +5966,7 @@ mod v2_tests {
             .attacker_to_ordered_blockers =
             vec![(second.clone(), Vec::new()), (first.clone(), Vec::new())];
         let reverse = attacker_orders(&combat_encoder(&observation).unwrap());
-        assert_eq!(reverse, vec![Some(1), Some(0)]);
+        assert_eq!(reverse, expected_orders("present_empty_reverse"));
         assert_ne!(forward, reverse);
 
         observation
@@ -6013,33 +6078,48 @@ mod v2_tests {
         let golden: serde_json::Value =
             serde_json::from_str(include_str!("../../data/flat_policy_v2/goldens_v2.json"))
                 .unwrap();
-        let cases = golden.get("canonical_cases").unwrap();
-        let absent = golden_string(cases, "absent");
-        let left = golden_string(cases, "present_empty_forward");
-        let right = golden_string(cases, "present_empty_reverse");
+        let full_cases = golden.get("full_observation_cases").unwrap();
+        let model_cases = golden.get("model_canonical_cases").unwrap();
+        let absent_full = golden_string(full_cases, "absent");
+        let left_full = golden_string(full_cases, "present_empty_forward");
+        let right_full = golden_string(full_cases, "present_empty_reverse");
+        let absent = golden_string(model_cases, "absent");
+        let left = golden_string(model_cases, "present_empty_forward");
+        let right = golden_string(model_cases, "present_empty_reverse");
         assert_ne!(absent.as_bytes(), left.as_bytes());
         assert_ne!(left.as_bytes(), right.as_bytes());
 
-        for payload in [absent, left, right] {
+        for payload in [absent_full, left_full, right_full, absent, left, right] {
             let parsed: serde_json::Value = serde_json::from_str(payload).unwrap();
             assert_eq!(serde_json::to_string(&parsed).unwrap(), payload);
         }
-        let absent_mapping = serde_json::from_str::<serde_json::Value>(absent).unwrap();
-        let left_mapping = serde_json::from_str::<serde_json::Value>(left).unwrap();
+        let absent_mapping = serde_json::from_str::<serde_json::Value>(absent_full).unwrap();
+        let mut left_observation = serde_json::from_str::<serde_json::Value>(left_full).unwrap();
+        let mut right_observation = serde_json::from_str::<serde_json::Value>(right_full).unwrap();
+        assert_eq!(left_observation["schema_version"].as_u64(), Some(5));
+        assert!(left_observation["projection"].is_object());
+        assert!(left_observation["own_hand"].is_array());
+        assert!(left_observation["known_library_cards"].is_array());
+        assert!(left_observation["known_hand_cards"].is_array());
         assert_eq!(
-            absent_mapping["combat"]["attacker_to_ordered_blockers"]
+            absent_mapping["projection"]["combat"]["attacker_to_ordered_blockers"]
                 .as_array()
                 .unwrap()
                 .len(),
             1
         );
         assert_eq!(
-            left_mapping["combat"]["attacker_to_ordered_blockers"]
+            left_observation["projection"]["combat"]["attacker_to_ordered_blockers"]
                 .as_array()
                 .unwrap()
                 .len(),
             2
         );
+        left_observation["projection"]["combat"]["attacker_to_ordered_blockers"] =
+            serde_json::Value::String("<red-pair-field>".to_string());
+        right_observation["projection"]["combat"]["attacker_to_ordered_blockers"] =
+            serde_json::Value::String("<red-pair-field>".to_string());
+        assert_eq!(left_observation, right_observation);
 
         let red_pair = golden.get("red_pair").unwrap();
         for (side, payload) in [("left", left), ("right", right)] {

@@ -9,6 +9,7 @@
 
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::engine::{CastMode, CostKind, Decision, OptionalCostChoice};
+use crate::flat_action_contract_v2::FLAT_ACTION_CANDIDATE_COMMITMENT_DOMAIN_V2;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use crate::phase_profile::{measure_optional, RlPhaseProfileV1, RlPhaseV1};
@@ -2475,8 +2476,11 @@ struct FlatActionCommitmentHasherV2(Sha256);
 
 impl FlatActionCommitmentHasherV2 {
     fn new(actor: PlayerSeatV1, action_count: u32, ref_count: u32, object_count: u16) -> Self {
+        #[cfg(test)]
+        TEST_FLAT_ACTION_V2_COMMITMENT_CONSTRUCTIONS
+            .with(|calls| calls.set(calls.get().saturating_add(1)));
         let mut hash = Sha256::new();
-        hash.update(b"mtg-kernel-flat-action-candidate-order-v2\0");
+        hash.update(FLAT_ACTION_CANDIDATE_COMMITMENT_DOMAIN_V2);
         hash.update(FLAT_ACTION_DECISION_SLICE_VERSION_V2.to_le_bytes());
         hash.update(FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V2.to_le_bytes());
         hash.update(FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V2.to_le_bytes());
@@ -5254,6 +5258,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 thread_local! {
     static TEST_EXACT_ENVIRONMENT_HASH_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static TEST_FLAT_ACTION_COMMITMENT_CONSTRUCTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static TEST_FLAT_ACTION_V2_COMMITMENT_CONSTRUCTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static TEST_FLAT_ACTION_V1_MATERIALIZATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -5275,6 +5280,16 @@ fn reset_test_flat_action_commitment_constructions() {
 #[cfg(test)]
 fn test_flat_action_commitment_constructions() -> u64 {
     TEST_FLAT_ACTION_COMMITMENT_CONSTRUCTIONS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn reset_test_flat_action_v2_commitment_constructions() {
+    TEST_FLAT_ACTION_V2_COMMITMENT_CONSTRUCTIONS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+fn test_flat_action_v2_commitment_constructions() -> u64 {
+    TEST_FLAT_ACTION_V2_COMMITMENT_CONSTRUCTIONS.with(std::cell::Cell::get)
 }
 
 #[cfg(test)]
@@ -9701,8 +9716,224 @@ mod tests {
     }
 
     #[test]
+    fn flat_action_v2_named_contract_layouts_are_exhaustive_and_exactly_typed() {
+        fn exact_u8(_: u8) {}
+        fn exact_u32(_: u32) {}
+        fn exact_u64(_: u64) {}
+        fn exact_commitment(_: [u8; 16]) {}
+
+        let binding = FlatActionDecisionBindingV2 {
+            slice_version: 1,
+            ref_role_mapping_version: 2,
+            card_token_mapping_version: 3,
+            candidate_commitment_version: 4,
+            card_db_hash: 5,
+            episode_id: 6,
+            environment_revision: 7,
+            bound_policy_step_count: 8,
+            physical_decision_id: 9,
+            bound_physical_decision_count: 10,
+            substep_index: 11,
+            substep_count: 12,
+            acting_player: 13,
+            decision_kind: 14,
+            legal_action_count: 15,
+            candidate_order_commitment: [16; 16],
+        };
+        let FlatActionDecisionBindingV2 {
+            slice_version,
+            ref_role_mapping_version,
+            card_token_mapping_version,
+            candidate_commitment_version,
+            card_db_hash,
+            episode_id,
+            environment_revision,
+            bound_policy_step_count,
+            physical_decision_id,
+            bound_physical_decision_count,
+            substep_index,
+            substep_count,
+            acting_player,
+            decision_kind,
+            legal_action_count,
+            candidate_order_commitment,
+        } = binding;
+        exact_u32(slice_version);
+        exact_u32(ref_role_mapping_version);
+        exact_u32(card_token_mapping_version);
+        exact_u32(candidate_commitment_version);
+        exact_u64(card_db_hash);
+        exact_u64(episode_id);
+        exact_u64(environment_revision);
+        exact_u64(bound_policy_step_count);
+        exact_u64(physical_decision_id);
+        exact_u64(bound_physical_decision_count);
+        exact_u32(substep_index);
+        exact_u32(substep_count);
+        exact_u8(acting_player);
+        exact_u8(decision_kind);
+        exact_u32(legal_action_count);
+        exact_commitment(candidate_order_commitment);
+
+        let slice = FlatActionDecisionSliceV2 {
+            binding,
+            active_action_count: 17,
+            active_ref_count: 18,
+            active_object_count: 19,
+        };
+        let FlatActionDecisionSliceV2 {
+            binding: slice_binding,
+            active_action_count,
+            active_ref_count,
+            active_object_count,
+        } = slice;
+        let _: (FlatActionDecisionBindingV2, u32, u32, u16) = (
+            slice_binding,
+            active_action_count,
+            active_ref_count,
+            active_object_count,
+        );
+
+        let mut actions = [FlatActionCoreV1::default(); 1];
+        let mut refs = [FlatActionRefV2::default(); 1];
+        let mut objects = [FlatActionObjectV2::default(); 1];
+        let buffers = FlatActionDecisionSliceBuffersV2 {
+            actions: &mut actions,
+            refs: &mut refs,
+            objects: &mut objects,
+        };
+        let FlatActionDecisionSliceBuffersV2 {
+            actions: action_buffer,
+            refs: ref_buffer,
+            objects: object_buffer,
+        } = buffers;
+        let _: (
+            &mut [FlatActionCoreV1],
+            &mut [FlatActionRefV2],
+            &mut [FlatActionObjectV2],
+        ) = (action_buffer, ref_buffer, object_buffer);
+    }
+
+    #[test]
+    fn flat_action_v2_full_distinct_field_commitment_matches_python_authority() {
+        fn unsigned(row: &serde_json::Value, field: &str) -> u64 {
+            row[field]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{field} must be an unsigned golden field"))
+        }
+        fn signed(row: &serde_json::Value, field: &str) -> i64 {
+            row[field]
+                .as_i64()
+                .unwrap_or_else(|| panic!("{field} must be a signed golden field"))
+        }
+        fn hex_bytes(value: &str) -> Vec<u8> {
+            assert_eq!(value.len() % 2, 0);
+            value
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect()
+        }
+
+        let golden: serde_json::Value =
+            serde_json::from_str(include_str!("../../data/flat_policy_v2/goldens_v2.json"))
+                .unwrap();
+        let full = &golden["action_commitment"]["full_distinct_fields_v2"];
+        assert_eq!(full["card_db_hash"].as_u64(), Some(KERNEL_CARDDB_HASH));
+        assert_eq!(full["actor_seat"].as_u64(), Some(1));
+        let object_rows = full["objects"].as_array().unwrap();
+        let action_rows = full["actions"].as_array().unwrap();
+        let reference_rows = full["references"].as_array().unwrap();
+        assert_eq!(object_rows.len(), 2);
+        assert_eq!(action_rows.len(), 2);
+        assert_eq!(reference_rows.len(), 2);
+
+        let object = |row: &serde_json::Value| FlatActionObjectV2 {
+            card_token: u32::try_from(unsigned(row, "card_token")).unwrap(),
+            group: match unsigned(row, "group") {
+                6 => FlatActionObjectGroupV1::Exile,
+                8 => FlatActionObjectGroupV1::Command,
+                value => panic!("unexpected golden object group {value}"),
+            },
+            actor_visible_ordinal: u16::try_from(unsigned(row, "actor_visible_ordinal")).unwrap(),
+            owner_relative: u8::try_from(unsigned(row, "owner_relative")).unwrap(),
+            controller_relative: u8::try_from(unsigned(row, "controller_relative")).unwrap(),
+            zone: u8::try_from(unsigned(row, "zone")).unwrap(),
+            zone_change_count: u32::try_from(unsigned(row, "zone_change_count")).unwrap(),
+        };
+        let action = |row: &serde_json::Value| FlatActionCoreV1 {
+            kind: match unsigned(row, "kind") {
+                1 => FlatActionKindV1::PlayLand,
+                26 => FlatActionKindV1::OrderTriggers,
+                value => panic!("unexpected golden action kind {value}"),
+            },
+            flags: u16::try_from(unsigned(row, "flags")).unwrap(),
+            ability_index: u8::try_from(unsigned(row, "ability_index")).unwrap(),
+            remaining: u8::try_from(unsigned(row, "remaining")).unwrap(),
+            mode_index: u8::try_from(unsigned(row, "mode_index")).unwrap(),
+            mode_count: u8::try_from(unsigned(row, "mode_count")).unwrap(),
+            option_index: u16::try_from(unsigned(row, "option_index")).unwrap(),
+            option_count: u16::try_from(unsigned(row, "option_count")).unwrap(),
+            selected_count: u16::try_from(unsigned(row, "selected_count")).unwrap(),
+            min_targets: u16::try_from(unsigned(row, "min_targets")).unwrap(),
+            max_targets: u16::try_from(unsigned(row, "max_targets")).unwrap(),
+            number: i32::try_from(signed(row, "number")).unwrap(),
+            minimum: i32::try_from(signed(row, "minimum")).unwrap(),
+            maximum: i32::try_from(signed(row, "maximum")).unwrap(),
+            mana_choice: u8::try_from(unsigned(row, "mana_choice")).unwrap(),
+            color: u8::try_from(unsigned(row, "color")).unwrap(),
+            cast_mode: u8::try_from(unsigned(row, "cast_mode")).unwrap(),
+            cost_kind: u8::try_from(unsigned(row, "cost_kind")).unwrap(),
+            optional_cost_choice: u8::try_from(unsigned(row, "optional_cost_choice")).unwrap(),
+            target_kind: u8::try_from(unsigned(row, "target_kind")).unwrap(),
+            target_player: u8::try_from(unsigned(row, "target_player")).unwrap(),
+            ref_start: u32::try_from(unsigned(row, "ref_start")).unwrap(),
+            ref_len: u16::try_from(unsigned(row, "ref_len")).unwrap(),
+        };
+        let reference = |row: &serde_json::Value| FlatActionRefV2 {
+            action_index: u32::try_from(unsigned(row, "action_index")).unwrap(),
+            role: match unsigned(row, "role") {
+                2 => FlatActionRefRoleV1::Card,
+                7 => FlatActionRefRoleV1::PendingSources,
+                value => panic!("unexpected golden reference role {value}"),
+            },
+            order_index: u16::try_from(unsigned(row, "order_index")).unwrap(),
+            associated_order: u16::try_from(unsigned(row, "associated_order")).unwrap(),
+            card_token: u32::try_from(unsigned(row, "card_token")).unwrap(),
+            object_index: u16::try_from(unsigned(row, "object_index")).unwrap(),
+        };
+        let objects = [object(&object_rows[0]), object(&object_rows[1])];
+        let actions = [action(&action_rows[0]), action(&action_rows[1])];
+        let references = [reference(&reference_rows[0]), reference(&reference_rows[1])];
+        assert_eq!(objects.map(|row| row.card_token), [65_535, 65_536]);
+
+        let expected = hex_bytes(full["commitment_hex"].as_str().unwrap());
+        assert_eq!(expected.len(), 16);
+        assert_eq!(
+            flat_action_commitment_from_rows_v2(PlayerSeatV1::P1, &actions, &references, &objects,)
+                .unwrap()
+                .as_slice(),
+            expected
+        );
+        let stream = hex_bytes(full["stream_hex"].as_str().unwrap());
+        assert_eq!(
+            format!("{:x}", Sha256::digest(stream)),
+            full["sha256_hex"].as_str().unwrap()
+        );
+        assert_eq!(
+            golden["action_commitment"]["frozen_v1_comparison"]["commitment_hex"].as_str(),
+            Some("208df409eb3dff44ce1980611250948f")
+        );
+        assert_eq!(
+            golden["action_commitment"]["same_representable_rows_v2"]["commitment_hex"].as_str(),
+            Some("dc0bf1ed6b5d073eeae97fe268536a5e")
+        );
+    }
+
+    #[test]
     fn flat_action_v2_mode_isolated_hot_path_and_cross_version_rejection() {
         reset_test_flat_action_commitment_constructions();
+        reset_test_flat_action_v2_commitment_constructions();
         reset_test_flat_action_v1_materializations();
         let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
             81_041,
@@ -9714,6 +9945,7 @@ mod tests {
         .unwrap();
         assert_eq!(test_flat_action_v1_materializations(), 0);
         assert_eq!(test_flat_action_commitment_constructions(), 0);
+        assert_eq!(test_flat_action_v2_commitment_constructions(), 1);
         let decision = flat_current_decision(&session);
 
         let mut v1_actions = [poison_flat_action(); 64];
@@ -9762,16 +9994,22 @@ mod tests {
         let actions_before = actions;
         let refs_before = refs;
         let objects_before = objects;
-        let encoded = session
-            .encode_current_flat_action_slice_v2(
-                decision,
-                &mut FlatActionDecisionSliceBuffersV2 {
-                    actions: &mut actions,
-                    refs: &mut refs,
-                    objects: &mut objects,
-                },
-            )
-            .unwrap();
+        let mut encoded = None;
+        for _ in 0..16 {
+            encoded = Some(
+                session
+                    .encode_current_flat_action_slice_v2(
+                        decision,
+                        &mut FlatActionDecisionSliceBuffersV2 {
+                            actions: &mut actions,
+                            refs: &mut refs,
+                            objects: &mut objects,
+                        },
+                    )
+                    .unwrap(),
+            );
+        }
+        let encoded = encoded.unwrap();
         assert_eq!(
             encoded.binding.slice_version,
             FLAT_ACTION_DECISION_SLICE_VERSION_V2
@@ -9804,6 +10042,7 @@ mod tests {
             .all(|row| (1..=65_536).contains(&row.card_token)));
         assert_eq!(test_flat_action_v1_materializations(), 0);
         assert_eq!(test_flat_action_commitment_constructions(), 0);
+        assert_eq!(test_flat_action_v2_commitment_constructions(), 1);
 
         let response_before = session.current_response();
         let state_before = session.diagnostic_state_hash();

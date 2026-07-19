@@ -8,11 +8,18 @@
   "typed_layout": {
     "domain": "mtg-kernel-flat-policy-typed-layout-v2\u0000",
     "base_sha256": "b4de06cab5644196111ab0f59bec454dd51cb1ec785b19386dc11709650d738b",
-    "overlay_sha256": "5078ebf89fec3add08a72f8055027165837075b03589507d0c0ffff73940950e",
-    "composite_sha256": "9eaf5f503fff9fdeb88979f98bd98041b3ce15af1696425833fb931015f6fc2a"
+    "overlay_sha256": "1b71179042957b75153d78a287711fb4237c9d3f6486aaee7aa26a04a9d0bbf5",
+    "composite_sha256": "b84014c784f2584f1993e62f01588c8ffdfeecc515341d4014f704fcf94ec791"
+  },
+  "action_contract": {
+    "path": "data/flat_policy_v2/action_contract_v2.json",
+    "schema": "flat-action-contract-v2",
+    "source_sha256": "946f495d6ba029f01b781e05b6ee70f1fe2a83f4a13167d02363ad383fe64a75",
+    "canonical_sha256": "bbac470c2352819c53ea5772314d1966ba88c8235e918f8678cc78b27ec1a10f"
   },
   "unchanged_contracts": {
     "mapping_sha256": "bf0347ab442bd1c81cade03899b0c1af93d9bc26468b1e8139dbfc562fa4c4b6",
+    "action_ref_role_crosswalk_sha256": "6bf7f82dc855da04a368fe53cba9411c5e8be07cfa8c450c2742a39bffbab958",
     "authoritative_features_sha256": "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
     "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
     "encoding_contract_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c"
@@ -32,15 +39,6 @@
     "action_candidate_commitment": 2
   },
   "visible_manifest": "globals,objects,relations,object_subtypes,ability_uses,goads,completed_dungeons,effect_subtype_changes,context_path_elements,actions,action_refs",
-  "candidate_commitment_domain": "mtg-kernel-flat-action-candidate-order-v2\u0000",
-  "card_token_contract": {
-    "minimum": 1,
-    "maximum": 65536,
-    "encoding": "card_db_id_plus_one_u32",
-    "wire_encoding": "u32_le",
-    "v1_maximum": 65535,
-    "v1_widened_boundary_disposition": "reject"
-  },
   "blocked_order_contract": {
     "type": "Option<u32>",
     "none": "attacker absent from attacker_to_ordered_blockers",
@@ -58,7 +56,7 @@
   ],
   "topology_audit": {
     "path": "data/flat_policy_v2/ordered_topology_audit_v2.md",
-    "source_sha256": "717a66fb6f4beb0bffdecb94b368f20fadee830c922ff7361bfd87872bae7cf6"
+    "source_sha256": "d1a763bd551be7caa35f07a27bcf0b68c258b23397fbd80acb40a8ca4e78e65f"
   },
   "independent_goldens": "data/flat_policy_v2/goldens_v2.json"
 }

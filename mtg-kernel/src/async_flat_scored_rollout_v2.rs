@@ -1017,8 +1017,15 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v2<O: FlatScoredTrajectoryO
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::async_flat_scored_rollout_v1::{
+        run_async_flat_scored_rollout_observed_v1, FlatBatchScorerErrorV1, FlatBatchScorerV1,
+        FlatScoredSelectedEventV1, FlatScoredTerminalEventV1, FlatScoredTrajectoryObserverV1,
+        FlatScoringBatchViewV1,
+    };
     use crate::rl::PlayerSeatV1;
+    use sha2::{Digest, Sha256};
     use std::any::TypeId;
+    use std::convert::Infallible;
     use std::time::Duration;
 
     fn minimal_valid_packet() -> OwnedFlatScoringDecisionV2 {
@@ -1049,6 +1056,27 @@ mod tests {
             FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V2;
         packet.decision.binding.contract_digests = FLAT_POLICY_CONTRACT_DIGESTS_V2;
         packet.actions.push(FlatScorerActionCoreV2::default());
+        packet
+    }
+
+    fn packet_with_single_action_ref_token(card_token: u32) -> OwnedFlatScoringDecisionV2 {
+        let mut packet = minimal_valid_packet();
+        packet.objects.push(FlatObjectCoreV2 {
+            card_token,
+            ..FlatObjectCoreV2::default()
+        });
+        packet.scorer_action_refs.push(FlatScorerActionRefV2 {
+            action_index: 0,
+            projection_role_id: crate::flat_policy_v2::flat_action_ref_projection_role_id_v2(
+                crate::rl_session::FlatActionRefRoleV1::Source,
+            ),
+            card_token,
+            model_object_index: 0,
+            ..FlatScorerActionRefV2::default()
+        });
+        packet.actions[0].ref_len = 1;
+        packet.decision.active_object_count = 1;
+        packet.decision.active_action_ref_count = 1;
         packet
     }
 
@@ -1098,6 +1126,14 @@ mod tests {
             *blocked_order = Some(1);
         }
         assert!(validate_packet(&packet).is_ok());
+    }
+
+    #[test]
+    fn packet_validation_rejects_padding_and_above_max_card_tokens() {
+        assert!(validate_packet(&packet_with_single_action_ref_token(1)).is_ok());
+        assert!(validate_packet(&packet_with_single_action_ref_token(65_536)).is_ok());
+        assert!(validate_packet(&packet_with_single_action_ref_token(0)).is_err());
+        assert!(validate_packet(&packet_with_single_action_ref_token(65_537)).is_err());
     }
 
     #[test]
@@ -1214,6 +1250,134 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct UniformScorerV1;
+
+    impl FlatBatchScorerV1 for UniformScorerV1 {
+        fn score_batch_v1(
+            &mut self,
+            batch: &FlatScoringBatchViewV1<'_>,
+            action_logits: &mut [f32],
+            values: &mut [f32],
+        ) -> Result<(), FlatBatchScorerErrorV1> {
+            assert_eq!(action_logits.len(), batch.total_action_count());
+            assert_eq!(values.len(), batch.decision_count());
+            action_logits.fill(0.0);
+            values.fill(0.0);
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct UniformTrajectoryRow {
+        episode_id: u64,
+        step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        learner_ordinal: u64,
+        action_seed: u64,
+        selected_index: u32,
+    }
+
+    impl UniformTrajectoryRow {
+        fn from_selected(
+            expected: FastActorDecisionV1,
+            learner_ordinal: u64,
+            action_seed: u64,
+            selected_index: u32,
+        ) -> Self {
+            Self {
+                episode_id: expected.episode_id,
+                step: expected.step,
+                physical_decision_id: expected.physical_decision_id,
+                substep_index: expected.substep_index,
+                learner_ordinal,
+                action_seed,
+                selected_index,
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct UniformTrajectoryObserverV1(Vec<UniformTrajectoryRow>);
+
+    impl FlatScoredTrajectoryObserverV1 for UniformTrajectoryObserverV1 {
+        type Error = Infallible;
+        type Output = Vec<UniformTrajectoryRow>;
+
+        fn observe_selected_v1(
+            &mut self,
+            event: FlatScoredSelectedEventV1<'_>,
+        ) -> Result<(), Self::Error> {
+            self.0.push(UniformTrajectoryRow::from_selected(
+                event.expected,
+                event.learner_ordinal,
+                event.action_seed,
+                event.selected_index,
+            ));
+            Ok(())
+        }
+
+        fn observe_terminal_v1(
+            &mut self,
+            _event: FlatScoredTerminalEventV1,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn finish_v1(self) -> Result<Self::Output, Self::Error> {
+            Ok(self.0)
+        }
+    }
+
+    #[derive(Default)]
+    struct UniformTrajectoryObserverV2(Vec<UniformTrajectoryRow>);
+
+    impl FlatScoredTrajectoryObserverV2 for UniformTrajectoryObserverV2 {
+        type Error = Infallible;
+        type Output = Vec<UniformTrajectoryRow>;
+
+        fn observe_selected_v2(
+            &mut self,
+            event: FlatScoredSelectedEventV2<'_>,
+        ) -> Result<(), Self::Error> {
+            self.0.push(UniformTrajectoryRow::from_selected(
+                event.expected,
+                event.learner_ordinal,
+                event.action_seed,
+                event.selected_index,
+            ));
+            Ok(())
+        }
+
+        fn observe_terminal_v2(
+            &mut self,
+            _event: FlatScoredTerminalEventV2,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn finish_v2(self) -> Result<Self::Output, Self::Error> {
+            Ok(self.0)
+        }
+    }
+
+    fn canonical_uniform_trajectory_fold(rows: &[UniformTrajectoryRow]) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(b"mtg-kernel-test-uniform-trajectory-v1\0");
+        hasher.update((rows.len() as u64).to_le_bytes());
+        for row in rows {
+            hasher.update(row.episode_id.to_le_bytes());
+            hasher.update(row.step.to_le_bytes());
+            hasher.update(row.physical_decision_id.to_le_bytes());
+            hasher.update(row.substep_index.to_le_bytes());
+            hasher.update(row.learner_ordinal.to_le_bytes());
+            hasher.update(row.action_seed.to_le_bytes());
+            hasher.update(row.selected_index.to_le_bytes());
+        }
+        hasher.finalize().into()
+    }
+
     #[test]
     fn actual_v2_rollout_delivers_only_v2_contract_batches() {
         let mut scorer = ContractCheckingScorerV2::default();
@@ -1225,6 +1389,63 @@ mod tests {
         assert_eq!(
             result.metrics.scored_decision_count,
             result.metrics.sampled_action_count
+        );
+    }
+
+    #[test]
+    fn v1_and_v2_uniform_logits_preserve_bounded_trajectory_semantics() {
+        let mut shaped = config(4);
+        shaped.worker_count = 2;
+        shaped.sessions_per_worker = 2;
+        shaped.broker_batch_target = 3;
+        let mut v1_scorer = UniformScorerV1;
+        let mut v2_scorer = ContractCheckingScorerV2::default();
+
+        let (v1, v1_rows) = run_async_flat_scored_rollout_observed_v1(
+            shaped.clone(),
+            &mut v1_scorer,
+            UniformTrajectoryObserverV1::default(),
+        )
+        .unwrap();
+        let (v2, v2_rows) = run_async_flat_scored_rollout_observed_v2(
+            shaped,
+            &mut v2_scorer,
+            UniformTrajectoryObserverV2::default(),
+        )
+        .unwrap();
+        assert!(v1.all_natural());
+        assert!(v2.all_natural());
+        assert!(!v1_rows.is_empty());
+        assert_eq!(v2_rows, v1_rows);
+        assert_eq!(
+            canonical_uniform_trajectory_fold(&v2_rows),
+            canonical_uniform_trajectory_fold(&v1_rows)
+        );
+        // Episode records bind terminal summaries, learner selected-action
+        // traces, and per-episode action counts. Exact observer-row equality
+        // independently binds every learner seed and selected action.
+        assert_eq!(v2.episodes, v1.episodes);
+        assert_eq!(v2.policy_step_count, v1.policy_step_count);
+        assert_eq!(v2.physical_decision_count, v1.physical_decision_count);
+        assert_ne!(v1.metrics.batch_membership_digest, [0; 32]);
+        assert_ne!(v2.metrics.batch_membership_digest, [0; 32]);
+        // The production membership folds deliberately use distinct V1/V2
+        // domains, so equal semantic trajectories must remain version-separated.
+        assert_ne!(
+            v2.metrics.batch_membership_digest,
+            v1.metrics.batch_membership_digest
+        );
+        assert_eq!(
+            v2.metrics.scored_decision_count,
+            v1.metrics.scored_decision_count
+        );
+        assert_eq!(
+            v2.metrics.sampled_action_count,
+            v1.metrics.sampled_action_count
+        );
+        assert_eq!(
+            v2.metrics.terminal_notification_count,
+            v1.metrics.terminal_notification_count
         );
     }
 }

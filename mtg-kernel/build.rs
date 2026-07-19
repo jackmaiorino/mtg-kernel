@@ -441,6 +441,59 @@ fn json_u64(value: &Value, field: &str, source: &Path) -> u64 {
         .unwrap_or_else(|| panic!("{}: {field} must be an unsigned integer", source.display()))
 }
 
+fn require_exact_object_keys(value: &Value, expected: &[&str], label: &str, source: &Path) {
+    let object = value
+        .as_object()
+        .unwrap_or_else(|| panic!("{}: {label} must be an object", source.display()));
+    let mut actual = object.keys().map(String::as_str).collect::<Vec<_>>();
+    let mut expected = expected.to_vec();
+    actual.sort_unstable();
+    expected.sort_unstable();
+    if actual != expected {
+        panic!(
+            "{}: {label} keys drift: expected {expected:?}, found {actual:?}",
+            source.display()
+        );
+    }
+}
+
+fn require_exact_string_pairs(
+    value: &Value,
+    expected: &[(&str, &str)],
+    label: &str,
+    source: &Path,
+) {
+    let rows = value
+        .as_array()
+        .unwrap_or_else(|| panic!("{}: {label} must be an array", source.display()));
+    if rows.len() != expected.len() {
+        panic!(
+            "{}: {label} width drift: expected {}, found {}",
+            source.display(),
+            expected.len(),
+            rows.len()
+        );
+    }
+    for (index, ((expected_name, expected_encoding), row)) in expected.iter().zip(rows).enumerate()
+    {
+        let pair = row.as_array().unwrap_or_else(|| {
+            panic!(
+                "{}: {label}[{index}] must be a two-string array",
+                source.display()
+            )
+        });
+        if pair.len() != 2
+            || pair[0].as_str() != Some(expected_name)
+            || pair[1].as_str() != Some(expected_encoding)
+        {
+            panic!(
+                "{}: {label}[{index}] drift: expected [{expected_name:?}, {expected_encoding:?}], found {row}",
+                source.display()
+            );
+        }
+    }
+}
+
 fn parse_sha256(value: &str, label: &str) -> [u8; 32] {
     if value.len() != 64
         || !value
@@ -743,20 +796,29 @@ pub const FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1: [u8; {}] = [{}];\n",
     )
 }
 
-fn flat_policy_contract_v2_codegen(repo_root: &Path) -> String {
+fn flat_policy_contract_v2_codegen(repo_root: &Path) -> (String, String) {
     const INVENTORY_SCHEMA: &str = "flat-policy-feature-inventory-v2";
     const GOLDENS_SCHEMA: &str = "flat-policy-v2-independent-goldens-v1";
+    const ACTION_CONTRACT_SCHEMA: &str = "flat-action-contract-v2";
     const BASE_INVENTORY_SCHEMA: &str = "flat-policy-feature-inventory-v1";
+    const CROSSWALK_SCHEMA: &str = "flat-policy-action-ref-role-crosswalk-v1";
     const TYPED_LAYOUT_DOMAIN: &[u8] = b"mtg-kernel-flat-policy-typed-layout-v2\0";
-    const ACTION_COMMITMENT_DOMAIN: &str = "mtg-kernel-flat-action-candidate-order-v2\0";
     const VISIBLE_MANIFEST: &str = "globals,objects,relations,object_subtypes,ability_uses,goads,completed_dungeons,effect_subtype_changes,context_path_elements,actions,action_refs";
-    const CROSSWALK_VERSION: u64 = 1;
-    const INTERNAL_TO_PROJECTION: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 9];
-    const INTERNAL_ROLE_WIDTH: u64 = 8;
-    const PROJECTION_ROLE_WIDTH: u64 = 10;
+    const INTERNAL_ROLES: [(&str, u64, u64); 8] = [
+        ("source", 0, 0),
+        ("candidate", 1, 1),
+        ("card", 2, 2),
+        ("attacker", 3, 3),
+        ("blocker", 4, 4),
+        ("target_object", 5, 5),
+        ("cards", 6, 6),
+        ("pending_sources", 7, 9),
+    ];
+    const PROJECTION_ONLY: [(&str, u64); 2] = [("attackers", 7), ("blockers", 8)];
 
     let inventory_path = repo_root.join("data/flat_policy_v2/feature_inventory_v2.json");
     let goldens_path = repo_root.join("data/flat_policy_v2/goldens_v2.json");
+    let action_contract_path = repo_root.join("data/flat_policy_v2/action_contract_v2.json");
     let base_inventory_path = repo_root.join("data/flat_policy_v1/feature_inventory_v1.json");
     let base_goldens_path = repo_root.join("data/flat_policy_v1/goldens_v1.json");
     let base_layout_path = repo_root.join("mtg-kernel/src/flat_policy_v1.rs");
@@ -766,6 +828,7 @@ fn flat_policy_contract_v2_codegen(repo_root: &Path) -> String {
     for path in [
         &inventory_path,
         &goldens_path,
+        &action_contract_path,
         &base_inventory_path,
         &base_goldens_path,
         &base_layout_path,
@@ -785,6 +848,8 @@ fn flat_policy_contract_v2_codegen(repo_root: &Path) -> String {
     };
     let (_inventory_bytes, inventory): (Vec<u8>, Value) = read_json(&inventory_path);
     let (_, goldens): (Vec<u8>, Value) = read_json(&goldens_path);
+    let (action_contract_bytes, action_contract): (Vec<u8>, Value) =
+        read_json(&action_contract_path);
     let (base_inventory_bytes, base_inventory): (Vec<u8>, Value) = read_json(&base_inventory_path);
     let (_, base_goldens): (Vec<u8>, Value) = read_json(&base_goldens_path);
 
@@ -794,9 +859,584 @@ fn flat_policy_contract_v2_codegen(repo_root: &Path) -> String {
     if json_string(&goldens, "schema", &goldens_path) != GOLDENS_SCHEMA {
         panic!("{}: unsupported schema", goldens_path.display());
     }
+    if json_string(&action_contract, "schema", &action_contract_path) != ACTION_CONTRACT_SCHEMA {
+        panic!("{}: unsupported schema", action_contract_path.display());
+    }
     if json_string(&base_inventory, "schema", &base_inventory_path) != BASE_INVENTORY_SCHEMA {
         panic!("{}: unsupported base schema", base_inventory_path.display());
     }
+
+    require_exact_object_keys(
+        &action_contract,
+        &[
+            "schema",
+            "source_digest_semantics",
+            "semantic_digest_semantics",
+            "type_identities",
+            "typed_layouts",
+            "versions",
+            "reference_role_mapping",
+            "candidate_commitment",
+            "card_token_contract",
+        ],
+        "action contract root",
+        &action_contract_path,
+    );
+    if json_string(
+        &action_contract,
+        "source_digest_semantics",
+        &action_contract_path,
+    ) != "raw_utf8_file_bytes_sha256"
+        || json_string(
+            &action_contract,
+            "semantic_digest_semantics",
+            &action_contract_path,
+        ) != "canonical_json_utf8_sha256"
+    {
+        panic!(
+            "{}: action-contract digest semantics drift",
+            action_contract_path.display()
+        );
+    }
+    let type_identities = action_contract.get("type_identities").unwrap_or_else(|| {
+        panic!(
+            "{}: missing type_identities",
+            action_contract_path.display()
+        )
+    });
+    require_exact_object_keys(
+        type_identities,
+        &[
+            "action_row",
+            "object_row",
+            "reference_row",
+            "binding",
+            "slice",
+            "buffers",
+        ],
+        "action contract type_identities",
+        &action_contract_path,
+    );
+    for (field, expected) in [
+        ("action_row", "FlatActionCoreV1_shared_by_v2"),
+        ("object_row", "FlatActionObjectV2"),
+        ("reference_row", "FlatActionRefV2"),
+        ("binding", "FlatActionDecisionBindingV2"),
+        ("slice", "FlatActionDecisionSliceV2"),
+        ("buffers", "FlatActionDecisionSliceBuffersV2"),
+    ] {
+        if json_string(type_identities, field, &action_contract_path) != expected {
+            panic!(
+                "{}: action-contract type identity {field} drift",
+                action_contract_path.display()
+            );
+        }
+    }
+    let action_typed_layouts = action_contract
+        .get("typed_layouts")
+        .unwrap_or_else(|| panic!("{}: missing typed_layouts", action_contract_path.display()));
+    require_exact_object_keys(
+        action_typed_layouts,
+        &[
+            "FlatActionDecisionBindingV2",
+            "FlatActionDecisionSliceV2",
+            "FlatActionDecisionSliceBuffersV2",
+        ],
+        "action contract typed_layouts",
+        &action_contract_path,
+    );
+    require_exact_string_pairs(
+        action_typed_layouts
+            .get("FlatActionDecisionBindingV2")
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: missing FlatActionDecisionBindingV2 layout",
+                    action_contract_path.display()
+                )
+            }),
+        &[
+            ("slice_version", "u32"),
+            ("ref_role_mapping_version", "u32"),
+            ("card_token_mapping_version", "u32"),
+            ("candidate_commitment_version", "u32"),
+            ("card_db_hash", "u64"),
+            ("episode_id", "u64"),
+            ("environment_revision", "u64"),
+            ("bound_policy_step_count", "u64"),
+            ("physical_decision_id", "u64"),
+            ("bound_physical_decision_count", "u64"),
+            ("substep_index", "u32"),
+            ("substep_count", "u32"),
+            ("acting_player", "u8"),
+            ("decision_kind", "u8"),
+            ("legal_action_count", "u32"),
+            ("candidate_order_commitment", "[u8;16]"),
+        ],
+        "FlatActionDecisionBindingV2 layout",
+        &action_contract_path,
+    );
+    require_exact_string_pairs(
+        action_typed_layouts
+            .get("FlatActionDecisionSliceV2")
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: missing FlatActionDecisionSliceV2 layout",
+                    action_contract_path.display()
+                )
+            }),
+        &[
+            ("binding", "FlatActionDecisionBindingV2"),
+            ("active_action_count", "u32"),
+            ("active_ref_count", "u32"),
+            ("active_object_count", "u16"),
+        ],
+        "FlatActionDecisionSliceV2 layout",
+        &action_contract_path,
+    );
+    require_exact_string_pairs(
+        action_typed_layouts
+            .get("FlatActionDecisionSliceBuffersV2")
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: missing FlatActionDecisionSliceBuffersV2 layout",
+                    action_contract_path.display()
+                )
+            }),
+        &[
+            ("actions", "&mut[FlatActionCoreV1]"),
+            ("refs", "&mut[FlatActionRefV2]"),
+            ("objects", "&mut[FlatActionObjectV2]"),
+        ],
+        "FlatActionDecisionSliceBuffersV2 layout",
+        &action_contract_path,
+    );
+    let action_versions = action_contract
+        .get("versions")
+        .unwrap_or_else(|| panic!("{}: missing versions", action_contract_path.display()));
+    require_exact_object_keys(
+        action_versions,
+        &[
+            "slice",
+            "reference_role_mapping",
+            "card_token_mapping",
+            "candidate_commitment",
+        ],
+        "action contract versions",
+        &action_contract_path,
+    );
+    for (field, expected) in [
+        ("slice", 2),
+        ("reference_role_mapping", 1),
+        ("card_token_mapping", 2),
+        ("candidate_commitment", 2),
+    ] {
+        if json_u64(action_versions, field, &action_contract_path) != expected {
+            panic!(
+                "{}: action-contract version {field} drift",
+                action_contract_path.display()
+            );
+        }
+    }
+
+    let reference_role_mapping = action_contract
+        .get("reference_role_mapping")
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: missing reference_role_mapping",
+                action_contract_path.display()
+            )
+        });
+    require_exact_object_keys(
+        reference_role_mapping,
+        &[
+            "authority_path",
+            "authority_schema",
+            "mapping_version",
+            "canonical_sha256",
+            "compatibility",
+        ],
+        "action contract reference_role_mapping",
+        &action_contract_path,
+    );
+    if json_string(
+        reference_role_mapping,
+        "authority_path",
+        &action_contract_path,
+    ) != "data/flat_policy_v1/goldens_v1.json#action_ref_role_crosswalk"
+        || json_string(
+            reference_role_mapping,
+            "authority_schema",
+            &action_contract_path,
+        ) != CROSSWALK_SCHEMA
+        || json_string(
+            reference_role_mapping,
+            "compatibility",
+            &action_contract_path,
+        ) != "v2_exactly_reuses_all_v1_internal_and_projection_role_ids"
+    {
+        panic!(
+            "{}: reference-role authority identity drift",
+            action_contract_path.display()
+        );
+    }
+
+    let base_crosswalk = base_goldens
+        .get("action_ref_role_crosswalk")
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: missing action_ref_role_crosswalk",
+                base_goldens_path.display()
+            )
+        });
+    require_exact_object_keys(
+        base_crosswalk,
+        &[
+            "entries",
+            "mapping_version",
+            "projection_only",
+            "python_projection_width",
+            "rust_internal_width",
+            "schema",
+        ],
+        "V1 action-ref role crosswalk authority",
+        &base_goldens_path,
+    );
+    let crosswalk_version = json_u64(base_crosswalk, "mapping_version", &base_goldens_path);
+    let internal_role_width = json_u64(base_crosswalk, "rust_internal_width", &base_goldens_path);
+    let projection_role_width = json_u64(
+        base_crosswalk,
+        "python_projection_width",
+        &base_goldens_path,
+    );
+    if json_string(base_crosswalk, "schema", &base_goldens_path) != CROSSWALK_SCHEMA
+        || crosswalk_version != 1
+        || internal_role_width != INTERNAL_ROLES.len() as u64
+        || projection_role_width != 10
+        || json_u64(
+            reference_role_mapping,
+            "mapping_version",
+            &action_contract_path,
+        ) != crosswalk_version
+        || json_u64(
+            action_versions,
+            "reference_role_mapping",
+            &action_contract_path,
+        ) != crosswalk_version
+    {
+        panic!("V2 action-ref role mapping identity diverged from its V1 authority");
+    }
+    let entries = base_crosswalk
+        .get("entries")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: crosswalk entries must be an array",
+                base_goldens_path.display()
+            )
+        });
+    if entries.len() != INTERNAL_ROLES.len() {
+        panic!("V2 action-ref internal role width diverged from its V1 authority");
+    }
+    let mut internal_to_projection = Vec::with_capacity(INTERNAL_ROLES.len());
+    for (entry, (role, internal_id, projection_id)) in entries.iter().zip(INTERNAL_ROLES) {
+        if entry.as_object().is_none_or(|entry| entry.len() != 3)
+            || json_string(entry, "role", &base_goldens_path) != role
+            || json_u64(entry, "rust_internal_id", &base_goldens_path) != internal_id
+            || json_u64(entry, "python_projection_id", &base_goldens_path) != projection_id
+        {
+            panic!(
+                "V2 action-ref role {role:?} diverged from the validated V1 crosswalk authority"
+            );
+        }
+        internal_to_projection.push(
+            u8::try_from(projection_id)
+                .expect("validated V1 action-ref projection ids must fit in u8"),
+        );
+    }
+    let projection_only = base_crosswalk
+        .get("projection_only")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: crosswalk projection_only must be an array",
+                base_goldens_path.display()
+            )
+        });
+    if projection_only.len() != PROJECTION_ONLY.len() {
+        panic!("V2 projection-only role width diverged from its V1 authority");
+    }
+    for (entry, (role, projection_id)) in projection_only.iter().zip(PROJECTION_ONLY) {
+        if entry.as_object().is_none_or(|entry| entry.len() != 2)
+            || json_string(entry, "role", &base_goldens_path) != role
+            || json_u64(entry, "python_projection_id", &base_goldens_path) != projection_id
+        {
+            panic!(
+                "V2 projection-only role {role:?} diverged from the validated V1 crosswalk authority"
+            );
+        }
+    }
+    let action_ref_role_crosswalk_digest = canonical_json_sha256(base_crosswalk);
+    require_digest_v2(
+        action_ref_role_crosswalk_digest,
+        parse_sha256(
+            json_string(
+                reference_role_mapping,
+                "canonical_sha256",
+                &action_contract_path,
+            ),
+            "V2 reference-role authority canonical_sha256",
+        ),
+        "V1 action-reference crosswalk authority digest",
+    );
+
+    let commitment_contract = action_contract
+        .get("candidate_commitment")
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: missing candidate_commitment",
+                action_contract_path.display()
+            )
+        });
+    require_exact_object_keys(
+        commitment_contract,
+        &[
+            "domain_utf8",
+            "stream_order",
+            "digest",
+            "published_bytes",
+            "header_fields",
+            "object_row",
+            "action_row",
+            "reference_row",
+        ],
+        "action contract candidate_commitment",
+        &action_contract_path,
+    );
+    let action_commitment_domain =
+        json_string(commitment_contract, "domain_utf8", &action_contract_path);
+    if action_commitment_domain != "mtg-kernel-flat-action-candidate-order-v2\0"
+        || json_string(commitment_contract, "stream_order", &action_contract_path)
+            != "header_then_objects_by_object_index_then_each_actions_refs_in_slice_order_then_action"
+        || json_string(commitment_contract, "digest", &action_contract_path) != "sha256"
+        || json_string(
+            commitment_contract,
+            "published_bytes",
+            &action_contract_path,
+        ) != "first_16"
+    {
+        panic!(
+            "{}: candidate commitment identity drift",
+            action_contract_path.display()
+        );
+    }
+    require_exact_string_pairs(
+        commitment_contract
+            .get("header_fields")
+            .unwrap_or_else(|| panic!("{}: missing header_fields", action_contract_path.display())),
+        &[
+            ("slice_version", "u32_le"),
+            ("reference_role_mapping_version", "u32_le"),
+            ("card_token_mapping_version", "u32_le"),
+            ("candidate_commitment_version", "u32_le"),
+            ("card_db_hash", "u64_le"),
+            ("actor_seat", "u8_p0_0_p1_1"),
+            ("action_count", "u32_le"),
+            ("reference_count", "u32_le"),
+            ("object_count", "u16_le"),
+        ],
+        "action contract header_fields",
+        &action_contract_path,
+    );
+    let object_row = commitment_contract
+        .get("object_row")
+        .unwrap_or_else(|| panic!("{}: missing object_row", action_contract_path.display()));
+    require_exact_object_keys(
+        object_row,
+        &["marker_ascii", "fields"],
+        "action contract object_row",
+        &action_contract_path,
+    );
+    if json_string(object_row, "marker_ascii", &action_contract_path) != "O" {
+        panic!("{}: object marker drift", action_contract_path.display());
+    }
+    require_exact_string_pairs(
+        object_row
+            .get("fields")
+            .unwrap_or_else(|| panic!("{}: missing object fields", action_contract_path.display())),
+        &[
+            ("object_index", "u16_le"),
+            ("card_token", "u32_le"),
+            ("group", "u8_discriminant"),
+            ("actor_visible_ordinal", "u16_le"),
+            ("owner_relative", "u8"),
+            ("controller_relative", "u8"),
+            ("zone", "u8"),
+            ("zone_change_count", "u32_le"),
+        ],
+        "action contract object fields",
+        &action_contract_path,
+    );
+    let action_row = commitment_contract
+        .get("action_row")
+        .unwrap_or_else(|| panic!("{}: missing action_row", action_contract_path.display()));
+    require_exact_object_keys(
+        action_row,
+        &["marker_ascii", "fields"],
+        "action contract action_row",
+        &action_contract_path,
+    );
+    if json_string(action_row, "marker_ascii", &action_contract_path) != "A" {
+        panic!("{}: action marker drift", action_contract_path.display());
+    }
+    require_exact_string_pairs(
+        action_row
+            .get("fields")
+            .unwrap_or_else(|| panic!("{}: missing action fields", action_contract_path.display())),
+        &[
+            ("action_index", "u32_le"),
+            ("kind", "u8_discriminant"),
+            ("flags", "u16_le"),
+            ("ability_index", "u8"),
+            ("remaining", "u8"),
+            ("mode_index", "u8"),
+            ("mode_count", "u8"),
+            ("option_index", "u16_le"),
+            ("option_count", "u16_le"),
+            ("selected_count", "u16_le"),
+            ("min_targets", "u16_le"),
+            ("max_targets", "u16_le"),
+            ("number", "i32_le_twos_complement"),
+            ("minimum", "i32_le_twos_complement"),
+            ("maximum", "i32_le_twos_complement"),
+            ("mana_choice", "u8"),
+            ("color", "u8"),
+            ("cast_mode", "u8"),
+            ("cost_kind", "u8"),
+            ("optional_cost_choice", "u8"),
+            ("target_kind", "u8"),
+            ("target_player", "u8"),
+            ("ref_start", "u32_le"),
+            ("ref_len", "u16_le"),
+        ],
+        "action contract action fields",
+        &action_contract_path,
+    );
+    let reference_row = commitment_contract
+        .get("reference_row")
+        .unwrap_or_else(|| panic!("{}: missing reference_row", action_contract_path.display()));
+    require_exact_object_keys(
+        reference_row,
+        &["marker_ascii", "fields"],
+        "action contract reference_row",
+        &action_contract_path,
+    );
+    if json_string(reference_row, "marker_ascii", &action_contract_path) != "R" {
+        panic!("{}: reference marker drift", action_contract_path.display());
+    }
+    require_exact_string_pairs(
+        reference_row.get("fields").unwrap_or_else(|| {
+            panic!(
+                "{}: missing reference fields",
+                action_contract_path.display()
+            )
+        }),
+        &[
+            ("action_index", "u32_le"),
+            ("role", "u8_discriminant"),
+            ("order_index", "u16_le"),
+            ("associated_order", "u16_le"),
+            ("card_token", "u32_le"),
+            ("object_index", "u16_le"),
+            ("bound_object.card_token", "u32_le"),
+            ("bound_object.group", "u8_discriminant"),
+            ("bound_object.actor_visible_ordinal", "u16_le"),
+            ("bound_object.owner_relative", "u8"),
+            ("bound_object.controller_relative", "u8"),
+            ("bound_object.zone", "u8"),
+            ("bound_object.zone_change_count", "u32_le"),
+        ],
+        "action contract reference fields",
+        &action_contract_path,
+    );
+    let action_token_contract = action_contract
+        .get("card_token_contract")
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: missing card_token_contract",
+                action_contract_path.display()
+            )
+        });
+    require_exact_object_keys(
+        action_token_contract,
+        &[
+            "minimum",
+            "maximum",
+            "encoding",
+            "wire_encoding",
+            "zero_reserved_for_padding",
+        ],
+        "action contract card_token_contract",
+        &action_contract_path,
+    );
+    if json_u64(action_token_contract, "minimum", &action_contract_path) != 1
+        || json_u64(action_token_contract, "maximum", &action_contract_path) != 65_536
+        || json_string(action_token_contract, "encoding", &action_contract_path)
+            != "card_db_id_plus_one_u32"
+        || json_string(
+            action_token_contract,
+            "wire_encoding",
+            &action_contract_path,
+        ) != "u32_le"
+        || action_token_contract
+            .get("zero_reserved_for_padding")
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        panic!(
+            "{}: card-token contract drift",
+            action_contract_path.display()
+        );
+    }
+
+    let action_contract_source_digest = sha256_bytes(&action_contract_bytes);
+    let action_contract_semantic_digest = canonical_json_sha256(&action_contract);
+    let action_inventory = inventory.get("action_contract").unwrap_or_else(|| {
+        panic!(
+            "{}: missing action_contract binding",
+            inventory_path.display()
+        )
+    });
+    require_exact_object_keys(
+        action_inventory,
+        &["path", "schema", "source_sha256", "canonical_sha256"],
+        "inventory action_contract",
+        &inventory_path,
+    );
+    if json_string(action_inventory, "path", &inventory_path)
+        != "data/flat_policy_v2/action_contract_v2.json"
+        || json_string(action_inventory, "schema", &inventory_path) != ACTION_CONTRACT_SCHEMA
+    {
+        panic!(
+            "{}: action-contract inventory identity drift",
+            inventory_path.display()
+        );
+    }
+    require_digest_v2(
+        action_contract_source_digest,
+        parse_sha256(
+            json_string(action_inventory, "source_sha256", &inventory_path),
+            "V2 action-contract source_sha256",
+        ),
+        "action-contract raw source digest",
+    );
+    require_digest_v2(
+        action_contract_semantic_digest,
+        parse_sha256(
+            json_string(action_inventory, "canonical_sha256", &inventory_path),
+            "V2 action-contract canonical_sha256",
+        ),
+        "action-contract canonical semantic digest",
+    );
 
     let inventory_digest = canonical_json_sha256(&inventory);
     require_digest_v2(
@@ -902,6 +1542,18 @@ fn flat_policy_contract_v2_codegen(repo_root: &Path) -> String {
     let unchanged = inventory
         .get("unchanged_contracts")
         .unwrap_or_else(|| panic!("{}: missing unchanged_contracts", inventory_path.display()));
+    require_exact_object_keys(
+        unchanged,
+        &[
+            "mapping_sha256",
+            "action_ref_role_crosswalk_sha256",
+            "authoritative_features_sha256",
+            "feature_contract_digest",
+            "encoding_contract_digest",
+        ],
+        "V2 unchanged_contracts",
+        &inventory_path,
+    );
     let mapping_digest = parse_sha256(
         json_string(unchanged, "mapping_sha256", &inventory_path),
         "V2 unchanged mapping_sha256",
@@ -913,6 +1565,18 @@ fn flat_policy_contract_v2_codegen(repo_root: &Path) -> String {
             "V1 goldens mapping_sha256",
         ),
         "unchanged enum and projection mapping digest",
+    );
+    require_digest_v2(
+        parse_sha256(
+            json_string(
+                unchanged,
+                "action_ref_role_crosswalk_sha256",
+                &inventory_path,
+            ),
+            "V2 unchanged action_ref_role_crosswalk_sha256",
+        ),
+        action_ref_role_crosswalk_digest,
+        "unchanged action-reference role crosswalk digest",
     );
     for field in [
         "authoritative_features_sha256",
@@ -969,30 +1633,24 @@ fn flat_policy_contract_v2_codegen(repo_root: &Path) -> String {
     if json_string(&inventory, "visible_manifest", &inventory_path) != VISIBLE_MANIFEST {
         panic!("{}: visible manifest drift", inventory_path.display());
     }
-    if json_string(&inventory, "candidate_commitment_domain", &inventory_path)
-        != ACTION_COMMITMENT_DOMAIN
-    {
-        panic!(
-            "{}: action commitment domain drift",
-            inventory_path.display()
-        );
-    }
-
-    let token_contract = inventory
-        .get("card_token_contract")
-        .unwrap_or_else(|| panic!("{}: missing card_token_contract", inventory_path.display()));
-    if json_u64(token_contract, "minimum", &inventory_path) != 1
-        || json_u64(token_contract, "maximum", &inventory_path) != 65_536
-        || json_string(token_contract, "encoding", &inventory_path) != "card_db_id_plus_one_u32"
-    {
-        panic!("{}: card token contract drift", inventory_path.display());
-    }
     let blocked_order = inventory.get("blocked_order_contract").unwrap_or_else(|| {
         panic!(
             "{}: missing blocked_order_contract",
             inventory_path.display()
         )
     });
+    require_exact_object_keys(
+        blocked_order,
+        &[
+            "type",
+            "none",
+            "some",
+            "invariant",
+            "v1_redundant_field_removed",
+        ],
+        "V2 blocked_order_contract",
+        &inventory_path,
+    );
     if json_string(blocked_order, "type", &inventory_path) != "Option<u32>"
         || json_string(blocked_order, "none", &inventory_path)
             != "attacker absent from attacker_to_ordered_blockers"
@@ -1000,6 +1658,8 @@ fn flat_policy_contract_v2_codegen(repo_root: &Path) -> String {
             != "exact zero-based mapping index including present-empty"
         || json_string(blocked_order, "invariant", &inventory_path)
             != "present indices unique and contiguous"
+        || json_string(blocked_order, "v1_redundant_field_removed", &inventory_path)
+            != "was_blocked"
     {
         panic!("{}: blocked_order contract drift", inventory_path.display());
     }
@@ -1023,28 +1683,45 @@ fn flat_policy_contract_v2_codegen(repo_root: &Path) -> String {
         "ordered topology audit source digest",
     );
 
-    let internal_to_projection = INTERNAL_TO_PROJECTION
+    let internal_to_projection = internal_to_projection
         .iter()
         .map(u8::to_string)
         .collect::<Vec<_>>()
         .join(", ");
-    format!(
+    let flat_policy_contract = format!(
         "// @generated by mtg-kernel/build.rs from data/flat_policy_v2; do not edit.\n\
 pub const FLAT_POLICY_MAPPING_SHA256_V2: [u8; 32] = {};\n\
 pub const FLAT_POLICY_FEATURE_INVENTORY_SHA256_V2: [u8; 32] = {};\n\
 pub const FLAT_POLICY_BASE_TYPED_LAYOUT_SHA256_V2: [u8; 32] = {};\n\
 pub const FLAT_POLICY_OVERLAY_TYPED_LAYOUT_SHA256_V2: [u8; 32] = {};\n\
 pub const FLAT_POLICY_TYPED_LAYOUT_SHA256_V2: [u8; 32] = {};\n\
-pub const FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V2: u32 = {CROSSWALK_VERSION};\n\
-pub const FLAT_ACTION_REF_INTERNAL_ROLE_WIDTH_V2: u8 = {INTERNAL_ROLE_WIDTH};\n\
-pub const FLAT_ACTION_REF_PROJECTION_ROLE_WIDTH_V2: u8 = {PROJECTION_ROLE_WIDTH};\n\
-pub const FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V2: [u8; {INTERNAL_ROLE_WIDTH}] = [{internal_to_projection}];\n",
+pub const FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V2: u32 = {crosswalk_version};\n\
+pub const FLAT_ACTION_REF_INTERNAL_ROLE_WIDTH_V2: u8 = {internal_role_width};\n\
+pub const FLAT_ACTION_REF_PROJECTION_ROLE_WIDTH_V2: u8 = {projection_role_width};\n\
+pub const FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V2: [u8; {internal_role_width}] = [{internal_to_projection}];\n",
         rust_byte_array(mapping_digest),
         rust_byte_array(inventory_digest),
         rust_byte_array(base_typed_layout_digest),
         rust_byte_array(overlay_typed_layout_digest),
         rust_byte_array(composite_typed_layout_digest),
-    )
+    );
+    let action_domain_bytes = action_commitment_domain.as_bytes();
+    let action_domain = action_domain_bytes
+        .iter()
+        .map(|byte| format!("0x{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let flat_action_contract = format!(
+        "// @generated by mtg-kernel/build.rs from data/flat_policy_v2/action_contract_v2.json; do not edit.\n\
+pub const FLAT_ACTION_CONTRACT_SOURCE_SHA256_V2: [u8; 32] = {};\n\
+pub const FLAT_ACTION_CONTRACT_SEMANTIC_SHA256_V2: [u8; 32] = {};\n\
+pub const FLAT_ACTION_CANDIDATE_COMMITMENT_DOMAIN_V2: &[u8; {}] = &[{}];\n",
+        rust_byte_array(action_contract_source_digest),
+        rust_byte_array(action_contract_semantic_digest),
+        action_domain_bytes.len(),
+        action_domain,
+    );
+    (flat_policy_contract, flat_action_contract)
 }
 
 fn main() {
@@ -1100,7 +1777,8 @@ fn main() {
     let out = codegen(&data.cards);
     let runtime_decks_out = runtime_decks_codegen(&runtime_decks, &data.cards);
     let flat_policy_contract_out = flat_policy_contract_codegen(&repo_root);
-    let flat_policy_contract_v2_out = flat_policy_contract_v2_codegen(&repo_root);
+    let (flat_policy_contract_v2_out, flat_action_contract_v2_out) =
+        flat_policy_contract_v2_codegen(&repo_root);
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let dest = Path::new(&out_dir).join("card_defs.rs");
@@ -1120,6 +1798,13 @@ fn main() {
         panic!(
             "failed to write {}: {error}",
             flat_policy_contract_v2_dest.display()
+        )
+    });
+    let flat_action_contract_v2_dest = Path::new(&out_dir).join("flat_action_contract_v2.rs");
+    fs::write(&flat_action_contract_v2_dest, flat_action_contract_v2_out).unwrap_or_else(|error| {
+        panic!(
+            "failed to write {}: {error}",
+            flat_action_contract_v2_dest.display()
         )
     });
 }

@@ -111,9 +111,17 @@ was absent from the outer mapping or present at a particular mapping index.
 Consequently, the canonical values for mapping order `[A -> [], B -> []]` and
 `[B -> [], A -> []]` could collapse to the same V1 tables. V2 removes the
 redundant `was_blocked` field and adds `blocked_order: Option<u32>`. The checked
-goldens in `goldens_v2.json` pin absent versus present-empty and both mapping
-permutations, including six raw SHA-512 blocks and all 96 binary32 feature
-bits for the red pair.
+goldens in `goldens_v2.json` contain complete canonical-JSON observations that
+pass the authoritative Python `OBSERVATION_SPEC` and semantic validator before
+model canonicalization. They pin absent versus present-empty and both mapping
+permutations. The red pair differs only at
+`projection.combat.attacker_to_ordered_blockers` and records six raw SHA-512
+blocks plus all 96 binary32 feature bits. Rust tests independently drive the
+production V2 observation encoder and scorer-visible relation view for the
+same three blocked-order outcomes; the JSON payloads are not partial combat
+fragments and are not claimed to be decoded by a separate Rust JSON path.
+These full production-observation goldens supersede every earlier
+fragment-only red-pair artifact; fragment evidence is no longer normative.
 
 No other ordered observation list lacks a reconstruction mechanism under the
 six rules above. This is an injectivity statement for the enumerated canonical

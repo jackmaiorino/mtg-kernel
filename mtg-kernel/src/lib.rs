@@ -27,6 +27,7 @@ pub mod effect;
 pub mod engine;
 pub mod event;
 pub mod fast_sampler;
+pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
 pub mod flat_policy_v2;
 pub mod ids;
