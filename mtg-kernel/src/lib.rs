@@ -74,6 +74,9 @@ pub(crate) mod native_trainer_v1;
 // Public in-process execution facade for the native trainer. This deliberately
 // owns no CLI grammar, serialized record, or filesystem publication contract.
 pub mod native_training_executor_v1;
+// Private-construction persistence receipt and the strict native generation
+// store boundary. The high-level publisher/read/recovery path lands here.
+pub mod native_training_store_v2;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;
