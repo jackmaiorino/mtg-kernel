@@ -13,6 +13,13 @@
 //! optimizer canonicalizes exactly this one gauge. The value-head bias is not
 //! shift-invariant and is explicitly outside the gauge set.
 //!
+//! The sequential reverse pass remains the production numerical backend. An
+//! explicitly selected prototype may instead evaluate four fixed logical
+//! reverse partitions with private gradient state and reduce them in partition
+//! order. Worker topology never changes those logical partitions. Because the
+//! extra reduction changes binary32 association, the prototype owns a distinct
+//! numerical-backend identity and is not wired into persisted trainer records.
+//!
 //! The fail-closed bound is scale-derived, not an observed-residual literal.
 //! With binary32 unit roundoff `u = EPSILON/2` and
 //! `gamma(k) = k*u/(1-k*u)`, substep `j` with `n_j` actions and absolute
@@ -48,6 +55,7 @@ thread_local! {
     static FORWARD_WITH_TAPE_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
     static PACKED_ACTUAL_RECOMPUTE_CALL_COUNT_V1: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     static ACTIVE_PACKED_RECOMPUTE_TEST_CONTROL_V1: RefCell<Option<Arc<PackedRecomputeTestControlV1>>> = const { RefCell::new(None) };
+    static ACTIVE_FIXED_PARTITION_BACKWARD_TEST_CONTROL_V1: RefCell<Option<Arc<FixedPartitionBackwardTestControlV1>>> = const { RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -214,10 +222,91 @@ impl PackedRecomputeExecutionContextV1 {
     }
 }
 
+#[cfg(test)]
+struct FixedPartitionBackwardTestControlV1 {
+    fail_partition_ordinal: Option<usize>,
+    attempted_partition_count: AtomicUsize,
+}
+
+#[cfg(test)]
+impl FixedPartitionBackwardTestControlV1 {
+    fn new_v1(fail_partition_ordinal: Option<usize>) -> Arc<Self> {
+        Arc::new(Self {
+            fail_partition_ordinal,
+            attempted_partition_count: AtomicUsize::new(0),
+        })
+    }
+}
+
+#[cfg(test)]
+struct FixedPartitionBackwardTestControlGuardV1 {
+    previous: Option<Arc<FixedPartitionBackwardTestControlV1>>,
+}
+
+#[cfg(test)]
+impl Drop for FixedPartitionBackwardTestControlGuardV1 {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        ACTIVE_FIXED_PARTITION_BACKWARD_TEST_CONTROL_V1.with(|active| active.replace(previous));
+    }
+}
+
+#[cfg(test)]
+fn install_fixed_partition_backward_test_control_v1(
+    control: Arc<FixedPartitionBackwardTestControlV1>,
+) -> FixedPartitionBackwardTestControlGuardV1 {
+    let previous = ACTIVE_FIXED_PARTITION_BACKWARD_TEST_CONTROL_V1
+        .with(|active| active.replace(Some(control)));
+    FixedPartitionBackwardTestControlGuardV1 { previous }
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct FixedPartitionBackwardExecutionContextV1 {
+    test_control: Option<Arc<FixedPartitionBackwardTestControlV1>>,
+}
+
+#[cfg(not(test))]
+#[derive(Clone, Copy, Default)]
+struct FixedPartitionBackwardExecutionContextV1;
+
+impl FixedPartitionBackwardExecutionContextV1 {
+    fn current_v1() -> Self {
+        #[cfg(test)]
+        {
+            Self {
+                test_control: ACTIVE_FIXED_PARTITION_BACKWARD_TEST_CONTROL_V1
+                    .with(|active| active.borrow().clone()),
+            }
+        }
+        #[cfg(not(test))]
+        {
+            Self
+        }
+    }
+
+    fn begin_partition_v1(&self, partition_ordinal: usize) -> bool {
+        #[cfg(test)]
+        {
+            if let Some(control) = self.test_control.as_ref() {
+                control
+                    .attempted_partition_count
+                    .fetch_add(1, Ordering::SeqCst);
+                return control.fail_partition_ordinal == Some(partition_ordinal);
+            }
+        }
+        #[cfg(not(test))]
+        let _ = partition_ordinal;
+        false
+    }
+}
+
 pub(crate) const TRAINER_ALGORITHM_V1: &str = "terminal_reinforce_value/v3";
 pub(crate) const TRAIN_STEP_IDENTITY_V1: &str = "native-policy-value-cpu-train-step-v1";
 pub const NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1: &str =
     "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-sequential";
+pub(crate) const FIXED_PARTITION_PARALLEL_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1: &str =
+    "rust-prototype-native-policy-train-step-v1-cpu-ieee754-binary32-fixed-reverse-partitions-4-v1";
 pub(crate) const NATIVE_OPTIMIZER_IDENTITY_V1: &str = "native-adam-canonical-scorer-bias-gauge-v1";
 pub(crate) const NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1: &str =
     "mtg-kernel-native-scorer-bias-gauge-evidence-v1";
@@ -240,6 +329,7 @@ const ACTION_ENCODER_INPUT: usize = ACTION_FEATURE_DIM_V1 + HIDDEN_DIM_V1;
 const SCORER_INPUT: usize = HIDDEN_DIM_V1 * 2;
 const PACKED_RECOMPUTE_MAX_WORKERS_V1: usize = 4;
 const PACKED_RECOMPUTE_MIN_SUBSTEPS_V1: usize = 64;
+const FIXED_BACKWARD_PARTITION_COUNT_V1: usize = 4;
 
 const CARD_EMBEDDING: usize = 0;
 const OBJECT_FIRST_WEIGHT: usize = 1;
@@ -524,6 +614,10 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     GroupCountNotExactlyRepresentable {
         group_count: usize,
     },
+    FixedPartitionBackwardWorkerLimitZero,
+    FixedPartitionBackwardWorkerPanicked {
+        partition_ordinal: usize,
+    },
     NonFinite {
         stage: &'static str,
         index: usize,
@@ -572,6 +666,12 @@ pub(crate) struct NativePolicyValueTrainStateV1 {
     first_moments: Vec<Vec<f32>>,
     second_moments: Vec<Vec<f32>>,
     scorer_bias_anchor_bits: u32,
+}
+
+#[derive(Clone, Copy)]
+enum BackwardExecutionV1 {
+    Sequential,
+    FixedPartitions { worker_limit: usize },
 }
 
 impl NativePolicyValueTrainStateV1 {
@@ -730,6 +830,7 @@ impl NativePolicyValueTrainStateV1 {
             value_coefficient,
             learning_rate,
             recompute_worker_limit,
+            BackwardExecutionV1::Sequential,
             &mut phase_recorder,
         )
     }
@@ -747,7 +848,35 @@ impl NativePolicyValueTrainStateV1 {
             value_coefficient,
             learning_rate,
             recompute_worker_limit,
+            BackwardExecutionV1::Sequential,
             phase_recorder,
+        )
+    }
+
+    /// Opt-in prototype for deterministic fixed-partition reverse evaluation.
+    ///
+    /// Logical partitioning is independent of `backward_worker_limit`; that
+    /// value controls only how many scoped workers evaluate the four frozen
+    /// partitions. The sequential production entry points above remain
+    /// byte-unchanged in arithmetic and retain their existing backend identity.
+    pub(crate) fn train_step_with_fixed_partition_parallel_backward_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        backward_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
+        self.train_step_with_recompute_workers_inner_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            BackwardExecutionV1::FixedPartitions {
+                worker_limit: backward_worker_limit,
+            },
+            &mut phase_recorder,
         )
     }
 
@@ -757,9 +886,16 @@ impl NativePolicyValueTrainStateV1 {
         value_coefficient: f32,
         learning_rate: f32,
         recompute_worker_limit: usize,
+        backward_execution: BackwardExecutionV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         let forward_loss_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
+        if matches!(
+            backward_execution,
+            BackwardExecutionV1::FixedPartitions { worker_limit: 0 }
+        ) {
+            return Err(NativePolicyTrainErrorV1::FixedPartitionBackwardWorkerLimitZero);
+        }
         if groups.is_empty() {
             return Err(NativePolicyTrainErrorV1::EmptyBatch);
         }
@@ -950,62 +1086,84 @@ impl NativePolicyValueTrainStateV1 {
         phase_recorder.finish_v1(forward_loss_timer);
 
         let backward_gauge_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::BackwardGauge);
-        let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
-        let mut reverse_workspace = ReverseWorkspaceV1::default();
-        // Torch autograd walks the independently constructed physical-decision
-        // and substep graphs in reverse construction order.  Preserve that
-        // accumulation order for shared parameter gradients. The scorer's
-        // final scalar-bias reduction also uses Torch's reverse action-row
-        // order; all other row traversals retain their established order.
-        for group in group_tapes.into_iter().rev() {
-            let d_joint_log_probability = -group.advantage / group_count;
-            let d_value = (value_coefficient / group_count) * (2.0 * group.value_error);
-            for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
-                // Torch LogSoftmaxBackward: retain the complete forward
-                // log-softmax output, then evaluate grad_output -
-                // exp(output) * sum(grad_output).  Both reductions and the
-                // following final scalar-bias accumulation use the pinned
-                // reverse graph/action order. The raw f32 residual is retained
-                // for the fail-closed gauge-bound record below.
-                resize_zeroed_v1(
-                    &mut reverse_workspace.grad_output,
-                    selected.log_probabilities.len(),
-                );
-                reverse_workspace.grad_output[selected.selected_action_index] =
-                    d_joint_log_probability;
-                let grad_output_sum = reverse_workspace
-                    .grad_output
-                    .iter()
-                    .copied()
-                    .fold(0.0f32, |sum, value| sum + value);
-                reverse_workspace.d_logits.clear();
-                reverse_workspace
-                    .d_logits
-                    .reserve(selected.log_probabilities.len());
-                for (gradient, log_probability) in reverse_workspace
-                    .grad_output
-                    .iter()
-                    .zip(&selected.log_probabilities)
-                {
-                    reverse_workspace
-                        .d_logits
-                        .push(*gradient - log_probability.exp() * grad_output_sum);
+        let (mut gradients, gauge_accumulator, reverse_workspace) = match backward_execution {
+            BackwardExecutionV1::Sequential => {
+                let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
+                let mut reverse_workspace = ReverseWorkspaceV1::default();
+                // Torch autograd walks the independently constructed
+                // physical-decision and substep graphs in reverse construction
+                // order. Preserve that accumulation order for shared parameter
+                // gradients. The scorer's final scalar-bias reduction also uses
+                // Torch's reverse action-row order; all other row traversals
+                // retain their established order.
+                for group in group_tapes.into_iter().rev() {
+                    let d_joint_log_probability = -group.advantage / group_count;
+                    let d_value = (value_coefficient / group_count) * (2.0 * group.value_error);
+                    for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
+                        // Keep the production reference arithmetic inline and
+                        // byte-for-byte ordered. The prototype helper below is
+                        // deliberately not on this default path.
+                        resize_zeroed_v1(
+                            &mut reverse_workspace.grad_output,
+                            selected.log_probabilities.len(),
+                        );
+                        reverse_workspace.grad_output[selected.selected_action_index] =
+                            d_joint_log_probability;
+                        let grad_output_sum = reverse_workspace
+                            .grad_output
+                            .iter()
+                            .copied()
+                            .fold(0.0f32, |sum, value| sum + value);
+                        reverse_workspace.d_logits.clear();
+                        reverse_workspace
+                            .d_logits
+                            .reserve(selected.log_probabilities.len());
+                        for (gradient, log_probability) in reverse_workspace
+                            .grad_output
+                            .iter()
+                            .zip(&selected.log_probabilities)
+                        {
+                            reverse_workspace
+                                .d_logits
+                                .push(*gradient - log_probability.exp() * grad_output_sum);
+                        }
+                        gauge_accumulator.observe(
+                            selected.tape.logits_v1(),
+                            selected.selected_action_index,
+                            d_joint_log_probability,
+                        )?;
+                        reverse_decision(
+                            &parameters,
+                            &mut gradients,
+                            &selected.tape,
+                            &reverse_workspace.d_logits,
+                            if substep_index == 0 { d_value } else { 0.0 },
+                            &mut reverse_workspace.decision,
+                        )?;
+                    }
                 }
-                gauge_accumulator.observe(
-                    selected.tape.logits_v1(),
-                    selected.selected_action_index,
-                    d_joint_log_probability,
-                )?;
-                reverse_decision(
-                    &parameters,
-                    &mut gradients,
-                    &selected.tape,
-                    &reverse_workspace.d_logits,
-                    if substep_index == 0 { d_value } else { 0.0 },
-                    &mut reverse_workspace.decision,
-                )?;
+                (gradients, gauge_accumulator, reverse_workspace)
             }
-        }
+            BackwardExecutionV1::FixedPartitions { worker_limit } => {
+                // Gauge evidence keeps the reference's exact global reverse
+                // observation order. Only dense gradient accumulation is
+                // partitioned, so the proof record does not acquire a second
+                // reduction convention.
+                let gauge_accumulator = observe_scorer_bias_gauge_v1(&group_tapes, group_count)?;
+                let execution_context = FixedPartitionBackwardExecutionContextV1::current_v1();
+                gradients = fixed_partition_backward_gradients_v1(
+                    &parameters,
+                    &group_tapes,
+                    group_count,
+                    value_coefficient,
+                    worker_limit,
+                    gradients,
+                    &execution_context,
+                )?;
+                drop(group_tapes);
+                (gradients, gauge_accumulator, ReverseWorkspaceV1::default())
+            }
+        };
         validate_finite_nested("gradient", &gradients)?;
         let raw_scorer_bias_residual = gradients[SCORER_SECOND_BIAS][0];
         let scorer_bias_before_bits = parameters[SCORER_SECOND_BIAS].values[0].to_bits();
@@ -1080,6 +1238,251 @@ impl NativePolicyValueTrainStateV1 {
         phase_recorder.finish_v1(commit_timer);
         Ok(result)
     }
+}
+
+fn prepare_reverse_logits_v1(
+    selected: &SelectedDecisionTapeV1<'_>,
+    d_joint_log_probability: f32,
+    workspace: &mut ReverseWorkspaceV1,
+) {
+    // Torch LogSoftmaxBackward: retain the complete forward log-softmax
+    // output, then evaluate grad_output - exp(output) * sum(grad_output).
+    resize_zeroed_v1(&mut workspace.grad_output, selected.log_probabilities.len());
+    workspace.grad_output[selected.selected_action_index] = d_joint_log_probability;
+    let grad_output_sum = workspace
+        .grad_output
+        .iter()
+        .copied()
+        .fold(0.0f32, |sum, value| sum + value);
+    workspace.d_logits.clear();
+    workspace.d_logits.reserve(selected.log_probabilities.len());
+    for (gradient, log_probability) in workspace
+        .grad_output
+        .iter()
+        .zip(&selected.log_probabilities)
+    {
+        workspace
+            .d_logits
+            .push(*gradient - log_probability.exp() * grad_output_sum);
+    }
+}
+
+fn observe_scorer_bias_gauge_v1(
+    groups: &[GroupTapeV1<'_>],
+    group_count: f32,
+) -> Result<ScorerBiasGaugeAccumulatorV1, NativePolicyTrainErrorV1> {
+    let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
+    for group in groups.iter().rev() {
+        let d_joint_log_probability = -group.advantage / group_count;
+        for selected in group.tapes.iter().rev() {
+            gauge_accumulator.observe(
+                &selected.tape.logits,
+                selected.selected_action_index,
+                d_joint_log_probability,
+            )?;
+        }
+    }
+    Ok(gauge_accumulator)
+}
+
+struct FixedPartitionBackwardResultV1 {
+    partition_ordinal: usize,
+    gradients: Vec<Vec<f32>>,
+}
+
+enum FixedPartitionBackwardOutcomeV1 {
+    Completed(Result<FixedPartitionBackwardResultV1, NativePolicyTrainErrorV1>),
+    Panicked { partition_ordinal: usize },
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fixed_partition_backward_gradients_v1(
+    parameters: &[NativeNamedParameterV1],
+    groups: &[GroupTapeV1<'_>],
+    group_count: f32,
+    value_coefficient: f32,
+    worker_limit: usize,
+    mut reduced_gradients: Vec<Vec<f32>>,
+    execution_context: &FixedPartitionBackwardExecutionContextV1,
+) -> Result<Vec<Vec<f32>>, NativePolicyTrainErrorV1> {
+    if worker_limit == 0 {
+        return Err(NativePolicyTrainErrorV1::FixedPartitionBackwardWorkerLimitZero);
+    }
+    let partition_count = FIXED_BACKWARD_PARTITION_COUNT_V1.min(groups.len());
+    debug_assert_ne!(partition_count, 0);
+    let partition_ordinals = (0..partition_count).collect::<Vec<_>>();
+    let worker_count = worker_limit.min(partition_count);
+    let outcomes = if worker_count == 1 {
+        fixed_partition_backward_outcomes_v1(
+            parameters,
+            groups,
+            group_count,
+            value_coefficient,
+            partition_count,
+            &partition_ordinals,
+            execution_context,
+        )
+    } else {
+        let partitions_per_worker = partition_count.div_ceil(worker_count);
+        thread::scope(|scope| {
+            let mut jobs = Vec::with_capacity(worker_count);
+            for (worker_index, chunk) in
+                partition_ordinals.chunks(partitions_per_worker).enumerate()
+            {
+                let spawned = thread::Builder::new()
+                    .name(format!("native-fixed-backward-{worker_index}"))
+                    .spawn_scoped(scope, move || {
+                        fixed_partition_backward_outcomes_v1(
+                            parameters,
+                            groups,
+                            group_count,
+                            value_coefficient,
+                            partition_count,
+                            chunk,
+                            execution_context,
+                        )
+                    });
+                jobs.push((spawned, chunk));
+            }
+
+            let mut outcomes = Vec::with_capacity(partition_count);
+            for (spawned, chunk) in jobs {
+                match spawned {
+                    Ok(worker) => match worker.join() {
+                        Ok(mut worker_outcomes) => outcomes.append(&mut worker_outcomes),
+                        Err(_) => outcomes.push(FixedPartitionBackwardOutcomeV1::Panicked {
+                            partition_ordinal: chunk[0],
+                        }),
+                    },
+                    Err(_) => outcomes.extend(fixed_partition_backward_outcomes_v1(
+                        parameters,
+                        groups,
+                        group_count,
+                        value_coefficient,
+                        partition_count,
+                        chunk,
+                        execution_context,
+                    )),
+                }
+            }
+            outcomes
+        })
+    };
+
+    for (expected_ordinal, outcome) in outcomes.into_iter().enumerate() {
+        let partition = match outcome {
+            FixedPartitionBackwardOutcomeV1::Completed(result) => result?,
+            FixedPartitionBackwardOutcomeV1::Panicked { partition_ordinal } => {
+                return Err(
+                    NativePolicyTrainErrorV1::FixedPartitionBackwardWorkerPanicked {
+                        partition_ordinal,
+                    },
+                );
+            }
+        };
+        if partition.partition_ordinal != expected_ordinal
+            || partition.gradients.len() != reduced_gradients.len()
+        {
+            return Err(NativePolicyTrainErrorV1::ParameterManifest);
+        }
+        for (destination, source) in reduced_gradients.iter_mut().zip(partition.gradients) {
+            if destination.len() != source.len() {
+                return Err(NativePolicyTrainErrorV1::ParameterManifest);
+            }
+            // This exact nested order is part of the prototype backend: logical
+            // partition ordinal, parameter ordinal, then flat tensor ordinal.
+            for (destination, source) in destination.iter_mut().zip(source) {
+                *destination += source;
+            }
+        }
+    }
+    Ok(reduced_gradients)
+}
+
+fn fixed_partition_backward_outcomes_v1(
+    parameters: &[NativeNamedParameterV1],
+    groups: &[GroupTapeV1<'_>],
+    group_count: f32,
+    value_coefficient: f32,
+    partition_count: usize,
+    partition_ordinals: &[usize],
+    execution_context: &FixedPartitionBackwardExecutionContextV1,
+) -> Vec<FixedPartitionBackwardOutcomeV1> {
+    partition_ordinals
+        .iter()
+        .copied()
+        .map(|partition_ordinal| {
+            let completed = catch_unwind(AssertUnwindSafe(|| {
+                if execution_context.begin_partition_v1(partition_ordinal) {
+                    return Err(NativePolicyTrainErrorV1::ParameterManifest);
+                }
+                fixed_partition_backward_v1(
+                    parameters,
+                    groups,
+                    group_count,
+                    value_coefficient,
+                    partition_count,
+                    partition_ordinal,
+                )
+            }));
+            match completed {
+                Ok(result) => FixedPartitionBackwardOutcomeV1::Completed(result),
+                Err(_) => FixedPartitionBackwardOutcomeV1::Panicked { partition_ordinal },
+            }
+        })
+        .collect()
+}
+
+fn fixed_partition_reverse_bounds_v1(
+    group_count: usize,
+    partition_count: usize,
+    partition_ordinal: usize,
+) -> (usize, usize) {
+    debug_assert!(partition_count != 0);
+    debug_assert!(partition_count <= group_count);
+    debug_assert!(partition_ordinal < partition_count);
+    let base = group_count / partition_count;
+    let longer_partition_count = group_count % partition_count;
+    let start = partition_ordinal * base + partition_ordinal.min(longer_partition_count);
+    let len = base + usize::from(partition_ordinal < longer_partition_count);
+    (start, start + len)
+}
+
+fn fixed_partition_backward_v1(
+    parameters: &[NativeNamedParameterV1],
+    groups: &[GroupTapeV1<'_>],
+    group_count: f32,
+    value_coefficient: f32,
+    partition_count: usize,
+    partition_ordinal: usize,
+) -> Result<FixedPartitionBackwardResultV1, NativePolicyTrainErrorV1> {
+    let mut gradients = parameters
+        .iter()
+        .map(|parameter| vec![0.0; parameter.values.len()])
+        .collect::<Vec<_>>();
+    let mut reverse_workspace = ReverseWorkspaceV1::default();
+    let (start, end) =
+        fixed_partition_reverse_bounds_v1(groups.len(), partition_count, partition_ordinal);
+    for reverse_group_ordinal in start..end {
+        let group = &groups[groups.len() - 1 - reverse_group_ordinal];
+        let d_joint_log_probability = -group.advantage / group_count;
+        let d_value = (value_coefficient / group_count) * (2.0 * group.value_error);
+        for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
+            prepare_reverse_logits_v1(selected, d_joint_log_probability, &mut reverse_workspace);
+            reverse_decision(
+                parameters,
+                &mut gradients,
+                &selected.tape,
+                &reverse_workspace.d_logits,
+                if substep_index == 0 { d_value } else { 0.0 },
+                &mut reverse_workspace.decision,
+            )?;
+        }
+    }
+    Ok(FixedPartitionBackwardResultV1 {
+        partition_ordinal,
+        gradients,
+    })
 }
 
 enum PackedIndependentRecomputeOutcomeV1 {
@@ -3666,6 +4069,34 @@ mod tests {
         );
     }
 
+    fn assert_named_tensors_within_strict_bounds_v1(
+        actual: &[NativeNamedParameterV1],
+        reference: &[NativeNamedParameterV1],
+        absolute: f32,
+        relative: f32,
+    ) {
+        assert_eq!(actual.len(), reference.len());
+        for (actual_tensor, reference_tensor) in actual.iter().zip(reference) {
+            assert_eq!(actual_tensor.name, reference_tensor.name);
+            assert_eq!(actual_tensor.shape, reference_tensor.shape);
+            assert_eq!(actual_tensor.values.len(), reference_tensor.values.len());
+            for (flat_index, (&actual_value, &reference_value)) in actual_tensor
+                .values
+                .iter()
+                .zip(&reference_tensor.values)
+                .enumerate()
+            {
+                let tolerance = absolute + relative * reference_value.abs();
+                let delta = (actual_value - reference_value).abs();
+                assert!(
+                    delta <= tolerance,
+                    "{}[{flat_index}] delta {delta:?} exceeds strict bound {tolerance:?}: parallel={actual_value:?} sequential={reference_value:?}",
+                    actual_tensor.name,
+                );
+            }
+        }
+    }
+
     fn is_sha256(value: &str) -> bool {
         value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
     }
@@ -4222,6 +4653,155 @@ mod tests {
             ))
         );
         assert_eq!(physical_scratch, physical_scratch_before);
+    }
+
+    #[test]
+    fn fixed_partition_parallel_backward_is_deterministic_topology_invariant_and_bounded() {
+        const GRADIENT_ABSOLUTE_BOUND: f32 = 1.0e-5;
+        const GRADIENT_RELATIVE_BOUND: f32 = 1.0e-5;
+        const TRAIN_STATE_ABSOLUTE_BOUND: f32 = 1.0e-6;
+        const TRAIN_STATE_RELATIVE_BOUND: f32 = 1.0e-6;
+
+        assert_ne!(
+            FIXED_PARTITION_PARALLEL_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1,
+            NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1
+        );
+        assert_eq!(FIXED_BACKWARD_PARTITION_COUNT_V1, 4);
+        assert_eq!(
+            (0..4)
+                .map(|ordinal| fixed_partition_reverse_bounds_v1(10, 4, ordinal))
+                .collect::<Vec<_>>(),
+            vec![(0, 3), (3, 6), (6, 8), (8, 10)]
+        );
+
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let step = &golden.steps[2];
+        let expected_outputs = expected_outputs_for_step(&model, &forward, step);
+        let substeps = substeps_for_step(&forward, step, &expected_outputs);
+        let all_groups = groups_for_step(step, &substeps);
+        let groups = &all_groups[..8];
+
+        let mut sequential_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        let sequential_result = sequential_state
+            .train_step_v1(
+                groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        let sequential_snapshot = sequential_state.snapshot_v1().unwrap();
+
+        let mut topology_reference = None;
+        for worker_limit in [1, 2, 4, 4] {
+            let mut parallel_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+            let parallel_result = parallel_state
+                .train_step_with_fixed_partition_parallel_backward_v1(
+                    groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                    1,
+                    worker_limit,
+                )
+                .unwrap();
+            let parallel_snapshot = parallel_state.snapshot_v1().unwrap();
+            if let Some((reference_result, reference_snapshot)) = topology_reference.as_ref() {
+                assert_eq!(&parallel_result, reference_result);
+                assert_eq!(&parallel_snapshot, reference_snapshot);
+            } else {
+                topology_reference = Some((parallel_result.clone(), parallel_snapshot.clone()));
+            }
+        }
+        let (parallel_result, parallel_snapshot) = topology_reference.unwrap();
+
+        assert_eq!(
+            parallel_result.policy_sum.to_bits(),
+            sequential_result.policy_sum.to_bits()
+        );
+        assert_eq!(
+            parallel_result.value_sum.to_bits(),
+            sequential_result.value_sum.to_bits()
+        );
+        assert_eq!(
+            parallel_result.loss.to_bits(),
+            sequential_result.loss.to_bits()
+        );
+        assert_eq!(parallel_result.adam_step, sequential_result.adam_step);
+        assert_eq!(
+            parallel_result.selected_outputs,
+            sequential_result.selected_outputs
+        );
+        assert_eq!(
+            parallel_result.physical_terms,
+            sequential_result.physical_terms
+        );
+        assert_named_tensors_within_strict_bounds_v1(
+            &parallel_result.gradients,
+            &sequential_result.gradients,
+            GRADIENT_ABSOLUTE_BOUND,
+            GRADIENT_RELATIVE_BOUND,
+        );
+
+        let mut parallel_gauge = parallel_result.scorer_bias_gauge.clone();
+        let mut sequential_gauge = sequential_result.scorer_bias_gauge.clone();
+        let parallel_raw = parallel_gauge.raw_gradient_residual;
+        let sequential_raw = sequential_gauge.raw_gradient_residual;
+        parallel_gauge.raw_gradient_residual = 0.0;
+        sequential_gauge.raw_gradient_residual = 0.0;
+        assert_eq!(parallel_gauge, sequential_gauge);
+        assert!(
+            f64::from(parallel_raw - sequential_raw).abs()
+                <= parallel_result.scorer_bias_gauge.derived_absolute_bound
+                    + sequential_result.scorer_bias_gauge.derived_absolute_bound
+        );
+
+        assert_eq!(parallel_snapshot.adam_step, sequential_snapshot.adam_step);
+        assert_eq!(
+            parallel_snapshot.scorer_bias_anchor_bits,
+            sequential_snapshot.scorer_bias_anchor_bits
+        );
+        assert_named_tensors_within_strict_bounds_v1(
+            &parallel_snapshot.parameters,
+            &sequential_snapshot.parameters,
+            TRAIN_STATE_ABSOLUTE_BOUND,
+            TRAIN_STATE_RELATIVE_BOUND,
+        );
+        assert_named_tensors_within_strict_bounds_v1(
+            &parallel_snapshot.first_moments,
+            &sequential_snapshot.first_moments,
+            TRAIN_STATE_ABSOLUTE_BOUND,
+            TRAIN_STATE_RELATIVE_BOUND,
+        );
+        assert_named_tensors_within_strict_bounds_v1(
+            &parallel_snapshot.second_moments,
+            &sequential_snapshot.second_moments,
+            TRAIN_STATE_ABSOLUTE_BOUND,
+            TRAIN_STATE_RELATIVE_BOUND,
+        );
+
+        let mut failed_state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let before_failure = failed_state.snapshot_v1().unwrap();
+        let control = FixedPartitionBackwardTestControlV1::new_v1(Some(2));
+        let error = {
+            let _guard = install_fixed_partition_backward_test_control_v1(Arc::clone(&control));
+            failed_state
+                .train_step_with_fixed_partition_parallel_backward_v1(
+                    groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                    1,
+                    4,
+                )
+                .unwrap_err()
+        };
+        assert_eq!(error, NativePolicyTrainErrorV1::ParameterManifest);
+        assert_eq!(
+            control.attempted_partition_count.load(Ordering::SeqCst),
+            FIXED_BACKWARD_PARTITION_COUNT_V1
+        );
+        assert_eq!(failed_state.snapshot_v1().unwrap(), before_failure);
     }
 
     #[test]
