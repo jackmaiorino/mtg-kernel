@@ -176,6 +176,21 @@ def build_payload(fixtures: list[dict[str, Any]]) -> dict[str, Any]:
     if opening["tensors"] != actor_swap["tensors"]:
         raise AssertionError("actor-seat mirror changed an actor-relative tensor")
 
+    synthetic_relations = by_name["synthetic-known-cards-object-relations-v1"]
+    synthetic_observation = synthetic_relations["rust_fixture"]["observation"]
+    if not any(synthetic_observation["known_hand_cards"]):
+        raise AssertionError("synthetic fixture did not cover a non-empty known hand")
+    if not any(synthetic_observation["known_library_cards"]):
+        raise AssertionError("synthetic fixture did not cover a non-empty known library")
+    relation_kinds = {
+        relation["relation_kind"]
+        for relation in synthetic_observation["projection"]["object_relations"]
+    }
+    if relation_kinds != {"attached_to", "exiled_by"}:
+        raise AssertionError(
+            "synthetic fixture must cover exactly AttachedTo and ExiledBy relations"
+        )
+
     absent = by_name["burn-mirror-combat"]
     present_empty = by_name["burn-mirror-combat-present-empty"]
     if absent["canonical_observation_json"] == present_empty["canonical_observation_json"]:

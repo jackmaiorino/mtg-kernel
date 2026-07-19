@@ -1014,6 +1014,23 @@ pub(crate) struct FlatScoringOwnedBuffersV2<'a> {
     pub action_refs: &'a mut Vec<FlatScorerActionRefV2>,
 }
 
+/// Test-only ownership bridge for declared synthetic full-tensor fixtures.
+///
+/// This deliberately reuses the production observation encoder instead of
+/// hand-maintaining a second flat-table construction in the fixture emitter.
+#[cfg(test)]
+pub(crate) struct FlatObservationOwnedTablesV2 {
+    pub globals: FlatGlobalsV2,
+    pub objects: Vec<FlatObjectCoreV2>,
+    pub relations: Vec<FlatRelationV2>,
+    pub object_subtypes: Vec<FlatObjectSubtypeV2>,
+    pub ability_uses: Vec<FlatObjectAbilityUseV2>,
+    pub goads: Vec<FlatObjectGoadV2>,
+    pub completed_dungeons: Vec<FlatCompletedDungeonV2>,
+    pub effect_subtype_changes: Vec<FlatEffectSubtypeChangeV2>,
+    pub context_path_elements: Vec<FlatContextPathElementV2>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlatDecisionErrorV2 {
     Action(FlatActionDecisionSliceErrorV1),
@@ -3900,6 +3917,28 @@ impl FlatDecisionEncoderV2 {
             active_action_object_count: usize_u32(self.action_objects.len())?,
         })
     }
+}
+
+#[cfg(test)]
+pub(crate) fn encode_observation_owned_tables_for_fixture_v2(
+    observation: &ObservationV5,
+) -> Result<FlatObservationOwnedTablesV2, FlatDecisionErrorV2> {
+    let mut encoder = FlatDecisionEncoderV2::default();
+    encoder.build_globals(observation)?;
+    encoder.register_objects(observation)?;
+    encoder.build_relations(observation)?;
+    encoder.validate_cached_tables()?;
+    Ok(FlatObservationOwnedTablesV2 {
+        globals: encoder.globals,
+        objects: encoder.objects,
+        relations: encoder.relations,
+        object_subtypes: encoder.object_subtypes,
+        ability_uses: encoder.ability_uses,
+        goads: encoder.goads,
+        completed_dungeons: encoder.completed_dungeons,
+        effect_subtype_changes: encoder.effect_subtype_changes,
+        context_path_elements: encoder.context_path_elements,
+    })
 }
 
 macro_rules! require_capacity {

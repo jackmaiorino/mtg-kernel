@@ -4304,7 +4304,7 @@ fn encode_action_v1<'a>(
     let mut ref_card_ids = try_vec_capacity(projected_refs.len())?;
     let mut ref_node_indices = try_vec_capacity(projected_refs.len())?;
     for reference in projected_refs {
-        ref_features.push(action_ref_features_v1(reference));
+        ref_features.push(action_ref_features_v1(reference)?);
         ref_card_ids.push(i64::from(reference.resolved.raw.card_token));
         ref_node_indices.push(
             i64::try_from(projected_node_index_v2(
@@ -4692,14 +4692,13 @@ fn explicit_action_features_v1(
 
 fn action_ref_features_v1(
     reference: ProjectedActionRefV1<'_>,
-) -> [f32; NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1] {
+) -> Result<[f32; NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1], NativeFlatTensorErrorV1> {
     let mut out = [0.0f32; NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1];
     out[usize::from(reference.role)] = 1.0;
-    card_ref_features_v1(Some(reference.resolved), &mut out[10..23])
-        .expect("resolved action references have canonical card identity");
+    card_ref_features_v1(Some(reference.resolved), &mut out[10..23])?;
     out[23] = scaled_number_v1(i64::from(reference.order_index), 32.0);
     out[24] = scaled_number_v1(i64::from(reference.associated_order), 32.0);
-    out
+    Ok(out)
 }
 
 fn card_ref_features_v1(
@@ -4830,12 +4829,16 @@ fn action_kind_name_v1(kind: FlatScorerActionKindV1) -> &'static str {
 mod tests {
     use super::*;
     use crate::flat_policy_v2::{
-        FlatCompletedDungeonV2, FlatContextPathElementV2, FlatDecisionEncoderV2,
-        FlatEffectSubtypeChangeV2, FlatGlobalsV2, FlatManaColorV2 as FlatManaColorV1,
-        FlatScoringOwnedBuffersV2,
+        encode_observation_owned_tables_for_fixture_v2, FlatCompletedDungeonV2,
+        FlatContextPathElementV2, FlatDecisionEncoderV2, FlatEffectSubtypeChangeV2, FlatGlobalsV2,
+        FlatManaColorV2 as FlatManaColorV1, FlatScoringOwnedBuffersV2,
     };
-    use crate::rl::{make_legal_action_v5, ActionSemanticV1};
+    use crate::rl::{
+        make_legal_action_v5, ActionSemanticV1, KnownLibraryCardV4, ObjectRelationPublicV4,
+        ObservationV5, PlayerSeatV1,
+    };
     use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    use crate::state::Zone;
     use serde::{Deserialize, Serialize};
     use sha2::Sha256;
 
@@ -5636,6 +5639,34 @@ mod tests {
                 &self.action_refs,
             )
         }
+
+        fn replace_observation_tables(&mut self, observation: &ObservationV5) {
+            let referenced_rows = self
+                .action_refs
+                .iter()
+                .map(|reference| {
+                    let index = usize::try_from(reference.model_object_index).unwrap();
+                    (index, self.objects[index])
+                })
+                .collect::<Vec<_>>();
+            let tables = encode_observation_owned_tables_for_fixture_v2(observation).unwrap();
+            self.globals = tables.globals;
+            self.objects = tables.objects;
+            self.relations = tables.relations;
+            self.object_subtypes = tables.object_subtypes;
+            self.ability_uses = tables.ability_uses;
+            self.goads = tables.goads;
+            self.completed_dungeons = tables.completed_dungeons;
+            self.effect_subtype_changes = tables.effect_subtype_changes;
+            self.context_path_elements = tables.context_path_elements;
+            for (index, expected) in referenced_rows {
+                assert_eq!(
+                    self.objects.get(index),
+                    Some(&expected),
+                    "synthetic observation transform changed a scorer action-ref row"
+                );
+            }
+        }
     }
 
     #[test]
@@ -6013,8 +6044,14 @@ mod tests {
                     case.name
                 );
             }
+            let transformed_observation: ObservationV5 =
+                serde_json::from_value(fixture.observation.clone()).unwrap();
             let mut owned = OwnedScoringDecisionV2::from_session(&session);
-            apply_owned_fixture_transform_v2(&mut owned, &fixture.fixture_transform);
+            apply_owned_fixture_transform_v2(
+                &mut owned,
+                &fixture.fixture_transform,
+                &transformed_observation,
+            );
             assert_eq!(
                 fixture.legal_actions.as_array().unwrap().len(),
                 owned.actions.len(),
@@ -6198,11 +6235,11 @@ mod tests {
                     None,
                 )
                 .unwrap()];
-                apply_owned_fixture_transform_v2(&mut owned, fixture_transform);
+                apply_owned_fixture_transform_v2(&mut owned, fixture_transform, &observation);
             }
             "card-token-65536" => {
                 observation.own_hand[0].stable.card_db_id = u16::MAX;
-                apply_owned_fixture_transform_v2(&mut owned, fixture_transform);
+                apply_owned_fixture_transform_v2(&mut owned, fixture_transform, &observation);
             }
             "actor-seat-swap" => {
                 let mut observation_value = serde_json::to_value(&observation).unwrap();
@@ -6219,7 +6256,7 @@ mod tests {
                     .combat
                     .attacker_to_ordered_blockers
                     .clear();
-                apply_owned_fixture_transform_v2(&mut owned, fixture_transform);
+                apply_owned_fixture_transform_v2(&mut owned, fixture_transform, &observation);
             }
             "combat-blocked-order-present-empty" => {
                 let attacker = observation.projection.surface.combat.ordered_attackers[0].clone();
@@ -6228,7 +6265,56 @@ mod tests {
                     .surface
                     .combat
                     .attacker_to_ordered_blockers = vec![(attacker, Vec::new())];
-                apply_owned_fixture_transform_v2(&mut owned, fixture_transform);
+                apply_owned_fixture_transform_v2(&mut owned, fixture_transform, &observation);
+            }
+            "synthetic-known-cards-object-relations-v1" => {
+                // Declared synthetic authority: the current Burn/Rally replay
+                // pool does not naturally expose these model-visible paths.
+                let actor = observation.acting_player;
+                let opponent = match actor {
+                    PlayerSeatV1::P0 => PlayerSeatV1::P1,
+                    PlayerSeatV1::P1 => PlayerSeatV1::P0,
+                };
+                let opponent_index = match opponent {
+                    PlayerSeatV1::P0 => 0,
+                    PlayerSeatV1::P1 => 1,
+                };
+                let mut known_hand = observation.own_hand[0].clone();
+                known_hand.card_name = "synthetic-known-hand".to_string();
+                known_hand.stable.arena_id = 0xff00_0001;
+                known_hand.stable.card_db_id = 61_001;
+                known_hand.stable.owner = opponent;
+                known_hand.stable.controller = opponent;
+                known_hand.stable.zone = Zone::Hand;
+                known_hand.stable.zone_change_count = 17;
+                observation.known_hand_cards[opponent_index] = vec![known_hand];
+
+                let mut known_library = observation.own_hand[1].clone();
+                known_library.card_name = "synthetic-known-library".to_string();
+                known_library.stable.arena_id = 0xff00_0002;
+                known_library.stable.card_db_id = 61_002;
+                known_library.stable.owner = opponent;
+                known_library.stable.controller = opponent;
+                known_library.stable.zone = Zone::Library;
+                known_library.stable.zone_change_count = 23;
+                observation.known_library_cards[opponent_index] = vec![KnownLibraryCardV4 {
+                    position: 0,
+                    card: known_library,
+                }];
+
+                let first = observation.own_hand[0].stable.clone();
+                let second = observation.own_hand[1].stable.clone();
+                observation.projection.surface.object_relations = vec![
+                    ObjectRelationPublicV4::AttachedTo {
+                        object: first.clone(),
+                        attached_to: second.clone(),
+                    },
+                    ObjectRelationPublicV4::ExiledBy {
+                        object: second,
+                        exiled_by: first,
+                    },
+                ];
+                apply_owned_fixture_transform_v2(&mut owned, fixture_transform, &observation);
             }
             _ => panic!("unknown full fixture transform"),
         }
@@ -6253,6 +6339,7 @@ mod tests {
     fn apply_owned_fixture_transform_v2(
         owned: &mut OwnedScoringDecisionV2,
         fixture_transform: &str,
+        transformed_observation: &ObservationV5,
     ) {
         match fixture_transform {
             "identity" | "actor-seat-swap" => {}
@@ -6272,6 +6359,9 @@ mod tests {
             }
             "card-token-65536" => {
                 owned.objects[0].card_token = NATIVE_FLAT_MAX_CARD_TOKEN_V2;
+            }
+            "synthetic-known-cards-object-relations-v1" => {
+                owned.replace_observation_tables(transformed_observation);
             }
             "combat-blocked-order-absent" => {
                 let mut count = 0;
@@ -6382,7 +6472,6 @@ mod tests {
         let mut emitted_effect = false;
         let mut emitted_private_combat = false;
         let mut emitted_pending_choice = false;
-        let mut emitted_present_empty_blocked_mapping = false;
         for step in 0..=120 {
             let FastActorResponseV1::Decision(expected) = session.current_response() else {
                 break;
@@ -6410,6 +6499,10 @@ mod tests {
                         ("synthetic-zero-objects", "zero-objects"),
                         ("synthetic-card-token-65536", "card-token-65536"),
                         ("synthetic-actor-seat-swap", "actor-seat-swap"),
+                        (
+                            "synthetic-known-cards-object-relations-v1",
+                            "synthetic-known-cards-object-relations-v1",
+                        ),
                     ] {
                         let fixture = emitted_full_fixture_v2(
                             &session,
@@ -6461,12 +6554,6 @@ mod tests {
             {
                 emitted_pending_choice = true;
                 Some("burn-mirror-pending-choice")
-            } else if !emitted_present_empty_blocked_mapping
-                && public.combat.attacker_to_ordered_blockers.len() == 1
-                && public.combat.attacker_to_ordered_blockers[0].1.is_empty()
-            {
-                emitted_present_empty_blocked_mapping = true;
-                Some("burn-mirror-blocked-mapping-present-empty")
             } else {
                 None
             };
@@ -6484,21 +6571,7 @@ mod tests {
                     "NATIVE_FLAT_FULL_V2_FIXTURE={}",
                     serde_json::to_string(&fixture).unwrap()
                 );
-                if name == "burn-mirror-blocked-mapping-present-empty" {
-                    let absent = emitted_full_fixture_v2(
-                        &session,
-                        "burn-mirror-blocked-mapping-absent".to_string(),
-                        episode_id,
-                        environment_seed,
-                        deck_ids.clone(),
-                        replay.clone(),
-                        "combat-blocked-order-absent",
-                    );
-                    println!(
-                        "NATIVE_FLAT_FULL_V2_FIXTURE={}",
-                        serde_json::to_string(&absent).unwrap()
-                    );
-                } else if name == "burn-mirror-combat" {
+                if name == "burn-mirror-combat" {
                     let present_empty = emitted_full_fixture_v2(
                         &session,
                         "burn-mirror-combat-present-empty".to_string(),
@@ -6579,8 +6652,14 @@ mod tests {
                 names.push("rally-mirror-blocker");
             }
             if !emitted_rally_known_card
-                && (!observation.known_library_cards.is_empty()
-                    || !observation.known_hand_cards.is_empty())
+                && (observation
+                    .known_library_cards
+                    .iter()
+                    .any(|cards| !cards.is_empty())
+                    || observation
+                        .known_hand_cards
+                        .iter()
+                        .any(|cards| !cards.is_empty()))
             {
                 emitted_rally_known_card = true;
                 names.push("rally-mirror-known-card");

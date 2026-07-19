@@ -1467,6 +1467,484 @@
       }
     },
     {
+      "canonical_observation_json": "{\"acting_player\":\"self\",\"known_hand_cards\":[[],[{\"stable\":{\"card_db_id\":61001,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Hand\"}}]],\"known_library_cards\":[[],[{\"card\":{\"stable\":{\"card_db_id\":61002,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Library\"}},\"position\":0}]],\"own_hand\":[{\"stable\":{\"card_db_id\":63,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":107,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":70,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":51,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":37,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":66,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}}],\"projection\":{\"active_player\":\"self\",\"battlefield\":[[],[]],\"combat\":{\"attacker_to_ordered_blockers\":[],\"attackers_declared\":false,\"blockers_declared\":false,\"ordered_attackers\":[]},\"continuous_effects\":[],\"engine_context\":{\"current_stage\":\"priority\",\"last_mana_ability_activator_since_priority_boundary\":null,\"mana_activity_since_priority_boundary\":false,\"pending_activation\":null,\"pending_cast\":null,\"pending_discard\":null,\"pending_effect\":null,\"pending_optional_cost\":null,\"pending_optional_cost_sacrifice\":null,\"pending_spell_copy\":null,\"pending_triggers\":[],\"priority_passes\":[false,false],\"stack_activity_since_priority_boundary\":false,\"stack_nonempty\":false},\"exile\":[],\"exile_play_permissions\":[],\"graveyards\":[[],[]],\"hand_counts\":[7,7],\"initiative\":null,\"library_counts\":[53,53],\"life_totals\":[20,20],\"mana_pools\":[[0,0,0,0,0,0],[0,0,0,0,0,0]],\"object_relations\":[{\"attached_to\":{\"card_db_id\":107,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"},\"object\":{\"card_db_id\":63,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"},\"relation_kind\":\"attached_to\"},{\"exiled_by\":{\"card_db_id\":63,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"},\"object\":{\"card_db_id\":107,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"},\"relation_kind\":\"exiled_by\"}],\"phase\":\"main1\",\"player_status\":[{\"draws_this_turn\":7,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0},{\"draws_this_turn\":7,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0}],\"policy_surface_context\":{\"current_stage\":\"surface\",\"private_combat_selection\":null},\"priority_player\":\"self\",\"stack\":[],\"surface_context\":{\"combat_priority_rearmed_by_mana_activity\":false,\"combat_priority_rearmed_by_stack_activity\":false,\"combat_priority_spent\":[false,false],\"current_stage\":\"priority\",\"madness_cast_reprompt_source\":null,\"mana_activity_since_last_stack_change\":false,\"mana_activity_since_round_open\":false,\"private_blockers\":null,\"private_discard\":null,\"private_optional_cost\":null,\"stack_grew_since_round_open\":false,\"stack_length_changed_since_observed\":false}}}",
+      "coverage": [
+        "production-v2-view",
+        "full-13-tensor-parity",
+        "synthetic-known-cards-object-relations-v1"
+      ],
+      "name": "synthetic-known-cards-object-relations-v1",
+      "rust_fixture": {
+        "canonical_observation_json": "{\"acting_player\":\"self\",\"known_hand_cards\":[[],[{\"stable\":{\"card_db_id\":61001,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Hand\"}}]],\"known_library_cards\":[[],[{\"card\":{\"stable\":{\"card_db_id\":61002,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Library\"}},\"position\":0}]],\"own_hand\":[{\"stable\":{\"card_db_id\":63,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":107,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":70,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":51,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":37,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":66,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}}],\"projection\":{\"active_player\":\"self\",\"battlefield\":[[],[]],\"combat\":{\"attacker_to_ordered_blockers\":[],\"attackers_declared\":false,\"blockers_declared\":false,\"ordered_attackers\":[]},\"continuous_effects\":[],\"engine_context\":{\"current_stage\":\"priority\",\"last_mana_ability_activator_since_priority_boundary\":null,\"mana_activity_since_priority_boundary\":false,\"pending_activation\":null,\"pending_cast\":null,\"pending_discard\":null,\"pending_effect\":null,\"pending_optional_cost\":null,\"pending_optional_cost_sacrifice\":null,\"pending_spell_copy\":null,\"pending_triggers\":[],\"priority_passes\":[false,false],\"stack_activity_since_priority_boundary\":false,\"stack_nonempty\":false},\"exile\":[],\"exile_play_permissions\":[],\"graveyards\":[[],[]],\"hand_counts\":[7,7],\"initiative\":null,\"library_counts\":[53,53],\"life_totals\":[20,20],\"mana_pools\":[[0,0,0,0,0,0],[0,0,0,0,0,0]],\"object_relations\":[{\"attached_to\":{\"card_db_id\":107,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"},\"object\":{\"card_db_id\":63,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"},\"relation_kind\":\"attached_to\"},{\"exiled_by\":{\"card_db_id\":63,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"},\"object\":{\"card_db_id\":107,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"},\"relation_kind\":\"exiled_by\"}],\"phase\":\"main1\",\"player_status\":[{\"draws_this_turn\":7,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0},{\"draws_this_turn\":7,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0}],\"policy_surface_context\":{\"current_stage\":\"surface\",\"private_combat_selection\":null},\"priority_player\":\"self\",\"stack\":[],\"surface_context\":{\"combat_priority_rearmed_by_mana_activity\":false,\"combat_priority_rearmed_by_stack_activity\":false,\"combat_priority_spent\":[false,false],\"current_stage\":\"priority\",\"madness_cast_reprompt_source\":null,\"mana_activity_since_last_stack_change\":false,\"mana_activity_since_round_open\":false,\"private_blockers\":null,\"private_discard\":null,\"private_optional_cost\":null,\"stack_grew_since_round_open\":false,\"stack_length_changed_since_observed\":false}}}",
+        "deck_ids": [
+          "Burn",
+          "Burn"
+        ],
+        "environment_seed": 462849,
+        "episode_id": 71001,
+        "fixture_transform": "synthetic-known-cards-object-relations-v1",
+        "legal_actions": [
+          {
+            "display_text": null,
+            "schema_version": 5,
+            "selected_index": 0,
+            "semantic": {
+              "action_kind": "play_land",
+              "actor": "p0",
+              "source": {
+                "arena_id": 2,
+                "card_db_id": 76,
+                "controller": "p0",
+                "owner": "p0",
+                "zone": "Hand",
+                "zone_change_count": 1
+              }
+            },
+            "stable_id": "legal-action-v5:723453ea24071d07"
+          },
+          {
+            "display_text": null,
+            "schema_version": 5,
+            "selected_index": 1,
+            "semantic": {
+              "action_kind": "pass",
+              "actor": "p0"
+            },
+            "stable_id": "legal-action-v5:8836ed4e86020938"
+          }
+        ],
+        "name": "synthetic-known-cards-object-relations-v1",
+        "observation": {
+          "acting_player": "p0",
+          "card_db_hash": 11560644956943479018,
+          "kernel_version": "",
+          "known_hand_cards": [
+            [],
+            [
+              {
+                "card_name": "synthetic-known-hand",
+                "stable": {
+                  "arena_id": 4278190081,
+                  "card_db_id": 61001,
+                  "controller": "p1",
+                  "owner": "p1",
+                  "zone": "Hand",
+                  "zone_change_count": 17
+                }
+              }
+            ]
+          ],
+          "known_library_cards": [
+            [],
+            [
+              {
+                "card": {
+                  "card_name": "synthetic-known-library",
+                  "stable": {
+                    "arena_id": 4278190082,
+                    "card_db_id": 61002,
+                    "controller": "p1",
+                    "owner": "p1",
+                    "zone": "Library",
+                    "zone_change_count": 23
+                  }
+                },
+                "position": 0
+              }
+            ]
+          ],
+          "own_hand": [
+            {
+              "card_name": "",
+              "stable": {
+                "arena_id": 0,
+                "card_db_id": 63,
+                "controller": "p0",
+                "owner": "p0",
+                "zone": "Hand",
+                "zone_change_count": 1
+              }
+            },
+            {
+              "card_name": "",
+              "stable": {
+                "arena_id": 1,
+                "card_db_id": 107,
+                "controller": "p0",
+                "owner": "p0",
+                "zone": "Hand",
+                "zone_change_count": 1
+              }
+            },
+            {
+              "card_name": "",
+              "stable": {
+                "arena_id": 2,
+                "card_db_id": 76,
+                "controller": "p0",
+                "owner": "p0",
+                "zone": "Hand",
+                "zone_change_count": 1
+              }
+            },
+            {
+              "card_name": "",
+              "stable": {
+                "arena_id": 3,
+                "card_db_id": 70,
+                "controller": "p0",
+                "owner": "p0",
+                "zone": "Hand",
+                "zone_change_count": 1
+              }
+            },
+            {
+              "card_name": "",
+              "stable": {
+                "arena_id": 4,
+                "card_db_id": 51,
+                "controller": "p0",
+                "owner": "p0",
+                "zone": "Hand",
+                "zone_change_count": 1
+              }
+            },
+            {
+              "card_name": "",
+              "stable": {
+                "arena_id": 5,
+                "card_db_id": 37,
+                "controller": "p0",
+                "owner": "p0",
+                "zone": "Hand",
+                "zone_change_count": 1
+              }
+            },
+            {
+              "card_name": "",
+              "stable": {
+                "arena_id": 6,
+                "card_db_id": 66,
+                "controller": "p0",
+                "owner": "p0",
+                "zone": "Hand",
+                "zone_change_count": 1
+              }
+            }
+          ],
+          "physical_decision_id": 0,
+          "policy_surface_version": 5,
+          "projection": {
+            "active_player": "p0",
+            "battlefield": [
+              [],
+              []
+            ],
+            "combat": {
+              "attacker_to_ordered_blockers": [],
+              "attackers_declared": false,
+              "blockers_declared": false,
+              "ordered_attackers": []
+            },
+            "continuous_effects": [],
+            "engine_context": {
+              "current_stage": "priority",
+              "last_mana_ability_activator_since_priority_boundary": null,
+              "mana_activity_since_priority_boundary": false,
+              "pending_activation": null,
+              "pending_cast": null,
+              "pending_discard": null,
+              "pending_effect": null,
+              "pending_optional_cost": null,
+              "pending_optional_cost_sacrifice": null,
+              "pending_spell_copy": null,
+              "pending_triggers": [],
+              "priority_passes": [
+                false,
+                false
+              ],
+              "stack_activity_since_priority_boundary": false,
+              "stack_nonempty": false
+            },
+            "exile": [],
+            "exile_play_permissions": [],
+            "graveyards": [
+              [],
+              []
+            ],
+            "hand_counts": [
+              7,
+              7
+            ],
+            "initiative": null,
+            "library_counts": [
+              53,
+              53
+            ],
+            "life_totals": [
+              20,
+              20
+            ],
+            "mana_pools": [
+              [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+              ]
+            ],
+            "object_relations": [
+              {
+                "attached_to": {
+                  "arena_id": 1,
+                  "card_db_id": 107,
+                  "controller": "p0",
+                  "owner": "p0",
+                  "zone": "Hand",
+                  "zone_change_count": 1
+                },
+                "object": {
+                  "arena_id": 0,
+                  "card_db_id": 63,
+                  "controller": "p0",
+                  "owner": "p0",
+                  "zone": "Hand",
+                  "zone_change_count": 1
+                },
+                "relation_kind": "attached_to"
+              },
+              {
+                "exiled_by": {
+                  "arena_id": 0,
+                  "card_db_id": 63,
+                  "controller": "p0",
+                  "owner": "p0",
+                  "zone": "Hand",
+                  "zone_change_count": 1
+                },
+                "object": {
+                  "arena_id": 1,
+                  "card_db_id": 107,
+                  "controller": "p0",
+                  "owner": "p0",
+                  "zone": "Hand",
+                  "zone_change_count": 1
+                },
+                "relation_kind": "exiled_by"
+              }
+            ],
+            "phase": "main1",
+            "player_status": [
+              {
+                "draws_this_turn": 7,
+                "drew_from_empty": false,
+                "dungeon": {
+                  "completed_dungeons": [],
+                  "dungeon_id": null,
+                  "room_id": null
+                },
+                "has_lost": false,
+                "lands_played_this_turn": 0,
+                "spells_cast_this_turn": 0
+              },
+              {
+                "draws_this_turn": 7,
+                "drew_from_empty": false,
+                "dungeon": {
+                  "completed_dungeons": [],
+                  "dungeon_id": null,
+                  "room_id": null
+                },
+                "has_lost": false,
+                "lands_played_this_turn": 0,
+                "spells_cast_this_turn": 0
+              }
+            ],
+            "policy_surface_context": {
+              "current_stage": "surface",
+              "private_combat_selection": null
+            },
+            "priority_player": "p0",
+            "stack": [],
+            "surface_context": {
+              "combat_priority_rearmed_by_mana_activity": false,
+              "combat_priority_rearmed_by_stack_activity": false,
+              "combat_priority_spent": [
+                false,
+                false
+              ],
+              "current_stage": "priority",
+              "madness_cast_reprompt_source": null,
+              "mana_activity_since_last_stack_change": false,
+              "mana_activity_since_round_open": false,
+              "private_blockers": null,
+              "private_discard": null,
+              "private_optional_cost": null,
+              "stack_grew_since_round_open": false,
+              "stack_length_changed_since_observed": false
+            },
+            "turn": 1
+          },
+          "schema_version": 5,
+          "step_index": 0,
+          "substep_count": 1,
+          "substep_index": 0,
+          "surface_version": 2,
+          "visible_projection_hash": 0
+        },
+        "replay_selected_indices": [],
+        "schema": "native-flat-full-v2-rust-fixture-v1"
+      },
+      "state_sha512_blocks_hex": [
+        "d978f91353b4c64590baef513c6ff20fc15e5a27df547592cf20a91da7301588dc9d097edd8a35cab2f6da6b85489b593a4fd09350eb0465751c76a19b87c746",
+        "50267b584eebaa92d192232b3cb677ed2f6ddfbb7a27c359c84175ca37d1e0631fa49ad73bbc78061bf2befff6a9540bf448b28ef9dd97510d1e1e189a2a56d9",
+        "41ef5e282c10b4dc5524295e9935213d4c84f6e17cba2da91a65095c8384d274446b4f1f60f2e14d70a8b13134f994d91c814e1c6430bfcf8b411fedb99eaba1",
+        "0ef559e12afabe2357aff3d02ab5f810b2342f4ac304d743461d081afd3508ec989bdee4592f3a41ee3616ee058f3e4566352c8919e6616f6cfcec39a809a5e5",
+        "ab1ce40a4762acd9b655431827cceb2464c69ccf6cb7f7ccf8700ef76d3635d3f541effd50c4e327b30f975c3d26c22aaa282dfcde7a019226381ffaf75947ce",
+        "21b7b5beeaac95a42f1647d87670d36d9fffd561f128979c09c3908d9b0622a647f222201095d9df739d407b026f8ad908fcfbf045a889aaa93183538689aa41"
+      ],
+      "tensors": {
+        "action_features": {
+          "f32_le_hex": "000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f00000000000000000000803f0000000000000000000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000000000000000364ecebec44a59be91b13bbf63326fbfb0739bbd18715bbeb06ed8be157816be52ae3e3fcf6e63bfbb743fbfd5a67d3f51e549bf1e633e3f557b1fbfd40b2b3dbe1d23bf7735243f7b611cbf5908103f8f383a3f0dcb733ed5bb073e44458abe4ff450bf004f70bf91a00fbf967d0abfca371f3f4b7b223faa896c3f5c6849bf9a11323ffd4675bf1500fdbe66c78f3d3943723fe069353f8b796ebfc19609bfc6e15e3f649982be95e95d3f8fff5b3fa5718d3eb80c81be6034febedc70953e7b720bbf21ae27bfeeedb63e1078493f6727bebe46d532bf3c34adbef3c181be64c6fe3db28494be07854fbd316e003fc47c93be7225f9be79314e3ff038df3e1646a53e643a4b3e47b65c3f67bb19bf842a97be9e222bbff5597a3f9e8b42bf9b1d9bbd23eaf8bec7051bbec16bdc3e1eff35bfee8086beada967bfcf5e013faf671abe2713253ef4963e3e839172be356b7bbfae342dbfe79a29bfafb222bf14e4e63cff6d6cbf470ff9be7a759bbde5990e3f461b6ebecc01663f266928bf0000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000000000000000000000000000803f00000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000004be8223f3a0910bf9af2aebe0468a63c22ba843e3236323e04676dbf290864bf9dd05a3f857a48bf978fbb3e67f0313ea2dd5bbf3c2891be3504023f656f54bf7e58533fac24223e461bde3dc10971bf7aa6cdbafd2263bfba122bbf19a1903e48f060bfc0baf4beb8598a3e0207763fb5fb86bdea1e5dbfc381a23efe21233fd2dffc3e3c0f143f8f142cbfe09a353fe5d217bfab7c0d3fc0e7d8be0d3f063f694a72bf308907bf13b914bf6671033fd050e03d7c3ac9be267547bf96be57be8cf242be6b18713efe09523fcd73f4be66181b3fef5e04bf1c3bff3e929765bf5ea7053f86354d3f61914bbe44ee2abf782b173f89cf533f36d0713f7bb0733e668e113e89b97e3fae46153fb2c874bea2391bbf3c9a2ebf47a15abe8cc4403e021c7cbc78936dbf7138d5bee69d33bfcf6b7abfefc8e1bc5d1f0b3f260e6bbfa1b7863ed629123f56792d3f687325bf5aeba0bc1cd2073fd6572bbfbd387abf426bda3e5e6182bb1951623fc1f578bf5e2b63bf898e1f3fa8005a3fc733e93e",
+          "shape": [
+            2,
+            195
+          ]
+        },
+        "action_ref_action_indices": {
+          "i64_values": [
+            0
+          ],
+          "shape": [
+            1
+          ]
+        },
+        "action_ref_card_ids": {
+          "i64_values": [
+            77
+          ],
+          "shape": [
+            1
+          ]
+        },
+        "action_ref_features": {
+          "f32_le_hex": "0000803f0000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000",
+          "shape": [
+            1,
+            25
+          ]
+        },
+        "action_ref_node_indices": {
+          "i64_values": [
+            2
+          ],
+          "shape": [
+            1
+          ]
+        },
+        "edge_features": {
+          "f32_le_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000000000000000000000000000803c0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000000000000000000000000000803c0000000000000000000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000803c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "shape": [
+            4,
+            41
+          ]
+        },
+        "edge_source_indices": {
+          "i64_values": [
+            7,
+            8,
+            0,
+            1
+          ],
+          "shape": [
+            4
+          ]
+        },
+        "edge_target_indices": {
+          "i64_values": [
+            7,
+            8,
+            1,
+            0
+          ],
+          "shape": [
+            4
+          ]
+        },
+        "object_card_ids": {
+          "i64_values": [
+            64,
+            108,
+            77,
+            71,
+            52,
+            38,
+            67,
+            61003,
+            61002
+          ],
+          "shape": [
+            9
+          ]
+        },
+        "object_features": {
+          "f32_le_hex": "0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803c0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003d0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000403d0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803d0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a03d0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c03d000000000000803f00000000000000000000803f000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000000000000000000000000000803f00000000000000000000803f00000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000000000000000",
+          "shape": [
+            9,
+            98
+          ]
+        },
+        "object_groups": {
+          "i64_values": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            16,
+            18
+          ],
+          "shape": [
+            9
+          ]
+        },
+        "object_node_ids": {
+          "i64_values": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "shape": [
+            9
+          ]
+        },
+        "state": {
+          "f32_le_hex": "0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f000000000000000000000000000000000000803f0000803f0000000000000000000000000000000000000000000000000000e03e0000543f0000000000000000000000000000603f0000000000000000000000000000000000000000000000000000803f0000000000000000000000000000000000000000000000000000e03e0000543f0000000000000000000000000000603f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003d0000003d000000000000803d000000000000803d000000000000000000000000000000000000000000000000000000000000803f0000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000000000000000000000000000000000000000000000000e0d58bf2fe5e8be1641b8be221b60bf424b31bfa7aa133ebead44bf0a53813d12317bbc166b143f4a2821bede9299be7a821e3ea5d857be72d8853ee2e1e4be67139ebe5a57153edab829bf6cef5a3fb57def3e62f398be84ea143f76f960be48352f3f880e73bfe47d7f3fac5669bf8f24eb3d88a0b9bec4c34fbf55ac323f21422fbf2068393f6f5b87be95bd05bf09ed433feab6a43e6cda8fbeb8d7b2bd296141bf3678c8beaf9c1cbff229333ffe6247bf617e1f3f833e5a3f7bae863eeab3423f0c8238bf5fe7213f960e5ebf2d43d7beeda3f0bec5ef4bbf6c10583f37bd493f4317fbbe6e2c5c3fc405ebbe56c3923dcff004be07260cbf134a4b3fc7376abfc558333f55794fbf682836bf8d391f3f6fef193fe21c6e3f6d6a263f84de7b3f773830bfc1a38dbeb47b2abf515a783fd70b103e703e743fb48e1c3fddd6fa3eb456923e2c8e303f7c6411be035071be48b9643e310cd93d1a88983e1bba3fbf2ab33f3f52ec17bdde14333ff8f7613fa126aa3e39f3b1beda55f9be",
+          "shape": [
+            219
+          ]
+        }
+      }
+    },
+    {
       "canonical_observation_json": "{\"acting_player\":\"self\",\"known_hand_cards\":[[],[]],\"known_library_cards\":[[],[]],\"own_hand\":[{\"stable\":{\"card_db_id\":63,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":107,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":70,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":51,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":37,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":66,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}}],\"projection\":{\"active_player\":\"self\",\"battlefield\":[[{\"ability_uses_this_turn\":[],\"attachments\":[],\"characteristics\":{\"base_power\":null,\"base_toughness\":null,\"effective_color_mask\":0,\"effective_keywords\":{\"deathtouch\":false,\"defender\":false,\"double_strike\":false,\"first_strike\":false,\"flying\":false,\"haste\":false,\"hexproof\":false,\"indestructible\":false,\"landwalk_mask\":0,\"lifelink\":false,\"menace\":false,\"minimum_blockers\":0,\"protection_from_monocolored\":false,\"reach\":false,\"trample\":false,\"vigilance\":false,\"ward_generic\":0},\"effective_power\":null,\"effective_subtype_ids\":[28],\"effective_toughness\":null,\"type_flags\":{\"artifact\":false,\"creature\":false,\"enchantment\":false,\"instant\":false,\"land\":true,\"sorcery\":false}},\"chosen_color\":null,\"counters\":{\"lore\":0,\"minus0_minus1\":0,\"minus1_minus1\":0,\"plus1_plus1\":0,\"stun\":0},\"damage\":0,\"entered_battlefield_turn\":\"this_turn\",\"face_index\":0,\"goaded_by\":[],\"is_token\":false,\"plotted_turn\":null,\"skip_next_untap\":false,\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Battlefield\"},\"summoning_sick\":true,\"tapped\":false}],[]],\"combat\":{\"attacker_to_ordered_blockers\":[],\"attackers_declared\":false,\"blockers_declared\":false,\"ordered_attackers\":[]},\"continuous_effects\":[],\"engine_context\":{\"current_stage\":\"priority\",\"last_mana_ability_activator_since_priority_boundary\":null,\"mana_activity_since_priority_boundary\":false,\"pending_activation\":null,\"pending_cast\":null,\"pending_discard\":null,\"pending_effect\":null,\"pending_optional_cost\":null,\"pending_optional_cost_sacrifice\":null,\"pending_spell_copy\":null,\"pending_triggers\":[],\"priority_passes\":[false,false],\"stack_activity_since_priority_boundary\":false,\"stack_nonempty\":false},\"exile\":[],\"exile_play_permissions\":[],\"graveyards\":[[],[]],\"hand_counts\":[6,7],\"initiative\":null,\"library_counts\":[53,53],\"life_totals\":[20,20],\"mana_pools\":[[0,0,0,0,0,0],[0,0,0,0,0,0]],\"object_relations\":[],\"phase\":\"main1\",\"player_status\":[{\"draws_this_turn\":7,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":1,\"spells_cast_this_turn\":0},{\"draws_this_turn\":7,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0}],\"policy_surface_context\":{\"current_stage\":\"surface\",\"private_combat_selection\":null},\"priority_player\":\"self\",\"stack\":[],\"surface_context\":{\"combat_priority_rearmed_by_mana_activity\":false,\"combat_priority_rearmed_by_stack_activity\":false,\"combat_priority_spent\":[false,false],\"current_stage\":\"priority\",\"madness_cast_reprompt_source\":null,\"mana_activity_since_last_stack_change\":false,\"mana_activity_since_round_open\":false,\"private_blockers\":null,\"private_discard\":null,\"private_optional_cost\":null,\"stack_grew_since_round_open\":false,\"stack_length_changed_since_observed\":false}}}",
       "coverage": [
         "production-v2-view",
@@ -12087,444 +12565,6 @@
       }
     },
     {
-      "canonical_observation_json": "{\"acting_player\":\"self\",\"known_hand_cards\":[[],[]],\"known_library_cards\":[[],[]],\"own_hand\":[{\"stable\":{\"card_db_id\":66,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":127,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":13,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":44,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}}],\"projection\":{\"active_player\":\"self\",\"battlefield\":[[],[]],\"combat\":{\"attacker_to_ordered_blockers\":[],\"attackers_declared\":false,\"blockers_declared\":false,\"ordered_attackers\":[]},\"continuous_effects\":[],\"engine_context\":{\"current_stage\":\"priority\",\"last_mana_ability_activator_since_priority_boundary\":null,\"mana_activity_since_priority_boundary\":false,\"pending_activation\":null,\"pending_cast\":null,\"pending_discard\":null,\"pending_effect\":null,\"pending_optional_cost\":null,\"pending_optional_cost_sacrifice\":null,\"pending_spell_copy\":null,\"pending_triggers\":[],\"priority_passes\":[false,false],\"stack_activity_since_priority_boundary\":false,\"stack_nonempty\":false},\"exile\":[],\"exile_play_permissions\":[],\"graveyards\":[[],[]],\"hand_counts\":[7,7],\"initiative\":null,\"library_counts\":[53,53],\"life_totals\":[20,20],\"mana_pools\":[[0,0,0,0,0,0],[0,0,0,0,0,0]],\"object_relations\":[],\"phase\":\"main1\",\"player_status\":[{\"draws_this_turn\":7,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0},{\"draws_this_turn\":7,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0}],\"policy_surface_context\":{\"current_stage\":\"surface\",\"private_combat_selection\":null},\"priority_player\":\"self\",\"stack\":[],\"surface_context\":{\"combat_priority_rearmed_by_mana_activity\":false,\"combat_priority_rearmed_by_stack_activity\":false,\"combat_priority_spent\":[false,false],\"current_stage\":\"priority\",\"madness_cast_reprompt_source\":null,\"mana_activity_since_last_stack_change\":false,\"mana_activity_since_round_open\":false,\"private_blockers\":null,\"private_discard\":null,\"private_optional_cost\":null,\"stack_grew_since_round_open\":false,\"stack_length_changed_since_observed\":false}}}",
-      "coverage": [
-        "production-v2-view",
-        "full-13-tensor-parity",
-        "identity"
-      ],
-      "name": "rally-mirror-known-card",
-      "rust_fixture": {
-        "canonical_observation_json": "{\"acting_player\":\"self\",\"known_hand_cards\":[[],[]],\"known_library_cards\":[[],[]],\"own_hand\":[{\"stable\":{\"card_db_id\":66,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":127,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":13,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":44,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}}],\"projection\":{\"active_player\":\"self\",\"battlefield\":[[],[]],\"combat\":{\"attacker_to_ordered_blockers\":[],\"attackers_declared\":false,\"blockers_declared\":false,\"ordered_attackers\":[]},\"continuous_effects\":[],\"engine_context\":{\"current_stage\":\"priority\",\"last_mana_ability_activator_since_priority_boundary\":null,\"mana_activity_since_priority_boundary\":false,\"pending_activation\":null,\"pending_cast\":null,\"pending_discard\":null,\"pending_effect\":null,\"pending_optional_cost\":null,\"pending_optional_cost_sacrifice\":null,\"pending_spell_copy\":null,\"pending_triggers\":[],\"priority_passes\":[false,false],\"stack_activity_since_priority_boundary\":false,\"stack_nonempty\":false},\"exile\":[],\"exile_play_permissions\":[],\"graveyards\":[[],[]],\"hand_counts\":[7,7],\"initiative\":null,\"library_counts\":[53,53],\"life_totals\":[20,20],\"mana_pools\":[[0,0,0,0,0,0],[0,0,0,0,0,0]],\"object_relations\":[],\"phase\":\"main1\",\"player_status\":[{\"draws_this_turn\":7,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0},{\"draws_this_turn\":7,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0}],\"policy_surface_context\":{\"current_stage\":\"surface\",\"private_combat_selection\":null},\"priority_player\":\"self\",\"stack\":[],\"surface_context\":{\"combat_priority_rearmed_by_mana_activity\":false,\"combat_priority_rearmed_by_stack_activity\":false,\"combat_priority_spent\":[false,false],\"current_stage\":\"priority\",\"madness_cast_reprompt_source\":null,\"mana_activity_since_last_stack_change\":false,\"mana_activity_since_round_open\":false,\"private_blockers\":null,\"private_discard\":null,\"private_optional_cost\":null,\"stack_grew_since_round_open\":false,\"stack_length_changed_since_observed\":false}}}",
-        "deck_ids": [
-          "Rally",
-          "Rally"
-        ],
-        "environment_seed": 462865,
-        "episode_id": 71011,
-        "fixture_transform": "identity",
-        "legal_actions": [
-          {
-            "display_text": null,
-            "schema_version": 5,
-            "selected_index": 0,
-            "semantic": {
-              "action_kind": "play_land",
-              "actor": "p0",
-              "source": {
-                "arena_id": 1,
-                "card_db_id": 76,
-                "controller": "p0",
-                "owner": "p0",
-                "zone": "Hand",
-                "zone_change_count": 1
-              }
-            },
-            "stable_id": "legal-action-v5:49d99770be8b522c"
-          },
-          {
-            "display_text": null,
-            "schema_version": 5,
-            "selected_index": 1,
-            "semantic": {
-              "action_kind": "play_land",
-              "actor": "p0",
-              "source": {
-                "arena_id": 4,
-                "card_db_id": 76,
-                "controller": "p0",
-                "owner": "p0",
-                "zone": "Hand",
-                "zone_change_count": 1
-              }
-            },
-            "stable_id": "legal-action-v5:a4646f8d38ad9de9"
-          },
-          {
-            "display_text": null,
-            "schema_version": 5,
-            "selected_index": 2,
-            "semantic": {
-              "action_kind": "play_land",
-              "actor": "p0",
-              "source": {
-                "arena_id": 6,
-                "card_db_id": 76,
-                "controller": "p0",
-                "owner": "p0",
-                "zone": "Hand",
-                "zone_change_count": 1
-              }
-            },
-            "stable_id": "legal-action-v5:a796031a2b46ac43"
-          },
-          {
-            "display_text": null,
-            "schema_version": 5,
-            "selected_index": 3,
-            "semantic": {
-              "action_kind": "pass",
-              "actor": "p0"
-            },
-            "stable_id": "legal-action-v5:8836ed4e86020938"
-          }
-        ],
-        "name": "rally-mirror-known-card",
-        "observation": {
-          "acting_player": "p0",
-          "card_db_hash": 11560644956943479018,
-          "kernel_version": "",
-          "known_hand_cards": [
-            [],
-            []
-          ],
-          "known_library_cards": [
-            [],
-            []
-          ],
-          "own_hand": [
-            {
-              "card_name": "",
-              "stable": {
-                "arena_id": 0,
-                "card_db_id": 66,
-                "controller": "p0",
-                "owner": "p0",
-                "zone": "Hand",
-                "zone_change_count": 1
-              }
-            },
-            {
-              "card_name": "",
-              "stable": {
-                "arena_id": 1,
-                "card_db_id": 76,
-                "controller": "p0",
-                "owner": "p0",
-                "zone": "Hand",
-                "zone_change_count": 1
-              }
-            },
-            {
-              "card_name": "",
-              "stable": {
-                "arena_id": 2,
-                "card_db_id": 127,
-                "controller": "p0",
-                "owner": "p0",
-                "zone": "Hand",
-                "zone_change_count": 1
-              }
-            },
-            {
-              "card_name": "",
-              "stable": {
-                "arena_id": 3,
-                "card_db_id": 13,
-                "controller": "p0",
-                "owner": "p0",
-                "zone": "Hand",
-                "zone_change_count": 1
-              }
-            },
-            {
-              "card_name": "",
-              "stable": {
-                "arena_id": 4,
-                "card_db_id": 76,
-                "controller": "p0",
-                "owner": "p0",
-                "zone": "Hand",
-                "zone_change_count": 1
-              }
-            },
-            {
-              "card_name": "",
-              "stable": {
-                "arena_id": 5,
-                "card_db_id": 44,
-                "controller": "p0",
-                "owner": "p0",
-                "zone": "Hand",
-                "zone_change_count": 1
-              }
-            },
-            {
-              "card_name": "",
-              "stable": {
-                "arena_id": 6,
-                "card_db_id": 76,
-                "controller": "p0",
-                "owner": "p0",
-                "zone": "Hand",
-                "zone_change_count": 1
-              }
-            }
-          ],
-          "physical_decision_id": 0,
-          "policy_surface_version": 5,
-          "projection": {
-            "active_player": "p0",
-            "battlefield": [
-              [],
-              []
-            ],
-            "combat": {
-              "attacker_to_ordered_blockers": [],
-              "attackers_declared": false,
-              "blockers_declared": false,
-              "ordered_attackers": []
-            },
-            "continuous_effects": [],
-            "engine_context": {
-              "current_stage": "priority",
-              "last_mana_ability_activator_since_priority_boundary": null,
-              "mana_activity_since_priority_boundary": false,
-              "pending_activation": null,
-              "pending_cast": null,
-              "pending_discard": null,
-              "pending_effect": null,
-              "pending_optional_cost": null,
-              "pending_optional_cost_sacrifice": null,
-              "pending_spell_copy": null,
-              "pending_triggers": [],
-              "priority_passes": [
-                false,
-                false
-              ],
-              "stack_activity_since_priority_boundary": false,
-              "stack_nonempty": false
-            },
-            "exile": [],
-            "exile_play_permissions": [],
-            "graveyards": [
-              [],
-              []
-            ],
-            "hand_counts": [
-              7,
-              7
-            ],
-            "initiative": null,
-            "library_counts": [
-              53,
-              53
-            ],
-            "life_totals": [
-              20,
-              20
-            ],
-            "mana_pools": [
-              [
-                0,
-                0,
-                0,
-                0,
-                0,
-                0
-              ],
-              [
-                0,
-                0,
-                0,
-                0,
-                0,
-                0
-              ]
-            ],
-            "object_relations": [],
-            "phase": "main1",
-            "player_status": [
-              {
-                "draws_this_turn": 7,
-                "drew_from_empty": false,
-                "dungeon": {
-                  "completed_dungeons": [],
-                  "dungeon_id": null,
-                  "room_id": null
-                },
-                "has_lost": false,
-                "lands_played_this_turn": 0,
-                "spells_cast_this_turn": 0
-              },
-              {
-                "draws_this_turn": 7,
-                "drew_from_empty": false,
-                "dungeon": {
-                  "completed_dungeons": [],
-                  "dungeon_id": null,
-                  "room_id": null
-                },
-                "has_lost": false,
-                "lands_played_this_turn": 0,
-                "spells_cast_this_turn": 0
-              }
-            ],
-            "policy_surface_context": {
-              "current_stage": "surface",
-              "private_combat_selection": null
-            },
-            "priority_player": "p0",
-            "stack": [],
-            "surface_context": {
-              "combat_priority_rearmed_by_mana_activity": false,
-              "combat_priority_rearmed_by_stack_activity": false,
-              "combat_priority_spent": [
-                false,
-                false
-              ],
-              "current_stage": "priority",
-              "madness_cast_reprompt_source": null,
-              "mana_activity_since_last_stack_change": false,
-              "mana_activity_since_round_open": false,
-              "private_blockers": null,
-              "private_discard": null,
-              "private_optional_cost": null,
-              "stack_grew_since_round_open": false,
-              "stack_length_changed_since_observed": false
-            },
-            "turn": 1
-          },
-          "schema_version": 5,
-          "step_index": 0,
-          "substep_count": 1,
-          "substep_index": 0,
-          "surface_version": 2,
-          "visible_projection_hash": 0
-        },
-        "replay_selected_indices": [],
-        "schema": "native-flat-full-v2-rust-fixture-v1"
-      },
-      "state_sha512_blocks_hex": [
-        "ca1c96b6510c28f2ad724d83ef125a55b56addb521dacc74b06da69d406c805708e6ae9bb84f2155b196b053c27d44a58f159632918213d5e6a003de5a72c8df",
-        "bc62630e5436c74a79acf8eb257847e854350ca276de6f36926449eccc1da572a7bd564424c7abc22883e8241e8481fbf91bfd9e67147b01112cc154d97dff2a",
-        "d17062fa1972124fa266f9e9b57d20abdf91486526e0c335d18b84a66f219bd7f94941acf33b599f1a1d612093fcf30d38a0dda22a919fc0dffe4e6e7ce95067",
-        "6a5b90c2f2a03b8312265129a47899da34cf61e80d92e4faad9a535999efc34781dfc3500dfc581e0b21e8f2193e98c5fdae6f9dc21d5a6fcec5c6a0d459b2d8",
-        "4d9b7c89bf4122f64e631f00db0a3ab8cfa91ad350c36569621564dedd34c4f91d3a7421d47c40e53c6ce4dd3b8a71cd0110afcdb573b14ee2f74a73751d6773",
-        "0bb73c805aff03dbe13907c6ff59b6915e8e42d84f01e443e877afeda3f1753658ef7f624d331199b38d416b36adc8bef1006857d8ab664a86a0e7d4321cbf4f"
-      ],
-      "tensors": {
-        "action_features": {
-          "f32_le_hex": "000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f00000000000000000000803f0000000000000000000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000000000000000364ecebec44a59be91b13bbf63326fbfb0739bbd18715bbeb06ed8be157816be52ae3e3fcf6e63bfbb743fbfd5a67d3f51e549bf1e633e3f557b1fbfd40b2b3dbe1d23bf7735243f7b611cbf5908103f8f383a3f0dcb733ed5bb073e44458abe4ff450bf004f70bf91a00fbf967d0abfca371f3f4b7b223faa896c3f5c6849bf9a11323ffd4675bf1500fdbe66c78f3d3943723fe069353f8b796ebfc19609bfc6e15e3f649982be95e95d3f8fff5b3fa5718d3eb80c81be6034febedc70953e7b720bbf21ae27bfeeedb63e1078493f6727bebe46d532bf3c34adbef3c181be64c6fe3db28494be07854fbd316e003fc47c93be7225f9be79314e3ff038df3e1646a53e643a4b3e47b65c3f67bb19bf842a97be9e222bbff5597a3f9e8b42bf9b1d9bbd23eaf8bec7051bbec16bdc3e1eff35bfee8086beada967bfcf5e013faf671abe2713253ef4963e3e839172be356b7bbfae342dbfe79a29bfafb222bf14e4e63cff6d6cbf470ff9be7a759bbde5990e3f461b6ebecc01663f266928bf000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f00000000000000000000803f0000000000000000000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000000000000000364ecebec44a59be91b13bbf63326fbfb0739bbd18715bbeb06ed8be157816be52ae3e3fcf6e63bfbb743fbfd5a67d3f51e549bf1e633e3f557b1fbfd40b2b3dbe1d23bf7735243f7b611cbf5908103f8f383a3f0dcb733ed5bb073e44458abe4ff450bf004f70bf91a00fbf967d0abfca371f3f4b7b223faa896c3f5c6849bf9a11323ffd4675bf1500fdbe66c78f3d3943723fe069353f8b796ebfc19609bfc6e15e3f649982be95e95d3f8fff5b3fa5718d3eb80c81be6034febedc70953e7b720bbf21ae27bfeeedb63e1078493f6727bebe46d532bf3c34adbef3c181be64c6fe3db28494be07854fbd316e003fc47c93be7225f9be79314e3ff038df3e1646a53e643a4b3e47b65c3f67bb19bf842a97be9e222bbff5597a3f9e8b42bf9b1d9bbd23eaf8bec7051bbec16bdc3e1eff35bfee8086beada967bfcf5e013faf671abe2713253ef4963e3e839172be356b7bbfae342dbfe79a29bfafb222bf14e4e63cff6d6cbf470ff9be7a759bbde5990e3f461b6ebecc01663f266928bf000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f00000000000000000000803f0000000000000000000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000000000000000364ecebec44a59be91b13bbf63326fbfb0739bbd18715bbeb06ed8be157816be52ae3e3fcf6e63bfbb743fbfd5a67d3f51e549bf1e633e3f557b1fbfd40b2b3dbe1d23bf7735243f7b611cbf5908103f8f383a3f0dcb733ed5bb073e44458abe4ff450bf004f70bf91a00fbf967d0abfca371f3f4b7b223faa896c3f5c6849bf9a11323ffd4675bf1500fdbe66c78f3d3943723fe069353f8b796ebfc19609bfc6e15e3f649982be95e95d3f8fff5b3fa5718d3eb80c81be6034febedc70953e7b720bbf21ae27bfeeedb63e1078493f6727bebe46d532bf3c34adbef3c181be64c6fe3db28494be07854fbd316e003fc47c93be7225f9be79314e3ff038df3e1646a53e643a4b3e47b65c3f67bb19bf842a97be9e222bbff5597a3f9e8b42bf9b1d9bbd23eaf8bec7051bbec16bdc3e1eff35bfee8086beada967bfcf5e013faf671abe2713253ef4963e3e839172be356b7bbfae342dbfe79a29bfafb222bf14e4e63cff6d6cbf470ff9be7a759bbde5990e3f461b6ebecc01663f266928bf0000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000000000000000000000000000803f00000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000004be8223f3a0910bf9af2aebe0468a63c22ba843e3236323e04676dbf290864bf9dd05a3f857a48bf978fbb3e67f0313ea2dd5bbf3c2891be3504023f656f54bf7e58533fac24223e461bde3dc10971bf7aa6cdbafd2263bfba122bbf19a1903e48f060bfc0baf4beb8598a3e0207763fb5fb86bdea1e5dbfc381a23efe21233fd2dffc3e3c0f143f8f142cbfe09a353fe5d217bfab7c0d3fc0e7d8be0d3f063f694a72bf308907bf13b914bf6671033fd050e03d7c3ac9be267547bf96be57be8cf242be6b18713efe09523fcd73f4be66181b3fef5e04bf1c3bff3e929765bf5ea7053f86354d3f61914bbe44ee2abf782b173f89cf533f36d0713f7bb0733e668e113e89b97e3fae46153fb2c874bea2391bbf3c9a2ebf47a15abe8cc4403e021c7cbc78936dbf7138d5bee69d33bfcf6b7abfefc8e1bc5d1f0b3f260e6bbfa1b7863ed629123f56792d3f687325bf5aeba0bc1cd2073fd6572bbfbd387abf426bda3e5e6182bb1951623fc1f578bf5e2b63bf898e1f3fa8005a3fc733e93e",
-          "shape": [
-            4,
-            195
-          ]
-        },
-        "action_ref_action_indices": {
-          "i64_values": [
-            0,
-            1,
-            2
-          ],
-          "shape": [
-            3
-          ]
-        },
-        "action_ref_card_ids": {
-          "i64_values": [
-            77,
-            77,
-            77
-          ],
-          "shape": [
-            3
-          ]
-        },
-        "action_ref_features": {
-          "f32_le_hex": "0000803f0000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f0000000000000000000000000000803f000000000000000000000000000000000000000000000000000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f0000000000000000000000000000803f000000000000000000000000000000000000000000000000000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000",
-          "shape": [
-            3,
-            25
-          ]
-        },
-        "action_ref_node_indices": {
-          "i64_values": [
-            1,
-            4,
-            6
-          ],
-          "shape": [
-            3
-          ]
-        },
-        "edge_features": {
-          "f32_le_hex": "",
-          "shape": [
-            0,
-            41
-          ]
-        },
-        "edge_source_indices": {
-          "i64_values": [],
-          "shape": [
-            0
-          ]
-        },
-        "edge_target_indices": {
-          "i64_values": [],
-          "shape": [
-            0
-          ]
-        },
-        "object_card_ids": {
-          "i64_values": [
-            67,
-            77,
-            128,
-            14,
-            77,
-            45,
-            77
-          ],
-          "shape": [
-            7
-          ]
-        },
-        "object_features": {
-          "f32_le_hex": "0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803c0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003d0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000403d0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803d0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a03d0000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c03d",
-          "shape": [
-            7,
-            98
-          ]
-        },
-        "object_groups": {
-          "i64_values": [
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0
-          ],
-          "shape": [
-            7
-          ]
-        },
-        "object_node_ids": {
-          "i64_values": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6
-          ],
-          "shape": [
-            7
-          ]
-        },
-        "state": {
-          "f32_le_hex": "0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f000000000000000000000000000000000000803f0000803f0000000000000000000000000000000000000000000000000000e03e0000543f0000000000000000000000000000603f0000000000000000000000000000000000000000000000000000803f0000000000000000000000000000000000000000000000000000e03e0000543f0000000000000000000000000000603f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000000000000000000000000000000000000000000000007358da3e1950643fab5cd33cb497aabeab75d73e5e32b3bd6e336d3e4ffea1be30775d3ec17aabbea53db1bef711953ed5d31abf05272a3f42073c3fe5903f3f3b3963bf27e3d4be59f1573ff08e503fd530883e432013bfc992583f23aed5bd09a5eebe8e57053ffa2e36bf0803773fe0e8773ed7097dbf50fbacbe04012abfe2c4743f38b6c3becdf2533ff781ac3e71bb55be407814bf2f129a3e43362f3f2805b13ee0c97a3ec63d3fbf071864bf81768b3e223f013f09880dbeb47845beb720053f3de8ce3cb45d2dbff132353f9ec3503f24c9753f95b19abe42f0e0be82f0bcbe084e43bf42d0653f7c300b3f787d6b3e122f05be171b833eb464313fb5c9973d83446c3f39c17fbf2be8e03e5435263fe5d134be2bc83c3f6a88733f8c173dbffa804a3fd8c83b3f14e31a3f205e1b3f313ac5be8250cbbd298ec9bd2edcf23aff07363f740e0c3fd0b20d3e1d85303ffb6ff0bef05e5b3f1d1413bf85006cbe9a89483e92f325beb522fb3efc5fa2be5165d6be41cf293f8f03c1be",
-          "shape": [
-            219
-          ]
-        }
-      }
-    },
-    {
       "canonical_observation_json": "{\"acting_player\":\"self\",\"known_hand_cards\":[[],[]],\"known_library_cards\":[[],[]],\"own_hand\":[{\"stable\":{\"card_db_id\":41,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":66,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":127,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":44,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}},{\"stable\":{\"card_db_id\":92,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"}}],\"projection\":{\"active_player\":\"self\",\"battlefield\":[[{\"ability_uses_this_turn\":[{\"ability_index\":0,\"ability_kind\":\"mana\",\"uses\":1}],\"attachments\":[],\"characteristics\":{\"base_power\":null,\"base_toughness\":null,\"effective_color_mask\":0,\"effective_keywords\":{\"deathtouch\":false,\"defender\":false,\"double_strike\":false,\"first_strike\":false,\"flying\":false,\"haste\":false,\"hexproof\":false,\"indestructible\":false,\"landwalk_mask\":0,\"lifelink\":false,\"menace\":false,\"minimum_blockers\":0,\"protection_from_monocolored\":false,\"reach\":false,\"trample\":false,\"vigilance\":false,\"ward_generic\":0},\"effective_power\":null,\"effective_subtype_ids\":[28],\"effective_toughness\":null,\"type_flags\":{\"artifact\":false,\"creature\":false,\"enchantment\":false,\"instant\":false,\"land\":true,\"sorcery\":false}},\"chosen_color\":null,\"counters\":{\"lore\":0,\"minus0_minus1\":0,\"minus1_minus1\":0,\"plus1_plus1\":0,\"stun\":0},\"damage\":0,\"entered_battlefield_turn\":\"earlier_turn\",\"face_index\":0,\"goaded_by\":[],\"is_token\":false,\"plotted_turn\":null,\"skip_next_untap\":false,\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Battlefield\"},\"summoning_sick\":false,\"tapped\":true},{\"ability_uses_this_turn\":[],\"attachments\":[],\"characteristics\":{\"base_power\":1,\"base_toughness\":2,\"effective_color_mask\":8,\"effective_keywords\":{\"deathtouch\":false,\"defender\":false,\"double_strike\":false,\"first_strike\":false,\"flying\":false,\"haste\":false,\"hexproof\":false,\"indestructible\":false,\"landwalk_mask\":0,\"lifelink\":false,\"menace\":false,\"minimum_blockers\":1,\"protection_from_monocolored\":false,\"reach\":false,\"trample\":false,\"vigilance\":false,\"ward_generic\":0},\"effective_power\":1,\"effective_subtype_ids\":[18,33],\"effective_toughness\":2,\"type_flags\":{\"artifact\":false,\"creature\":true,\"enchantment\":false,\"instant\":false,\"land\":false,\"sorcery\":false}},\"chosen_color\":null,\"counters\":{\"lore\":0,\"minus0_minus1\":0,\"minus1_minus1\":0,\"plus1_plus1\":0,\"stun\":0},\"damage\":0,\"entered_battlefield_turn\":\"earlier_turn\",\"face_index\":0,\"goaded_by\":[],\"is_token\":false,\"plotted_turn\":null,\"skip_next_untap\":false,\"stable\":{\"card_db_id\":45,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Battlefield\"},\"summoning_sick\":false,\"tapped\":true},{\"ability_uses_this_turn\":[],\"attachments\":[],\"characteristics\":{\"base_power\":null,\"base_toughness\":null,\"effective_color_mask\":0,\"effective_keywords\":{\"deathtouch\":false,\"defender\":false,\"double_strike\":false,\"first_strike\":false,\"flying\":false,\"haste\":false,\"hexproof\":false,\"indestructible\":false,\"landwalk_mask\":0,\"lifelink\":false,\"menace\":false,\"minimum_blockers\":0,\"protection_from_monocolored\":false,\"reach\":false,\"trample\":false,\"vigilance\":false,\"ward_generic\":0},\"effective_power\":null,\"effective_subtype_ids\":[28],\"effective_toughness\":null,\"type_flags\":{\"artifact\":false,\"creature\":false,\"enchantment\":false,\"instant\":false,\"land\":true,\"sorcery\":false}},\"chosen_color\":null,\"counters\":{\"lore\":0,\"minus0_minus1\":0,\"minus1_minus1\":0,\"plus1_plus1\":0,\"stun\":0},\"damage\":0,\"entered_battlefield_turn\":\"earlier_turn\",\"face_index\":0,\"goaded_by\":[],\"is_token\":false,\"plotted_turn\":null,\"skip_next_untap\":false,\"stable\":{\"card_db_id\":76,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Battlefield\"},\"summoning_sick\":false,\"tapped\":false}],[{\"ability_uses_this_turn\":[],\"attachments\":[],\"characteristics\":{\"base_power\":null,\"base_toughness\":null,\"effective_color_mask\":0,\"effective_keywords\":{\"deathtouch\":false,\"defender\":false,\"double_strike\":false,\"first_strike\":false,\"flying\":false,\"haste\":false,\"hexproof\":false,\"indestructible\":false,\"landwalk_mask\":0,\"lifelink\":false,\"menace\":false,\"minimum_blockers\":0,\"protection_from_monocolored\":false,\"reach\":false,\"trample\":false,\"vigilance\":false,\"ward_generic\":0},\"effective_power\":null,\"effective_subtype_ids\":[28],\"effective_toughness\":null,\"type_flags\":{\"artifact\":false,\"creature\":false,\"enchantment\":false,\"instant\":false,\"land\":true,\"sorcery\":false}},\"chosen_color\":null,\"counters\":{\"lore\":0,\"minus0_minus1\":0,\"minus1_minus1\":0,\"plus1_plus1\":0,\"stun\":0},\"damage\":0,\"entered_battlefield_turn\":\"earlier_turn\",\"face_index\":0,\"goaded_by\":[],\"is_token\":false,\"plotted_turn\":null,\"skip_next_untap\":false,\"stable\":{\"card_db_id\":76,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Battlefield\"},\"summoning_sick\":false,\"tapped\":true},{\"ability_uses_this_turn\":[],\"attachments\":[],\"characteristics\":{\"base_power\":null,\"base_toughness\":null,\"effective_color_mask\":0,\"effective_keywords\":{\"deathtouch\":false,\"defender\":false,\"double_strike\":false,\"first_strike\":false,\"flying\":false,\"haste\":false,\"hexproof\":false,\"indestructible\":false,\"landwalk_mask\":0,\"lifelink\":false,\"menace\":false,\"minimum_blockers\":0,\"protection_from_monocolored\":false,\"reach\":false,\"trample\":false,\"vigilance\":false,\"ward_generic\":0},\"effective_power\":null,\"effective_subtype_ids\":[28],\"effective_toughness\":null,\"type_flags\":{\"artifact\":false,\"creature\":false,\"enchantment\":false,\"instant\":false,\"land\":true,\"sorcery\":false}},\"chosen_color\":null,\"counters\":{\"lore\":0,\"minus0_minus1\":0,\"minus1_minus1\":0,\"plus1_plus1\":0,\"stun\":0},\"damage\":0,\"entered_battlefield_turn\":\"earlier_turn\",\"face_index\":0,\"goaded_by\":[],\"is_token\":false,\"plotted_turn\":null,\"skip_next_untap\":false,\"stable\":{\"card_db_id\":76,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Battlefield\"},\"summoning_sick\":false,\"tapped\":true},{\"ability_uses_this_turn\":[],\"attachments\":[],\"characteristics\":{\"base_power\":null,\"base_toughness\":null,\"effective_color_mask\":0,\"effective_keywords\":{\"deathtouch\":false,\"defender\":false,\"double_strike\":false,\"first_strike\":false,\"flying\":false,\"haste\":false,\"hexproof\":false,\"indestructible\":false,\"landwalk_mask\":0,\"lifelink\":false,\"menace\":false,\"minimum_blockers\":0,\"protection_from_monocolored\":false,\"reach\":false,\"trample\":false,\"vigilance\":false,\"ward_generic\":0},\"effective_power\":null,\"effective_subtype_ids\":[28],\"effective_toughness\":null,\"type_flags\":{\"artifact\":false,\"creature\":false,\"enchantment\":false,\"instant\":false,\"land\":true,\"sorcery\":false}},\"chosen_color\":null,\"counters\":{\"lore\":0,\"minus0_minus1\":0,\"minus1_minus1\":0,\"plus1_plus1\":0,\"stun\":0},\"damage\":0,\"entered_battlefield_turn\":\"this_turn\",\"face_index\":0,\"goaded_by\":[],\"is_token\":false,\"plotted_turn\":null,\"skip_next_untap\":false,\"stable\":{\"card_db_id\":76,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Battlefield\"},\"summoning_sick\":true,\"tapped\":true},{\"ability_uses_this_turn\":[],\"attachments\":[],\"characteristics\":{\"base_power\":1,\"base_toughness\":1,\"effective_color_mask\":8,\"effective_keywords\":{\"deathtouch\":false,\"defender\":false,\"double_strike\":false,\"first_strike\":false,\"flying\":false,\"haste\":false,\"hexproof\":false,\"indestructible\":false,\"landwalk_mask\":0,\"lifelink\":false,\"menace\":false,\"minimum_blockers\":1,\"protection_from_monocolored\":false,\"reach\":false,\"trample\":false,\"vigilance\":false,\"ward_generic\":0},\"effective_power\":1,\"effective_subtype_ids\":[50],\"effective_toughness\":1,\"type_flags\":{\"artifact\":false,\"creature\":true,\"enchantment\":false,\"instant\":false,\"land\":false,\"sorcery\":false}},\"chosen_color\":null,\"counters\":{\"lore\":0,\"minus0_minus1\":0,\"minus1_minus1\":0,\"plus1_plus1\":0,\"stun\":0},\"damage\":0,\"entered_battlefield_turn\":\"this_turn\",\"face_index\":0,\"goaded_by\":[],\"is_token\":false,\"plotted_turn\":null,\"skip_next_untap\":false,\"stable\":{\"card_db_id\":127,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Battlefield\"},\"summoning_sick\":true,\"tapped\":false},{\"ability_uses_this_turn\":[],\"attachments\":[],\"characteristics\":{\"base_power\":null,\"base_toughness\":null,\"effective_color_mask\":0,\"effective_keywords\":{\"deathtouch\":false,\"defender\":false,\"double_strike\":false,\"first_strike\":false,\"flying\":false,\"haste\":false,\"hexproof\":false,\"indestructible\":false,\"landwalk_mask\":0,\"lifelink\":false,\"menace\":false,\"minimum_blockers\":0,\"protection_from_monocolored\":false,\"reach\":false,\"trample\":false,\"vigilance\":false,\"ward_generic\":0},\"effective_power\":null,\"effective_subtype_ids\":[4],\"effective_toughness\":null,\"type_flags\":{\"artifact\":true,\"creature\":false,\"enchantment\":false,\"instant\":false,\"land\":false,\"sorcery\":false}},\"chosen_color\":null,\"counters\":{\"lore\":0,\"minus0_minus1\":0,\"minus1_minus1\":0,\"plus1_plus1\":0,\"stun\":0},\"damage\":0,\"entered_battlefield_turn\":\"this_turn\",\"face_index\":0,\"goaded_by\":[],\"is_token\":true,\"plotted_turn\":null,\"skip_next_untap\":false,\"stable\":{\"card_db_id\":132,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Battlefield\"},\"summoning_sick\":true,\"tapped\":false}]],\"combat\":{\"attacker_to_ordered_blockers\":[[{\"card_db_id\":45,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Battlefield\"},[{\"card_db_id\":127,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Battlefield\"}]]],\"attackers_declared\":true,\"blockers_declared\":true,\"ordered_attackers\":[{\"card_db_id\":45,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Battlefield\"}]},\"continuous_effects\":[],\"engine_context\":{\"current_stage\":\"priority\",\"last_mana_ability_activator_since_priority_boundary\":null,\"mana_activity_since_priority_boundary\":false,\"pending_activation\":null,\"pending_cast\":null,\"pending_discard\":null,\"pending_effect\":null,\"pending_optional_cost\":null,\"pending_optional_cost_sacrifice\":null,\"pending_spell_copy\":null,\"pending_triggers\":[],\"priority_passes\":[false,false],\"stack_activity_since_priority_boundary\":false,\"stack_nonempty\":false},\"exile\":[],\"exile_play_permissions\":[],\"graveyards\":[[],[{\"ability_uses_this_turn\":[],\"attachments\":[],\"characteristics\":{\"base_power\":null,\"base_toughness\":null,\"effective_color_mask\":8,\"effective_keywords\":{\"deathtouch\":false,\"defender\":false,\"double_strike\":false,\"first_strike\":false,\"flying\":false,\"haste\":false,\"hexproof\":false,\"indestructible\":false,\"landwalk_mask\":0,\"lifelink\":false,\"menace\":false,\"minimum_blockers\":0,\"protection_from_monocolored\":false,\"reach\":false,\"trample\":false,\"vigilance\":false,\"ward_generic\":0},\"effective_power\":null,\"effective_subtype_ids\":[],\"effective_toughness\":null,\"type_flags\":{\"artifact\":false,\"creature\":false,\"enchantment\":false,\"instant\":true,\"land\":false,\"sorcery\":false}},\"chosen_color\":null,\"counters\":{\"lore\":0,\"minus0_minus1\":0,\"minus1_minus1\":0,\"plus1_plus1\":0,\"stun\":0},\"damage\":0,\"entered_battlefield_turn\":null,\"face_index\":0,\"goaded_by\":[],\"is_token\":false,\"plotted_turn\":null,\"skip_next_untap\":false,\"stable\":{\"card_db_id\":66,\"controller\":\"opponent\",\"owner\":\"opponent\",\"zone\":\"Graveyard\"},\"summoning_sick\":false,\"tapped\":false}]],\"hand_counts\":[7,4],\"initiative\":null,\"library_counts\":[50,51],\"life_totals\":[16,19],\"mana_pools\":[[0,0,0,0,0,0],[0,0,0,0,0,0]],\"object_relations\":[],\"phase\":\"declare_blockers\",\"player_status\":[{\"draws_this_turn\":1,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0},{\"draws_this_turn\":0,\"drew_from_empty\":false,\"dungeon\":{\"completed_dungeons\":[],\"dungeon_id\":null,\"room_id\":null},\"has_lost\":false,\"lands_played_this_turn\":0,\"spells_cast_this_turn\":0}],\"policy_surface_context\":{\"current_stage\":\"surface\",\"private_combat_selection\":null},\"priority_player\":\"self\",\"stack\":[],\"surface_context\":{\"combat_priority_rearmed_by_mana_activity\":false,\"combat_priority_rearmed_by_stack_activity\":false,\"combat_priority_spent\":[true,false],\"current_stage\":\"priority\",\"madness_cast_reprompt_source\":null,\"mana_activity_since_last_stack_change\":true,\"mana_activity_since_round_open\":false,\"private_blockers\":null,\"private_discard\":null,\"private_optional_cost\":null,\"stack_grew_since_round_open\":false,\"stack_length_changed_since_observed\":false}}}",
       "coverage": [
         "production-v2-view",
@@ -19453,7 +19493,7 @@
     "object_groups": 20,
     "state": 219
   },
-  "payload_sha256": "36247d65b50ba18efb0678b09244c6bcf7923db6279d754c75b24075db14af3c",
+  "payload_sha256": "2f87d49106806a402148fc8b115a54ac94713eb717f45f897eff57a3bd1184ec",
   "python_contracts": {
     "encoding_contract_version": "actor-relative-node-graph-12",
     "feature_registry_version": "rust-observation-v5-action-v5-registry-4",
