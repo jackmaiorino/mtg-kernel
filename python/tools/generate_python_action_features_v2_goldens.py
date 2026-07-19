@@ -2,7 +2,7 @@
 """Generate Python-authoritative action tensorization goldens.
 
 The Rust native action tensorizer reconstructs the model-input portion of a
-Policy-v5 legal action from ``FlatScoringDecisionViewV1``.  This generator uses
+Policy-v5 legal action from ``FlatScoringDecisionViewV2``.  This generator uses
 the frozen Python feature implementation as the numerical and canonical-JSON
 authority.  It also emits the compact scorer-side rows needed to construct an
 equivalent Rust view without importing operational action metadata.
@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO_ROOT / "python"))
 from mtg_kernel_rl import features as f  # noqa: E402
 
 
-OUTPUT = REPO_ROOT / "data" / "flat_policy_v1" / "python_action_features_v1.json"
+OUTPUT = REPO_ROOT / "data" / "flat_policy_v2" / "python_action_features_v2.json"
 
 ROLE_IDS = {
     "source": 0,
@@ -518,6 +518,7 @@ def supplementary_cases() -> list[Case]:
 
     low = stable_ref(400, 0, p0, p0, "Hand")
     high = stable_ref(401, 65_534, p0, p0, "Hand")
+    widened = stable_ref(402, 65_535, p0, p0, "Hand")
     add(
         "card-token-1",
         {"action_kind": "cast_spell", "actor": p0, "source": low},
@@ -529,6 +530,13 @@ def supplementary_cases() -> list[Case]:
         {"action_kind": "cast_spell", "actor": p0, "source": high},
         "card-token-boundary",
         "token-65535",
+    )
+    add(
+        "card-token-65536",
+        {"action_kind": "cast_spell", "actor": p0, "source": widened},
+        "card-token-boundary",
+        "token-65536",
+        "v2-u32-token",
     )
 
     meta_semantic = {"action_kind": "cast_spell", "actor": p0, "source": source}
@@ -581,42 +589,6 @@ def supplementary_cases() -> list[Case]:
     return cases
 
 
-def python_only_token_65536_case() -> dict[str, Any]:
-    ref = stable_ref(9_999, 65_535, "p0", "p0", "Hand")
-    action = legal_action(
-        {"action_kind": "cast_spell", "actor": "p0", "source": ref},
-        stable_id="legal-action-v5:python-token-65536",
-    )
-    case = Case("python-only-card-token-65536", action)
-    f.assert_action_classified(action)
-    registry, _ = registry_for(case)
-    features, ref_features, ref_tokens, ref_nodes = f._action_features(
-        action, "p0", registry
-    )
-    canonical = f._canonical_model_value(
-        action,
-        f.LEGAL_ACTION_SPEC,
-        ("legal_action",),
-        f._CanonicalContext("p0"),
-    )
-    canonical_json = json.dumps(
-        canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    )
-    return {
-        "name": case.name,
-        "status": "domain-coverage-blocker",
-        "reason": "Python card_db_id 65535 maps to token 65536, which FlatScorerActionRefV1.card_token (u16) cannot represent",
-        "python_card_db_id": 65_535,
-        "python_card_token": 65_536,
-        "canonical_json": canonical_json,
-        "canonical_utf8_hex": canonical_json.encode("utf-8").hex(),
-        "full_feature_f32_bits": f32_bits(features),
-        "action_ref_feature_f32_bits": [f32_bits(row) for row in ref_features],
-        "action_ref_card_ids": ref_tokens,
-        "action_ref_node_indices": ref_nodes,
-    }
-
-
 def canonical_payload_bytes(value: Any) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
@@ -641,7 +613,7 @@ def build_payload() -> dict[str, Any]:
 
     features_path = REPO_ROOT / "python" / "mtg_kernel_rl" / "features.py"
     payload: dict[str, Any] = {
-        "schema": "mtg-kernel-python-action-features-golden/v1",
+        "schema": "mtg-kernel-python-action-features-golden/v2",
         "authority": "python/mtg_kernel_rl/features.py",
         "authority_sha256": hashlib.sha256(features_path.read_bytes()).hexdigest(),
         "python_contracts": {
@@ -705,8 +677,8 @@ def build_payload() -> dict[str, Any]:
             "chunk_encoding": "u32_le",
             "chunk_to_float": "f64(chunk)/f64(0xffffffff)*2.0-1.0 then one f32 cast",
         },
-        "current_rust_card_token_max": 65_535,
-        "domain_coverage_blockers": [python_only_token_65536_case()],
+        "current_rust_card_token_max": 65_536,
+        "domain_coverage_blockers": [],
         "cases": cases,
     }
     payload["payload_sha256"] = hashlib.sha256(canonical_payload_bytes(payload)).hexdigest()

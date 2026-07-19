@@ -1,14 +1,16 @@
-//! Python-compatible native tensors reconstructed from the flat scorer view.
+//! Python-compatible native tensors reconstructed from the V2 flat scorer view.
 //!
-//! This interim V1 module implements only the legal-action half. The scorer
-//! view's observation side is not yet injective over the Python observation
-//! contract, so empty observation tables in [`NativeFlatDecisionTensorV1`] are
-//! not a claim of a complete encoded decision. A later view version may fill
-//! those tables without changing the action reconstruction isolated here.
+//! The first checkpoint in this module migrates the validated legal-action
+//! projection to explicit V2 scorer types and the full Python one-based card
+//! token domain. The observation half is filled by the subsequent full-view
+//! checkpoint in this same module.
 
-use crate::flat_policy_v1::{
-    FlatObjectCoreV1, FlatRelativePlayerV1, FlatScorerActionCoreV1, FlatScorerActionKindV1,
-    FlatScorerActionRefV1, FlatScoringDecisionViewV1, FlatZoneV1,
+use crate::flat_policy_v2::{
+    FlatObjectCoreV2 as FlatObjectCoreV1, FlatRelativePlayerV2 as FlatRelativePlayerV1,
+    FlatScorerActionCoreV2 as FlatScorerActionCoreV1,
+    FlatScorerActionKindV2 as FlatScorerActionKindV1,
+    FlatScorerActionRefV2 as FlatScorerActionRefV1,
+    FlatScoringDecisionViewV2 as FlatScoringDecisionViewV1, FlatZoneV2 as FlatZoneV1,
 };
 use crate::rl_session::{
     FLAT_ACTION_FLAG_CAST_IT_V1, FLAT_ACTION_FLAG_CHANGE_TARGET_V1, FLAT_ACTION_FLAG_INCLUDE_V1,
@@ -19,21 +21,29 @@ use sha2::{Digest, Sha512};
 use std::collections::BTreeMap;
 use std::fmt;
 
-pub(crate) const NATIVE_FLAT_STATE_FEATURE_DIM_V1: usize = 219;
-pub(crate) const NATIVE_FLAT_OBJECT_FEATURE_DIM_V1: usize = 98;
-pub(crate) const NATIVE_FLAT_EDGE_FEATURE_DIM_V1: usize = 41;
-pub(crate) const NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1: usize = 99;
-pub(crate) const NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V1: usize = 96;
-pub(crate) const NATIVE_FLAT_ACTION_FEATURE_DIM_V1: usize = 195;
-pub(crate) const NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1: usize = 25;
-pub(crate) const NATIVE_FLAT_OBJECT_GROUP_COUNT_V1: usize = 20;
+pub(crate) const NATIVE_FLAT_STATE_FEATURE_DIM_V2: usize = 219;
+pub(crate) const NATIVE_FLAT_OBJECT_FEATURE_DIM_V2: usize = 98;
+pub(crate) const NATIVE_FLAT_EDGE_FEATURE_DIM_V2: usize = 41;
+pub(crate) const NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2: usize = 99;
+pub(crate) const NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2: usize = 96;
+pub(crate) const NATIVE_FLAT_ACTION_FEATURE_DIM_V2: usize = 195;
+pub(crate) const NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2: usize = 25;
+pub(crate) const NATIVE_FLAT_OBJECT_GROUP_COUNT_V2: usize = 20;
+pub(crate) const NATIVE_FLAT_MAX_CARD_TOKEN_V2: u32 = (u16::MAX as u32) + 1;
 
-pub(crate) const NATIVE_FLAT_CURRENT_MAX_CARD_TOKEN_V1: u32 = u16::MAX as u32;
-/// Domain-coverage blocker: Python admits `card_db_id == 65_535`, whose
-/// one-based token is 65_536. `FlatScorerActionRefV1.card_token` is currently
-/// `u16`, so that token cannot enter this V1 view without a schema widening.
-pub(crate) const NATIVE_FLAT_PYTHON_REQUIRED_MAX_CARD_TOKEN_V1: u32 =
-    NATIVE_FLAT_CURRENT_MAX_CARD_TOKEN_V1 + 1;
+// The action encoder below was mechanically migrated from the reviewed V1
+// implementation. These private aliases keep that byte-sensitive logic small
+// while the module's externally consumed contract is explicitly V2.
+const NATIVE_FLAT_STATE_FEATURE_DIM_V1: usize = NATIVE_FLAT_STATE_FEATURE_DIM_V2;
+const NATIVE_FLAT_OBJECT_FEATURE_DIM_V1: usize = NATIVE_FLAT_OBJECT_FEATURE_DIM_V2;
+const NATIVE_FLAT_EDGE_FEATURE_DIM_V1: usize = NATIVE_FLAT_EDGE_FEATURE_DIM_V2;
+const NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1: usize =
+    NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2;
+const NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V1: usize = NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2;
+const NATIVE_FLAT_ACTION_FEATURE_DIM_V1: usize = NATIVE_FLAT_ACTION_FEATURE_DIM_V2;
+const NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1: usize = NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2;
+const NATIVE_FLAT_OBJECT_GROUP_COUNT_V1: usize = NATIVE_FLAT_OBJECT_GROUP_COUNT_V2;
+const NATIVE_FLAT_CURRENT_MAX_CARD_TOKEN_V1: u32 = NATIVE_FLAT_MAX_CARD_TOKEN_V2;
 
 const ACTION_HASH_BLOCK_COUNT_V1: usize = 6;
 const ACTION_HASH_BLOCK_BYTES_V1: usize = 64;
@@ -72,7 +82,7 @@ const OPTIONAL_COST_CHOICES_V1: [&str; 3] = ["Decline", "Discard", "SacrificeLan
 /// checkpoint fills the five `action*` fields transactionally and leaves the
 /// observation fields for a later injective scorer-view contract.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct NativeFlatDecisionTensorV1 {
+pub(crate) struct NativeFlatDecisionTensorV2 {
     pub(crate) state: Vec<f32>,
     pub(crate) object_features: Vec<f32>,
     pub(crate) object_card_ids: Vec<i64>,
@@ -89,7 +99,7 @@ pub(crate) struct NativeFlatDecisionTensorV1 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NativeFlatTensorErrorV1 {
+pub(crate) enum NativeFlatTensorErrorV2 {
     EmptyActionTable,
     ActingPlayerNotRelativeSelf,
     ActionReferenceRange,
@@ -104,13 +114,16 @@ pub(crate) enum NativeFlatTensorErrorV1 {
     OutputInvariant,
 }
 
-impl fmt::Display for NativeFlatTensorErrorV1 {
+impl fmt::Display for NativeFlatTensorErrorV2 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "native flat tensorization failed: {self:?}")
     }
 }
 
-impl std::error::Error for NativeFlatTensorErrorV1 {}
+impl std::error::Error for NativeFlatTensorErrorV2 {}
+
+type NativeFlatTensorErrorV1 = NativeFlatTensorErrorV2;
+type NativeFlatDecisionTensorV1 = NativeFlatDecisionTensorV2;
 
 #[derive(Clone, Copy)]
 struct ResolvedActionRefV1<'a> {
@@ -145,7 +158,7 @@ struct ActionHalfV1 {
 
 /// Fills only the legal-action tensors. All validation and allocation happen
 /// before any field in `output` is replaced.
-pub(crate) fn fill_native_flat_action_tensors_v1(
+fn fill_native_flat_action_tensors_v1(
     decision: FlatScoringDecisionViewV1<'_>,
     output: &mut NativeFlatDecisionTensorV1,
 ) -> Result<(), NativeFlatTensorErrorV1> {
@@ -158,7 +171,16 @@ pub(crate) fn fill_native_flat_action_tensors_v1(
     Ok(())
 }
 
-pub(crate) fn validate_native_flat_action_half_v1(
+/// Fills the Python-parity action tensors from the explicit V2 scorer view.
+/// Validation and allocation complete before any output field is replaced.
+pub(crate) fn fill_native_flat_action_tensors_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    output: &mut NativeFlatDecisionTensorV2,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    fill_native_flat_action_tensors_v1(decision, output)
+}
+
+fn validate_native_flat_action_half_v1(
     output: &NativeFlatDecisionTensorV1,
     action_count: usize,
     action_ref_count: usize,
@@ -174,6 +196,15 @@ pub(crate) fn validate_native_flat_action_half_v1(
         action_ref_count,
         object_count,
     )
+}
+
+pub(crate) fn validate_native_flat_action_half_v2(
+    output: &NativeFlatDecisionTensorV2,
+    action_count: usize,
+    action_ref_count: usize,
+    object_count: usize,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    validate_native_flat_action_half_v1(output, action_count, action_ref_count, object_count)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -693,7 +724,7 @@ fn resolve_action_refs_v1<'a>(
             .objects()
             .get(object_index)
             .ok_or(NativeFlatTensorErrorV1::ActionReferenceObject)?;
-        if object.card_token != u32::from(reference.card_token)
+        if object.card_token != reference.card_token
             || object.owner == FlatRelativePlayerV1::None
             || object.controller == FlatRelativePlayerV1::None
             || object.zone.is_none()
@@ -837,7 +868,7 @@ fn canonical_card_ref_v1(
     let mut out = Map::new();
     out.insert(
         "card_db_id".to_owned(),
-        Value::from(u32::from(reference.raw.card_token) - 1),
+        Value::from(reference.raw.card_token - 1),
     );
     out.insert(
         "controller".to_owned(),
@@ -1163,11 +1194,13 @@ fn action_kind_name_v1(kind: FlatScorerActionKindV1) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flat_policy_v1::{FlatGlobalsV1, FlatManaColorV1};
+    use crate::flat_policy_v2::{
+        FlatGlobalsV2 as FlatGlobalsV1, FlatManaColorV2 as FlatManaColorV1,
+    };
     use serde::Deserialize;
     use sha2::Sha256;
 
-    const GOLDEN: &str = include_str!("../../data/flat_policy_v1/python_action_features_v1.json");
+    const GOLDEN: &str = include_str!("../../data/flat_policy_v2/python_action_features_v2.json");
     const FEATURES_PY: &[u8] = include_bytes!("../../python/mtg_kernel_rl/features.py");
 
     #[derive(Deserialize)]
@@ -1176,7 +1209,7 @@ mod tests {
         payload_sha256: String,
         dimensions: GoldenDimensions,
         current_rust_card_token_max: u32,
-        domain_coverage_blockers: Vec<DomainBlocker>,
+        domain_coverage_blockers: Vec<Value>,
         cases: Vec<GoldenCase>,
     }
 
@@ -1186,13 +1219,6 @@ mod tests {
         action_hash: usize,
         action: usize,
         action_ref: usize,
-    }
-
-    #[derive(Deserialize)]
-    struct DomainBlocker {
-        name: String,
-        python_card_token: u32,
-        status: String,
     }
 
     #[derive(Deserialize)]
@@ -1256,7 +1282,7 @@ mod tests {
         projection_role_id: u8,
         order_index: u16,
         associated_order: u16,
-        card_token: u16,
+        card_token: u32,
         model_object_index: u32,
     }
 
@@ -1557,27 +1583,29 @@ mod tests {
     }
 
     #[test]
-    fn card_token_65536_is_an_explicit_domain_blocker() {
+    fn card_token_65536_is_admitted_and_python_authoritative() {
         let document = golden();
         assert_eq!(
             document.current_rust_card_token_max,
             NATIVE_FLAT_CURRENT_MAX_CARD_TOKEN_V1
         );
-        assert_eq!(NATIVE_FLAT_CURRENT_MAX_CARD_TOKEN_V1, 65_535);
-        assert_eq!(NATIVE_FLAT_PYTHON_REQUIRED_MAX_CARD_TOKEN_V1, 65_536);
-        assert!(u16::try_from(NATIVE_FLAT_PYTHON_REQUIRED_MAX_CARD_TOKEN_V1).is_err());
-        assert_eq!(document.domain_coverage_blockers.len(), 1);
-        let blocker = &document.domain_coverage_blockers[0];
-        assert_eq!(blocker.name, "python-only-card-token-65536");
-        assert_eq!(
-            blocker.python_card_token,
-            NATIVE_FLAT_PYTHON_REQUIRED_MAX_CARD_TOKEN_V1
-        );
-        assert_eq!(blocker.status, "domain-coverage-blocker");
+        assert_eq!(NATIVE_FLAT_CURRENT_MAX_CARD_TOKEN_V1, 65_536);
+        assert!(document.domain_coverage_blockers.is_empty());
         assert!(document
             .cases
             .iter()
             .any(|case| case.name == "card-token-65535"));
+        let case = document
+            .cases
+            .iter()
+            .find(|case| case.name == "card-token-65536")
+            .expect("V2 golden must pin the widened token");
+        assert_eq!(case.action_ref_card_ids, [65_536]);
+        let (globals, objects, actions, refs) = parts(&case.flat_input);
+        let mut output = NativeFlatDecisionTensorV2::default();
+        fill_native_flat_action_tensors_v2(view(&globals, &objects, &actions, &refs), &mut output)
+            .unwrap();
+        assert_eq!(output.action_ref_card_ids, [65_536]);
     }
 
     #[test]

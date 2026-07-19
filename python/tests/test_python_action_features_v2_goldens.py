@@ -7,10 +7,10 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-GENERATOR = ROOT / "python" / "tools" / "generate_python_action_features_v1_goldens.py"
+GENERATOR = ROOT / "python" / "tools" / "generate_python_action_features_v2_goldens.py"
 
 
-class PythonActionFeaturesV1GoldenTests(unittest.TestCase):
+class PythonActionFeaturesV2GoldenTests(unittest.TestCase):
     def test_checked_in_golden_matches_python_feature_authority(self) -> None:
         completed = subprocess.run(
             [sys.executable, str(GENERATOR), "--check"],
