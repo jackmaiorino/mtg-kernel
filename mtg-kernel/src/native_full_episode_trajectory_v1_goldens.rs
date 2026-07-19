@@ -9,15 +9,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-const GOLDEN_SCHEMA_V1: &str = "mtg_kernel_native_full_episode_trajectory_goldens/v1";
-const GOLDEN_GENERATOR_IDENTITY_V1: &str =
-    "mtg-kernel-native-full-episode-trajectory-goldens-stdlib-python-v1";
-const GOLDEN_VECTOR_STREAM_IDENTITY_V1: &str =
-    "mtg-kernel-native-full-episode-trajectory-golden-vector-stream-sha256-v1";
-const GOLDEN_ARTIFACT_SHA256_V1: &str =
-    "502a1b4ba296fdc4b2f4e8fd61cc5b4d64f152c9b84b4e11a85967f76c3bde8b";
-const GOLDEN_VECTOR_STREAM_SHA256_V1: &str =
-    "f5230cbbc0b87735e7aa14c89ce31e41ce769de3f4292cafe63dad4733168d7a";
 const MAX_GOLDEN_ARTIFACT_BYTES_V1: usize = 4 * 1_024 * 1_024;
 const MAX_GOLDEN_CASES_V1: usize = 256;
 const MAX_GOLDEN_DECISIONS_V1: usize = 4_096;
@@ -393,7 +384,7 @@ fn golden_vector_stream_v1(artifact: &GoldenArtifactV1) -> Vec<u8> {
     append_atom_v1(
         &mut stream,
         "domain",
-        GOLDEN_VECTOR_STREAM_IDENTITY_V1.as_bytes(),
+        NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1.as_bytes(),
     );
     append_atom_v1(
         &mut stream,
@@ -552,15 +543,21 @@ fn portable_full_episode_trajectory_goldens_match_production() {
     let artifact: GoldenArtifactV1 =
         serde_json::from_slice(&artifact_bytes).expect("strict typed golden artifact parses");
     assert_eq!(artifact_bytes, canonical_json_bytes_v1(&artifact));
-    assert_eq!(artifact.schema, GOLDEN_SCHEMA_V1);
-    assert_eq!(artifact.generator_identity, GOLDEN_GENERATOR_IDENTITY_V1);
+    assert_eq!(
+        artifact.schema,
+        NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1
+    );
+    assert_eq!(
+        artifact.generator_identity,
+        NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1
+    );
     assert_eq!(
         artifact.trajectory_identity,
         NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1
     );
     assert_eq!(
         artifact.vector_stream_identity,
-        GOLDEN_VECTOR_STREAM_IDENTITY_V1
+        NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1
     );
     assert_strict_case_order_v1(
         artifact
@@ -574,12 +571,12 @@ fn portable_full_episode_trajectory_goldens_match_production() {
     let vector_stream_sha256: [u8; 32] = Sha256::digest(golden_vector_stream_v1(&artifact)).into();
     assert_eq!(
         artifact_sha256,
-        parse_lower_hex_v1::<32>(GOLDEN_ARTIFACT_SHA256_V1)
+        parse_lower_hex_v1::<32>(NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1)
             .expect("artifact SHA-256 pin is lowercase raw32")
     );
     assert_eq!(
         vector_stream_sha256,
-        parse_lower_hex_v1::<32>(GOLDEN_VECTOR_STREAM_SHA256_V1)
+        parse_lower_hex_v1::<32>(NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1)
             .expect("vector-stream SHA-256 pin is lowercase raw32")
     );
 

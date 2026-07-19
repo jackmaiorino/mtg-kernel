@@ -1773,9 +1773,11 @@ fn main() {
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", runtime_decks_path.display()));
     let runtime_decks: RuntimeDeckCatalogJson = serde_json::from_str(&runtime_decks_text)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", runtime_decks_path.display()));
+    let runtime_decks_file_sha256 = sha256_hex(sha256_bytes(runtime_decks_text.as_bytes()));
 
     let out = codegen(&data.cards);
-    let runtime_decks_out = runtime_decks_codegen(&runtime_decks, &data.cards);
+    let runtime_decks_out =
+        runtime_decks_codegen(&runtime_decks, &data.cards, &runtime_decks_file_sha256);
     let flat_policy_contract_out = flat_policy_contract_codegen(&repo_root);
     let (flat_policy_contract_v2_out, flat_action_contract_v2_out) =
         flat_policy_contract_v2_codegen(&repo_root);
@@ -1809,7 +1811,11 @@ fn main() {
     });
 }
 
-fn runtime_decks_codegen(catalog: &RuntimeDeckCatalogJson, cards: &[CardJson]) -> String {
+fn runtime_decks_codegen(
+    catalog: &RuntimeDeckCatalogJson,
+    cards: &[CardJson],
+    catalog_file_sha256: &str,
+) -> String {
     const EXPECTED_SCHEMA: &str = "kernel_runtime_decks/v1";
     const EXPECTED_PROTOCOL: &str = "canonical-mainboard-bo1/v1";
     const EXPECTED_SOURCE_HASH_NORMALIZATION: &str = "utf8_text_crlf_v1";
@@ -2035,6 +2041,11 @@ fn runtime_decks_codegen(catalog: &RuntimeDeckCatalogJson, cards: &[CardJson]) -
     ] {
         writeln!(out, "pub const {name}: &str = {value:?};").unwrap();
     }
+    writeln!(
+        out,
+        "pub const RUNTIME_DECK_CATALOG_FILE_SHA256: &str = {catalog_file_sha256:?};"
+    )
+    .unwrap();
     writeln!(
         out,
         "pub const RUNTIME_DECK_SOURCE_ROW_ORDINAL_BASE: u32 = {};",

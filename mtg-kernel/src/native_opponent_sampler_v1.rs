@@ -19,6 +19,14 @@ pub const UNIFORM_INDEX_MODULO_U64_WIDTH_ONE_SEED_RULE_V1: &str =
     "derive-and-record-one-leaf-seed-for-every-substep-including-legal-count-one;then-selected-index-is-zero-and-the-next-substep-index-advances";
 pub const UNIFORM_INDEX_MODULO_U64_BIAS_RULE_V1: &str =
     "intentional-modulo-bias-no-rejection-sampling;when-legal-count-does-not-divide-the-action-seed-domain-low-residues-have-one-extra-preimage;changing-this-rule-requires-a-new-sampler-identity";
+pub const NATIVE_OPPONENT_SAMPLER_VECTORS_FILE_SHA256_V1: &str =
+    "9e5898308d30614a4a09cecb584200521b1a3b727606d8cf78dbe70b51106e18";
+pub const NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1: &str =
+    "2b65520a528dcf9eba8d7baded50cc9ad50cf507704c2b4410e2afb4b34d7fad";
+pub const NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_IDENTITY_V1: &str =
+    "mtg-kernel-trainer-uniform-policy-v1";
+pub const NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_MODEL_RULE_V1: &str =
+    "no-model-uniform-legal-index";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UniformIndexModuloU64ErrorV1 {
@@ -114,10 +122,6 @@ mod tests {
         include_bytes!("../../data/native_opponent_sampler_vectors_v1.json");
     const GENERATOR_BYTES: &[u8] =
         include_bytes!("../../python/tools/generate_native_opponent_sampler_vectors_v1.py");
-    const VECTOR_ARTIFACT_SHA256: &str =
-        "9e5898308d30614a4a09cecb584200521b1a3b727606d8cf78dbe70b51106e18";
-    const VECTOR_STREAM_SHA256: &str =
-        "2b65520a528dcf9eba8d7baded50cc9ad50cf507704c2b4410e2afb4b34d7fad";
     const SCHEMA: &str = "mtg-kernel-native-opponent-sampler-cross-language-vectors/v1";
     const GENERATOR_IDENTITY: &str = "stdlib-only-independent-sha256-uniform-modulo-reference-v1";
     const SEED_ATOM_FRAMING_IDENTITY: &str = "u32be-tag-length-u64be-payload-length-atom-v1";
@@ -445,7 +449,10 @@ mod tests {
 
     #[test]
     fn cross_language_vectors_bind_production_modulo_and_full_seed_chain() {
-        assert_eq!(sha256_hex(VECTOR_BYTES), VECTOR_ARTIFACT_SHA256);
+        assert_eq!(
+            sha256_hex(VECTOR_BYTES),
+            NATIVE_OPPONENT_SAMPLER_VECTORS_FILE_SHA256_V1
+        );
         let fixture: Value = serde_json::from_slice(VECTOR_BYTES).unwrap();
         assert_eq!(value_str(&fixture, "schema"), SCHEMA);
         assert_eq!(value_u32(&fixture, "vector_schema_version"), 1);
@@ -644,8 +651,14 @@ mod tests {
             SEMANTIC_STREAM_FRAMING_IDENTITY
         );
         assert_eq!(value_str(semantic, "atom_formula"), ATOM_FORMULA);
-        assert_eq!(value_str(semantic, "sha256"), VECTOR_STREAM_SHA256);
-        assert_eq!(sha256_hex(&semantic_stream(&fixture)), VECTOR_STREAM_SHA256);
+        assert_eq!(
+            value_str(semantic, "sha256"),
+            NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1
+        );
+        assert_eq!(
+            sha256_hex(&semantic_stream(&fixture)),
+            NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1
+        );
         assert_eq!(
             value_str(&fixture["authority"], "implementation"),
             GENERATOR_IDENTITY
