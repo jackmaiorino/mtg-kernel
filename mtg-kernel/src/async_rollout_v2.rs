@@ -405,6 +405,8 @@ struct SharedRolloutV2 {
     worker_count: usize,
     sessions_per_worker: usize,
     scheduler_deadline: Instant,
+    #[cfg(test)]
+    test_instrumentation: Arc<TestRunInstrumentationV2>,
 }
 
 impl SharedRolloutV2 {
@@ -437,6 +439,8 @@ impl SharedRolloutV2 {
             worker_count,
             sessions_per_worker,
             scheduler_deadline,
+            #[cfg(test)]
+            test_instrumentation: current_test_run_instrumentation_v2(),
         }
     }
 
@@ -528,34 +532,109 @@ const TEST_INJECT_OPPONENT_STEP_V2: u8 = 3;
 #[cfg(test)]
 const TEST_INJECT_PANIC_V2: u8 = 4;
 #[cfg(test)]
-static TEST_INJECTION_V2: AtomicU8 = AtomicU8::new(0);
-#[cfg(test)]
-static TEST_ACTIVE_WORKERS_V2: AtomicUsize = AtomicUsize::new(0);
+#[derive(Debug, Default)]
+struct TestRunInstrumentationV2 {
+    injection: AtomicU8,
+    active_workers: AtomicUsize,
+}
 
 #[cfg(test)]
-struct TestActiveWorkerGuardV2;
+std::thread_local! {
+    static ACTIVE_TEST_RUN_INSTRUMENTATION_V2:
+        std::cell::RefCell<Option<Arc<TestRunInstrumentationV2>>> = const {
+            std::cell::RefCell::new(None)
+        };
+}
+
+#[cfg(test)]
+struct AsyncRolloutTestGuardV2 {
+    instrumentation: Arc<TestRunInstrumentationV2>,
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl AsyncRolloutTestGuardV2 {
+    fn inject(&self, injection: u8) {
+        self.instrumentation
+            .injection
+            .store(injection, Ordering::SeqCst);
+    }
+
+    fn pending_injection(&self) -> u8 {
+        self.instrumentation.injection.load(Ordering::SeqCst)
+    }
+
+    fn active_workers(&self) -> usize {
+        self.instrumentation.active_workers.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+fn acquire_async_rollout_test_guard_v2() -> AsyncRolloutTestGuardV2 {
+    let instrumentation = Arc::new(TestRunInstrumentationV2::default());
+    ACTIVE_TEST_RUN_INSTRUMENTATION_V2.with(|active| {
+        assert!(
+            active.replace(Some(Arc::clone(&instrumentation))).is_none(),
+            "nested async-rollout-v2 test instrumentation is unsupported"
+        );
+    });
+    AsyncRolloutTestGuardV2 {
+        instrumentation,
+        thread_bound: std::marker::PhantomData,
+    }
+}
+
+#[cfg(test)]
+fn current_test_run_instrumentation_v2() -> Arc<TestRunInstrumentationV2> {
+    ACTIVE_TEST_RUN_INSTRUMENTATION_V2
+        .with(|active| active.borrow().clone())
+        .unwrap_or_else(|| Arc::new(TestRunInstrumentationV2::default()))
+}
+
+#[cfg(test)]
+impl Drop for AsyncRolloutTestGuardV2 {
+    fn drop(&mut self) {
+        ACTIVE_TEST_RUN_INSTRUMENTATION_V2.with(|active| {
+            let installed = active.replace(None);
+            debug_assert!(installed
+                .as_ref()
+                .is_some_and(|installed| Arc::ptr_eq(installed, &self.instrumentation)));
+        });
+    }
+}
+
+#[cfg(test)]
+struct TestActiveWorkerGuardV2 {
+    instrumentation: Arc<TestRunInstrumentationV2>,
+}
 
 #[cfg(test)]
 impl TestActiveWorkerGuardV2 {
-    fn enter() -> Self {
-        TEST_ACTIVE_WORKERS_V2.fetch_add(1, Ordering::SeqCst);
-        Self
+    fn enter(instrumentation: Arc<TestRunInstrumentationV2>) -> Self {
+        instrumentation
+            .active_workers
+            .fetch_add(1, Ordering::SeqCst);
+        Self { instrumentation }
     }
 }
 
 #[cfg(test)]
 impl Drop for TestActiveWorkerGuardV2 {
     fn drop(&mut self) {
-        TEST_ACTIVE_WORKERS_V2.fetch_sub(1, Ordering::SeqCst);
+        self.instrumentation
+            .active_workers
+            .fetch_sub(1, Ordering::SeqCst);
     }
 }
 
 #[cfg(test)]
 fn maybe_inject_worker_failure(
+    instrumentation: &TestRunInstrumentationV2,
     injection: u8,
     failure: WorkerFailureV2,
 ) -> Result<(), WorkerFailureV2> {
-    if TEST_INJECTION_V2
+    if instrumentation
+        .injection
         .compare_exchange(injection, 0, Ordering::SeqCst, Ordering::SeqCst)
         .is_ok()
     {
@@ -623,6 +702,7 @@ impl LocalLaneV2 {
             .filter(|next| *next < shared.end_episode_id);
         #[cfg(test)]
         maybe_inject_worker_failure(
+            &shared.test_instrumentation,
             TEST_INJECT_RESET_V2,
             WorkerFailureV2 {
                 logical_lane_id: self.logical_lane_id,
@@ -678,6 +758,7 @@ impl LocalLaneV2 {
                     mailbox.state.store(MAILBOX_WORKER_OWNED, Ordering::Release);
                     #[cfg(test)]
                     maybe_inject_worker_failure(
+                        &shared.test_instrumentation,
                         TEST_INJECT_LEARNER_STEP_V2,
                         WorkerFailureV2 {
                             logical_lane_id: self.logical_lane_id,
@@ -777,6 +858,7 @@ impl LocalLaneV2 {
                         uniform_index(&mut self.opponent_policy, decision.legal_action_count);
                     #[cfg(test)]
                     maybe_inject_worker_failure(
+                        &shared.test_instrumentation,
                         TEST_INJECT_OPPONENT_STEP_V2,
                         WorkerFailureV2 {
                             logical_lane_id: self.logical_lane_id,
@@ -838,6 +920,7 @@ fn worker_loop(
         .collect();
     #[cfg(test)]
     maybe_inject_worker_failure(
+        &shared.test_instrumentation,
         TEST_INJECT_PANIC_V2,
         WorkerFailureV2 {
             logical_lane_id: first_lane,
@@ -922,7 +1005,7 @@ fn worker_loop(
 
 fn worker_entry(shared: Arc<SharedRolloutV2>, config: AsyncRolloutConfigV2, worker_id: usize) {
     #[cfg(test)]
-    let _active_worker = TestActiveWorkerGuardV2::enter();
+    let _active_worker = TestActiveWorkerGuardV2::enter(Arc::clone(&shared.test_instrumentation));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         worker_loop(&shared, &config, worker_id)
     }));
@@ -1623,9 +1706,6 @@ fn worker_phase_from_code(code: u8) -> Option<AsyncRolloutWorkerPhaseV1> {
 mod tests {
     use super::*;
     use crate::async_rollout::{run_seeded_uniform_async_rollout_v1, AsyncRolloutConfigV1};
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn config() -> AsyncRolloutConfigV2 {
         AsyncRolloutConfigV2 {
@@ -1687,8 +1767,8 @@ mod tests {
     }
 
     fn assert_injected_failure(injection: u8, expected_phase: AsyncRolloutWorkerPhaseV1) {
-        let baseline = TEST_ACTIVE_WORKERS_V2.load(Ordering::SeqCst);
-        TEST_INJECTION_V2.store(injection, Ordering::SeqCst);
+        let test_state = acquire_async_rollout_test_guard_v2();
+        test_state.inject(injection);
         let mut injected = config();
         injected.episode_count = 4;
         injected.measure_broker_service_time = false;
@@ -1697,14 +1777,14 @@ mod tests {
             error,
             AsyncRolloutErrorV2::WorkerFailed { phase, .. } if phase == expected_phase
         ));
-        assert_eq!(TEST_INJECTION_V2.load(Ordering::SeqCst), 0);
-        assert_eq!(TEST_ACTIVE_WORKERS_V2.load(Ordering::SeqCst), baseline);
+        assert_eq!(test_state.pending_injection(), 0);
+        assert_eq!(test_state.active_workers(), 0);
     }
 
     #[test]
     fn rejects_invalid_capacity_before_spawning() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        let baseline = TEST_ACTIVE_WORKERS_V2.load(Ordering::SeqCst);
+        let test_state = acquire_async_rollout_test_guard_v2();
+        assert_eq!(test_state.active_workers(), 0);
         let mut invalid = config();
         invalid.worker_count = 0;
         assert!(matches!(
@@ -1732,12 +1812,11 @@ mod tests {
             run_seeded_uniform_async_rollout_v2(invalid),
             Err(AsyncRolloutErrorV2::InvalidSchedulerTimeout)
         ));
-        assert_eq!(TEST_ACTIVE_WORKERS_V2.load(Ordering::SeqCst), baseline);
+        assert_eq!(test_state.active_workers(), 0);
     }
 
     #[test]
     fn multi_session_schedule_matches_v1_episode_and_trace_results() {
-        let _lock = TEST_LOCK.lock().unwrap();
         let v2_config = config();
         let v1_config = AsyncRolloutConfigV1 {
             deck_ids: v2_config.deck_ids.clone(),
@@ -1767,7 +1846,6 @@ mod tests {
 
     #[test]
     fn quiescence_flushes_a_short_tail_without_a_timer() {
-        let _lock = TEST_LOCK.lock().unwrap();
         let mut short = config();
         short.worker_count = 4;
         short.sessions_per_worker = 4;
@@ -1782,7 +1860,6 @@ mod tests {
 
     #[test]
     fn repeated_schedule_has_identical_round_batch_digest_and_shape() {
-        let _lock = TEST_LOCK.lock().unwrap();
         let mut repeated = config();
         repeated.worker_count = 3;
         repeated.sessions_per_worker = 3;
@@ -1821,7 +1898,6 @@ mod tests {
 
     #[test]
     fn injected_reset_step_and_panic_failures_cancel_and_join_all_workers() {
-        let _lock = TEST_LOCK.lock().unwrap();
         assert_injected_failure(TEST_INJECT_RESET_V2, AsyncRolloutWorkerPhaseV1::Reset);
         assert_injected_failure(
             TEST_INJECT_LEARNER_STEP_V2,
@@ -1835,22 +1911,54 @@ mod tests {
     }
 
     #[test]
+    fn parallel_faulted_and_clean_v2_runs_own_disjoint_instrumentation() {
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let fault_start = Arc::clone(&start);
+        let faulted = thread::spawn(move || {
+            let test_state = acquire_async_rollout_test_guard_v2();
+            test_state.inject(TEST_INJECT_RESET_V2);
+            fault_start.wait();
+            let error = run_seeded_uniform_async_rollout_v2(config()).unwrap_err();
+            assert!(matches!(
+                error,
+                AsyncRolloutErrorV2::WorkerFailed {
+                    phase: AsyncRolloutWorkerPhaseV1::Reset,
+                    ..
+                }
+            ));
+            assert_eq!(test_state.pending_injection(), 0);
+            assert_eq!(test_state.active_workers(), 0);
+        });
+
+        let clean_start = Arc::clone(&start);
+        let clean = thread::spawn(move || {
+            let test_state = acquire_async_rollout_test_guard_v2();
+            clean_start.wait();
+            let result = run_seeded_uniform_async_rollout_v2(config()).unwrap();
+            assert!(result.all_natural());
+            assert_eq!(test_state.pending_injection(), 0);
+            assert_eq!(test_state.active_workers(), 0);
+        });
+
+        faulted.join().unwrap();
+        clean.join().unwrap();
+    }
+
+    #[test]
     fn cooperative_deadline_fails_closed_and_joins_spawned_workers() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        let baseline = TEST_ACTIVE_WORKERS_V2.load(Ordering::SeqCst);
+        let test_state = acquire_async_rollout_test_guard_v2();
         let mut expired = config();
         expired.scheduler_timeout = Duration::from_nanos(1);
         assert!(matches!(
             run_seeded_uniform_async_rollout_v2(expired),
             Err(AsyncRolloutErrorV2::SchedulerDeadlineExceeded)
         ));
-        assert_eq!(TEST_ACTIVE_WORKERS_V2.load(Ordering::SeqCst), baseline);
+        assert_eq!(test_state.active_workers(), 0);
     }
 
     #[test]
     fn broker_owned_quiescence_blocks_early_action_then_cancellation_wakes_worker() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        let baseline = TEST_ACTIVE_WORKERS_V2.load(Ordering::SeqCst);
+        let test_state = acquire_async_rollout_test_guard_v2();
         let shared = shared_for_test(0, 1, 1, 1, 1);
         shared.broker_thread.set(thread::current()).unwrap();
         let worker_config = AsyncRolloutConfigV2 {
@@ -1924,12 +2032,11 @@ mod tests {
         );
         shared.cancel_and_wake_all();
         guard.join_every_worker().unwrap();
-        assert_eq!(TEST_ACTIVE_WORKERS_V2.load(Ordering::SeqCst), baseline);
+        assert_eq!(test_state.active_workers(), 0);
     }
 
     #[test]
     fn rejected_complete_round_publishes_no_partial_action_chunk() {
-        let _lock = TEST_LOCK.lock().unwrap();
         let shared = shared_for_test(1, 3, 2, 1, 2);
         let decision_a = FastActorDecisionV1 {
             episode_id: 1,
@@ -2010,7 +2117,6 @@ mod tests {
 
     #[test]
     fn join_guard_reports_first_panic_only_after_joining_every_handle() {
-        let _lock = TEST_LOCK.lock().unwrap();
         let shared = shared_for_test(1, 2, 2, 2, 1);
         let completed = Arc::new(AtomicBool::new(false));
         let mut guard = WorkerJoinGuardV2::new(shared);
@@ -2029,7 +2135,6 @@ mod tests {
 
     #[test]
     fn quiescent_round_handoff_stress_covers_short_and_full_chunks() {
-        let _lock = TEST_LOCK.lock().unwrap();
         for iteration in 0..16usize {
             let mut stress = config();
             stress.worker_count = 2;
