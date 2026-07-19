@@ -44,6 +44,8 @@ pub(crate) mod native_flat_cpu_reference_v1;
 pub(crate) mod native_policy_value_net_v1;
 // Exact CPU loss/backward/Adam reference for terminal_reinforce_value/v3;
 // deliberately not a scheduler, checkpoint format, or performance backend.
+#[cfg(feature = "native-flat-tensorizer-diagnostic")]
+pub mod native_flat_tensorizer_diagnostic_v1;
 #[allow(dead_code)]
 pub(crate) mod native_flat_tensorizer_v2;
 #[allow(dead_code)]
@@ -62,6 +64,9 @@ pub(crate) mod native_trainer_schedule_v1;
 // Persistence and the external trainer/runner record boundary remain separate.
 #[allow(dead_code)]
 pub(crate) mod native_trainer_v1;
+// Public in-process execution facade for the native trainer. This deliberately
+// owns no CLI grammar, serialized record, or filesystem publication contract.
+pub mod native_training_executor_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;

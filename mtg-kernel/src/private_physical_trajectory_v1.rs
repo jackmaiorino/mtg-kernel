@@ -189,10 +189,10 @@ fn decision_kind_code(kind: FastActorDecisionKindV1) -> u8 {
 mod tests {
     use super::*;
     use crate::async_flat_scored_rollout_v1::{
-        initial_learner_trace_hash_v1, record_learner_trace_v1,
-        run_async_flat_scored_rollout_observed_v1, AsyncFlatScoredObservedRunErrorV1,
-        FlatBatchScorerErrorV1, FlatBatchScorerV1, FlatScoredObserverPhaseV1,
-        FlatScoringBatchViewV1, ASYNC_FLAT_SCORED_TEST_LOCK_V1,
+        acquire_async_flat_scored_test_lock_v1, initial_learner_trace_hash_v1,
+        record_learner_trace_v1, run_async_flat_scored_rollout_observed_v1,
+        AsyncFlatScoredObservedRunErrorV1, FlatBatchScorerErrorV1, FlatBatchScorerV1,
+        FlatScoredObserverPhaseV1, FlatScoringBatchViewV1,
     };
     use crate::async_rollout_v2::AsyncRolloutConfigV2;
     use crate::flat_policy_v1::{FlatDecisionBindingV1, FlatScoringDecisionViewV1};
@@ -1442,7 +1442,7 @@ mod tests {
 
     #[test]
     fn grouped_output_is_canonical_and_scheduler_shape_invariant() {
-        let _lock = ASYNC_FLAT_SCORED_TEST_LOCK_V1.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let shapes = [(1, 1, 1), (1, 4, 3), (4, 1, 3), (4, 2, 5)];
         let mut reference = None;
         for (workers, sessions, target) in shapes {
@@ -1510,7 +1510,7 @@ mod tests {
 
     #[test]
     fn observed_rollout_discards_grouped_output_on_mutated_association() {
-        let _lock = ASYNC_FLAT_SCORED_TEST_LOCK_V1.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let config = rollout_config(1, 2, 2);
         let inner = FlatPhysicalTrajectoryObserverV1::new(
             config.learner_seat,

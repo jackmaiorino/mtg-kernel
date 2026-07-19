@@ -20,9 +20,9 @@ use crate::rl_session::{
     FLAT_ACTION_FLAG_CAST_IT_V1, FLAT_ACTION_FLAG_CHANGE_TARGET_V1, FLAT_ACTION_FLAG_INCLUDE_V1,
     FLAT_ACTION_FLAG_PAY_V1, FLAT_ACTION_FLAG_USE_COST_V1, FLAT_ACTION_FLAG_VALUE_V1,
 };
+use serde::Serialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha512};
-use std::collections::BTreeMap;
 use std::fmt;
 
 pub(crate) const NATIVE_FLAT_STATE_FEATURE_DIM_V2: usize = 219;
@@ -236,9 +236,18 @@ struct ObjectProjectionV2 {
     node_to_raw: Vec<usize>,
 }
 
-#[derive(Default)]
 pub(crate) struct NativeFlatTensorizerV2 {
     poisoned: bool,
+    canonical_json: Vec<u8>,
+}
+
+impl Default for NativeFlatTensorizerV2 {
+    fn default() -> Self {
+        Self {
+            poisoned: false,
+            canonical_json: Vec::with_capacity(16 * 1024),
+        }
+    }
 }
 
 impl NativeFlatTensorizerV2 {
@@ -254,7 +263,7 @@ impl NativeFlatTensorizerV2 {
         if self.poisoned {
             return Err(NativeFlatTensorErrorV2::Poisoned);
         }
-        match encode_full_decision_v2(decision) {
+        match encode_full_decision_with_scratch_v2(decision, &mut self.canonical_json) {
             Ok(encoded) => {
                 *output = encoded;
                 Ok(())
@@ -371,13 +380,15 @@ pub(crate) fn fill_native_flat_decision_tensors_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     output: &mut NativeFlatDecisionTensorV2,
 ) -> Result<(), NativeFlatTensorErrorV2> {
-    let encoded = encode_full_decision_v2(decision)?;
+    let mut canonical_json = Vec::new();
+    let encoded = encode_full_decision_with_scratch_v2(decision, &mut canonical_json)?;
     *output = encoded;
     Ok(())
 }
 
-fn encode_full_decision_v2(
+fn encode_full_decision_with_scratch_v2(
     decision: FlatScoringDecisionViewV1<'_>,
+    canonical_json: &mut Vec<u8>,
 ) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
@@ -385,9 +396,13 @@ fn encode_full_decision_v2(
     validate_auxiliary_tables_v2(decision)?;
     let objects = encode_objects_v2(decision)?;
     let edges = encode_edges_v2(decision, &objects.projection)?;
-    let canonical = canonical_observation_v2(decision, &objects.projection)?;
-    let state = encode_state_v2(decision, &canonical)?;
-    let actions = encode_action_half_with_projection_v2(decision, Some(&objects.projection))?;
+    write_canonical_observation_v2(decision, &objects.projection, canonical_json)?;
+    let state = encode_state_v2(decision, canonical_json)?;
+    let actions = encode_action_half_with_projection_and_scratch_v2(
+        decision,
+        Some(&objects.projection),
+        canonical_json,
+    )?;
     let output = NativeFlatDecisionTensorV2 {
         state,
         object_features: objects.features,
@@ -410,6 +425,50 @@ fn encode_full_decision_v2(
         decision.action_refs().len(),
     )?;
     Ok(output)
+}
+
+#[cfg(test)]
+fn encode_full_decision_reference_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+) -> Result<(NativeFlatDecisionTensorV2, Vec<u8>), NativeFlatTensorErrorV2> {
+    if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
+        return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
+    }
+    validate_auxiliary_tables_v2(decision)?;
+    let objects = encode_objects_v2(decision)?;
+    let edges = encode_edges_v2(decision, &objects.projection)?;
+    let canonical = canonical_observation_v2(decision, &objects.projection)?;
+    let canonical_json =
+        serde_json::to_vec(&canonical).map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)?;
+    let state = encode_state_v2(decision, &canonical_json)?;
+    let mut action_scratch = Vec::new();
+    let actions = encode_action_half_with_projection_and_scratch_v2(
+        decision,
+        Some(&objects.projection),
+        &mut action_scratch,
+    )?;
+    let output = NativeFlatDecisionTensorV2 {
+        state,
+        object_features: objects.features,
+        object_card_ids: objects.card_ids,
+        object_groups: objects.groups,
+        object_node_ids: objects.node_ids,
+        edge_features: edges.features,
+        edge_source_indices: edges.sources,
+        edge_target_indices: edges.targets,
+        action_features: actions.action_features,
+        action_ref_features: actions.action_ref_features,
+        action_ref_card_ids: actions.action_ref_card_ids,
+        action_ref_action_indices: actions.action_ref_action_indices,
+        action_ref_node_indices: actions.action_ref_node_indices,
+    };
+    validate_full_output_v2(
+        &output,
+        objects.projection.node_to_raw.len(),
+        decision.actions().len(),
+        decision.action_refs().len(),
+    )?;
+    Ok((output, canonical_json))
 }
 
 fn object_output_group_rank_v2(group: FlatObjectGroupV2) -> Option<usize> {
@@ -481,8 +540,7 @@ fn encode_objects_v2(
     let mut node_ids = try_vec_capacity(output_count)?;
     for (node, &raw) in projection.node_to_raw.iter().enumerate() {
         let object = &decision.objects()[raw];
-        let row = object_features_v2(decision, raw, object)?;
-        features.extend_from_slice(&row);
+        append_object_features_v2(decision, raw, object, &mut features)?;
         card_ids.push(i64::from(object.card_token));
         groups.push(i64::from(object.group as u8));
         node_ids
@@ -673,16 +731,115 @@ fn relation_pairs_v2(
     Ok(pairs)
 }
 
-fn object_features_v2(
+struct PendingObjectFeatureRowV2<'a> {
+    output: &'a mut Vec<f32>,
+    row_ptr: *mut f32,
+    start_len: usize,
+    len: usize,
+    overflowed: bool,
+}
+
+impl<'a> PendingObjectFeatureRowV2<'a> {
+    fn new(output: &'a mut Vec<f32>) -> Result<Self, NativeFlatTensorErrorV2> {
+        if output.capacity().saturating_sub(output.len()) < NATIVE_FLAT_OBJECT_FEATURE_DIM_V2 {
+            return Err(NativeFlatTensorErrorV2::OutputInvariant);
+        }
+        let start_len = output.len();
+        // SAFETY: the capacity check above proves that start_len is inside the
+        // allocation with room for one complete object row. The exclusive Vec
+        // borrow held by Self prevents reallocation while row_ptr is live.
+        let row_ptr = unsafe { output.as_mut_ptr().add(start_len) };
+        Ok(Self {
+            start_len,
+            output,
+            row_ptr,
+            len: 0,
+            overflowed: false,
+        })
+    }
+
+    #[inline(always)]
+    fn push(&mut self, value: f32) {
+        if self.len < NATIVE_FLAT_OBJECT_FEATURE_DIM_V2 {
+            // SAFETY: construction proves one complete row of spare capacity.
+            // The bound above stays within it, and each slot is written once
+            // while the Vec's published length remains unchanged.
+            unsafe {
+                self.row_ptr.add(self.len).write(value);
+            }
+            self.len += 1;
+        } else {
+            self.overflowed = true;
+        }
+    }
+
+    #[inline(always)]
+    fn extend(&mut self, values: impl IntoIterator<Item = f32>) {
+        for value in values {
+            self.push(value);
+        }
+    }
+
+    fn finish(self) -> Result<(), NativeFlatTensorErrorV2> {
+        if self.overflowed || self.len != NATIVE_FLAT_OBJECT_FEATURE_DIM_V2 {
+            Err(NativeFlatTensorErrorV2::OutputInvariant)
+        } else {
+            let published_len = self
+                .start_len
+                .checked_add(NATIVE_FLAT_OBJECT_FEATURE_DIM_V2)
+                .ok_or(NativeFlatTensorErrorV2::CheckedIntegerRange)?;
+            // SAFETY: success proves every newly exposed f32 slot was written
+            // exactly once, and construction proved the capacity bound.
+            unsafe {
+                self.output.set_len(published_len);
+            }
+            Ok(())
+        }
+    }
+}
+
+fn append_object_one_hot_v2(
+    output: &mut PendingObjectFeatureRowV2<'_>,
+    index: usize,
+    width: usize,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    if index >= width {
+        return Err(NativeFlatTensorErrorV2::EnumRange);
+    }
+    output.extend((0..width).map(|candidate| f32::from(candidate == index)));
+    Ok(())
+}
+
+fn append_object_mask_v2(
+    output: &mut PendingObjectFeatureRowV2<'_>,
+    value: u32,
+    width: usize,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    if width >= 32 || value >= (1_u32 << width) {
+        return Err(NativeFlatTensorErrorV2::ObjectShape);
+    }
+    output.extend((0..width).map(|bit| f32::from(value & (1_u32 << bit) != 0)));
+    Ok(())
+}
+
+fn append_object_turn_relation_v2(
+    relation: FlatTurnRelationV2,
+    output: &mut PendingObjectFeatureRowV2<'_>,
+) {
+    output.extend((0..3).map(|index| f32::from(index == relation as usize)));
+}
+
+fn append_object_features_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     raw: usize,
     object: &FlatObjectCoreV1,
-) -> Result<[f32; NATIVE_FLAT_OBJECT_FEATURE_DIM_V2], NativeFlatTensorErrorV2> {
-    let mut row = Vec::with_capacity(NATIVE_FLAT_OBJECT_FEATURE_DIM_V2);
+    output: &mut Vec<f32>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let mut row = PendingObjectFeatureRowV2::new(output)?;
     row.extend(required_relative_features_v2(object.owner)?);
     row.extend(required_relative_features_v2(object.controller)?);
     let zone = object.zone.ok_or(NativeFlatTensorErrorV2::ObjectShape)? as usize;
-    append_one_hot_v2(&mut row, zone, 7)?;
+    append_object_one_hot_v2(&mut row, zone, 7)?;
     let subtypes = object_subtypes_v2(decision, raw, object)?;
     let uses = object_ability_uses_v2(decision, raw, object)?;
     let goads = object_goads_v2(decision, raw, object)?;
@@ -745,7 +902,7 @@ fn object_features_v2(
             .map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)?,
         8.0,
     ));
-    turn_relation_features_v2(object.plotted_turn, &mut row);
+    append_object_turn_relation_v2(object.plotted_turn, &mut row);
     row.push(f32::from(object.card_details_present && object.is_token));
     row.push(scaled_i64_v2(
         if object.card_details_present {
@@ -759,11 +916,11 @@ fn object_features_v2(
         object.card_details_present && object.chosen_color.is_some(),
     ));
     if let Some(color) = object.chosen_color.filter(|_| object.card_details_present) {
-        append_one_hot_v2(&mut row, color as usize, 6)?;
+        append_object_one_hot_v2(&mut row, color as usize, 6)?;
     } else {
         row.extend([0.0; 6]);
     }
-    turn_relation_features_v2(object.entered_battlefield_turn, &mut row);
+    append_object_turn_relation_v2(object.entered_battlefield_turn, &mut row);
     row.push(scaled_u64_v2(uses.len() as u64, 8.0));
     row.push(scaled_u64_v2(
         uses.iter().map(|entry| u64::from(entry.uses)).sum(),
@@ -819,18 +976,15 @@ fn object_features_v2(
     ] {
         row.push(scaled_i64_v2(i64::from(value.unwrap_or(0)), 20.0));
     }
-    append_mask_v2(&mut row, u32::from(object.effective_color_mask), 6)?;
+    append_object_mask_v2(&mut row, u32::from(object.effective_color_mask), 6)?;
     row.push(scaled_u64_v2(subtypes.len() as u64, 16.0));
     row.extend(object.keyword_flags.into_iter().map(f32::from));
     row.push(scaled_i64_v2(i64::from(object.ward_generic), 16.0));
     row.push(scaled_i64_v2(i64::from(object.minimum_blockers), 8.0));
-    append_mask_v2(&mut row, u32::from(object.landwalk_mask), 6)?;
-    append_one_hot_v2(&mut row, object.source_kind as usize, 12)?;
+    append_object_mask_v2(&mut row, u32::from(object.landwalk_mask), 6)?;
+    append_object_one_hot_v2(&mut row, object.source_kind as usize, 12)?;
     row.push(scaled_i64_v2(i64::from(object.visible_ordinal), 64.0));
-    let row: [f32; NATIVE_FLAT_OBJECT_FEATURE_DIM_V2] = row
-        .try_into()
-        .map_err(|_| NativeFlatTensorErrorV2::OutputInvariant)?;
-    Ok(row)
+    row.finish()
 }
 
 fn validate_auxiliary_tables_v2(
@@ -1447,7 +1601,7 @@ fn encode_context_edges_v2(
 
 fn encode_state_v2(
     decision: FlatScoringDecisionViewV1<'_>,
-    canonical: &Value,
+    canonical_json: &[u8],
 ) -> Result<Vec<f32>, NativeFlatTensorErrorV2> {
     let globals = decision.globals();
     let mut state = Vec::with_capacity(NATIVE_FLAT_STATE_FEATURE_DIM_V2);
@@ -1591,13 +1745,12 @@ fn encode_state_v2(
     if state.len() != NATIVE_FLAT_STATE_FEATURE_DIM_V2 - NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2 {
         return Err(NativeFlatTensorErrorV2::OutputInvariant);
     }
-    let canonical_json =
-        serde_json::to_vec(canonical).map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)?;
-    state.extend(digest_features_v2(
+    append_digest_features_v2(
+        &mut state,
         b"observation-state",
-        &canonical_json,
+        canonical_json,
         NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2,
-    ));
+    );
     Ok(state)
 }
 
@@ -1608,10 +1761,18 @@ fn count_role_v2(relations: &[FlatRelationV2], role: FlatRelationRoleV2) -> usiz
         .count()
 }
 
-fn digest_features_v2(namespace: &[u8], canonical_json: &[u8], dims: usize) -> Vec<f32> {
-    let mut output = Vec::with_capacity(dims);
+fn append_digest_features_v2(
+    output: &mut Vec<f32>,
+    namespace: &[u8],
+    canonical_json: &[u8],
+    dims: usize,
+) {
+    let target_len = output
+        .len()
+        .checked_add(dims)
+        .expect("fixed tensor dimensions cannot overflow usize");
     let mut counter = 0_u32;
-    while output.len() < dims {
+    while output.len() < target_len {
         let mut digest = Sha512::new();
         digest.update(namespace);
         digest.update(counter.to_le_bytes());
@@ -1620,13 +1781,515 @@ fn digest_features_v2(namespace: &[u8], canonical_json: &[u8], dims: usize) -> V
         for chunk in block.chunks_exact(4) {
             let integer = u32::from_le_bytes(chunk.try_into().expect("four-byte hash chunk"));
             output.push(((f64::from(integer) / f64::from(u32::MAX)) * 2.0 - 1.0) as f32);
-            if output.len() == dims {
+            if output.len() == target_len {
                 break;
             }
         }
         counter += 1;
     }
-    output
+}
+
+fn write_canonical_observation_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    output.clear();
+    let globals = decision.globals();
+    output.extend_from_slice(br#"{"acting_player":"self","known_hand_cards":"#);
+    write_canonical_known_cards_v2(
+        decision,
+        projection,
+        FlatRelationRoleV2::KnownHand,
+        false,
+        output,
+    )?;
+    output.extend_from_slice(br#","known_library_cards":"#);
+    write_canonical_known_cards_v2(
+        decision,
+        projection,
+        FlatRelationRoleV2::KnownLibrary,
+        true,
+        output,
+    )?;
+    output.extend_from_slice(br#","own_hand":"#);
+    write_canonical_private_group_v2(decision, projection, FlatObjectGroupV2::SelfHand, output)?;
+    output.extend_from_slice(br#","projection":{"active_player":"#);
+    write_relative_player_json_v2(output, globals.active_player, false)?;
+    output.extend_from_slice(br#","battlefield":["#);
+    write_canonical_public_group_v2(
+        decision,
+        projection,
+        FlatObjectGroupV2::SelfBattlefield,
+        output,
+    )?;
+    output.push(b',');
+    write_canonical_public_group_v2(
+        decision,
+        projection,
+        FlatObjectGroupV2::OpponentBattlefield,
+        output,
+    )?;
+    output.extend_from_slice(br#"],"combat":"#);
+    append_json_value_v2(output, &canonical_combat_v2(decision, projection)?)?;
+    output.extend_from_slice(br#","continuous_effects":"#);
+    append_json_value_v2(output, &canonical_effects_v2(decision, projection)?)?;
+    output.extend_from_slice(br#","engine_context":"#);
+    append_json_value_v2(output, &canonical_engine_context_v2(decision, projection)?)?;
+    output.extend_from_slice(br#","exile":"#);
+    write_canonical_public_group_v2(decision, projection, FlatObjectGroupV2::Exile, output)?;
+    output.extend_from_slice(br#","exile_play_permissions":"#);
+    append_json_value_v2(output, &canonical_permissions_v2(decision, projection)?)?;
+    output.extend_from_slice(br#","graveyards":["#);
+    write_canonical_public_group_v2(
+        decision,
+        projection,
+        FlatObjectGroupV2::SelfGraveyard,
+        output,
+    )?;
+    output.push(b',');
+    write_canonical_public_group_v2(
+        decision,
+        projection,
+        FlatObjectGroupV2::OpponentGraveyard,
+        output,
+    )?;
+    output.extend_from_slice(br#"],"hand_counts":"#);
+    append_json_v2(
+        output,
+        &[globals.players[0].hand_count, globals.players[1].hand_count],
+    )?;
+    output.extend_from_slice(br#","initiative":"#);
+    write_relative_player_json_v2(output, globals.initiative, true)?;
+    output.extend_from_slice(br#","library_counts":"#);
+    append_json_v2(
+        output,
+        &[
+            globals.players[0].library_count,
+            globals.players[1].library_count,
+        ],
+    )?;
+    output.extend_from_slice(br#","life_totals":"#);
+    append_json_v2(output, &[globals.players[0].life, globals.players[1].life])?;
+    output.extend_from_slice(br#","mana_pools":["#);
+    append_json_v2(output, &globals.players[0].mana)?;
+    output.push(b',');
+    append_json_v2(output, &globals.players[1].mana)?;
+    output.extend_from_slice(br#"],"object_relations":"#);
+    append_json_value_v2(
+        output,
+        &canonical_object_relations_v2(decision, projection)?,
+    )?;
+    output.extend_from_slice(br#","phase":"#);
+    write_enum_json_v2(output, globals.phase as usize, &PHASE_NAMES_V2)?;
+    output.extend_from_slice(br#","player_status":"#);
+    append_json_value_v2(output, &canonical_player_status_v2(decision)?)?;
+    output.extend_from_slice(br#","policy_surface_context":"#);
+    append_json_value_v2(output, &canonical_policy_surface_v2(decision, projection)?)?;
+    output.extend_from_slice(br#","priority_player":"#);
+    write_relative_player_json_v2(output, globals.priority_player, false)?;
+    output.extend_from_slice(br#","stack":"#);
+    append_json_value_v2(output, &canonical_stack_v2(decision, projection)?)?;
+    output.extend_from_slice(br#","surface_context":"#);
+    append_json_value_v2(output, &canonical_surface_context_v2(decision, projection)?)?;
+    output.extend_from_slice(b"}}");
+    Ok(())
+}
+
+fn append_json_v2<T: Serialize + ?Sized>(
+    output: &mut Vec<u8>,
+    value: &T,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    serde_json::to_writer(&mut *output, value).map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)
+}
+
+fn append_json_value_v2(
+    output: &mut Vec<u8>,
+    value: &Value,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    append_json_v2(output, value)
+}
+
+fn append_static_json_string_v2(output: &mut Vec<u8>, value: &str) {
+    debug_assert!(value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')));
+    output.push(b'"');
+    output.extend_from_slice(value.as_bytes());
+    output.push(b'"');
+}
+
+fn relative_player_name_v2(
+    player: FlatRelativePlayerV1,
+    optional: bool,
+) -> Result<Option<&'static str>, NativeFlatTensorErrorV2> {
+    match player {
+        FlatRelativePlayerV1::SelfPlayer => Ok(Some("self")),
+        FlatRelativePlayerV1::Opponent => Ok(Some("opponent")),
+        FlatRelativePlayerV1::None if optional => Ok(None),
+        FlatRelativePlayerV1::None => Err(NativeFlatTensorErrorV2::ObjectShape),
+    }
+}
+
+fn write_relative_player_json_v2(
+    output: &mut Vec<u8>,
+    player: FlatRelativePlayerV1,
+    optional: bool,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    if let Some(name) = relative_player_name_v2(player, optional)? {
+        append_static_json_string_v2(output, name);
+    } else {
+        output.extend_from_slice(b"null");
+    }
+    Ok(())
+}
+
+fn write_enum_json_v2<const N: usize>(
+    output: &mut Vec<u8>,
+    index: usize,
+    names: &[&str; N],
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let name = names.get(index).ok_or(NativeFlatTensorErrorV2::EnumRange)?;
+    append_static_json_string_v2(output, name);
+    Ok(())
+}
+
+fn write_turn_relation_json_v2(output: &mut Vec<u8>, relation: FlatTurnRelationV2) {
+    match relation {
+        FlatTurnRelationV2::Absent => output.extend_from_slice(b"null"),
+        FlatTurnRelationV2::ThisTurn => append_static_json_string_v2(output, "this_turn"),
+        FlatTurnRelationV2::EarlierTurn => append_static_json_string_v2(output, "earlier_turn"),
+    }
+}
+
+fn write_canonical_stable_ref_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    raw: usize,
+    controller_override: Option<FlatRelativePlayerV1>,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let object = decision
+        .objects()
+        .get(raw)
+        .ok_or(NativeFlatTensorErrorV2::ObjectShape)?;
+    if object.card_token == 0 || object.card_token > NATIVE_FLAT_MAX_CARD_TOKEN_V2 {
+        return Err(NativeFlatTensorErrorV2::CardTokenRange);
+    }
+    output.extend_from_slice(br#"{"card_db_id":"#);
+    append_json_v2(output, &(object.card_token - 1))?;
+    output.extend_from_slice(br#","controller":"#);
+    write_relative_player_json_v2(
+        output,
+        controller_override.unwrap_or(object.controller),
+        false,
+    )?;
+    output.extend_from_slice(br#","owner":"#);
+    write_relative_player_json_v2(output, object.owner, false)?;
+    output.extend_from_slice(br#","zone":"#);
+    append_static_json_string_v2(
+        output,
+        zone_name_v1(object.zone.ok_or(NativeFlatTensorErrorV2::ObjectShape)?),
+    );
+    output.push(b'}');
+    Ok(())
+}
+
+fn write_canonical_private_group_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    group: FlatObjectGroupV2,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let mut order = 0usize;
+    for &raw in &projection.node_to_raw {
+        let object = &decision.objects()[raw];
+        if object.group != group {
+            continue;
+        }
+        if usize::try_from(object.visible_ordinal).ok() != Some(order) {
+            return Err(NativeFlatTensorErrorV2::ObjectOrder);
+        }
+        order += 1;
+    }
+    output.push(b'[');
+    let mut order = 0usize;
+    for &raw in &projection.node_to_raw {
+        if decision.objects()[raw].group != group {
+            continue;
+        }
+        if order != 0 {
+            output.push(b',');
+        }
+        output.extend_from_slice(br#"{"stable":"#);
+        write_canonical_stable_ref_v2(decision, raw, None, output)?;
+        output.push(b'}');
+        order += 1;
+    }
+    output.push(b']');
+    Ok(())
+}
+
+fn write_canonical_public_group_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    group: FlatObjectGroupV2,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let mut order = 0usize;
+    for &raw in &projection.node_to_raw {
+        let object = &decision.objects()[raw];
+        if object.group != group {
+            continue;
+        }
+        if usize::try_from(object.visible_ordinal).ok() != Some(order) {
+            return Err(NativeFlatTensorErrorV2::ObjectOrder);
+        }
+        order += 1;
+    }
+    output.push(b'[');
+    let mut order = 0usize;
+    for &raw in &projection.node_to_raw {
+        if decision.objects()[raw].group != group {
+            continue;
+        }
+        if order != 0 {
+            output.push(b',');
+        }
+        write_canonical_public_card_v2(decision, raw, output)?;
+        order += 1;
+    }
+    output.push(b']');
+    Ok(())
+}
+
+fn write_canonical_known_cards_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    role: FlatRelationRoleV2,
+    include_position: bool,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let mut owners: [Vec<(u32, Vec<u8>)>; 2] = [Vec::new(), Vec::new()];
+    for relation in decision
+        .relations()
+        .iter()
+        .filter(|relation| relation.role == role)
+    {
+        let owner = match relation.payload {
+            FlatRelationPayloadV2::Known { owner } => owner,
+            _ => return Err(NativeFlatTensorErrorV2::RelationShape),
+        };
+        let owner_index = match owner {
+            FlatRelativePlayerV1::SelfPlayer => 0,
+            FlatRelativePlayerV1::Opponent => 1,
+            FlatRelativePlayerV1::None => return Err(NativeFlatTensorErrorV2::RelationShape),
+        };
+        if relation.primary_order != owner_index as u32 {
+            return Err(NativeFlatTensorErrorV2::RelationOrder);
+        }
+        let raw = usize::try_from(
+            relation
+                .target_object
+                .ok_or(NativeFlatTensorErrorV2::RelationShape)?,
+        )
+        .map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)?;
+        let _ = projected_required_node_v2(relation.target_object, projection)?;
+        let mut stable = Vec::with_capacity(96);
+        write_canonical_stable_ref_v2(decision, raw, None, &mut stable)?;
+        owners[owner_index].push((relation.secondary_order, stable));
+    }
+    for rows in &mut owners {
+        rows.sort_by_key(|(order, _)| *order);
+        if !include_position {
+            for (index, (order, _)) in rows.iter().enumerate() {
+                if usize::try_from(*order).ok() != Some(index) {
+                    return Err(NativeFlatTensorErrorV2::RelationOrder);
+                }
+            }
+            rows.sort_by(|left, right| left.1.cmp(&right.1));
+        }
+    }
+    output.push(b'[');
+    for (owner_index, rows) in owners.iter().enumerate() {
+        if owner_index != 0 {
+            output.push(b',');
+        }
+        output.push(b'[');
+        for (index, (position, stable)) in rows.iter().enumerate() {
+            if index != 0 {
+                output.push(b',');
+            }
+            if include_position {
+                output.extend_from_slice(br#"{"card":{"stable":"#);
+                output.extend_from_slice(stable);
+                output.extend_from_slice(br#"},"position":"#);
+                append_json_v2(output, position)?;
+                output.push(b'}');
+            } else {
+                output.extend_from_slice(br#"{"stable":"#);
+                output.extend_from_slice(stable);
+                output.push(b'}');
+            }
+        }
+        output.push(b']');
+    }
+    output.push(b']');
+    Ok(())
+}
+
+fn write_canonical_public_card_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    raw: usize,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let object = &decision.objects()[raw];
+    if !object.card_details_present {
+        return Err(NativeFlatTensorErrorV2::ObjectShape);
+    }
+    let subtypes = object_subtypes_v2(decision, raw, object)?;
+    let uses = object_ability_uses_v2(decision, raw, object)?;
+    let goads = object_goads_v2(decision, raw, object)?;
+    let mut goad_values = goads
+        .iter()
+        .map(|goad| {
+            Ok(object_value_v2([
+                ("expires_at_turn", Value::from(goad.expires_after_turns)),
+                ("player", relative_player_value_v2(goad.player, false)?),
+            ]))
+        })
+        .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?;
+    sort_canonical_values_v2(&mut goad_values);
+    let chosen_color = object
+        .chosen_color
+        .map(|color| {
+            MANA_COLORS_V1
+                .get(color as usize)
+                .copied()
+                .ok_or(NativeFlatTensorErrorV2::EnumRange)
+        })
+        .transpose()?;
+
+    output.extend_from_slice(br#"{"ability_uses_this_turn":["#);
+    for (index, entry) in uses.iter().enumerate() {
+        if index != 0 {
+            output.push(b',');
+        }
+        output.extend_from_slice(br#"{"ability_index":"#);
+        append_json_v2(output, &entry.ability_index)?;
+        output.extend_from_slice(br#","ability_kind":"#);
+        append_static_json_string_v2(
+            output,
+            if entry.ability_kind == 0 {
+                "mana"
+            } else {
+                "activated"
+            },
+        );
+        output.extend_from_slice(br#","uses":"#);
+        append_json_v2(output, &entry.uses)?;
+        output.push(b'}');
+    }
+    output.extend_from_slice(br#"],"attachments":[],"characteristics":{"base_power":"#);
+    append_json_v2(output, &object.base_power)?;
+    output.extend_from_slice(br#","base_toughness":"#);
+    append_json_v2(output, &object.base_toughness)?;
+    output.extend_from_slice(br#","effective_color_mask":"#);
+    append_json_v2(output, &object.effective_color_mask)?;
+    output.extend_from_slice(br#","effective_keywords":{"deathtouch":"#);
+    append_json_v2(output, &object.keyword_flags[7])?;
+    output.extend_from_slice(br#","defender":"#);
+    append_json_v2(output, &object.keyword_flags[9])?;
+    output.extend_from_slice(br#","double_strike":"#);
+    append_json_v2(output, &object.keyword_flags[6])?;
+    output.extend_from_slice(br#","first_strike":"#);
+    append_json_v2(output, &object.keyword_flags[5])?;
+    output.extend_from_slice(br#","flying":"#);
+    append_json_v2(output, &object.keyword_flags[0])?;
+    output.extend_from_slice(br#","haste":"#);
+    append_json_v2(output, &object.keyword_flags[2])?;
+    output.extend_from_slice(br#","hexproof":"#);
+    append_json_v2(output, &object.keyword_flags[11])?;
+    output.extend_from_slice(br#","indestructible":"#);
+    append_json_v2(output, &object.keyword_flags[12])?;
+    output.extend_from_slice(br#","landwalk_mask":"#);
+    append_json_v2(output, &object.landwalk_mask)?;
+    output.extend_from_slice(br#","lifelink":"#);
+    append_json_v2(output, &object.keyword_flags[10])?;
+    output.extend_from_slice(br#","menace":"#);
+    append_json_v2(output, &object.keyword_flags[8])?;
+    output.extend_from_slice(br#","minimum_blockers":"#);
+    append_json_v2(output, &object.minimum_blockers)?;
+    output.extend_from_slice(br#","protection_from_monocolored":"#);
+    append_json_v2(output, &object.keyword_flags[13])?;
+    output.extend_from_slice(br#","reach":"#);
+    append_json_v2(output, &object.keyword_flags[1])?;
+    output.extend_from_slice(br#","trample":"#);
+    append_json_v2(output, &object.keyword_flags[4])?;
+    output.extend_from_slice(br#","vigilance":"#);
+    append_json_v2(output, &object.keyword_flags[3])?;
+    output.extend_from_slice(br#","ward_generic":"#);
+    append_json_v2(output, &object.ward_generic)?;
+    output.extend_from_slice(br#"},"effective_power":"#);
+    append_json_v2(output, &object.effective_power)?;
+    output.extend_from_slice(br#","effective_subtype_ids":["#);
+    for (index, subtype) in subtypes.iter().enumerate() {
+        if index != 0 {
+            output.push(b',');
+        }
+        append_json_v2(output, &subtype.subtype_id)?;
+    }
+    output.extend_from_slice(br#"],"effective_toughness":"#);
+    append_json_v2(output, &object.effective_toughness)?;
+    output.extend_from_slice(br#","type_flags":{"artifact":"#);
+    append_json_v2(output, &object.type_flags[4])?;
+    output.extend_from_slice(br#","creature":"#);
+    append_json_v2(output, &object.type_flags[1])?;
+    output.extend_from_slice(br#","enchantment":"#);
+    append_json_v2(output, &object.type_flags[5])?;
+    output.extend_from_slice(br#","instant":"#);
+    append_json_v2(output, &object.type_flags[2])?;
+    output.extend_from_slice(br#","land":"#);
+    append_json_v2(output, &object.type_flags[0])?;
+    output.extend_from_slice(br#","sorcery":"#);
+    append_json_v2(output, &object.type_flags[3])?;
+    output.extend_from_slice(br#"}},"chosen_color":"#);
+    if let Some(color) = chosen_color {
+        append_static_json_string_v2(output, color);
+    } else {
+        output.extend_from_slice(b"null");
+    }
+    output.extend_from_slice(br#","counters":{"lore":"#);
+    append_json_v2(output, &object.counters[4])?;
+    output.extend_from_slice(br#","minus0_minus1":"#);
+    append_json_v2(output, &object.counters[2])?;
+    output.extend_from_slice(br#","minus1_minus1":"#);
+    append_json_v2(output, &object.counters[1])?;
+    output.extend_from_slice(br#","plus1_plus1":"#);
+    append_json_v2(output, &object.counters[0])?;
+    output.extend_from_slice(br#","stun":"#);
+    append_json_v2(output, &object.counters[3])?;
+    output.extend_from_slice(br#"},"damage":"#);
+    append_json_v2(output, &object.damage)?;
+    output.extend_from_slice(br#","entered_battlefield_turn":"#);
+    write_turn_relation_json_v2(output, object.entered_battlefield_turn);
+    output.extend_from_slice(br#","face_index":"#);
+    append_json_v2(output, &object.face_index)?;
+    output.extend_from_slice(br#","goaded_by":"#);
+    append_json_v2(output, &goad_values)?;
+    output.extend_from_slice(br#","is_token":"#);
+    append_json_v2(output, &object.is_token)?;
+    output.extend_from_slice(br#","plotted_turn":"#);
+    write_turn_relation_json_v2(output, object.plotted_turn);
+    output.extend_from_slice(br#","skip_next_untap":"#);
+    append_json_v2(output, &object.skip_next_untap)?;
+    output.extend_from_slice(br#","stable":"#);
+    write_canonical_stable_ref_v2(decision, raw, None, output)?;
+    output.extend_from_slice(br#","summoning_sick":"#);
+    append_json_v2(output, &object.summoning_sick)?;
+    output.extend_from_slice(br#","tapped":"#);
+    append_json_v2(output, &object.tapped)?;
+    output.push(b'}');
+    Ok(())
 }
 
 fn canonical_observation_v2(
@@ -2054,7 +2717,7 @@ fn turn_relation_value_v2(relation: FlatTurnRelationV2) -> Value {
 }
 
 fn sort_canonical_values_v2(values: &mut [Value]) {
-    values.sort_by_key(canonical_value_bytes);
+    values.sort_by_cached_key(canonical_value_bytes);
 }
 
 fn canonical_known_cards_v2(
@@ -3848,12 +4511,14 @@ fn validate_native_flat_action_slices_v1(
 fn encode_action_half_v1(
     decision: FlatScoringDecisionViewV1<'_>,
 ) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
-    encode_action_half_with_projection_v2(decision, None)
+    let mut canonical_json = Vec::new();
+    encode_action_half_with_projection_and_scratch_v2(decision, None, &mut canonical_json)
 }
 
-fn encode_action_half_with_projection_v2(
+fn encode_action_half_with_projection_and_scratch_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     projection: Option<&ObjectProjectionV2>,
+    canonical_json: &mut Vec<u8>,
 ) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV1::ActingPlayerNotRelativeSelf);
@@ -3888,12 +4553,14 @@ fn encode_action_half_with_projection_v2(
         if start != ref_cursor || end > refs.len() {
             return Err(NativeFlatTensorErrorV1::ActionReferenceRange);
         }
-        let encoded = encode_action_v1(
+        let encoded = encode_action_with_scratch_v1(
             decision,
             action_index,
             action,
             &refs[start..end],
             projection,
+            canonical_json,
+            false,
         )?;
         out.action_features.extend_from_slice(&encoded.features);
         let action_index = i64::try_from(action_index)
@@ -3940,6 +4607,27 @@ fn encode_action_v1<'a>(
     action: &FlatScorerActionCoreV1,
     raw_refs: &'a [FlatScorerActionRefV1],
     projection: Option<&ObjectProjectionV2>,
+) -> Result<EncodedActionV1, NativeFlatTensorErrorV1> {
+    let mut canonical_json = Vec::new();
+    encode_action_with_scratch_v1(
+        decision,
+        action_index,
+        action,
+        raw_refs,
+        projection,
+        &mut canonical_json,
+        true,
+    )
+}
+
+fn encode_action_with_scratch_v1<'a>(
+    decision: FlatScoringDecisionViewV1<'a>,
+    action_index: usize,
+    action: &FlatScorerActionCoreV1,
+    raw_refs: &'a [FlatScorerActionRefV1],
+    projection: Option<&ObjectProjectionV2>,
+    canonical_json_scratch: &mut Vec<u8>,
+    retain_canonical_json: bool,
 ) -> Result<EncodedActionV1, NativeFlatTensorErrorV1> {
     let resolved = resolve_action_refs_v1(decision, action_index, raw_refs)?;
     let mut expected = FlatScorerActionCoreV1 {
@@ -4204,9 +4892,7 @@ fn encode_action_v1<'a>(
                 .iter()
                 .map(|reference| canonical_card_ref_v1(*reference))
                 .collect::<Result<Vec<_>, _>>()?;
-            cards.sort_by(|left, right| {
-                canonical_value_bytes(left).cmp(&canonical_value_bytes(right))
-            });
+            cards.sort_by_cached_key(canonical_value_bytes);
             semantic.insert("cards".to_owned(), Value::Array(cards));
             semantic_order.sort_by_key(|reference| {
                 projected_node_index_v2(reference.raw.model_object_index, projection)
@@ -4295,8 +4981,8 @@ fn encode_action_v1<'a>(
     if projected_refs.len() != resolved.len() {
         return Err(NativeFlatTensorErrorV1::ActionReferenceShape);
     }
-    let canonical_json = canonical_action_json_v1(semantic)?;
-    let (sha512_blocks, hash_features) = action_hash_features_v1(&canonical_json);
+    write_canonical_action_json_v1(semantic, canonical_json_scratch)?;
+    let (sha512_blocks, hash_features) = action_hash_features_v1(canonical_json_scratch);
     let mut features = explicit_action_features_v1(action, &resolved)?;
     features[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..].copy_from_slice(&hash_features);
 
@@ -4315,7 +5001,11 @@ fn encode_action_v1<'a>(
         );
     }
     Ok(EncodedActionV1 {
-        canonical_json,
+        canonical_json: if retain_canonical_json {
+            canonical_json_scratch.clone()
+        } else {
+            Vec::new()
+        },
         sha512_blocks,
         features,
         ref_features,
@@ -4528,12 +5218,16 @@ fn canonical_card_ref_v1(
     Ok(Value::Object(out))
 }
 
-fn canonical_action_json_v1(
+fn write_canonical_action_json_v1(
     semantic: Map<String, Value>,
-) -> Result<Vec<u8>, NativeFlatTensorErrorV1> {
-    let mut outer = BTreeMap::new();
-    outer.insert("semantic", Value::Object(semantic));
-    serde_json::to_vec(&outer).map_err(|_| NativeFlatTensorErrorV1::CanonicalJson)
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV1> {
+    output.clear();
+    output.extend_from_slice(br#"{"semantic":"#);
+    serde_json::to_writer(&mut *output, &Value::Object(semantic))
+        .map_err(|_| NativeFlatTensorErrorV1::CanonicalJson)?;
+    output.push(b'}');
+    Ok(())
 }
 
 fn canonical_value_bytes(value: &Value) -> Vec<u8> {
@@ -5710,6 +6404,39 @@ mod tests {
     }
 
     #[test]
+    fn failed_object_row_does_not_publish_spare_capacity() {
+        let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            71_002,
+            0x71_002,
+            256,
+            32_768,
+            ["Burn".to_string(), "Burn".to_string()],
+        )
+        .unwrap();
+        let mut malformed = OwnedScoringDecisionV2::from_session(&session);
+        let projection = build_object_projection_v2(&malformed.objects).unwrap();
+        let raw = *projection
+            .node_to_raw
+            .last()
+            .expect("fixture must include a projected object");
+        malformed.objects[raw].card_details_present = true;
+        malformed.objects[raw].effective_color_mask = 1 << 6;
+
+        let decision = malformed.view();
+        let mut output = Vec::with_capacity(NATIVE_FLAT_OBJECT_FEATURE_DIM_V2 + 1);
+        output.push(31_337.0);
+        assert_eq!(
+            append_object_features_v2(decision, raw, &decision.objects()[raw], &mut output),
+            Err(NativeFlatTensorErrorV2::ObjectShape)
+        );
+        assert_eq!(
+            output,
+            [31_337.0],
+            "failed row exposed partially initialized spare capacity"
+        );
+    }
+
+    #[test]
     fn full_tensorizer_is_transactional_and_stateful_errors_poison_reuse() {
         let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
             71_002,
@@ -5923,6 +6650,89 @@ mod tests {
         }
         assert_eq!(seen_engine_stages, [0, 1, 3, 6].into_iter().collect());
         assert_eq!(seen_policy_stages, [0, 1, 2].into_iter().collect());
+    }
+
+    #[test]
+    fn streamed_encoder_matches_value_reference_on_seeded_randomized_replays() {
+        fn next_random(state: &mut u64) -> u64 {
+            *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut value = *state;
+            value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            value ^ (value >> 31)
+        }
+
+        let mut compared = 0usize;
+        for (episode_id, environment_seed, deck_ids) in [
+            (
+                71_101,
+                0x9d4a_feb8_91c2_0041,
+                ["Burn".to_string(), "Burn".to_string()],
+            ),
+            (
+                71_102,
+                0xc87f_516a_42d9_1073,
+                ["Rally".to_string(), "Rally".to_string()],
+            ),
+            (
+                71_103,
+                0x0ab3_7639_d21e_f184,
+                ["Burn".to_string(), "Rally".to_string()],
+            ),
+            (
+                71_104,
+                0x765e_409b_3f18_c2ad,
+                ["Rally".to_string(), "Burn".to_string()],
+            ),
+        ] {
+            let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+                episode_id,
+                environment_seed,
+                512,
+                65_536,
+                deck_ids,
+            )
+            .unwrap();
+            let mut random_state = environment_seed ^ episode_id.rotate_left(17);
+            let mut tensorizer = NativeFlatTensorizerV2::new();
+            for step in 0..96 {
+                let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                    break;
+                };
+                let owned = OwnedScoringDecisionV2::from_session(&session);
+                let (reference, reference_json) = encode_full_decision_reference_v2(owned.view())
+                    .unwrap_or_else(|error| {
+                        panic!("reference episode {episode_id} step {step}: {error:?}")
+                    });
+                let projection = build_object_projection_v2(owned.view().objects()).unwrap();
+                let mut streamed_json = Vec::new();
+                write_canonical_observation_v2(owned.view(), &projection, &mut streamed_json)
+                    .unwrap_or_else(|error| {
+                        panic!("stream episode {episode_id} step {step}: {error:?}")
+                    });
+                assert_eq!(
+                    streamed_json, reference_json,
+                    "canonical bytes episode {episode_id} step {step}"
+                );
+                let mut actual = NativeFlatDecisionTensorV2::default();
+                tensorizer
+                    .fill(owned.view(), &mut actual)
+                    .unwrap_or_else(|error| {
+                        panic!("tensor episode {episode_id} step {step}: {error:?}")
+                    });
+                assert_eq!(
+                    actual, reference,
+                    "all tensor bits episode {episode_id} step {step}"
+                );
+                let selected = (next_random(&mut random_state)
+                    % u64::from(expected.legal_action_count)) as u32;
+                session
+                    .step(expected.episode_id, expected.step, selected)
+                    .unwrap();
+                compared += 1;
+            }
+        }
+        assert!(compared >= 128, "randomized replay coverage was too short");
     }
 
     fn assert_full_float_tensor(

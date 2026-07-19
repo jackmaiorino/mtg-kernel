@@ -19,6 +19,9 @@ cuda-flat-training-capacity-v1 = ["dep:cudarc"]
 # probes used by the noncanonical capacity diagnostic. Off by default so the
 # production API cannot bypass encode to obtain a consumable binding.
 flat-action-diagnostic = []
+# Environment-only microprofile for the production V2 full tensorizer. The
+# feature exposes no trainer or model shortcut and is off in normal builds.
+native-flat-tensorizer-diagnostic = []
 
 [[example]]
 name = "cuda_flat_training_capacity_v1"
@@ -27,6 +30,10 @@ required-features = ["cuda-flat-training-capacity-v1"]
 [[example]]
 name = "flat_action_encoder_diagnostic"
 required-features = ["flat-action-diagnostic"]
+
+[[example]]
+name = "native_flat_tensorizer_diagnostic"
+required-features = ["native-flat-tensorizer-diagnostic"]
 
 [build-dependencies]
 serde = { version = "1", features = ["derive"] }
