@@ -1637,6 +1637,61 @@ mod tests {
     }
 
     #[test]
+    fn parameter_snapshot_replacement_commits_once_and_rejects_corruption_transactionally() {
+        fn assert_rejected_without_drift(
+            model: &mut NativePolicyValueNetV1,
+            replacement: Vec<NativeNamedParameterV1>,
+        ) {
+            let before_digest = model.parameter_manifest_sha256_v1();
+            let before_snapshot = model.parameter_snapshot_v1();
+            assert!(model.replace_parameter_snapshot_v1(&replacement).is_err());
+            assert_eq!(model.parameter_manifest_sha256_v1(), before_digest);
+            assert_eq!(model.parameter_snapshot_v1(), before_snapshot);
+        }
+
+        let mut model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .expect("model builds");
+        let initial_digest = model.parameter_manifest_sha256_v1();
+        let mut replacement = model.parameter_snapshot_v1();
+        for (ordinal, parameter) in replacement.iter_mut().enumerate() {
+            let position = if ordinal == 0 {
+                CARD_EMBEDDING_DIM_V1
+            } else {
+                0
+            };
+            parameter.values[position] += (ordinal + 1) as f32 / 10_000.0;
+        }
+        model
+            .replace_parameter_snapshot_v1(&replacement)
+            .expect("complete valid replacement commits");
+        assert_eq!(model.parameter_snapshot_v1(), replacement);
+        assert_ne!(model.parameter_manifest_sha256_v1(), initial_digest);
+
+        let baseline = model.parameter_snapshot_v1();
+
+        let mut bad_name = baseline.clone();
+        bad_name[1].name = "wrong.weight";
+        assert_rejected_without_drift(&mut model, bad_name);
+
+        let mut bad_shape = baseline.clone();
+        bad_shape[1].shape[0] += 1;
+        assert_rejected_without_drift(&mut model, bad_shape);
+
+        let mut bad_count = baseline.clone();
+        bad_count[1].values.pop();
+        assert_rejected_without_drift(&mut model, bad_count);
+
+        let mut nonfinite = baseline.clone();
+        nonfinite[1].values[0] = f32::NAN;
+        assert_rejected_without_drift(&mut model, nonfinite);
+
+        let mut nonzero_padding = baseline;
+        nonzero_padding[0].values[0] = 1.0;
+        assert_rejected_without_drift(&mut model, nonzero_padding);
+    }
+
+    #[test]
     fn config_drift_is_rejected_before_parameter_allocation() {
         let mut config = NativePolicyValueModelConfigV1::contract_v1();
         config.hidden_dim += 1;

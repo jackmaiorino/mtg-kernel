@@ -13,7 +13,7 @@ GENERATOR = (
 
 
 class NativePolicyValueNetV1GoldenTests(unittest.TestCase):
-    def test_checked_in_fixture_matches_torch_model_authority(self) -> None:
+    def test_checked_in_fixture_has_portable_authority_bindings(self) -> None:
         completed = subprocess.run(
             [sys.executable, str(GENERATOR), "--check"],
             cwd=ROOT,

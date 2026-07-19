@@ -3,6 +3,11 @@
 The checked fixture deliberately covers the model architecture with small,
 synthetic EncodedDecision tensors.  It is an inference-parity fixture, not a
 training, throughput, or cross-libm bit-parity claim.
+
+Raw numerical bytes are generated and byte-checked only on the declared
+Windows authority tuple.  Ordinary ``--check`` is intentionally portable: it
+checks the pinned artifact, source authority, schema, configuration, manifest,
+and fixture structure without executing the host's Torch forward kernels.
 """
 
 from __future__ import annotations
@@ -11,11 +16,21 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import platform
 import struct
 import sys
 from typing import Any
 
 import torch
+
+
+TORCH_NUM_THREADS = 1
+TORCH_NUM_INTEROP_THREADS = 1
+if torch.get_num_threads() != TORCH_NUM_THREADS:
+    torch.set_num_threads(TORCH_NUM_THREADS)
+if torch.get_num_interop_threads() != TORCH_NUM_INTEROP_THREADS:
+    torch.set_num_interop_threads(TORCH_NUM_INTEROP_THREADS)
+torch.use_deterministic_algorithms(True)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,10 +58,35 @@ SCHEMA = "native-policy-value-net-v1-torch-goldens-v1"
 MODEL_AUTHORITY = ROOT / "python" / "mtg_kernel_rl" / "model.py"
 EXPECTED_MODEL_AUTHORITY_SHA256 = "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59"
 OUTPUT = ROOT / "data" / "native_policy_value_net_v1" / "runner_fixed_forward_goldens_v1.json"
+EXPECTED_OUTPUT_SHA256 = "c3c5e864f9666cba73b15dc5a038cd57c7d9a46aaccc2b8d3c3c16e956efe9ec"
+
+AUTHORITY_PLATFORM_SYSTEM = "Windows"
+AUTHORITY_PLATFORM_MACHINE = "AMD64"
+AUTHORITY_PYTHON_VERSION = "3.13.14"
+AUTHORITY_TORCH_VERSION = "2.13.0+cpu"
+NUMERICAL_CLAIM = (
+    "Rust reproduces Torch CPU outputs within declared absolute and relative "
+    "tolerances; no cross-libm or bit-parity claim"
+)
+ABSOLUTE_TOLERANCE = 2.0e-5
+RELATIVE_TOLERANCE = 2.0e-5
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise RuntimeError(f"duplicate JSON key in native model fixture: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise RuntimeError(f"non-finite JSON constant in native model fixture: {value}")
 
 
 def _pattern(length: int, *, multiplier: int, modulus: int, center: int, denominator: int) -> list[float]:
@@ -215,11 +255,11 @@ def _payload() -> dict[str, Any]:
         "authority": {
             "path": MODEL_AUTHORITY.relative_to(ROOT).as_posix(),
             "sha256": authority_sha,
-            "torch_version": torch.__version__,
+            "torch_version": AUTHORITY_TORCH_VERSION,
             "initializer": INITIALIZER_RUNNER_FIXED_V1,
-            "numerical_claim": "Rust reproduces Torch CPU outputs within declared absolute and relative tolerances; no cross-libm or bit-parity claim",
-            "absolute_tolerance": 2.0e-5,
-            "relative_tolerance": 2.0e-5,
+            "numerical_claim": NUMERICAL_CLAIM,
+            "absolute_tolerance": ABSOLUTE_TOLERANCE,
+            "relative_tolerance": RELATIVE_TOLERANCE,
         },
         "model_config": config.to_dict(),
         "model_config_fingerprint": config.contract_fingerprint(),
@@ -232,16 +272,151 @@ def _encoded_payload(payload: dict[str, Any]) -> bytes:
     return (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode("utf-8")
 
 
+def _assert_portable_runtime() -> None:
+    actual = {
+        "python_version": platform.python_version(),
+        "torch_version": str(torch.__version__),
+        "torch_num_threads": torch.get_num_threads(),
+        "torch_num_interop_threads": torch.get_num_interop_threads(),
+        "torch_deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+        "torch_default_dtype": str(torch.get_default_dtype()),
+    }
+    expected = {
+        "python_version": AUTHORITY_PYTHON_VERSION,
+        "torch_version": AUTHORITY_TORCH_VERSION,
+        "torch_num_threads": TORCH_NUM_THREADS,
+        "torch_num_interop_threads": TORCH_NUM_INTEROP_THREADS,
+        "torch_deterministic_algorithms": True,
+        "torch_default_dtype": "torch.float32",
+    }
+    if actual != expected:
+        raise RuntimeError(
+            f"native model portable checker runtime mismatch: expected={expected} actual={actual}"
+        )
+
+
+def _assert_exact_authority_environment() -> None:
+    _assert_portable_runtime()
+    actual = {
+        "platform_system": platform.system(),
+        "platform_machine": platform.machine(),
+    }
+    expected = {
+        "platform_system": AUTHORITY_PLATFORM_SYSTEM,
+        "platform_machine": AUTHORITY_PLATFORM_MACHINE,
+    }
+    if actual != expected:
+        raise RuntimeError(
+            f"native model exact authority environment mismatch: expected={expected} actual={actual}"
+        )
+
+
+def _portable_check() -> None:
+    _assert_portable_runtime()
+    if not OUTPUT.is_file():
+        raise RuntimeError(f"checked native model fixture is missing: {OUTPUT}")
+    checked_bytes = OUTPUT.read_bytes()
+    checked_sha256 = hashlib.sha256(checked_bytes).hexdigest()
+    if checked_sha256 != EXPECTED_OUTPUT_SHA256:
+        raise RuntimeError(
+            "checked native model artifact digest drift: "
+            f"expected={EXPECTED_OUTPUT_SHA256} actual={checked_sha256}"
+        )
+    checked = json.loads(
+        checked_bytes,
+        object_pairs_hook=_strict_object,
+        parse_constant=_reject_json_constant,
+    )
+    if _encoded_payload(checked) != checked_bytes:
+        raise RuntimeError("checked native model fixture is not canonical pretty JSON")
+    if set(checked) != {
+        "schema",
+        "authority",
+        "model_config",
+        "model_config_fingerprint",
+        "parameter_manifest",
+        "cases",
+    }:
+        raise RuntimeError("checked native model fixture top-level schema drifted")
+    authority_sha = _sha256(MODEL_AUTHORITY)
+    if authority_sha != EXPECTED_MODEL_AUTHORITY_SHA256:
+        raise RuntimeError(
+            "python model.py authority drifted: "
+            f"expected {EXPECTED_MODEL_AUTHORITY_SHA256}, got {authority_sha}"
+        )
+    expected_authority = {
+        "path": MODEL_AUTHORITY.relative_to(ROOT).as_posix(),
+        "sha256": authority_sha,
+        "torch_version": AUTHORITY_TORCH_VERSION,
+        "initializer": INITIALIZER_RUNNER_FIXED_V1,
+        "numerical_claim": NUMERICAL_CLAIM,
+        "absolute_tolerance": ABSOLUTE_TOLERANCE,
+        "relative_tolerance": RELATIVE_TOLERANCE,
+    }
+    config = ModelConfig()
+    expected_static = {
+        "schema": SCHEMA,
+        "authority": expected_authority,
+        "model_config": config.to_dict(),
+        "model_config_fingerprint": config.contract_fingerprint(),
+    }
+    for key, expected in expected_static.items():
+        if checked.get(key) != expected:
+            raise RuntimeError(f"checked native model fixture static contract drift: {key}")
+    manifest = checked["parameter_manifest"]
+    if set(manifest) != {"digest_contract", "sha256", "count", "ordered"}:
+        raise RuntimeError("checked native model parameter manifest schema drifted")
+    if manifest["count"] != 1_230_994 or len(manifest["ordered"]) != 33:
+        raise RuntimeError("checked native model parameter manifest count drifted")
+    expected_cases = {
+        "zero_edges_zero_action_refs": (2, 0, 2, 0),
+        "ordered_edges_and_action_refs": (3, 3, 3, 4),
+    }
+    cases = checked["cases"]
+    if type(cases) is not list or len(cases) != len(expected_cases):
+        raise RuntimeError("checked native model fixture case count drifted")
+    for case in cases:
+        name = case.get("name")
+        if name not in expected_cases:
+            raise RuntimeError(f"checked native model fixture case name drifted: {name}")
+        object_count, edge_count, action_count, ref_count = expected_cases[name]
+        observed = (
+            len(case["object_card_ids"]),
+            len(case["edge_source_indices"]),
+            len(case["action_features"]) // ACTION_FEATURE_DIM,
+            len(case["action_ref_card_ids"]),
+        )
+        if observed != (object_count, edge_count, action_count, ref_count):
+            raise RuntimeError(f"checked native model fixture shape drift: {name}")
+        if len(case["torch_logits"]) != action_count or len(case["torch_logits_bits"]) != action_count:
+            raise RuntimeError(f"checked native model fixture output shape drift: {name}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true", help="fail if the checked fixture drifts")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="portable artifact, source-binding, schema, configuration, and structure check",
+    )
+    mode.add_argument(
+        "--authority-check",
+        action="store_true",
+        help="on the declared authority tuple, regenerate and require byte identity",
+    )
     args = parser.parse_args()
-    expected = _encoded_payload(_payload())
     if args.check:
+        _portable_check()
+        print(f"PASS portable {OUTPUT.relative_to(ROOT)}")
+        return 0
+    _assert_exact_authority_environment()
+    expected = _encoded_payload(_payload())
+    if args.authority_check:
         actual = OUTPUT.read_bytes() if OUTPUT.exists() else b""
         if actual != expected:
-            raise SystemExit(f"stale native policy/value golden: {OUTPUT}")
-        print(f"PASS {OUTPUT.relative_to(ROOT)}")
+            raise SystemExit(f"stale native policy/value authority golden: {OUTPUT}")
+        print(f"PASS authority {OUTPUT.relative_to(ROOT)}")
         return 0
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(expected)
