@@ -12,9 +12,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 #[cfg(any(not(test), windows))]
 use std::fs;
-use std::path::Path;
-#[cfg(windows)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const PRODUCTION_FEATURE_NAME_V1: &str = "native-training-store-v2-production";
 const PRODUCTION_FEATURE_ENV_V1: &str = "CARGO_FEATURE_NATIVE_TRAINING_STORE_V2_PRODUCTION";
@@ -640,6 +638,134 @@ fn emit_rerun_inputs_v1(crate_manifest_dir: &Path) {
     }
 }
 
+fn parse_git_control_line_v1<'a>(
+    bytes: &'a [u8],
+    prefix: Option<&str>,
+    code: &'static str,
+) -> CaptureResultV1<&'a str> {
+    if bytes.is_empty() || bytes.len() > 4_096 || bytes.contains(&0) {
+        return Err(capture_error(code));
+    }
+    let value = std::str::from_utf8(bytes).map_err(|_| capture_error(code))?;
+    let value = value
+        .strip_suffix("\r\n")
+        .or_else(|| value.strip_suffix('\n'))
+        .unwrap_or(value);
+    let value = match prefix {
+        Some(prefix) => value
+            .strip_prefix(prefix)
+            .ok_or_else(|| capture_error(code))?,
+        None => value,
+    };
+    if value.is_empty()
+        || value.contains('\r')
+        || value.contains('\n')
+        || value.bytes().any(|byte| byte < 0x20 || byte == 0x7f)
+    {
+        return Err(capture_error(code));
+    }
+    Ok(value)
+}
+
+fn validate_git_reference_v1(reference: &str) -> CaptureResultV1<()> {
+    if !reference.starts_with("refs/")
+        || reference.contains('\\')
+        || reference
+            .split('/')
+            .any(|component| component.is_empty() || matches!(component, "." | ".."))
+    {
+        return Err(capture_error("native_store_git_head_reference_invalid"));
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn canonical_directory_v1(path: &Path, code: &'static str) -> CaptureResultV1<PathBuf> {
+    let canonical = fs::canonicalize(path).map_err(|_| capture_error(code))?;
+    if !fs::metadata(&canonical)
+        .map_err(|_| capture_error(code))?
+        .is_dir()
+    {
+        return Err(capture_error(code));
+    }
+    Ok(canonical)
+}
+
+#[cfg(not(test))]
+fn resolve_git_directories_v1(repo_root: &Path) -> CaptureResultV1<(PathBuf, PathBuf)> {
+    let marker = repo_root.join(".git");
+    let metadata =
+        fs::metadata(&marker).map_err(|_| capture_error("native_store_git_marker_missing"))?;
+    let git_dir = if metadata.is_dir() {
+        canonical_directory_v1(&marker, "native_store_git_directory_invalid")?
+    } else if metadata.is_file() {
+        let bytes =
+            fs::read(&marker).map_err(|_| capture_error("native_store_git_pointer_read_failed"))?;
+        let value = parse_git_control_line_v1(
+            &bytes,
+            Some("gitdir: "),
+            "native_store_git_pointer_invalid",
+        )?;
+        let path = PathBuf::from(value);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            repo_root.join(path)
+        };
+        canonical_directory_v1(&path, "native_store_git_directory_invalid")?
+    } else {
+        return Err(capture_error("native_store_git_marker_invalid"));
+    };
+
+    let common_marker = git_dir.join("commondir");
+    let common_dir = if common_marker.exists() {
+        let bytes = fs::read(&common_marker)
+            .map_err(|_| capture_error("native_store_git_common_pointer_read_failed"))?;
+        let value =
+            parse_git_control_line_v1(&bytes, None, "native_store_git_common_pointer_invalid")?;
+        let path = PathBuf::from(value);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            git_dir.join(path)
+        };
+        canonical_directory_v1(&path, "native_store_git_common_directory_invalid")?
+    } else {
+        git_dir.clone()
+    };
+    Ok((git_dir, common_dir))
+}
+
+#[cfg(not(test))]
+fn emit_git_identity_rerun_inputs_v1(repo_root: &Path) -> CaptureResultV1<()> {
+    let marker = repo_root.join(".git");
+    let (git_dir, common_dir) = resolve_git_directories_v1(repo_root)?;
+    let head_path = git_dir.join("HEAD");
+    let head_bytes =
+        fs::read(&head_path).map_err(|_| capture_error("native_store_git_head_read_failed"))?;
+    let head = parse_git_control_line_v1(&head_bytes, None, "native_store_git_head_invalid")?;
+
+    for path in [
+        marker,
+        head_path,
+        git_dir.join("index"),
+        git_dir.join("commondir"),
+        common_dir.join("packed-refs"),
+    ] {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+    if let Some(reference) = head.strip_prefix("ref: ") {
+        validate_git_reference_v1(reference)?;
+        println!(
+            "cargo:rerun-if-changed={}",
+            common_dir.join(reference).display()
+        );
+    } else if !is_lower_hex(head, 40) {
+        return Err(capture_error("native_store_git_head_detached_invalid"));
+    }
+    Ok(())
+}
+
 #[cfg(not(test))]
 pub(crate) fn configure_native_store_build_capture_v1(crate_manifest_dir: &Path, out_dir: &Path) {
     emit_rerun_inputs_v1(crate_manifest_dir);
@@ -649,13 +775,16 @@ pub(crate) fn configure_native_store_build_capture_v1(crate_manifest_dir: &Path,
             .unwrap_or_else(|error| panic!("{error}"));
         return;
     }
-
     let target_os = std::env::var_os("CARGO_CFG_TARGET_OS");
     if target_os.as_deref() != Some(OsStr::new("windows")) {
         write_generated_source_v1(out_dir, disabled_generated_source_v1())
             .unwrap_or_else(|error| panic!("{error}"));
         return;
     }
+    let repo_root = crate_manifest_dir
+        .parent()
+        .expect("CARGO_MANIFEST_DIR must have a parent");
+    emit_git_identity_rerun_inputs_v1(repo_root).unwrap_or_else(|error| panic!("{error}"));
 
     #[cfg(not(windows))]
     {
@@ -1329,6 +1458,41 @@ a_b = []
         let source = disabled_generated_source_v1();
         assert!(!source.contains("pub(crate) const"));
         assert!(!source.contains("NATIVE_STORE_BUILD_"));
+    }
+
+    #[test]
+    fn git_control_lines_and_head_references_fail_closed() {
+        assert_eq!(
+            parse_git_control_line_v1(
+                b"gitdir: C:\\repo\\.git\\worktrees\\capture\n",
+                Some("gitdir: "),
+                "invalid",
+            )
+            .unwrap(),
+            "C:\\repo\\.git\\worktrees\\capture"
+        );
+        assert_eq!(
+            parse_git_control_line_v1(b"../..\r\n", None, "invalid").unwrap(),
+            "../.."
+        );
+        for invalid in [
+            b"".as_slice(),
+            b"gitdir: \n".as_slice(),
+            b"gitdir: first\nsecond\n".as_slice(),
+            b"gitdir: first\0second\n".as_slice(),
+        ] {
+            assert!(parse_git_control_line_v1(invalid, Some("gitdir: "), "invalid").is_err());
+        }
+
+        assert!(validate_git_reference_v1("refs/heads/capture").is_ok());
+        for invalid in [
+            "heads/capture",
+            "refs//capture",
+            "refs/heads/../capture",
+            "refs\\heads\\capture",
+        ] {
+            assert!(validate_git_reference_v1(invalid).is_err());
+        }
     }
 
     #[test]
