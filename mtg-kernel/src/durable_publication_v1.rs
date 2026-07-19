@@ -140,7 +140,7 @@ pub struct DurablePublicationErrorV1 {
 }
 
 impl DurablePublicationErrorV1 {
-    fn new(kind: DurablePublicationErrorKindV1, detail: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: DurablePublicationErrorKindV1, detail: impl Into<String>) -> Self {
         Self {
             kind,
             detail: detail.into(),
@@ -148,7 +148,7 @@ impl DurablePublicationErrorV1 {
         }
     }
 
-    fn with_io(
+    pub(crate) fn with_io(
         kind: DurablePublicationErrorKindV1,
         detail: impl Into<String>,
         source: io::Error,
@@ -185,21 +185,21 @@ impl Error for DurablePublicationErrorV1 {
 
 #[cfg(unix)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ObjectIdentityV1 {
+pub(crate) struct ObjectIdentityV1 {
     device: u64,
     inode: u64,
 }
 
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ObjectIdentityV1 {
+pub(crate) struct ObjectIdentityV1 {
     volume_serial_number: u32,
     file_index: u64,
 }
 
 #[cfg(not(any(unix, windows)))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ObjectIdentityV1;
+pub(crate) struct ObjectIdentityV1;
 
 #[cfg(unix)]
 fn object_identity_v1(metadata: &Metadata) -> Result<ObjectIdentityV1, DurablePublicationErrorV1> {
@@ -374,7 +374,7 @@ fn path_identity_v1(
 }
 
 #[cfg(unix)]
-fn file_identity_v1(file: &File) -> Result<ObjectIdentityV1, DurablePublicationErrorV1> {
+pub(crate) fn file_identity_v1(file: &File) -> Result<ObjectIdentityV1, DurablePublicationErrorV1> {
     object_identity_v1(&file.metadata().map_err(|error| {
         DurablePublicationErrorV1::with_io(
             DurablePublicationErrorKindV1::UnsupportedPlatform,
@@ -385,12 +385,14 @@ fn file_identity_v1(file: &File) -> Result<ObjectIdentityV1, DurablePublicationE
 }
 
 #[cfg(windows)]
-fn file_identity_v1(file: &File) -> Result<ObjectIdentityV1, DurablePublicationErrorV1> {
+pub(crate) fn file_identity_v1(file: &File) -> Result<ObjectIdentityV1, DurablePublicationErrorV1> {
     windows_identity_v1::from_file_v1(file)
 }
 
 #[cfg(not(any(unix, windows)))]
-fn file_identity_v1(_file: &File) -> Result<ObjectIdentityV1, DurablePublicationErrorV1> {
+pub(crate) fn file_identity_v1(
+    _file: &File,
+) -> Result<ObjectIdentityV1, DurablePublicationErrorV1> {
     Err(DurablePublicationErrorV1::new(
         DurablePublicationErrorKindV1::UnsupportedPlatform,
         "stable filesystem-object handle identity is unavailable on this platform",
@@ -531,7 +533,7 @@ pub fn capture_existing_publication_parent_v1(
     })
 }
 
-fn revalidate_parent_v1(
+pub(crate) fn revalidate_parent_v1(
     parent: &ValidatedPublicationParentV1,
 ) -> Result<(), DurablePublicationErrorV1> {
     let (canonical_path, identity) =
@@ -549,7 +551,7 @@ fn revalidate_parent_v1(
     Ok(())
 }
 
-fn child_path_v1(
+pub(crate) fn child_path_v1(
     parent: &ValidatedPublicationParentV1,
     name: &OsStr,
 ) -> Result<PathBuf, DurablePublicationErrorV1> {
@@ -580,7 +582,7 @@ fn sha256_v1(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
-fn validate_caller_content_v1(
+pub(crate) fn validate_caller_content_v1(
     bytes: &[u8],
     expectation: DurableFileExpectationV1,
 ) -> Result<(), DurablePublicationErrorV1> {
@@ -599,7 +601,7 @@ fn validate_caller_content_v1(
     Ok(())
 }
 
-fn regular_path_metadata_v1(
+pub(crate) fn regular_path_metadata_v1(
     path: &Path,
     error_kind: DurablePublicationErrorKindV1,
 ) -> Result<Metadata, DurablePublicationErrorV1> {
@@ -622,7 +624,7 @@ fn regular_path_metadata_v1(
     Ok(metadata)
 }
 
-fn recapture_exact_file_v1(
+pub(crate) fn recapture_exact_file_v1(
     path: &Path,
     required_identity: ObjectIdentityV1,
     expectation: DurableFileExpectationV1,
@@ -761,7 +763,7 @@ fn recapture_exact_file_v1(
 }
 
 #[cfg(unix)]
-fn sync_parent_namespace_v1(
+pub(crate) fn sync_parent_namespace_v1(
     parent: &ValidatedPublicationParentV1,
 ) -> Result<(), DurablePublicationErrorV1> {
     revalidate_parent_v1(parent)?;
@@ -788,7 +790,7 @@ fn sync_parent_namespace_v1(
 }
 
 #[cfg(not(unix))]
-fn sync_parent_namespace_v1(
+pub(crate) fn sync_parent_namespace_v1(
     parent: &ValidatedPublicationParentV1,
 ) -> Result<(), DurablePublicationErrorV1> {
     // See the module-level platform guarantee. Revalidation still closes the
