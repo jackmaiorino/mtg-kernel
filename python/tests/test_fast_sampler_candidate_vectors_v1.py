@@ -14,7 +14,7 @@ GENERATOR_PATH = (
     REPOSITORY_ROOT / "python" / "tools" / "generate_fast_sampler_candidate_vectors_v1.py"
 )
 FIXTURE_PATH = REPOSITORY_ROOT / "data" / "fast_sampler_candidate_vectors_v1.json"
-FIXTURE_SHA256 = "bb928feeb7e34221ebccad38d15b0e24fe4ea5ff6ea61fa54da8055269c249d5"
+FIXTURE_SHA256 = "407a08fb9b9bb5012f14d779d0878c986ce0f16530820a89f5bd54c33d5e7456"
 
 SPEC = importlib.util.spec_from_file_location("fast_sampler_candidate_vectors_v1", GENERATOR_PATH)
 if SPEC is None or SPEC.loader is None:  # pragma: no cover
@@ -28,6 +28,11 @@ class FastSamplerCandidateVectorsV1Test(unittest.TestCase):
         fixture_bytes = FIXTURE_PATH.read_bytes()
         self.assertEqual(hashlib.sha256(fixture_bytes).hexdigest(), FIXTURE_SHA256)
         fixture = json.loads(fixture_bytes)
+        self.assertEqual(fixture["vector_schema_version"], 1)
+        self.assertEqual(
+            fixture["generator_identity"],
+            "stdlib-only-independent-integer-bit-reference-v1",
+        )
         self.assertEqual(
             fixture_bytes,
             generator.canonical_json_bytes(generator.payload(REPOSITORY_ROOT)),
@@ -76,6 +81,26 @@ class FastSamplerCandidateVectorsV1Test(unittest.TestCase):
         self.assertEqual(len(cases["width-two-ordered"]["logit_bits_hex"]), 2)
         self.assertEqual(len(cases["maximum-admitted-width"]["logit_bits_hex"]), 64)
         self.assertEqual(
+            cases["q8-exact-ties-to-even"]["logit_bits_hex"],
+            ["00000000", "bb000000", "bbc00000"],
+        )
+        self.assertIn(
+            "0xBB000000 is the convention-discriminating witness",
+            cases["q8-exact-ties-to-even"]["coverage_note"],
+        )
+        self.assertIn(
+            "ties-to-even=0, half-up=1",
+            cases["q8-exact-ties-to-even"]["coverage_note"],
+        )
+        self.assertIn(
+            "ties-to-even=2, half-up=2",
+            cases["q8-exact-ties-to-even"]["coverage_note"],
+        )
+        self.assertIn(
+            "pre-existing Rust fast-sampler test recipe",
+            cases["maximum-admitted-width"]["input_recipe_provenance"],
+        )
+        self.assertEqual(
             list(map(int, cases["hamilton-exact-remainder-tie"]["mass_u128"])),
             [
                 6_148_914_691_236_517_206,
@@ -107,6 +132,7 @@ class FastSamplerCandidateVectorsV1Test(unittest.TestCase):
                 rejections[name]["expected_error"],
                 {"bits_hex": bits, "code": "nonfinite", "index": 1, "width": 2},
             )
+        self.assertIn("sign-agnostic", fixture["nonfinite_coverage_note"])
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ const ORACLE_SHA256: &str = "bb42f0cacae9902d67851941678cf2fb34a90cb8459403126a8
 const CANDIDATE_VECTOR_BYTES: &[u8] =
     include_bytes!("../../data/fast_sampler_candidate_vectors_v1.json");
 const CANDIDATE_VECTOR_SHA256: &str =
-    "bb928feeb7e34221ebccad38d15b0e24fe4ea5ff6ea61fa54da8055269c249d5";
+    "407a08fb9b9bb5012f14d779d0878c986ce0f16530820a89f5bd54c33d5e7456";
 
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -148,6 +148,11 @@ fn cross_language_candidate_vectors_match_production_sampler_exactly() {
         fixture["sampler_identity"],
         FAST_CATEGORICAL_SAMPLER_VERSION
     );
+    assert_eq!(fixture["vector_schema_version"], 1);
+    assert_eq!(
+        fixture["generator_identity"],
+        "stdlib-only-independent-integer-bit-reference-v1"
+    );
     assert_eq!(
         fixture["sampler_contract_sha256"],
         FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256
@@ -156,7 +161,7 @@ fn cross_language_candidate_vectors_match_production_sampler_exactly() {
         fixture["exp_table_sha256"],
         FAST_CATEGORICAL_EXP_TABLE_SHA256
     );
-    assert_eq!(fixture["case_count"], 11);
+    assert_eq!(fixture["case_count"], 12);
     assert_eq!(fixture["seed_count_per_case"], 7);
     assert_eq!(fixture["rejection_count"], 5);
 
@@ -165,9 +170,10 @@ fn cross_language_candidate_vectors_match_production_sampler_exactly() {
         "width-one",
         "width-two-ordered",
         "hamilton-exact-remainder-tie",
-        "equal-tie-order",
-        "repeated-weight-legal-order",
+        "equal-mass-selection-order",
+        "repeated-weight-selection-order",
         "q8-halfway-neighbors",
+        "q8-exact-ties-to-even",
         "clamp-neighborhood",
         "finite-extremes",
         "signed-zero-and-subnormal",
@@ -197,6 +203,27 @@ fn cross_language_candidate_vectors_match_production_sampler_exactly() {
             stream.extend_from_slice(&value.to_be_bytes());
         }
         let logits = bits.iter().copied().map(f32::from_bits).collect::<Vec<_>>();
+        if name == "q8-exact-ties-to-even" {
+            assert_eq!(bits, [0x0000_0000, 0xBB00_0000, 0xBBC0_0000]);
+            assert!(case["coverage_note"]
+                .as_str()
+                .unwrap()
+                .contains("0xBB000000 is the convention-discriminating witness"));
+            assert!(case["coverage_note"]
+                .as_str()
+                .unwrap()
+                .contains("ties-to-even=0, half-up=1"));
+            assert!(case["coverage_note"]
+                .as_str()
+                .unwrap()
+                .contains("ties-to-even=2, half-up=2"));
+        }
+        if name == "maximum-admitted-width" {
+            assert!(case["input_recipe_provenance"]
+                .as_str()
+                .unwrap()
+                .contains("pre-existing Rust fast-sampler test recipe"));
+        }
         let expected_masses = case["mass_u128"]
             .as_array()
             .unwrap()

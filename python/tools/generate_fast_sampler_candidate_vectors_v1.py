@@ -18,7 +18,9 @@ from typing import Any
 
 
 SCHEMA = "mtg-kernel-fast-sampler-cross-language-vectors/v1"
+VECTOR_SCHEMA_VERSION = 1
 SAMPLER_IDENTITY = "f32-q8-expq63-hamilton-splitmix64-v1"
+GENERATOR_IDENTITY = "stdlib-only-independent-integer-bit-reference-v1"
 SAMPLER_CONTRACT_SHA256 = (
     "276407494966b195b7c011caf984d2354484f7532161107b19ecc83388de92b6"
 )
@@ -208,9 +210,10 @@ CASE_BITS: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("width-one", (0x7F7F_FFFF,)),
     ("width-two-ordered", (0x0000_0000, 0x3F80_0000)),
     ("hamilton-exact-remainder-tie", (0x0000_0000,) * 3),
-    ("equal-tie-order", (0x0000_0000,) * 4),
-    ("repeated-weight-legal-order", (0x0000_0000, 0xBF80_0000, 0x0000_0000, 0xBF80_0000)),
+    ("equal-mass-selection-order", (0x0000_0000,) * 4),
+    ("repeated-weight-selection-order", (0x0000_0000, 0xBF80_0000, 0x0000_0000, 0xBF80_0000)),
     ("q8-halfway-neighbors", (0x0000_0000, 0xBAFF_FF00, 0xBB00_0080, 0xBBBF_FF80, 0xBBC0_0080)),
+    ("q8-exact-ties-to-even", (0x0000_0000, 0xBB00_0000, 0xBBC0_0000)),
     ("clamp-neighborhood", (0x0000_0000, 0xC17F_F800, 0xC180_0000, 0xC180_0400, 0xC188_0000)),
     ("finite-extremes", (0x7F7F_FFFF, 0xFF7F_FFFF, 0x0000_0000, 0xBF80_0000)),
     ("signed-zero-and-subnormal", (0x0000_0000, 0x8000_0000, 0x0000_0001, 0x8000_0001)),
@@ -277,14 +280,25 @@ def payload(repository_root: Path) -> dict[str, Any]:
                     "selected_index": select_mass(masses, draw),
                 }
             )
-        cases.append(
-            {
-                "name": name,
-                "logit_bits_hex": [f"{bits:08x}" for bits in logit_bits],
-                "mass_u128": [str(mass) for mass in masses],
-                "draws": draws,
-            }
-        )
+        case = {
+            "name": name,
+            "logit_bits_hex": [f"{bits:08x}" for bits in logit_bits],
+            "mass_u128": [str(mass) for mass in masses],
+            "draws": draws,
+        }
+        if name == "q8-exact-ties-to-even":
+            case["coverage_note"] = (
+                "unclamped exact binary q8 half ties with even and odd floors; "
+                "0xBB000000 is the convention-discriminating witness "
+                "(ties-to-even=0, half-up=1), while 0xBBC00000 pins the "
+                "complementary upward tie-even result (ties-to-even=2, half-up=2)"
+            )
+        if name == "maximum-admitted-width":
+            case["input_recipe_provenance"] = (
+                "pre-existing Rust fast-sampler test recipe: "
+                "-((index * 37) mod 4097) / 256 for legal indices 0..63"
+            )
+        cases.append(case)
     rejections: list[dict[str, Any]] = []
     for name, logit_bits in REJECTION_BITS:
         try:
@@ -304,11 +318,13 @@ def payload(repository_root: Path) -> dict[str, Any]:
     stream = framed_vector_stream(cases, rejections)
     return {
         "schema": SCHEMA,
+        "vector_schema_version": VECTOR_SCHEMA_VERSION,
         "sampler_identity": SAMPLER_IDENTITY,
+        "generator_identity": GENERATOR_IDENTITY,
         "sampler_contract_sha256": SAMPLER_CONTRACT_SHA256,
         "exp_table_sha256": EXP_TABLE_SHA256,
         "authority": {
-            "implementation": "stdlib-only-independent-integer-bit-reference-v1",
+            "implementation": GENERATOR_IDENTITY,
             "generator": GENERATOR_RELATIVE.as_posix(),
             "generator_sha256": sha256_hex(generator_bytes),
             "forbidden_dependencies": ["rust-ffi", "numpy", "torch", "decimal-softmax"],
@@ -320,6 +336,10 @@ def payload(repository_root: Path) -> dict[str, Any]:
         "cases": cases,
         "rejection_count": len(rejections),
         "rejections": rejections,
+        "nonfinite_coverage_note": (
+            "one quiet positive NaN payload is sufficient because production "
+            "classification is sign-agnostic and uses the exponent-mask rule"
+        ),
         "nonclaims": [
             "not-decimal-softmax-hamilton-splitmix64-v1",
             "not-learning-noninferiority-evidence",
