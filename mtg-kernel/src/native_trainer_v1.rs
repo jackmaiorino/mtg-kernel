@@ -1379,6 +1379,11 @@ impl NativeTrainerStateV2 {
                 return Err(NativeTrainerErrorV1::ObserverPanicked { phase });
             }
         };
+        validate_scorer_rollout_counters_v2(
+            scorer_accepted_batch_count,
+            scorer_accepted_decision_count,
+            &rollout.metrics,
+        )?;
         #[cfg(test)]
         assert_eq!(
             scorer_forward_call_count, scorer_accepted_decision_count,
@@ -1803,6 +1808,23 @@ pub(crate) fn validate_update_config_v2(
     let learning_rate = f32::from_bits(config.learning_rate_bits);
     if !learning_rate.is_finite() || learning_rate <= 0.0 {
         return Err(NativeTrainerErrorV1::InvalidUpdateConfig("learning_rate"));
+    }
+    Ok(())
+}
+
+fn validate_scorer_rollout_counters_v2(
+    scorer_accepted_batch_count: u64,
+    scorer_accepted_decision_count: u64,
+    rollout_metrics: &AsyncFlatScoredRolloutMetricsV2,
+) -> Result<(), NativeTrainerErrorV1> {
+    if scorer_accepted_batch_count != rollout_metrics.scorer_batch_count
+        || scorer_accepted_decision_count != rollout_metrics.scored_decision_count
+        || scorer_accepted_decision_count != rollout_metrics.sampled_action_count
+        || scorer_accepted_decision_count != rollout_metrics.batch_width_sum
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "scorer accepted counters must exactly match rollout counters",
+        ));
     }
     Ok(())
 }
@@ -2292,6 +2314,49 @@ mod tests {
         evidence.rollout_metrics.total_elapsed_ns = 0;
         evidence.rollout_metrics.broker_service_ns = 0;
         evidence
+    }
+
+    #[test]
+    fn scorer_acceptance_counters_must_match_rollout_counters() {
+        let expected_error = NativeTrainerErrorV1::GroupingInvariant(
+            "scorer accepted counters must exactly match rollout counters",
+        );
+        let valid = AsyncFlatScoredRolloutMetricsV2 {
+            scorer_batch_count: 2,
+            scored_decision_count: 3,
+            sampled_action_count: 3,
+            batch_width_sum: 3,
+            ..AsyncFlatScoredRolloutMetricsV2::default()
+        };
+        assert_eq!(validate_scorer_rollout_counters_v2(2, 3, &valid), Ok(()));
+
+        let mut wrong_batch_count = valid;
+        wrong_batch_count.scorer_batch_count = 1;
+        assert_eq!(
+            validate_scorer_rollout_counters_v2(2, 3, &wrong_batch_count),
+            Err(expected_error.clone())
+        );
+
+        let mut wrong_scored_count = valid;
+        wrong_scored_count.scored_decision_count = 2;
+        assert_eq!(
+            validate_scorer_rollout_counters_v2(2, 3, &wrong_scored_count),
+            Err(expected_error.clone())
+        );
+
+        let mut wrong_sampled_count = valid;
+        wrong_sampled_count.sampled_action_count = 2;
+        assert_eq!(
+            validate_scorer_rollout_counters_v2(2, 3, &wrong_sampled_count),
+            Err(expected_error.clone())
+        );
+
+        let mut wrong_width_sum = valid;
+        wrong_width_sum.batch_width_sum = 2;
+        assert_eq!(
+            validate_scorer_rollout_counters_v2(2, 3, &wrong_width_sum),
+            Err(expected_error)
+        );
     }
 
     #[test]
