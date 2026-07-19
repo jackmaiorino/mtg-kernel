@@ -32,12 +32,13 @@ use std::cell::Cell;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
-use std::rc::Rc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 #[cfg(test)]
 thread_local! {
     static FORWARD_WITH_TAPE_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
-    static PACKED_SCORER_FORWARD_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
     static PACKED_INDEPENDENT_RECOMPUTE_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -47,11 +48,8 @@ pub(crate) fn forward_with_tape_call_count_for_test_v1() -> u64 {
 }
 
 #[cfg(test)]
-pub(crate) fn packed_forward_call_counts_for_test_v1() -> (u64, u64) {
-    (
-        PACKED_SCORER_FORWARD_CALL_COUNT_V1.with(Cell::get),
-        PACKED_INDEPENDENT_RECOMPUTE_CALL_COUNT_V1.with(Cell::get),
-    )
+pub(crate) fn packed_independent_recompute_call_count_for_test_v1() -> u64 {
+    PACKED_INDEPENDENT_RECOMPUTE_CALL_COUNT_V1.with(Cell::get)
 }
 
 pub(crate) const TRAINER_ALGORITHM_V1: &str = "terminal_reinforce_value/v3";
@@ -1095,10 +1093,10 @@ struct DecisionTapeV1 {
 /// opaque outside this module: callers may move and borrow it, but cannot
 /// rewrite activations or detach it from the model generation that created it.
 pub(crate) struct NativePolicyPackedForwardTapeV1 {
-    model_generation_sha256: Rc<str>,
+    model_generation_sha256: Arc<str>,
     tape: DecisionTapeV1,
     #[cfg(test)]
-    lifetime_probe: Option<Rc<()>>,
+    lifetime_probe: Option<Arc<()>>,
 }
 
 impl std::fmt::Debug for NativePolicyPackedForwardTapeV1 {
@@ -1125,7 +1123,7 @@ impl NativePolicyPackedForwardTapeV1 {
         let mut corrupted = self.model_generation_sha256.to_string();
         let replacement = if corrupted.starts_with('0') { "1" } else { "0" };
         corrupted.replace_range(0..1, replacement);
-        self.model_generation_sha256 = Rc::from(corrupted);
+        self.model_generation_sha256 = Arc::from(corrupted);
     }
 
     #[cfg(test)]
@@ -1155,11 +1153,13 @@ impl NativePolicyPackedForwardTapeV1 {
 /// exact rollout-time activations for backward. Learning still performs its
 /// separately owned output-validation forward from canonical encoded input.
 pub(crate) struct NativePolicyPackedForwardBuilderV1 {
-    parameters: Vec<NativeNamedParameterV1>,
+    parameters: Arc<[NativeNamedParameterV1]>,
     config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
-    model_generation_sha256: Rc<str>,
+    model_generation_sha256: Arc<str>,
     #[cfg(test)]
-    lifetime_probe: Option<Rc<()>>,
+    lifetime_probe: Option<Arc<()>>,
+    #[cfg(test)]
+    forward_call_count: Arc<AtomicU64>,
 }
 
 impl NativePolicyPackedForwardBuilderV1 {
@@ -1169,11 +1169,13 @@ impl NativePolicyPackedForwardBuilderV1 {
         let parameters = model.parameter_snapshot_v1();
         validate_parameter_manifest(&parameters)?;
         Ok(Self {
-            parameters,
+            parameters: Arc::from(parameters),
             config: model.config_v1(),
-            model_generation_sha256: Rc::from(model.parameter_manifest_sha256_v1()),
+            model_generation_sha256: Arc::from(model.parameter_manifest_sha256_v1()),
             #[cfg(test)]
             lifetime_probe: None,
+            #[cfg(test)]
+            forward_call_count: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -1181,20 +1183,26 @@ impl NativePolicyPackedForwardBuilderV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyPackedForwardTapeV1, NativePolicyTrainErrorV1> {
+        let tape = forward_with_tape(self.parameters.as_ref(), self.config, encoded)?;
         #[cfg(test)]
-        PACKED_SCORER_FORWARD_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
+        self.forward_call_count.fetch_add(1, Ordering::SeqCst);
         Ok(NativePolicyPackedForwardTapeV1 {
             model_generation_sha256: self.model_generation_sha256.clone(),
-            tape: forward_with_tape(&self.parameters, self.config, encoded)?,
+            tape,
             #[cfg(test)]
             lifetime_probe: self.lifetime_probe.clone(),
         })
     }
 
     #[cfg(test)]
-    fn with_lifetime_probe_for_test_v1(mut self, probe: Rc<()>) -> Self {
+    fn with_lifetime_probe_for_test_v1(mut self, probe: Arc<()>) -> Self {
         self.lifetime_probe = Some(probe);
         self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn forward_call_count_for_test_v1(&self) -> u64 {
+        self.forward_call_count.load(Ordering::SeqCst)
     }
 }
 
@@ -2952,37 +2960,32 @@ mod tests {
                 expected_outputs_for_step(reference_state.model_v1(), &forward, step);
             let reference_substeps = substeps_for_step(&forward, step, &expected_outputs);
             let reference_groups = groups_for_step(step, &reference_substeps);
-            let lifetime_probe = Rc::new(());
+            let lifetime_probe = Arc::new(());
             let packed_before = packed_state.snapshot_v1().unwrap();
 
             let packed_result = {
                 let builder =
                     NativePolicyPackedForwardBuilderV1::from_model_v1(packed_state.model_v1())
                         .unwrap()
-                        .with_lifetime_probe_for_test_v1(Rc::clone(&lifetime_probe));
-                let calls_before_scorer = forward_with_tape_call_count_for_test_v1();
-                let (scorer_calls_before, recompute_calls_before) =
-                    packed_forward_call_counts_for_test_v1();
+                        .with_lifetime_probe_for_test_v1(Arc::clone(&lifetime_probe));
+                let calls_before_scorer = builder.forward_call_count_for_test_v1();
+                let recompute_calls_before = packed_independent_recompute_call_count_for_test_v1();
                 let packed_tapes = packed_tapes_for_step(&builder, &forward, step);
                 let expected_forward_count = step
                     .groups
                     .iter()
                     .map(|group| group.substeps.len() as u64)
                     .sum::<u64>();
-                let calls_after_scorer = forward_with_tape_call_count_for_test_v1();
+                let calls_after_scorer = builder.forward_call_count_for_test_v1();
                 assert_eq!(
                     calls_after_scorer - calls_before_scorer,
                     expected_forward_count
                 );
-                let (scorer_calls_after, recompute_calls_before_train) =
-                    packed_forward_call_counts_for_test_v1();
-                assert_eq!(
-                    scorer_calls_after - scorer_calls_before,
-                    expected_forward_count
-                );
+                let recompute_calls_before_train =
+                    packed_independent_recompute_call_count_for_test_v1();
                 assert_eq!(recompute_calls_before_train, recompute_calls_before);
                 assert_eq!(
-                    Rc::strong_count(&lifetime_probe),
+                    Arc::strong_count(&lifetime_probe),
                     2 + expected_forward_count as usize,
                     "one builder and one owner per packed tape"
                 );
@@ -2997,21 +3000,20 @@ mod tests {
                     )
                     .unwrap();
                 assert_eq!(
-                    forward_with_tape_call_count_for_test_v1() - calls_after_scorer,
+                    builder.forward_call_count_for_test_v1(),
+                    calls_after_scorer,
+                    "learning must not use the scorer-owned forward builder"
+                );
+                assert_eq!(
+                    packed_independent_recompute_call_count_for_test_v1()
+                        - recompute_calls_before_train,
                     expected_forward_count,
                     "packed learning must independently recompute every substep exactly once"
-                );
-                let (scorer_calls_after_train, recompute_calls_after_train) =
-                    packed_forward_call_counts_for_test_v1();
-                assert_eq!(scorer_calls_after_train, scorer_calls_after);
-                assert_eq!(
-                    recompute_calls_after_train - recompute_calls_before_train,
-                    expected_forward_count
                 );
                 result
             };
             assert_eq!(
-                Rc::strong_count(&lifetime_probe),
+                Arc::strong_count(&lifetime_probe),
                 1,
                 "packed tapes must not escape their update"
             );

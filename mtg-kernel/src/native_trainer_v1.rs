@@ -33,7 +33,7 @@ use crate::native_flat_tensorizer_v2::{
 };
 use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1;
 #[cfg(test)]
-use crate::native_policy_train_step_v1::packed_forward_call_counts_for_test_v1;
+use crate::native_policy_train_step_v1::packed_independent_recompute_call_count_for_test_v1;
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPackedForwardBuilderV1,
     NativePolicyPackedForwardTapeV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
@@ -59,8 +59,11 @@ use crate::rl_session::{SessionDeckHashesV1, SessionDeckIdsV1};
 use crate::runtime_decks::runtime_deck_by_id;
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const NATIVE_POLICY_SCORER_CONTRACT_CODE_V1: u32 = 1;
@@ -316,6 +319,7 @@ pub(crate) enum NativePolicyScorerFailureV1 {
     MissingDecision,
     Tensor(NativeFlatTensorErrorV2),
     PackedForward(NativePolicyTrainErrorV1),
+    ForwardWorker,
     Association(NativePolicyAssociationErrorV1),
     CounterOverflow,
 }
@@ -328,8 +332,132 @@ impl NativePolicyScorerFailureV1 {
             Self::MissingDecision => NATIVE_POLICY_SCORER_DECISION_CODE_V1,
             Self::Tensor(_) => NATIVE_POLICY_SCORER_TENSOR_CODE_V1,
             Self::PackedForward(_) => NATIVE_POLICY_SCORER_MODEL_CODE_V1,
+            Self::ForwardWorker => NATIVE_POLICY_SCORER_MODEL_CODE_V1,
             Self::Association(_) => NATIVE_POLICY_SCORER_ASSOCIATION_CODE_V1,
             Self::CounterOverflow => NATIVE_POLICY_SCORER_COUNTER_CODE_V1,
+        }
+    }
+}
+
+struct NativePolicyForwardTaskV1 {
+    ordinal: usize,
+    tensor: NativeFlatDecisionTensorV2,
+    #[cfg(test)]
+    force_panic: bool,
+}
+
+struct NativePolicyForwardResultV1 {
+    ordinal: usize,
+    tensor: NativeFlatDecisionTensorV2,
+    tape: Option<NativePolicyPackedForwardTapeV1>,
+    error: Option<NativePolicyTrainErrorV1>,
+    panicked: bool,
+}
+
+/// Per-update bounded workers for independent CPU forwards. Tensorization and
+/// result publication remain on the broker thread; workers see only owned
+/// tensors and one immutable parameter snapshot. Results are reassembled by
+/// input ordinal before any caller-visible slice or association is changed.
+struct NativePolicyForwardPoolV1 {
+    task_sender: Option<mpsc::SyncSender<NativePolicyForwardTaskV1>>,
+    result_receiver: mpsc::Receiver<NativePolicyForwardResultV1>,
+    workers: Vec<JoinHandle<()>>,
+}
+
+impl NativePolicyForwardPoolV1 {
+    fn try_new_v1(
+        builder: Arc<NativePolicyPackedForwardBuilderV1>,
+        worker_count: usize,
+    ) -> Option<Self> {
+        if worker_count < 2 {
+            return None;
+        }
+        let (task_sender, task_receiver) =
+            mpsc::sync_channel::<NativePolicyForwardTaskV1>(worker_count);
+        let task_receiver = Arc::new(Mutex::new(task_receiver));
+        let (result_sender, result_receiver) = mpsc::channel();
+        let mut workers = Vec::<JoinHandle<()>>::with_capacity(worker_count);
+        for worker_index in 0..worker_count {
+            let worker_builder = Arc::clone(&builder);
+            let worker_tasks = Arc::clone(&task_receiver);
+            let worker_results = result_sender.clone();
+            let handle = match thread::Builder::new()
+                .name(format!("native-policy-forward-{worker_index}"))
+                .spawn(move || loop {
+                    let task = {
+                        let receiver = match worker_tasks.lock() {
+                            Ok(receiver) => receiver,
+                            Err(_) => break,
+                        };
+                        match receiver.recv() {
+                            Ok(task) => task,
+                            Err(_) => break,
+                        }
+                    };
+                    let ordinal = task.ordinal;
+                    let completed = catch_unwind(AssertUnwindSafe(|| {
+                        #[cfg(test)]
+                        if task.force_panic {
+                            panic!("injected native policy forward worker panic");
+                        }
+                        worker_builder.forward_v1(native_encoded_decision_view_v1(&task.tensor))
+                    }));
+                    let (tape, error, panicked) = match completed {
+                        Ok(Ok(tape)) => (Some(tape), None, false),
+                        Ok(Err(error)) => (None, Some(error), false),
+                        Err(_) => (None, None, true),
+                    };
+                    if worker_results
+                        .send(NativePolicyForwardResultV1 {
+                            ordinal,
+                            tensor: task.tensor,
+                            tape,
+                            error,
+                            panicked,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }) {
+                Ok(handle) => handle,
+                Err(_) => {
+                    drop(task_sender);
+                    drop(result_sender);
+                    for worker in workers {
+                        let _ = worker.join();
+                    }
+                    return None;
+                }
+            };
+            workers.push(handle);
+        }
+        drop(result_sender);
+        Some(Self {
+            task_sender: Some(task_sender),
+            result_receiver,
+            workers,
+        })
+    }
+
+    fn submit_v1(&self, task: NativePolicyForwardTaskV1) -> Result<(), ()> {
+        self.task_sender
+            .as_ref()
+            .ok_or(())?
+            .send(task)
+            .map_err(|_| ())
+    }
+
+    fn receive_v1(&self) -> Result<NativePolicyForwardResultV1, ()> {
+        self.result_receiver.recv().map_err(|_| ())
+    }
+}
+
+impl Drop for NativePolicyForwardPoolV1 {
+    fn drop(&mut self) {
+        drop(self.task_sender.take());
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
         }
     }
 }
@@ -338,27 +466,223 @@ impl NativePolicyScorerFailureV1 {
 /// native policy/value network. It owns one immutable parameter snapshot for
 /// the update so every scored decision can retain the exact backward tape.
 struct NativePolicyBatchScorerV2 {
-    forward_builder: NativePolicyPackedForwardBuilderV1,
+    forward_builder: Arc<NativePolicyPackedForwardBuilderV1>,
+    forward_pool: Option<NativePolicyForwardPoolV1>,
     tensorizer: NativeFlatTensorizerV2,
     associations: NativePolicyAssociationProducerV1,
     last_failure: Option<NativePolicyScorerFailureV1>,
     accepted_batch_count: u64,
     accepted_decision_count: u64,
+    #[cfg(test)]
+    force_next_parallel_worker_panic: bool,
 }
 
 impl NativePolicyBatchScorerV2 {
     fn new_v1(
         model: &NativePolicyValueNetV1,
         associations: NativePolicyAssociationProducerV1,
+        forward_worker_limit: usize,
     ) -> Result<Self, NativePolicyTrainErrorV1> {
+        let forward_builder = Arc::new(NativePolicyPackedForwardBuilderV1::from_model_v1(model)?);
+        let available_workers = thread::available_parallelism()
+            .map(|parallelism| parallelism.get())
+            .unwrap_or(1);
+        let forward_pool = NativePolicyForwardPoolV1::try_new_v1(
+            Arc::clone(&forward_builder),
+            forward_worker_limit.min(available_workers),
+        );
         Ok(Self {
-            forward_builder: NativePolicyPackedForwardBuilderV1::from_model_v1(model)?,
+            forward_builder,
+            forward_pool,
             tensorizer: NativeFlatTensorizerV2::new(),
             associations,
             last_failure: None,
             accepted_batch_count: 0,
             accepted_decision_count: 0,
+            #[cfg(test)]
+            force_next_parallel_worker_panic: false,
         })
+    }
+
+    fn score_decisions_scalar_v1(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logit_count: usize,
+        candidate_logits: &mut Vec<f32>,
+        candidate_values: &mut Vec<f32>,
+        candidate_associations: &mut Vec<NativeScoredDecisionAssociationV1>,
+    ) -> Result<(), NativePolicyScorerFailureV1> {
+        for decision_index in 0..batch.decision_count() {
+            let decision = batch
+                .decision(decision_index)
+                .ok_or(NativePolicyScorerFailureV1::MissingDecision)?;
+            let binding = batch
+                .binding(decision_index)
+                .ok_or(NativePolicyScorerFailureV1::MissingDecision)?;
+            let begin = batch.action_offsets()[decision_index];
+            let end = batch.action_offsets()[decision_index + 1];
+            if end < begin || end > action_logit_count || end - begin != decision.actions().len() {
+                return Err(NativePolicyScorerFailureV1::OutputShape);
+            }
+
+            let mut tensor = NativeFlatDecisionTensorV2::default();
+            self.tensorizer
+                .fill(decision, &mut tensor)
+                .map_err(NativePolicyScorerFailureV1::Tensor)?;
+            let tape = self
+                .forward_builder
+                .forward_v1(native_encoded_decision_view_v1(&tensor))
+                .map_err(NativePolicyScorerFailureV1::PackedForward)?;
+            if tape.logits_v1().len() != end - begin || !tape.value_v1().is_finite() {
+                return Err(NativePolicyScorerFailureV1::OutputShape);
+            }
+            candidate_logits.extend_from_slice(tape.logits_v1());
+            candidate_values.push(tape.value_v1());
+            candidate_associations.push(NativeScoredDecisionAssociationV1 {
+                binding,
+                training_input: NativePolicyScoredTrainingInputV1 { tensor, tape },
+            });
+        }
+        Ok(())
+    }
+
+    fn score_decisions_parallel_v1(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logit_count: usize,
+        candidate_logits: &mut Vec<f32>,
+        candidate_values: &mut Vec<f32>,
+        candidate_associations: &mut Vec<NativeScoredDecisionAssociationV1>,
+    ) -> Result<(), NativePolicyScorerFailureV1> {
+        let pool = self
+            .forward_pool
+            .as_ref()
+            .ok_or(NativePolicyScorerFailureV1::ForwardWorker)?;
+        #[cfg(test)]
+        let force_worker_panic = std::mem::take(&mut self.force_next_parallel_worker_panic);
+        let mut bindings = Vec::new();
+        bindings
+            .try_reserve_exact(batch.decision_count())
+            .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
+        let mut expected_logit_counts = Vec::new();
+        expected_logit_counts
+            .try_reserve_exact(batch.decision_count())
+            .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
+        let mut submitted = 0usize;
+        let mut synchronous_failure = None;
+
+        for decision_index in 0..batch.decision_count() {
+            #[cfg(test)]
+            // Pair the injected ordinal-zero worker panic with a later
+            // broker-thread failure. The failure witness then proves that
+            // parallel collection retains the scalar path's first-ordinal
+            // precedence instead of returning the failure observed first in
+            // wall-clock order.
+            if force_worker_panic && decision_index == 1 {
+                synchronous_failure = Some(NativePolicyScorerFailureV1::OutputShape);
+                break;
+            }
+            let decision = match batch.decision(decision_index) {
+                Some(decision) => decision,
+                None => {
+                    synchronous_failure = Some(NativePolicyScorerFailureV1::MissingDecision);
+                    break;
+                }
+            };
+            let binding = match batch.binding(decision_index) {
+                Some(binding) => binding,
+                None => {
+                    synchronous_failure = Some(NativePolicyScorerFailureV1::MissingDecision);
+                    break;
+                }
+            };
+            let begin = batch.action_offsets()[decision_index];
+            let end = batch.action_offsets()[decision_index + 1];
+            if end < begin || end > action_logit_count || end - begin != decision.actions().len() {
+                synchronous_failure = Some(NativePolicyScorerFailureV1::OutputShape);
+                break;
+            }
+            let mut tensor = NativeFlatDecisionTensorV2::default();
+            if let Err(error) = self.tensorizer.fill(decision, &mut tensor) {
+                synchronous_failure = Some(NativePolicyScorerFailureV1::Tensor(error));
+                break;
+            }
+            let task = NativePolicyForwardTaskV1 {
+                ordinal: decision_index,
+                tensor,
+                #[cfg(test)]
+                force_panic: force_worker_panic && decision_index == 0,
+            };
+            if pool.submit_v1(task).is_err() {
+                synchronous_failure = Some(NativePolicyScorerFailureV1::ForwardWorker);
+                break;
+            }
+            bindings.push(binding);
+            expected_logit_counts.push(end - begin);
+            submitted += 1;
+        }
+
+        let mut result_slots = (0..submitted)
+            .map(|_| None)
+            .collect::<Vec<Option<NativePolicyForwardResultV1>>>();
+        let mut pool_protocol_failed = false;
+        for _ in 0..submitted {
+            match pool.receive_v1() {
+                Ok(result)
+                    if result.ordinal < submitted && result_slots[result.ordinal].is_none() =>
+                {
+                    let ordinal = result.ordinal;
+                    result_slots[ordinal] = Some(result);
+                }
+                Ok(_) => pool_protocol_failed = true,
+                Err(()) => {
+                    pool_protocol_failed = true;
+                    break;
+                }
+            }
+        }
+
+        for ((binding, expected_logit_count), slot) in bindings
+            .into_iter()
+            .zip(expected_logit_counts)
+            .zip(result_slots)
+        {
+            let (tensor, tape) = match slot {
+                Some(result) if result.panicked => {
+                    return Err(NativePolicyScorerFailureV1::ForwardWorker);
+                }
+                Some(mut result) => {
+                    let tape = match (result.tape.take(), result.error.take()) {
+                        (Some(tape), None) => tape,
+                        (None, Some(error)) => {
+                            return Err(NativePolicyScorerFailureV1::PackedForward(error));
+                        }
+                        _ => return Err(NativePolicyScorerFailureV1::ForwardWorker),
+                    };
+                    (result.tensor, tape)
+                }
+                None => return Err(NativePolicyScorerFailureV1::ForwardWorker),
+            };
+            if tape.logits_v1().len() != expected_logit_count || !tape.value_v1().is_finite() {
+                return Err(NativePolicyScorerFailureV1::OutputShape);
+            }
+            candidate_logits.extend_from_slice(tape.logits_v1());
+            candidate_values.push(tape.value_v1());
+            candidate_associations.push(NativeScoredDecisionAssociationV1 {
+                binding,
+                training_input: NativePolicyScoredTrainingInputV1 { tensor, tape },
+            });
+        }
+        if pool_protocol_failed {
+            return Err(NativePolicyScorerFailureV1::ForwardWorker);
+        }
+        if let Some(error) = synchronous_failure {
+            return Err(error);
+        }
+        if submitted != batch.decision_count() {
+            return Err(NativePolicyScorerFailureV1::ForwardWorker);
+        }
+        Ok(())
     }
 
     fn score_chunk_v1(
@@ -404,36 +728,22 @@ impl NativePolicyBatchScorerV2 {
             .try_reserve_exact(batch.decision_count())
             .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
 
-        for decision_index in 0..batch.decision_count() {
-            let decision = batch
-                .decision(decision_index)
-                .ok_or(NativePolicyScorerFailureV1::MissingDecision)?;
-            let binding = batch
-                .binding(decision_index)
-                .ok_or(NativePolicyScorerFailureV1::MissingDecision)?;
-            let begin = batch.action_offsets()[decision_index];
-            let end = batch.action_offsets()[decision_index + 1];
-            if end < begin || end > action_logits.len() || end - begin != decision.actions().len() {
-                return Err(NativePolicyScorerFailureV1::OutputShape);
-            }
-
-            let mut tensor = NativeFlatDecisionTensorV2::default();
-            self.tensorizer
-                .fill(decision, &mut tensor)
-                .map_err(NativePolicyScorerFailureV1::Tensor)?;
-            let tape = self
-                .forward_builder
-                .forward_v1(native_encoded_decision_view_v1(&tensor))
-                .map_err(NativePolicyScorerFailureV1::PackedForward)?;
-            if tape.logits_v1().len() != end - begin || !tape.value_v1().is_finite() {
-                return Err(NativePolicyScorerFailureV1::OutputShape);
-            }
-            candidate_logits.extend_from_slice(tape.logits_v1());
-            candidate_values.push(tape.value_v1());
-            candidate_associations.push(NativeScoredDecisionAssociationV1 {
-                binding,
-                training_input: NativePolicyScoredTrainingInputV1 { tensor, tape },
-            });
+        if self.forward_pool.is_some() && batch.decision_count() > 1 {
+            self.score_decisions_parallel_v1(
+                batch,
+                action_logits.len(),
+                &mut candidate_logits,
+                &mut candidate_values,
+                &mut candidate_associations,
+            )?;
+        } else {
+            self.score_decisions_scalar_v1(
+                batch,
+                action_logits.len(),
+                &mut candidate_logits,
+                &mut candidate_values,
+                &mut candidate_associations,
+            )?;
         }
         if candidate_logits.len() != action_logits.len() || candidate_values.len() != values.len() {
             return Err(NativePolicyScorerFailureV1::OutputShape);
@@ -835,6 +1145,8 @@ pub(crate) struct NativeTrainerStateV2 {
     pending_test_train_non_selected_logit_mutation: bool,
     #[cfg(test)]
     pending_test_train_revalidation_mutation: Option<NativePolicyTrainRevalidationTestMutationV1>,
+    #[cfg(test)]
+    pending_test_forward_worker_panic: bool,
 }
 
 impl NativeTrainerStateV2 {
@@ -894,6 +1206,8 @@ impl NativeTrainerStateV2 {
             pending_test_train_non_selected_logit_mutation: false,
             #[cfg(test)]
             pending_test_train_revalidation_mutation: None,
+            #[cfg(test)]
+            pending_test_forward_worker_panic: false,
         })
     }
 
@@ -920,6 +1234,8 @@ impl NativeTrainerStateV2 {
             pending_test_train_non_selected_logit_mutation: false,
             #[cfg(test)]
             pending_test_train_revalidation_mutation: None,
+            #[cfg(test)]
+            pending_test_forward_worker_panic: false,
         })
     }
 
@@ -954,6 +1270,8 @@ impl NativeTrainerStateV2 {
             std::mem::take(&mut self.pending_test_train_non_selected_logit_mutation);
         #[cfg(test)]
         let test_train_revalidation_mutation = self.pending_test_train_revalidation_mutation.take();
+        #[cfg(test)]
+        let test_forward_worker_panic = std::mem::take(&mut self.pending_test_forward_worker_panic);
         validate_update_config_v2(config)?;
         if config.batch_episodes != self.batch_episodes {
             return Err(NativeTrainerErrorV1::InvalidUpdateConfig("batch_episodes"));
@@ -1017,8 +1335,16 @@ impl NativeTrainerStateV2 {
             consumer,
         )
         .map_err(NativeTrainerErrorV1::ObserverConstruction)?;
-        let mut scorer = NativePolicyBatchScorerV2::new_v1(self.train_state.model_v1(), producer)
-            .map_err(NativeTrainerErrorV1::Train)?;
+        let mut scorer = NativePolicyBatchScorerV2::new_v1(
+            self.train_state.model_v1(),
+            producer,
+            config.broker_batch_target.min(logical_actor_count),
+        )
+        .map_err(NativeTrainerErrorV1::Train)?;
+        #[cfg(test)]
+        if test_forward_worker_panic {
+            scorer.force_next_parallel_worker_panic = true;
+        }
         let rollout_result = run_async_flat_scored_rollout_native_observed_v2(
             rollout_config,
             self.base_seed,
@@ -1027,6 +1353,8 @@ impl NativeTrainerStateV2 {
         );
         let scorer_accepted_batch_count = scorer.accepted_batch_count;
         let scorer_accepted_decision_count = scorer.accepted_decision_count;
+        #[cfg(test)]
+        let scorer_forward_call_count = scorer.forward_builder.forward_call_count_for_test_v1();
         let scorer_failure = scorer.last_failure.clone();
         drop(scorer);
         let (rollout, observed_trajectory) = match rollout_result {
@@ -1049,6 +1377,11 @@ impl NativeTrainerStateV2 {
                 return Err(NativeTrainerErrorV1::ObserverPanicked { phase });
             }
         };
+        #[cfg(test)]
+        assert_eq!(
+            scorer_forward_call_count, scorer_accepted_decision_count,
+            "the shared scorer builder must run exactly once per accepted decision"
+        );
         let NativePolicyObservedTrajectoryV1 {
             grouped,
             full_trajectory_receipts,
@@ -1197,6 +1530,16 @@ impl NativeTrainerStateV2 {
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         assert!(self.pending_test_train_revalidation_mutation.is_none());
         self.pending_test_train_revalidation_mutation = Some(mutation);
+        self.run_even_batch_update_v2(config)
+    }
+
+    #[cfg(test)]
+    fn run_even_batch_update_with_forward_worker_panic_v2(
+        &mut self,
+        config: &NativeTrainerUpdateConfigV2,
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+        assert!(!self.pending_test_forward_worker_panic);
+        self.pending_test_forward_worker_panic = true;
         self.run_even_batch_update_v2(config)
     }
 }
@@ -2045,36 +2388,31 @@ mod tests {
         let mut narrow = initial.clone();
         let mut wide = initial;
 
-        let narrow_forward_counts_before = packed_forward_call_counts_for_test_v1();
+        let narrow_recompute_count_before = packed_independent_recompute_call_count_for_test_v1();
         let narrow_evidence = narrow
             .run_even_batch_update_v2(&burn_pair_config_v2(1, 1, 1))
             .unwrap();
-        let narrow_forward_counts_after = packed_forward_call_counts_for_test_v1();
-        let wide_forward_counts_before = narrow_forward_counts_after;
+        let narrow_recompute_count_after = packed_independent_recompute_call_count_for_test_v1();
+        let wide_recompute_count_before = narrow_recompute_count_after;
         let wide_evidence = wide
             .run_even_batch_update_v2(&burn_pair_config_v2(2, 2, 3))
             .unwrap();
-        let wide_forward_counts_after = packed_forward_call_counts_for_test_v1();
+        let wide_recompute_count_after = packed_independent_recompute_call_count_for_test_v1();
 
         for (before, after, evidence) in [
             (
-                narrow_forward_counts_before,
-                narrow_forward_counts_after,
+                narrow_recompute_count_before,
+                narrow_recompute_count_after,
                 &narrow_evidence,
             ),
             (
-                wide_forward_counts_before,
-                wide_forward_counts_after,
+                wide_recompute_count_before,
+                wide_recompute_count_after,
                 &wide_evidence,
             ),
         ] {
             assert_eq!(
-                after.0 - before.0,
-                evidence.scorer_accepted_decision_count,
-                "the production scorer must evaluate each accepted decision exactly once"
-            );
-            assert_eq!(
-                after.1 - before.1,
+                after - before,
                 evidence.scorer_accepted_decision_count,
                 "training must independently recompute each accepted decision exactly once"
             );
@@ -2622,6 +2960,38 @@ mod tests {
             ) if expected_bits != actual_bits
         ));
         assert_eq!(exact_state_snapshot_v1(&trainer), before);
+    }
+
+    #[test]
+    fn parallel_scorer_preserves_failure_order_and_is_transactional_and_retryable() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<NativePolicyPackedForwardBuilderV1>();
+        assert_send_sync::<NativePolicyPackedForwardTapeV1>();
+
+        let _lock = TEST_LOCK.lock().unwrap();
+        let initial = trainer_v2(2);
+        let before = exact_state_snapshot_v1(&initial);
+        let mut faulted = initial.clone();
+        let mut reference = initial;
+        let config = burn_even_batch_config_v2(2, 2, 2, 3);
+        assert_eq!(
+            faulted
+                .run_even_batch_update_with_forward_worker_panic_v2(&config)
+                .unwrap_err(),
+            NativeTrainerErrorV1::Scorer(NativePolicyScorerFailureV1::ForwardWorker)
+        );
+        assert_eq!(exact_state_snapshot_v1(&faulted), before);
+
+        let faulted_evidence = faulted.run_even_batch_update_v2(&config).unwrap();
+        let reference_evidence = reference.run_even_batch_update_v2(&config).unwrap();
+        assert_eq!(
+            without_observed_timing_v2(faulted_evidence),
+            without_observed_timing_v2(reference_evidence)
+        );
+        assert_eq!(
+            exact_state_snapshot_v1(&faulted),
+            exact_state_snapshot_v1(&reference)
+        );
     }
 
     #[test]
