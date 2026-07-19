@@ -37,8 +37,13 @@ use crate::flat_policy_v1::{
     FLAT_SCORER_PACKET_VERSION_V1, FLAT_SCORER_VISIBLE_MANIFEST_V1,
     FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V1,
 };
+use crate::native_trainer_schedule_v1::{
+    derive_native_trainer_learner_action_seed_v1, derive_native_trainer_opponent_action_seed_v1,
+    native_trainer_episode_schedule_v1,
+};
 use crate::rl::{
-    derive_env_seed, derive_policy_seed, PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2,
+    derive_env_seed, derive_policy_seed, PlayerSeatV1, TerminalClassificationV1, TerminalOutcomeV1,
+    TerminalSafeCodeV2,
 };
 use crate::rl_session::{
     FastActorDecisionKindV1, FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1,
@@ -64,6 +69,213 @@ pub const ASYNC_FLAT_SCORED_SAMPLER_ID_V1: &str =
 
 const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+/// Crate-private execution schedule selected before worker construction.
+/// Public V1/V2 entry points always select `Legacy`; only the native trainer
+/// integration path may select the frozen Python-compatible schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum FlatScoredExecutionScheduleV1 {
+    Legacy,
+    NativeTrainerV1 { base_seed: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeOpenPhysicalGroupV1 {
+    physical_decision_id: u64,
+    acting_player: PlayerSeatV1,
+    substep_count: u32,
+    next_substep_index: u32,
+    next_policy_step: u64,
+    actor_group_ordinal: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeLaneScheduleStateV1 {
+    base_seed: u64,
+    episode_index: u64,
+    learner_seat: PlayerSeatV1,
+    learner_completed_group_count: u64,
+    opponent_completed_group_count: u64,
+    learner_policy_step_count: u64,
+    opponent_policy_step_count: u64,
+    open_group: Option<NativeOpenPhysicalGroupV1>,
+}
+
+impl NativeLaneScheduleStateV1 {
+    fn new(base_seed: u64, episode_index: u64, learner_seat: PlayerSeatV1) -> Self {
+        Self {
+            base_seed,
+            episode_index,
+            learner_seat,
+            learner_completed_group_count: 0,
+            opponent_completed_group_count: 0,
+            learner_policy_step_count: 0,
+            opponent_policy_step_count: 0,
+            open_group: None,
+        }
+    }
+
+    fn actor_group_ordinal(self, actor: PlayerSeatV1) -> u64 {
+        if actor == self.learner_seat {
+            self.learner_completed_group_count
+        } else {
+            self.opponent_completed_group_count
+        }
+    }
+
+    fn completed_group_count(self) -> Option<u64> {
+        self.learner_completed_group_count
+            .checked_add(self.opponent_completed_group_count)
+    }
+
+    fn committed_policy_step_count(self) -> Option<u64> {
+        self.learner_policy_step_count
+            .checked_add(self.opponent_policy_step_count)
+    }
+
+    /// Validate the entire declared group at substep zero before deriving or
+    /// releasing its first action. The checks depend only on episode-local
+    /// state and frozen trainer caps, never worker/lane/batch topology.
+    fn preflight_action_seed(
+        &mut self,
+        decision: FastActorDecisionV1,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+    ) -> Result<u64, ()> {
+        if decision.episode_id != self.episode_index
+            || decision.legal_action_count == 0
+            || decision.substep_count == 0
+            || decision.substep_index >= decision.substep_count
+            || self.committed_policy_step_count() != Some(decision.step)
+        {
+            return Err(());
+        }
+        match self.open_group {
+            None => {
+                if decision.substep_index != 0
+                    || self.completed_group_count() != Some(decision.physical_decision_id)
+                    || decision
+                        .physical_decision_id
+                        .checked_add(1)
+                        .is_none_or(|count| count > max_physical_decisions)
+                    || decision
+                        .step
+                        .checked_add(u64::from(decision.substep_count))
+                        .is_none_or(|count| count > max_policy_steps)
+                {
+                    return Err(());
+                }
+                let actor_group_ordinal = self.actor_group_ordinal(decision.acting_player);
+                // A completed group must be representable before its first
+                // action. This keeps ordinal overflow on the preflight side of
+                // the engine-mutation boundary.
+                actor_group_ordinal.checked_add(1).ok_or(())?;
+                self.open_group = Some(NativeOpenPhysicalGroupV1 {
+                    physical_decision_id: decision.physical_decision_id,
+                    acting_player: decision.acting_player,
+                    substep_count: decision.substep_count,
+                    next_substep_index: 0,
+                    next_policy_step: decision.step,
+                    actor_group_ordinal,
+                });
+            }
+            Some(open)
+                if open.physical_decision_id == decision.physical_decision_id
+                    && open.acting_player == decision.acting_player
+                    && open.substep_count == decision.substep_count
+                    && open.next_substep_index == decision.substep_index
+                    && open.next_policy_step == decision.step => {}
+            Some(_) => return Err(()),
+        }
+        let open = self.open_group.ok_or(())?;
+        if decision.acting_player == self.learner_seat {
+            derive_native_trainer_learner_action_seed_v1(
+                self.base_seed,
+                self.episode_index,
+                open.actor_group_ordinal,
+                decision.substep_index,
+            )
+            .map_err(|_| ())
+        } else {
+            derive_native_trainer_opponent_action_seed_v1(
+                self.base_seed,
+                self.episode_index,
+                open.actor_group_ordinal,
+                decision.substep_index,
+            )
+            .map_err(|_| ())
+        }
+    }
+
+    /// Commit only after the selected action has been accepted by the engine.
+    /// Actor-local physical ordinals advance on the declared final substep,
+    /// never on policy substeps or scheduler rounds.
+    fn commit_action(&mut self, decision: FastActorDecisionV1) -> Result<(), ()> {
+        let open = self.open_group.as_mut().ok_or(())?;
+        if open.physical_decision_id != decision.physical_decision_id
+            || open.acting_player != decision.acting_player
+            || open.substep_count != decision.substep_count
+            || open.next_substep_index != decision.substep_index
+            || open.next_policy_step != decision.step
+        {
+            return Err(());
+        }
+        if decision.acting_player == self.learner_seat {
+            self.learner_policy_step_count =
+                self.learner_policy_step_count.checked_add(1).ok_or(())?;
+        } else {
+            self.opponent_policy_step_count =
+                self.opponent_policy_step_count.checked_add(1).ok_or(())?;
+        }
+        let group_complete = decision
+            .substep_index
+            .checked_add(1)
+            .is_some_and(|next| next == decision.substep_count);
+        if group_complete {
+            if decision.acting_player == self.learner_seat {
+                self.learner_completed_group_count = self
+                    .learner_completed_group_count
+                    .checked_add(1)
+                    .ok_or(())?;
+            } else {
+                self.opponent_completed_group_count = self
+                    .opponent_completed_group_count
+                    .checked_add(1)
+                    .ok_or(())?;
+            }
+            self.open_group = None;
+        } else {
+            open.next_substep_index = open.next_substep_index.checked_add(1).ok_or(())?;
+            open.next_policy_step = open.next_policy_step.checked_add(1).ok_or(())?;
+        }
+        Ok(())
+    }
+
+    fn validate_terminal(self, terminal: &RlSessionTerminalV1) -> Result<(), ()> {
+        if self.open_group.is_some()
+            || terminal.episode_id != self.episode_index
+            || terminal.terminal_classification != TerminalClassificationV1::Natural
+            || terminal.terminal_code != TerminalSafeCodeV2::NaturalGameOver
+            || matches!(
+                terminal.terminal_outcome,
+                TerminalOutcomeV1::Truncated | TerminalOutcomeV1::Halted
+            )
+            || self
+                .learner_policy_step_count
+                .checked_add(self.opponent_policy_step_count)
+                != Some(terminal.policy_step_count)
+            || self
+                .learner_completed_group_count
+                .checked_add(self.opponent_completed_group_count)
+                != Some(terminal.physical_decision_count)
+        {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+}
 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -844,6 +1056,7 @@ pub(crate) trait FlatScoredFamilyCore: Copy + Send + Sync + 'static {
     fn reset_session(
         config: &AsyncRolloutConfigV2,
         episode_id: u64,
+        environment_seed: u64,
     ) -> Result<FastActorSessionV1, ()>;
 
     fn encode_packet(
@@ -960,6 +1173,7 @@ pub(crate) struct RoundDecisionCore<F: FlatScoredFamilyCore> {
     worker_id: usize,
     logical_lane_id: usize,
     expected: FastActorDecisionV1,
+    native_action_seed: Option<u64>,
     pub(crate) packet: F::ValidatedPacket,
 }
 
@@ -1085,6 +1299,7 @@ impl FiniteScorerValueV1 {
 struct BoundScoredActionCore<F: FlatScoredFamilyCore> {
     binding: F::Binding,
     learner_ordinal: u64,
+    action_seed: u64,
     selected_index: u32,
     predicted_value: FiniteScorerValueV1,
 }
@@ -1138,6 +1353,7 @@ enum WorkerControlCore<F: FlatScoredFamilyCore> {
 struct WaitingDecisionCore<F: FlatScoredFamilyCore> {
     expected: FastActorDecisionV1,
     binding: F::Binding,
+    native_action_seed: Option<u64>,
 }
 
 struct LocalLaneCore<F: FlatScoredFamilyCore> {
@@ -1152,6 +1368,8 @@ struct LocalLaneCore<F: FlatScoredFamilyCore> {
     waiting_decision: Option<WaitingDecisionCore<F>>,
     waiting_terminal: bool,
     opponent_policy: SplitMix64,
+    learner_seat: PlayerSeatV1,
+    native_schedule: Option<NativeLaneScheduleStateV1>,
     learner_action_count: u64,
     learner_trace_hash: u64,
     #[cfg(test)]
@@ -1183,6 +1401,8 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             waiting_decision: None,
             waiting_terminal: false,
             opponent_policy: SplitMix64::seed(0),
+            learner_seat: PlayerSeatV1::P0,
+            native_schedule: None,
             learner_action_count: 0,
             learner_trace_hash: FNV1A64_OFFSET,
             #[cfg(test)]
@@ -1218,6 +1438,9 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             if action.scored.binding != waiting.binding
                 || F::packet_binding(&action.packet) != waiting.binding
                 || action.scored.learner_ordinal != self.learner_action_count
+                || waiting
+                    .native_action_seed
+                    .is_some_and(|seed| seed != action.scored.action_seed)
                 || action.scored.selected_index >= waiting.expected.legal_action_count
             {
                 return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
@@ -1247,6 +1470,11 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             self.packet = Some(F::into_owned_packet(action.packet));
             self.response = Some(response);
             self.waiting_decision = None;
+            if let Some(schedule) = self.native_schedule.as_mut() {
+                schedule.commit_action(waiting.expected).map_err(|_| {
+                    self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding)
+                })?;
+            }
             #[cfg(test)]
             self.test_instrumentation
                 .consumed_action_count
@@ -1292,6 +1520,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
     fn fill(
         &mut self,
         config: &AsyncRolloutConfigV2,
+        execution_schedule: FlatScoredExecutionScheduleV1,
         end_episode_id: u64,
         logical_lane_count: usize,
     ) -> Result<(), WorkerFailureV1> {
@@ -1304,7 +1533,30 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
         self.next_episode_id = episode_id
             .checked_add(logical_lane_count as u64)
             .filter(|next| *next < end_episode_id);
-        let session = F::reset_session(config, episode_id).map_err(|_| {
+        let (environment_seed, learner_seat, native_schedule) = match execution_schedule {
+            FlatScoredExecutionScheduleV1::Legacy => (
+                derive_env_seed(config.environment_seed, episode_id),
+                config.learner_seat,
+                None,
+            ),
+            FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed } => {
+                let episode =
+                    native_trainer_episode_schedule_v1(base_seed, episode_id).map_err(|_| {
+                        self.episode_id = episode_id;
+                        self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
+                    })?;
+                (
+                    episode.environment_seed,
+                    episode.learner_seat,
+                    Some(NativeLaneScheduleStateV1::new(
+                        base_seed,
+                        episode_id,
+                        episode.learner_seat,
+                    )),
+                )
+            }
+        };
+        let session = F::reset_session(config, episode_id, environment_seed).map_err(|_| {
             self.episode_id = episode_id;
             self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
         })?;
@@ -1315,6 +1567,8 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
         self.waiting_terminal = false;
         self.opponent_policy =
             SplitMix64::seed(derive_policy_seed(config.opponent_policy_seed, episode_id));
+        self.learner_seat = learner_seat;
+        self.native_schedule = native_schedule;
         self.learner_action_count = 0;
         self.learner_trace_hash = initial_learner_trace_hash_v1(episode_id);
         Ok(())
@@ -1341,6 +1595,11 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                 .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
             match response {
                 FastActorResponseV1::Terminal(terminal) => {
+                    if let Some(schedule) = self.native_schedule {
+                        schedule
+                            .validate_terminal(&terminal)
+                            .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                    }
                     terminals.push(RoundTerminalV1 {
                         worker_id: self.worker_id,
                         logical_lane_id: self.logical_lane_id,
@@ -1352,7 +1611,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                     return Ok(());
                 }
                 FastActorResponseV1::Decision(expected)
-                    if expected.acting_player == config.learner_seat =>
+                    if expected.acting_player == self.learner_seat =>
                 {
                     if expected.legal_action_count == 0
                         || usize::try_from(expected.legal_action_count)
@@ -1360,6 +1619,18 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                     {
                         return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Encode));
                     }
+                    let native_action_seed = self
+                        .native_schedule
+                        .as_mut()
+                        .map(|schedule| {
+                            schedule.preflight_action_seed(
+                                expected,
+                                config.max_physical_decisions,
+                                config.max_policy_steps,
+                            )
+                        })
+                        .transpose()
+                        .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
                     let packet = self
                         .packet
                         .take()
@@ -1374,18 +1645,34 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                     )
                     .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Encode))?;
                     let binding = F::packet_binding(&packet);
-                    self.waiting_decision = Some(WaitingDecisionCore { expected, binding });
+                    self.waiting_decision = Some(WaitingDecisionCore {
+                        expected,
+                        binding,
+                        native_action_seed,
+                    });
                     decisions.push(RoundDecisionCore {
                         worker_id: self.worker_id,
                         logical_lane_id: self.logical_lane_id,
                         expected,
+                        native_action_seed,
                         packet,
                     });
                     return Ok(());
                 }
                 FastActorResponseV1::Decision(decision) => {
-                    let selected_index =
-                        uniform_index(&mut self.opponent_policy, decision.legal_action_count);
+                    let selected_index = if let Some(schedule) = self.native_schedule.as_mut() {
+                        let seed = schedule
+                            .preflight_action_seed(
+                                decision,
+                                config.max_physical_decisions,
+                                config.max_policy_steps,
+                            )
+                            .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                        u32::try_from(seed % u64::from(decision.legal_action_count))
+                            .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?
+                    } else {
+                        uniform_index(&mut self.opponent_policy, decision.legal_action_count)
+                    };
                     let missing_session = self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol);
                     let response = self
                         .session
@@ -1393,6 +1680,11 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         .ok_or(missing_session)?
                         .step(decision.episode_id, decision.step, selected_index)
                         .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::OpponentStep))?;
+                    if let Some(schedule) = self.native_schedule.as_mut() {
+                        schedule
+                            .commit_action(decision)
+                            .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                    }
                     self.response = Some(response);
                 }
             }
@@ -1801,10 +2093,11 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV1 {
     fn reset_session(
         config: &AsyncRolloutConfigV2,
         episode_id: u64,
+        environment_seed: u64,
     ) -> Result<FastActorSessionV1, ()> {
         FastActorSessionV1::reset_with_decks_and_limits(
             episode_id,
-            derive_env_seed(config.environment_seed, episode_id),
+            environment_seed,
             config.max_physical_decisions,
             config.max_policy_steps,
             config.deck_ids.clone(),
@@ -1869,6 +2162,7 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV1 {
 struct WorkerRuntimeV1 {
     end_episode_id: u64,
     logical_lane_count: usize,
+    execution_schedule: FlatScoredExecutionScheduleV1,
     deadline: Instant,
     cancel: Arc<AtomicBool>,
     released_epoch: Arc<AtomicU64>,
@@ -1947,7 +2241,12 @@ fn worker_loop<F: FlatScoredFamilyCore>(
         }
 
         for lane in &mut lanes {
-            lane.fill(config, runtime.end_episode_id, runtime.logical_lane_count)?;
+            lane.fill(
+                config,
+                runtime.execution_schedule,
+                runtime.end_episode_id,
+                runtime.logical_lane_count,
+            )?;
             lane.advance_to_event(
                 config,
                 runtime.deadline,
@@ -2076,13 +2375,20 @@ impl BrokerEpisodeV1 {
 
     fn sample_seed(
         &mut self,
+        execution_schedule: FlatScoredExecutionScheduleV1,
         learner_policy_seed: u64,
         episode_id: u64,
+        native_action_seed: Option<u64>,
     ) -> Result<(u64, u64), AsyncFlatScoredRolloutErrorV1> {
         self.bind(episode_id)?;
         let ordinal = self.learner_decision_ordinal;
-        let seed =
-            derive_async_flat_scored_action_seed_v1(learner_policy_seed, episode_id, ordinal);
+        let seed = match (execution_schedule, native_action_seed) {
+            (FlatScoredExecutionScheduleV1::Legacy, None) => {
+                derive_async_flat_scored_action_seed_v1(learner_policy_seed, episode_id, ordinal)
+            }
+            (FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. }, Some(seed)) => seed,
+            _ => return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation),
+        };
         Ok((ordinal, seed))
     }
 
@@ -2167,6 +2473,7 @@ impl MembershipDigestV1 {
 fn sample_validated_round_decision_v1<F: FlatScoredFamilyCore>(
     broker_episodes: &mut [BrokerEpisodeV1],
     sampler: &mut FastCategoricalScratch,
+    execution_schedule: FlatScoredExecutionScheduleV1,
     learner_policy_seed: u64,
     decision: &RoundDecisionCore<F>,
     action_logits: &[f32],
@@ -2175,8 +2482,12 @@ fn sample_validated_round_decision_v1<F: FlatScoredFamilyCore>(
     let broker_episode = broker_episodes
         .get_mut(decision.logical_lane_id)
         .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
-    let (learner_ordinal, action_seed) =
-        broker_episode.sample_seed(learner_policy_seed, decision.expected.episode_id)?;
+    let (learner_ordinal, action_seed) = broker_episode.sample_seed(
+        execution_schedule,
+        learner_policy_seed,
+        decision.expected.episode_id,
+        decision.native_action_seed,
+    )?;
     let selected_index = sampler
         .sample(action_logits, action_seed)
         .map_err(|error| AsyncFlatScoredRolloutErrorV1::SamplingFailed {
@@ -2226,6 +2537,7 @@ fn stage_validated_action_reply_v1<F: FlatScoredFamilyCore>(
             scored: BoundScoredActionCore {
                 binding,
                 learner_ordinal: sample.learner_ordinal,
+                action_seed: sample.action_seed,
                 selected_index: sample.selected_index,
                 predicted_value: sample.predicted_value,
             },
@@ -2300,7 +2612,12 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
 {
     let mut scorer = FlatBatchScorerAdapterV1(scorer);
     let observer = FlatScoredTrajectoryObserverAdapterV1(observer);
-    run_async_flat_scored_rollout_core::<FlatScoredFamilyV1, _, _>(config, &mut scorer, observer)
+    run_async_flat_scored_rollout_core::<FlatScoredFamilyV1, _, _>(
+        config,
+        FlatScoredExecutionScheduleV1::Legacy,
+        &mut scorer,
+        observer,
+    )
 }
 
 pub(crate) fn run_async_flat_scored_rollout_core<
@@ -2309,6 +2626,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
     O: FlatScoredTrajectoryObserverCore<F>,
 >(
     config: AsyncRolloutConfigV2,
+    execution_schedule: FlatScoredExecutionScheduleV1,
     scorer: &mut S,
     mut observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
@@ -2352,6 +2670,12 @@ pub(crate) fn run_async_flat_scored_rollout_core<
         .first_episode_id
         .checked_add(config.episode_count)
         .ok_or(AsyncFlatScoredRolloutErrorV1::EpisodeRangeOverflow)?;
+    if let FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed } = execution_schedule {
+        native_trainer_episode_schedule_v1(base_seed, config.first_episode_id)
+            .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+        native_trainer_episode_schedule_v1(base_seed, end_episode_id - 1)
+            .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+    }
     let episode_count_usize = usize::try_from(config.episode_count).map_err(|_| {
         AsyncFlatScoredRolloutErrorV1::EpisodeCountExceedsAddressSpace {
             requested: config.episode_count,
@@ -2370,6 +2694,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
     let worker_runtime = WorkerRuntimeV1 {
         end_episode_id,
         logical_lane_count,
+        execution_schedule,
         deadline,
         cancel: Arc::clone(&cancel),
         released_epoch: Arc::clone(&released_epoch),
@@ -2673,6 +2998,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
                     let sample = sample_validated_round_decision_v1(
                         &mut broker_episodes,
                         &mut sampler,
+                        execution_schedule,
                         config.learner_policy_seed,
                         decision,
                         &round_logits[logit_start..logit_end],
@@ -2719,6 +3045,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
                     let sample = sample_validated_round_decision_v1(
                         &mut broker_episodes,
                         &mut sampler,
+                        execution_schedule,
                         config.learner_policy_seed,
                         &decision,
                         &round_logits[logit_start..logit_end],
@@ -4493,7 +4820,13 @@ mod tests {
         let end_episode_id = shaped.first_episode_id + shaped.episode_count;
         let mut lane = LocalLaneV1::vacant(0, 0, shaped.first_episode_id, end_episode_id);
         lane.test_instrumentation = _test_state.instrumentation_arc();
-        lane.fill(&shaped, end_episode_id, 1).unwrap();
+        lane.fill(
+            &shaped,
+            FlatScoredExecutionScheduleV1::Legacy,
+            end_episode_id,
+            1,
+        )
+        .unwrap();
         let mut decisions = Vec::new();
         let mut terminals = Vec::new();
         lane.advance_to_event(
@@ -4514,6 +4847,7 @@ mod tests {
                 scored: BoundScoredActionV1 {
                     binding,
                     learner_ordinal: 1,
+                    action_seed: 0,
                     selected_index: 0,
                     predicted_value: FiniteScorerValueV1::new(0.0).unwrap(),
                 },
@@ -4723,5 +5057,162 @@ mod tests {
             digest,
             "e1aa12d2736f4c52fed56fc89defb9f16bcda852631b2eee8c2e8bb707943981"
         );
+    }
+
+    fn native_schedule_decision(
+        episode_id: u64,
+        step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        acting_player: PlayerSeatV1,
+    ) -> FastActorDecisionV1 {
+        FastActorDecisionV1 {
+            episode_id,
+            step,
+            environment_revision: step,
+            physical_decision_id,
+            substep_index,
+            substep_count,
+            acting_player,
+            decision_kind: FastActorDecisionKindV1::Surface,
+            legal_action_count: 3,
+        }
+    }
+
+    #[test]
+    fn native_schedule_preflights_caps_and_never_commits_partial_groups() {
+        let mut schedule = NativeLaneScheduleStateV1::new(71_501, 0, PlayerSeatV1::P0);
+        let first = native_schedule_decision(0, 0, 0, 0, 2, PlayerSeatV1::P0);
+        assert_eq!(
+            schedule.preflight_action_seed(first, 2, 8).unwrap(),
+            derive_native_trainer_learner_action_seed_v1(71_501, 0, 0, 0).unwrap()
+        );
+        schedule.commit_action(first).unwrap();
+        assert_eq!(schedule.learner_completed_group_count, 0);
+        assert!(schedule.open_group.is_some());
+
+        let shifted_policy_step = native_schedule_decision(0, 2, 0, 1, 2, PlayerSeatV1::P0);
+        assert_eq!(
+            schedule.preflight_action_seed(shifted_policy_step, 2, 8),
+            Err(())
+        );
+        assert_eq!(schedule.learner_completed_group_count, 0);
+        assert!(schedule.open_group.is_some());
+
+        let malformed = native_schedule_decision(0, 1, 1, 0, 1, PlayerSeatV1::P0);
+        assert_eq!(schedule.preflight_action_seed(malformed, 2, 8), Err(()));
+        assert_eq!(schedule.learner_completed_group_count, 0);
+        assert!(schedule.open_group.is_some());
+
+        let synthetic_terminal = RlSessionTerminalV1 {
+            schema_version: 0,
+            deck_ids: Default::default(),
+            deck_hashes: Default::default(),
+            episode_id: 0,
+            terminal_outcome: TerminalOutcomeV1::Draw,
+            terminal_classification: TerminalClassificationV1::Natural,
+            terminal_code: TerminalSafeCodeV2::NaturalGameOver,
+            winner: None,
+            terminal_reward: [0, 0],
+            terminal_reason: String::new(),
+            policy_step_count: 1,
+            physical_decision_count: 0,
+        };
+        assert_eq!(schedule.validate_terminal(&synthetic_terminal), Err(()));
+
+        let mut capped = NativeLaneScheduleStateV1::new(71_501, 0, PlayerSeatV1::P0);
+        let exceeds_policy_cap = native_schedule_decision(0, 7, 1, 0, 2, PlayerSeatV1::P0);
+        assert_eq!(
+            capped.preflight_action_seed(exceeds_policy_cap, 2, 8),
+            Err(())
+        );
+        assert!(capped.open_group.is_none());
+        let exceeds_physical_cap = native_schedule_decision(0, 0, 2, 0, 1, PlayerSeatV1::P0);
+        assert_eq!(
+            capped.preflight_action_seed(exceeds_physical_cap, 2, 8),
+            Err(())
+        );
+        assert!(capped.open_group.is_none());
+    }
+
+    #[test]
+    fn native_actor_ordinals_advance_only_on_final_substep_and_are_role_local() {
+        let mut schedule = NativeLaneScheduleStateV1::new(71_501, 1, PlayerSeatV1::P1);
+        let opponent_first = native_schedule_decision(1, 0, 0, 0, 2, PlayerSeatV1::P0);
+        let opponent_last = native_schedule_decision(1, 1, 0, 1, 2, PlayerSeatV1::P0);
+        assert_eq!(
+            schedule
+                .preflight_action_seed(opponent_first, 10, 10)
+                .unwrap(),
+            derive_native_trainer_opponent_action_seed_v1(71_501, 1, 0, 0).unwrap()
+        );
+        schedule.commit_action(opponent_first).unwrap();
+        assert_eq!(schedule.opponent_completed_group_count, 0);
+        assert_eq!(
+            schedule
+                .preflight_action_seed(opponent_last, 10, 10)
+                .unwrap(),
+            derive_native_trainer_opponent_action_seed_v1(71_501, 1, 0, 1).unwrap()
+        );
+        schedule.commit_action(opponent_last).unwrap();
+        assert_eq!(schedule.opponent_completed_group_count, 1);
+        assert_eq!(schedule.learner_completed_group_count, 0);
+
+        let learner = native_schedule_decision(1, 2, 1, 0, 1, PlayerSeatV1::P1);
+        assert_eq!(
+            schedule.preflight_action_seed(learner, 10, 10).unwrap(),
+            derive_native_trainer_learner_action_seed_v1(71_501, 1, 0, 0).unwrap()
+        );
+        schedule.commit_action(learner).unwrap();
+        assert_eq!(schedule.learner_completed_group_count, 1);
+        assert_eq!(schedule.opponent_completed_group_count, 1);
+
+        let skipped_physical_id = native_schedule_decision(1, 3, 3, 0, 1, PlayerSeatV1::P1);
+        assert_eq!(
+            schedule.preflight_action_seed(skipped_physical_id, 10, 10),
+            Err(())
+        );
+        let reused_physical_id = native_schedule_decision(1, 3, 1, 0, 1, PlayerSeatV1::P1);
+        assert_eq!(
+            schedule.preflight_action_seed(reused_physical_id, 10, 10),
+            Err(())
+        );
+        let shifted_new_group_step = native_schedule_decision(1, 4, 2, 0, 1, PlayerSeatV1::P1);
+        assert_eq!(
+            schedule.preflight_action_seed(shifted_new_group_step, 10, 10),
+            Err(())
+        );
+        assert!(schedule.open_group.is_none());
+
+        let natural_terminal = RlSessionTerminalV1 {
+            schema_version: 0,
+            deck_ids: Default::default(),
+            deck_hashes: Default::default(),
+            episode_id: 1,
+            terminal_outcome: TerminalOutcomeV1::Draw,
+            terminal_classification: TerminalClassificationV1::Natural,
+            terminal_code: TerminalSafeCodeV2::NaturalGameOver,
+            winner: None,
+            terminal_reward: [0, 0],
+            terminal_reason: String::new(),
+            policy_step_count: 3,
+            physical_decision_count: 2,
+        };
+        assert_eq!(schedule.validate_terminal(&natural_terminal), Ok(()));
+        let truncated = RlSessionTerminalV1 {
+            terminal_outcome: TerminalOutcomeV1::Truncated,
+            terminal_classification: TerminalClassificationV1::Truncated,
+            terminal_code: TerminalSafeCodeV2::DecisionCap,
+            ..natural_terminal.clone()
+        };
+        assert_eq!(schedule.validate_terminal(&truncated), Err(()));
+        let halted = RlSessionTerminalV1 {
+            terminal_outcome: TerminalOutcomeV1::Halted,
+            terminal_classification: TerminalClassificationV1::Halted,
+            terminal_code: TerminalSafeCodeV2::FailClosed,
+            ..natural_terminal
+        };
+        assert_eq!(schedule.validate_terminal(&halted), Err(()));
     }
 }

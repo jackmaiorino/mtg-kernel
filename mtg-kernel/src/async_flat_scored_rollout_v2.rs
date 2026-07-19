@@ -10,9 +10,9 @@ use crate::async_flat_scored_rollout_v1::{
     run_async_flat_scored_rollout_core, AsyncFlatScoredObservedRunErrorV1,
     AsyncFlatScoredRolloutErrorV1, AsyncFlatScoredRolloutMetricsV1, AsyncFlatScoredRolloutResultV1,
     AsyncFlatScoredWorkerPhaseV1, FlatBatchScorerCore, FlatBatchScorerErrorV1,
-    FlatScoredFamilyCore, FlatScoredObserverPhaseV1, FlatScoredSelectedEventCore,
-    FlatScoredTerminalEventV1, FlatScoredTrajectoryObserverCore, RoundDecisionCore,
-    ASYNC_FLAT_SCORED_SAMPLER_ID_V1, ASYNC_FLAT_SCORED_SAMPLER_VERSION_V1,
+    FlatScoredExecutionScheduleV1, FlatScoredFamilyCore, FlatScoredObserverPhaseV1,
+    FlatScoredSelectedEventCore, FlatScoredTerminalEventV1, FlatScoredTrajectoryObserverCore,
+    RoundDecisionCore, ASYNC_FLAT_SCORED_SAMPLER_ID_V1, ASYNC_FLAT_SCORED_SAMPLER_VERSION_V1,
     ASYNC_FLAT_SCORED_SPLITMIX_GAMMA_V1,
 };
 use crate::async_rollout::{AsyncRolloutEpisodeV1, AsyncRolloutTerminalV1};
@@ -34,7 +34,7 @@ use crate::flat_policy_v2::{
     FLAT_SCORER_PACKET_VERSION_V2, FLAT_SCORER_VISIBLE_MANIFEST_V2,
     FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V2,
 };
-use crate::rl::{derive_env_seed, TerminalClassificationV1, TerminalSafeCodeV2};
+use crate::rl::{TerminalClassificationV1, TerminalSafeCodeV2};
 use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1,
     FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V2, FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V2,
@@ -733,10 +733,11 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV2 {
     fn reset_session(
         config: &AsyncRolloutConfigV2,
         episode_id: u64,
+        environment_seed: u64,
     ) -> Result<FastActorSessionV1, ()> {
         FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
             episode_id,
-            derive_env_seed(config.environment_seed, episode_id),
+            environment_seed,
             config.max_physical_decisions,
             config.max_policy_steps,
             config.deck_ids.clone(),
@@ -989,10 +990,47 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v2<O: FlatScoredTrajectoryO
     observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
 {
+    run_async_flat_scored_rollout_observed_with_schedule_v2(
+        config,
+        FlatScoredExecutionScheduleV1::Legacy,
+        scorer,
+        observer,
+    )
+}
+
+/// Internal native-trainer execution path. It deliberately accepts no public
+/// seed/config schema: the caller supplies the one frozen trainer base seed,
+/// while public V2 continues to use its legacy fixed-seat three-seed schedule.
+#[allow(dead_code)]
+pub(crate) fn run_async_flat_scored_rollout_native_observed_v2<
+    O: FlatScoredTrajectoryObserverV2,
+>(
+    config: AsyncRolloutConfigV2,
+    base_seed: u64,
+    scorer: &mut impl FlatBatchScorerV2,
+    observer: O,
+) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
+{
+    run_async_flat_scored_rollout_observed_with_schedule_v2(
+        config,
+        FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed },
+        scorer,
+        observer,
+    )
+}
+
+fn run_async_flat_scored_rollout_observed_with_schedule_v2<O: FlatScoredTrajectoryObserverV2>(
+    config: AsyncRolloutConfigV2,
+    execution_schedule: FlatScoredExecutionScheduleV1,
+    scorer: &mut impl FlatBatchScorerV2,
+    observer: O,
+) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
+{
     let mut scorer = FlatBatchScorerAdapterV2(scorer);
     let observer = FlatScoredTrajectoryObserverAdapterV2(observer);
     match run_async_flat_scored_rollout_core::<FlatScoredFamilyV2, _, _>(
         config,
+        execution_schedule,
         &mut scorer,
         observer,
     ) {
@@ -1022,6 +1060,9 @@ mod tests {
         FlatScoredSelectedEventV1, FlatScoredTerminalEventV1, FlatScoredTrajectoryObserverV1,
         FlatScoringBatchViewV1,
     };
+    use crate::native_trainer_schedule_v1::derive_native_trainer_learner_action_seed_v1;
+    use crate::private_physical_trajectory_core::FlatPhysicalLearnerSeatRuleCore;
+    use crate::private_physical_trajectory_v2::NativeFlatPhysicalTrajectoryObserverV2;
     use crate::rl::PlayerSeatV1;
     use sha2::{Digest, Sha256};
     use std::any::TypeId;
@@ -1171,7 +1212,12 @@ mod tests {
     #[test]
     fn poisoned_owned_buffer_tails_are_dropped_before_reuse() {
         let shaped = config(1);
-        let session = FlatScoredFamilyV2::reset_session(&shaped, 0).unwrap();
+        let session = FlatScoredFamilyV2::reset_session(
+            &shaped,
+            0,
+            crate::rl::derive_env_seed(shaped.environment_seed, 0),
+        )
+        .unwrap();
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
             panic!("expected live V2 decision");
         };
@@ -1447,5 +1493,107 @@ mod tests {
             v2.metrics.terminal_notification_count,
             v1.metrics.terminal_notification_count
         );
+    }
+
+    #[test]
+    fn native_schedule_processes_episode_parity_and_group_widths_topology_free() {
+        const BASE_SEED: u64 = 71_501;
+        let shapes = [(1, 1, 1), (1, 2, 2)];
+        let mut reference = None;
+        let mut exercised_width_invariance = false;
+        for (workers, sessions, target) in shapes {
+            let mut shaped = config(2);
+            shaped.worker_count = workers;
+            shaped.sessions_per_worker = sessions;
+            shaped.broker_batch_target = target;
+            let observer = NativeFlatPhysicalTrajectoryObserverV2::new(
+                shaped.first_episode_id,
+                shaped.episode_count,
+            )
+            .unwrap();
+            let mut scorer = ContractCheckingScorerV2::default();
+            let (result, batch) = run_async_flat_scored_rollout_native_observed_v2(
+                shaped,
+                BASE_SEED,
+                &mut scorer,
+                observer,
+            )
+            .unwrap();
+            assert!(result.all_natural());
+            assert_eq!(
+                batch.learner_seat_rule,
+                FlatPhysicalLearnerSeatRuleCore::EpisodeParity
+            );
+            assert_eq!(batch.episodes.len(), 2);
+            assert_eq!(batch.episodes[0].learner_seat, PlayerSeatV1::P0);
+            assert_eq!(batch.episodes[1].learner_seat, PlayerSeatV1::P1);
+
+            for episode in &batch.episodes {
+                let mut preceding_policy_width = 0u64;
+                for (group_index, group) in episode.groups.iter().enumerate() {
+                    let group_ordinal = u64::try_from(group_index).unwrap();
+                    for substep in &group.substeps {
+                        assert_eq!(
+                            substep.action_seed,
+                            derive_native_trainer_learner_action_seed_v1(
+                                BASE_SEED,
+                                episode.episode_id,
+                                group_ordinal,
+                                substep.expected.substep_index,
+                            )
+                            .unwrap()
+                        );
+                    }
+                    if preceding_policy_width != group_ordinal {
+                        let first = group.substeps.first().unwrap();
+                        let wrong_width_coupled_seed =
+                            derive_native_trainer_learner_action_seed_v1(
+                                BASE_SEED,
+                                episode.episode_id,
+                                preceding_policy_width,
+                                0,
+                            )
+                            .unwrap();
+                        assert_ne!(first.action_seed, wrong_width_coupled_seed);
+                        exercised_width_invariance = true;
+                    }
+                    preceding_policy_width = preceding_policy_width
+                        .checked_add(u64::from(group.substep_count))
+                        .unwrap();
+                }
+            }
+            match &reference {
+                Some(expected) => assert_eq!(&batch, expected),
+                None => reference = Some(batch),
+            }
+        }
+        assert!(
+            exercised_width_invariance,
+            "real Rally processing must include a later learner group after a multi-substep group"
+        );
+    }
+
+    #[test]
+    fn native_schedule_discards_a_policy_cap_terminal_without_observer_output() {
+        let mut shaped = config(1);
+        shaped.max_policy_steps = 1;
+        let observer = NativeFlatPhysicalTrajectoryObserverV2::new(
+            shaped.first_episode_id,
+            shaped.episode_count,
+        )
+        .unwrap();
+        let mut scorer = ContractCheckingScorerV2::default();
+        let error =
+            run_async_flat_scored_rollout_native_observed_v2(shaped, 71_501, &mut scorer, observer)
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            AsyncFlatScoredObservedRunErrorV2::Rollout(
+                AsyncFlatScoredRolloutErrorV2::WorkerFailed {
+                    phase: AsyncFlatScoredWorkerPhaseV2::Protocol,
+                    ..
+                }
+            )
+        ));
     }
 }
