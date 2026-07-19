@@ -4,9 +4,10 @@
 //! evaluates the live native model, and atomically stages the owned thirteen
 //! tensors beside the exact packet binding and output bits.  The trajectory
 //! observer consumes that association before grouping, so training never
-//! reconstructs from copied raw scorer tables.  A complete two-episode
-//! alternating-seat rollout and grouped Adam step are prepared on private
-//! candidates; the live trainer changes only after every cross-check passes.
+//! reconstructs from copied raw scorer tables.  A complete configurable even
+//! batch of alternating-seat episodes and one grouped Adam step are prepared
+//! on private candidates; the live trainer changes only after every
+//! cross-check passes.
 //!
 //! This module deliberately owns no persisted schema, checkpoint writer, CLI,
 //! sampler identity, seed identity, schedule identity, loss identity, or gauge
@@ -19,7 +20,9 @@ use crate::async_flat_scored_rollout_v2::{
     FlatScoredObserverPhaseV2, FlatScoredSelectedEventV2, FlatScoredTerminalEventV2,
     FlatScoredTrajectoryObserverV2, FlatScoringBatchViewV2,
 };
-use crate::async_rollout_v2::AsyncRolloutConfigV2;
+use crate::async_rollout_v2::{
+    AsyncRolloutConfigV2, ASYNC_ROLLOUT_MAX_SESSIONS_PER_WORKER_V2, ASYNC_ROLLOUT_MAX_WORKERS_V2,
+};
 use crate::flat_policy_v2::FlatDecisionBindingV2;
 use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2, NativeFlatTensorizerV2,
@@ -51,7 +54,7 @@ use crate::runtime_decks::runtime_deck_by_id;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const NATIVE_POLICY_SCORER_CONTRACT_CODE_V1: u32 = 1;
 const NATIVE_POLICY_SCORER_OUTPUT_SHAPE_CODE_V1: u32 = 2;
@@ -60,7 +63,11 @@ const NATIVE_POLICY_SCORER_TENSOR_CODE_V1: u32 = 4;
 const NATIVE_POLICY_SCORER_MODEL_CODE_V1: u32 = 5;
 const NATIVE_POLICY_SCORER_ASSOCIATION_CODE_V1: u32 = 6;
 const NATIVE_POLICY_SCORER_COUNTER_CODE_V1: u32 = 7;
-const NATIVE_TRAINER_EPISODES_PER_UPDATE_V1: u64 = 2;
+pub(crate) const NATIVE_TRAINER_CONTRACT_IDENTITY_V2: &str =
+    "mtg-kernel-native-even-batch-trainer-v2";
+pub(crate) const NATIVE_TRAINER_MIN_BATCH_EPISODES_V2: u64 = 2;
+pub(crate) const NATIVE_TRAINER_MAX_BATCH_EPISODES_V2: u64 = 10_000;
+const NATIVE_TRAINER_U63_MAX_V2: u64 = (1_u64 << 63) - 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativePolicyAssociationErrorV1 {
@@ -99,6 +106,13 @@ enum NativePolicyAssociationTestMutationV1 {
     Binding,
     SelectedLogit,
     Value,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativePolicyTrainRevalidationTestMutationV1 {
+    ExpectedLogitCount { episode_offset: usize },
+    Value { episode_offset: usize },
 }
 
 #[derive(Clone, Debug)]
@@ -667,8 +681,9 @@ fn validate_full_trajectory_receipts_v1(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NativeTrainerUpdateConfigV1 {
+pub(crate) struct NativeTrainerUpdateConfigV2 {
     pub(crate) deck_ids: SessionDeckIdsV1,
+    pub(crate) batch_episodes: u64,
     pub(crate) max_physical_decisions: u64,
     pub(crate) max_policy_steps: u64,
     pub(crate) worker_count: usize,
@@ -681,7 +696,7 @@ pub(crate) struct NativeTrainerUpdateConfigV1 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeTrainerProgressV1 {
+pub(crate) struct NativeTrainerProgressV2 {
     pub(crate) next_episode_index: u64,
     pub(crate) successful_update_count: u64,
     pub(crate) completed_episode_count: u64,
@@ -721,10 +736,18 @@ pub(crate) struct NativeTrainerPhysicalTermEvidenceV1 {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NativeTrainerUpdateEvidenceV1 {
+pub(crate) struct NativeTrainerUpdateEvidenceV2 {
+    pub(crate) trainer_contract_identity: &'static str,
+    /// End-to-end successful-update wall time, including rollout, inference,
+    /// grouping, training, evidence construction, and pre-commit validation.
+    pub(crate) update_elapsed_ns: u64,
     pub(crate) first_episode_index: u64,
     pub(crate) episode_count: u64,
-    pub(crate) episodes: [NativeTrainerEpisodeEvidenceV1; 2],
+    pub(crate) worker_count: usize,
+    pub(crate) sessions_per_worker: usize,
+    pub(crate) logical_actor_count: usize,
+    pub(crate) broker_batch_target: usize,
+    pub(crate) episodes: Vec<NativeTrainerEpisodeEvidenceV1>,
     pub(crate) learner_group_count: u64,
     pub(crate) learner_policy_step_count: u64,
     pub(crate) scorer_accepted_batch_count: u64,
@@ -747,6 +770,11 @@ pub(crate) struct NativeTrainerUpdateEvidenceV1 {
 pub(crate) enum NativeTrainerErrorV1 {
     Schedule(NativeTrainerScheduleErrorV1),
     InvalidUpdateConfig(&'static str),
+    ResumeInvariant(&'static str),
+    ProgressOutsideU63 {
+        field: &'static str,
+        value: u64,
+    },
     ObserverConstruction(NativePolicyTrajectoryErrorV1),
     Scorer(NativePolicyScorerFailureV1),
     Rollout(AsyncFlatScoredRolloutErrorV2),
@@ -772,40 +800,78 @@ pub(crate) enum NativeTrainerErrorV1 {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct NativeTrainerStateV1 {
+pub(crate) struct NativeTrainerStateV2 {
     base_seed: u64,
+    batch_episodes: u64,
     train_state: NativePolicyValueTrainStateV1,
-    progress: NativeTrainerProgressV1,
+    progress: NativeTrainerProgressV2,
     #[cfg(test)]
     pending_test_association_mutation: Option<NativePolicyAssociationTestMutationV1>,
     #[cfg(test)]
     pending_test_train_non_selected_logit_mutation: bool,
+    #[cfg(test)]
+    pending_test_train_revalidation_mutation: Option<NativePolicyTrainRevalidationTestMutationV1>,
 }
 
-impl NativeTrainerStateV1 {
-    pub(crate) fn new_v1(
+impl NativeTrainerStateV2 {
+    pub(crate) fn new_v2(
         base_seed: u64,
+        batch_episodes: u64,
         train_state: NativePolicyValueTrainStateV1,
     ) -> Result<Self, NativeTrainerErrorV1> {
-        native_trainer_episode_schedule_v1(base_seed, 0).map_err(NativeTrainerErrorV1::Schedule)?;
+        let progress = NativeTrainerProgressV2 {
+            next_episode_index: 0,
+            successful_update_count: 0,
+            completed_episode_count: 0,
+            learner_physical_decision_count: 0,
+            learner_policy_step_count: 0,
+        };
+        validate_resumed_parts_v2(base_seed, batch_episodes, &train_state, progress)?;
         Ok(Self {
             base_seed,
+            batch_episodes,
             train_state,
-            progress: NativeTrainerProgressV1 {
-                next_episode_index: 0,
-                successful_update_count: 0,
-                completed_episode_count: 0,
-                learner_physical_decision_count: 0,
-                learner_policy_step_count: 0,
-            },
+            progress,
             #[cfg(test)]
             pending_test_association_mutation: None,
             #[cfg(test)]
             pending_test_train_non_selected_logit_mutation: false,
+            #[cfg(test)]
+            pending_test_train_revalidation_mutation: None,
         })
     }
 
-    pub(crate) fn progress_v1(&self) -> NativeTrainerProgressV1 {
+    /// Reconstructs a trainer only after validating the persisted batch binding,
+    /// complete decoded train state, progress arithmetic, and next full schedule.
+    /// The caller retains the borrowed candidate unchanged on every rejection.
+    pub(crate) fn from_resumed_parts_v2(
+        base_seed: u64,
+        batch_episodes: u64,
+        train_state: &NativePolicyValueTrainStateV1,
+        progress: NativeTrainerProgressV2,
+    ) -> Result<Self, NativeTrainerErrorV1> {
+        validate_resumed_parts_v2(base_seed, batch_episodes, train_state, progress)?;
+        Ok(Self {
+            base_seed,
+            batch_episodes,
+            // The only ownership acquisition in the resume path. Every
+            // fallible validation above has already completed.
+            train_state: train_state.clone(),
+            progress,
+            #[cfg(test)]
+            pending_test_association_mutation: None,
+            #[cfg(test)]
+            pending_test_train_non_selected_logit_mutation: false,
+            #[cfg(test)]
+            pending_test_train_revalidation_mutation: None,
+        })
+    }
+
+    pub(crate) fn base_seed_v2(&self) -> u64 {
+        self.base_seed
+    }
+
+    pub(crate) fn progress_v2(&self) -> NativeTrainerProgressV2 {
         self.progress
     }
 
@@ -813,23 +879,29 @@ impl NativeTrainerStateV1 {
         &self.train_state
     }
 
-    pub(crate) fn run_two_episode_update_v1(
+    pub(crate) fn run_even_batch_update_v2(
         &mut self,
-        config: &NativeTrainerUpdateConfigV1,
-    ) -> Result<NativeTrainerUpdateEvidenceV1, NativeTrainerErrorV1> {
-        self.run_two_episode_update_inner_v1(config)
+        config: &NativeTrainerUpdateConfigV2,
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+        self.run_even_batch_update_inner_v2(config)
     }
 
-    fn run_two_episode_update_inner_v1(
+    fn run_even_batch_update_inner_v2(
         &mut self,
-        config: &NativeTrainerUpdateConfigV1,
-    ) -> Result<NativeTrainerUpdateEvidenceV1, NativeTrainerErrorV1> {
+        config: &NativeTrainerUpdateConfigV2,
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+        let update_started = Instant::now();
         #[cfg(test)]
         let test_mutation = self.pending_test_association_mutation.take();
         #[cfg(test)]
         let test_train_non_selected_logit_mutation =
             std::mem::take(&mut self.pending_test_train_non_selected_logit_mutation);
-        validate_update_config_v1(config)?;
+        #[cfg(test)]
+        let test_train_revalidation_mutation = self.pending_test_train_revalidation_mutation.take();
+        validate_update_config_v2(config)?;
+        if config.batch_episodes != self.batch_episodes {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig("batch_episodes"));
+        }
         let expected_deck_hashes = [
             runtime_deck_by_id(&config.deck_ids[0])
                 .ok_or(NativeTrainerErrorV1::InvalidUpdateConfig("deck_ids"))?
@@ -838,6 +910,10 @@ impl NativeTrainerStateV1 {
                 .ok_or(NativeTrainerErrorV1::InvalidUpdateConfig("deck_ids"))?
                 .runtime_deck_hash,
         ];
+        let logical_actor_count = config
+            .worker_count
+            .checked_mul(config.sessions_per_worker)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
         if self.progress.next_episode_index & 1 != 0 {
             return Err(NativeTrainerErrorV1::GroupingInvariant(
                 "next episode must begin an even/odd parity pair",
@@ -845,7 +921,7 @@ impl NativeTrainerStateV1 {
         }
         let first_episode_index = self.progress.next_episode_index;
         let end_episode_index = first_episode_index
-            .checked_add(NATIVE_TRAINER_EPISODES_PER_UPDATE_V1)
+            .checked_add(config.batch_episodes)
             .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
         native_trainer_episode_schedule_v1(self.base_seed, first_episode_index)
             .map_err(NativeTrainerErrorV1::Schedule)?;
@@ -864,7 +940,7 @@ impl NativeTrainerStateV1 {
             sessions_per_worker: config.sessions_per_worker,
             broker_batch_target: config.broker_batch_target,
             first_episode_id: first_episode_index,
-            episode_count: NATIVE_TRAINER_EPISODES_PER_UPDATE_V1,
+            episode_count: config.batch_episodes,
             scheduler_timeout: config.scheduler_timeout,
             measure_broker_service_time: config.measure_broker_service_time,
         };
@@ -879,7 +955,7 @@ impl NativeTrainerStateV1 {
         }
         let observer = NativePolicyTrajectoryObserverV1::new_v1(
             first_episode_index,
-            NATIVE_TRAINER_EPISODES_PER_UPDATE_V1,
+            config.batch_episodes,
             self.base_seed,
             expected_deck_hashes,
             consumer,
@@ -920,10 +996,12 @@ impl NativeTrainerStateV1 {
             grouped,
             full_trajectory_receipts,
         } = observed_trajectory;
-        validate_grouped_batch_v1(&grouped, first_episode_index)?;
-        if !rollout.all_natural() || rollout.episodes.len() != 2 {
+        validate_grouped_batch_v2(&grouped, first_episode_index, config.batch_episodes)?;
+        let expected_episode_count = usize::try_from(config.batch_episodes)
+            .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
+        if !rollout.all_natural() || rollout.episodes.len() != expected_episode_count {
             return Err(NativeTrainerErrorV1::GroupingInvariant(
-                "rollout must contain exactly two natural episodes",
+                "rollout must contain exactly the configured natural episodes",
             ));
         }
         #[cfg(test)]
@@ -931,6 +1009,10 @@ impl NativeTrainerStateV1 {
         #[cfg(test)]
         if test_train_non_selected_logit_mutation {
             mutate_grouped_non_selected_logit_for_test_v1(&mut grouped)?;
+        }
+        #[cfg(test)]
+        if let Some(mutation) = test_train_revalidation_mutation {
+            mutate_grouped_train_revalidation_for_test_v1(&mut grouped, mutation)?;
         }
 
         let model_digest_before = self.train_state.model_v1().parameter_manifest_sha256_v1();
@@ -951,29 +1033,17 @@ impl NativeTrainerStateV1 {
         let changed_non_gauge_parameter_count =
             changed_non_gauge_parameters_v1(&parameters_before, &parameters_after)?;
 
-        let next_progress = NativeTrainerProgressV1 {
-            next_episode_index: end_episode_index,
-            successful_update_count: self
-                .progress
-                .successful_update_count
-                .checked_add(1)
-                .ok_or(NativeTrainerErrorV1::CounterOverflow)?,
-            completed_episode_count: self
-                .progress
-                .completed_episode_count
-                .checked_add(NATIVE_TRAINER_EPISODES_PER_UPDATE_V1)
-                .ok_or(NativeTrainerErrorV1::CounterOverflow)?,
-            learner_physical_decision_count: self
-                .progress
-                .learner_physical_decision_count
-                .checked_add(learner_group_count)
-                .ok_or(NativeTrainerErrorV1::CounterOverflow)?,
-            learner_policy_step_count: self
-                .progress
-                .learner_policy_step_count
-                .checked_add(grouped.learner_policy_step_count)
-                .ok_or(NativeTrainerErrorV1::CounterOverflow)?,
-        };
+        let next_progress = progress_after_successful_update_v2(
+            self.progress,
+            self.batch_episodes,
+            learner_group_count,
+            grouped.learner_policy_step_count,
+        )?;
+        if next_progress.next_episode_index != end_episode_index {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "progress helper must advance the configured batch exactly once",
+            ));
+        }
         let expected_adam_step = adam_step_before
             .checked_add(1)
             .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
@@ -1003,9 +1073,15 @@ impl NativeTrainerStateV1 {
                 terminal_return: term.terminal_return,
             })
             .collect();
-        let evidence = NativeTrainerUpdateEvidenceV1 {
+        let mut evidence = NativeTrainerUpdateEvidenceV2 {
+            trainer_contract_identity: NATIVE_TRAINER_CONTRACT_IDENTITY_V2,
+            update_elapsed_ns: 0,
             first_episode_index,
-            episode_count: NATIVE_TRAINER_EPISODES_PER_UPDATE_V1,
+            episode_count: config.batch_episodes,
+            worker_count: config.worker_count,
+            sessions_per_worker: config.sessions_per_worker,
+            logical_actor_count,
+            broker_batch_target: config.broker_batch_target,
             episodes: episode_evidence,
             learner_group_count,
             learner_policy_step_count: grouped.learner_policy_step_count,
@@ -1030,29 +1106,143 @@ impl NativeTrainerStateV1 {
         // evidence, and counter check above completed on owned candidates.
         self.train_state = candidate_train_state;
         self.progress = next_progress;
+        evidence.update_elapsed_ns =
+            u64::try_from(update_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         Ok(evidence)
     }
 
     #[cfg(test)]
-    fn run_two_episode_update_with_mutation_v1(
+    fn run_even_batch_update_with_mutation_v2(
         &mut self,
-        config: &NativeTrainerUpdateConfigV1,
+        config: &NativeTrainerUpdateConfigV2,
         mutation: NativePolicyAssociationTestMutationV1,
-    ) -> Result<NativeTrainerUpdateEvidenceV1, NativeTrainerErrorV1> {
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         assert!(self.pending_test_association_mutation.is_none());
         self.pending_test_association_mutation = Some(mutation);
-        self.run_two_episode_update_v1(config)
+        self.run_even_batch_update_v2(config)
     }
 
     #[cfg(test)]
-    fn run_two_episode_update_with_train_non_selected_logit_mutation_v1(
+    fn run_even_batch_update_with_train_non_selected_logit_mutation_v2(
         &mut self,
-        config: &NativeTrainerUpdateConfigV1,
-    ) -> Result<NativeTrainerUpdateEvidenceV1, NativeTrainerErrorV1> {
+        config: &NativeTrainerUpdateConfigV2,
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         assert!(!self.pending_test_train_non_selected_logit_mutation);
         self.pending_test_train_non_selected_logit_mutation = true;
-        self.run_two_episode_update_v1(config)
+        self.run_even_batch_update_v2(config)
     }
+
+    #[cfg(test)]
+    fn run_even_batch_update_with_train_revalidation_mutation_v2(
+        &mut self,
+        config: &NativeTrainerUpdateConfigV2,
+        mutation: NativePolicyTrainRevalidationTestMutationV1,
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+        assert!(self.pending_test_train_revalidation_mutation.is_none());
+        self.pending_test_train_revalidation_mutation = Some(mutation);
+        self.run_even_batch_update_v2(config)
+    }
+}
+
+fn validate_progress_u63_v2(progress: NativeTrainerProgressV2) -> Result<(), NativeTrainerErrorV1> {
+    for (field, value) in [
+        ("next_episode_index", progress.next_episode_index),
+        ("successful_update_count", progress.successful_update_count),
+        ("completed_episode_count", progress.completed_episode_count),
+        (
+            "learner_physical_decision_count",
+            progress.learner_physical_decision_count,
+        ),
+        (
+            "learner_policy_step_count",
+            progress.learner_policy_step_count,
+        ),
+    ] {
+        if value > NATIVE_TRAINER_U63_MAX_V2 {
+            return Err(NativeTrainerErrorV1::ProgressOutsideU63 { field, value });
+        }
+    }
+    Ok(())
+}
+
+fn progress_after_successful_update_v2(
+    progress: NativeTrainerProgressV2,
+    batch_episodes: u64,
+    learner_physical_decision_count: u64,
+    learner_policy_step_count: u64,
+) -> Result<NativeTrainerProgressV2, NativeTrainerErrorV1> {
+    let next_progress = NativeTrainerProgressV2 {
+        next_episode_index: progress
+            .next_episode_index
+            .checked_add(batch_episodes)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?,
+        successful_update_count: progress
+            .successful_update_count
+            .checked_add(1)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?,
+        completed_episode_count: progress
+            .completed_episode_count
+            .checked_add(batch_episodes)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?,
+        learner_physical_decision_count: progress
+            .learner_physical_decision_count
+            .checked_add(learner_physical_decision_count)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?,
+        learner_policy_step_count: progress
+            .learner_policy_step_count
+            .checked_add(learner_policy_step_count)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?,
+    };
+    validate_progress_u63_v2(next_progress)?;
+    Ok(next_progress)
+}
+
+fn validate_resumed_parts_v2(
+    base_seed: u64,
+    batch_episodes: u64,
+    train_state: &NativePolicyValueTrainStateV1,
+    progress: NativeTrainerProgressV2,
+) -> Result<(), NativeTrainerErrorV1> {
+    validate_batch_episodes_v2(batch_episodes)?;
+    train_state
+        .snapshot_v1()
+        .map_err(NativeTrainerErrorV1::Train)?;
+    validate_progress_u63_v2(progress)?;
+
+    if progress.next_episode_index & 1 != 0 {
+        return Err(NativeTrainerErrorV1::ResumeInvariant(
+            "next episode must begin an even/odd parity pair",
+        ));
+    }
+    if progress.next_episode_index != progress.completed_episode_count {
+        return Err(NativeTrainerErrorV1::ResumeInvariant(
+            "next episode must equal completed episode count",
+        ));
+    }
+    let expected_completed_episode_count = progress
+        .successful_update_count
+        .checked_mul(batch_episodes)
+        .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+    if progress.completed_episode_count != expected_completed_episode_count {
+        return Err(NativeTrainerErrorV1::ResumeInvariant(
+            "completed episode count must equal successful updates times persisted batch episodes",
+        ));
+    }
+    if train_state.adam_step_v1() != progress.successful_update_count {
+        return Err(NativeTrainerErrorV1::ResumeInvariant(
+            "Adam step must equal successful update count",
+        ));
+    }
+
+    let final_episode_index = progress
+        .next_episode_index
+        .checked_add(batch_episodes - 1)
+        .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+    native_trainer_episode_schedule_v1(base_seed, progress.next_episode_index)
+        .map_err(NativeTrainerErrorV1::Schedule)?;
+    native_trainer_episode_schedule_v1(base_seed, final_episode_index)
+        .map_err(NativeTrainerErrorV1::Schedule)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1087,11 +1277,77 @@ fn mutate_grouped_non_selected_logit_for_test_v1(
     ))
 }
 
-fn validate_update_config_v1(
-    config: &NativeTrainerUpdateConfigV1,
+#[cfg(test)]
+fn mutate_grouped_train_revalidation_for_test_v1(
+    grouped: &mut NativePolicyGroupedTrajectoryV1,
+    mutation: NativePolicyTrainRevalidationTestMutationV1,
 ) -> Result<(), NativeTrainerErrorV1> {
+    let episode_offset = match mutation {
+        NativePolicyTrainRevalidationTestMutationV1::ExpectedLogitCount { episode_offset }
+        | NativePolicyTrainRevalidationTestMutationV1::Value { episode_offset } => episode_offset,
+    };
+    let episode =
+        grouped
+            .episodes
+            .get_mut(episode_offset)
+            .ok_or(NativeTrainerErrorV1::GroupingInvariant(
+                "test mutation episode offset is out of range",
+            ))?;
+    for group in &mut episode.groups {
+        if let Some(substep) = group.substeps.first_mut() {
+            match mutation {
+                NativePolicyTrainRevalidationTestMutationV1::ExpectedLogitCount { .. } => {
+                    substep.raw_action_logit_bits.pop().ok_or(
+                        NativeTrainerErrorV1::GroupingInvariant(
+                            "test requires a nonempty expected-logit vector",
+                        ),
+                    )?;
+                }
+                NativePolicyTrainRevalidationTestMutationV1::Value { .. } => {
+                    substep.predicted_value_bits ^= 1;
+                }
+            }
+            return Ok(());
+        }
+    }
+    Err(NativeTrainerErrorV1::GroupingInvariant(
+        "test requires a learner substep",
+    ))
+}
+
+fn validate_batch_episodes_v2(batch_episodes: u64) -> Result<(), NativeTrainerErrorV1> {
+    if !(NATIVE_TRAINER_MIN_BATCH_EPISODES_V2..=NATIVE_TRAINER_MAX_BATCH_EPISODES_V2)
+        .contains(&batch_episodes)
+        || batch_episodes & 1 != 0
+    {
+        return Err(NativeTrainerErrorV1::InvalidUpdateConfig("batch_episodes"));
+    }
+    Ok(())
+}
+
+fn validate_update_config_v2(
+    config: &NativeTrainerUpdateConfigV2,
+) -> Result<(), NativeTrainerErrorV1> {
+    validate_batch_episodes_v2(config.batch_episodes)?;
     if config.deck_ids.iter().any(String::is_empty) {
         return Err(NativeTrainerErrorV1::InvalidUpdateConfig("deck_ids"));
+    }
+    if !(1..=ASYNC_ROLLOUT_MAX_WORKERS_V2).contains(&config.worker_count) {
+        return Err(NativeTrainerErrorV1::InvalidUpdateConfig("worker_count"));
+    }
+    if !(1..=ASYNC_ROLLOUT_MAX_SESSIONS_PER_WORKER_V2).contains(&config.sessions_per_worker) {
+        return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+            "sessions_per_worker",
+        ));
+    }
+    let logical_actor_count = config
+        .worker_count
+        .checked_mul(config.sessions_per_worker)
+        .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+    if !(1..=logical_actor_count).contains(&config.broker_batch_target) {
+        return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+            "broker_batch_target",
+        ));
     }
     if config.max_physical_decisions == 0 {
         return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
@@ -1121,14 +1377,17 @@ fn validate_update_config_v1(
     Ok(())
 }
 
-fn validate_grouped_batch_v1(
+fn validate_grouped_batch_v2(
     grouped: &NativePolicyGroupedTrajectoryV1,
     first_episode_index: u64,
+    batch_episodes: u64,
 ) -> Result<(), NativeTrainerErrorV1> {
+    let expected_episode_count =
+        usize::try_from(batch_episodes).map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
     if grouped.learner_seat_rule != FlatPhysicalLearnerSeatRuleCore::EpisodeParity
         || grouped.first_episode_id != first_episode_index
-        || grouped.episode_count != NATIVE_TRAINER_EPISODES_PER_UPDATE_V1
-        || grouped.episodes.len() != 2
+        || grouped.episode_count != batch_episodes
+        || grouped.episodes.len() != expected_episode_count
     {
         return Err(NativeTrainerErrorV1::GroupingInvariant(
             "alternating-seat batch envelope",
@@ -1138,7 +1397,7 @@ fn validate_grouped_batch_v1(
         let expected_episode = first_episode_index
             .checked_add(u64::try_from(offset).map_err(|_| NativeTrainerErrorV1::CounterOverflow)?)
             .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
-        let expected_seat = if offset == 0 {
+        let expected_seat = if expected_episode & 1 == 0 {
             PlayerSeatV1::P0
         } else {
             PlayerSeatV1::P1
@@ -1172,14 +1431,21 @@ fn train_grouped_candidate_v1(
 ) -> Result<
     (
         crate::native_policy_train_step_v1::NativePolicyTrainStepResultV1,
-        [NativeTrainerEpisodeEvidenceV1; 2],
+        Vec<NativeTrainerEpisodeEvidenceV1>,
         u64,
     ),
     NativeTrainerErrorV1,
 > {
     let mut source_groups = Vec::new();
     let mut terminal_returns = Vec::new();
-    let mut episode_evidence = Vec::with_capacity(2);
+    let episode_capacity = usize::try_from(grouped.episode_count)
+        .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
+    if full_trajectory_receipts.len() != episode_capacity {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "full trajectory receipt count",
+        ));
+    }
+    let mut episode_evidence = Vec::with_capacity(episode_capacity);
     for episode in &grouped.episodes {
         let mut matching_receipts = full_trajectory_receipts
             .iter()
@@ -1271,10 +1537,12 @@ fn train_grouped_candidate_v1(
         .train_step_v1(&borrowed_groups, value_coefficient, learning_rate)
         .map_err(NativeTrainerErrorV1::Train)?;
     verify_recomputed_outputs_v1(&source_groups, &terminal_returns, &result)?;
-    let episodes: [NativeTrainerEpisodeEvidenceV1; 2] = episode_evidence
-        .try_into()
-        .map_err(|_| NativeTrainerErrorV1::GroupingInvariant("episode evidence count"))?;
-    Ok((result, episodes, learner_group_count))
+    if episode_evidence.len() != episode_capacity {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "episode evidence count",
+        ));
+    }
+    Ok((result, episode_evidence, learner_group_count))
 }
 
 fn verify_recomputed_outputs_v1(
@@ -1415,13 +1683,14 @@ mod tests {
         NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
     };
 
-    fn burn_update_config_v1(
+    fn burn_pair_config_v2(
         worker_count: usize,
         sessions_per_worker: usize,
         broker_batch_target: usize,
-    ) -> NativeTrainerUpdateConfigV1 {
-        NativeTrainerUpdateConfigV1 {
+    ) -> NativeTrainerUpdateConfigV2 {
+        NativeTrainerUpdateConfigV2 {
             deck_ids: ["Burn".to_owned(), "Burn".to_owned()],
+            batch_episodes: 2,
             max_physical_decisions: 5_000,
             max_policy_steps: 640_000,
             worker_count,
@@ -1434,24 +1703,40 @@ mod tests {
         }
     }
 
-    fn trainer_v1() -> NativeTrainerStateV1 {
+    fn burn_even_batch_config_v2(
+        batch_episodes: u64,
+        worker_count: usize,
+        sessions_per_worker: usize,
+        broker_batch_target: usize,
+    ) -> NativeTrainerUpdateConfigV2 {
+        let mut config =
+            burn_pair_config_v2(worker_count, sessions_per_worker, broker_batch_target);
+        config.batch_episodes = batch_episodes;
+        config
+    }
+
+    fn trainer_v2(batch_episodes: u64) -> NativeTrainerStateV2 {
         let model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
                 .unwrap();
         let train_state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
-        NativeTrainerStateV1::new_v1(71_501, train_state).unwrap()
+        NativeTrainerStateV2::new_v2(71_501, batch_episodes, train_state).unwrap()
     }
 
     fn exact_state_snapshot_v1(
-        trainer: &NativeTrainerStateV1,
+        trainer: &NativeTrainerStateV2,
     ) -> (
-        NativeTrainerProgressV1,
+        NativeTrainerProgressV2,
+        u64,
+        u32,
         Vec<NativeNamedParameterV1>,
         Vec<NativeNamedParameterV1>,
         Vec<NativeNamedParameterV1>,
     ) {
         (
-            trainer.progress_v1(),
+            trainer.progress_v2(),
+            trainer.train_state_v1().adam_step_v1(),
+            trainer.train_state_v1().scorer_bias_anchor_f32_bits_v1(),
             trainer.train_state_v1().model_v1().parameter_snapshot_v1(),
             trainer.train_state_v1().first_moment_snapshot_v1(),
             trainer.train_state_v1().second_moment_snapshot_v1(),
@@ -1467,21 +1752,76 @@ mod tests {
             .to_bits()
     }
 
+    fn without_observed_timing_v2(
+        mut evidence: NativeTrainerUpdateEvidenceV2,
+    ) -> NativeTrainerUpdateEvidenceV2 {
+        evidence.update_elapsed_ns = 0;
+        evidence.rollout_metrics.total_elapsed_ns = 0;
+        evidence.rollout_metrics.broker_service_ns = 0;
+        evidence
+    }
+
     #[test]
     fn real_burn_pair_updates_once_and_is_topology_invariant() {
         let _lock = TEST_LOCK.lock().unwrap();
-        let initial = trainer_v1();
+        let initial = trainer_v2(2);
         let initial_parameters = initial.train_state_v1().model_v1().parameter_snapshot_v1();
         let initial_bias_bits = gauge_value_bits_v1(&initial_parameters);
         let mut narrow = initial.clone();
         let mut wide = initial;
 
         let narrow_evidence = narrow
-            .run_two_episode_update_v1(&burn_update_config_v1(1, 1, 1))
+            .run_even_batch_update_v2(&burn_pair_config_v2(1, 1, 1))
             .unwrap();
         let wide_evidence = wide
-            .run_two_episode_update_v1(&burn_update_config_v1(2, 2, 3))
+            .run_even_batch_update_v2(&burn_pair_config_v2(2, 2, 3))
             .unwrap();
+
+        // Frozen against the exact PR #44 two-episode reference behavior.
+        // Timing and scheduler topology are intentionally excluded; the
+        // accepted trajectories, model outputs, update scalars, and complete
+        // optimizer state are all bit-pinned.
+        assert_eq!(
+            narrow.train_state_v1().state_sha256_v1().unwrap(),
+            [
+                250, 165, 172, 135, 179, 143, 5, 205, 138, 114, 252, 103, 138, 241, 177, 197, 117,
+                96, 251, 190, 79, 49, 165, 11, 15, 249, 71, 182, 127, 49, 170, 141,
+            ]
+        );
+        assert_eq!(narrow_evidence.learner_group_count, 112);
+        assert_eq!(narrow_evidence.learner_policy_step_count, 113);
+        assert_eq!(narrow_evidence.scorer_accepted_batch_count, 113);
+        assert_eq!(narrow_evidence.scorer_accepted_decision_count, 113);
+        assert_eq!(
+            narrow_evidence.model_digest_before,
+            "cc8205d35f68b9d961a4115b7029b2c394f9ee9a981887284e46410b5a90991c"
+        );
+        assert_eq!(
+            narrow_evidence.model_digest_after,
+            "5dcf4eff6f0bce4d5c38f9d3eeb84f0a33afd9db67a8969dfc4360b9df35d443"
+        );
+        assert_eq!(narrow_evidence.changed_non_gauge_parameter_count, 32);
+        assert_eq!(narrow_evidence.policy_sum_bits, 1_111_603_742);
+        assert_eq!(narrow_evidence.value_sum_bits, 1_121_934_211);
+        assert_eq!(narrow_evidence.loss_bits, 1_064_195_456);
+        assert_eq!(
+            narrow_evidence.episodes[0]
+                .full_trajectory_receipt
+                .trajectory_sha256,
+            [
+                218, 58, 252, 127, 21, 185, 50, 121, 19, 64, 114, 39, 237, 157, 11, 206, 2, 100,
+                249, 37, 3, 248, 145, 82, 102, 176, 154, 247, 122, 191, 134, 7,
+            ]
+        );
+        assert_eq!(
+            narrow_evidence.episodes[1]
+                .full_trajectory_receipt
+                .trajectory_sha256,
+            [
+                0, 225, 21, 221, 53, 228, 140, 20, 20, 160, 25, 212, 244, 84, 87, 177, 246, 163,
+                191, 9, 245, 195, 100, 216, 166, 134, 107, 212, 163, 200, 224, 119,
+            ]
+        );
 
         for evidence in [&narrow_evidence, &wide_evidence] {
             assert_eq!(evidence.first_episode_index, 0);
@@ -1555,9 +1895,9 @@ mod tests {
             );
         }
 
-        assert_eq!(narrow.progress_v1().successful_update_count, 1);
-        assert_eq!(narrow.progress_v1().completed_episode_count, 2);
-        assert_eq!(narrow.progress_v1().next_episode_index, 2);
+        assert_eq!(narrow.progress_v2().successful_update_count, 1);
+        assert_eq!(narrow.progress_v2().completed_episode_count, 2);
+        assert_eq!(narrow.progress_v2().next_episode_index, 2);
         assert_eq!(narrow.train_state_v1().adam_step_v1(), 1);
         let narrow_parameters = narrow.train_state_v1().model_v1().parameter_snapshot_v1();
         assert!(narrow_parameters
@@ -1617,30 +1957,302 @@ mod tests {
         );
 
         let second_evidence = narrow
-            .run_two_episode_update_v1(&burn_update_config_v1(1, 1, 1))
+            .run_even_batch_update_v2(&burn_pair_config_v2(1, 1, 1))
             .unwrap();
         assert_eq!(second_evidence.first_episode_index, 2);
         assert_eq!(
             second_evidence
                 .episodes
-                .map(|episode| episode.episode_index),
-            [2, 3]
+                .iter()
+                .map(|episode| episode.episode_index)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
         );
         assert_eq!(second_evidence.episodes[0].learner_seat, PlayerSeatV1::P0);
         assert_eq!(second_evidence.episodes[1].learner_seat, PlayerSeatV1::P1);
         assert_eq!(second_evidence.adam_step_before, 1);
         assert_eq!(second_evidence.adam_step_after, 2);
-        assert_eq!(narrow.progress_v1().successful_update_count, 2);
-        assert_eq!(narrow.progress_v1().completed_episode_count, 4);
-        assert_eq!(narrow.progress_v1().next_episode_index, 4);
+        assert_eq!(narrow.progress_v2().successful_update_count, 2);
+        assert_eq!(narrow.progress_v2().completed_episode_count, 4);
+        assert_eq!(narrow.progress_v2().next_episode_index, 4);
         assert_eq!(narrow.train_state_v1().adam_step_v1(), 2);
+    }
+
+    #[test]
+    fn even_batch_v2_accepts_python_range_and_rejects_non_even_cardinality() {
+        assert_eq!(
+            NATIVE_TRAINER_CONTRACT_IDENTITY_V2,
+            "mtg-kernel-native-even-batch-trainer-v2"
+        );
+        for batch_episodes in [0, 1, 3, NATIVE_TRAINER_MAX_BATCH_EPISODES_V2 + 2] {
+            let config = burn_even_batch_config_v2(batch_episodes, 1, 1, 1);
+            assert_eq!(
+                validate_update_config_v2(&config),
+                Err(NativeTrainerErrorV1::InvalidUpdateConfig("batch_episodes"))
+            );
+        }
+        for batch_episodes in [2, 4, 16, NATIVE_TRAINER_MAX_BATCH_EPISODES_V2] {
+            validate_update_config_v2(&burn_even_batch_config_v2(batch_episodes, 1, 1, 1)).unwrap();
+        }
+
+        let mut trainer = trainer_v2(4);
+        let before = exact_state_snapshot_v1(&trainer);
+        assert_eq!(trainer.batch_episodes, 4);
+        assert_eq!(
+            trainer.run_even_batch_update_v2(&burn_even_batch_config_v2(2, 1, 1, 1)),
+            Err(NativeTrainerErrorV1::InvalidUpdateConfig("batch_episodes"))
+        );
+        assert_eq!(trainer.batch_episodes, 4);
+        assert_eq!(exact_state_snapshot_v1(&trainer), before);
+    }
+
+    #[test]
+    fn real_burn_even_batches_update_once_and_are_topology_invariant() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        for batch_episodes in [4, 16] {
+            let initial = trainer_v2(batch_episodes);
+            let mut narrow = initial.clone();
+            let mut wide = initial;
+            let narrow_evidence = narrow
+                .run_even_batch_update_v2(&burn_even_batch_config_v2(batch_episodes, 1, 1, 1))
+                .unwrap();
+            let wide_evidence = wide
+                .run_even_batch_update_v2(&burn_even_batch_config_v2(batch_episodes, 4, 4, 16))
+                .unwrap();
+
+            assert_eq!(narrow_evidence.episode_count, batch_episodes);
+            assert_eq!(
+                narrow_evidence.trainer_contract_identity,
+                NATIVE_TRAINER_CONTRACT_IDENTITY_V2
+            );
+            assert_eq!(narrow_evidence.worker_count, 1);
+            assert_eq!(narrow_evidence.sessions_per_worker, 1);
+            assert_eq!(narrow_evidence.logical_actor_count, 1);
+            assert_eq!(narrow_evidence.broker_batch_target, 1);
+            assert_eq!(wide_evidence.worker_count, 4);
+            assert_eq!(wide_evidence.sessions_per_worker, 4);
+            assert_eq!(wide_evidence.logical_actor_count, 16);
+            assert_eq!(wide_evidence.broker_batch_target, 16);
+            assert_eq!(
+                narrow_evidence.episodes.len(),
+                usize::try_from(batch_episodes).unwrap()
+            );
+            for (offset, episode) in narrow_evidence.episodes.iter().enumerate() {
+                let expected_index = u64::try_from(offset).unwrap();
+                assert_eq!(episode.episode_index, expected_index);
+                assert_eq!(
+                    episode.learner_seat,
+                    if expected_index & 1 == 0 {
+                        PlayerSeatV1::P0
+                    } else {
+                        PlayerSeatV1::P1
+                    }
+                );
+                assert_eq!(
+                    episode.full_trajectory_receipt.environment_seed,
+                    native_trainer_episode_schedule_v1(71_501, expected_index)
+                        .unwrap()
+                        .environment_seed
+                );
+            }
+            for pair in narrow_evidence.episodes.chunks_exact(2) {
+                assert_eq!(
+                    pair[0].full_trajectory_receipt.environment_seed,
+                    pair[1].full_trajectory_receipt.environment_seed
+                );
+            }
+            assert_eq!(narrow_evidence.adam_step_before, 0);
+            assert_eq!(narrow_evidence.adam_step_after, 1);
+            assert_eq!(narrow.progress_v2().successful_update_count, 1);
+            assert_eq!(narrow.progress_v2().completed_episode_count, batch_episodes);
+            assert_eq!(narrow.progress_v2().next_episode_index, batch_episodes);
+            assert_eq!(narrow.train_state_v1().adam_step_v1(), 1);
+
+            assert_eq!(narrow_evidence.episodes, wide_evidence.episodes);
+            assert_eq!(
+                narrow_evidence.scorer_accepted_decision_count,
+                wide_evidence.scorer_accepted_decision_count
+            );
+            assert_eq!(
+                narrow_evidence.learner_group_count,
+                wide_evidence.learner_group_count
+            );
+            assert_eq!(
+                narrow_evidence.learner_policy_step_count,
+                wide_evidence.learner_policy_step_count
+            );
+            assert_eq!(
+                narrow_evidence.selected_outputs,
+                wide_evidence.selected_outputs
+            );
+            assert_eq!(narrow_evidence.physical_terms, wide_evidence.physical_terms);
+            assert_eq!(
+                narrow_evidence.policy_sum_bits,
+                wide_evidence.policy_sum_bits
+            );
+            assert_eq!(narrow_evidence.value_sum_bits, wide_evidence.value_sum_bits);
+            assert_eq!(narrow_evidence.loss_bits, wide_evidence.loss_bits);
+            assert_eq!(
+                narrow_evidence.model_digest_before,
+                wide_evidence.model_digest_before
+            );
+            assert_eq!(
+                narrow_evidence.model_digest_after,
+                wide_evidence.model_digest_after
+            );
+            assert_eq!(
+                exact_state_snapshot_v1(&narrow),
+                exact_state_snapshot_v1(&wide)
+            );
+        }
+    }
+
+    #[test]
+    fn even_batch_v2_resume_binds_persisted_k_and_continues_exactly() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let config = burn_even_batch_config_v2(4, 2, 2, 4);
+        let mut uninterrupted = trainer_v2(4);
+        uninterrupted.run_even_batch_update_v2(&config).unwrap();
+
+        let persisted_progress = uninterrupted.progress_v2();
+        let persisted_train_state = uninterrupted.train_state_v1().clone();
+        let persisted_state_sha = persisted_train_state.state_sha256_v1().unwrap();
+        let mut resumed = NativeTrainerStateV2::from_resumed_parts_v2(
+            uninterrupted.base_seed_v2(),
+            4,
+            &persisted_train_state,
+            persisted_progress,
+        )
+        .unwrap();
+        assert_eq!(resumed.base_seed_v2(), 71_501);
+        assert_eq!(resumed.batch_episodes, 4);
+        assert_eq!(
+            persisted_train_state.state_sha256_v1().unwrap(),
+            persisted_state_sha
+        );
+        assert_eq!(
+            resumed.train_state_v1().state_sha256_v1().unwrap(),
+            persisted_state_sha
+        );
+
+        let uninterrupted_evidence = uninterrupted.run_even_batch_update_v2(&config).unwrap();
+        let resumed_evidence = resumed.run_even_batch_update_v2(&config).unwrap();
+        assert_eq!(
+            without_observed_timing_v2(uninterrupted_evidence),
+            without_observed_timing_v2(resumed_evidence)
+        );
+        assert_eq!(
+            exact_state_snapshot_v1(&uninterrupted),
+            exact_state_snapshot_v1(&resumed)
+        );
+        assert_eq!(resumed.progress_v2().successful_update_count, 2);
+        assert_eq!(resumed.progress_v2().completed_episode_count, 8);
+        assert_eq!(resumed.progress_v2().next_episode_index, 8);
+
+        let source_before = persisted_train_state.state_sha256_v1().unwrap();
+        let error = NativeTrainerStateV2::from_resumed_parts_v2(
+            71_501,
+            2,
+            &persisted_train_state,
+            persisted_progress,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            NativeTrainerErrorV1::ResumeInvariant(
+                "completed episode count must equal successful updates times persisted batch episodes"
+            )
+        ));
+        assert_eq!(
+            persisted_train_state.state_sha256_v1().unwrap(),
+            source_before
+        );
+    }
+
+    #[test]
+    fn even_batch_v2_resume_progress_corruption_is_transactional() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let train_state = trainer_v2(4).train_state_v1().clone();
+        let source_sha = train_state.state_sha256_v1().unwrap();
+        let valid = NativeTrainerProgressV2 {
+            next_episode_index: 0,
+            successful_update_count: 0,
+            completed_episode_count: 0,
+            learner_physical_decision_count: 0,
+            learner_policy_step_count: 0,
+        };
+
+        for (progress, expected) in [
+            (
+                NativeTrainerProgressV2 {
+                    next_episode_index: 1,
+                    ..valid
+                },
+                NativeTrainerErrorV1::ResumeInvariant(
+                    "next episode must begin an even/odd parity pair",
+                ),
+            ),
+            (
+                NativeTrainerProgressV2 {
+                    next_episode_index: 4,
+                    completed_episode_count: 2,
+                    successful_update_count: 1,
+                    ..valid
+                },
+                NativeTrainerErrorV1::ResumeInvariant(
+                    "next episode must equal completed episode count",
+                ),
+            ),
+            (
+                NativeTrainerProgressV2 {
+                    next_episode_index: 4,
+                    completed_episode_count: 4,
+                    successful_update_count: 2,
+                    ..valid
+                },
+                NativeTrainerErrorV1::ResumeInvariant(
+                    "completed episode count must equal successful updates times persisted batch episodes",
+                ),
+            ),
+            (
+                NativeTrainerProgressV2 {
+                    next_episode_index: 4,
+                    completed_episode_count: 4,
+                    successful_update_count: 1,
+                    ..valid
+                },
+                NativeTrainerErrorV1::ResumeInvariant(
+                    "Adam step must equal successful update count",
+                ),
+            ),
+            (
+                NativeTrainerProgressV2 {
+                    learner_policy_step_count: NATIVE_TRAINER_U63_MAX_V2 + 1,
+                    ..valid
+                },
+                NativeTrainerErrorV1::ProgressOutsideU63 {
+                    field: "learner_policy_step_count",
+                    value: NATIVE_TRAINER_U63_MAX_V2 + 1,
+                },
+            ),
+        ] {
+            let error = NativeTrainerStateV2::from_resumed_parts_v2(
+                71_501,
+                4,
+                &train_state,
+                progress,
+            )
+            .unwrap_err();
+            assert_eq!(error, expected);
+            assert_eq!(train_state.state_sha256_v1().unwrap(), source_sha);
+        }
     }
 
     #[test]
     fn association_mutations_leave_model_optimizer_and_counters_exact() {
         let _lock = TEST_LOCK.lock().unwrap();
-        let mut trainer = trainer_v1();
-        let config = burn_update_config_v1(1, 1, 1);
+        let mut trainer = trainer_v2(2);
+        let config = burn_pair_config_v2(1, 1, 1);
         let before = exact_state_snapshot_v1(&trainer);
         for (mutation, expected) in [
             (
@@ -1657,7 +2269,7 @@ mod tests {
             ),
         ] {
             let error = trainer
-                .run_two_episode_update_with_mutation_v1(&config, mutation)
+                .run_even_batch_update_with_mutation_v2(&config, mutation)
                 .unwrap_err();
             assert!(matches!(
                 error,
@@ -1673,11 +2285,11 @@ mod tests {
     #[test]
     fn non_selected_logit_mutation_reaches_full_vector_gate_transactionally() {
         let _lock = TEST_LOCK.lock().unwrap();
-        let mut trainer = trainer_v1();
-        let config = burn_update_config_v1(1, 1, 1);
+        let mut trainer = trainer_v2(2);
+        let config = burn_pair_config_v2(1, 1, 1);
         let before = exact_state_snapshot_v1(&trainer);
         let error = trainer
-            .run_two_episode_update_with_train_non_selected_logit_mutation_v1(&config)
+            .run_even_batch_update_with_train_non_selected_logit_mutation_v2(&config)
             .unwrap_err();
         assert!(matches!(
             error,
@@ -1692,5 +2304,61 @@ mod tests {
             ) if action_index != selected_action_index && expected_bits != actual_bits
         ));
         assert_eq!(exact_state_snapshot_v1(&trainer), before);
+    }
+
+    #[test]
+    fn even_batch_v2_recomputed_value_corruption_is_transactional_at_each_batch_region() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let config = burn_even_batch_config_v2(4, 2, 2, 4);
+        for episode_offset in [0, 2, 3] {
+            let mut trainer = trainer_v2(4);
+            let before = exact_state_snapshot_v1(&trainer);
+            let error = trainer
+                .run_even_batch_update_with_train_revalidation_mutation_v2(
+                    &config,
+                    NativePolicyTrainRevalidationTestMutationV1::Value { episode_offset },
+                )
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                NativeTrainerErrorV1::Train(
+                    NativePolicyTrainErrorV1::RecomputedValueBitsMismatch {
+                        expected_bits,
+                        actual_bits,
+                        ..
+                    }
+                ) if expected_bits != actual_bits
+            ));
+            assert_eq!(exact_state_snapshot_v1(&trainer), before);
+        }
+    }
+
+    #[test]
+    fn even_batch_v2_expected_logit_count_corruption_is_transactional_at_each_batch_region() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let config = burn_even_batch_config_v2(4, 2, 2, 4);
+        for episode_offset in [0, 2, 3] {
+            let mut trainer = trainer_v2(4);
+            let before = exact_state_snapshot_v1(&trainer);
+            let error = trainer
+                .run_even_batch_update_with_train_revalidation_mutation_v2(
+                    &config,
+                    NativePolicyTrainRevalidationTestMutationV1::ExpectedLogitCount {
+                        episode_offset,
+                    },
+                )
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                NativeTrainerErrorV1::Train(
+                    NativePolicyTrainErrorV1::ExpectedLogitCountMismatch {
+                        expected,
+                        actual,
+                        ..
+                    }
+                ) if expected < actual
+            ));
+            assert_eq!(exact_state_snapshot_v1(&trainer), before);
+        }
     }
 }
