@@ -193,8 +193,8 @@ pub(crate) struct ObjectIdentityV1 {
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ObjectIdentityV1 {
-    volume_serial_number: u32,
-    file_index: u64,
+    volume_serial_number: u64,
+    file_id: [u8; 16],
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -230,24 +230,15 @@ mod windows_identity_v1 {
     const FILE_FLAG_BACKUP_SEMANTICS_V1: u32 = 0x0200_0000;
 
     #[repr(C)]
-    struct FileTimeV1 {
-        _low: u32,
-        _high: u32,
+    struct FileIdInfoV1 {
+        volume_serial_number: u64,
+        file_id: [u8; 16],
     }
 
-    #[repr(C)]
-    struct ByHandleFileInformationV1 {
-        _file_attributes: u32,
-        _creation_time: FileTimeV1,
-        _last_access_time: FileTimeV1,
-        _last_write_time: FileTimeV1,
-        volume_serial_number: u32,
-        _file_size_high: u32,
-        _file_size_low: u32,
-        _number_of_links: u32,
-        file_index_high: u32,
-        file_index_low: u32,
-    }
+    // FILE_ID_INFO is exactly a ULONGLONG followed by FILE_ID_128. Pinning the
+    // ABI size prevents a layout edit from silently changing the FFI buffer.
+    const _: [(); 24] = [(); std::mem::size_of::<FileIdInfoV1>()];
+    const FILE_ID_INFO_CLASS_V1: i32 = 0x12;
 
     #[link(name = "kernel32")]
     extern "system" {
@@ -260,18 +251,28 @@ mod windows_identity_v1 {
             flags_and_attributes: u32,
             template_file: HandleV1,
         ) -> HandleV1;
-        fn GetFileInformationByHandle(
+        fn GetFileInformationByHandleEx(
             file: HandleV1,
-            information: *mut ByHandleFileInformationV1,
+            information_class: i32,
+            information: *mut c_void,
+            information_size: u32,
         ) -> i32;
         fn CloseHandle(object: HandleV1) -> i32;
     }
 
     fn from_handle_v1(handle: HandleV1) -> Result<ObjectIdentityV1, DurablePublicationErrorV1> {
-        let mut information = MaybeUninit::<ByHandleFileInformationV1>::uninit();
+        let mut information = MaybeUninit::<FileIdInfoV1>::uninit();
         // SAFETY: `handle` is live for this call and the out pointer references
-        // enough aligned storage for BY_HANDLE_FILE_INFORMATION.
-        let success = unsafe { GetFileInformationByHandle(handle, information.as_mut_ptr()) };
+        // exactly 24 aligned bytes for FILE_ID_INFO. FileIdInfo (0x12) is the
+        // documented class that returns the volume serial plus 128-bit file ID.
+        let success = unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FILE_ID_INFO_CLASS_V1,
+                information.as_mut_ptr().cast(),
+                std::mem::size_of::<FileIdInfoV1>() as u32,
+            )
+        };
         if success == 0 {
             return Err(DurablePublicationErrorV1::with_io(
                 DurablePublicationErrorKindV1::UnsupportedPlatform,
@@ -283,8 +284,7 @@ mod windows_identity_v1 {
         let information = unsafe { information.assume_init() };
         Ok(ObjectIdentityV1 {
             volume_serial_number: information.volume_serial_number,
-            file_index: (u64::from(information.file_index_high) << 32)
-                | u64::from(information.file_index_low),
+            file_id: information.file_id,
         })
     }
 
@@ -551,6 +551,59 @@ pub(crate) fn revalidate_parent_v1(
     Ok(())
 }
 
+#[cfg(windows)]
+fn windows_ascii_name_eq_v1(value: &[u16], expected_uppercase: &[u8]) -> bool {
+    value.len() == expected_uppercase.len()
+        && value
+            .iter()
+            .zip(expected_uppercase)
+            .all(|(unit, expected)| {
+                u8::try_from(*unit)
+                    .map(|byte| byte.to_ascii_uppercase() == *expected)
+                    .unwrap_or(false)
+            })
+}
+
+#[cfg(windows)]
+fn windows_reserved_device_base_v1(name: &[u16]) -> bool {
+    let base_end = name
+        .iter()
+        .position(|unit| *unit == u16::from(b'.'))
+        .unwrap_or(name.len());
+    let mut base = &name[..base_end];
+    while matches!(base.last(), Some(unit) if *unit == u16::from(b'.') || *unit == u16::from(b' '))
+    {
+        base = &base[..base.len() - 1];
+    }
+
+    if [
+        b"CON".as_slice(),
+        b"PRN".as_slice(),
+        b"AUX".as_slice(),
+        b"NUL".as_slice(),
+        b"CONIN$".as_slice(),
+        b"CONOUT$".as_slice(),
+        b"CLOCK$".as_slice(),
+    ]
+    .iter()
+    .any(|reserved| windows_ascii_name_eq_v1(base, reserved))
+    {
+        return true;
+    }
+
+    if base.len() != 4 {
+        return false;
+    }
+    let numbered_prefix = windows_ascii_name_eq_v1(&base[..3], b"COM")
+        || windows_ascii_name_eq_v1(&base[..3], b"LPT");
+    let reserved_number = matches!(
+        base[3],
+        unit if (u16::from(b'1')..=u16::from(b'9')).contains(&unit)
+            || matches!(unit, 0x00b9 | 0x00b2 | 0x00b3)
+    );
+    numbered_prefix && reserved_number
+}
+
 pub(crate) fn child_path_v1(
     parent: &ValidatedPublicationParentV1,
     name: &OsStr,
@@ -568,10 +621,28 @@ pub(crate) fn child_path_v1(
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        if name.encode_wide().any(|unit| unit == u16::from(b':')) {
+        let wide: Vec<u16> = name.encode_wide().collect();
+        if wide.iter().any(|unit| *unit == u16::from(b':')) {
             return Err(DurablePublicationErrorV1::new(
                 DurablePublicationErrorKindV1::InvalidChildName,
                 "Windows alternate-data-stream child names are forbidden",
+            ));
+        }
+        let trimmed_length = wide
+            .iter()
+            .rposition(|unit| *unit != u16::from(b'.') && *unit != u16::from(b' '))
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        if trimmed_length != wide.len() {
+            return Err(DurablePublicationErrorV1::new(
+                DurablePublicationErrorKindV1::InvalidChildName,
+                "Windows publication child names may not end in dots or spaces",
+            ));
+        }
+        if windows_reserved_device_base_v1(&wide[..trimmed_length]) {
+            return Err(DurablePublicationErrorV1::new(
+                DurablePublicationErrorKindV1::InvalidChildName,
+                "Windows reserved device child name is forbidden",
             ));
         }
     }
@@ -622,6 +693,107 @@ pub(crate) fn regular_path_metadata_v1(
         ));
     }
     Ok(metadata)
+}
+
+/// Recaptures one existing regular path through path, open-handle, path, and
+/// reopen-handle identity views. Absence is returned distinctly. This does not
+/// attest content; it is used only to detect same-object aliases before a move.
+pub(crate) fn recapture_existing_regular_identity_v1(
+    path: &Path,
+    error_kind: DurablePublicationErrorKindV1,
+) -> Result<Option<ObjectIdentityV1>, DurablePublicationErrorV1> {
+    let path_before = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(DurablePublicationErrorV1::with_io(
+                error_kind,
+                format!("cannot inspect publication file {}", path.display()),
+                error,
+            ));
+        }
+    };
+    if is_link_or_reparse_v1(&path_before) || !path_before.file_type().is_file() {
+        return Err(DurablePublicationErrorV1::new(
+            error_kind,
+            format!(
+                "publication path is a link, reparse point, or non-regular file: {}",
+                path.display()
+            ),
+        ));
+    }
+    let identity_before =
+        path_identity_v1(path, &path_before).map_err(|error| DurablePublicationErrorV1 {
+            kind: error_kind,
+            detail: error.detail,
+            source: error.source,
+        })?;
+
+    let opened = File::open(path).map_err(|error| {
+        DurablePublicationErrorV1::with_io(
+            error_kind,
+            format!("cannot open publication file {}", path.display()),
+            error,
+        )
+    })?;
+    let opened_metadata = opened.metadata().map_err(|error| {
+        DurablePublicationErrorV1::with_io(
+            error_kind,
+            format!("cannot inspect opened publication file {}", path.display()),
+            error,
+        )
+    })?;
+    if !opened_metadata.file_type().is_file() {
+        return Err(DurablePublicationErrorV1::new(
+            error_kind,
+            "opened publication path is not a regular file",
+        ));
+    }
+
+    let path_after = regular_path_metadata_v1(path, error_kind)?;
+    let reopened = File::open(path).map_err(|error| {
+        DurablePublicationErrorV1::with_io(
+            error_kind,
+            format!("cannot reopen publication file {}", path.display()),
+            error,
+        )
+    })?;
+    let reopened_metadata = reopened.metadata().map_err(|error| {
+        DurablePublicationErrorV1::with_io(
+            error_kind,
+            format!(
+                "cannot inspect reopened publication file {}",
+                path.display()
+            ),
+            error,
+        )
+    })?;
+    if !reopened_metadata.file_type().is_file() {
+        return Err(DurablePublicationErrorV1::new(
+            error_kind,
+            "reopened publication path is not a regular file",
+        ));
+    }
+
+    let identities = [
+        file_identity_v1(&opened),
+        path_identity_v1(path, &path_after),
+        file_identity_v1(&reopened),
+    ];
+    for identity in identities {
+        let identity = identity.map_err(|error| DurablePublicationErrorV1 {
+            kind: error_kind,
+            detail: error.detail,
+            source: error.source,
+        })?;
+        if identity != identity_before {
+            return Err(DurablePublicationErrorV1::new(
+                error_kind,
+                "publication file identity changed during alias recapture",
+            ));
+        }
+    }
+    Ok(Some(identity_before))
 }
 
 pub(crate) fn recapture_exact_file_v1(
@@ -1439,6 +1611,92 @@ mod tests {
                 }
                 Err(error) => panic!("cannot create Windows test symlink: {error}"),
             }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_file_id_info_is_full_width_handle_path_and_hardlink_stable() {
+        let directory = TestDirectoryV1::new("file-id-info");
+        let original = directory.path().join("original.bin");
+        let hardlink = directory.path().join("hardlink.bin");
+        let distinct = directory.path().join("distinct.bin");
+        fs::write(&original, b"same bytes").unwrap();
+        fs::hard_link(&original, &hardlink).unwrap();
+        fs::write(&distinct, b"same bytes").unwrap();
+
+        let original_metadata = fs::symlink_metadata(&original).unwrap();
+        let hardlink_metadata = fs::symlink_metadata(&hardlink).unwrap();
+        let distinct_metadata = fs::symlink_metadata(&distinct).unwrap();
+        let original_identity = path_identity_v1(&original, &original_metadata).unwrap();
+        let hardlink_identity = path_identity_v1(&hardlink, &hardlink_metadata).unwrap();
+        let distinct_identity = path_identity_v1(&distinct, &distinct_metadata).unwrap();
+        let original_handle = File::open(&original).unwrap();
+
+        assert_eq!(original_identity.file_id.len(), 16);
+        assert_eq!(
+            file_identity_v1(&original_handle).unwrap(),
+            original_identity
+        );
+        assert_eq!(hardlink_identity, original_identity);
+        assert_ne!(distinct_identity, original_identity);
+
+        // This source-level witness would be impossible with the retired
+        // 64-bit file-index representation: all sixteen identifier bytes
+        // participate in Eq, including the upper half.
+        let mut upper_half_changed = original_identity;
+        upper_half_changed.file_id[15] ^= 0xff;
+        assert_ne!(upper_half_changed, original_identity);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_child_names_reject_devices_extensions_superscripts_and_trim_aliases() {
+        let directory = TestDirectoryV1::new("windows-child-names");
+        let parent = capture_existing_publication_parent_v1(directory.path()).unwrap();
+        let rejected = [
+            "CON",
+            "con.txt",
+            "PrN.log",
+            "AUX",
+            "nul.dat",
+            "CONIN$",
+            "conout$.json",
+            "Clock$.record",
+            "COM1",
+            "com9.txt",
+            "LPT1",
+            "lpt9.ext",
+            "COM¹",
+            "cOm².txt",
+            "LPT³.dat",
+            "CON .txt",
+            "normal.",
+            "normal ",
+            "normal. ",
+        ];
+        for name in rejected {
+            assert_eq!(
+                child_path_v1(&parent, OsStr::new(name)).unwrap_err().kind(),
+                DurablePublicationErrorKindV1::InvalidChildName,
+                "reserved or trimmed Windows name accepted: {name:?}"
+            );
+        }
+
+        for allowed in [
+            "COM0",
+            "COM10",
+            "LPT0",
+            "LPT10.txt",
+            "CLOCK",
+            "CONSOLE.txt",
+            "AUXILIARY",
+            "ordinary.record",
+        ] {
+            assert!(
+                child_path_v1(&parent, OsStr::new(allowed)).is_ok(),
+                "ordinary Windows name rejected: {allowed:?}"
+            );
         }
     }
 }

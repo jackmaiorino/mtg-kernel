@@ -34,10 +34,10 @@
 //! directory concurrently. Callers must exclusively own that directory.
 
 use crate::durable_publication_v1::{
-    child_path_v1, file_identity_v1, recapture_exact_file_v1, regular_path_metadata_v1,
-    revalidate_parent_v1, sync_parent_namespace_v1, validate_caller_content_v1,
-    DurableFileExpectationV1, DurablePublicationErrorKindV1, DurablePublicationErrorV1,
-    ValidatedPublicationParentV1,
+    child_path_v1, file_identity_v1, recapture_exact_file_v1,
+    recapture_existing_regular_identity_v1, revalidate_parent_v1, sync_parent_namespace_v1,
+    validate_caller_content_v1, DurableFileExpectationV1, DurablePublicationErrorKindV1,
+    DurablePublicationErrorV1, ObjectIdentityV1, ValidatedPublicationParentV1,
 };
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
@@ -376,18 +376,10 @@ fn publish_file_by_move_with_hook_v2(
         expectation,
         DurablePublicationErrorKindV1::StageVerification,
     )?;
-    if disposition == MoveDispositionV2::Replace {
-        validate_replace_target_v2(&final_path)?;
-        // Target inspection is path based, so close that boundary with one
-        // last stage and parent recapture before the move itself.
-        revalidate_parent_v1(parent)?;
-        recapture_exact_file_v1(
-            &stage_path,
-            stage_identity,
-            expectation,
-            DurablePublicationErrorKindV1::StageVerification,
-        )?;
-    }
+    // This is deliberately the final path operation before either move. It
+    // detects case-folded, short-name, and hard-link aliases by stable object
+    // identity rather than lexical spelling.
+    reject_final_stage_alias_v2(&final_path, stage_identity, disposition)?;
 
     match disposition {
         MoveDispositionV2::ImmutableNoReplace => {
@@ -462,20 +454,23 @@ fn publish_file_by_move_with_hook_v2(
     Ok(PublishedMoveV2 { final_path })
 }
 
-fn validate_replace_target_v2(final_path: &Path) -> Result<(), DurablePublicationErrorV1> {
-    match fs::symlink_metadata(final_path) {
-        Ok(_) => regular_path_metadata_v1(final_path, DurablePublicationErrorKindV1::FinalPublish)
-            .map(|_| ()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(DurablePublicationErrorV1::with_io(
-            DurablePublicationErrorKindV1::FinalPublish,
-            format!(
-                "cannot inspect replacement destination {}",
-                final_path.display()
-            ),
-            error,
-        )),
+fn reject_final_stage_alias_v2(
+    final_path: &Path,
+    stage_identity: ObjectIdentityV1,
+    disposition: MoveDispositionV2,
+) -> Result<(), DurablePublicationErrorV1> {
+    let inspection_kind = match disposition {
+        MoveDispositionV2::ImmutableNoReplace => DurablePublicationErrorKindV1::FinalCollision,
+        MoveDispositionV2::Replace => DurablePublicationErrorKindV1::FinalPublish,
+    };
+    if recapture_existing_regular_identity_v1(final_path, inspection_kind)? == Some(stage_identity)
+    {
+        return Err(DurablePublicationErrorV1::new(
+            DurablePublicationErrorKindV1::FinalCollision,
+            "staging and final child paths resolve to the same filesystem object",
+        ));
     }
+    Ok(())
 }
 
 fn immutable_move_error_kind_v2(
@@ -775,6 +770,54 @@ mod tests {
         file.sync_all().expect("sync corrupt bytes");
     }
 
+    fn substitute_distinct_same_content_object_v2(path: &Path, bytes: &[u8]) {
+        let before = recapture_existing_regular_identity_v1(
+            path,
+            DurablePublicationErrorKindV1::FinalVerification,
+        )
+        .unwrap()
+        .unwrap();
+        fs::remove_file(path).expect("remove substitution source");
+        let mut replacement = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .expect("create distinct substitution object");
+        replacement
+            .write_all(bytes)
+            .expect("write identical substitution bytes");
+        replacement
+            .sync_all()
+            .expect("sync identical substitution bytes");
+        drop(replacement);
+        let after = recapture_existing_regular_identity_v1(
+            path,
+            DurablePublicationErrorKindV1::FinalVerification,
+        )
+        .unwrap()
+        .unwrap();
+        assert_ne!(before, after, "substitution reused the original identity");
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+
+    fn create_different_name_same_identity_alias_v2(stage_path: &Path, final_path: &Path) {
+        fs::hard_link(stage_path, final_path).expect("create hard-link alias");
+        let stage_identity = recapture_existing_regular_identity_v1(
+            stage_path,
+            DurablePublicationErrorKindV1::StageVerification,
+        )
+        .unwrap()
+        .unwrap();
+        let final_identity = recapture_existing_regular_identity_v1(
+            final_path,
+            DurablePublicationErrorKindV1::FinalCollision,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(stage_identity, final_identity);
+        assert_ne!(stage_path, final_path);
+    }
+
     fn assert_receipt_content_v2(
         final_path: &Path,
         expected_bytes: &[u8],
@@ -1061,6 +1104,157 @@ mod tests {
             fs::read(directory.path().join("candidate.stage")).unwrap(),
             bytes
         );
+    }
+
+    #[test]
+    fn hardlink_alias_is_rejected_immediately_before_both_move_modes() {
+        let bytes = b"same-object-alias-content";
+        let expectation = DurableFileExpectationV1::from_bytes(bytes).unwrap();
+        for disposition in [
+            MoveDispositionV2::ImmutableNoReplace,
+            MoveDispositionV2::Replace,
+        ] {
+            let directory = TestDirectoryV2::new("hardlink-alias");
+            let parent = capture_existing_publication_parent_v1(directory.path()).unwrap();
+            let error = publish_file_by_move_with_hook_v2(
+                &parent,
+                OsStr::new("candidate.stage"),
+                OsStr::new("different-final.bin"),
+                bytes,
+                expectation,
+                disposition,
+                |boundary, stage_path, final_path| {
+                    if boundary == PublicationBoundaryV2::StageReverified {
+                        create_different_name_same_identity_alias_v2(stage_path, final_path);
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                DurablePublicationErrorKindV1::FinalCollision,
+                "{disposition:?}"
+            );
+            assert_eq!(
+                fs::read(directory.path().join("candidate.stage")).unwrap(),
+                bytes
+            );
+            assert_eq!(
+                fs::read(directory.path().join("different-final.bin")).unwrap(),
+                bytes
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn public_move_apis_reject_case_folded_stage_final_aliases() {
+        let bytes = b"case-folded-alias-content";
+        let expectation = DurableFileExpectationV1::from_bytes(bytes).unwrap();
+
+        let immutable_directory = TestDirectoryV2::new("immutable-case-alias");
+        let immutable_parent =
+            capture_existing_publication_parent_v1(immutable_directory.path()).unwrap();
+        let immutable_error = publish_immutable_file_by_move_v2(
+            &immutable_parent,
+            OsStr::new("MixedCase.Stage"),
+            OsStr::new("mixedcase.stage"),
+            bytes,
+            expectation,
+        )
+        .unwrap_err();
+        assert_eq!(
+            immutable_error.kind(),
+            DurablePublicationErrorKindV1::FinalCollision
+        );
+        assert_eq!(
+            fs::read(immutable_directory.path().join("MixedCase.Stage")).unwrap(),
+            bytes
+        );
+
+        let replacement_directory = TestDirectoryV2::new("replacement-case-alias");
+        let replacement_parent =
+            capture_existing_publication_parent_v1(replacement_directory.path()).unwrap();
+        let replacement_error = replace_file_by_move_v2(
+            &replacement_parent,
+            OsStr::new("Pointer.Stage"),
+            OsStr::new("pointer.stage"),
+            bytes,
+            expectation,
+        )
+        .unwrap_err();
+        assert_eq!(
+            replacement_error.kind(),
+            DurablePublicationErrorKindV1::FinalCollision
+        );
+        assert_eq!(
+            fs::read(replacement_directory.path().join("Pointer.Stage")).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn distinct_same_content_stage_and_final_substitution_fail_both_move_modes() {
+        let bytes = b"identity-substitution-content";
+        let expectation = DurableFileExpectationV1::from_bytes(bytes).unwrap();
+        for disposition in [
+            MoveDispositionV2::ImmutableNoReplace,
+            MoveDispositionV2::Replace,
+        ] {
+            for target in [
+                PublicationBoundaryV2::StageReverified,
+                PublicationBoundaryV2::FinalMoved,
+            ] {
+                let directory = TestDirectoryV2::new("object-substitution");
+                let parent = capture_existing_publication_parent_v1(directory.path()).unwrap();
+                if disposition == MoveDispositionV2::Replace {
+                    fs::write(directory.path().join("final.bin"), b"old pointer").unwrap();
+                }
+                let result = publish_file_by_move_with_hook_v2(
+                    &parent,
+                    OsStr::new("candidate.stage"),
+                    OsStr::new("final.bin"),
+                    bytes,
+                    expectation,
+                    disposition,
+                    |boundary, stage_path, final_path| {
+                        if boundary == target {
+                            let substitution_path =
+                                if target == PublicationBoundaryV2::StageReverified {
+                                    stage_path
+                                } else {
+                                    final_path
+                                };
+                            substitute_distinct_same_content_object_v2(substitution_path, bytes);
+                        }
+                        Ok(())
+                    },
+                );
+                let expected_kind = if target == PublicationBoundaryV2::StageReverified {
+                    DurablePublicationErrorKindV1::StageVerification
+                } else {
+                    DurablePublicationErrorKindV1::FinalVerification
+                };
+                assert_eq!(
+                    result.unwrap_err().kind(),
+                    expected_kind,
+                    "{disposition:?} at {target:?}"
+                );
+                if target == PublicationBoundaryV2::StageReverified {
+                    if disposition == MoveDispositionV2::Replace {
+                        assert_eq!(
+                            fs::read(directory.path().join("final.bin")).unwrap(),
+                            b"old pointer"
+                        );
+                    } else {
+                        assert!(!directory.path().join("final.bin").exists());
+                    }
+                } else {
+                    assert_eq!(fs::read(directory.path().join("final.bin")).unwrap(), bytes);
+                }
+            }
+        }
     }
 
     #[test]
