@@ -4,10 +4,11 @@ The Rust capture is a clean-revision, single-update Rally/Rally production
 term stream. This authority reconstructs the exact per-group binary32 terms,
 requires the portable sequential reconstruction to match the production Rust
 bits, then computes the pinned ``torch.stack(...).sum()`` reduction. Frozen
-5e-5 absolute/relative tolerances are never changed. Policy and value sum
-channels additionally require a predeclared 5x tolerance margin; falling below
+5e-5 absolute/relative tolerances are never changed. Policy sum, value sum, and
+normalized loss each require the predeclared 5x tolerance margin; falling below
 that floor produces the stable ``repair_required`` diagnostic after the full
-evidence artifact has been written.
+evidence artifact has been written. The evidence-run invocation must also pass
+the exact capture executable so its recorded SHA-256 is re-derived.
 """
 
 from __future__ import annotations
@@ -38,7 +39,9 @@ if str(ROOT / "python") not in sys.path:
 # deterministic authority topology and gives us the exact production Python
 # loss function whose stack/sum order is authoritative.
 import generate_native_policy_train_step_v1_goldens as train_fixture  # noqa: E402
+from mtg_kernel_rl.determinism import derive_train_env_seed  # noqa: E402
 from mtg_kernel_rl.trainer import _compute_loss_tensors  # noqa: E402
+from mtg_kernel_rl.training_store import _learner_seat  # noqa: E402
 
 
 SCHEMA = "native-policy-loss-reduction-true-k512-gate-v1"
@@ -78,6 +81,8 @@ INTERMEDIATE_GENERATOR = (
 )
 
 EXPECTED_K = 512
+EXPECTED_PAIR_COUNT = EXPECTED_K // 2
+EXPECTED_ENVIRONMENT_SEED_OCCURRENCES = 2
 EXPECTED_RUN_BASE_SEED = 71_501
 EXPECTED_DECK_IDS = ["Rally", "Rally"]
 EXPECTED_TRAINER_CONTRACT = "mtg-kernel-native-even-batch-trainer-v2"
@@ -92,9 +97,8 @@ VALUE_COEFFICIENT_BITS = "0x3f000000"
 LEARNING_RATE_BITS = "0x3a83126f"
 LOSS_ABSOLUTE_TOLERANCE = 5.0e-5
 LOSS_RELATIVE_TOLERANCE = 5.0e-5
-SUM_MARGIN_FLOOR = 5.0
-SUM_CHANNELS = ("policy_sum", "value_sum")
 ALL_CHANNELS = ("policy_sum", "value_sum", "loss")
+MARGIN_FLOOR = 5.0
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 STRICT_SOURCE_RECIPE_IDENTITY = "mtg-kernel-strict-source-tree-sha256-v1"
 STRICT_SOURCE_RECIPE_SHA256 = (
@@ -383,6 +387,69 @@ def _snapshot_expectations() -> dict[str, Any]:
     }
 
 
+def _episode_schedule_proof(records: list[dict[str, Any]]) -> dict[str, Any]:
+    if len(records) != EXPECTED_K:
+        raise RuntimeError("capture does not contain the frozen episode schedule")
+    occurrences: dict[int, list[int]] = {}
+    environment_seeds_recomputed = True
+    learner_seats_recomputed = True
+    consecutive_even_odd_pairing = True
+    for ordinal, record in enumerate(records):
+        episode_index = record.get("episode_index")
+        environment_seed = record.get("environment_seed")
+        learner_seat = record.get("learner_seat")
+        if episode_index != ordinal:
+            raise RuntimeError("capture episode schedule indices are not contiguous")
+        if type(environment_seed) is not int or not 0 <= environment_seed < 1 << 64:
+            raise RuntimeError("capture episode environment seed is invalid")
+        expected_seed = derive_train_env_seed(EXPECTED_RUN_BASE_SEED, episode_index // 2)
+        expected_seat = _learner_seat(episode_index)
+        environment_seeds_recomputed &= environment_seed == expected_seed
+        learner_seats_recomputed &= learner_seat == expected_seat
+        occurrences.setdefault(environment_seed, []).append(ordinal)
+        if ordinal % 2 == 1:
+            previous = records[ordinal - 1]
+            consecutive_even_odd_pairing &= (
+                previous.get("episode_index") == ordinal - 1
+                and previous.get("environment_seed") == environment_seed
+                and previous.get("learner_seat") == "p0"
+                and learner_seat == "p1"
+            )
+
+    each_seed_occurs_exactly_twice = all(
+        len(ordinals) == EXPECTED_ENVIRONMENT_SEED_OCCURRENCES
+        for ordinals in occurrences.values()
+    )
+    occurrence_positions_are_consecutive_even_odd = all(
+        len(ordinals) == EXPECTED_ENVIRONMENT_SEED_OCCURRENCES
+        and ordinals[0] % 2 == 0
+        and ordinals[1] == ordinals[0] + 1
+        for ordinals in occurrences.values()
+    )
+    consecutive_even_odd_pairing &= occurrence_positions_are_consecutive_even_odd
+    proof = {
+        "distinct_environment_seed_count": len(occurrences),
+        "environment_seed_occurrences_per_distinct_seed": (
+            EXPECTED_ENVIRONMENT_SEED_OCCURRENCES
+        ),
+        "each_environment_seed_occurs_exactly_twice": each_seed_occurs_exactly_twice,
+        "consecutive_even_odd_seed_pairing_validated": consecutive_even_odd_pairing,
+        "environment_seeds_recomputed_from_frozen_schedule": (
+            environment_seeds_recomputed
+        ),
+        "learner_seats_recomputed_from_frozen_schedule": learner_seats_recomputed,
+    }
+    if (
+        proof["distinct_environment_seed_count"] != EXPECTED_PAIR_COUNT
+        or not each_seed_occurs_exactly_twice
+        or not consecutive_even_odd_pairing
+        or not environment_seeds_recomputed
+        or not learner_seats_recomputed
+    ):
+        raise RuntimeError("capture paired episode schedule provenance drifted")
+    return proof
+
+
 def _episode_stream_digest(records: list[dict[str, Any]]) -> str:
     digest = hashlib.sha256()
     for ordinal, record in enumerate(records):
@@ -495,7 +562,9 @@ def _validate_scalar_record(record: Any, expected: float, context: str) -> None:
         raise RuntimeError(f"{context} scalar bits/value drifted")
 
 
-def _validate_capture(capture_path: Path) -> tuple[dict[str, Any], str, str]:
+def _validate_capture(
+    capture_path: Path, capture_executable: Path | None = None
+) -> tuple[dict[str, Any], str, str, str | None]:
     if not capture_path.is_file():
         raise RuntimeError(f"K512 capture is missing: {capture_path}")
     capture_sha256 = _sha256(capture_path)
@@ -569,7 +638,18 @@ def _validate_capture(capture_path: Path) -> tuple[dict[str, Any], str, str]:
         != CAPTURE_HARNESS.relative_to(ROOT).as_posix()
     ):
         raise RuntimeError("capture source preflight/postflight record drifted")
-    _require_hex(source.get("executable_sha256"), 64, "capture executable sha256")
+    recorded_executable_sha256 = _require_hex(
+        source.get("executable_sha256"), 64, "capture executable sha256"
+    )
+    rederived_executable_sha256: str | None = None
+    if capture_executable is not None:
+        if not capture_executable.is_absolute() or not capture_executable.is_file():
+            raise RuntimeError(
+                "capture executable must be an existing absolute file path"
+            )
+        rederived_executable_sha256 = _sha256(capture_executable)
+        if rederived_executable_sha256 != recorded_executable_sha256:
+            raise RuntimeError("capture executable SHA-256 binding failed")
 
     workload = capture["workload"]
     expected_workload = {
@@ -626,11 +706,15 @@ def _validate_capture(capture_path: Path) -> tuple[dict[str, Any], str, str]:
     episodes = episode_stream.get("records")
     if not isinstance(episodes, list) or len(episodes) != EXPECTED_K:
         raise RuntimeError("capture does not contain exactly 512 episode receipts")
+    episode_schedule_proof = _episode_schedule_proof(episodes)
     if (
         episode_stream.get("framing") != EPISODE_STREAM_FRAMING
         or episode_stream.get("sha256") != _episode_stream_digest(episodes)
         or episode_stream.get("independent_episode_count") != EXPECTED_K
-        or episode_stream.get("distinct_environment_seed_count") != EXPECTED_K
+        or any(
+            episode_stream.get(field) != expected
+            for field, expected in episode_schedule_proof.items()
+        )
     ):
         raise RuntimeError("capture episode stream provenance drifted")
 
@@ -681,7 +765,7 @@ def _validate_capture(capture_path: Path) -> tuple[dict[str, Any], str, str]:
     if (
         term_cursor != group_count
         or learner_policy_step_sum != sizing["learner_policy_step_count"]
-        or len(environment_seeds) != EXPECTED_K
+        or len(environment_seeds) != EXPECTED_PAIR_COUNT
     ):
         raise RuntimeError("capture episode aggregate counts drifted")
     for term in terms:
@@ -714,7 +798,12 @@ def _validate_capture(capture_path: Path) -> tuple[dict[str, Any], str, str]:
     for name, expected in zip(ALL_CHANNELS, sequential, strict=True):
         _validate_scalar_record(production.get(name), expected, f"production {name}")
 
-    return capture, capture_sha256, harness_sha256
+    return (
+        capture,
+        capture_sha256,
+        harness_sha256,
+        rederived_executable_sha256,
+    )
 
 
 def _tensor_bits(value: torch.Tensor) -> str:
@@ -774,21 +863,22 @@ def _authority_reduction(
 
 
 def _comparison_record(name: str, torch_value: float, rust_value: float) -> dict[str, Any]:
+    if name not in ALL_CHANNELS:
+        raise RuntimeError(f"unknown scalar comparison channel: {name}")
     delta = abs(float(rust_value) - float(torch_value))
     allowed = LOSS_ABSOLUTE_TOLERANCE + LOSS_RELATIVE_TOLERANCE * abs(
         float(torch_value)
     )
     tolerance_holds = delta <= allowed
     margin = None if delta == 0.0 else allowed / delta
-    floor_applies = name in SUM_CHANNELS
-    margin_floor_holds = not floor_applies or margin is None or margin >= SUM_MARGIN_FLOOR
+    margin_floor_holds = margin is None or margin >= MARGIN_FLOOR
     return {
         "absolute_delta_f64": delta,
         "allowed_delta_f64": allowed,
         "tolerance_holds": tolerance_holds,
         "margin_ratio_allowed_over_delta_f64": margin,
-        "margin_floor_applies": floor_applies,
-        "required_margin_floor_f64": SUM_MARGIN_FLOOR if floor_applies else None,
+        "margin_floor_applies": True,
+        "required_margin_floor_f64": MARGIN_FLOOR,
         "margin_floor_holds": margin_floor_holds,
         "gate_holds": tolerance_holds and margin_floor_holds,
     }
@@ -800,7 +890,7 @@ def _gate_record(comparisons: dict[str, dict[str, Any]]) -> dict[str, Any]:
         comparison = comparisons[name]
         if not comparison["tolerance_holds"]:
             triggered.append(f"{name}:frozen_tolerance_breach")
-        if comparison["margin_floor_applies"] and not comparison["margin_floor_holds"]:
+        if not comparison["margin_floor_holds"]:
             triggered.append(f"{name}:margin_below_5x")
     repair_required = bool(triggered)
     return {
@@ -810,19 +900,23 @@ def _gate_record(comparisons: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "all_frozen_tolerances_hold": all(
             comparisons[name]["tolerance_holds"] for name in ALL_CHANNELS
         ),
-        "all_sum_margin_floors_hold": all(
-            comparisons[name]["margin_floor_holds"] for name in SUM_CHANNELS
+        "all_scalar_margin_floors_hold": all(
+            comparisons[name]["margin_floor_holds"] for name in ALL_CHANNELS
         ),
         "silent_tolerance_loosening_permitted": False,
         "predeclared_repair_paths": [
             "versioned deterministic blocked/pairwise Rust reduction with a new train-step identity and fresh cross-language goldens",
-            "separately reviewed scale-aware Higham-style bound for sum channels only while leaving per-group loss tolerance unchanged",
+            "separately reviewed scale-aware Higham-style bound for policy_sum, value_sum, and propagated normalized loss while leaving frozen tolerances unchanged",
         ],
     }
 
 
-def _payload(capture_path: Path) -> dict[str, Any]:
-    capture, capture_sha256, harness_sha256 = _validate_capture(capture_path)
+def _payload(capture_path: Path, capture_executable: Path) -> dict[str, Any]:
+    capture, capture_sha256, harness_sha256, executable_sha256 = _validate_capture(
+        capture_path, capture_executable
+    )
+    if executable_sha256 is None:
+        raise RuntimeError("capture executable SHA-256 was not re-derived")
     source_receipt = capture["source"]["strict_source_tree"]
     torch_stack, group_count, policy_term_count, value_term_count = _authority_reduction(
         capture
@@ -860,6 +954,7 @@ def _payload(capture_path: Path) -> dict[str, Any]:
             "capture_harness_sha256": harness_sha256,
             "capture_artifact_path": CAPTURE_PATH.relative_to(ROOT).as_posix(),
             "capture_artifact_sha256": capture_sha256,
+            "capture_executable_sha256": executable_sha256,
             "source_tree_recipe_identity": source_receipt[
                 "source_tree_recipe_identity"
             ],
@@ -868,6 +963,10 @@ def _payload(capture_path: Path) -> dict[str, Any]:
             ],
             "capture_source_git_commit": source_receipt["git_commit"],
             "capture_source_tree_sha256": source_receipt["source_tree_sha256"],
+            "capture_executable_path_supplied_to_gate": True,
+            "capture_executable_sha256_rederived": (
+                executable_sha256 == capture["source"]["executable_sha256"]
+            ),
             "intermediate_rung_path": INTERMEDIATE_RUNG.relative_to(ROOT).as_posix(),
             "intermediate_rung_sha256": _sha256(INTERMEDIATE_RUNG),
             "intermediate_generator_path": INTERMEDIATE_GENERATOR.relative_to(ROOT).as_posix(),
@@ -937,10 +1036,9 @@ def _payload(capture_path: Path) -> dict[str, Any]:
                 "relative": LOSS_RELATIVE_TOLERANCE,
                 "comparison_rule": "abs(rust-torch) <= absolute + relative*abs(torch)",
             },
-            "sum_margin_floor": {
-                "channels": list(SUM_CHANNELS),
-                "minimum_allowed_over_delta_ratio": SUM_MARGIN_FLOOR,
-                "loss_channel_floor_nonclaim": "loss must hold the frozen tolerance; the predeclared 5x floor applies to policy_sum and value_sum",
+            "scalar_margin_floor": {
+                "channels": list(ALL_CHANNELS),
+                "minimum_allowed_over_delta_ratio": MARGIN_FLOOR,
             },
         },
         "gate": gate,
@@ -963,7 +1061,9 @@ def _comparison_from_records(
 
 
 def _portable_check() -> None:
-    capture, capture_sha256, harness_sha256 = _validate_capture(CAPTURE_PATH)
+    capture, capture_sha256, harness_sha256, _executable_sha256 = _validate_capture(
+        CAPTURE_PATH
+    )
     source_receipt = capture["source"]["strict_source_tree"]
     checked = _load_strict(OUTPUT)
     if checked.get("schema") != SCHEMA or checked.get("identity") != IDENTITY:
@@ -978,6 +1078,9 @@ def _portable_check() -> None:
         "capture_harness_sha256": harness_sha256,
         "capture_artifact_path": CAPTURE_PATH.relative_to(ROOT).as_posix(),
         "capture_artifact_sha256": capture_sha256,
+        "capture_executable_sha256": capture["source"]["executable_sha256"],
+        "capture_executable_path_supplied_to_gate": True,
+        "capture_executable_sha256_rederived": True,
         "source_tree_recipe_identity": STRICT_SOURCE_RECIPE_IDENTITY,
         "source_tree_recipe_sha256": STRICT_SOURCE_RECIPE_SHA256,
         "capture_source_git_commit": source_receipt["git_commit"],
@@ -1029,10 +1132,12 @@ def _portable_check() -> None:
             "relative": LOSS_RELATIVE_TOLERANCE,
             "comparison_rule": "abs(rust-torch) <= absolute + relative*abs(torch)",
         }
-        or reduction.get("sum_margin_floor", {}).get(
+        or reduction.get("scalar_margin_floor", {}).get("channels")
+        != list(ALL_CHANNELS)
+        or reduction.get("scalar_margin_floor", {}).get(
             "minimum_allowed_over_delta_ratio"
         )
-        != SUM_MARGIN_FLOOR
+        != MARGIN_FLOOR
     ):
         raise RuntimeError("true-K512 frozen reduction contract drifted")
     if checked.get("gate") != _gate_record(expected_comparisons):
@@ -1040,9 +1145,23 @@ def _portable_check() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=(
+            "Evaluate the true-K512 capture. Evidence generation and authority "
+            "checking require --capture-executable to name the exact binary "
+            "that produced the capture; a rebuilt substitute is not accepted."
+        )
+    )
     parser.add_argument("--capture", type=Path, default=CAPTURE_PATH)
     parser.add_argument("--output", type=Path, default=OUTPUT)
+    parser.add_argument(
+        "--capture-executable",
+        type=Path,
+        help=(
+            "absolute path to the preserved capture executable; its SHA-256 "
+            "must equal source.executable_sha256 before Torch runs"
+        ),
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--check",
@@ -1062,8 +1181,12 @@ def main() -> int:
         print(f"PASS portable {OUTPUT.relative_to(ROOT)}")
         return 0
 
+    if args.capture_executable is None:
+        parser.error(
+            "--capture-executable is required outside portable --check mode"
+        )
     train_fixture._assert_exact_authority_environment()
-    payload = _payload(args.capture)
+    payload = _payload(args.capture, args.capture_executable)
     encoded = _encoded_payload(payload)
     if args.authority_check:
         if args.capture != CAPTURE_PATH or args.output != OUTPUT:

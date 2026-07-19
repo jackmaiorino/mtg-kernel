@@ -54,6 +54,8 @@ pub(crate) fn packed_independent_recompute_call_count_for_test_v1() -> u64 {
 
 pub(crate) const TRAINER_ALGORITHM_V1: &str = "terminal_reinforce_value/v3";
 pub(crate) const TRAIN_STEP_IDENTITY_V1: &str = "native-policy-value-cpu-train-step-v1";
+pub const NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1: &str =
+    "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-sequential";
 pub(crate) const NATIVE_OPTIMIZER_IDENTITY_V1: &str = "native-adam-canonical-scorer-bias-gauge-v1";
 pub(crate) const NATIVE_TRAIN_STATE_SHA256_IDENTITY_V1: &str =
     "mtg-kernel-native-policy-value-train-state-sha256-v1";

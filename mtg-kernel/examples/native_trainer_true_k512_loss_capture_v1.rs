@@ -7,8 +7,9 @@
 //! repository so clean-source preflight and postflight can be compared exactly.
 
 use mtg_kernel::native_training_executor_v1::{
-    NativeTrainingExecutionConfigV1, NativeTrainingExecutorErrorV1, NativeTrainingExecutorV1,
-    NativeTrainingSnapshotReceiptV1, NativeTrainingUpdateObservationV2,
+    native_training_episode_schedule_v1, NativeTrainingExecutionConfigV1,
+    NativeTrainingExecutorErrorV1, NativeTrainingExecutorV1, NativeTrainingSnapshotReceiptV1,
+    NativeTrainingUpdateObservationV2, NATIVE_TRAINING_NUMERICAL_BACKEND_IDENTITY_V1,
 };
 use mtg_kernel::rl::{PlayerSeatV1, TerminalOutcomeV1};
 use mtg_kernel::strict_source_tree_attestation_v1::{
@@ -18,7 +19,7 @@ use mtg_kernel::strict_source_tree_attestation_v1::{
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
 use std::fmt::{Display, Formatter};
@@ -37,6 +38,8 @@ const SELECTED_STREAM_FRAMING: &str = "for selected output in production order: 
 const EPISODE_STREAM_FRAMING: &str = "for episode ordinal in production order: u64be(ordinal)||u64be(episode_index)||u64be(environment_seed)||u64be(deck_hash_p0)||u64be(deck_hash_p1)||u8(learner_seat)||i8_twos_complement(learner_return)||u64be(learner_group_count)||u64be(learner_policy_step_count)||raw32(full_trajectory_sha256)";
 const RUN_BASE_SEED: u64 = 71_501;
 const K: u64 = 512;
+const PAIR_COUNT: usize = 256;
+const ENVIRONMENT_SEED_OCCURRENCES_PER_PAIR: usize = 2;
 const DECK_ID: &str = "Rally";
 const MAX_PHYSICAL_DECISIONS: u64 = 5_000;
 const MAX_POLICY_STEPS: u64 = 640_000;
@@ -224,7 +227,20 @@ struct EpisodeStreamRecord {
     sha256: String,
     independent_episode_count: usize,
     distinct_environment_seed_count: usize,
+    environment_seed_occurrences_per_distinct_seed: usize,
+    each_environment_seed_occurs_exactly_twice: bool,
+    consecutive_even_odd_seed_pairing_validated: bool,
+    environment_seeds_recomputed_from_frozen_schedule: bool,
+    learner_seats_recomputed_from_frozen_schedule: bool,
     records: Vec<EpisodeRecord>,
+}
+
+struct EpisodeScheduleProof {
+    distinct_environment_seed_count: usize,
+    each_environment_seed_occurs_exactly_twice: bool,
+    consecutive_even_odd_seed_pairing_validated: bool,
+    environment_seeds_recomputed_from_frozen_schedule: bool,
+    learner_seats_recomputed_from_frozen_schedule: bool,
 }
 
 #[derive(Serialize)]
@@ -646,15 +662,15 @@ fn build_capture_record(
     outer_update_elapsed_ns: u128,
 ) -> Result<CaptureRecord, AppError> {
     validate_observation(&observation)?;
-    let (episodes, episode_sha256, distinct_environment_seed_count) =
-        episode_records(&observation)?;
+    let (episodes, episode_sha256, episode_schedule_proof) = episode_records(&observation)?;
     let term_stream = term_records(&observation)?;
     let selected_sha256 = selected_stream_sha256(&observation)?;
     let (policy_sum, value_sum, loss) = reconstruct_sequential_reduction(&observation)?;
-    if policy_sum.to_bits() != observation.policy_sum_bits
-        || value_sum.to_bits() != observation.value_sum_bits
-        || loss.to_bits() != observation.loss_bits
-    {
+    let reconstruction_matches_production_bits = policy_sum.to_bits()
+        == observation.policy_sum_bits
+        && value_sum.to_bits() == observation.value_sum_bits
+        && loss.to_bits() == observation.loss_bits;
+    if !reconstruction_matches_production_bits {
         return Err(AppError::new(
             "production scalar reconstruction does not match observed bits",
         ));
@@ -675,7 +691,7 @@ fn build_capture_record(
             composition_identity: "production-native-training-executor-single-update-genuine-rally-v1",
             composition_nonclaim: "all 512 episodes were independently executed by production NativeTrainingExecutorV1; no physical group or term was cycled, replayed, expanded, or synthetically generated",
             trainer_contract_identity: observation.trainer_contract_identity,
-            numerical_backend_identity: "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-sequential",
+            numerical_backend_identity: NATIVE_TRAINING_NUMERICAL_BACKEND_IDENTITY_V1,
             run_base_seed: RUN_BASE_SEED,
             batch_episodes: K,
             deck_ids: [DECK_ID, DECK_ID],
@@ -715,7 +731,18 @@ fn build_capture_record(
             framing: EPISODE_STREAM_FRAMING,
             sha256: episode_sha256,
             independent_episode_count: episodes.len(),
-            distinct_environment_seed_count,
+            distinct_environment_seed_count: episode_schedule_proof
+                .distinct_environment_seed_count,
+            environment_seed_occurrences_per_distinct_seed:
+                ENVIRONMENT_SEED_OCCURRENCES_PER_PAIR,
+            each_environment_seed_occurs_exactly_twice: episode_schedule_proof
+                .each_environment_seed_occurs_exactly_twice,
+            consecutive_even_odd_seed_pairing_validated: episode_schedule_proof
+                .consecutive_even_odd_seed_pairing_validated,
+            environment_seeds_recomputed_from_frozen_schedule: episode_schedule_proof
+                .environment_seeds_recomputed_from_frozen_schedule,
+            learner_seats_recomputed_from_frozen_schedule: episode_schedule_proof
+                .learner_seats_recomputed_from_frozen_schedule,
             records: episodes,
         },
         selected_outputs: SelectedStreamRecord {
@@ -736,7 +763,7 @@ fn build_capture_record(
         },
         rust_production_reduction: RustReductionRecord {
             operation: "ordered f32 policy_sum += (-joint_log_probability * (terminal_return_f32 - value)); value_sum += ((value - terminal_return_f32) * (value - terminal_return_f32)); loss = (policy_sum + 0.5f32 * value_sum) / learner_group_count_f32",
-            reconstruction_matches_production_bits: true,
+            reconstruction_matches_production_bits,
             policy_sum: scalar_record(f32::from_bits(observation.policy_sum_bits)),
             value_sum: scalar_record(f32::from_bits(observation.value_sum_bits)),
             loss: scalar_record(f32::from_bits(observation.loss_bits)),
@@ -775,24 +802,55 @@ fn validate_observation(observation: &NativeTrainingUpdateObservationV2) -> Resu
 
 fn episode_records(
     observation: &NativeTrainingUpdateObservationV2,
-) -> Result<(Vec<EpisodeRecord>, String, usize), AppError> {
+) -> Result<(Vec<EpisodeRecord>, String, EpisodeScheduleProof), AppError> {
     let mut digest = Sha256::new();
     let mut records = Vec::with_capacity(observation.episodes.len());
-    let mut environment_seeds = BTreeSet::new();
+    let mut environment_seed_occurrences: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    let mut consecutive_even_odd_seed_pairing_validated = true;
+    let mut environment_seeds_recomputed_from_frozen_schedule = true;
+    let mut learner_seats_recomputed_from_frozen_schedule = true;
     let mut term_begin = 0usize;
     for (ordinal, episode) in observation.episodes.iter().enumerate() {
         let expected_index = u64::try_from(ordinal)
             .map_err(|_| AppError::new("episode ordinal does not fit u64"))?;
         let receipt = episode.full_trajectory_receipt;
+        let expected_schedule = native_training_episode_schedule_v1(RUN_BASE_SEED, expected_index)
+            .map_err(|error| AppError::executor("frozen episode schedule failed", error))?;
+        let expected_parity_seat = if ordinal % 2 == 0 {
+            PlayerSeatV1::P0
+        } else {
+            PlayerSeatV1::P1
+        };
+        environment_seeds_recomputed_from_frozen_schedule &= expected_schedule.episode_index
+            == expected_index
+            && expected_schedule.pair_index == expected_index / 2
+            && receipt.environment_seed == expected_schedule.environment_seed;
+        learner_seats_recomputed_from_frozen_schedule &= expected_schedule.learner_seat
+            == expected_parity_seat
+            && episode.learner_seat == expected_schedule.learner_seat;
+        if ordinal % 2 == 1 {
+            let previous = observation
+                .episodes
+                .get(ordinal - 1)
+                .ok_or_else(|| AppError::new("paired episode predecessor is missing"))?;
+            consecutive_even_odd_seed_pairing_validated &= previous.episode_index.checked_add(1)
+                == Some(episode.episode_index)
+                && previous.learner_seat == PlayerSeatV1::P0
+                && episode.learner_seat == PlayerSeatV1::P1
+                && previous.full_trajectory_receipt.environment_seed == receipt.environment_seed;
+        }
         if episode.episode_index != expected_index
             || receipt.episode_index != episode.episode_index
             || receipt.learner_seat != episode.learner_seat
             || receipt.learner_policy_step_count != episode.learner_policy_step_count
             || receipt.learner_physical_decision_count != episode.learner_group_count
-            || !environment_seeds.insert(receipt.environment_seed)
         {
             return Err(AppError::new("genuine episode provenance invariant failed"));
         }
+        environment_seed_occurrences
+            .entry(receipt.environment_seed)
+            .or_default()
+            .push(ordinal);
         let group_count = usize::try_from(episode.learner_group_count)
             .map_err(|_| AppError::new("episode group count does not fit usize"))?;
         let term_end = term_begin
@@ -840,10 +898,37 @@ fn episode_records(
             "episode term ranges do not cover term stream",
         ));
     }
+    let each_environment_seed_occurs_exactly_twice = environment_seed_occurrences
+        .values()
+        .all(|ordinals| ordinals.len() == ENVIRONMENT_SEED_OCCURRENCES_PER_PAIR);
+    let occurrences_are_consecutive_even_odd =
+        environment_seed_occurrences.values().all(|ordinals| {
+            ordinals.len() == ENVIRONMENT_SEED_OCCURRENCES_PER_PAIR
+                && ordinals[0] % 2 == 0
+                && ordinals[1] == ordinals[0] + 1
+        });
+    consecutive_even_odd_seed_pairing_validated &= occurrences_are_consecutive_even_odd;
+    let distinct_environment_seed_count = environment_seed_occurrences.len();
+    if distinct_environment_seed_count != PAIR_COUNT
+        || !each_environment_seed_occurs_exactly_twice
+        || !consecutive_even_odd_seed_pairing_validated
+        || !environment_seeds_recomputed_from_frozen_schedule
+        || !learner_seats_recomputed_from_frozen_schedule
+    {
+        return Err(AppError::new(
+            "genuine paired episode schedule provenance invariant failed",
+        ));
+    }
     Ok((
         records,
         hex_bytes(&digest.finalize()),
-        environment_seeds.len(),
+        EpisodeScheduleProof {
+            distinct_environment_seed_count,
+            each_environment_seed_occurs_exactly_twice,
+            consecutive_even_odd_seed_pairing_validated,
+            environment_seeds_recomputed_from_frozen_schedule,
+            learner_seats_recomputed_from_frozen_schedule,
+        },
     ))
 }
 
