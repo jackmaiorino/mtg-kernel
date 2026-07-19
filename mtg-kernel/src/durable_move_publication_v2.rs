@@ -777,11 +777,15 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        fs::remove_file(path).expect("remove substitution source");
+        // Create the replacement while the original still exists. Some Unix
+        // filesystems immediately recycle the just-unlinked inode, which made
+        // a remove-then-create fixture spuriously reuse the original identity
+        // and fail before exercising the publication guard.
+        let replacement_path = path.with_extension("distinct-substitution-v2");
         let mut replacement = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(path)
+            .open(&replacement_path)
             .expect("create distinct substitution object");
         replacement
             .write_all(bytes)
@@ -790,13 +794,25 @@ mod tests {
             .sync_all()
             .expect("sync identical substitution bytes");
         drop(replacement);
+        let replacement_identity = recapture_existing_regular_identity_v1(
+            &replacement_path,
+            DurablePublicationErrorKindV1::FinalVerification,
+        )
+        .unwrap()
+        .unwrap();
+        assert_ne!(
+            before, replacement_identity,
+            "coexisting substitution objects must have distinct identities"
+        );
+        fs::remove_file(path).expect("remove substitution source");
+        fs::rename(&replacement_path, path).expect("install distinct substitution object");
         let after = recapture_existing_regular_identity_v1(
             path,
             DurablePublicationErrorKindV1::FinalVerification,
         )
         .unwrap()
         .unwrap();
-        assert_ne!(before, after, "substitution reused the original identity");
+        assert_eq!(replacement_identity, after);
         assert_eq!(fs::read(path).unwrap(), bytes);
     }
 
