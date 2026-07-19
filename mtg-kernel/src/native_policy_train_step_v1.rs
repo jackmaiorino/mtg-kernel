@@ -246,30 +246,30 @@ pub(crate) struct NativePolicyTrainStepResultV1 {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NativeScorerBiasGaugeRecordV1 {
-    pub(crate) parameter_name: &'static str,
-    pub(crate) substep_count: usize,
-    pub(crate) total_action_count: usize,
-    pub(crate) max_action_count: usize,
-    pub(crate) sum_abs_policy_coefficients: f64,
-    pub(crate) substep_bounds: Vec<NativeGaugeSubstepBoundV1>,
-    pub(crate) per_substep_bound_sum: f64,
-    pub(crate) cross_substep_bound: f64,
-    pub(crate) raw_gradient_residual: f32,
-    pub(crate) derived_absolute_bound: f64,
-    pub(crate) high_precision_residual: f64,
-    pub(crate) canonical_gradient: f32,
-    pub(crate) parameter_before_bits: u32,
-    pub(crate) parameter_after_bits: u32,
+pub struct NativeScorerBiasGaugeRecordV1 {
+    pub parameter_name: &'static str,
+    pub substep_count: usize,
+    pub total_action_count: usize,
+    pub max_action_count: usize,
+    pub sum_abs_policy_coefficients: f64,
+    pub substep_bounds: Vec<NativeGaugeSubstepBoundV1>,
+    pub per_substep_bound_sum: f64,
+    pub cross_substep_bound: f64,
+    pub raw_gradient_residual: f32,
+    pub derived_absolute_bound: f64,
+    pub high_precision_residual: f64,
+    pub canonical_gradient: f32,
+    pub parameter_before_bits: u32,
+    pub parameter_after_bits: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NativeGaugeSubstepBoundV1 {
-    pub(crate) action_count: usize,
-    pub(crate) abs_policy_coefficient: f64,
-    pub(crate) gamma_operation_count: usize,
-    pub(crate) gamma: f64,
-    pub(crate) bound_component: f64,
+pub struct NativeGaugeSubstepBoundV1 {
+    pub action_count: usize,
+    pub abs_policy_coefficient: f64,
+    pub gamma_operation_count: usize,
+    pub gamma: f64,
+    pub bound_component: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

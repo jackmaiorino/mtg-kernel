@@ -75,18 +75,18 @@ pub(crate) struct NativeFullEpisodeTrajectoryDecisionRowV1 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeFullEpisodeTrajectoryReceiptV1 {
-    pub(crate) episode_index: u64,
-    pub(crate) environment_seed: u64,
-    pub(crate) deck_hashes: SessionDeckHashesV1,
-    pub(crate) learner_seat: PlayerSeatV1,
-    pub(crate) trajectory_sha256: [u8; 32],
-    pub(crate) policy_step_count: u64,
-    pub(crate) physical_decision_count: u64,
-    pub(crate) learner_policy_step_count: u64,
-    pub(crate) opponent_policy_step_count: u64,
-    pub(crate) learner_physical_decision_count: u64,
-    pub(crate) opponent_physical_decision_count: u64,
+pub struct NativeFullEpisodeTrajectoryReceiptV1 {
+    pub episode_index: u64,
+    pub environment_seed: u64,
+    pub deck_hashes: SessionDeckHashesV1,
+    pub learner_seat: PlayerSeatV1,
+    pub trajectory_sha256: [u8; 32],
+    pub policy_step_count: u64,
+    pub physical_decision_count: u64,
+    pub learner_policy_step_count: u64,
+    pub opponent_policy_step_count: u64,
+    pub learner_physical_decision_count: u64,
+    pub opponent_physical_decision_count: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

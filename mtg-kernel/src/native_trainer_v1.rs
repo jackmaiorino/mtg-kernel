@@ -1027,65 +1027,67 @@ pub(crate) struct NativeTrainerProgressV2 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeTrainerEpisodeEvidenceV1 {
-    pub(crate) episode_index: u64,
-    pub(crate) learner_seat: PlayerSeatV1,
-    pub(crate) learner_return: i8,
-    pub(crate) learner_group_count: u64,
-    pub(crate) learner_policy_step_count: u64,
-    pub(crate) learner_trace_hash: u64,
-    pub(crate) terminal_outcome: TerminalOutcomeV1,
+pub struct NativeTrainerEpisodeEvidenceV1 {
+    pub episode_index: u64,
+    pub learner_seat: PlayerSeatV1,
+    pub learner_return: i8,
+    pub learner_group_count: u64,
+    pub learner_policy_step_count: u64,
+    pub learner_trace_hash: u64,
+    pub terminal_outcome: TerminalOutcomeV1,
     /// Full both-actor accepted-action commitment. The legacy learner-only
     /// trace remains diagnostic and is not a persisted trajectory identity.
-    pub(crate) full_trajectory_receipt: NativeFullEpisodeTrajectoryReceiptV1,
+    pub full_trajectory_receipt: NativeFullEpisodeTrajectoryReceiptV1,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeTrainerSelectedOutputEvidenceV1 {
-    pub(crate) group_index: usize,
-    pub(crate) substep_index: usize,
-    pub(crate) selected_action_index: usize,
-    pub(crate) selected_logit_bits: u32,
-    pub(crate) value_bits: u32,
-    pub(crate) selected_log_probability_bits: u32,
+pub struct NativeTrainerSelectedOutputEvidenceV1 {
+    pub group_index: usize,
+    pub substep_index: usize,
+    pub selected_action_index: usize,
+    pub selected_logit_bits: u32,
+    pub value_bits: u32,
+    pub selected_log_probability_bits: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeTrainerPhysicalTermEvidenceV1 {
-    pub(crate) joint_log_probability_bits: u32,
-    pub(crate) value_bits: u32,
-    pub(crate) terminal_return: i8,
+pub struct NativeTrainerPhysicalTermEvidenceV1 {
+    pub joint_log_probability_bits: u32,
+    pub value_bits: u32,
+    pub terminal_return: i8,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NativeTrainerUpdateEvidenceV2 {
-    pub(crate) trainer_contract_identity: &'static str,
+pub struct NativeTrainerUpdateEvidenceV2 {
+    pub trainer_contract_identity: &'static str,
     /// End-to-end successful-update wall time, including rollout, inference,
     /// grouping, training, evidence construction, and pre-commit validation.
-    pub(crate) update_elapsed_ns: u64,
-    pub(crate) first_episode_index: u64,
-    pub(crate) episode_count: u64,
-    pub(crate) worker_count: usize,
-    pub(crate) sessions_per_worker: usize,
-    pub(crate) logical_actor_count: usize,
-    pub(crate) broker_batch_target: usize,
-    pub(crate) episodes: Vec<NativeTrainerEpisodeEvidenceV1>,
-    pub(crate) learner_group_count: u64,
-    pub(crate) learner_policy_step_count: u64,
-    pub(crate) scorer_accepted_batch_count: u64,
-    pub(crate) scorer_accepted_decision_count: u64,
-    pub(crate) rollout_metrics: AsyncFlatScoredRolloutMetricsV2,
-    pub(crate) model_digest_before: String,
-    pub(crate) model_digest_after: String,
-    pub(crate) changed_non_gauge_parameter_count: usize,
-    pub(crate) policy_sum_bits: u32,
-    pub(crate) value_sum_bits: u32,
-    pub(crate) loss_bits: u32,
-    pub(crate) adam_step_before: u64,
-    pub(crate) adam_step_after: u64,
-    pub(crate) selected_outputs: Vec<NativeTrainerSelectedOutputEvidenceV1>,
-    pub(crate) physical_terms: Vec<NativeTrainerPhysicalTermEvidenceV1>,
-    pub(crate) scorer_bias_gauge: NativeScorerBiasGaugeRecordV1,
+    pub update_elapsed_ns: u64,
+    pub first_episode_index: u64,
+    pub episode_count: u64,
+    pub physical_decision_count: u64,
+    pub policy_step_count: u64,
+    pub worker_count: usize,
+    pub sessions_per_worker: usize,
+    pub logical_actor_count: usize,
+    pub broker_batch_target: usize,
+    pub episodes: Vec<NativeTrainerEpisodeEvidenceV1>,
+    pub learner_group_count: u64,
+    pub learner_policy_step_count: u64,
+    pub scorer_accepted_batch_count: u64,
+    pub scorer_accepted_decision_count: u64,
+    pub rollout_metrics: AsyncFlatScoredRolloutMetricsV2,
+    pub model_digest_before: String,
+    pub model_digest_after: String,
+    pub changed_non_gauge_parameter_count: usize,
+    pub policy_sum_bits: u32,
+    pub value_sum_bits: u32,
+    pub loss_bits: u32,
+    pub adam_step_before: u64,
+    pub adam_step_after: u64,
+    pub selected_outputs: Vec<NativeTrainerSelectedOutputEvidenceV1>,
+    pub physical_terms: Vec<NativeTrainerPhysicalTermEvidenceV1>,
+    pub scorer_bias_gauge: NativeScorerBiasGaugeRecordV1,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1468,6 +1470,8 @@ impl NativeTrainerStateV2 {
             update_elapsed_ns: 0,
             first_episode_index,
             episode_count: config.batch_episodes,
+            physical_decision_count: rollout.physical_decision_count,
+            policy_step_count: rollout.policy_step_count,
             worker_count: config.worker_count,
             sessions_per_worker: config.sessions_per_worker,
             logical_actor_count,
@@ -1597,7 +1601,7 @@ fn progress_after_successful_update_v2(
     Ok(next_progress)
 }
 
-fn validate_resumed_parts_v2(
+pub(crate) fn validate_resumed_parts_v2(
     base_seed: u64,
     batch_episodes: u64,
     train_state: &NativePolicyValueTrainStateV1,
@@ -1751,7 +1755,7 @@ fn validate_batch_episodes_v2(batch_episodes: u64) -> Result<(), NativeTrainerEr
     Ok(())
 }
 
-fn validate_update_config_v2(
+pub(crate) fn validate_update_config_v2(
     config: &NativeTrainerUpdateConfigV2,
 ) -> Result<(), NativeTrainerErrorV1> {
     validate_batch_episodes_v2(config.batch_episodes)?;
