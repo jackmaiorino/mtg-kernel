@@ -38,6 +38,7 @@ pub use crate::native_trainer_v1::{
     NativeTrainerSelectedOutputEvidenceV1 as NativeTrainingSelectedOutputObservationV1,
     NativeTrainerUpdateEvidenceV2 as NativeTrainingUpdateObservationV2,
 };
+use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
@@ -572,9 +573,120 @@ fn bootstrap_executor_error_v1(
     NativeTrainingExecutorErrorV1::with_diagnostic(kind, code, error)
 }
 
-/// Stateful one-update-at-a-time trainer executor. A successful update is
-/// transactional inside the trainer; callers decide when and how to publish a
-/// checkpoint candidate.
+/// A prepared update owns the complete candidate trainer, observation, and
+/// checkpoint while exclusively borrowing the live executor.
+///
+/// Persistence layers inspect [`Self::observation`] and
+/// [`Self::checkpoint_candidate`], publish that exact candidate, and call
+/// [`Self::bind_manifest_bytes_v2`] with the exact manifest bytes before any
+/// publication begins. Dropping this value at any point leaves the live
+/// executor unchanged. Because the exclusive executor borrow remains inside
+/// this value, another update cannot be prepared or committed while
+/// publication is in flight.
+#[must_use = "dropping a prepared update aborts it without advancing the executor"]
+pub struct NativeTrainingPreparedUpdateV2<'executor> {
+    executor: &'executor mut NativeTrainingExecutorV1,
+    candidate_trainer: NativeTrainerStateV2,
+    observation: NativeTrainingUpdateObservationV2,
+    checkpoint: NativeTrainingCheckpointCandidateV1,
+}
+
+impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
+    pub fn observation(&self) -> &NativeTrainingUpdateObservationV2 {
+        &self.observation
+    }
+
+    pub fn checkpoint_candidate(&self) -> &NativeTrainingCheckpointCandidateV1 {
+        &self.checkpoint
+    }
+
+    /// Binds the exact opaque manifest bytes that a future persistence layer
+    /// must publish alongside this checkpoint payload.
+    ///
+    /// The executor does not interpret or serialize these bytes. It owns them
+    /// only so a later publication receipt can be compared against the exact
+    /// manifest SHA-256 before the live trainer is advanced. This typestate has
+    /// deliberately no commit method until that non-forgeable receipt is
+    /// supplied by the durable store path.
+    pub fn bind_manifest_bytes_v2(
+        self,
+        manifest_bytes: Box<[u8]>,
+    ) -> NativeTrainingBoundUpdateV2<'executor> {
+        let expected_manifest_sha256 = Sha256::digest(&manifest_bytes).into();
+        let expected_generation_index = self.checkpoint.adam_step();
+        let expected_payload_sha256 = self.checkpoint.digests().payload_sha256;
+        let Self {
+            executor,
+            candidate_trainer,
+            observation,
+            checkpoint,
+        } = self;
+        NativeTrainingBoundUpdateV2 {
+            _executor: executor,
+            _candidate_trainer: candidate_trainer,
+            observation,
+            checkpoint,
+            manifest_bytes,
+            expected_generation_index,
+            expected_payload_sha256,
+            expected_manifest_sha256,
+        }
+    }
+}
+
+/// Prepared candidate plus the exact opaque manifest bytes intended for
+/// publication. This is an intermediate typestate, not a persistence receipt.
+///
+/// It intentionally exposes no live-commit operation yet. The V2 store must
+/// first return a private-construction, move-only receipt proving publication
+/// of this generation, payload digest, and manifest digest. Dropping this value
+/// leaves the exclusively borrowed executor unchanged.
+#[must_use = "dropping a publication-bound update aborts it without advancing the executor"]
+pub struct NativeTrainingBoundUpdateV2<'executor> {
+    // Retained exclusively for the future receipt-gated final commit. The
+    // leading underscores are removed when that store path lands.
+    _executor: &'executor mut NativeTrainingExecutorV1,
+    _candidate_trainer: NativeTrainerStateV2,
+    observation: NativeTrainingUpdateObservationV2,
+    checkpoint: NativeTrainingCheckpointCandidateV1,
+    manifest_bytes: Box<[u8]>,
+    expected_generation_index: u64,
+    expected_payload_sha256: [u8; 32],
+    expected_manifest_sha256: [u8; 32],
+}
+
+impl NativeTrainingBoundUpdateV2<'_> {
+    pub fn observation(&self) -> &NativeTrainingUpdateObservationV2 {
+        &self.observation
+    }
+
+    pub fn checkpoint_candidate(&self) -> &NativeTrainingCheckpointCandidateV1 {
+        &self.checkpoint
+    }
+
+    pub fn manifest_bytes(&self) -> &[u8] {
+        &self.manifest_bytes
+    }
+
+    pub const fn expected_generation_index(&self) -> u64 {
+        self.expected_generation_index
+    }
+
+    pub const fn expected_payload_sha256(&self) -> [u8; 32] {
+        self.expected_payload_sha256
+    }
+
+    pub const fn expected_manifest_sha256(&self) -> [u8; 32] {
+        self.expected_manifest_sha256
+    }
+}
+
+/// Stateful one-update-at-a-time trainer executor.
+///
+/// Durable callers must use [`Self::prepare_update_v2`] so a successful
+/// persistence attempt precedes the live in-memory commit. The direct
+/// [`Self::run_update_v2`] method remains available for non-persisting runners
+/// and diagnostics.
 pub struct NativeTrainingExecutorV1 {
     config: NativeTrainingExecutionConfigV1,
     update_config: NativeTrainerUpdateConfigV2,
@@ -689,8 +801,50 @@ impl NativeTrainingExecutorV1 {
         self.trainer.progress_v2().into()
     }
 
+    /// Computes and validates one complete update against an isolated clone of
+    /// the live trainer, then returns an exclusive prepared-update guard.
+    ///
+    /// The live executor remains unchanged throughout rollout, training,
+    /// observation binding, and 14.7 MiB checkpoint encoding. A persistence
+    /// layer may retry publication through the borrowed checkpoint without
+    /// recomputing the update. This intermediate typestate deliberately cannot
+    /// make the candidate live; the receipt-gated commit operation lands only
+    /// with the durable V2 store. Dropping the guard aborts the candidate and
+    /// releases the executor unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified error with the live executor unchanged for every
+    /// candidate rollout, training, validation, or checkpoint-export failure.
+    pub fn prepare_update_v2(
+        &mut self,
+    ) -> Result<NativeTrainingPreparedUpdateV2<'_>, NativeTrainingExecutorErrorV1> {
+        let mut candidate_executor = Self {
+            config: self.config.clone(),
+            update_config: self.update_config.clone(),
+            trainer: self.trainer.clone(),
+            snapshot_receipt: None,
+        };
+        let observation = candidate_executor
+            .trainer
+            .run_even_batch_update_v2(&candidate_executor.update_config)
+            .map_err(trainer_executor_error_v1)?;
+        let checkpoint =
+            candidate_executor.checkpoint_candidate_for_observation_v2(&observation)?;
+        Ok(NativeTrainingPreparedUpdateV2 {
+            executor: self,
+            candidate_trainer: candidate_executor.trainer,
+            observation,
+            checkpoint,
+        })
+    }
+
     /// Runs exactly one K-episode transactional update and moves out the complete
     /// owned V2 evidence without post-timer evidence copying.
+    ///
+    /// This method commits in memory before returning and is therefore for
+    /// non-persisting runners and diagnostics. Durable callers must use
+    /// [`Self::prepare_update_v2`].
     ///
     /// # Errors
     ///
@@ -1139,6 +1293,94 @@ mod tests {
             .unwrap();
         assert_eq!(second_candidate.progress().successful_update_count, 2);
         assert_ne!(second_candidate, first_candidate);
+    }
+
+    #[test]
+    fn prepared_and_manifest_bound_updates_abort_unchanged_and_retry_exactly() {
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let config = burn_config_v1(2);
+        let mut executor =
+            NativeTrainingExecutorV1::from_common_model_snapshot_v1(config, &manifest, &payload)
+                .unwrap();
+        let before = executor.checkpoint_candidate_v1().unwrap();
+
+        let (aborted_observation, aborted_candidate) = {
+            let prepared = executor.prepare_update_v2().unwrap();
+            assert_eq!(prepared.observation().adam_step_before, 0);
+            assert_eq!(prepared.observation().adam_step_after, 1);
+            assert_eq!(
+                prepared
+                    .checkpoint_candidate()
+                    .progress()
+                    .successful_update_count,
+                1
+            );
+            assert_ne!(prepared.checkpoint_candidate(), &before);
+
+            // A persistence implementation may attempt publication repeatedly
+            // through this same borrowed candidate. No export or update is
+            // repeated and the backing payload remains the same allocation.
+            let first_payload = prepared.checkpoint_candidate().payload();
+            let first_payload_address = first_payload.as_ptr();
+            let first_payload_sha256 = prepared.checkpoint_candidate().payload_sha256_hex();
+            assert_eq!(
+                prepared.checkpoint_candidate().payload().as_ptr(),
+                first_payload_address
+            );
+            assert_eq!(
+                prepared.checkpoint_candidate().payload_sha256_hex(),
+                first_payload_sha256
+            );
+
+            // Simulate a permanent publication failure by dropping the guard.
+            (
+                without_timing_v1(prepared.observation().clone()),
+                prepared.checkpoint_candidate().clone(),
+            )
+        };
+
+        assert_eq!(executor.progress().successful_update_count, 0);
+        assert_eq!(executor.checkpoint_candidate_v1().unwrap(), before);
+
+        let manifest_bytes = br#"{"checkpoint":"candidate-one"}
+"#
+        .to_vec()
+        .into_boxed_slice();
+        let expected_manifest_sha256: [u8; 32] = Sha256::digest(&manifest_bytes).into();
+        {
+            let prepared = executor.prepare_update_v2().unwrap();
+            assert_eq!(
+                without_timing_v1(prepared.observation().clone()),
+                aborted_observation
+            );
+            assert_eq!(prepared.checkpoint_candidate(), &aborted_candidate);
+            let bound = prepared.bind_manifest_bytes_v2(manifest_bytes.clone());
+            assert_eq!(bound.expected_generation_index(), 1);
+            assert_eq!(
+                bound.expected_payload_sha256(),
+                aborted_candidate.digests().payload_sha256
+            );
+            assert_eq!(bound.expected_manifest_sha256(), expected_manifest_sha256);
+            assert_eq!(bound.manifest_bytes(), manifest_bytes.as_ref());
+            assert_eq!(bound.checkpoint_candidate(), &aborted_candidate);
+            assert_eq!(
+                without_timing_v1(bound.observation().clone()),
+                aborted_observation
+            );
+            // There is deliberately no commit operation on this typestate.
+            // Dropping after a hypothetical publication failure still aborts.
+        }
+        assert_eq!(executor.progress().successful_update_count, 0);
+        assert_eq!(executor.checkpoint_candidate_v1().unwrap(), before);
+
+        // The existing direct non-persisting update remains a useful oracle:
+        // it must produce the exact candidate held by both aborted guards.
+        let direct_observation = executor.run_update_v2().unwrap();
+        assert_eq!(without_timing_v1(direct_observation), aborted_observation);
+        assert_eq!(
+            executor.checkpoint_candidate_v1().unwrap(),
+            aborted_candidate
+        );
     }
 
     #[test]
