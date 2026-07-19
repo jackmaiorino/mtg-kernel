@@ -1861,7 +1861,7 @@ mod tests {
         "../../data/native_policy_train_step_v1/runner_fixed_train_step_goldens_v1.json"
     );
     const TRAIN_FIXTURE_SHA256: &str =
-        "6b7444a3b9640e943d6127ecadaa71be8ac72b7d134cdcd24709db8578ff1769";
+        "7672c87912b6015f393d66921a3e78cb5623dd76582a9513f2d87c560c0f4aa7";
     const MODEL_AUTHORITY: &[u8] = include_bytes!("../../python/mtg_kernel_rl/model.py");
     const TRAINER_AUTHORITY: &[u8] = include_bytes!("../../python/mtg_kernel_rl/trainer.py");
     const FORWARD_AUTHORITY: &[u8] = include_bytes!(
@@ -2545,6 +2545,7 @@ mod tests {
             .iter()
             .flat_map(|step| &step.groups)
             .any(|group| group.substeps.len() > 1));
+        assert!(golden.steps.iter().any(|step| step.groups.len() == 32));
 
         for step in &golden.steps {
             let expected_outputs = expected_outputs_for_step(state.model_v1(), &forward, step);
