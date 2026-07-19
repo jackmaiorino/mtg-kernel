@@ -344,6 +344,13 @@ pub(crate) enum NativePolicyTrainErrorV1 {
         residual_bits: u32,
         bound_bits: u64,
     },
+    GaugeHighPrecisionResidualExceeded {
+        residual_bits: u64,
+        bound_bits: u64,
+    },
+    GroupCountNotExactlyRepresentable {
+        group_count: usize,
+    },
     NonFinite {
         stage: &'static str,
         index: usize,
@@ -687,7 +694,7 @@ impl NativePolicyValueTrainStateV1 {
             });
         }
 
-        let group_count = groups.len() as f32;
+        let group_count = exact_group_count_f32(groups.len())?;
         let loss = (policy_sum + value_coefficient * value_sum) / group_count;
         finite_scalar("loss", 0, policy_sum)?;
         finite_scalar("loss", 1, value_sum)?;
@@ -982,6 +989,16 @@ impl ScorerBiasGaugeAccumulatorV1 {
                 bound_bits: derived_absolute_bound.to_bits(),
             });
         }
+        if !self.high_precision_residual.is_finite()
+            || self.high_precision_residual.abs() > derived_absolute_bound
+        {
+            return Err(
+                NativePolicyTrainErrorV1::GaugeHighPrecisionResidualExceeded {
+                    residual_bits: self.high_precision_residual.to_bits(),
+                    bound_bits: derived_absolute_bound.to_bits(),
+                },
+            );
+        }
         Ok(NativeScorerBiasGaugeRecordV1 {
             parameter_name: CANONICAL_GAUGE_PARAMETERS_V1[0],
             substep_count: self.substep_count,
@@ -999,6 +1016,16 @@ impl ScorerBiasGaugeAccumulatorV1 {
             parameter_after_bits: parameter_before_bits,
         })
     }
+}
+
+fn exact_group_count_f32(group_count: usize) -> Result<f32, NativePolicyTrainErrorV1> {
+    let widened = u64::try_from(group_count)
+        .map_err(|_| NativePolicyTrainErrorV1::GroupCountNotExactlyRepresentable { group_count })?;
+    let represented = widened as f32;
+    if !represented.is_finite() || represented as u128 != u128::from(widened) {
+        return Err(NativePolicyTrainErrorV1::GroupCountNotExactlyRepresentable { group_count });
+    }
+    Ok(represented)
 }
 
 fn f32_gamma(operation_count: usize) -> Result<f64, NativePolicyTrainErrorV1> {
@@ -4472,6 +4499,58 @@ mod tests {
         assert_eq!(
             f32_gamma(1usize << f32::MANTISSA_DIGITS),
             Err(NativePolicyTrainErrorV1::GaugeBoundOverflow)
+        );
+
+        let mut high_precision_exceeded = ScorerBiasGaugeAccumulatorV1::default();
+        high_precision_exceeded.observe(&logits, 2, -0.75).unwrap();
+        high_precision_exceeded.high_precision_residual = 1.0;
+        assert!(matches!(
+            high_precision_exceeded.finish(0.0, (-0.05f32).to_bits()),
+            Err(NativePolicyTrainErrorV1::GaugeHighPrecisionResidualExceeded { .. })
+        ));
+
+        let mut high_precision_nonfinite = ScorerBiasGaugeAccumulatorV1::default();
+        high_precision_nonfinite.observe(&logits, 2, -0.75).unwrap();
+        high_precision_nonfinite.high_precision_residual = f64::NAN;
+        assert!(matches!(
+            high_precision_nonfinite.finish(0.0, (-0.05f32).to_bits()),
+            Err(NativePolicyTrainErrorV1::GaugeHighPrecisionResidualExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn group_count_conversion_is_exact_or_rejected() {
+        assert_eq!(
+            exact_group_count_f32(1).unwrap().to_bits(),
+            1.0f32.to_bits()
+        );
+        let largest_exact = 1usize << f32::MANTISSA_DIGITS;
+        assert_eq!(
+            exact_group_count_f32(largest_exact).unwrap().to_bits(),
+            (largest_exact as f32).to_bits()
+        );
+        let first_inexact = largest_exact + 1;
+        assert_eq!(
+            exact_group_count_f32(first_inexact),
+            Err(
+                NativePolicyTrainErrorV1::GroupCountNotExactlyRepresentable {
+                    group_count: first_inexact,
+                }
+            )
+        );
+        let larger_exact = largest_exact << 1;
+        assert_eq!(
+            exact_group_count_f32(larger_exact).unwrap().to_bits(),
+            (larger_exact as f32).to_bits()
+        );
+        let saturating_roundtrip_trap = u32::MAX as usize;
+        assert_eq!(
+            exact_group_count_f32(saturating_roundtrip_trap),
+            Err(
+                NativePolicyTrainErrorV1::GroupCountNotExactlyRepresentable {
+                    group_count: saturating_roundtrip_trap,
+                }
+            )
         );
     }
 
