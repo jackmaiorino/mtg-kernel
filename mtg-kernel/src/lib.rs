@@ -39,6 +39,10 @@ pub(crate) mod native_flat_cpu_reference_v1;
 // deliberately not a production or performance backend.
 #[allow(dead_code)]
 pub(crate) mod native_policy_value_net_v1;
+// Exact CPU loss/backward/Adam reference for terminal_reinforce_value/v3;
+// deliberately not a scheduler, checkpoint format, or performance backend.
+#[allow(dead_code)]
+pub(crate) mod native_policy_train_step_v1;
 #[allow(dead_code)]
 pub(crate) mod native_trainer_schedule_v1;
 pub mod phase_profile;

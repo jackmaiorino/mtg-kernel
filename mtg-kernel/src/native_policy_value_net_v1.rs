@@ -223,7 +223,7 @@ impl<'a> NativeEncodedDecisionViewV1<'a> {
         }
     }
 
-    fn validate(
+    pub(crate) fn validate(
         self,
         config: NativePolicyValueModelConfigV1,
     ) -> Result<ValidatedCountsV1, NativePolicyValueErrorV1> {
@@ -349,6 +349,15 @@ pub(crate) struct NativePolicyValueOutputV1 {
     pub(crate) value: f32,
 }
 
+/// Ordered, owned copy of one Torch-compatible named parameter.  The order
+/// and `[output, input]` linear-weight layout come from `named_parameters()`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativeNamedParameterV1 {
+    pub(crate) name: &'static str,
+    pub(crate) shape: Vec<usize>,
+    pub(crate) values: Vec<f32>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NativePolicyValueErrorV1 {
     ModelConfigMismatch(&'static str),
@@ -390,11 +399,11 @@ impl Display for NativePolicyValueErrorV1 {
 impl Error for NativePolicyValueErrorV1 {}
 
 #[derive(Clone, Copy, Debug)]
-struct ValidatedCountsV1 {
-    object_count: usize,
-    edge_count: usize,
-    action_count: usize,
-    action_ref_count: usize,
+pub(crate) struct ValidatedCountsV1 {
+    pub(crate) object_count: usize,
+    pub(crate) edge_count: usize,
+    pub(crate) action_count: usize,
+    pub(crate) action_ref_count: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -686,6 +695,58 @@ impl NativePolicyValueNetV1 {
         format!("{:x}", digest.finalize())
     }
 
+    pub(crate) fn parameter_snapshot_v1(&self) -> Vec<NativeNamedParameterV1> {
+        let mut parameters = Vec::new();
+        self.visit_parameters_v1(|name, shape, values| {
+            parameters.push(NativeNamedParameterV1 {
+                name,
+                shape: shape.to_vec(),
+                values: values.to_vec(),
+            });
+        });
+        parameters
+    }
+
+    /// Replaces all named parameters as one transaction.  Names, shapes,
+    /// finiteness, parameter count, and the padding embedding row are checked
+    /// on a private clone before the live model changes.
+    pub(crate) fn replace_parameter_snapshot_v1(
+        &mut self,
+        replacement: &[NativeNamedParameterV1],
+    ) -> Result<(), NativePolicyValueErrorV1> {
+        let expected = self.parameter_snapshot_v1();
+        if replacement.len() != expected.len()
+            || replacement.iter().zip(&expected).any(|(actual, expected)| {
+                actual.name != expected.name
+                    || actual.shape != expected.shape
+                    || actual.values.len() != expected.values.len()
+                    || actual.values.iter().any(|value| !value.is_finite())
+            })
+        {
+            return Err(NativePolicyValueErrorV1::ParameterInvariant(
+                "replacement_manifest",
+            ));
+        }
+
+        let mut candidate = self.clone();
+        let mut position = 0usize;
+        candidate.visit_parameters_mut_v1(|name, shape, values| {
+            let source = &replacement[position];
+            debug_assert_eq!(source.name, name);
+            debug_assert_eq!(source.shape, shape);
+            values.copy_from_slice(&source.values);
+            position += 1;
+        });
+        candidate.validate_parameters_v1()?;
+        if candidate.parameter_count_v1() != PARAMETER_COUNT_V1 {
+            return Err(NativePolicyValueErrorV1::ParameterInvariant(
+                "parameter_count",
+            ));
+        }
+        *self = candidate;
+        Ok(())
+    }
+
     fn validate_parameters_v1(&self) -> Result<(), NativePolicyValueErrorV1> {
         let expected_embedding = checked_product(
             self.config.card_vocab_size,
@@ -764,6 +825,69 @@ impl NativePolicyValueNetV1 {
         visit_linear_v1(&mut visitor, "value_head.0", &self.value_first);
         visit_linear_v1(&mut visitor, "value_head.2", &self.value_second);
     }
+
+    fn visit_parameters_mut_v1(
+        &mut self,
+        mut visitor: impl FnMut(&'static str, &[usize], &mut [f32]),
+    ) {
+        visitor(
+            "card_embedding.weight",
+            &[CARD_VOCAB_SIZE_V1, CARD_EMBEDDING_DIM_V1],
+            &mut self.card_embedding,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "object_encoder.0",
+            &mut self.object_encoder.first,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "object_encoder.2",
+            &mut self.object_encoder.second,
+        );
+        visit_linear_mut_v1(&mut visitor, "edge_encoder.0", &mut self.edge_encoder.first);
+        visit_linear_mut_v1(
+            &mut visitor,
+            "edge_encoder.2",
+            &mut self.edge_encoder.second,
+        );
+        visit_linear_mut_v1(&mut visitor, "node_update.0", &mut self.node_update.first);
+        visit_linear_mut_v1(&mut visitor, "node_update.2", &mut self.node_update.second);
+        visit_linear_mut_v1(
+            &mut visitor,
+            "state_encoder.0",
+            &mut self.state_encoder.first,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "state_encoder.2",
+            &mut self.state_encoder.second,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "action_ref_encoder.0",
+            &mut self.action_ref_encoder.first,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "action_ref_encoder.2",
+            &mut self.action_ref_encoder.second,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "action_encoder.0",
+            &mut self.action_encoder.first,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "action_encoder.2",
+            &mut self.action_encoder.second,
+        );
+        visit_linear_mut_v1(&mut visitor, "scorer.0", &mut self.scorer_first);
+        visit_linear_mut_v1(&mut visitor, "scorer.2", &mut self.scorer_second);
+        visit_linear_mut_v1(&mut visitor, "value_head.0", &mut self.value_first);
+        visit_linear_mut_v1(&mut visitor, "value_head.2", &mut self.value_second);
+    }
 }
 
 fn visit_linear_v1(
@@ -796,6 +920,38 @@ fn visit_linear_v1(
         &linear.weight,
     );
     visitor(bias_name, &[linear.output_dim], &linear.bias);
+}
+
+fn visit_linear_mut_v1(
+    visitor: &mut impl FnMut(&'static str, &[usize], &mut [f32]),
+    prefix: &'static str,
+    linear: &mut LinearV1,
+) {
+    let (weight_name, bias_name) = match prefix {
+        "object_encoder.0" => ("object_encoder.0.weight", "object_encoder.0.bias"),
+        "object_encoder.2" => ("object_encoder.2.weight", "object_encoder.2.bias"),
+        "edge_encoder.0" => ("edge_encoder.0.weight", "edge_encoder.0.bias"),
+        "edge_encoder.2" => ("edge_encoder.2.weight", "edge_encoder.2.bias"),
+        "node_update.0" => ("node_update.0.weight", "node_update.0.bias"),
+        "node_update.2" => ("node_update.2.weight", "node_update.2.bias"),
+        "state_encoder.0" => ("state_encoder.0.weight", "state_encoder.0.bias"),
+        "state_encoder.2" => ("state_encoder.2.weight", "state_encoder.2.bias"),
+        "action_ref_encoder.0" => ("action_ref_encoder.0.weight", "action_ref_encoder.0.bias"),
+        "action_ref_encoder.2" => ("action_ref_encoder.2.weight", "action_ref_encoder.2.bias"),
+        "action_encoder.0" => ("action_encoder.0.weight", "action_encoder.0.bias"),
+        "action_encoder.2" => ("action_encoder.2.weight", "action_encoder.2.bias"),
+        "scorer.0" => ("scorer.0.weight", "scorer.0.bias"),
+        "scorer.2" => ("scorer.2.weight", "scorer.2.bias"),
+        "value_head.0" => ("value_head.0.weight", "value_head.0.bias"),
+        "value_head.2" => ("value_head.2.weight", "value_head.2.bias"),
+        _ => unreachable!("all native model parameters use frozen names"),
+    };
+    visitor(
+        weight_name,
+        &[linear.output_dim, linear.input_dim],
+        &mut linear.weight,
+    );
+    visitor(bias_name, &[linear.output_dim], &mut linear.bias);
 }
 
 fn apply_two_layer_tanh_rows_v1(encoder: &TwoLayerTanhV1, input: &[f32], rows: usize) -> Vec<f32> {
