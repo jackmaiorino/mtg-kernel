@@ -19,6 +19,7 @@
 //!   are orchestrated outside the Rust process.
 
 pub mod async_flat_scored_rollout_v1;
+pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
 pub mod card_def;
@@ -27,6 +28,7 @@ pub mod engine;
 pub mod event;
 pub mod fast_sampler;
 pub mod flat_policy_v1;
+pub mod flat_policy_v2;
 pub mod ids;
 pub mod mana;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
@@ -36,7 +38,9 @@ pub(crate) mod native_flat_cpu_reference_v1;
 pub(crate) mod native_trainer_schedule_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
+pub(crate) mod private_physical_trajectory_core;
 pub(crate) mod private_physical_trajectory_v1;
+pub(crate) mod private_physical_trajectory_v2;
 pub mod rl;
 pub mod rl_session;
 pub mod runtime_decks;

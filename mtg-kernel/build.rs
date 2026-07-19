@@ -467,6 +467,16 @@ fn require_digest(actual: [u8; 32], expected: [u8; 32], label: &str) {
     }
 }
 
+fn require_digest_v2(actual: [u8; 32], expected: [u8; 32], label: &str) {
+    if actual != expected {
+        panic!(
+            "flat-policy-v2 {label} mismatch: generated {}, recomputed {}",
+            sha256_hex(expected),
+            sha256_hex(actual)
+        );
+    }
+}
+
 fn rust_byte_array(bytes: [u8; 32]) -> String {
     let mut output = String::from("[");
     for (index, byte) in bytes.iter().enumerate() {
@@ -733,6 +743,310 @@ pub const FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V1: [u8; {}] = [{}];\n",
     )
 }
 
+fn flat_policy_contract_v2_codegen(repo_root: &Path) -> String {
+    const INVENTORY_SCHEMA: &str = "flat-policy-feature-inventory-v2";
+    const GOLDENS_SCHEMA: &str = "flat-policy-v2-independent-goldens-v1";
+    const BASE_INVENTORY_SCHEMA: &str = "flat-policy-feature-inventory-v1";
+    const TYPED_LAYOUT_DOMAIN: &[u8] = b"mtg-kernel-flat-policy-typed-layout-v2\0";
+    const ACTION_COMMITMENT_DOMAIN: &str = "mtg-kernel-flat-action-candidate-order-v2\0";
+    const VISIBLE_MANIFEST: &str = "globals,objects,relations,object_subtypes,ability_uses,goads,completed_dungeons,effect_subtype_changes,context_path_elements,actions,action_refs";
+    const CROSSWALK_VERSION: u64 = 1;
+    const INTERNAL_TO_PROJECTION: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 9];
+    const INTERNAL_ROLE_WIDTH: u64 = 8;
+    const PROJECTION_ROLE_WIDTH: u64 = 10;
+
+    let inventory_path = repo_root.join("data/flat_policy_v2/feature_inventory_v2.json");
+    let goldens_path = repo_root.join("data/flat_policy_v2/goldens_v2.json");
+    let base_inventory_path = repo_root.join("data/flat_policy_v1/feature_inventory_v1.json");
+    let base_goldens_path = repo_root.join("data/flat_policy_v1/goldens_v1.json");
+    let base_layout_path = repo_root.join("mtg-kernel/src/flat_policy_v1.rs");
+    let overlay_layout_path = repo_root.join("mtg-kernel/src/flat_policy_v2.rs");
+    let features_path = repo_root.join("python/mtg_kernel_rl/features.py");
+    let topology_audit_path = repo_root.join("data/flat_policy_v2/ordered_topology_audit_v2.md");
+    for path in [
+        &inventory_path,
+        &goldens_path,
+        &base_inventory_path,
+        &base_goldens_path,
+        &base_layout_path,
+        &overlay_layout_path,
+        &features_path,
+        &topology_audit_path,
+    ] {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+
+    let read_json = |path: &Path| {
+        let bytes = fs::read(path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+        let value = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()));
+        (bytes, value)
+    };
+    let (_inventory_bytes, inventory): (Vec<u8>, Value) = read_json(&inventory_path);
+    let (_, goldens): (Vec<u8>, Value) = read_json(&goldens_path);
+    let (base_inventory_bytes, base_inventory): (Vec<u8>, Value) = read_json(&base_inventory_path);
+    let (_, base_goldens): (Vec<u8>, Value) = read_json(&base_goldens_path);
+
+    if json_string(&inventory, "schema", &inventory_path) != INVENTORY_SCHEMA {
+        panic!("{}: unsupported schema", inventory_path.display());
+    }
+    if json_string(&goldens, "schema", &goldens_path) != GOLDENS_SCHEMA {
+        panic!("{}: unsupported schema", goldens_path.display());
+    }
+    if json_string(&base_inventory, "schema", &base_inventory_path) != BASE_INVENTORY_SCHEMA {
+        panic!("{}: unsupported base schema", base_inventory_path.display());
+    }
+
+    let inventory_digest = canonical_json_sha256(&inventory);
+    require_digest_v2(
+        inventory_digest,
+        parse_sha256(
+            json_string(&goldens, "inventory_sha256", &goldens_path),
+            "V2 goldens inventory_sha256",
+        ),
+        "canonical inventory digest",
+    );
+    let payload_digest = parse_sha256(
+        json_string(&goldens, "payload_sha256", &goldens_path),
+        "V2 goldens payload_sha256",
+    );
+    let mut payload_without_digest = goldens.clone();
+    payload_without_digest
+        .as_object_mut()
+        .expect("V2 goldens root was validated as an object")
+        .remove("payload_sha256");
+    require_digest_v2(
+        canonical_json_sha256(&payload_without_digest),
+        payload_digest,
+        "goldens payload digest",
+    );
+
+    let base = inventory
+        .get("base_inventory")
+        .unwrap_or_else(|| panic!("{}: missing base_inventory", inventory_path.display()));
+    if json_string(base, "schema", &inventory_path) != BASE_INVENTORY_SCHEMA {
+        panic!("{}: base inventory schema drift", inventory_path.display());
+    }
+    require_digest_v2(
+        sha256_bytes(&base_inventory_bytes),
+        parse_sha256(
+            json_string(base, "source_sha256", &inventory_path),
+            "V2 base inventory source_sha256",
+        ),
+        "base inventory source digest",
+    );
+    require_digest_v2(
+        canonical_json_sha256(&base_inventory),
+        parse_sha256(
+            json_string(base, "canonical_sha256", &inventory_path),
+            "V2 base inventory canonical_sha256",
+        ),
+        "base inventory canonical digest",
+    );
+
+    let typed_layout = inventory
+        .get("typed_layout")
+        .unwrap_or_else(|| panic!("{}: missing typed_layout", inventory_path.display()));
+    if json_string(typed_layout, "domain", &inventory_path).as_bytes() != TYPED_LAYOUT_DOMAIN {
+        panic!("{}: typed-layout domain drift", inventory_path.display());
+    }
+    let base_typed_layout_digest = parse_sha256(
+        json_string(typed_layout, "base_sha256", &inventory_path),
+        "V2 typed-layout base_sha256",
+    );
+    require_digest_v2(
+        base_typed_layout_digest,
+        parse_sha256(
+            json_string(
+                &base_inventory,
+                "rust_typed_layout_sha256",
+                &base_inventory_path,
+            ),
+            "V1 inventory rust_typed_layout_sha256",
+        ),
+        "base typed-layout inventory binding",
+    );
+    require_digest_v2(
+        sha256_bytes(&fs::read(&base_layout_path).unwrap_or_else(|error| {
+            panic!("failed to read {}: {error}", base_layout_path.display())
+        })),
+        base_typed_layout_digest,
+        "base typed-layout source digest",
+    );
+    let overlay_typed_layout_digest = parse_sha256(
+        json_string(typed_layout, "overlay_sha256", &inventory_path),
+        "V2 typed-layout overlay_sha256",
+    );
+    require_digest_v2(
+        sha256_bytes(&fs::read(&overlay_layout_path).unwrap_or_else(|error| {
+            panic!("failed to read {}: {error}", overlay_layout_path.display())
+        })),
+        overlay_typed_layout_digest,
+        "overlay typed-layout source digest",
+    );
+    let mut composite_hasher = Sha256::new();
+    composite_hasher.update(TYPED_LAYOUT_DOMAIN);
+    composite_hasher.update(base_typed_layout_digest);
+    composite_hasher.update(overlay_typed_layout_digest);
+    let composite_typed_layout_digest: [u8; 32] = composite_hasher.finalize().into();
+    require_digest_v2(
+        composite_typed_layout_digest,
+        parse_sha256(
+            json_string(typed_layout, "composite_sha256", &inventory_path),
+            "V2 typed-layout composite_sha256",
+        ),
+        "composite typed-layout digest",
+    );
+
+    let unchanged = inventory
+        .get("unchanged_contracts")
+        .unwrap_or_else(|| panic!("{}: missing unchanged_contracts", inventory_path.display()));
+    let mapping_digest = parse_sha256(
+        json_string(unchanged, "mapping_sha256", &inventory_path),
+        "V2 unchanged mapping_sha256",
+    );
+    require_digest_v2(
+        mapping_digest,
+        parse_sha256(
+            json_string(&base_goldens, "mapping_sha256", &base_goldens_path),
+            "V1 goldens mapping_sha256",
+        ),
+        "unchanged enum and projection mapping digest",
+    );
+    for field in [
+        "authoritative_features_sha256",
+        "feature_contract_digest",
+        "encoding_contract_digest",
+    ] {
+        let base_value = parse_sha256(
+            json_string(&base_inventory, field, &base_inventory_path),
+            &format!("V1 inventory {field}"),
+        );
+        require_digest_v2(
+            parse_sha256(
+                json_string(unchanged, field, &inventory_path),
+                &format!("V2 unchanged {field}"),
+            ),
+            base_value,
+            &format!("unchanged {field}"),
+        );
+    }
+    require_digest_v2(
+        sha256_bytes(
+            &fs::read(&features_path).unwrap_or_else(|error| {
+                panic!("failed to read {}: {error}", features_path.display())
+            }),
+        ),
+        parse_sha256(
+            json_string(unchanged, "authoritative_features_sha256", &inventory_path),
+            "V2 unchanged authoritative_features_sha256",
+        ),
+        "authoritative Python features source digest",
+    );
+
+    let versions = inventory
+        .get("versions")
+        .unwrap_or_else(|| panic!("{}: missing versions", inventory_path.display()));
+    for (field, expected) in [
+        ("typed_layout", 2),
+        ("feature_inventory", 2),
+        ("enum_mapping", 1),
+        ("object_group_mapping", 1),
+        ("relation_role_mapping", 1),
+        ("context_subrole_mapping", 1),
+        ("scorer_packet", 2),
+        ("scorer_action_ref", 2),
+        ("scorer_visible_manifest", 2),
+        ("action_decision_slice", 2),
+        ("action_card_token_mapping", 2),
+        ("action_candidate_commitment", 2),
+    ] {
+        if json_u64(versions, field, &inventory_path) != expected {
+            panic!("{}: {field} version drift", inventory_path.display());
+        }
+    }
+    if json_string(&inventory, "visible_manifest", &inventory_path) != VISIBLE_MANIFEST {
+        panic!("{}: visible manifest drift", inventory_path.display());
+    }
+    if json_string(&inventory, "candidate_commitment_domain", &inventory_path)
+        != ACTION_COMMITMENT_DOMAIN
+    {
+        panic!(
+            "{}: action commitment domain drift",
+            inventory_path.display()
+        );
+    }
+
+    let token_contract = inventory
+        .get("card_token_contract")
+        .unwrap_or_else(|| panic!("{}: missing card_token_contract", inventory_path.display()));
+    if json_u64(token_contract, "minimum", &inventory_path) != 1
+        || json_u64(token_contract, "maximum", &inventory_path) != 65_536
+        || json_string(token_contract, "encoding", &inventory_path) != "card_db_id_plus_one_u32"
+    {
+        panic!("{}: card token contract drift", inventory_path.display());
+    }
+    let blocked_order = inventory.get("blocked_order_contract").unwrap_or_else(|| {
+        panic!(
+            "{}: missing blocked_order_contract",
+            inventory_path.display()
+        )
+    });
+    if json_string(blocked_order, "type", &inventory_path) != "Option<u32>"
+        || json_string(blocked_order, "none", &inventory_path)
+            != "attacker absent from attacker_to_ordered_blockers"
+        || json_string(blocked_order, "some", &inventory_path)
+            != "exact zero-based mapping index including present-empty"
+        || json_string(blocked_order, "invariant", &inventory_path)
+            != "present indices unique and contiguous"
+    {
+        panic!("{}: blocked_order contract drift", inventory_path.display());
+    }
+
+    let topology_audit = inventory
+        .get("topology_audit")
+        .unwrap_or_else(|| panic!("{}: missing topology_audit", inventory_path.display()));
+    if json_string(topology_audit, "path", &inventory_path)
+        != "data/flat_policy_v2/ordered_topology_audit_v2.md"
+    {
+        panic!("{}: topology audit path drift", inventory_path.display());
+    }
+    require_digest_v2(
+        sha256_bytes(&fs::read(&topology_audit_path).unwrap_or_else(|error| {
+            panic!("failed to read {}: {error}", topology_audit_path.display())
+        })),
+        parse_sha256(
+            json_string(topology_audit, "source_sha256", &inventory_path),
+            "V2 topology audit source_sha256",
+        ),
+        "ordered topology audit source digest",
+    );
+
+    let internal_to_projection = INTERNAL_TO_PROJECTION
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "// @generated by mtg-kernel/build.rs from data/flat_policy_v2; do not edit.\n\
+pub const FLAT_POLICY_MAPPING_SHA256_V2: [u8; 32] = {};\n\
+pub const FLAT_POLICY_FEATURE_INVENTORY_SHA256_V2: [u8; 32] = {};\n\
+pub const FLAT_POLICY_BASE_TYPED_LAYOUT_SHA256_V2: [u8; 32] = {};\n\
+pub const FLAT_POLICY_OVERLAY_TYPED_LAYOUT_SHA256_V2: [u8; 32] = {};\n\
+pub const FLAT_POLICY_TYPED_LAYOUT_SHA256_V2: [u8; 32] = {};\n\
+pub const FLAT_ACTION_REF_PROJECTION_ROLE_MAPPING_VERSION_V2: u32 = {CROSSWALK_VERSION};\n\
+pub const FLAT_ACTION_REF_INTERNAL_ROLE_WIDTH_V2: u8 = {INTERNAL_ROLE_WIDTH};\n\
+pub const FLAT_ACTION_REF_PROJECTION_ROLE_WIDTH_V2: u8 = {PROJECTION_ROLE_WIDTH};\n\
+pub const FLAT_ACTION_REF_INTERNAL_TO_PROJECTION_V2: [u8; {INTERNAL_ROLE_WIDTH}] = [{internal_to_projection}];\n",
+        rust_byte_array(mapping_digest),
+        rust_byte_array(inventory_digest),
+        rust_byte_array(base_typed_layout_digest),
+        rust_byte_array(overlay_typed_layout_digest),
+        rust_byte_array(composite_typed_layout_digest),
+    )
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let repo_root = Path::new(&manifest_dir).join("..");
@@ -786,6 +1100,7 @@ fn main() {
     let out = codegen(&data.cards);
     let runtime_decks_out = runtime_decks_codegen(&runtime_decks, &data.cards);
     let flat_policy_contract_out = flat_policy_contract_codegen(&repo_root);
+    let flat_policy_contract_v2_out = flat_policy_contract_v2_codegen(&repo_root);
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let dest = Path::new(&out_dir).join("card_defs.rs");
@@ -798,6 +1113,13 @@ fn main() {
         panic!(
             "failed to write {}: {error}",
             flat_policy_contract_dest.display()
+        )
+    });
+    let flat_policy_contract_v2_dest = Path::new(&out_dir).join("flat_policy_contract_v2.rs");
+    fs::write(&flat_policy_contract_v2_dest, flat_policy_contract_v2_out).unwrap_or_else(|error| {
+        panic!(
+            "failed to write {}: {error}",
+            flat_policy_contract_v2_dest.display()
         )
     });
 }

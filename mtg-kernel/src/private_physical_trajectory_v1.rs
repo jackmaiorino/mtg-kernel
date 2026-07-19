@@ -12,18 +12,28 @@
 #![allow(dead_code)]
 
 use crate::async_flat_scored_rollout_v1::{
-    initial_learner_trace_hash_v1, record_learner_trace_v1, FlatScoredSelectedEventV1,
-    FlatScoredTerminalEventV1, FlatScoredTrajectoryObserverV1,
+    FlatScoredSelectedEventV1, FlatScoredTerminalEventV1, FlatScoredTrajectoryObserverV1,
 };
+#[cfg(test)]
 use crate::async_rollout::AsyncRolloutTerminalV1;
 use crate::flat_policy_v1::{
     FlatCompletedDungeonV1, FlatContextPathElementV1, FlatEffectSubtypeChangeV1, FlatGlobalsV1,
     FlatObjectAbilityUseV1, FlatObjectCoreV1, FlatObjectGoadV1, FlatObjectSubtypeV1,
     FlatRelationV1, FlatScorerActionCoreV1, FlatScorerActionRefV1, FlatScoringDecisionViewV1,
 };
-use crate::rl::{PlayerSeatV1, TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2};
-use crate::rl_session::{FastActorDecisionKindV1, FastActorDecisionV1};
-use std::collections::BTreeMap;
+use crate::private_physical_trajectory_core::{
+    decision_kind_code as core_decision_kind_code, player_seat_code as core_player_seat_code,
+    selected_log_probability as core_selected_log_probability, FlatGroupedEpisodeCore,
+    FlatGroupedTrajectoryBatchCore, FlatLearnerSubstepSampleCore, FlatPhysicalDecisionSampleCore,
+    FlatPhysicalTrajectoryErrorCore, FlatPhysicalTrajectoryObserverCore,
+    FlatPhysicalUpdateStagingCore, FlatSelectedSampleCore, FlatTerminalSampleCore,
+};
+use crate::rl::PlayerSeatV1;
+#[cfg(test)]
+use crate::rl::{TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2};
+use crate::rl_session::FastActorDecisionKindV1;
+#[cfg(test)]
+use crate::rl_session::FastActorDecisionV1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FlatOwnedScoringInputsV1 {
@@ -58,284 +68,29 @@ impl FlatOwnedScoringInputsV1 {
     }
 }
 
-/// Exact owned association for one learner policy substep. Float payloads are
-/// stored as bits so staging equality is bit-exact and cannot acquire NaN
-/// equality semantics later.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FlatLearnerSubstepSampleV1 {
-    pub(crate) expected: FastActorDecisionV1,
-    pub(crate) binding: crate::flat_policy_v1::FlatDecisionBindingV1,
-    pub(crate) learner_ordinal: u64,
-    pub(crate) action_seed: u64,
-    pub(crate) selected_index: u32,
-    pub(crate) raw_action_logit_bits: Vec<u32>,
-    pub(crate) selected_log_probability_bits: u32,
-    pub(crate) predicted_value_bits: u32,
-    pub(crate) scoring_inputs: FlatOwnedScoringInputsV1,
-}
-
-/// One complete learner physical decision. The joint log probability is the
-/// ordered f32 sum of every selected substep log probability. `value_bits` is
-/// copied exactly from substep zero. Continuation values remain associated in
-/// `substeps[1..]` for audit, but are intentionally absent from this v3 loss
-/// input.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FlatPhysicalDecisionSampleV1 {
-    pub(crate) episode_id: u64,
-    pub(crate) physical_decision_id: u64,
-    pub(crate) acting_player: PlayerSeatV1,
-    pub(crate) first_learner_ordinal: u64,
-    pub(crate) substep_count: u32,
-    pub(crate) joint_selected_log_probability_bits: u32,
-    pub(crate) value_bits: u32,
-    pub(crate) substeps: Vec<FlatLearnerSubstepSampleV1>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FlatGroupedEpisodeV1 {
-    pub(crate) episode_id: u64,
-    pub(crate) learner_seat: PlayerSeatV1,
-    pub(crate) learner_return: i32,
-    pub(crate) learner_policy_step_count: u64,
-    pub(crate) opponent_policy_step_count: u64,
-    pub(crate) learner_physical_decision_count: u64,
-    pub(crate) opponent_physical_decision_count: u64,
-    pub(crate) learner_trace_hash: u64,
-    pub(crate) terminal: AsyncRolloutTerminalV1,
-    pub(crate) groups: Vec<FlatPhysicalDecisionSampleV1>,
-}
-
-/// Explicitly records whether a later native trainer has any samples. `Ready`
-/// is staging only and grants no optimizer or publication authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FlatPhysicalUpdateStagingV1 {
-    NoUpdateZeroLearnerGroups,
-    Ready { learner_group_count: u64 },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FlatGroupedTrajectoryBatchV1 {
-    pub(crate) learner_seat: PlayerSeatV1,
-    pub(crate) first_episode_id: u64,
-    pub(crate) episode_count: u64,
-    pub(crate) learner_policy_step_count: u64,
-    pub(crate) learner_physical_decision_count: u64,
-    pub(crate) update_staging: FlatPhysicalUpdateStagingV1,
-    pub(crate) episodes: Vec<FlatGroupedEpisodeV1>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FlatPhysicalTrajectoryErrorV1 {
-    ExpectedEpisodeRangeOverflow,
-    EpisodeCountExceedsAddressSpace,
-    ResultAllocationFailed,
-    EpisodeOutOfRange {
-        episode_id: u64,
-    },
-    SelectedAfterTerminal {
-        episode_id: u64,
-    },
-    SelectedActorMismatch {
-        episode_id: u64,
-        expected: PlayerSeatV1,
-        actual: PlayerSeatV1,
-    },
-    SelectedBindingMismatch {
-        episode_id: u64,
-        learner_ordinal: u64,
-    },
-    LegalActionCountMismatch {
-        episode_id: u64,
-        learner_ordinal: u64,
-    },
-    SelectedIndexOutOfRange {
-        episode_id: u64,
-        learner_ordinal: u64,
-    },
-    NonFiniteLogit {
-        episode_id: u64,
-        learner_ordinal: u64,
-        action_index: u32,
-        bits: u32,
-    },
-    NonFiniteSelectedLogProbability {
-        episode_id: u64,
-        learner_ordinal: u64,
-    },
-    NonFinitePredictedValue {
-        episode_id: u64,
-        learner_ordinal: u64,
-        bits: u32,
-    },
-    LearnerOrdinalMismatch {
-        episode_id: u64,
-        expected: u64,
-        actual: u64,
-    },
-    ZeroSubstepCount {
-        episode_id: u64,
-        physical_decision_id: u64,
-    },
-    FirstSubstepNotZero {
-        episode_id: u64,
-        physical_decision_id: u64,
-        actual: u32,
-    },
-    PhysicalDecisionNotStrictlyIncreasing {
-        episode_id: u64,
-        previous: u64,
-        actual: u64,
-    },
-    PolicyStepNotStrictlyIncreasing {
-        episode_id: u64,
-        previous: u64,
-        actual: u64,
-    },
-    OpenGroupKeyMismatch {
-        episode_id: u64,
-        expected_physical_decision_id: u64,
-        actual_physical_decision_id: u64,
-    },
-    OpenGroupActorMismatch {
-        episode_id: u64,
-        physical_decision_id: u64,
-    },
-    SubstepCountMismatch {
-        episode_id: u64,
-        physical_decision_id: u64,
-        expected: u32,
-        actual: u32,
-    },
-    SubstepIndexMismatch {
-        episode_id: u64,
-        physical_decision_id: u64,
-        expected: u32,
-        actual: u32,
-    },
-    PolicyStepNotContiguousWithinGroup {
-        episode_id: u64,
-        physical_decision_id: u64,
-        expected: u64,
-        actual: u64,
-    },
-    JointLogProbabilityOverflow {
-        episode_id: u64,
-        physical_decision_id: u64,
-    },
-    CountOverflow,
-    DuplicateTerminal {
-        episode_id: u64,
-    },
-    TerminalInterruptedOpenGroup {
-        episode_id: u64,
-        physical_decision_id: u64,
-    },
-    TerminalLearnerActionCountMismatch {
-        episode_id: u64,
-        expected: u64,
-        actual: u64,
-    },
-    TerminalLearnerTraceMismatch {
-        episode_id: u64,
-    },
-    NonNaturalTerminal {
-        episode_id: u64,
-    },
-    TerminalTupleMismatch {
-        episode_id: u64,
-    },
-    LearnerRewardMismatch {
-        episode_id: u64,
-        learner_seat: PlayerSeatV1,
-    },
-    LearnerPhysicalDecisionOutOfRange {
-        episode_id: u64,
-        physical_decision_id: u64,
-        terminal_physical_decision_count: u64,
-    },
-    LearnerPolicyStepOutOfRange {
-        episode_id: u64,
-        policy_step: u64,
-        terminal_policy_step_count: u64,
-    },
-    TerminalPolicyStepCountUnderflow {
-        episode_id: u64,
-    },
-    TerminalPhysicalDecisionCountUnderflow {
-        episode_id: u64,
-    },
-    OpponentPolicyStepsBelowPhysicalDecisions {
-        episode_id: u64,
-        opponent_policy_step_count: u64,
-        opponent_physical_decision_count: u64,
-    },
-    MissingTerminal {
-        episode_id: u64,
-    },
-}
-
-#[derive(Debug)]
-struct OpenPhysicalDecisionV1 {
-    episode_id: u64,
-    physical_decision_id: u64,
-    acting_player: PlayerSeatV1,
-    first_learner_ordinal: u64,
-    substep_count: u32,
-    next_substep_index: u32,
-    last_policy_step: u64,
-    joint_selected_log_probability: f32,
-    value_bits: u32,
-    substeps: Vec<FlatLearnerSubstepSampleV1>,
-}
-
-impl OpenPhysicalDecisionV1 {
-    fn complete(self) -> FlatPhysicalDecisionSampleV1 {
-        FlatPhysicalDecisionSampleV1 {
-            episode_id: self.episode_id,
-            physical_decision_id: self.physical_decision_id,
-            acting_player: self.acting_player,
-            first_learner_ordinal: self.first_learner_ordinal,
-            substep_count: self.substep_count,
-            joint_selected_log_probability_bits: self.joint_selected_log_probability.to_bits(),
-            value_bits: self.value_bits,
-            substeps: self.substeps,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct EpisodeAssemblyV1 {
-    next_learner_ordinal: u64,
-    learner_trace_hash: u64,
-    last_completed_physical_decision_id: Option<u64>,
-    last_learner_policy_step: Option<u64>,
-    open_group: Option<OpenPhysicalDecisionV1>,
-    groups: Vec<FlatPhysicalDecisionSampleV1>,
-    completed: Option<FlatGroupedEpisodeV1>,
-}
-
-impl EpisodeAssemblyV1 {
-    fn new(episode_id: u64) -> Self {
-        Self {
-            next_learner_ordinal: 0,
-            learner_trace_hash: initial_learner_trace_hash_v1(episode_id),
-            last_completed_physical_decision_id: None,
-            last_learner_policy_step: None,
-            open_group: None,
-            groups: Vec::new(),
-            completed: None,
-        }
-    }
-}
+pub(crate) type FlatLearnerSubstepSampleV1 = FlatLearnerSubstepSampleCore<
+    crate::flat_policy_v1::FlatDecisionBindingV1,
+    FlatOwnedScoringInputsV1,
+>;
+pub(crate) type FlatPhysicalDecisionSampleV1 = FlatPhysicalDecisionSampleCore<
+    crate::flat_policy_v1::FlatDecisionBindingV1,
+    FlatOwnedScoringInputsV1,
+>;
+pub(crate) type FlatGroupedEpisodeV1 =
+    FlatGroupedEpisodeCore<crate::flat_policy_v1::FlatDecisionBindingV1, FlatOwnedScoringInputsV1>;
+pub(crate) type FlatPhysicalUpdateStagingV1 = FlatPhysicalUpdateStagingCore;
+pub(crate) type FlatGroupedTrajectoryBatchV1 = FlatGroupedTrajectoryBatchCore<
+    crate::flat_policy_v1::FlatDecisionBindingV1,
+    FlatOwnedScoringInputsV1,
+>;
+pub(crate) type FlatPhysicalTrajectoryErrorV1 = FlatPhysicalTrajectoryErrorCore;
 
 #[derive(Debug)]
 pub(crate) struct FlatPhysicalTrajectoryObserverV1 {
-    learner_seat: PlayerSeatV1,
-    first_episode_id: u64,
-    end_episode_id: u64,
-    episode_count: u64,
-    episodes: BTreeMap<u64, EpisodeAssemblyV1>,
-    poisoned_error: Option<FlatPhysicalTrajectoryErrorV1>,
+    core: FlatPhysicalTrajectoryObserverCore<
+        crate::flat_policy_v1::FlatDecisionBindingV1,
+        FlatOwnedScoringInputsV1,
+    >,
 }
 
 impl FlatPhysicalTrajectoryObserverV1 {
@@ -344,441 +99,18 @@ impl FlatPhysicalTrajectoryObserverV1 {
         first_episode_id: u64,
         episode_count: u64,
     ) -> Result<Self, FlatPhysicalTrajectoryErrorV1> {
-        let end_episode_id = first_episode_id
-            .checked_add(episode_count)
-            .ok_or(FlatPhysicalTrajectoryErrorV1::ExpectedEpisodeRangeOverflow)?;
-        usize::try_from(episode_count)
-            .map_err(|_| FlatPhysicalTrajectoryErrorV1::EpisodeCountExceedsAddressSpace)?;
         Ok(Self {
-            learner_seat,
-            first_episode_id,
-            end_episode_id,
-            episode_count,
-            episodes: BTreeMap::new(),
-            poisoned_error: None,
+            core: FlatPhysicalTrajectoryObserverCore::new(
+                learner_seat,
+                first_episode_id,
+                episode_count,
+            )?,
         })
     }
 
-    fn validate_episode_id(&self, episode_id: u64) -> Result<(), FlatPhysicalTrajectoryErrorV1> {
-        if (self.first_episode_id..self.end_episode_id).contains(&episode_id) {
-            Ok(())
-        } else {
-            Err(FlatPhysicalTrajectoryErrorV1::EpisodeOutOfRange { episode_id })
-        }
-    }
-
-    fn observe_selected(
-        &mut self,
-        event: FlatScoredSelectedEventV1<'_>,
-    ) -> Result<(), FlatPhysicalTrajectoryErrorV1> {
-        let expected = event.expected;
-        self.validate_episode_id(expected.episode_id)?;
-        if expected.acting_player != self.learner_seat {
-            return Err(FlatPhysicalTrajectoryErrorV1::SelectedActorMismatch {
-                episode_id: expected.episode_id,
-                expected: self.learner_seat,
-                actual: expected.acting_player,
-            });
-        }
-        if !selected_binding_matches(&event) {
-            return Err(FlatPhysicalTrajectoryErrorV1::SelectedBindingMismatch {
-                episode_id: expected.episode_id,
-                learner_ordinal: event.learner_ordinal,
-            });
-        }
-        if event.raw_action_logits.len()
-            != usize::try_from(expected.legal_action_count).unwrap_or(usize::MAX)
-            || event.decision.actions().len() != event.raw_action_logits.len()
-        {
-            return Err(FlatPhysicalTrajectoryErrorV1::LegalActionCountMismatch {
-                episode_id: expected.episode_id,
-                learner_ordinal: event.learner_ordinal,
-            });
-        }
-        let selected_index = usize::try_from(event.selected_index).map_err(|_| {
-            FlatPhysicalTrajectoryErrorV1::SelectedIndexOutOfRange {
-                episode_id: expected.episode_id,
-                learner_ordinal: event.learner_ordinal,
-            }
-        })?;
-        if selected_index >= event.raw_action_logits.len() {
-            return Err(FlatPhysicalTrajectoryErrorV1::SelectedIndexOutOfRange {
-                episode_id: expected.episode_id,
-                learner_ordinal: event.learner_ordinal,
-            });
-        }
-        let selected_log_probability = selected_log_probability(
-            expected.episode_id,
-            event.learner_ordinal,
-            selected_index,
-            event.raw_action_logits,
-        )?;
-        if !f32::from_bits(event.predicted_value_bits).is_finite() {
-            return Err(FlatPhysicalTrajectoryErrorV1::NonFinitePredictedValue {
-                episode_id: expected.episode_id,
-                learner_ordinal: event.learner_ordinal,
-                bits: event.predicted_value_bits,
-            });
-        }
-        let owned_substep = FlatLearnerSubstepSampleV1 {
-            expected,
-            binding: event.binding,
-            learner_ordinal: event.learner_ordinal,
-            action_seed: event.action_seed,
-            selected_index: event.selected_index,
-            raw_action_logit_bits: event
-                .raw_action_logits
-                .iter()
-                .map(|value| value.to_bits())
-                .collect(),
-            selected_log_probability_bits: selected_log_probability.to_bits(),
-            predicted_value_bits: event.predicted_value_bits,
-            scoring_inputs: FlatOwnedScoringInputsV1::copy_from_view(event.decision),
-        };
-
-        let episode = self
-            .episodes
-            .entry(expected.episode_id)
-            .or_insert_with(|| EpisodeAssemblyV1::new(expected.episode_id));
-        if episode.completed.is_some() {
-            return Err(FlatPhysicalTrajectoryErrorV1::SelectedAfterTerminal {
-                episode_id: expected.episode_id,
-            });
-        }
-        if event.learner_ordinal != episode.next_learner_ordinal {
-            return Err(FlatPhysicalTrajectoryErrorV1::LearnerOrdinalMismatch {
-                episode_id: expected.episode_id,
-                expected: episode.next_learner_ordinal,
-                actual: event.learner_ordinal,
-            });
-        }
-        if expected.substep_count == 0 {
-            return Err(FlatPhysicalTrajectoryErrorV1::ZeroSubstepCount {
-                episode_id: expected.episode_id,
-                physical_decision_id: expected.physical_decision_id,
-            });
-        }
-
-        let next_learner_ordinal = episode
-            .next_learner_ordinal
-            .checked_add(1)
-            .ok_or(FlatPhysicalTrajectoryErrorV1::CountOverflow)?;
-        let next_trace_hash =
-            record_learner_trace_v1(episode.learner_trace_hash, expected, event.selected_index);
-
-        match episode.open_group.as_mut() {
-            None => {
-                if expected.substep_index != 0 {
-                    return Err(FlatPhysicalTrajectoryErrorV1::FirstSubstepNotZero {
-                        episode_id: expected.episode_id,
-                        physical_decision_id: expected.physical_decision_id,
-                        actual: expected.substep_index,
-                    });
-                }
-                if let Some(previous) = episode.last_completed_physical_decision_id {
-                    if expected.physical_decision_id <= previous {
-                        return Err(
-                            FlatPhysicalTrajectoryErrorV1::PhysicalDecisionNotStrictlyIncreasing {
-                                episode_id: expected.episode_id,
-                                previous,
-                                actual: expected.physical_decision_id,
-                            },
-                        );
-                    }
-                }
-                if let Some(previous) = episode.last_learner_policy_step {
-                    if expected.step <= previous {
-                        return Err(
-                            FlatPhysicalTrajectoryErrorV1::PolicyStepNotStrictlyIncreasing {
-                                episode_id: expected.episode_id,
-                                previous,
-                                actual: expected.step,
-                            },
-                        );
-                    }
-                }
-                episode.open_group = Some(OpenPhysicalDecisionV1 {
-                    episode_id: expected.episode_id,
-                    physical_decision_id: expected.physical_decision_id,
-                    acting_player: expected.acting_player,
-                    first_learner_ordinal: event.learner_ordinal,
-                    substep_count: expected.substep_count,
-                    next_substep_index: 1,
-                    last_policy_step: expected.step,
-                    joint_selected_log_probability: selected_log_probability,
-                    value_bits: event.predicted_value_bits,
-                    substeps: vec![owned_substep],
-                });
-            }
-            Some(open) => {
-                if expected.physical_decision_id != open.physical_decision_id {
-                    return Err(FlatPhysicalTrajectoryErrorV1::OpenGroupKeyMismatch {
-                        episode_id: expected.episode_id,
-                        expected_physical_decision_id: open.physical_decision_id,
-                        actual_physical_decision_id: expected.physical_decision_id,
-                    });
-                }
-                if expected.acting_player != open.acting_player {
-                    return Err(FlatPhysicalTrajectoryErrorV1::OpenGroupActorMismatch {
-                        episode_id: expected.episode_id,
-                        physical_decision_id: expected.physical_decision_id,
-                    });
-                }
-                if expected.substep_count != open.substep_count {
-                    return Err(FlatPhysicalTrajectoryErrorV1::SubstepCountMismatch {
-                        episode_id: expected.episode_id,
-                        physical_decision_id: expected.physical_decision_id,
-                        expected: open.substep_count,
-                        actual: expected.substep_count,
-                    });
-                }
-                if expected.substep_index != open.next_substep_index {
-                    return Err(FlatPhysicalTrajectoryErrorV1::SubstepIndexMismatch {
-                        episode_id: expected.episode_id,
-                        physical_decision_id: expected.physical_decision_id,
-                        expected: open.next_substep_index,
-                        actual: expected.substep_index,
-                    });
-                }
-                let next_policy_step = open
-                    .last_policy_step
-                    .checked_add(1)
-                    .ok_or(FlatPhysicalTrajectoryErrorV1::CountOverflow)?;
-                if expected.step != next_policy_step {
-                    return Err(
-                        FlatPhysicalTrajectoryErrorV1::PolicyStepNotContiguousWithinGroup {
-                            episode_id: expected.episode_id,
-                            physical_decision_id: expected.physical_decision_id,
-                            expected: next_policy_step,
-                            actual: expected.step,
-                        },
-                    );
-                }
-                let joint = open.joint_selected_log_probability + selected_log_probability;
-                if !joint.is_finite() {
-                    return Err(FlatPhysicalTrajectoryErrorV1::JointLogProbabilityOverflow {
-                        episode_id: expected.episode_id,
-                        physical_decision_id: expected.physical_decision_id,
-                    });
-                }
-                open.joint_selected_log_probability = joint;
-                open.next_substep_index = open
-                    .next_substep_index
-                    .checked_add(1)
-                    .ok_or(FlatPhysicalTrajectoryErrorV1::CountOverflow)?;
-                open.last_policy_step = expected.step;
-                open.substeps.push(owned_substep);
-            }
-        }
-
-        episode.next_learner_ordinal = next_learner_ordinal;
-        episode.learner_trace_hash = next_trace_hash;
-        episode.last_learner_policy_step = Some(expected.step);
-        let group_complete = episode
-            .open_group
-            .as_ref()
-            .is_some_and(|open| open.next_substep_index == open.substep_count);
-        if group_complete {
-            let complete = episode
-                .open_group
-                .take()
-                .expect("group completion was checked above")
-                .complete();
-            episode.last_completed_physical_decision_id = Some(complete.physical_decision_id);
-            episode.groups.push(complete);
-        }
-        Ok(())
-    }
-
-    fn observe_terminal(
-        &mut self,
-        event: FlatScoredTerminalEventV1,
-    ) -> Result<(), FlatPhysicalTrajectoryErrorV1> {
-        let terminal = event.terminal;
-        self.validate_episode_id(terminal.episode_id)?;
-        let episode = self
-            .episodes
-            .entry(terminal.episode_id)
-            .or_insert_with(|| EpisodeAssemblyV1::new(terminal.episode_id));
-        if episode.completed.is_some() {
-            return Err(FlatPhysicalTrajectoryErrorV1::DuplicateTerminal {
-                episode_id: terminal.episode_id,
-            });
-        }
-        if let Some(open) = episode.open_group.as_ref() {
-            return Err(
-                FlatPhysicalTrajectoryErrorV1::TerminalInterruptedOpenGroup {
-                    episode_id: terminal.episode_id,
-                    physical_decision_id: open.physical_decision_id,
-                },
-            );
-        }
-        if event.learner_action_count != episode.next_learner_ordinal {
-            return Err(
-                FlatPhysicalTrajectoryErrorV1::TerminalLearnerActionCountMismatch {
-                    episode_id: terminal.episode_id,
-                    expected: episode.next_learner_ordinal,
-                    actual: event.learner_action_count,
-                },
-            );
-        }
-        if event.learner_trace_hash != episode.learner_trace_hash {
-            return Err(
-                FlatPhysicalTrajectoryErrorV1::TerminalLearnerTraceMismatch {
-                    episode_id: terminal.episode_id,
-                },
-            );
-        }
-        if terminal.terminal_classification != TerminalClassificationV1::Natural
-            || terminal.terminal_code != TerminalSafeCodeV2::NaturalGameOver
-        {
-            return Err(FlatPhysicalTrajectoryErrorV1::NonNaturalTerminal {
-                episode_id: terminal.episode_id,
-            });
-        }
-        let (expected_winner, expected_reward) = match terminal.terminal_outcome {
-            TerminalOutcomeV1::P0Win => (Some(PlayerSeatV1::P0), [1, -1]),
-            TerminalOutcomeV1::P1Win => (Some(PlayerSeatV1::P1), [-1, 1]),
-            TerminalOutcomeV1::Draw => (None, [0, 0]),
-            TerminalOutcomeV1::Truncated | TerminalOutcomeV1::Halted => {
-                return Err(FlatPhysicalTrajectoryErrorV1::TerminalTupleMismatch {
-                    episode_id: terminal.episode_id,
-                });
-            }
-        };
-        if terminal.winner != expected_winner || terminal.terminal_reward != expected_reward {
-            return Err(FlatPhysicalTrajectoryErrorV1::TerminalTupleMismatch {
-                episode_id: terminal.episode_id,
-            });
-        }
-        let learner_return = match (self.learner_seat, terminal.winner) {
-            (_, None) => 0,
-            (learner, Some(winner)) if learner == winner => 1,
-            _ => -1,
-        };
-        let learner_reward_index = match self.learner_seat {
-            PlayerSeatV1::P0 => 0,
-            PlayerSeatV1::P1 => 1,
-        };
-        if terminal.terminal_reward[learner_reward_index] != learner_return {
-            return Err(FlatPhysicalTrajectoryErrorV1::LearnerRewardMismatch {
-                episode_id: terminal.episode_id,
-                learner_seat: self.learner_seat,
-            });
-        }
-        if let Some(invalid_group) = episode
-            .groups
-            .iter()
-            .find(|group| group.physical_decision_id >= terminal.physical_decision_count)
-        {
-            return Err(
-                FlatPhysicalTrajectoryErrorV1::LearnerPhysicalDecisionOutOfRange {
-                    episode_id: terminal.episode_id,
-                    physical_decision_id: invalid_group.physical_decision_id,
-                    terminal_physical_decision_count: terminal.physical_decision_count,
-                },
-            );
-        }
-        let learner_group_count = u64::try_from(episode.groups.len())
-            .map_err(|_| FlatPhysicalTrajectoryErrorV1::CountOverflow)?;
-        let opponent_policy_step_count = terminal
-            .policy_step_count
-            .checked_sub(episode.next_learner_ordinal)
-            .ok_or(
-                FlatPhysicalTrajectoryErrorV1::TerminalPolicyStepCountUnderflow {
-                    episode_id: terminal.episode_id,
-                },
-            )?;
-        let opponent_physical_decision_count = terminal
-            .physical_decision_count
-            .checked_sub(learner_group_count)
-            .ok_or(
-                FlatPhysicalTrajectoryErrorV1::TerminalPhysicalDecisionCountUnderflow {
-                    episode_id: terminal.episode_id,
-                },
-            )?;
-        if let Some(invalid_substep) = episode
-            .groups
-            .iter()
-            .flat_map(|group| group.substeps.iter())
-            .find(|substep| substep.expected.step >= terminal.policy_step_count)
-        {
-            return Err(FlatPhysicalTrajectoryErrorV1::LearnerPolicyStepOutOfRange {
-                episode_id: terminal.episode_id,
-                policy_step: invalid_substep.expected.step,
-                terminal_policy_step_count: terminal.policy_step_count,
-            });
-        }
-        if opponent_policy_step_count < opponent_physical_decision_count {
-            return Err(
-                FlatPhysicalTrajectoryErrorV1::OpponentPolicyStepsBelowPhysicalDecisions {
-                    episode_id: terminal.episode_id,
-                    opponent_policy_step_count,
-                    opponent_physical_decision_count,
-                },
-            );
-        }
-        let groups = std::mem::take(&mut episode.groups);
-        episode.completed = Some(FlatGroupedEpisodeV1 {
-            episode_id: terminal.episode_id,
-            learner_seat: self.learner_seat,
-            learner_return,
-            learner_policy_step_count: episode.next_learner_ordinal,
-            opponent_policy_step_count,
-            learner_physical_decision_count: learner_group_count,
-            opponent_physical_decision_count,
-            learner_trace_hash: episode.learner_trace_hash,
-            terminal,
-            groups,
-        });
-        Ok(())
-    }
-
-    fn finish(self) -> Result<FlatGroupedTrajectoryBatchV1, FlatPhysicalTrajectoryErrorV1> {
-        if let Some(error) = self.poisoned_error {
-            return Err(error);
-        }
-        let capacity = usize::try_from(self.episode_count)
-            .map_err(|_| FlatPhysicalTrajectoryErrorV1::EpisodeCountExceedsAddressSpace)?;
-        let mut episodes = Vec::new();
-        episodes
-            .try_reserve_exact(capacity)
-            .map_err(|_| FlatPhysicalTrajectoryErrorV1::ResultAllocationFailed)?;
-        let mut assemblies = self.episodes;
-        let mut learner_policy_step_count = 0u64;
-        let mut learner_physical_decision_count = 0u64;
-        for episode_id in self.first_episode_id..self.end_episode_id {
-            let mut assembly = assemblies
-                .remove(&episode_id)
-                .ok_or(FlatPhysicalTrajectoryErrorV1::MissingTerminal { episode_id })?;
-            let episode = assembly
-                .completed
-                .take()
-                .ok_or(FlatPhysicalTrajectoryErrorV1::MissingTerminal { episode_id })?;
-            learner_policy_step_count = learner_policy_step_count
-                .checked_add(episode.learner_policy_step_count)
-                .ok_or(FlatPhysicalTrajectoryErrorV1::CountOverflow)?;
-            learner_physical_decision_count = learner_physical_decision_count
-                .checked_add(episode.learner_physical_decision_count)
-                .ok_or(FlatPhysicalTrajectoryErrorV1::CountOverflow)?;
-            episodes.push(episode);
-        }
-        let update_staging = if learner_physical_decision_count == 0 {
-            FlatPhysicalUpdateStagingV1::NoUpdateZeroLearnerGroups
-        } else {
-            FlatPhysicalUpdateStagingV1::Ready {
-                learner_group_count: learner_physical_decision_count,
-            }
-        };
-        Ok(FlatGroupedTrajectoryBatchV1 {
-            learner_seat: self.learner_seat,
-            first_episode_id: self.first_episode_id,
-            episode_count: self.episode_count,
-            learner_policy_step_count,
-            learner_physical_decision_count,
-            update_staging,
-            episodes,
-        })
+    #[cfg(test)]
+    fn duplicate_first_group_for_test(&mut self, episode_id: u64) {
+        self.core.duplicate_first_group_for_test(episode_id);
     }
 }
 
@@ -790,29 +122,34 @@ impl FlatScoredTrajectoryObserverV1 for FlatPhysicalTrajectoryObserverV1 {
         &mut self,
         event: FlatScoredSelectedEventV1<'_>,
     ) -> Result<(), Self::Error> {
-        if let Some(error) = self.poisoned_error {
-            return Err(error);
-        }
-        let result = self.observe_selected(event);
-        if let Err(error) = result {
-            self.poisoned_error = Some(error);
-        }
-        result
+        let binding_matches = selected_binding_matches(&event);
+        let decision = event.decision;
+        self.core.observe_selected(
+            FlatSelectedSampleCore {
+                expected: event.expected,
+                binding: event.binding,
+                binding_matches,
+                learner_ordinal: event.learner_ordinal,
+                action_seed: event.action_seed,
+                selected_index: event.selected_index,
+                raw_action_logits: event.raw_action_logits,
+                scorer_action_count: decision.actions().len(),
+                predicted_value_bits: event.predicted_value_bits,
+            },
+            || FlatOwnedScoringInputsV1::copy_from_view(decision),
+        )
     }
 
     fn observe_terminal_v1(&mut self, event: FlatScoredTerminalEventV1) -> Result<(), Self::Error> {
-        if let Some(error) = self.poisoned_error {
-            return Err(error);
-        }
-        let result = self.observe_terminal(event);
-        if let Err(error) = result {
-            self.poisoned_error = Some(error);
-        }
-        result
+        self.core.observe_terminal(FlatTerminalSampleCore {
+            terminal: event.terminal,
+            learner_action_count: event.learner_action_count,
+            learner_trace_hash: event.learner_trace_hash,
+        })
     }
 
     fn finish_v1(self) -> Result<Self::Output, Self::Error> {
-        self.finish()
+        self.core.finish()
     }
 }
 
@@ -837,54 +174,22 @@ fn selected_log_probability(
     selected_index: usize,
     logits: &[f32],
 ) -> Result<f32, FlatPhysicalTrajectoryErrorV1> {
-    let mut maximum = f32::NEG_INFINITY;
-    for (action_index, &logit) in logits.iter().enumerate() {
-        if !logit.is_finite() {
-            return Err(FlatPhysicalTrajectoryErrorV1::NonFiniteLogit {
-                episode_id,
-                learner_ordinal,
-                action_index: u32::try_from(action_index).unwrap_or(u32::MAX),
-                bits: logit.to_bits(),
-            });
-        }
-        maximum = maximum.max(logit);
-    }
-    let mut denominator = 0.0f32;
-    for &logit in logits {
-        denominator += (logit - maximum).exp();
-    }
-    let result = (logits[selected_index] - maximum) - denominator.ln();
-    if result.is_finite() {
-        Ok(result)
-    } else {
-        Err(
-            FlatPhysicalTrajectoryErrorV1::NonFiniteSelectedLogProbability {
-                episode_id,
-                learner_ordinal,
-            },
-        )
-    }
+    core_selected_log_probability(episode_id, learner_ordinal, selected_index, logits)
 }
 
 fn player_seat_code(seat: PlayerSeatV1) -> u8 {
-    match seat {
-        PlayerSeatV1::P0 => 0,
-        PlayerSeatV1::P1 => 1,
-    }
+    core_player_seat_code(seat)
 }
 
 fn decision_kind_code(kind: FastActorDecisionKindV1) -> u8 {
-    match kind {
-        FastActorDecisionKindV1::Surface => 0,
-        FastActorDecisionKindV1::AttackerInclusion => 1,
-        FastActorDecisionKindV1::BlockerInclusion => 2,
-    }
+    core_decision_kind_code(kind)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::async_flat_scored_rollout_v1::{
+        initial_learner_trace_hash_v1, record_learner_trace_v1,
         run_async_flat_scored_rollout_observed_v1, AsyncFlatScoredObservedRunErrorV1,
         FlatBatchScorerErrorV1, FlatBatchScorerV1, FlatScoredObserverPhaseV1,
         FlatScoringBatchViewV1, ASYNC_FLAT_SCORED_TEST_LOCK_V1,
@@ -2031,9 +1336,7 @@ mod tests {
             FlatPhysicalTrajectoryObserverV1::new(PlayerSeatV1::P0, 12, 1).unwrap();
         let first_group = SelectedSpecV1::new(12, 0, 0, 1, 0);
         observe_selected(&mut physical_underflow, &first_group).unwrap();
-        let assembly = physical_underflow.episodes.get_mut(&12).unwrap();
-        let duplicate_group = assembly.groups[0].clone();
-        assembly.groups.push(duplicate_group);
+        physical_underflow.duplicate_first_group_for_test(12);
         assert_eq!(
             physical_underflow.observe_terminal_v1(natural_terminal(
                 12,
