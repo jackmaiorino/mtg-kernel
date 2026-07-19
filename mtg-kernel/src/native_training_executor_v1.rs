@@ -38,6 +38,7 @@ pub use crate::native_trainer_v1::{
     NativeTrainerSelectedOutputEvidenceV1 as NativeTrainingSelectedOutputObservationV1,
     NativeTrainerUpdateEvidenceV2 as NativeTrainingUpdateObservationV2,
 };
+use crate::native_training_store_v2::NativeTrainingPersistenceReceiptV2;
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -622,8 +623,8 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
             checkpoint,
         } = self;
         NativeTrainingBoundUpdateV2 {
-            _executor: executor,
-            _candidate_trainer: candidate_trainer,
+            executor,
+            candidate_trainer,
             observation,
             checkpoint,
             manifest_bytes,
@@ -637,16 +638,14 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
 /// Prepared candidate plus the exact opaque manifest bytes intended for
 /// publication. This is an intermediate typestate, not a persistence receipt.
 ///
-/// It intentionally exposes no live-commit operation yet. The V2 store must
-/// first return a private-construction, move-only receipt proving publication
-/// of this generation, payload digest, and manifest digest. Dropping this value
-/// leaves the exclusively borrowed executor unchanged.
+/// The only live-commit operation consumes a private-construction, move-only V2
+/// store receipt proving publication of this generation, payload digest, and
+/// manifest digest. Dropping this value leaves the exclusively borrowed
+/// executor unchanged.
 #[must_use = "dropping a publication-bound update aborts it without advancing the executor"]
 pub struct NativeTrainingBoundUpdateV2<'executor> {
-    // Retained exclusively for the future receipt-gated final commit. The
-    // leading underscores are removed when that store path lands.
-    _executor: &'executor mut NativeTrainingExecutorV1,
-    _candidate_trainer: NativeTrainerStateV2,
+    executor: &'executor mut NativeTrainingExecutorV1,
+    candidate_trainer: NativeTrainerStateV2,
     observation: NativeTrainingUpdateObservationV2,
     checkpoint: NativeTrainingCheckpointCandidateV1,
     manifest_bytes: Box<[u8]>,
@@ -679,6 +678,49 @@ impl NativeTrainingBoundUpdateV2<'_> {
     pub const fn expected_manifest_sha256(&self) -> [u8; 32] {
         self.expected_manifest_sha256
     }
+
+    /// Consumes a V2 store receipt, checks it against the exact bound candidate,
+    /// and advances the live executor only after every fallible check passes.
+    ///
+    /// Receipt mismatch consumes and aborts the candidate while leaving the
+    /// live executor unchanged. On success, the trainer assignment is the sole
+    /// commit point; no fallible operation follows it.
+    pub fn commit_v2(
+        self,
+        receipt: NativeTrainingPersistenceReceiptV2,
+    ) -> Result<NativeTrainingUpdateObservationV2, NativeTrainingExecutorErrorV1> {
+        if !persistence_receipt_matches_v2(
+            &receipt,
+            self.expected_generation_index,
+            self.expected_payload_sha256,
+            self.expected_manifest_sha256,
+        ) {
+            return Err(NativeTrainingExecutorErrorV1::redacted(
+                NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+                "persistence_receipt_mismatch",
+            ));
+        }
+
+        let Self {
+            executor,
+            candidate_trainer,
+            observation,
+            ..
+        } = self;
+        executor.trainer = candidate_trainer;
+        Ok(observation)
+    }
+}
+
+fn persistence_receipt_matches_v2(
+    receipt: &NativeTrainingPersistenceReceiptV2,
+    expected_generation_index: u64,
+    expected_payload_sha256: [u8; 32],
+    expected_manifest_sha256: [u8; 32],
+) -> bool {
+    receipt.generation_index() == expected_generation_index
+        && receipt.checkpoint_payload_sha256() == expected_payload_sha256
+        && receipt.checkpoint_manifest_sha256() == expected_manifest_sha256
 }
 
 /// Stateful one-update-at-a-time trainer executor.
@@ -1367,8 +1409,8 @@ mod tests {
                 without_timing_v1(bound.observation().clone()),
                 aborted_observation
             );
-            // There is deliberately no commit operation on this typestate.
-            // Dropping after a hypothetical publication failure still aborts.
+            // Dropping without a store receipt after a hypothetical
+            // publication failure still aborts.
         }
         assert_eq!(executor.progress().successful_update_count, 0);
         assert_eq!(executor.checkpoint_candidate_v1().unwrap(), before);
@@ -1380,6 +1422,95 @@ mod tests {
         assert_eq!(
             executor.checkpoint_candidate_v1().unwrap(),
             aborted_candidate
+        );
+    }
+
+    #[test]
+    fn persistence_receipt_is_nonforgeable_and_gates_the_only_live_commit() {
+        use crate::native_training_store_v2::test_persistence_receipt_v2;
+
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let config = burn_config_v1(2);
+        let mut executor =
+            NativeTrainingExecutorV1::from_common_model_snapshot_v1(config, &manifest, &payload)
+                .unwrap();
+        let before = executor.checkpoint_candidate_v1().unwrap();
+        let manifest_bytes = br#"{"checkpoint":"receipt-gated-candidate"}
+"#
+        .to_vec()
+        .into_boxed_slice();
+
+        let (expected_observation, expected_candidate, generation, payload_sha, manifest_sha) = {
+            let prepared = executor.prepare_update_v2().unwrap();
+            let bound = prepared.bind_manifest_bytes_v2(manifest_bytes.clone());
+            (
+                without_timing_v1(bound.observation().clone()),
+                bound.checkpoint_candidate().clone(),
+                bound.expected_generation_index(),
+                bound.expected_payload_sha256(),
+                bound.expected_manifest_sha256(),
+            )
+        };
+        assert_eq!(executor.checkpoint_candidate_v1().unwrap(), before);
+
+        let wrong_generation =
+            test_persistence_receipt_v2(generation + 1, payload_sha, manifest_sha);
+        let wrong_payload = test_persistence_receipt_v2(
+            generation,
+            {
+                let mut digest = payload_sha;
+                digest[31] ^= 1;
+                digest
+            },
+            manifest_sha,
+        );
+        let wrong_manifest = test_persistence_receipt_v2(generation, payload_sha, {
+            let mut digest = manifest_sha;
+            digest[31] ^= 1;
+            digest
+        });
+        assert!(!persistence_receipt_matches_v2(
+            &wrong_generation,
+            generation,
+            payload_sha,
+            manifest_sha
+        ));
+        assert!(!persistence_receipt_matches_v2(
+            &wrong_payload,
+            generation,
+            payload_sha,
+            manifest_sha
+        ));
+        assert!(!persistence_receipt_matches_v2(
+            &wrong_manifest,
+            generation,
+            payload_sha,
+            manifest_sha
+        ));
+
+        let prepared = executor.prepare_update_v2().unwrap();
+        let bound = prepared.bind_manifest_bytes_v2(manifest_bytes.clone());
+        let error = bound.commit_v2(wrong_generation).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding
+        );
+        assert_eq!(error.code(), "persistence_receipt_mismatch");
+        assert_eq!(executor.progress().successful_update_count, 0);
+        assert_eq!(executor.checkpoint_candidate_v1().unwrap(), before);
+
+        let prepared = executor.prepare_update_v2().unwrap();
+        let bound = prepared.bind_manifest_bytes_v2(manifest_bytes);
+        let correct_receipt = test_persistence_receipt_v2(generation, payload_sha, manifest_sha);
+        let committed_observation = bound.commit_v2(correct_receipt).unwrap();
+        assert_eq!(
+            without_timing_v1(committed_observation),
+            expected_observation
+        );
+        assert_eq!(executor.progress().successful_update_count, 1);
+        assert_eq!(
+            executor.checkpoint_candidate_v1().unwrap(),
+            expected_candidate
         );
     }
 
