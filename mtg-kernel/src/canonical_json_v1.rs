@@ -313,6 +313,43 @@ impl ValueSerializerV1 {
     }
 }
 
+/// First-error state for serde compound builders.
+///
+/// Serde callers are expected to propagate serializer errors, but this codec is
+/// an authority boundary: a hand-written `Serialize` implementation must not be
+/// able to catch an error and then publish a partial value. Once any compound
+/// operation fails, every later operation and `end` return that original error.
+#[derive(Default)]
+struct CompoundSerializerStateV1 {
+    first_error: Option<CanonicalJsonErrorV1>,
+}
+
+impl CompoundSerializerStateV1 {
+    fn require_usable(&self) -> Result<()> {
+        match self.first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    fn record<T>(&mut self, result: Result<T>) -> Result<T> {
+        if let Some(error) = self.first_error {
+            return Err(error);
+        }
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                self.first_error = Some(error);
+                Err(error)
+            }
+        }
+    }
+
+    fn fail<T>(&mut self, kind: CanonicalJsonErrorKindV1) -> Result<T> {
+        self.record(Err(CanonicalJsonErrorV1::new(kind)))
+    }
+}
+
 impl Serializer for ValueSerializerV1 {
     type Ok = CanonicalJsonValueV1;
     type Error = CanonicalJsonErrorV1;
@@ -461,6 +498,7 @@ impl Serializer for ValueSerializerV1 {
             values: Vec::new(),
             null_policy: self.null_policy,
             depth,
+            state: CompoundSerializerStateV1::default(),
         })
     }
 
@@ -491,6 +529,7 @@ impl Serializer for ValueSerializerV1 {
             values: Vec::new(),
             null_policy: self.null_policy,
             array_depth,
+            state: CompoundSerializerStateV1::default(),
         })
     }
 
@@ -528,19 +567,24 @@ struct SequenceSerializerV1 {
     values: Vec<CanonicalJsonValueV1>,
     null_policy: CanonicalJsonNullPolicyV1,
     depth: usize,
+    state: CompoundSerializerStateV1,
 }
 
 impl SequenceSerializerV1 {
     fn push<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
-        self.values.push(value.serialize(ValueSerializerV1 {
+        self.state.require_usable()?;
+        let value = value.serialize(ValueSerializerV1 {
             null_policy: self.null_policy,
             containing_depth: self.depth,
-        })?);
+        });
+        let value = self.state.record(value)?;
+        self.values.push(value);
         Ok(())
     }
 
-    fn finish(self) -> CanonicalJsonValueV1 {
-        CanonicalJsonValueV1::Array(self.values)
+    fn finish(self) -> Result<CanonicalJsonValueV1> {
+        self.state.require_usable()?;
+        Ok(CanonicalJsonValueV1::Array(self.values))
     }
 }
 
@@ -553,7 +597,7 @@ impl SerializeSeq for SequenceSerializerV1 {
     }
 
     fn end(self) -> Result<Self::Ok> {
-        Ok(self.finish())
+        self.finish()
     }
 }
 
@@ -566,7 +610,7 @@ impl SerializeTuple for SequenceSerializerV1 {
     }
 
     fn end(self) -> Result<Self::Ok> {
-        Ok(self.finish())
+        self.finish()
     }
 }
 
@@ -579,7 +623,7 @@ impl SerializeTupleStruct for SequenceSerializerV1 {
     }
 
     fn end(self) -> Result<Self::Ok> {
-        Ok(self.finish())
+        self.finish()
     }
 }
 
@@ -588,6 +632,7 @@ struct TupleVariantSerializerV1 {
     values: Vec<CanonicalJsonValueV1>,
     null_policy: CanonicalJsonNullPolicyV1,
     array_depth: usize,
+    state: CompoundSerializerStateV1,
 }
 
 impl SerializeTupleVariant for TupleVariantSerializerV1 {
@@ -595,14 +640,18 @@ impl SerializeTupleVariant for TupleVariantSerializerV1 {
     type Error = CanonicalJsonErrorV1;
 
     fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
-        self.values.push(value.serialize(ValueSerializerV1 {
+        self.state.require_usable()?;
+        let value = value.serialize(ValueSerializerV1 {
             null_policy: self.null_policy,
             containing_depth: self.array_depth,
-        })?);
+        });
+        let value = self.state.record(value)?;
+        self.values.push(value);
         Ok(())
     }
 
     fn end(self) -> Result<Self::Ok> {
+        self.state.require_usable()?;
         Ok(singleton_object(
             self.variant,
             CanonicalJsonValueV1::Array(self.values),
@@ -615,6 +664,7 @@ struct ObjectSerializerV1 {
     pending_key: Option<String>,
     null_policy: CanonicalJsonNullPolicyV1,
     depth: usize,
+    state: CompoundSerializerStateV1,
 }
 
 impl ObjectSerializerV1 {
@@ -624,6 +674,7 @@ impl ObjectSerializerV1 {
             pending_key: None,
             null_policy,
             depth,
+            state: CompoundSerializerStateV1::default(),
         }
     }
 
@@ -642,25 +693,25 @@ impl ObjectSerializerV1 {
     }
 
     fn insert<T: Serialize + ?Sized>(&mut self, key: String, value: &T) -> Result<()> {
+        self.state.require_usable()?;
         if self.pending_key.is_some() {
-            return Err(CanonicalJsonErrorV1::new(
-                CanonicalJsonErrorKindV1::Serialization,
-            ));
+            return self.state.fail(CanonicalJsonErrorKindV1::Serialization);
         }
-        self.accept_key(&key)?;
+        let accepted = self.accept_key(&key);
+        self.state.record(accepted)?;
         let value = value.serialize(ValueSerializerV1 {
             null_policy: self.null_policy,
             containing_depth: self.depth,
-        })?;
+        });
+        let value = self.state.record(value)?;
         self.values.insert(key, value);
         Ok(())
     }
 
-    fn finish(self) -> Result<CanonicalJsonValueV1> {
+    fn finish(mut self) -> Result<CanonicalJsonValueV1> {
+        self.state.require_usable()?;
         if self.pending_key.is_some() {
-            return Err(CanonicalJsonErrorV1::new(
-                CanonicalJsonErrorKindV1::Serialization,
-            ));
+            return self.state.fail(CanonicalJsonErrorKindV1::Serialization);
         }
         Ok(CanonicalJsonValueV1::Object(self.values))
     }
@@ -671,26 +722,28 @@ impl SerializeMap for ObjectSerializerV1 {
     type Error = CanonicalJsonErrorV1;
 
     fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<()> {
+        self.state.require_usable()?;
         if self.pending_key.is_some() {
-            return Err(CanonicalJsonErrorV1::new(
-                CanonicalJsonErrorKindV1::Serialization,
-            ));
+            return self.state.fail(CanonicalJsonErrorKindV1::Serialization);
         }
-        let key = key.serialize(MapKeySerializerV1)?;
-        self.accept_key(&key)?;
+        let key = key.serialize(MapKeySerializerV1);
+        let key = self.state.record(key)?;
+        let accepted = self.accept_key(&key);
+        self.state.record(accepted)?;
         self.pending_key = Some(key);
         Ok(())
     }
 
     fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
-        let key = self
-            .pending_key
-            .take()
-            .ok_or_else(|| CanonicalJsonErrorV1::new(CanonicalJsonErrorKindV1::Serialization))?;
+        self.state.require_usable()?;
+        let Some(key) = self.pending_key.take() else {
+            return self.state.fail(CanonicalJsonErrorKindV1::Serialization);
+        };
         let value = value.serialize(ValueSerializerV1 {
             null_policy: self.null_policy,
             containing_depth: self.depth,
-        })?;
+        });
+        let value = self.state.record(value)?;
         self.values.insert(key, value);
         Ok(())
     }
@@ -700,7 +753,9 @@ impl SerializeMap for ObjectSerializerV1 {
         key: &K,
         value: &V,
     ) -> Result<()> {
-        let key = key.serialize(MapKeySerializerV1)?;
+        self.state.require_usable()?;
+        let key = key.serialize(MapKeySerializerV1);
+        let key = self.state.record(key)?;
         self.insert(key, value)
     }
 
@@ -718,7 +773,9 @@ impl SerializeStruct for ObjectSerializerV1 {
         key: &'static str,
         value: &T,
     ) -> Result<()> {
-        validate_printable_ascii(key)?;
+        self.state.require_usable()?;
+        let key_validation = validate_printable_ascii(key);
+        self.state.record(key_validation)?;
         self.insert(key.to_owned(), value)
     }
 
@@ -1411,7 +1468,13 @@ fn parse_u64_decimal(digits: &[u8]) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::{ser::SerializeMap, Deserialize, Serializer};
+    use serde::{
+        ser::{
+            SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
+            SerializeTupleVariant,
+        },
+        Deserialize, Serializer,
+    };
     use std::collections::BTreeMap;
 
     fn assert_kind<T>(result: Result<T>, expected: CanonicalJsonErrorKindV1) {
@@ -1530,6 +1593,148 @@ mod tests {
             to_canonical_json_bytes_v1(&DuplicateMap, CanonicalJsonNullPolicyV1::Forbid),
             CanonicalJsonErrorKindV1::DuplicateObjectKey,
         );
+    }
+
+    enum SwallowedCompoundError {
+        DuplicateMapEntry,
+        InvalidMapValue,
+        InvalidSequenceElement,
+        InvalidTupleVariantField,
+        InvalidStructVariantField,
+        NestedInvalidStructInMap,
+    }
+
+    struct SwallowedInnerStructError;
+
+    impl Serialize for SwallowedInnerStructError {
+        fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let mut structure = serializer.serialize_struct("Inner", 2)?;
+            assert!(structure.serialize_field("invalid", &1.5_f64).is_err());
+            assert!(structure.serialize_field("after", &1_u8).is_err());
+            structure.end()
+        }
+    }
+
+    impl Serialize for SwallowedCompoundError {
+        fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            match self {
+                Self::DuplicateMapEntry => {
+                    let mut map = serializer.serialize_map(Some(3))?;
+                    map.serialize_entry("same", &1_u8)?;
+                    assert!(map.serialize_entry("same", &2_u8).is_err());
+                    assert!(map.serialize_entry("after", &3_u8).is_err());
+                    map.end()
+                }
+                Self::InvalidMapValue => {
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    map.serialize_key("invalid")?;
+                    assert!(map.serialize_value(&1.5_f64).is_err());
+                    assert!(map.serialize_entry("after", &1_u8).is_err());
+                    map.end()
+                }
+                Self::InvalidSequenceElement => {
+                    let mut sequence = serializer.serialize_seq(Some(2))?;
+                    assert!(sequence.serialize_element(&1.5_f64).is_err());
+                    assert!(sequence.serialize_element(&1_u8).is_err());
+                    sequence.end()
+                }
+                Self::InvalidTupleVariantField => {
+                    let mut variant =
+                        serializer.serialize_tuple_variant("Fixture", 0, "Tuple", 2)?;
+                    assert!(variant.serialize_field(&1.5_f64).is_err());
+                    assert!(variant.serialize_field(&1_u8).is_err());
+                    variant.end()
+                }
+                Self::InvalidStructVariantField => {
+                    let mut variant =
+                        serializer.serialize_struct_variant("Fixture", 0, "Struct", 2)?;
+                    assert!(variant.serialize_field("invalid", &1.5_f64).is_err());
+                    assert!(variant.serialize_field("after", &1_u8).is_err());
+                    variant.end()
+                }
+                Self::NestedInvalidStructInMap => {
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    assert!(map
+                        .serialize_entry("nested", &SwallowedInnerStructError)
+                        .is_err());
+                    assert!(map.serialize_entry("after", &1_u8).is_err());
+                    map.end()
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compound_builders_keep_first_error_when_custom_serialize_tries_to_continue() {
+        for (fixture, expected) in [
+            (
+                SwallowedCompoundError::DuplicateMapEntry,
+                CanonicalJsonErrorKindV1::DuplicateObjectKey,
+            ),
+            (
+                SwallowedCompoundError::InvalidMapValue,
+                CanonicalJsonErrorKindV1::FloatingPointForbidden,
+            ),
+            (
+                SwallowedCompoundError::InvalidSequenceElement,
+                CanonicalJsonErrorKindV1::FloatingPointForbidden,
+            ),
+            (
+                SwallowedCompoundError::InvalidTupleVariantField,
+                CanonicalJsonErrorKindV1::FloatingPointForbidden,
+            ),
+            (
+                SwallowedCompoundError::InvalidStructVariantField,
+                CanonicalJsonErrorKindV1::FloatingPointForbidden,
+            ),
+            (
+                SwallowedCompoundError::NestedInvalidStructInMap,
+                CanonicalJsonErrorKindV1::FloatingPointForbidden,
+            ),
+        ] {
+            assert_kind(
+                to_canonical_json_bytes_v1(&fixture, CanonicalJsonNullPolicyV1::Forbid),
+                expected,
+            );
+        }
+    }
+
+    #[test]
+    fn compound_builder_subsequent_calls_and_end_repeat_exact_first_error() {
+        let serializer = ValueSerializerV1 {
+            null_policy: CanonicalJsonNullPolicyV1::Forbid,
+            containing_depth: 0,
+        };
+        let mut map = serializer.serialize_map(Some(3)).unwrap();
+        map.serialize_entry("same", &1_u8).unwrap();
+        let map_first = map.serialize_entry("same", &2_u8).unwrap_err();
+        assert_eq!(
+            map_first.kind(),
+            CanonicalJsonErrorKindV1::DuplicateObjectKey
+        );
+        let map_later = map.serialize_key("after").unwrap_err();
+        assert_eq!(map_later, map_first);
+        assert_eq!(SerializeMap::end(map).unwrap_err(), map_first);
+
+        let serializer = ValueSerializerV1 {
+            null_policy: CanonicalJsonNullPolicyV1::Forbid,
+            containing_depth: 0,
+        };
+        let mut sequence = serializer.serialize_seq(Some(2)).unwrap();
+        let sequence_first = SerializeSeq::serialize_element(&mut sequence, &1.5_f64).unwrap_err();
+        assert_eq!(
+            sequence_first.kind(),
+            CanonicalJsonErrorKindV1::FloatingPointForbidden
+        );
+        let sequence_later = SerializeSeq::serialize_element(&mut sequence, &1_u8).unwrap_err();
+        assert_eq!(sequence_later, sequence_first);
+        assert_eq!(SerializeSeq::end(sequence).unwrap_err(), sequence_first);
     }
 
     #[test]
