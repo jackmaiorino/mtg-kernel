@@ -382,7 +382,26 @@ std::thread_local! {
 // Retained for downstream tests that coordinate their own expensive rollout
 // calls. Fault and capture state no longer depends on this process-global lock.
 #[cfg(test)]
-pub(crate) static ASYNC_FLAT_SCORED_TEST_LOCK_V1: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static ASYNC_FLAT_SCORED_TEST_LOCK_V1: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+fn acquire_data_free_coordination_lock_v1(
+    lock: &std::sync::Mutex<()>,
+) -> std::sync::MutexGuard<'_, ()> {
+    let guard = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // This mutex protects no data. A prior test panic must not turn one
+    // diagnostic failure into unrelated follow-on failures, so recovering the
+    // unit guard also restores the coordination primitive for later callers.
+    lock.clear_poison();
+    guard
+}
+
+#[cfg(test)]
+pub(crate) fn acquire_async_flat_scored_test_lock_v1() -> std::sync::MutexGuard<'static, ()> {
+    acquire_data_free_coordination_lock_v1(&ASYNC_FLAT_SCORED_TEST_LOCK_V1)
+}
 
 /// Installs fault/capture instrumentation for runs started by this test
 /// thread. Each run clones the `Arc` into its broker and workers, so unrelated
@@ -3598,6 +3617,24 @@ mod tests {
 
     use super::acquire_async_flat_scored_test_guard_v1;
     const TEST_LEARNER_POLICY_SEED: u64 = 83_501;
+
+    #[test]
+    fn data_free_coordination_lock_recovers_after_a_panicking_holder() {
+        let lock = Arc::new(std::sync::Mutex::new(()));
+        let panicking_lock = Arc::clone(&lock);
+        let panicked = std::thread::spawn(move || {
+            let _guard = panicking_lock.lock().unwrap();
+            panic!("intentional coordination-lock poison");
+        })
+        .join();
+        assert!(panicked.is_err());
+        assert!(lock.is_poisoned());
+
+        let guard = acquire_data_free_coordination_lock_v1(&lock);
+        assert!(!lock.is_poisoned());
+        drop(guard);
+        assert!(lock.try_lock().is_ok());
+    }
 
     #[derive(Default)]
     struct ZeroScorer {

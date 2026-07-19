@@ -2112,7 +2112,7 @@ fn changed_non_gauge_parameters_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::async_flat_scored_rollout_v1::ASYNC_FLAT_SCORED_TEST_LOCK_V1 as TEST_LOCK;
+    use crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1;
     use crate::common_model_snapshot_v1::{
         common_model_snapshot_paths_v1, BASE_SEED_V1 as SNAPSHOT_AUTHORITY_BASE_SEED_V1,
         MODEL_INIT_SEED_V1 as SNAPSHOT_MODEL_INIT_SEED_V1, SNAPSHOT_IDENTITY_V1,
@@ -2225,6 +2225,66 @@ mod tests {
             .to_bits()
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct BurnPairNumericalWitnessV1<'a> {
+        train_state_sha256: [u8; 32],
+        model_digest_after: &'a str,
+        policy_sum_bits: u32,
+        value_sum_bits: u32,
+        loss_bits: u32,
+    }
+
+    fn recorded_burn_pair_numerical_witness_v1(
+    ) -> (&'static str, BurnPairNumericalWitnessV1<'static>) {
+        // The trainer intentionally uses the target's f32 transcendental
+        // implementations. Their last-bit differences are immaterial to the
+        // declared numerical tolerances but become visible in an exact
+        // optimizer-state digest. These witnesses are scoped to the repository-
+        // pinned Rust toolchain and named target tuple. Keep each tuple exact
+        // and fail closed instead of silently applying one target's witness to
+        // another.
+        #[cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "msvc"))]
+        {
+            (
+                "x86_64-pc-windows-msvc",
+                BurnPairNumericalWitnessV1 {
+                    train_state_sha256: [
+                        250, 165, 172, 135, 179, 143, 5, 205, 138, 114, 252, 103, 138, 241, 177,
+                        197, 117, 96, 251, 190, 79, 49, 165, 11, 15, 249, 71, 182, 127, 49, 170,
+                        141,
+                    ],
+                    model_digest_after:
+                        "5dcf4eff6f0bce4d5c38f9d3eeb84f0a33afd9db67a8969dfc4360b9df35d443",
+                    policy_sum_bits: 1_111_603_742,
+                    value_sum_bits: 1_121_934_211,
+                    loss_bits: 1_064_195_456,
+                },
+            )
+        }
+        #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
+        {
+            (
+                "x86_64-unknown-linux-gnu",
+                BurnPairNumericalWitnessV1 {
+                    train_state_sha256: [
+                        123, 200, 0, 83, 51, 3, 54, 216, 47, 5, 112, 187, 4, 74, 137, 69, 67, 101,
+                        49, 78, 192, 135, 162, 81, 61, 143, 123, 166, 225, 191, 172, 17,
+                    ],
+                    model_digest_after:
+                        "40eafa2be6624d0126e5aaf704441034f6186799c4235f7b7c513b7d3628f06d",
+                    policy_sum_bits: 1_111_603_742,
+                    value_sum_bits: 1_121_934_212,
+                    loss_bits: 1_064_195_457,
+                },
+            )
+        }
+        #[cfg(not(any(
+            all(target_arch = "x86_64", target_os = "windows", target_env = "msvc"),
+            all(target_arch = "x86_64", target_os = "linux", target_env = "gnu")
+        )))]
+        panic!("no reviewed exact Burn-pair numerical witness for this Rust target");
+    }
+
     fn without_observed_timing_v2(
         mut evidence: NativeTrainerUpdateEvidenceV2,
     ) -> NativeTrainerUpdateEvidenceV2 {
@@ -2238,7 +2298,7 @@ mod tests {
     fn common_snapshot_bootstrap_keeps_authority_seed_separate_and_trains_rally_pair() {
         const RUN_BASE_SEED_V1: u64 = 71_501;
 
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
         let (mut trainer, record) = NativeTrainerStateV2::from_common_model_snapshot_v2(
             RUN_BASE_SEED_V1,
@@ -2348,7 +2408,7 @@ mod tests {
     fn common_snapshot_bootstrap_rejects_corruption_and_seed_collision_without_live_drift() {
         const RUN_BASE_SEED_V1: u64 = 71_501;
 
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
         let (trainer, _) = NativeTrainerStateV2::from_common_model_snapshot_v2(
             RUN_BASE_SEED_V1,
@@ -2388,7 +2448,7 @@ mod tests {
 
     #[test]
     fn real_burn_pair_updates_once_and_is_topology_invariant() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let initial = trainer_v2(2);
         let initial_parameters = initial.train_state_v1().model_v1().parameter_snapshot_v1();
         let initial_bias_bits = gauge_value_bits_v1(&initial_parameters);
@@ -2425,16 +2485,47 @@ mod tests {
             );
         }
 
-        // Frozen against the exact PR #44 two-episode reference behavior.
-        // Timing and scheduler topology are intentionally excluded; the
-        // accepted trajectories, model outputs, update scalars, and complete
-        // optimizer state are all bit-pinned.
+        let narrow_state_sha256 = narrow.train_state_v1().state_sha256_v1().unwrap();
+        let wide_state_sha256 = wide.train_state_v1().state_sha256_v1().unwrap();
         assert_eq!(
-            narrow.train_state_v1().state_sha256_v1().unwrap(),
-            [
-                250, 165, 172, 135, 179, 143, 5, 205, 138, 114, 252, 103, 138, 241, 177, 197, 117,
-                96, 251, 190, 79, 49, 165, 11, 15, 249, 71, 182, 127, 49, 170, 141,
-            ]
+            narrow_state_sha256, wide_state_sha256,
+            "the exact K=2 train state must be scheduler-topology invariant"
+        );
+        assert_eq!(
+            narrow_evidence.model_digest_after, wide_evidence.model_digest_after,
+            "the exact K=2 model must be scheduler-topology invariant"
+        );
+        assert_eq!(
+            (
+                narrow_evidence.policy_sum_bits,
+                narrow_evidence.value_sum_bits,
+                narrow_evidence.loss_bits,
+            ),
+            (
+                wide_evidence.policy_sum_bits,
+                wide_evidence.value_sum_bits,
+                wide_evidence.loss_bits,
+            ),
+            "the exact K=2 loss tuple must be scheduler-topology invariant"
+        );
+
+        // The Windows witness remains frozen to the exact reviewed PR #44
+        // two-episode behavior. The independently repeated Linux witness pins
+        // the same test program on its GNU target tuple; it is deliberately not
+        // a cross-OS PR #44 bit-parity claim. Timing and scheduler topology are
+        // excluded. Runtime and trajectory facts below stay target-independent;
+        // platform libm last bits flow into the exact numerical/Adam digest.
+        let (reviewed_target, expected_numerical) = recorded_burn_pair_numerical_witness_v1();
+        let actual_numerical = BurnPairNumericalWitnessV1 {
+            train_state_sha256: narrow_state_sha256,
+            model_digest_after: narrow_evidence.model_digest_after.as_str(),
+            policy_sum_bits: narrow_evidence.policy_sum_bits,
+            value_sum_bits: narrow_evidence.value_sum_bits,
+            loss_bits: narrow_evidence.loss_bits,
+        };
+        assert_eq!(
+            actual_numerical, expected_numerical,
+            "exact K=2 numerical witness drifted on {reviewed_target}"
         );
         assert_eq!(narrow_evidence.learner_group_count, 112);
         assert_eq!(narrow_evidence.learner_policy_step_count, 113);
@@ -2444,14 +2535,7 @@ mod tests {
             narrow_evidence.model_digest_before,
             "cc8205d35f68b9d961a4115b7029b2c394f9ee9a981887284e46410b5a90991c"
         );
-        assert_eq!(
-            narrow_evidence.model_digest_after,
-            "5dcf4eff6f0bce4d5c38f9d3eeb84f0a33afd9db67a8969dfc4360b9df35d443"
-        );
         assert_eq!(narrow_evidence.changed_non_gauge_parameter_count, 32);
-        assert_eq!(narrow_evidence.policy_sum_bits, 1_111_603_742);
-        assert_eq!(narrow_evidence.value_sum_bits, 1_121_934_211);
-        assert_eq!(narrow_evidence.loss_bits, 1_064_195_456);
         assert_eq!(
             narrow_evidence.episodes[0]
                 .full_trajectory_receipt
@@ -2663,7 +2747,7 @@ mod tests {
 
     #[test]
     fn real_burn_even_batches_update_once_and_are_topology_invariant() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         for batch_episodes in [4, 16] {
             let initial = trainer_v2(batch_episodes);
             let mut narrow = initial.clone();
@@ -2764,7 +2848,7 @@ mod tests {
 
     #[test]
     fn even_batch_v2_resume_binds_persisted_k_and_continues_exactly() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let config = burn_even_batch_config_v2(4, 2, 2, 4);
         let mut uninterrupted = trainer_v2(4);
         uninterrupted.run_even_batch_update_v2(&config).unwrap();
@@ -2847,7 +2931,7 @@ mod tests {
 
     #[test]
     fn even_batch_v2_resume_progress_corruption_is_transactional() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let train_state = trainer_v2(4).train_state_v1().clone();
         let source_sha = train_state.state_sha256_v1().unwrap();
         let valid = NativeTrainerProgressV2 {
@@ -2926,7 +3010,7 @@ mod tests {
 
     #[test]
     fn association_mutations_leave_model_optimizer_and_counters_exact() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let mut trainer = trainer_v2(2);
         let config = burn_pair_config_v2(1, 1, 1);
         let before = exact_state_snapshot_v1(&trainer);
@@ -2996,7 +3080,7 @@ mod tests {
         assert_send_sync::<NativePolicyPackedForwardBuilderV1>();
         assert_send_sync::<NativePolicyPackedForwardTapeV1>();
 
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let initial = trainer_v2(2);
         let before = exact_state_snapshot_v1(&initial);
         let mut faulted = initial.clone();
@@ -3024,7 +3108,7 @@ mod tests {
 
     #[test]
     fn non_selected_logit_mutation_reaches_full_vector_gate_transactionally() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let mut trainer = trainer_v2(2);
         let config = burn_pair_config_v2(1, 1, 1);
         let before = exact_state_snapshot_v1(&trainer);
@@ -3048,7 +3132,7 @@ mod tests {
 
     #[test]
     fn even_batch_v2_recomputed_logit_corruption_is_transactional_at_each_batch_region() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let config = burn_even_batch_config_v2(4, 2, 2, 4);
         for episode_offset in [0, 2, 3] {
             let mut trainer = trainer_v2(4);
@@ -3077,7 +3161,7 @@ mod tests {
 
     #[test]
     fn even_batch_v2_recomputed_value_corruption_is_transactional_at_each_batch_region() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let config = burn_even_batch_config_v2(4, 2, 2, 4);
         for episode_offset in [0, 2, 3] {
             let mut trainer = trainer_v2(4);
@@ -3104,7 +3188,7 @@ mod tests {
 
     #[test]
     fn even_batch_v2_expected_logit_count_corruption_is_transactional_at_each_batch_region() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
         let config = burn_even_batch_config_v2(4, 2, 2, 4);
         for episode_offset in [0, 2, 3] {
             let mut trainer = trainer_v2(4);
