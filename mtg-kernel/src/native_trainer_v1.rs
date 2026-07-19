@@ -1,13 +1,13 @@
 //! Real in-memory native trainer integration.
 //!
 //! The scorer tensorizes each production V2 learner decision exactly once,
-//! evaluates the live native model, and atomically stages the owned thirteen
-//! tensors beside the exact packet binding and output bits.  The trajectory
-//! observer consumes that association before grouping, so training never
-//! reconstructs from copied raw scorer tables.  A complete configurable even
-//! batch of alternating-seat episodes and one grouped Adam step are prepared
-//! on private candidates; the live trainer changes only after every
-//! cross-check passes.
+//! evaluates the live native model, and atomically stages its private packed
+//! forward tape beside the exact packet binding and output bits. The
+//! trajectory observer consumes that association before grouping, so training
+//! neither reconstructs from copied raw scorer tables nor evaluates the same
+//! decision twice. A complete configurable even batch of alternating-seat
+//! episodes and one grouped Adam step are prepared on private candidates; the
+//! live trainer changes only after every cross-check passes.
 //!
 //! This module deliberately owns no persisted schema, checkpoint writer, CLI,
 //! sampler identity, seed identity, schedule identity, loss identity, or gauge
@@ -26,16 +26,16 @@ use crate::async_rollout_v2::{
 use crate::flat_policy_v2::FlatDecisionBindingV2;
 use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2, NativeFlatTensorizerV2,
-    NATIVE_FLAT_ACTION_FEATURE_DIM_V2,
 };
 use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1;
 use crate::native_policy_train_step_v1::{
-    NativePolicyPhysicalDecisionV1, NativePolicySubstepV1, NativePolicyTrainErrorV1,
-    NativePolicyValueTrainStateV1, NativeScorerBiasGaugeRecordV1,
+    NativePolicyForwardInputV1, NativePolicyPackedForwardBuilderV1,
+    NativePolicyPackedForwardTapeV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
+    NativePolicyTrainErrorV1, NativePolicyValueTrainStateV1, NativeScorerBiasGaugeRecordV1,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativeNamedParameterV1,
-    NativePolicyValueErrorV1, NativePolicyValueNetV1,
+    NativePolicyValueNetV1,
 };
 use crate::native_trainer_schedule_v1::{
     native_trainer_episode_schedule_v1, NativeTrainerScheduleErrorV1,
@@ -80,16 +80,13 @@ pub(crate) enum NativePolicyAssociationErrorV1 {
     LogitBitsMismatch,
     ValueBitsMismatch,
     SelectedIndexOutOfRange,
-    TensorActionShapeMismatch,
     ResidualScoredDecisions,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug)]
 struct NativeScoredDecisionAssociationV1 {
     binding: FlatDecisionBindingV2,
-    tensor: NativeFlatDecisionTensorV2,
-    logit_bits: Vec<u32>,
-    value_bits: u32,
+    tape: NativePolicyPackedForwardTapeV1,
 }
 
 #[derive(Debug, Default)]
@@ -106,6 +103,7 @@ enum NativePolicyAssociationTestMutationV1 {
     Binding,
     SelectedLogit,
     Value,
+    ModelGeneration,
 }
 
 #[cfg(test)]
@@ -180,7 +178,7 @@ impl NativePolicyAssociationConsumerV1 {
     fn pop_verified_v1(
         &self,
         event: &FlatScoredSelectedEventV2<'_>,
-    ) -> Result<NativeFlatDecisionTensorV2, NativePolicyAssociationErrorV1> {
+    ) -> Result<NativePolicyPackedForwardTapeV1, NativePolicyAssociationErrorV1> {
         let mut shared = self
             .shared
             .try_borrow_mut()
@@ -216,50 +214,33 @@ impl NativePolicyAssociationConsumerV1 {
                     staged.binding.action_binding.episode_id ^= 1;
                 }
                 NativePolicyAssociationTestMutationV1::SelectedLogit => {
-                    let bits = match staged.logit_bits.get_mut(selected_index) {
-                        Some(bits) => bits,
-                        None => {
-                            shared.poisoned =
-                                Some(NativePolicyAssociationErrorV1::LogitCountMismatch);
-                            return Err(NativePolicyAssociationErrorV1::LogitCountMismatch);
-                        }
-                    };
-                    *bits ^= 1;
+                    staged
+                        .tape
+                        .corrupt_logit_for_test_v1(selected_index)
+                        .map_err(|_| NativePolicyAssociationErrorV1::LogitCountMismatch)?;
                 }
                 NativePolicyAssociationTestMutationV1::Value => {
-                    staged.value_bits ^= 1;
+                    staged.tape.corrupt_value_for_test_v1();
+                }
+                NativePolicyAssociationTestMutationV1::ModelGeneration => {
+                    staged.tape.corrupt_model_generation_for_test_v1();
                 }
             }
         }
-        let tensor_action_count = staged
-            .tensor
-            .action_features
-            .len()
-            .checked_div(NATIVE_FLAT_ACTION_FEATURE_DIM_V2)
-            .filter(|_| {
-                staged
-                    .tensor
-                    .action_features
-                    .len()
-                    .is_multiple_of(NATIVE_FLAT_ACTION_FEATURE_DIM_V2)
-            });
+        let tape_logits = staged.tape.logits_v1();
         let error = if staged.binding != event.binding {
             Some(NativePolicyAssociationErrorV1::BindingMismatch)
-        } else if staged.logit_bits.len() != event.raw_action_logits.len() {
+        } else if tape_logits.len() != event.raw_action_logits.len() {
             Some(NativePolicyAssociationErrorV1::LogitCountMismatch)
-        } else if tensor_action_count != Some(staged.logit_bits.len()) {
-            Some(NativePolicyAssociationErrorV1::TensorActionShapeMismatch)
-        } else if staged.logit_bits[selected_index]
+        } else if tape_logits[selected_index].to_bits()
             != event.raw_action_logits[selected_index].to_bits()
-            || staged
-                .logit_bits
+            || tape_logits
                 .iter()
-                .copied()
-                .zip(event.raw_action_logits.iter().map(|value| value.to_bits()))
-                .any(|(expected, actual)| expected != actual)
+                .zip(event.raw_action_logits)
+                .any(|(expected, actual)| expected.to_bits() != actual.to_bits())
         {
             Some(NativePolicyAssociationErrorV1::LogitBitsMismatch)
-        } else if staged.value_bits != event.predicted_value_bits {
+        } else if staged.tape.value_v1().to_bits() != event.predicted_value_bits {
             Some(NativePolicyAssociationErrorV1::ValueBitsMismatch)
         } else {
             None
@@ -268,7 +249,7 @@ impl NativePolicyAssociationConsumerV1 {
             shared.poisoned = Some(error);
             return Err(error);
         }
-        Ok(staged.tensor)
+        Ok(staged.tape)
     }
 
     fn finish_v1(&self) -> Result<(), NativePolicyAssociationErrorV1> {
@@ -293,7 +274,7 @@ pub(crate) enum NativePolicyScorerFailureV1 {
     OutputShape,
     MissingDecision,
     Tensor(NativeFlatTensorErrorV2),
-    Model(NativePolicyValueErrorV1),
+    PackedForward(NativePolicyTrainErrorV1),
     Association(NativePolicyAssociationErrorV1),
     CounterOverflow,
 }
@@ -305,7 +286,7 @@ impl NativePolicyScorerFailureV1 {
             Self::OutputShape => NATIVE_POLICY_SCORER_OUTPUT_SHAPE_CODE_V1,
             Self::MissingDecision => NATIVE_POLICY_SCORER_DECISION_CODE_V1,
             Self::Tensor(_) => NATIVE_POLICY_SCORER_TENSOR_CODE_V1,
-            Self::Model(_) => NATIVE_POLICY_SCORER_MODEL_CODE_V1,
+            Self::PackedForward(_) => NATIVE_POLICY_SCORER_MODEL_CODE_V1,
             Self::Association(_) => NATIVE_POLICY_SCORER_ASSOCIATION_CODE_V1,
             Self::CounterOverflow => NATIVE_POLICY_SCORER_COUNTER_CODE_V1,
         }
@@ -313,10 +294,10 @@ impl NativePolicyScorerFailureV1 {
 }
 
 /// Production V2 scorer backed by the exact native thirteen-tensor encoder and
-/// native policy/value network.  It owns no model state; one update borrows the
-/// current immutable model until rollout completes.
-struct NativePolicyBatchScorerV2<'a> {
-    model: &'a NativePolicyValueNetV1,
+/// native policy/value network. It owns one immutable parameter snapshot for
+/// the update so every scored decision can retain the exact backward tape.
+struct NativePolicyBatchScorerV2 {
+    forward_builder: NativePolicyPackedForwardBuilderV1,
     tensorizer: NativeFlatTensorizerV2,
     associations: NativePolicyAssociationProducerV1,
     last_failure: Option<NativePolicyScorerFailureV1>,
@@ -324,19 +305,19 @@ struct NativePolicyBatchScorerV2<'a> {
     accepted_decision_count: u64,
 }
 
-impl<'a> NativePolicyBatchScorerV2<'a> {
+impl NativePolicyBatchScorerV2 {
     fn new_v1(
-        model: &'a NativePolicyValueNetV1,
+        model: &NativePolicyValueNetV1,
         associations: NativePolicyAssociationProducerV1,
-    ) -> Self {
-        Self {
-            model,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
+        Ok(Self {
+            forward_builder: NativePolicyPackedForwardBuilderV1::from_model_v1(model)?,
             tensorizer: NativeFlatTensorizerV2::new(),
             associations,
             last_failure: None,
             accepted_batch_count: 0,
             accepted_decision_count: 0,
-        }
+        })
     }
 
     fn score_chunk_v1(
@@ -399,26 +380,16 @@ impl<'a> NativePolicyBatchScorerV2<'a> {
             self.tensorizer
                 .fill(decision, &mut tensor)
                 .map_err(NativePolicyScorerFailureV1::Tensor)?;
-            let output = self
-                .model
+            let tape = self
+                .forward_builder
                 .forward_v1(native_encoded_decision_view_v1(&tensor))
-                .map_err(NativePolicyScorerFailureV1::Model)?;
-            if output.logits.len() != end - begin || !output.value.is_finite() {
+                .map_err(NativePolicyScorerFailureV1::PackedForward)?;
+            if tape.logits_v1().len() != end - begin || !tape.value_v1().is_finite() {
                 return Err(NativePolicyScorerFailureV1::OutputShape);
             }
-            let logit_bits = output
-                .logits
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>();
-            candidate_logits.extend_from_slice(&output.logits);
-            candidate_values.push(output.value);
-            candidate_associations.push(NativeScoredDecisionAssociationV1 {
-                binding,
-                tensor,
-                logit_bits,
-                value_bits: output.value.to_bits(),
-            });
+            candidate_logits.extend_from_slice(tape.logits_v1());
+            candidate_values.push(tape.value_v1());
+            candidate_associations.push(NativeScoredDecisionAssociationV1 { binding, tape });
         }
         if candidate_logits.len() != action_logits.len() || candidate_values.len() != values.len() {
             return Err(NativePolicyScorerFailureV1::OutputShape);
@@ -438,7 +409,7 @@ impl<'a> NativePolicyBatchScorerV2<'a> {
     }
 }
 
-impl FlatBatchScorerV2 for NativePolicyBatchScorerV2<'_> {
+impl FlatBatchScorerV2 for NativePolicyBatchScorerV2 {
     fn score_batch_v2(
         &mut self,
         batch: &FlatScoringBatchViewV2<'_>,
@@ -480,7 +451,7 @@ fn native_encoded_decision_view_v1(
 }
 
 type NativePolicyGroupedTrajectoryV1 =
-    FlatGroupedTrajectoryBatchCore<FlatDecisionBindingV2, NativeFlatDecisionTensorV2>;
+    FlatGroupedTrajectoryBatchCore<FlatDecisionBindingV2, NativePolicyPackedForwardTapeV1>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativePolicyTrajectoryErrorV1 {
@@ -497,7 +468,8 @@ struct NativePolicyObservedTrajectoryV1 {
 
 #[derive(Debug)]
 struct NativePolicyTrajectoryObserverV1 {
-    core: FlatPhysicalTrajectoryObserverCore<FlatDecisionBindingV2, NativeFlatDecisionTensorV2>,
+    core:
+        FlatPhysicalTrajectoryObserverCore<FlatDecisionBindingV2, NativePolicyPackedForwardTapeV1>,
     associations: NativePolicyAssociationConsumerV1,
     base_seed: u64,
     expected_deck_hashes: SessionDeckHashesV1,
@@ -543,17 +515,11 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
         event: FlatScoredSelectedEventV2<'_>,
     ) -> Result<(), Self::Error> {
         let binding_matches = selected_binding_matches(&event);
-        let tensor = self
+        let tape = self
             .associations
             .pop_verified_v1(&event)
             .map_err(NativePolicyTrajectoryErrorV1::Association)?;
-        let scorer_action_count = tensor
-            .action_features
-            .len()
-            .checked_div(NATIVE_FLAT_ACTION_FEATURE_DIM_V2)
-            .ok_or(NativePolicyTrajectoryErrorV1::Association(
-                NativePolicyAssociationErrorV1::TensorActionShapeMismatch,
-            ))?;
+        let scorer_action_count = tape.logits_v1().len();
         self.core
             .observe_selected(
                 FlatSelectedSampleCore {
@@ -567,7 +533,7 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
                     scorer_action_count,
                     predicted_value_bits: event.predicted_value_bits,
                 },
-                || tensor,
+                || tape,
             )
             .map_err(|error| {
                 NativePolicyTrajectoryErrorV1::Grouping(FlatPhysicalTrajectoryErrorV2::from(error))
@@ -961,7 +927,8 @@ impl NativeTrainerStateV2 {
             consumer,
         )
         .map_err(NativeTrainerErrorV1::ObserverConstruction)?;
-        let mut scorer = NativePolicyBatchScorerV2::new_v1(self.train_state.model_v1(), producer);
+        let mut scorer = NativePolicyBatchScorerV2::new_v1(self.train_state.model_v1(), producer)
+            .map_err(NativeTrainerErrorV1::Train)?;
         let rollout_result = run_async_flat_scored_rollout_native_observed_v2(
             rollout_config,
             self.base_seed,
@@ -1508,7 +1475,7 @@ fn train_grouped_candidate_v1(
                 .enumerate()
                 .map(|(substep_index, substep)| {
                     Ok(NativePolicySubstepV1 {
-                        encoded: native_encoded_decision_view_v1(&substep.scoring_inputs),
+                        forward: NativePolicyForwardInputV1::Packed(&substep.scoring_inputs),
                         selected_action_index: usize::try_from(substep.selected_index).map_err(
                             |_| NativeTrainerErrorV1::RecomputedOutputMismatch {
                                 field: "selected_action_index",
@@ -1548,7 +1515,7 @@ fn train_grouped_candidate_v1(
 fn verify_recomputed_outputs_v1(
     source_groups: &[&crate::private_physical_trajectory_core::FlatPhysicalDecisionSampleCore<
         FlatDecisionBindingV2,
-        NativeFlatDecisionTensorV2,
+        NativePolicyPackedForwardTapeV1,
     >],
     terminal_returns: &[i8],
     result: &crate::native_policy_train_step_v1::NativePolicyTrainStepResultV1,
@@ -2280,6 +2247,20 @@ mod tests {
             ));
             assert_eq!(exact_state_snapshot_v1(&trainer), before);
         }
+
+        let error = trainer
+            .run_two_episode_update_with_mutation_v1(
+                &config,
+                NativePolicyAssociationTestMutationV1::ModelGeneration,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            NativeTrainerErrorV1::Train(
+                NativePolicyTrainErrorV1::PackedForwardModelGenerationMismatch { .. }
+            )
+        ));
+        assert_eq!(exact_state_snapshot_v1(&trainer), before);
     }
 
     #[test]

@@ -27,8 +27,22 @@ use crate::native_policy_value_net_v1::{
     OBJECT_FEATURE_DIM_V1, OBJECT_GROUP_COUNT_V1, PARAMETER_COUNT_V1, STATE_DIM_V1,
 };
 use sha2::{Digest, Sha256};
+#[cfg(test)]
+use std::cell::Cell;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::ops::Deref;
+use std::rc::Rc;
+
+#[cfg(test)]
+thread_local! {
+    static FORWARD_WITH_TAPE_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn forward_with_tape_call_count_for_test_v1() -> u64 {
+    FORWARD_WITH_TAPE_CALL_COUNT_V1.with(Cell::get)
+}
 
 pub(crate) const TRAINER_ALGORITHM_V1: &str = "terminal_reinforce_value/v3";
 pub(crate) const TRAIN_STEP_IDENTITY_V1: &str = "native-policy-value-cpu-train-step-v1";
@@ -167,13 +181,19 @@ pub(crate) fn native_train_state_parameter_layout_v1(
         .zip(EXPECTED_PARAMETER_SHAPES)
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
+pub(crate) enum NativePolicyForwardInputV1<'a> {
+    Encoded(Box<NativeEncodedDecisionViewV1<'a>>),
+    Packed(&'a NativePolicyPackedForwardTapeV1),
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct NativePolicySubstepV1<'a> {
-    pub(crate) encoded: NativeEncodedDecisionViewV1<'a>,
+    pub(crate) forward: NativePolicyForwardInputV1<'a>,
     pub(crate) selected_action_index: usize,
     /// Complete scorer output captured when this exact encoded decision was
-    /// sampled. The train-step forward must reproduce every row bit-exactly
-    /// before any backward or optimizer work begins.
+    /// sampled. Either the reference recompute or the scorer-owned packed tape
+    /// must reproduce every row bit-exactly before backward or optimizer work.
     pub(crate) expected_raw_action_logit_bits: &'a [u32],
     pub(crate) expected_value_bits: u32,
 }
@@ -276,6 +296,10 @@ pub(crate) enum NativePolicyTrainErrorV1 {
         substep_index: usize,
         expected_bits: u32,
         actual_bits: u32,
+    },
+    PackedForwardModelGenerationMismatch {
+        group_index: usize,
+        substep_index: usize,
     },
     InvalidValueCoefficient,
     InvalidLearningRate,
@@ -492,6 +516,27 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             self.scorer_bias_anchor_bits,
         )?;
+        let packed_model_generation_sha256 = groups
+            .iter()
+            .flat_map(|group| group.substeps)
+            .any(|substep| matches!(&substep.forward, NativePolicyForwardInputV1::Packed(_)))
+            .then(|| self.model.parameter_manifest_sha256_v1());
+        if let Some(expected_generation) = packed_model_generation_sha256.as_deref() {
+            for (group_index, group) in groups.iter().enumerate() {
+                for (substep_index, substep) in group.substeps.iter().enumerate() {
+                    if let NativePolicyForwardInputV1::Packed(packed) = &substep.forward {
+                        if packed.model_generation_sha256.as_ref() != expected_generation {
+                            return Err(
+                                NativePolicyTrainErrorV1::PackedForwardModelGenerationMismatch {
+                                    group_index,
+                                    substep_index,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         let mut gradients = parameters
             .iter()
@@ -517,7 +562,18 @@ impl NativePolicyValueTrainStateV1 {
             let mut tapes = Vec::with_capacity(group.substeps.len());
             let mut joint_log_probability = None;
             for (substep_index, substep) in group.substeps.iter().enumerate() {
-                let tape = forward_with_tape(&parameters, self.model.config_v1(), substep.encoded)?;
+                let tape = match &substep.forward {
+                    NativePolicyForwardInputV1::Encoded(encoded) => {
+                        DecisionTapeSourceV1::Owned(Box::new(forward_with_tape(
+                            &parameters,
+                            self.model.config_v1(),
+                            **encoded,
+                        )?))
+                    }
+                    NativePolicyForwardInputV1::Packed(packed) => {
+                        DecisionTapeSourceV1::Packed(&packed.tape)
+                    }
+                };
                 if substep.expected_raw_action_logit_bits.len() != tape.logits.len() {
                     return Err(NativePolicyTrainErrorV1::ExpectedLogitCountMismatch {
                         group_index,
@@ -902,14 +958,134 @@ struct DecisionTapeV1 {
     value: f32,
 }
 
-struct SelectedDecisionTapeV1 {
+/// Scorer-owned, update-local forward state.  The type is deliberately
+/// opaque outside this module: callers may move and borrow it, but cannot
+/// rewrite activations or detach it from the model generation that created it.
+pub(crate) struct NativePolicyPackedForwardTapeV1 {
+    model_generation_sha256: Rc<str>,
     tape: DecisionTapeV1,
+    #[cfg(test)]
+    lifetime_probe: Option<Rc<()>>,
+}
+
+impl std::fmt::Debug for NativePolicyPackedForwardTapeV1 {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativePolicyPackedForwardTapeV1")
+            .field("model_generation_sha256", &self.model_generation_sha256)
+            .field("action_count", &self.tape.logits.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl NativePolicyPackedForwardTapeV1 {
+    pub(crate) fn logits_v1(&self) -> &[f32] {
+        &self.tape.logits
+    }
+
+    pub(crate) fn value_v1(&self) -> f32 {
+        self.tape.value
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_model_generation_for_test_v1(&mut self) {
+        let mut corrupted = self.model_generation_sha256.to_string();
+        let replacement = if corrupted.starts_with('0') { "1" } else { "0" };
+        corrupted.replace_range(0..1, replacement);
+        self.model_generation_sha256 = Rc::from(corrupted);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_logit_for_test_v1(&mut self, index: usize) -> Result<(), ()> {
+        let logit = self.tape.logits.get_mut(index).ok_or(())?;
+        *logit = f32::from_bits(logit.to_bits() ^ 1);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_non_selected_logit_for_test_v1(&mut self, selected: usize) -> bool {
+        let index = match (0..self.tape.logits.len()).find(|index| *index != selected) {
+            Some(index) => index,
+            None => return false,
+        };
+        self.corrupt_logit_for_test_v1(index).is_ok()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_value_for_test_v1(&mut self) {
+        self.tape.value = f32::from_bits(self.tape.value.to_bits() ^ 1);
+    }
+}
+
+/// One immutable parameter snapshot is shared by every scorer forward in an
+/// update.  This avoids both a second network evaluation during learning and
+/// a parameter clone per scored decision.
+pub(crate) struct NativePolicyPackedForwardBuilderV1 {
+    parameters: Vec<NativeNamedParameterV1>,
+    config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
+    model_generation_sha256: Rc<str>,
+    #[cfg(test)]
+    lifetime_probe: Option<Rc<()>>,
+}
+
+impl NativePolicyPackedForwardBuilderV1 {
+    pub(crate) fn from_model_v1(
+        model: &NativePolicyValueNetV1,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
+        let parameters = model.parameter_snapshot_v1();
+        validate_parameter_manifest(&parameters)?;
+        Ok(Self {
+            parameters,
+            config: model.config_v1(),
+            model_generation_sha256: Rc::from(model.parameter_manifest_sha256_v1()),
+            #[cfg(test)]
+            lifetime_probe: None,
+        })
+    }
+
+    pub(crate) fn forward_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyPackedForwardTapeV1, NativePolicyTrainErrorV1> {
+        Ok(NativePolicyPackedForwardTapeV1 {
+            model_generation_sha256: self.model_generation_sha256.clone(),
+            tape: forward_with_tape(&self.parameters, self.config, encoded)?,
+            #[cfg(test)]
+            lifetime_probe: self.lifetime_probe.clone(),
+        })
+    }
+
+    #[cfg(test)]
+    fn with_lifetime_probe_for_test_v1(mut self, probe: Rc<()>) -> Self {
+        self.lifetime_probe = Some(probe);
+        self
+    }
+}
+
+enum DecisionTapeSourceV1<'a> {
+    Owned(Box<DecisionTapeV1>),
+    Packed(&'a DecisionTapeV1),
+}
+
+impl Deref for DecisionTapeSourceV1<'_> {
+    type Target = DecisionTapeV1;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Owned(tape) => tape,
+            Self::Packed(tape) => tape,
+        }
+    }
+}
+
+struct SelectedDecisionTapeV1<'a> {
+    tape: DecisionTapeSourceV1<'a>,
     selected_action_index: usize,
     log_probabilities: Vec<f32>,
 }
 
-struct GroupTapeV1 {
-    tapes: Vec<SelectedDecisionTapeV1>,
+struct GroupTapeV1<'a> {
+    tapes: Vec<SelectedDecisionTapeV1<'a>>,
     advantage: f32,
     value_error: f32,
 }
@@ -919,6 +1095,8 @@ fn forward_with_tape(
     config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
     encoded: NativeEncodedDecisionViewV1<'_>,
 ) -> Result<DecisionTapeV1, NativePolicyTrainErrorV1> {
+    #[cfg(test)]
+    FORWARD_WITH_TAPE_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
     let counts = encoded.validate(config)?;
     let object_card_ids = encoded
         .object_card_ids
@@ -2144,7 +2322,60 @@ mod tests {
                     .iter()
                     .zip(expected_group)
                     .map(|(substep, expected)| NativePolicySubstepV1 {
-                        encoded: encoded(case_by_name(forward, &substep.case)),
+                        forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded(
+                            case_by_name(forward, &substep.case),
+                        ))),
+                        selected_action_index: substep.selected_action_index,
+                        expected_raw_action_logit_bits: &expected.raw_action_logit_bits,
+                        expected_value_bits: expected.value_bits,
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn packed_tapes_for_step(
+        builder: &NativePolicyPackedForwardBuilderV1,
+        forward: &ForwardFixture,
+        step: &GoldenStep,
+    ) -> Vec<Vec<NativePolicyPackedForwardTapeV1>> {
+        step.groups
+            .iter()
+            .map(|group| {
+                group
+                    .substeps
+                    .iter()
+                    .map(|substep| {
+                        builder
+                            .forward_v1(encoded(case_by_name(forward, &substep.case)))
+                            .expect("packed scorer forward succeeds")
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn packed_substeps_for_step<'a>(
+        step: &GoldenStep,
+        expected_outputs: &'a [Vec<ExpectedOutputBits>],
+        packed_tapes: &'a [Vec<NativePolicyPackedForwardTapeV1>],
+    ) -> Vec<Vec<NativePolicySubstepV1<'a>>> {
+        assert_eq!(step.groups.len(), expected_outputs.len());
+        assert_eq!(step.groups.len(), packed_tapes.len());
+        step.groups
+            .iter()
+            .zip(expected_outputs)
+            .zip(packed_tapes)
+            .map(|((group, expected_group), packed_group)| {
+                assert_eq!(group.substeps.len(), expected_group.len());
+                assert_eq!(group.substeps.len(), packed_group.len());
+                group
+                    .substeps
+                    .iter()
+                    .zip(expected_group)
+                    .zip(packed_group)
+                    .map(|((substep, expected), packed)| NativePolicySubstepV1 {
+                        forward: NativePolicyForwardInputV1::Packed(packed),
                         selected_action_index: substep.selected_action_index,
                         expected_raw_action_logit_bits: &expected.raw_action_logit_bits,
                         expected_value_bits: expected.value_bits,
@@ -2437,6 +2668,177 @@ mod tests {
     }
 
     #[test]
+    fn scorer_packed_tapes_are_exact_zero_recompute_and_drop_with_the_update() {
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut reference_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        let mut packed_state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+
+        for step in &golden.steps {
+            let expected_outputs =
+                expected_outputs_for_step(reference_state.model_v1(), &forward, step);
+            let reference_substeps = substeps_for_step(&forward, step, &expected_outputs);
+            let reference_groups = groups_for_step(step, &reference_substeps);
+            let lifetime_probe = Rc::new(());
+
+            let packed_result = {
+                let builder =
+                    NativePolicyPackedForwardBuilderV1::from_model_v1(packed_state.model_v1())
+                        .unwrap()
+                        .with_lifetime_probe_for_test_v1(Rc::clone(&lifetime_probe));
+                let calls_before_scorer = forward_with_tape_call_count_for_test_v1();
+                let packed_tapes = packed_tapes_for_step(&builder, &forward, step);
+                let expected_forward_count = step
+                    .groups
+                    .iter()
+                    .map(|group| group.substeps.len() as u64)
+                    .sum::<u64>();
+                let calls_after_scorer = forward_with_tape_call_count_for_test_v1();
+                assert_eq!(
+                    calls_after_scorer - calls_before_scorer,
+                    expected_forward_count
+                );
+                assert_eq!(
+                    Rc::strong_count(&lifetime_probe),
+                    2 + expected_forward_count as usize,
+                    "one builder and one owner per packed tape"
+                );
+                let packed_substeps =
+                    packed_substeps_for_step(step, &expected_outputs, &packed_tapes);
+                let packed_groups = groups_for_step(step, &packed_substeps);
+                let result = packed_state
+                    .train_step_v1(
+                        &packed_groups,
+                        golden.value_coefficient,
+                        golden.optimizer.learning_rate,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    forward_with_tape_call_count_for_test_v1(),
+                    calls_after_scorer,
+                    "packed learning must not run a second forward"
+                );
+                result
+            };
+            assert_eq!(
+                Rc::strong_count(&lifetime_probe),
+                1,
+                "packed tapes must not escape their update"
+            );
+
+            let calls_before_reference = forward_with_tape_call_count_for_test_v1();
+            let reference_result = reference_state
+                .train_step_v1(
+                    &reference_groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                )
+                .unwrap();
+            let expected_reference_forwards = step
+                .groups
+                .iter()
+                .map(|group| group.substeps.len() as u64)
+                .sum::<u64>();
+            assert_eq!(
+                forward_with_tape_call_count_for_test_v1() - calls_before_reference,
+                expected_reference_forwards
+            );
+            assert_eq!(packed_result, reference_result);
+            assert_eq!(
+                packed_state.snapshot_v1().unwrap(),
+                reference_state.snapshot_v1().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn corrupt_packed_tape_and_model_generation_fail_before_state_mutation() {
+        let (forward, golden) = fixtures();
+        let step = &golden.steps[0];
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let baseline = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let before = baseline.snapshot_v1().unwrap();
+        let expected_outputs = expected_outputs_for_step(baseline.model_v1(), &forward, step);
+
+        let mut corrupt_tape_state = baseline.clone();
+        let builder =
+            NativePolicyPackedForwardBuilderV1::from_model_v1(baseline.model_v1()).unwrap();
+        let mut corrupt_tapes = packed_tapes_for_step(&builder, &forward, step);
+        let mut corruption = None;
+        for (group_index, (golden_group, tape_group)) in
+            step.groups.iter().zip(&mut corrupt_tapes).enumerate()
+        {
+            for (substep_index, (golden_substep, tape)) in
+                golden_group.substeps.iter().zip(tape_group).enumerate()
+            {
+                if tape.corrupt_non_selected_logit_for_test_v1(golden_substep.selected_action_index)
+                {
+                    corruption = Some((
+                        group_index,
+                        substep_index,
+                        golden_substep.selected_action_index,
+                    ));
+                    break;
+                }
+            }
+            if corruption.is_some() {
+                break;
+            }
+        }
+        let (corrupt_group, corrupt_substep, selected_action_index) =
+            corruption.expect("fixture contains a multi-action packed tape");
+        let corrupt_substeps = packed_substeps_for_step(step, &expected_outputs, &corrupt_tapes);
+        let corrupt_groups = groups_for_step(step, &corrupt_substeps);
+        let error = corrupt_tape_state
+            .train_step_v1(
+                &corrupt_groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            NativePolicyTrainErrorV1::RecomputedLogitBitsMismatch {
+                group_index,
+                substep_index,
+                action_index,
+                selected_action_index: actual_selected,
+                expected_bits,
+                actual_bits,
+            } if group_index == corrupt_group
+                && substep_index == corrupt_substep
+                && action_index != selected_action_index
+                && actual_selected == selected_action_index
+                && expected_bits != actual_bits
+        ));
+        assert_eq!(corrupt_tape_state.snapshot_v1().unwrap(), before);
+
+        let mut stale_generation_state = baseline;
+        let mut stale_tapes = packed_tapes_for_step(&builder, &forward, step);
+        stale_tapes[0][0].corrupt_model_generation_for_test_v1();
+        let stale_substeps = packed_substeps_for_step(step, &expected_outputs, &stale_tapes);
+        let stale_groups = groups_for_step(step, &stale_substeps);
+        assert_eq!(
+            stale_generation_state.train_step_v1(
+                &stale_groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            ),
+            Err(
+                NativePolicyTrainErrorV1::PackedForwardModelGenerationMismatch {
+                    group_index: 0,
+                    substep_index: 0,
+                }
+            )
+        );
+        assert_eq!(stale_generation_state.snapshot_v1().unwrap(), before);
+    }
+
+    #[test]
     fn torch_authority_grouped_loss_backward_and_multistep_adam_match_declared_witnesses() {
         let (forward, golden) = fixtures();
         assert_eq!(
@@ -2692,7 +3094,10 @@ mod tests {
             let mut joint = None;
             let mut first_value = None;
             for substep in group.substeps {
-                let output = model.forward_v1(substep.encoded).unwrap();
+                let NativePolicyForwardInputV1::Encoded(encoded) = &substep.forward else {
+                    panic!("finite-difference oracle requires encoded reference input");
+                };
+                let output = model.forward_v1(**encoded).unwrap();
                 let (log_probability, _) =
                     selected_log_softmax(&output.logits, substep.selected_action_index).unwrap();
                 joint = Some(match joint {
@@ -2750,7 +3155,11 @@ mod tests {
         let frozen_advantages = groups
             .iter()
             .map(|group| {
-                let output = model.forward_v1(group.substeps[0].encoded).unwrap();
+                let NativePolicyForwardInputV1::Encoded(encoded) = &group.substeps[0].forward
+                else {
+                    panic!("finite-difference oracle requires encoded reference input");
+                };
+                let output = model.forward_v1(**encoded).unwrap();
                 f32::from(group.terminal_return) - output.value
             })
             .collect::<Vec<_>>();
@@ -3208,7 +3617,7 @@ mod tests {
             .map(|logit| logit.to_bits())
             .collect::<Vec<_>>();
         let bad_selected = [NativePolicySubstepV1 {
-            encoded: encoded(case),
+            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded(case))),
             selected_action_index: usize::MAX,
             expected_raw_action_logit_bits: &case_logit_bits,
             expected_value_bits: case_output.value.to_bits(),
@@ -3244,7 +3653,7 @@ mod tests {
             &case.action_ref_node_indices,
         );
         let malformed_substeps = [NativePolicySubstepV1 {
-            encoded: malformed,
+            forward: NativePolicyForwardInputV1::Encoded(Box::new(malformed)),
             selected_action_index: 0,
             expected_raw_action_logit_bits: &[],
             expected_value_bits: 0,
@@ -3264,7 +3673,7 @@ mod tests {
         assert_state_unchanged(&state, &parameters, &first, &second, 0);
 
         let valid_substeps = [NativePolicySubstepV1 {
-            encoded: encoded(case),
+            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded(case))),
             selected_action_index: 1,
             expected_raw_action_logit_bits: &case_logit_bits,
             expected_value_bits: case_output.value.to_bits(),
