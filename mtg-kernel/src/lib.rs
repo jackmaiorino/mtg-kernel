@@ -23,6 +23,9 @@ pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
 pub mod card_def;
+// Strict Python-authoritative initial-model snapshot loader for matched trials.
+#[allow(dead_code)]
+pub(crate) mod common_model_snapshot_v1;
 pub mod effect;
 pub mod engine;
 pub mod event;

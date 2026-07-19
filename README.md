@@ -10,6 +10,12 @@ The deterministic engine, schema-v5 Rust/Python policy boundary, artifact integr
 
 These admission and smoke results are engineering evidence, not completion of the roadmap's 32-pair mirror gate, cross-deck gate, full-pool protocol, or science-release gate.
 
+The Python-authoritative common initial-model interchange used by the matched
+native trainer lane is documented in
+[COMMON_MODEL_SNAPSHOT_V1.md](COMMON_MODEL_SNAPSHOT_V1.md). It is an
+initial-parameter artifact with a step-zero optimizer bootstrap, not a resume
+checkpoint or an initializer-, learning-, or speed-parity claim.
+
 This is **not yet science-ready**. Seven canonical Pauper decks remain incomplete, the full-pool training protocol and sampled-primary 9x9 matrix have not been run, and the clean-clone artifact-reproduction release gate remains open. [ROADMAP.md](ROADMAP.md) is the authoritative definition of completion and records the pinned nine-deck scope.
 
 ## Requirements

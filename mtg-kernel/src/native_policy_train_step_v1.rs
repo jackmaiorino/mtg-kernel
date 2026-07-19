@@ -369,6 +369,10 @@ impl NativePolicyValueTrainStateV1 {
         self.adam_step
     }
 
+    pub(crate) fn scorer_bias_anchor_f32_bits_v1(&self) -> u32 {
+        self.scorer_bias_anchor_bits
+    }
+
     pub(crate) fn first_moment_snapshot_v1(&self) -> Vec<NativeNamedParameterV1> {
         named_state_snapshot(&self.model.parameter_snapshot_v1(), &self.first_moments)
     }
@@ -598,7 +602,8 @@ impl NativePolicyValueTrainStateV1 {
             next_step,
             learning_rate,
         )?;
-        next_parameters[SCORER_SECOND_BIAS].values[0] = parameters[SCORER_SECOND_BIAS].values[0];
+        next_parameters[SCORER_SECOND_BIAS].values[0] =
+            f32::from_bits(self.scorer_bias_anchor_bits);
         next_first_moments[SCORER_SECOND_BIAS][0] = 0.0;
         next_second_moments[SCORER_SECOND_BIAS][0] = 0.0;
         scorer_bias_gauge.parameter_after_bits =
