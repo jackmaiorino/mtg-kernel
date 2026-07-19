@@ -14,6 +14,7 @@ import mtg_kernel_rl.cli as cli_mod
 import mtg_kernel_rl.rollout as rollout_mod
 from mtg_kernel_rl.action_sampling import fixed_categorical_sampler_contract
 from mtg_kernel_rl.client import Decision
+from mtg_kernel_rl.path_safety import OUTPUT_LOCK_FILE_NAME
 from mtg_kernel_rl.rollout import (
     RUNNER_ACTION_SELECTION_CONTRACT,
     RUNNER_ARTIFACT_SCHEMA_VERSION,
@@ -154,6 +155,51 @@ class RolloutTest(unittest.TestCase):
                     expected_policy_head=wrong_head,
                 )
             self.assertFalse((tmp / "wrong-head-output").exists())
+
+    def test_post_execution_model_reattestation_failure_publishes_no_authoritative_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            launcher = fake_launcher(tmp, "valid")
+            store, head = _trained_policy_fixture(tmp, launcher, "reattestation-store")
+            out = tmp / "reattestation-output"
+            original_load_policy = rollout_mod.ValidatedChain.load_policy
+            load_count = 0
+
+            def load_policy_with_second_read_tamper(chain, ref=None):  # type: ignore[no-untyped-def]
+                nonlocal load_count
+                snapshot = original_load_policy(chain, ref)
+                load_count += 1
+                if load_count == 2:
+                    with torch.no_grad():
+                        snapshot.model.card_embedding.weight[1, 0].add_(1.0)
+                return snapshot
+
+            with mock.patch.object(
+                rollout_mod.ValidatedChain,
+                "load_policy",
+                new=load_policy_with_second_read_tamper,
+            ):
+                with self.assertRaises(ValueError) as raised:
+                    run_episodes(
+                        env_bin=launcher,
+                        out_dir=out,
+                        episodes=1,
+                        base_seed=71_501,
+                        max_physical_decisions=8,
+                        max_policy_steps=16,
+                        p0="greedy",
+                        p1="uniform",
+                        training_store=store,
+                        expected_policy_head=head,
+                    )
+            self.assertEqual(load_count, 2)
+            self.assertEqual(
+                str(raised.exception),
+                "runner policy model tensor card_embedding.weight differs from its checkpoint attestation",
+            )
+            self.assertEqual({path.name for path in out.iterdir()}, {OUTPUT_LOCK_FILE_NAME})
+            self.assertFalse((out / "episodes.jsonl").exists())
+            self.assertFalse((out / "run.json").exists())
 
     def test_runner_policy_seeds_use_physical_group_then_substep_leaf(self) -> None:
         responses = [

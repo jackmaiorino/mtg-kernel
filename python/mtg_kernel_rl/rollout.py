@@ -326,6 +326,7 @@ def _preflight_policy(
         raise ValueError("runner environment binary hash differs from the validated training run")
     if _paths_overlap(ref.root, out_dir):
         raise ValueError("runner output root must not overlap the training store")
+    # load_policy constructs from ModelConfig, whose validate() binds the feature contract before inference.
     policy = chain.load_policy(ref)
     if policy.ref.model_config.contract_fingerprint() != source["model"]["contract_fingerprint"]:
         raise ValueError("runner policy model contract differs from the validated training run")
