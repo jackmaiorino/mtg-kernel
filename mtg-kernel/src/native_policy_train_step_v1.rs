@@ -2315,11 +2315,134 @@ mod tests {
     );
     const TRAIN_FIXTURE_SHA256: &str =
         "7672c87912b6015f393d66921a3e78cb5623dd76582a9513f2d87c560c0f4aa7";
+    const LOSS_REDUCTION_JSON: &str = include_str!(
+        "../../data/native_policy_train_step_v1/loss_reduction_intermediate_rung_v1.json"
+    );
+    const LOSS_REDUCTION_FIXTURE_SHA256: &str =
+        "472b0b56eb772b7b78401d2ea676121f215ab970ef62e012adb611f7c9f0adc1";
+    const LOSS_REDUCTION_GENERATOR: &[u8] =
+        include_bytes!("../../python/tools/generate_native_policy_loss_reduction_rung_v1.py");
+    const LOSS_REDUCTION_GENERATOR_SHA256: &str =
+        "486ef731d60cc7fa6044c4c3b2b00823915bc8b6179cd87a251de0c2c6bbf2a4";
     const MODEL_AUTHORITY: &[u8] = include_bytes!("../../python/mtg_kernel_rl/model.py");
     const TRAINER_AUTHORITY: &[u8] = include_bytes!("../../python/mtg_kernel_rl/trainer.py");
     const FORWARD_AUTHORITY: &[u8] = include_bytes!(
         "../../data/native_policy_value_net_v1/runner_fixed_forward_goldens_v1.json"
     );
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionFixture {
+        schema: String,
+        identity: String,
+        authority: LossReductionAuthority,
+        provenance: LossReductionProvenance,
+        model_state: LossReductionModelState,
+        term_stream: LossReductionTermStream,
+        reduction: LossReductionRecord,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionAuthority {
+        generator_path: String,
+        generator_sha256: String,
+        base_artifact_path: String,
+        base_artifact_sha256: String,
+        model_path: String,
+        model_sha256: String,
+        trainer_path: String,
+        trainer_sha256: String,
+        forward_fixture_path: String,
+        forward_fixture_sha256: String,
+        platform_system: String,
+        platform_machine: String,
+        python_version: String,
+        torch_version: String,
+        torch_num_threads: usize,
+        torch_num_interop_threads: usize,
+        torch_deterministic_algorithms: bool,
+        torch_default_dtype: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionProvenance {
+        base_program_json_pointer: String,
+        cycle_rule: String,
+        base_group_count: usize,
+        base_substep_count: usize,
+        cycle_count: usize,
+        learner_physical_decision_group_count: usize,
+        policy_substep_count: usize,
+        terminal_return_counts: std::collections::BTreeMap<String, usize>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionModelState {
+        trainer_algorithm: String,
+        initializer: String,
+        adam_step_before: u64,
+        reconstruction: String,
+        parameters_sha256: String,
+        first_moments_sha256: String,
+        second_moments_sha256: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionTermStream {
+        framing: String,
+        sha256: String,
+        base_cycle_terms: Vec<LossReductionBaseTerm>,
+        policy_nonzero_count: usize,
+        value_nonzero_count: usize,
+        policy_positive_count: usize,
+        policy_negative_count: usize,
+        value_positive_count: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionBaseTerm {
+        base_group_index: usize,
+        policy_term_f32_bits: String,
+        value_term_f32_bits: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionRecord {
+        torch_operation: String,
+        rust_operation: String,
+        torch_stack: LossReductionScalars,
+        sequential_f32_over_same_torch_term_bits: LossReductionScalars,
+        frozen_tolerance: LossReductionTolerance,
+        same_term_sequential_vs_torch_stack:
+            std::collections::BTreeMap<String, LossReductionComparison>,
+        all_same_term_comparisons_hold: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionScalars {
+        policy_sum: LossReductionScalar,
+        value_sum: LossReductionScalar,
+        loss: LossReductionScalar,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionScalar {
+        value: f32,
+        f32_bits: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionTolerance {
+        absolute: f64,
+        relative: f64,
+        comparison_rule: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LossReductionComparison {
+        absolute_delta_f64: f64,
+        allowed_delta_f64: f64,
+        holds: bool,
+    }
 
     #[derive(Debug, Deserialize)]
     struct ForwardFixture {
@@ -2796,6 +2919,20 @@ mod tests {
         format!("{:x}", Sha256::digest(bytes))
     }
 
+    fn reduction_f32_bits(value: &str) -> u32 {
+        let digits = value
+            .strip_prefix("0x")
+            .filter(|digits| digits.len() == 8)
+            .expect("loss-reduction f32 bits use exact 0x plus eight-hex framing");
+        u32::from_str_radix(digits, 16).expect("loss-reduction f32 bits parse")
+    }
+
+    fn reduction_scalar_bits(scalar: &LossReductionScalar) -> u32 {
+        let bits = reduction_f32_bits(&scalar.f32_bits);
+        assert_eq!(scalar.value.to_bits(), bits);
+        bits
+    }
+
     fn assert_gauge_record(
         actual: &NativeScorerBiasGaugeRecordV1,
         expected: &GoldenScorerBiasGauge,
@@ -3201,6 +3338,381 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn intermediate_torch_stack_vs_production_sequential_loss_reduction_holds() {
+        let (forward, golden) = fixtures();
+        let rung: LossReductionFixture =
+            serde_json::from_str(LOSS_REDUCTION_JSON).expect("loss-reduction rung parses");
+
+        assert_eq!(
+            rung.schema,
+            "native-policy-loss-reduction-intermediate-rung-v1"
+        );
+        assert_eq!(
+            rung.identity,
+            "torch-stack-vs-rust-sequential-loss-reduction-v1"
+        );
+        assert_eq!(
+            digest_bytes(LOSS_REDUCTION_JSON.as_bytes()),
+            LOSS_REDUCTION_FIXTURE_SHA256
+        );
+        assert_eq!(
+            digest_bytes(LOSS_REDUCTION_GENERATOR),
+            LOSS_REDUCTION_GENERATOR_SHA256
+        );
+        assert_eq!(
+            rung.authority.generator_path,
+            "python/tools/generate_native_policy_loss_reduction_rung_v1.py"
+        );
+        assert_eq!(
+            rung.authority.generator_sha256,
+            LOSS_REDUCTION_GENERATOR_SHA256
+        );
+        assert_eq!(
+            rung.authority.base_artifact_path,
+            "data/native_policy_train_step_v1/runner_fixed_train_step_goldens_v1.json"
+        );
+        assert_eq!(rung.authority.base_artifact_sha256, TRAIN_FIXTURE_SHA256);
+        assert_eq!(rung.authority.model_path, "python/mtg_kernel_rl/model.py");
+        assert_eq!(rung.authority.model_sha256, golden.authority.model_sha256);
+        assert_eq!(
+            rung.authority.trainer_path,
+            "python/mtg_kernel_rl/trainer.py"
+        );
+        assert_eq!(
+            rung.authority.trainer_sha256,
+            golden.authority.trainer_sha256
+        );
+        assert_eq!(
+            rung.authority.forward_fixture_path,
+            "data/native_policy_value_net_v1/runner_fixed_forward_goldens_v1.json"
+        );
+        assert_eq!(
+            rung.authority.forward_fixture_sha256,
+            golden.authority.forward_fixture_sha256
+        );
+        assert_eq!(rung.authority.platform_system, "Windows");
+        assert_eq!(rung.authority.platform_machine, "AMD64");
+        assert_eq!(rung.authority.python_version, "3.13.14");
+        assert_eq!(rung.authority.torch_version, "2.13.0+cpu");
+        assert_eq!(rung.authority.torch_num_threads, 1);
+        assert_eq!(rung.authority.torch_num_interop_threads, 1);
+        assert!(rung.authority.torch_deterministic_algorithms);
+        assert_eq!(rung.authority.torch_default_dtype, "torch.float32");
+
+        assert_eq!(rung.provenance.base_program_json_pointer, "/steps/2/groups");
+        assert_eq!(
+            rung.provenance.cycle_rule,
+            "rung_group[i] = base_group[i % 32] for i in 0..1024"
+        );
+        assert_eq!(rung.provenance.base_group_count, 32);
+        assert_eq!(rung.provenance.base_substep_count, 40);
+        assert_eq!(rung.provenance.cycle_count, 32);
+        assert_eq!(rung.provenance.learner_physical_decision_group_count, 1_024);
+        assert_eq!(rung.provenance.policy_substep_count, 1_280);
+        assert_eq!(golden.steps.len(), 3);
+        let base_step = &golden.steps[2];
+        assert_eq!(base_step.step, 3);
+        assert_eq!(base_step.groups.len(), rung.provenance.base_group_count);
+        assert_eq!(
+            base_step
+                .groups
+                .iter()
+                .map(|group| group.substeps.len())
+                .sum::<usize>(),
+            rung.provenance.base_substep_count
+        );
+        let mut terminal_counts = std::collections::BTreeMap::new();
+        for terminal_return in [-1i8, 0, 1] {
+            terminal_counts.insert(
+                terminal_return.to_string(),
+                base_step
+                    .groups
+                    .iter()
+                    .filter(|group| group.terminal_return == terminal_return)
+                    .count()
+                    * rung.provenance.cycle_count,
+            );
+        }
+        assert_eq!(terminal_counts, rung.provenance.terminal_return_counts);
+
+        assert_eq!(rung.model_state.trainer_algorithm, TRAINER_ALGORITHM_V1);
+        assert_eq!(rung.model_state.initializer, "runner-fixed-v1");
+        assert_eq!(rung.model_state.adam_step_before, 2);
+        assert!(rung
+            .model_state
+            .reconstruction
+            .contains("execute base artifact steps 1 and 2"));
+        let authority_state = &golden.steps[1];
+        assert_eq!(
+            rung.model_state.parameters_sha256,
+            authority_state.parameters_after_adam.sha256
+        );
+        assert_eq!(
+            rung.model_state.first_moments_sha256,
+            authority_state.first_moments_after_adam.sha256
+        );
+        assert_eq!(
+            rung.model_state.second_moments_sha256,
+            authority_state.second_moments_after_adam.sha256
+        );
+
+        assert_eq!(
+            rung.term_stream.framing,
+            "for group_index in 0..1024: u32_le(group_index)||u32_le(policy_term_f32_bits)||u32_le(value_term_f32_bits)"
+        );
+        assert_eq!(rung.term_stream.base_cycle_terms.len(), 32);
+        let mut stream_hasher = Sha256::new();
+        let mut sequential_policy_sum = 0.0f32;
+        let mut sequential_value_sum = 0.0f32;
+        let mut policy_nonzero_count = 0usize;
+        let mut value_nonzero_count = 0usize;
+        let mut policy_positive_count = 0usize;
+        let mut policy_negative_count = 0usize;
+        let mut value_positive_count = 0usize;
+        for group_index in 0..rung.provenance.learner_physical_decision_group_count {
+            let base_group_index = group_index % rung.provenance.base_group_count;
+            let term = &rung.term_stream.base_cycle_terms[base_group_index];
+            assert_eq!(term.base_group_index, base_group_index);
+            let policy_bits = reduction_f32_bits(&term.policy_term_f32_bits);
+            let value_bits = reduction_f32_bits(&term.value_term_f32_bits);
+            stream_hasher.update((group_index as u32).to_le_bytes());
+            stream_hasher.update(policy_bits.to_le_bytes());
+            stream_hasher.update(value_bits.to_le_bytes());
+            let policy_term = f32::from_bits(policy_bits);
+            let value_term = f32::from_bits(value_bits);
+            sequential_policy_sum += policy_term;
+            sequential_value_sum += value_term;
+            policy_nonzero_count += usize::from(policy_bits & 0x7fff_ffff != 0);
+            value_nonzero_count += usize::from(value_bits & 0x7fff_ffff != 0);
+            policy_positive_count += usize::from(policy_term > 0.0);
+            policy_negative_count += usize::from(policy_term < 0.0);
+            value_positive_count += usize::from(value_term > 0.0);
+        }
+        assert_eq!(
+            format!("{:x}", stream_hasher.finalize()),
+            rung.term_stream.sha256
+        );
+        assert_eq!(policy_nonzero_count, rung.term_stream.policy_nonzero_count);
+        assert_eq!(value_nonzero_count, rung.term_stream.value_nonzero_count);
+        assert_eq!(
+            policy_positive_count,
+            rung.term_stream.policy_positive_count
+        );
+        assert_eq!(
+            policy_negative_count,
+            rung.term_stream.policy_negative_count
+        );
+        assert_eq!(value_positive_count, rung.term_stream.value_positive_count);
+        assert!(policy_positive_count > 0 && policy_negative_count > 0);
+        assert_eq!(value_nonzero_count, 1_024);
+
+        let sequential_loss = (sequential_policy_sum
+            + golden.value_coefficient * sequential_value_sum)
+            / rung.provenance.learner_physical_decision_group_count as f32;
+        assert_eq!(
+            sequential_policy_sum.to_bits(),
+            reduction_scalar_bits(
+                &rung
+                    .reduction
+                    .sequential_f32_over_same_torch_term_bits
+                    .policy_sum
+            )
+        );
+        assert_eq!(
+            sequential_value_sum.to_bits(),
+            reduction_scalar_bits(
+                &rung
+                    .reduction
+                    .sequential_f32_over_same_torch_term_bits
+                    .value_sum
+            )
+        );
+        assert_eq!(
+            sequential_loss.to_bits(),
+            reduction_scalar_bits(&rung.reduction.sequential_f32_over_same_torch_term_bits.loss)
+        );
+        assert!(rung.reduction.torch_operation.contains("torch.stack"));
+        assert!(rung.reduction.rust_operation.contains("policy_sum +="));
+        assert_eq!(rung.reduction.frozen_tolerance.absolute, 5.0e-5f64);
+        assert_eq!(rung.reduction.frozen_tolerance.relative, 5.0e-5f64);
+        assert_eq!(
+            rung.reduction.frozen_tolerance.comparison_rule,
+            "abs(actual-expected) <= absolute + relative*abs(expected)"
+        );
+        assert!(rung.reduction.all_same_term_comparisons_hold);
+        for (name, expected, actual) in [
+            (
+                "policy_sum",
+                rung.reduction.torch_stack.policy_sum.value,
+                sequential_policy_sum,
+            ),
+            (
+                "value_sum",
+                rung.reduction.torch_stack.value_sum.value,
+                sequential_value_sum,
+            ),
+            (
+                "loss",
+                rung.reduction.torch_stack.loss.value,
+                sequential_loss,
+            ),
+        ] {
+            let comparison = &rung.reduction.same_term_sequential_vs_torch_stack[name];
+            let delta = (f64::from(actual) - f64::from(expected)).abs();
+            let allowed = rung.reduction.frozen_tolerance.absolute
+                + rung.reduction.frozen_tolerance.relative * f64::from(expected).abs();
+            assert_eq!(comparison.absolute_delta_f64, delta);
+            assert_eq!(comparison.allowed_delta_f64, allowed);
+            assert_eq!(comparison.holds, delta <= allowed);
+            assert!(
+                comparison.holds,
+                "same-term reduction exceeds tolerance for {name}"
+            );
+        }
+        reduction_scalar_bits(&rung.reduction.torch_stack.policy_sum);
+        reduction_scalar_bits(&rung.reduction.torch_stack.value_sum);
+        reduction_scalar_bits(&rung.reduction.torch_stack.loss);
+
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        for step in golden
+            .steps
+            .iter()
+            .take(rung.model_state.adam_step_before as usize)
+        {
+            let expected_outputs = expected_outputs_for_step(state.model_v1(), &forward, step);
+            let substeps = substeps_for_step(&forward, step, &expected_outputs);
+            let groups = groups_for_step(step, &substeps);
+            let result = state
+                .train_step_v1(
+                    &groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                )
+                .unwrap();
+            assert_eq!(result.adam_step, step.step);
+            assert_close(
+                result.policy_sum,
+                step.loss.policy_sum.value,
+                golden.authority.loss_absolute_tolerance,
+                golden.authority.loss_relative_tolerance,
+            );
+            assert_close(
+                result.value_sum,
+                step.loss.value_sum.value,
+                golden.authority.loss_absolute_tolerance,
+                golden.authority.loss_relative_tolerance,
+            );
+            assert_close(
+                result.loss,
+                step.loss.loss.value,
+                golden.authority.loss_absolute_tolerance,
+                golden.authority.loss_relative_tolerance,
+            );
+            assert_tensor_state(
+                &state.model_v1().parameter_snapshot_v1(),
+                &step.parameters_after_adam,
+                golden.authority.optimizer_absolute_tolerance,
+                golden.authority.optimizer_relative_tolerance,
+            );
+            assert_tensor_state(
+                &state.first_moment_snapshot_v1(),
+                &step.first_moments_after_adam,
+                golden.authority.optimizer_absolute_tolerance,
+                golden.authority.optimizer_relative_tolerance,
+            );
+            assert_tensor_state(
+                &state.second_moment_snapshot_v1(),
+                &step.second_moments_after_adam,
+                golden.authority.optimizer_absolute_tolerance,
+                golden.authority.optimizer_relative_tolerance,
+            );
+        }
+        assert_eq!(state.adam_step_v1(), rung.model_state.adam_step_before);
+
+        let expected_outputs = expected_outputs_for_step(state.model_v1(), &forward, base_step);
+        let base_substeps = substeps_for_step(&forward, base_step, &expected_outputs);
+        let expanded_substeps = (0..rung.provenance.learner_physical_decision_group_count)
+            .map(|group_index| {
+                base_substeps[group_index % rung.provenance.base_group_count].clone()
+            })
+            .collect::<Vec<_>>();
+        let expanded_groups = expanded_substeps
+            .iter()
+            .enumerate()
+            .map(|(group_index, substeps)| NativePolicyPhysicalDecisionV1 {
+                substeps,
+                terminal_return: base_step.groups[group_index % rung.provenance.base_group_count]
+                    .terminal_return,
+            })
+            .collect::<Vec<_>>();
+        let result = state
+            .train_step_v1(
+                &expanded_groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        assert_eq!(result.adam_step, rung.model_state.adam_step_before + 1);
+        assert_eq!(state.adam_step_v1(), result.adam_step);
+        assert_eq!(
+            result.physical_terms.len(),
+            rung.provenance.learner_physical_decision_group_count
+        );
+        assert_eq!(
+            result.selected_outputs.len(),
+            rung.provenance.policy_substep_count
+        );
+
+        let mut reproduced_policy_sum = 0.0f32;
+        let mut reproduced_value_sum = 0.0f32;
+        let mut actual_policy_positive = 0usize;
+        let mut actual_policy_negative = 0usize;
+        let mut actual_value_nonzero = 0usize;
+        for term in &result.physical_terms {
+            let target = f32::from(term.terminal_return);
+            let advantage = target - term.value;
+            let policy_term = -term.joint_log_probability * advantage;
+            let value_error = term.value - target;
+            let value_term = value_error * value_error;
+            reproduced_policy_sum += policy_term;
+            reproduced_value_sum += value_term;
+            actual_policy_positive += usize::from(policy_term > 0.0);
+            actual_policy_negative += usize::from(policy_term < 0.0);
+            actual_value_nonzero += usize::from(value_term.to_bits() & 0x7fff_ffff != 0);
+        }
+        let reproduced_loss = (reproduced_policy_sum
+            + golden.value_coefficient * reproduced_value_sum)
+            / result.physical_terms.len() as f32;
+        assert_eq!(result.policy_sum.to_bits(), reproduced_policy_sum.to_bits());
+        assert_eq!(result.value_sum.to_bits(), reproduced_value_sum.to_bits());
+        assert_eq!(result.loss.to_bits(), reproduced_loss.to_bits());
+        assert!(actual_policy_positive > 0 && actual_policy_negative > 0);
+        assert_eq!(actual_value_nonzero, result.physical_terms.len());
+
+        assert_close(
+            result.policy_sum,
+            rung.reduction.torch_stack.policy_sum.value,
+            rung.reduction.frozen_tolerance.absolute as f32,
+            rung.reduction.frozen_tolerance.relative as f32,
+        );
+        assert_close(
+            result.value_sum,
+            rung.reduction.torch_stack.value_sum.value,
+            rung.reduction.frozen_tolerance.absolute as f32,
+            rung.reduction.frozen_tolerance.relative as f32,
+        );
+        assert_close(
+            result.loss,
+            rung.reduction.torch_stack.loss.value,
+            rung.reduction.frozen_tolerance.absolute as f32,
+            rung.reduction.frozen_tolerance.relative as f32,
+        );
     }
 
     #[test]

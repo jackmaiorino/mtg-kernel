@@ -1,0 +1,273 @@
+{
+  "authority": {
+    "base_artifact_path": "data/native_policy_train_step_v1/runner_fixed_train_step_goldens_v1.json",
+    "base_artifact_sha256": "7672c87912b6015f393d66921a3e78cb5623dd76582a9513f2d87c560c0f4aa7",
+    "forward_fixture_path": "data/native_policy_value_net_v1/runner_fixed_forward_goldens_v1.json",
+    "forward_fixture_sha256": "c3c5e864f9666cba73b15dc5a038cd57c7d9a46aaccc2b8d3c3c16e956efe9ec",
+    "generator_path": "python/tools/generate_native_policy_loss_reduction_rung_v1.py",
+    "generator_sha256": "486ef731d60cc7fa6044c4c3b2b00823915bc8b6179cd87a251de0c2c6bbf2a4",
+    "model_path": "python/mtg_kernel_rl/model.py",
+    "model_sha256": "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59",
+    "platform_machine": "AMD64",
+    "platform_system": "Windows",
+    "python_version": "3.13.14",
+    "torch_default_dtype": "torch.float32",
+    "torch_deterministic_algorithms": true,
+    "torch_num_interop_threads": 1,
+    "torch_num_threads": 1,
+    "torch_version": "2.13.0+cpu",
+    "trainer_path": "python/mtg_kernel_rl/trainer.py",
+    "trainer_sha256": "47cd76a243f1b58a695cc0ffe257e8737dcd7bea0b68140349b80139409683ad"
+  },
+  "identity": "torch-stack-vs-rust-sequential-loss-reduction-v1",
+  "model_state": {
+    "adam_step_before": 2,
+    "first_moments_sha256": "c430fab839bd5880149e0ec576aabb74c765b51ac6b2c60eb13940129efb8af3",
+    "initializer": "runner-fixed-v1",
+    "parameters_sha256": "dc916db301e70a6f59ac2d803d4fd01bed7f0ba07b031d24d19cbba8badd67b4",
+    "reconstruction": "initialize runner-fixed-v1, then execute base artifact steps 1 and 2 with canonical scorer.2.bias gauge before evaluating the cycled step-3 program",
+    "second_moments_sha256": "69e4f5ebd81529d155c22b10411ffc7ef43f0543c2737da0732e61a1f3b90b92",
+    "trainer_algorithm": "terminal_reinforce_value/v3"
+  },
+  "provenance": {
+    "base_group_count": 32,
+    "base_program_json_pointer": "/steps/2/groups",
+    "base_substep_count": 40,
+    "cycle_count": 32,
+    "cycle_rule": "rung_group[i] = base_group[i % 32] for i in 0..1024",
+    "learner_physical_decision_group_count": 1024,
+    "policy_substep_count": 1280,
+    "terminal_return_counts": {
+      "-1": 352,
+      "0": 352,
+      "1": 320
+    }
+  },
+  "reduction": {
+    "all_same_term_comparisons_hold": true,
+    "frozen_tolerance": {
+      "absolute": 5e-05,
+      "comparison_rule": "abs(actual-expected) <= absolute + relative*abs(expected)",
+      "relative": 5e-05
+    },
+    "rust_operation": "ordered f32 policy_sum += policy_term and value_sum += value_term, then (policy_sum + 0.5f32 * value_sum) / 1024f32",
+    "same_term_sequential_vs_torch_stack": {
+      "loss": {
+        "absolute_delta_f64": 2.682209014892578e-07,
+        "allowed_delta_f64": 6.43918976187706e-05,
+        "holds": true
+      },
+      "policy_sum": {
+        "absolute_delta_f64": 4.57763671875e-05,
+        "allowed_delta_f64": 0.0036206409454345705,
+        "holds": true
+      },
+      "value_sum": {
+        "absolute_delta_f64": 0.0006103515625,
+        "allowed_delta_f64": 0.03666588745117188,
+        "holds": true
+      }
+    },
+    "sequential_f32_over_same_torch_term_bits": {
+      "loss": {
+        "f32_bits": "0x3e935f76",
+        "value": 0.2878376841545105
+      },
+      "policy_sum": {
+        "f32_bits": "0xc28ed357",
+        "value": -71.41277313232422
+      },
+      "value_sum": {
+        "f32_bits": "0x4437144c",
+        "value": 732.317138671875
+      }
+    },
+    "torch_operation": "policy_sum=torch.stack(policy_terms).sum(); value_sum=torch.stack(value_terms).sum(); loss=(policy_sum+0.5*value_sum)/1024",
+    "torch_stack": {
+      "loss": {
+        "f32_bits": "0x3e935f7f",
+        "value": 0.287837952375412
+      },
+      "policy_sum": {
+        "f32_bits": "0xc28ed35d",
+        "value": -71.4128189086914
+      },
+      "value_sum": {
+        "f32_bits": "0x44371456",
+        "value": 732.3177490234375
+      }
+    }
+  },
+  "schema": "native-policy-loss-reduction-intermediate-rung-v1",
+  "term_stream": {
+    "base_cycle_terms": [
+      {
+        "base_group_index": 0,
+        "policy_term_f32_bits": "0xc009218b",
+        "value_term_f32_bits": "0x3fb743fc"
+      },
+      {
+        "base_group_index": 1,
+        "policy_term_f32_bits": "0x3e801e49",
+        "value_term_f32_bits": "0x3d5fa514"
+      },
+      {
+        "base_group_index": 2,
+        "policy_term_f32_bits": "0x3f0939b4",
+        "value_term_f32_bits": "0x3f25403f"
+      },
+      {
+        "base_group_index": 3,
+        "policy_term_f32_bits": "0xbf6da6d1",
+        "value_term_f32_bits": "0x3f1656f9"
+      },
+      {
+        "base_group_index": 4,
+        "policy_term_f32_bits": "0xbeaf65ba",
+        "value_term_f32_bits": "0x3d1e41b3"
+      },
+      {
+        "base_group_index": 5,
+        "policy_term_f32_bits": "0x3fa18b0d",
+        "value_term_f32_bits": "0x3fc2ced5"
+      },
+      {
+        "base_group_index": 6,
+        "policy_term_f32_bits": "0xbf4c5ed2",
+        "value_term_f32_bits": "0x3fb743fc"
+      },
+      {
+        "base_group_index": 7,
+        "policy_term_f32_bits": "0x3e801e49",
+        "value_term_f32_bits": "0x3d5fa514"
+      },
+      {
+        "base_group_index": 8,
+        "policy_term_f32_bits": "0x3fc69ab2",
+        "value_term_f32_bits": "0x3f25403f"
+      },
+      {
+        "base_group_index": 9,
+        "policy_term_f32_bits": "0xbf6da6d1",
+        "value_term_f32_bits": "0x3f1656f9"
+      },
+      {
+        "base_group_index": 10,
+        "policy_term_f32_bits": "0xbe064a3a",
+        "value_term_f32_bits": "0x3d1e41b3"
+      },
+      {
+        "base_group_index": 11,
+        "policy_term_f32_bits": "0x3fa18b0d",
+        "value_term_f32_bits": "0x3fc2ced5"
+      },
+      {
+        "base_group_index": 12,
+        "policy_term_f32_bits": "0xc009218b",
+        "value_term_f32_bits": "0x3fb743fc"
+      },
+      {
+        "base_group_index": 13,
+        "policy_term_f32_bits": "0x3e801e49",
+        "value_term_f32_bits": "0x3d5fa514"
+      },
+      {
+        "base_group_index": 14,
+        "policy_term_f32_bits": "0x3f0939b4",
+        "value_term_f32_bits": "0x3f25403f"
+      },
+      {
+        "base_group_index": 15,
+        "policy_term_f32_bits": "0xbf6da6d1",
+        "value_term_f32_bits": "0x3f1656f9"
+      },
+      {
+        "base_group_index": 16,
+        "policy_term_f32_bits": "0xbeaf65ba",
+        "value_term_f32_bits": "0x3d1e41b3"
+      },
+      {
+        "base_group_index": 17,
+        "policy_term_f32_bits": "0x3fa18b0d",
+        "value_term_f32_bits": "0x3fc2ced5"
+      },
+      {
+        "base_group_index": 18,
+        "policy_term_f32_bits": "0xbf4c5ed2",
+        "value_term_f32_bits": "0x3fb743fc"
+      },
+      {
+        "base_group_index": 19,
+        "policy_term_f32_bits": "0x3e801e49",
+        "value_term_f32_bits": "0x3d5fa514"
+      },
+      {
+        "base_group_index": 20,
+        "policy_term_f32_bits": "0x3fc69ab2",
+        "value_term_f32_bits": "0x3f25403f"
+      },
+      {
+        "base_group_index": 21,
+        "policy_term_f32_bits": "0xbf6da6d1",
+        "value_term_f32_bits": "0x3f1656f9"
+      },
+      {
+        "base_group_index": 22,
+        "policy_term_f32_bits": "0xbe064a3a",
+        "value_term_f32_bits": "0x3d1e41b3"
+      },
+      {
+        "base_group_index": 23,
+        "policy_term_f32_bits": "0x3fa18b0d",
+        "value_term_f32_bits": "0x3fc2ced5"
+      },
+      {
+        "base_group_index": 24,
+        "policy_term_f32_bits": "0xc009218b",
+        "value_term_f32_bits": "0x3fb743fc"
+      },
+      {
+        "base_group_index": 25,
+        "policy_term_f32_bits": "0x3e801e49",
+        "value_term_f32_bits": "0x3d5fa514"
+      },
+      {
+        "base_group_index": 26,
+        "policy_term_f32_bits": "0x3f0939b4",
+        "value_term_f32_bits": "0x3f25403f"
+      },
+      {
+        "base_group_index": 27,
+        "policy_term_f32_bits": "0xbf6da6d1",
+        "value_term_f32_bits": "0x3f1656f9"
+      },
+      {
+        "base_group_index": 28,
+        "policy_term_f32_bits": "0xbeaf65ba",
+        "value_term_f32_bits": "0x3d1e41b3"
+      },
+      {
+        "base_group_index": 29,
+        "policy_term_f32_bits": "0x3fa18b0d",
+        "value_term_f32_bits": "0x3fc2ced5"
+      },
+      {
+        "base_group_index": 30,
+        "policy_term_f32_bits": "0xbf4c5ed2",
+        "value_term_f32_bits": "0x3fb743fc"
+      },
+      {
+        "base_group_index": 31,
+        "policy_term_f32_bits": "0x3e801e49",
+        "value_term_f32_bits": "0x3d5fa514"
+      }
+    ],
+    "framing": "for group_index in 0..1024: u32_le(group_index)||u32_le(policy_term_f32_bits)||u32_le(value_term_f32_bits)",
+    "policy_negative_count": 512,
+    "policy_nonzero_count": 1024,
+    "policy_positive_count": 512,
+    "sha256": "3ee64a179a72ffb64a6166cacd41dd07cfafe1b7a30622d1c3fd2d06976d647f",
+    "value_nonzero_count": 1024,
+    "value_positive_count": 1024
+  }
+}
