@@ -22,6 +22,10 @@ flat-action-diagnostic = []
 # Environment-only microprofile for the production V2 full tensorizer. The
 # feature exposes no trainer or model shortcut and is off in normal builds.
 native-flat-tensorizer-diagnostic = []
+# Windows-only production admission for the native V2 training-store writer.
+# Non-Windows builds retain parser/stub support but never emit a production
+# build-capture tuple.
+native-training-store-v2-production = []
 
 [[example]]
 name = "cuda_flat_training_capacity_v1"
@@ -36,6 +40,12 @@ name = "native_flat_tensorizer_diagnostic"
 required-features = ["native-flat-tensorizer-diagnostic"]
 
 [build-dependencies]
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+toml = "0.8"
+
+[dev-dependencies]
+semver = "1"
+toml = "0.8"
