@@ -5,6 +5,8 @@
 //! Python-authoritative encoded decisions can be packed into a ragged Burn
 //! graph without changing the normal CPU reference or trainer contracts.
 
+mod training;
+
 use crate::common_model_snapshot_v1::{
     common_model_snapshot_paths_v1, load_common_model_snapshot_v1,
 };
@@ -1424,6 +1426,10 @@ pub(crate) fn run_cuda_v1() -> Result<(), Box<dyn Error>> {
         );
     }
     Ok(())
+}
+
+pub(crate) fn run_cuda_training_v1() -> Result<(), Box<dyn Error>> {
+    training::run_cuda_training_v1()
 }
 
 #[cfg(test)]

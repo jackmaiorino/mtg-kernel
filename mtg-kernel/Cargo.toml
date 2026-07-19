@@ -4,9 +4,9 @@ version = "0.0.4"
 edition.workspace = true
 
 [dependencies]
-burn = { version = "=0.21.0", default-features = false, features = ["std"], optional = true }
+burn = { version = "=0.21.0", default-features = false, features = ["std", "autodiff"], optional = true }
 burn-cuda = { version = "=0.21.0", default-features = false, features = ["std"], optional = true }
-cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "nvrtc", "cublas", "cuda-12080", "dynamic-loading"], optional = true }
+cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "runtime", "nvrtc", "cublas", "cuda-12080", "dynamic-loading"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -19,7 +19,7 @@ count_allocs = []
 cuda-flat-training-capacity-v1 = ["dep:cudarc"]
 # Experimental production-parameter forward backend. This is deliberately
 # opt-in and is not a matched-training or evidence identity.
-experimental-burn-net8-packed-cuda-v1 = ["dep:burn", "dep:burn-cuda"]
+experimental-burn-net8-packed-cuda-v1 = ["dep:burn", "dep:burn-cuda", "dep:cudarc"]
 # Audit-only flat action shape, cached-binding, hash-cost, and cache-rebuild
 # probes used by the noncanonical capacity diagnostic. Off by default so the
 # production API cannot bypass encode to obtain a consumable binding.
@@ -43,6 +43,10 @@ required-features = ["cuda-flat-training-capacity-v1"]
 
 [[example]]
 name = "experimental_burn_net8_packed_cuda_v1"
+required-features = ["experimental-burn-net8-packed-cuda-v1"]
+
+[[example]]
+name = "experimental_burn_net8_cuda_train_v1"
 required-features = ["experimental-burn-net8-packed-cuda-v1"]
 
 [[example]]

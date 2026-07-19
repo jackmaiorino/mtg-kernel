@@ -99,16 +99,11 @@ The module and root runner exist only with the
 `experimental-burn-net8-packed-cuda-v1` feature. No store, CLI, seed, schema,
 or cross-language benchmark contract is changed.
 
-## Backward / Adam blockers
+## Backward / Adam follow-up
 
-- Define and validate gradient export in the frozen 33-tensor native order,
-  including the inverse transpose for every Burn linear weight.
-- Validate ragged scatter backward and batch-loss behavior against
-  `terminal_reinforce_value/v3`, including duplicate-score recomputation.
-- Decide whether the frozen native Adam implementation remains authoritative
-  (requiring gradient readback) or implement a separately versioned CUDA Adam.
-  Burn's stock optimizer cannot be assumed numerically identical.
-- Import/export both moment streams and preserve exactly one transactional
-  optimizer step per even episode batch, including candidate-clone rollback.
-- Replace fresh `Tensor::from_data` allocations with persistent host/device
-  staging before any end-to-end trainer timing is treated as evidence.
+The experimental backward, frozen-order gradient export, device Adam,
+moment-stream import/export, rollback, resident-batch timing, and their current
+numerical-identity blockers are now tracked in
+`docs/experimental_burn_net8_cuda_train_v1.md`. This forward-only document is
+retained as the original diagnostic baseline; its blocker list is superseded
+by that checkpoint.

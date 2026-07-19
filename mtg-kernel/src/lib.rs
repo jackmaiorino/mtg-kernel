@@ -200,3 +200,11 @@ pub const KERNEL_VERSION: &str = "0.0.4-spike";
 pub fn run_experimental_burn_net8_packed_cuda_v1() -> Result<(), Box<dyn std::error::Error>> {
     experimental_burn_net8_packed_v1::run_cuda_v1()
 }
+
+/// Runs the opt-in Burn/CUDA training-feasibility diagnostic. This is an
+/// experimental gradient/optimizer mapping probe, not a production trainer.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[doc(hidden)]
+pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::error::Error>> {
+    experimental_burn_net8_packed_v1::run_cuda_training_v1()
+}
