@@ -21,6 +21,13 @@
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
 
+#[allow(dead_code)]
+#[path = "../build_support/native_store_build_capture_v1.rs"]
+mod native_store_build_capture_v1;
+#[allow(dead_code)]
+#[path = "src/strict_source_tree_attestation_v1.rs"]
+mod strict_source_tree_attestation_v1;
+
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -1727,6 +1734,11 @@ pub const FLAT_ACTION_CANDIDATE_COMMITMENT_DOMAIN_V2: &[u8; {}] = &[{}];\n",
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let repo_root = Path::new(&manifest_dir).join("..");
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR set by cargo");
+    native_store_build_capture_v1::configure_native_store_build_capture_v1(
+        Path::new(&manifest_dir),
+        Path::new(&out_dir),
+    );
     configure_commit_tree_binding(&repo_root);
     let json_path = Path::new(&manifest_dir)
         .join("..")
@@ -1782,7 +1794,6 @@ fn main() {
     let (flat_policy_contract_v2_out, flat_action_contract_v2_out) =
         flat_policy_contract_v2_codegen(&repo_root);
 
-    let out_dir = env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let dest = Path::new(&out_dir).join("card_defs.rs");
     fs::write(&dest, out).unwrap_or_else(|e| panic!("failed to write {}: {e}", dest.display()));
     let runtime_decks_dest = Path::new(&out_dir).join("runtime_decks.rs");

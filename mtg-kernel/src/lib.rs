@@ -20,6 +20,19 @@
 //! - Strict single-session JSONL reset/step boundary; parallelism and batching
 //!   are orchestrated outside the Rust process.
 
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    not(all(
+        target_env = "msvc",
+        any(target_arch = "x86_64", target_arch = "aarch64"),
+        not(debug_assertions)
+    ))
+))]
+compile_error!(
+    "native-training-store-v2-production requires Windows MSVC x86_64/aarch64 release without debug assertions"
+);
+
 pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
@@ -79,6 +92,17 @@ pub(crate) mod native_trainer_v1;
 // Public in-process execution facade for the native trainer. This deliberately
 // owns no CLI grammar, serialized record, or filesystem publication contract.
 pub mod native_training_executor_v1;
+// Non-persisting provenance guard for the exact admitted production build.
+// The non-Windows required-feature binary contains only its parser/refusal stub
+// and therefore never compiles this module or its generated constants.
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
+pub mod native_store_production_capture_v2;
 // Pure typed run/v2 record validation and deterministic digest authority.
 // Capture, filesystem publication, and learning-quality claims live elsewhere.
 pub mod native_training_store_run_v2;
