@@ -103,6 +103,13 @@ pub mod native_training_executor_v1;
     not(debug_assertions)
 ))]
 pub mod native_store_production_capture_v2;
+// Pure checkpoint-v3 authority. The public decoder is deliberately
+// genesis-only until complete Episode/UpdateGroup evidence can supply sealed
+// cumulative trained progress.
+pub mod native_training_store_checkpoint_v3;
+// Schema-neutral checked ATOM/raw32/SHA framing shared by Store records.
+#[allow(dead_code)]
+pub(crate) mod native_training_store_digest_v1;
 // Pure typed run/v2 record validation and deterministic digest authority.
 // Capture, filesystem publication, and learning-quality claims live elsewhere.
 pub mod native_training_store_run_v2;

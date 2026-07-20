@@ -1916,6 +1916,11 @@ fn contains_at_location_boundary(bytes: &[u8], needle: &[u8]) -> bool {
 }
 
 #[cfg(test)]
+pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
+    tests::fixture_bytes()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::{json, Value};
@@ -2304,7 +2309,7 @@ mod tests {
         record.contracts.identity_bundle_sha256 = identity_bundle_sha256_v2(record).unwrap();
     }
 
-    fn fixture_bytes() -> Vec<u8> {
+    pub(super) fn fixture_bytes() -> Vec<u8> {
         to_canonical_json_bytes_v1(&fixture_record(), CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
 
