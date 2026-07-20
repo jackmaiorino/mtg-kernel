@@ -134,6 +134,11 @@ impl ValidatedNativeTrainingStoreStateV2 {
         self.latest_generation_index
     }
 
+    /// Exact reopened state-payload bytes of the latest boundary.
+    pub fn latest_payload(&self) -> &[u8] {
+        &self.latest_payload
+    }
+
     pub const fn latest_checkpoint(&self) -> &CheckpointManifestV3 {
         &self.latest_checkpoint
     }
@@ -180,6 +185,80 @@ pub fn validate_native_training_store_v2(
         .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::RootInvalid))?;
     let _shared = root.lock_shared_v2().map_err(map_lock_error_v2)?;
     walk_complete_store_v2(root, run)
+}
+
+/// One named boundary generation loaded strictly from validated Store bytes.
+#[derive(Debug)]
+pub struct LoadedNativeTrainingBoundaryV2 {
+    generation_index: u64,
+    checkpoint: CheckpointManifestV3,
+    payload: Vec<u8>,
+}
+
+impl LoadedNativeTrainingBoundaryV2 {
+    pub const fn generation_index(&self) -> u64 {
+        self.generation_index
+    }
+
+    pub const fn checkpoint(&self) -> &CheckpointManifestV3 {
+        &self.checkpoint
+    }
+
+    /// Exact reopened state-payload bytes of the named boundary.
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+/// Load one named boundary generation under the shared reader lock.
+///
+/// The complete Store is first validated through the full walk, the named
+/// generation must not exceed the proven latest pointer, and the boundary is
+/// then rewalked from genesis so its complete ancestry, evidence chain,
+/// checkpoint reference, and payload all revalidate before any byte is
+/// returned. Runner and evaluator loads consume exactly this authority; the
+/// locator is never persisted.
+pub fn load_native_training_boundary_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    generation_index: u64,
+) -> Result<LoadedNativeTrainingBoundaryV2> {
+    root.recapture_v2()
+        .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::RootInvalid))?;
+    let _shared = root.lock_shared_v2().map_err(map_lock_error_v2)?;
+    let state = walk_complete_store_v2(root, run)?;
+    let checkpoint_segment_updates = run.checkpoint_segment_updates();
+    if generation_index > state.latest_generation_index
+        || !(generation_index == 0 || generation_index.is_multiple_of(checkpoint_segment_updates))
+    {
+        return Err(resume_error_v2(
+            NativeTrainingStoreResumeV2ErrorKind::GenerationInvalid,
+        ));
+    }
+    if generation_index == state.latest_generation_index {
+        return Ok(LoadedNativeTrainingBoundaryV2 {
+            generation_index,
+            checkpoint: state.latest_checkpoint,
+            payload: state.latest_payload,
+        });
+    }
+    let schedule_invalid = resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::ScheduleInvalid);
+    let mut walked: Option<WalkedGenerationV2> = None;
+    let mut current = 0_u64;
+    loop {
+        let generation = load_generation_v2(root, run, walked.as_ref(), current)?;
+        if current == generation_index {
+            return Ok(LoadedNativeTrainingBoundaryV2 {
+                generation_index,
+                checkpoint: generation.checkpoint,
+                payload: generation.payload,
+            });
+        }
+        walked = Some(generation);
+        current = current
+            .checked_add(checkpoint_segment_updates)
+            .ok_or(schedule_invalid)?;
+    }
 }
 
 /// Resume the Store under the exclusive mutator lock.

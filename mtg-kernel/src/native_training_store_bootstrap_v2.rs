@@ -230,6 +230,8 @@ mod windows_bootstrap_v2 {
 
     const RUN_LEAF_V2: &str = "run.json";
     const RUN_STAGE_LEAF_V2: &str = ".run.json.stage-v2";
+    const LATEST_LEAF_V2: &str = "latest.json";
+    const LATEST_STAGE_LEAF_V2: &str = ".latest.json.stage-v2";
     const DIRECTORY_SHARE_V2: u32 = FILE_SHARE_READ_V2 | FILE_SHARE_WRITE_V2 | FILE_SHARE_DELETE_V2;
 
     /// Presence inventory admitted by the strict B-state classifier.
@@ -239,6 +241,7 @@ mod windows_bootstrap_v2 {
         directory_count: usize,
         run_stage_present: bool,
         run_present: bool,
+        latest_content_present: bool,
     }
 
     struct HeldBootstrapLockV2<'handle> {
@@ -267,6 +270,7 @@ mod windows_bootstrap_v2 {
             directory_count: 0,
             run_stage_present: false,
             run_present: false,
+            latest_content_present: false,
         };
         let mut seen_directories = [false; 4];
         for entry in fs::read_dir(root_path).map_err(|_| corrupt)? {
@@ -297,6 +301,15 @@ mod windows_bootstrap_v2 {
                         return Err(corrupt);
                     }
                     inventory.run_stage_present = true;
+                }
+                LATEST_LEAF_V2 | LATEST_STAGE_LEAF_V2 => {
+                    // Generation content is admissible only at B8, where
+                    // ordinary generation recovery applies; before B8 it
+                    // makes the root corrupt.
+                    if !file_type.is_file() {
+                        return Err(corrupt);
+                    }
+                    inventory.latest_content_present = true;
                 }
                 _ => {
                     let position = NATIVE_TRAINING_STORE_SUBDIRECTORY_ORDER_V2
@@ -334,6 +347,9 @@ mod windows_bootstrap_v2 {
             return Err(corrupt);
         }
         if inventory.run_present && (inventory.directory_count != 4 || !inventory.lock_present) {
+            return Err(corrupt);
+        }
+        if inventory.latest_content_present && !inventory.run_present {
             return Err(corrupt);
         }
         Ok(inventory)
@@ -742,6 +758,22 @@ mod tests {
                 third.outcome(),
                 NativeTrainingStoreBootstrapOutcomeV2::RunAuthorityPresent
             );
+            drop(third);
+
+            // At B8 ordinary generation recovery applies: latest.json and
+            // generation content are admissible and preserved.
+            fs::write(root_path.join("latest.json"), b"{}").unwrap();
+            fs::write(
+                root_path.join("segments").join("segment-00000000.json"),
+                b"{}",
+            )
+            .unwrap();
+            let reopened = bootstrap_native_training_store_v2(parent.path(), "store").unwrap();
+            assert_eq!(
+                reopened.outcome(),
+                NativeTrainingStoreBootstrapOutcomeV2::RunAuthorityPresent
+            );
+            assert_eq!(fs::read(root_path.join("latest.json")).unwrap(), b"{}");
         }
 
         #[test]
