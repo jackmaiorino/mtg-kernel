@@ -318,6 +318,26 @@ impl UpdateEvidenceChainContextV1 {
     pub const fn train_state_sha256(&self) -> [u8; 32] {
         self.train_state_sha256
     }
+
+    pub(crate) const fn run_sha256_raw_v1(&self) -> [u8; 32] {
+        self.run_sha256
+    }
+
+    pub(crate) const fn identity_bundle_sha256_raw_v1(&self) -> [u8; 32] {
+        self.identity_bundle_sha256
+    }
+
+    pub(crate) const fn batch_episodes_v1(&self) -> u64 {
+        self.batch_episodes
+    }
+
+    pub(crate) const fn checkpoint_segment_updates_v1(&self) -> u64 {
+        self.checkpoint_segment_updates
+    }
+
+    pub(crate) const fn scorer_bias_anchor_bits_v1(&self) -> u32 {
+        self.scorer_bias_anchor_bits
+    }
 }
 
 /// Validated group paired with the only context that may validate its
