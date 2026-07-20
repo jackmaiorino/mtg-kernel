@@ -198,7 +198,7 @@ impl ValidatedNativeTrainingStoreRootV2 {
 }
 
 #[cfg(windows)]
-mod windows_store_root_v2 {
+pub(crate) mod windows_store_root_v2 {
     use super::{
         root_error_v2, NativeTrainingStoreDirectoryV2, NativeTrainingStoreRootV2ErrorKind, Result,
         NATIVE_TRAINING_STORE_LOCK_LEAF_V2, NATIVE_TRAINING_STORE_SUBDIRECTORY_ORDER_V2,
@@ -208,18 +208,18 @@ mod windows_store_root_v2 {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::path::{Path, PathBuf};
 
-    type HandleV2 = *mut c_void;
+    pub(crate) type HandleV2 = *mut c_void;
     const INVALID_HANDLE_VALUE_V2: HandleV2 = -1_isize as HandleV2;
-    const GENERIC_READ_V2: u32 = 0x8000_0000;
-    const FILE_SHARE_READ_V2: u32 = 0x0000_0001;
-    const FILE_SHARE_WRITE_V2: u32 = 0x0000_0002;
-    const FILE_SHARE_DELETE_V2: u32 = 0x0000_0004;
+    pub(crate) const GENERIC_READ_V2: u32 = 0x8000_0000;
+    pub(crate) const FILE_SHARE_READ_V2: u32 = 0x0000_0001;
+    pub(crate) const FILE_SHARE_WRITE_V2: u32 = 0x0000_0002;
+    pub(crate) const FILE_SHARE_DELETE_V2: u32 = 0x0000_0004;
     const OPEN_EXISTING_V2: u32 = 3;
     const FILE_FLAG_OPEN_REPARSE_POINT_V2: u32 = 0x0020_0000;
     const FILE_FLAG_BACKUP_SEMANTICS_V2: u32 = 0x0200_0000;
-    const FILE_ATTRIBUTE_DIRECTORY_V2: u32 = 0x0000_0010;
-    const FILE_ATTRIBUTE_REPARSE_POINT_V2: u32 = 0x0000_0400;
-    const FILE_ATTRIBUTE_COMPRESSED_V2: u32 = 0x0000_0800;
+    pub(crate) const FILE_ATTRIBUTE_DIRECTORY_V2: u32 = 0x0000_0010;
+    pub(crate) const FILE_ATTRIBUTE_REPARSE_POINT_V2: u32 = 0x0000_0400;
+    pub(crate) const FILE_ATTRIBUTE_COMPRESSED_V2: u32 = 0x0000_0800;
     const DRIVE_FIXED_V2: u32 = 3;
     const FILE_BASIC_INFO_CLASS_V2: i32 = 0;
     const FILE_STANDARD_INFO_CLASS_V2: i32 = 1;
@@ -232,12 +232,12 @@ mod windows_store_root_v2 {
     const VERBATIM_PREFIX_V2: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
 
     #[repr(C)]
-    struct FileBasicInfoV2 {
+    pub(crate) struct FileBasicInfoV2 {
         creation_time: i64,
         last_access_time: i64,
         last_write_time: i64,
         change_time: i64,
-        file_attributes: u32,
+        pub(crate) file_attributes: u32,
     }
 
     // FILE_BASIC_INFO is four LARGE_INTEGER fields plus one DWORD padded to
@@ -246,12 +246,12 @@ mod windows_store_root_v2 {
     const _: [(); 40] = [(); std::mem::size_of::<FileBasicInfoV2>()];
 
     #[repr(C)]
-    struct FileStandardInfoV2 {
+    pub(crate) struct FileStandardInfoV2 {
         allocation_size: i64,
-        end_of_file: i64,
-        number_of_links: u32,
-        delete_pending: u8,
-        directory: u8,
+        pub(crate) end_of_file: i64,
+        pub(crate) number_of_links: u32,
+        pub(crate) delete_pending: u8,
+        pub(crate) directory: u8,
     }
 
     // FILE_STANDARD_INFO is two LARGE_INTEGER fields, one DWORD, and two
@@ -260,9 +260,9 @@ mod windows_store_root_v2 {
 
     #[repr(C)]
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    struct FileIdInfoV2 {
-        volume_serial_number: u64,
-        file_id: [u8; 16],
+    pub(crate) struct FileIdInfoV2 {
+        pub(crate) volume_serial_number: u64,
+        pub(crate) file_id: [u8; 16],
     }
 
     // FILE_ID_INFO is exactly a ULONGLONG followed by FILE_ID_128.
@@ -339,8 +339,8 @@ mod windows_store_root_v2 {
 
     /// Owned raw handle closed exactly once on drop.
     #[derive(Debug)]
-    struct OwnedHandleV2 {
-        raw: HandleV2,
+    pub(crate) struct OwnedHandleV2 {
+        pub(crate) raw: HandleV2,
     }
 
     // SAFETY: the wrapped kernel handle is used only for handle-based
@@ -393,7 +393,10 @@ mod windows_store_root_v2 {
         }
     }
 
-    fn wide_path_v2(path: &Path, kind: NativeTrainingStoreRootV2ErrorKind) -> Result<Vec<u16>> {
+    pub(crate) fn wide_path_v2(
+        path: &Path,
+        kind: NativeTrainingStoreRootV2ErrorKind,
+    ) -> Result<Vec<u16>> {
         let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
         if wide.contains(&0) {
             return Err(root_error_v2(kind));
@@ -402,7 +405,7 @@ mod windows_store_root_v2 {
         Ok(wide)
     }
 
-    fn open_no_follow_v2(
+    pub(crate) fn open_no_follow_v2(
         path: &Path,
         desired_access: u32,
         share_mode: u32,
@@ -433,7 +436,7 @@ mod windows_store_root_v2 {
         Ok(OwnedHandleV2 { raw: handle })
     }
 
-    fn basic_info_v2(
+    pub(crate) fn basic_info_v2(
         handle: &OwnedHandleV2,
         kind: NativeTrainingStoreRootV2ErrorKind,
     ) -> Result<FileBasicInfoV2> {
@@ -455,7 +458,7 @@ mod windows_store_root_v2 {
         Ok(unsafe { information.assume_init() })
     }
 
-    fn standard_info_v2(
+    pub(crate) fn standard_info_v2(
         handle: &OwnedHandleV2,
         kind: NativeTrainingStoreRootV2ErrorKind,
     ) -> Result<FileStandardInfoV2> {
@@ -477,7 +480,7 @@ mod windows_store_root_v2 {
         Ok(unsafe { information.assume_init() })
     }
 
-    fn identity_v2(
+    pub(crate) fn identity_v2(
         handle: &OwnedHandleV2,
         kind: NativeTrainingStoreRootV2ErrorKind,
     ) -> Result<FileIdInfoV2> {
@@ -499,7 +502,7 @@ mod windows_store_root_v2 {
         Ok(unsafe { information.assume_init() })
     }
 
-    fn final_path_v2(
+    pub(crate) fn final_path_v2(
         handle: &OwnedHandleV2,
         kind: NativeTrainingStoreRootV2ErrorKind,
     ) -> Result<PathBuf> {
@@ -518,7 +521,10 @@ mod windows_store_root_v2 {
         Ok(PathBuf::from(std::ffi::OsString::from_wide(wide)))
     }
 
-    fn require_local_fixed_ntfs_v2(handle: &OwnedHandleV2, final_path: &Path) -> Result<()> {
+    pub(crate) fn require_local_fixed_ntfs_v2(
+        handle: &OwnedHandleV2,
+        final_path: &Path,
+    ) -> Result<()> {
         let kind = NativeTrainingStoreRootV2ErrorKind::VolumeInvalid;
         let mut serial = 0_u32;
         let mut maximum_component = 0_u32;
@@ -573,7 +579,7 @@ mod windows_store_root_v2 {
         Some(vec![letter, u16::from(b':'), u16::from(b'\\'), 0])
     }
 
-    fn require_directory_attributes_v2(
+    pub(crate) fn require_directory_attributes_v2(
         handle: &OwnedHandleV2,
         kind: NativeTrainingStoreRootV2ErrorKind,
     ) -> Result<()> {
@@ -763,28 +769,47 @@ mod windows_store_root_v2 {
         }
 
         pub(super) fn lock_range_v2(&self, exclusive: bool) -> Result<HeldRangeLockV2<'_>> {
-            let mut flags = LOCKFILE_FAIL_IMMEDIATELY_V2;
-            if exclusive {
-                flags |= LOCKFILE_EXCLUSIVE_LOCK_V2;
-            }
-            let mut overlapped = zero_overlapped_v2();
-            // SAFETY: the retained lock handle is live and the overlapped
-            // range names exactly the offset-zero byte required by the
-            // frozen lock contract.
-            let success =
-                unsafe { LockFileEx(self.lock.handle.raw, flags, 0, 1, 0, &mut overlapped) };
-            if success == 0 {
-                let raw = std::io::Error::last_os_error().raw_os_error();
-                return Err(root_error_v2(if raw == Some(ERROR_LOCK_VIOLATION_V2) {
+            try_range_lock_v2(&self.lock.handle, exclusive).map_err(|raw| {
+                root_error_v2(if raw == Some(ERROR_LOCK_VIOLATION_V2) {
                     NativeTrainingStoreRootV2ErrorKind::StoreBusy
                 } else {
                     NativeTrainingStoreRootV2ErrorKind::LockInvalid
-                }));
-            }
+                })
+            })?;
             Ok(HeldRangeLockV2 {
                 handle: &self.lock.handle,
             })
         }
+    }
+
+    /// Raw OS code reported when the frozen range lock is already held.
+    pub(crate) const RANGE_LOCK_HELD_RAW_OS_V2: i32 = ERROR_LOCK_VIOLATION_V2;
+
+    /// Try the nonblocking offset-zero length-one range lock on a handle.
+    pub(crate) fn try_range_lock_v2(
+        handle: &OwnedHandleV2,
+        exclusive: bool,
+    ) -> std::result::Result<(), Option<i32>> {
+        let mut flags = LOCKFILE_FAIL_IMMEDIATELY_V2;
+        if exclusive {
+            flags |= LOCKFILE_EXCLUSIVE_LOCK_V2;
+        }
+        let mut overlapped = zero_overlapped_v2();
+        // SAFETY: the lock handle is live and the overlapped range names
+        // exactly the offset-zero byte required by the frozen lock contract.
+        let success = unsafe { LockFileEx(handle.raw, flags, 0, 1, 0, &mut overlapped) };
+        if success == 0 {
+            return Err(std::io::Error::last_os_error().raw_os_error());
+        }
+        Ok(())
+    }
+
+    /// Release the offset-zero length-one range lock on a handle.
+    pub(crate) fn release_range_lock_v2(handle: &OwnedHandleV2) {
+        let mut overlapped = zero_overlapped_v2();
+        // SAFETY: the lock handle is live and the overlapped range names
+        // exactly the previously locked offset-zero byte.
+        let _ = unsafe { UnlockFileEx(handle.raw, 0, 1, 0, &mut overlapped) };
     }
 }
 

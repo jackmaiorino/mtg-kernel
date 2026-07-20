@@ -143,6 +143,9 @@ pub mod native_training_store_update_group_v1;
 // Schema-neutral checked ATOM/raw32/SHA framing shared by Store records.
 #[allow(dead_code)]
 pub(crate) mod native_training_store_digest_v1;
+// Idempotent B0-B8 root-skeleton bootstrap and pre-run recovery. Run-record
+// byte authority, generation publication, and resume remain later layers.
+pub mod native_training_store_bootstrap_v2;
 // Path-backed Store root authority: no-follow retained handles, local
 // fixed-NTFS admission, identity recapture, and the nonblocking LockFileEx
 // range locks. Non-Windows callers receive the stable unsupported-platform
