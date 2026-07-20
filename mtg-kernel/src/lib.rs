@@ -115,8 +115,7 @@ pub mod native_training_executor_v1;
     not(debug_assertions)
 ))]
 pub mod native_store_production_capture_v2;
-// Pure update-zero sidecar/head boundary authority. Trained parent-bound
-// construction remains unavailable in this first slice.
+// Pure genesis and trained parent-bound sidecar/head authority.
 pub mod native_training_store_boundary_v2;
 // Pure checkpoint-v3 authority for genesis and evidence-bound trained state.
 pub mod native_training_store_checkpoint_v3;
