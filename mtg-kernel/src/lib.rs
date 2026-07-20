@@ -146,6 +146,11 @@ pub(crate) mod native_training_store_digest_v1;
 // Idempotent B0-B8 root-skeleton bootstrap and pre-run recovery. Run-record
 // byte authority, generation publication, and resume remain later layers.
 pub mod native_training_store_bootstrap_v2;
+// One-command development science loop: bootstrap-or-resume training to the
+// exact target, full Store validation, checkpoint-ref boundary loads, runner
+// episodes, and the seat-swapped uniform reward-delta evaluation. It claims
+// no experiment-manifest authority.
+pub mod native_science_loop_v1;
 // Store-wide currentness validation and resume orchestration: shared-lock
 // full-chain walk, exclusive-lock recognized-stage cleanup, the exact P=N
 // no-op, and latest-checkpoint executor reconstruction.
