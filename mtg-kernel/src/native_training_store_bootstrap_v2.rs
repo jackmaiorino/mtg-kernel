@@ -111,7 +111,9 @@ impl NativeTrainingStoreBootstrapV2 {
     }
 }
 
-/// Fault-injection boundaries after each bootstrap operation.
+/// Fault-injection boundaries after each bootstrap operation. The variants
+/// are constructed only by the Windows bootstrap engine and its tests.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BootstrapBoundaryV2 {
     ParentValidated,
