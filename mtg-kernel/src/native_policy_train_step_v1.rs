@@ -23,9 +23,10 @@
 
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionViewV1, NativeNamedParameterV1, NativePolicyValueErrorV1,
-    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, ACTION_FEATURE_DIM_V1,
-    ACTION_REF_FEATURE_DIM_V1, CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1, EDGE_FEATURE_DIM_V1,
-    HIDDEN_DIM_V1, OBJECT_FEATURE_DIM_V1, OBJECT_GROUP_COUNT_V1, PARAMETER_COUNT_V1, STATE_DIM_V1,
+    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, ValidatedCountsV1,
+    ACTION_FEATURE_DIM_V1, ACTION_REF_FEATURE_DIM_V1, CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1,
+    EDGE_FEATURE_DIM_V1, HIDDEN_DIM_V1, OBJECT_FEATURE_DIM_V1, OBJECT_GROUP_COUNT_V1,
+    PARAMETER_COUNT_V1, STATE_DIM_V1,
 };
 use sha2::{Digest, Sha256};
 #[cfg(test)]
@@ -848,16 +849,16 @@ impl NativePolicyValueTrainStateV1 {
                         DecisionTapeSourceV1::Packed(&tape.tape)
                     }
                 };
-                if substep.selected_action_index >= tape.logits.len() {
+                if substep.selected_action_index >= tape.logits_v1().len() {
                     return Err(NativePolicyTrainErrorV1::SelectedActionOutOfRange {
                         group_index,
                         substep_index,
                         selected: substep.selected_action_index,
-                        action_count: tape.logits.len(),
+                        action_count: tape.logits_v1().len(),
                     });
                 }
                 let (selected_log_probability, log_probabilities) =
-                    selected_log_softmax(&tape.logits, substep.selected_action_index)?;
+                    selected_log_softmax(tape.logits_v1(), substep.selected_action_index)?;
                 joint_log_probability = Some(match joint_log_probability {
                     None => selected_log_probability,
                     Some(active) => active + selected_log_probability,
@@ -866,8 +867,8 @@ impl NativePolicyValueTrainStateV1 {
                     group_index,
                     substep_index,
                     selected_action_index: substep.selected_action_index,
-                    selected_logit: tape.logits[substep.selected_action_index],
-                    value: tape.value,
+                    selected_logit: tape.logits_v1()[substep.selected_action_index],
+                    value: tape.value_v1(),
                     selected_log_probability,
                 });
                 tapes.push(SelectedDecisionTapeV1 {
@@ -878,7 +879,7 @@ impl NativePolicyValueTrainStateV1 {
             }
 
             let joint_log_probability = joint_log_probability.expect("nonempty group checked");
-            let value = tapes[0].tape.value;
+            let value = tapes[0].tape.value_v1();
             let target = f32::from(group.terminal_return);
             let advantage = target - value;
             let policy_term = -joint_log_probability * advantage;
@@ -950,7 +951,7 @@ impl NativePolicyValueTrainStateV1 {
                         .push(*gradient - log_probability.exp() * grad_output_sum);
                 }
                 gauge_accumulator.observe(
-                    &selected.tape.logits,
+                    selected.tape.logits_v1(),
                     selected.selected_action_index,
                     d_joint_log_probability,
                 )?;
@@ -1163,14 +1164,14 @@ fn validate_forward_output_bits_v1(
     source: ForwardOutputSourceV1,
 ) -> Result<(), NativePolicyTrainErrorV1> {
     let expected_count = substep.expected_raw_action_logit_bits.len();
-    if expected_count != tape.logits.len() {
+    if expected_count != tape.logits_v1().len() {
         return Err(match source {
             ForwardOutputSourceV1::IndependentRecompute => {
                 NativePolicyTrainErrorV1::ExpectedLogitCountMismatch {
                     group_index,
                     substep_index,
                     expected: expected_count,
-                    actual: tape.logits.len(),
+                    actual: tape.logits_v1().len(),
                 }
             }
             ForwardOutputSourceV1::PackedBackwardTape => {
@@ -1178,7 +1179,7 @@ fn validate_forward_output_bits_v1(
                     group_index,
                     substep_index,
                     expected: expected_count,
-                    actual: tape.logits.len(),
+                    actual: tape.logits_v1().len(),
                 }
             }
         });
@@ -1186,7 +1187,7 @@ fn validate_forward_output_bits_v1(
     for (action_index, (&expected_bits, actual)) in substep
         .expected_raw_action_logit_bits
         .iter()
-        .zip(&tape.logits)
+        .zip(tape.logits_v1())
         .enumerate()
     {
         let actual_bits = actual.to_bits();
@@ -1215,7 +1216,7 @@ fn validate_forward_output_bits_v1(
             });
         }
     }
-    let actual_value_bits = tape.value.to_bits();
+    let actual_value_bits = tape.value_v1().to_bits();
     if actual_value_bits != substep.expected_value_bits {
         return Err(match source {
             ForwardOutputSourceV1::IndependentRecompute => {
@@ -1440,31 +1441,292 @@ const ACTION_SPEC: TwoLayerSpecV1 = TwoLayerSpecV1 {
     input_dim: ACTION_ENCODER_INPUT,
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TapeSpanV1 {
+    start: usize,
+    len: usize,
+}
+
+impl TapeSpanV1 {
+    fn checked_v1(start: usize, len: usize) -> Result<Self, NativePolicyTrainErrorV1> {
+        start
+            .checked_add(len)
+            .ok_or_else(decision_tape_arena_overflow_v1)?;
+        Ok(Self { start, len })
+    }
+
+    fn end_v1(self) -> usize {
+        self.start + self.len
+    }
+
+    fn values_v1<T>(self, arena: &[T]) -> &[T] {
+        &arena[self.start..self.end_v1()]
+    }
+
+    fn values_mut_v1<T>(self, arena: &mut [T]) -> &mut [T] {
+        &mut arena[self.start..self.end_v1()]
+    }
+
+    fn checked_subspan_v1(
+        self,
+        offset: usize,
+        len: usize,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(decision_tape_arena_overflow_v1)?;
+        if end > self.len {
+            return Err(NativePolicyTrainErrorV1::ParameterManifest);
+        }
+        Self::checked_v1(
+            self.start
+                .checked_add(offset)
+                .ok_or_else(decision_tape_arena_overflow_v1)?,
+            len,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DecisionTapeArenaCapacityV1 {
+    f32_count: usize,
+    usize_count: usize,
+    scratch_f32_count: usize,
+}
+
+impl DecisionTapeArenaCapacityV1 {
+    fn checked_v1(counts: ValidatedCountsV1) -> Result<Self, NativePolicyTrainErrorV1> {
+        let mut f32_count = 0usize;
+        checked_add_tape_rows_v1(
+            &mut f32_count,
+            counts.object_count,
+            OBJECT_ENCODER_INPUT + 2 * HIDDEN_DIM_V1,
+        )?;
+        checked_add_tape_rows_v1(
+            &mut f32_count,
+            counts.edge_count,
+            EDGE_ENCODER_INPUT + 2 * HIDDEN_DIM_V1,
+        )?;
+        checked_add_tape_rows_v1(
+            &mut f32_count,
+            counts.object_count,
+            NODE_UPDATE_INPUT + 2 * HIDDEN_DIM_V1,
+        )?;
+        checked_add_tape_rows_v1(&mut f32_count, 1, STATE_ENCODER_INPUT + 2 * HIDDEN_DIM_V1)?;
+        checked_add_tape_rows_v1(
+            &mut f32_count,
+            counts.action_ref_count,
+            ACTION_REF_ENCODER_INPUT + 2 * HIDDEN_DIM_V1,
+        )?;
+        checked_add_tape_rows_v1(
+            &mut f32_count,
+            counts.action_count,
+            ACTION_ENCODER_INPUT + 2 * HIDDEN_DIM_V1,
+        )?;
+        checked_add_tape_rows_v1(&mut f32_count, counts.action_count, SCORER_INPUT)?;
+        checked_add_tape_rows_v1(&mut f32_count, counts.action_count, HIDDEN_DIM_V1)?;
+        checked_add_tape_rows_v1(&mut f32_count, counts.action_count, 1)?;
+        checked_add_tape_rows_v1(&mut f32_count, 1, HIDDEN_DIM_V1)?;
+        checked_add_tape_rows_v1(&mut f32_count, 1, 1)?;
+
+        let usize_count = counts
+            .object_count
+            .checked_add(counts.edge_count)
+            .and_then(|count| count.checked_add(counts.action_ref_count))
+            .and_then(|count| count.checked_mul(2))
+            .ok_or_else(decision_tape_arena_overflow_v1)?;
+        let object_pool_count = counts
+            .object_count
+            .checked_mul(HIDDEN_DIM_V1)
+            .ok_or_else(decision_tape_arena_overflow_v1)?;
+        let group_pool_count = OBJECT_GROUP_COUNT_V1
+            .checked_mul(HIDDEN_DIM_V1)
+            .ok_or_else(decision_tape_arena_overflow_v1)?;
+        let action_pool_count = counts
+            .action_count
+            .checked_mul(HIDDEN_DIM_V1)
+            .ok_or_else(decision_tape_arena_overflow_v1)?;
+        let capacity = Self {
+            f32_count,
+            usize_count,
+            scratch_f32_count: object_pool_count
+                .max(group_pool_count)
+                .max(action_pool_count),
+        };
+        checked_tape_vec_capacity_v1::<f32>(capacity.f32_count)?;
+        checked_tape_vec_capacity_v1::<usize>(capacity.usize_count)?;
+        checked_tape_vec_capacity_v1::<f32>(capacity.scratch_f32_count)?;
+        Ok(capacity)
+    }
+}
+
+fn decision_tape_arena_overflow_v1() -> NativePolicyTrainErrorV1 {
+    NativePolicyValueErrorV1::SizeOverflow("decision_tape_arena").into()
+}
+
+fn checked_tape_vec_capacity_v1<T>(count: usize) -> Result<(), NativePolicyTrainErrorV1> {
+    let byte_count = count
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or_else(decision_tape_arena_overflow_v1)?;
+    if byte_count > isize::MAX as usize {
+        return Err(decision_tape_arena_overflow_v1());
+    }
+    Ok(())
+}
+
+fn checked_add_tape_rows_v1(
+    total: &mut usize,
+    rows: usize,
+    width: usize,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    let count = rows
+        .checked_mul(width)
+        .ok_or_else(decision_tape_arena_overflow_v1)?;
+    *total = total
+        .checked_add(count)
+        .ok_or_else(decision_tape_arena_overflow_v1)?;
+    Ok(())
+}
+
+fn append_external_f32_v1(
+    arena: &mut Vec<f32>,
+    values: &[f32],
+) -> Result<TapeSpanV1, NativePolicyTrainErrorV1> {
+    let span = TapeSpanV1::checked_v1(arena.len(), values.len())?;
+    if span.end_v1() > arena.capacity() {
+        return Err(decision_tape_arena_overflow_v1());
+    }
+    arena.extend_from_slice(values);
+    Ok(span)
+}
+
+fn append_arena_f32_v1(
+    arena: &mut Vec<f32>,
+    source: TapeSpanV1,
+) -> Result<TapeSpanV1, NativePolicyTrainErrorV1> {
+    if source.end_v1() > arena.len() {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    }
+    let destination = TapeSpanV1::checked_v1(arena.len(), source.len)?;
+    if destination.end_v1() > arena.capacity() {
+        return Err(decision_tape_arena_overflow_v1());
+    }
+    for offset in 0..source.len {
+        let value = arena[source.start + offset];
+        arena.push(value);
+    }
+    Ok(destination)
+}
+
+fn append_zeroed_f32_v1(
+    arena: &mut Vec<f32>,
+    len: usize,
+) -> Result<TapeSpanV1, NativePolicyTrainErrorV1> {
+    let span = TapeSpanV1::checked_v1(arena.len(), len)?;
+    if span.end_v1() > arena.capacity() {
+        return Err(decision_tape_arena_overflow_v1());
+    }
+    arena.resize(span.end_v1(), 0.0);
+    Ok(span)
+}
+
+fn append_usize_casts_v1(
+    arena: &mut Vec<usize>,
+    values: &[i64],
+) -> Result<TapeSpanV1, NativePolicyTrainErrorV1> {
+    let span = TapeSpanV1::checked_v1(arena.len(), values.len())?;
+    if span.end_v1() > arena.capacity() {
+        return Err(decision_tape_arena_overflow_v1());
+    }
+    arena.extend(values.iter().map(|value| *value as usize));
+    Ok(span)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TwoLayerTapeV1 {
-    input: Vec<f32>,
-    first_output: Vec<f32>,
-    second_output: Vec<f32>,
+    input: TapeSpanV1,
+    first_output: TapeSpanV1,
+    second_output: TapeSpanV1,
     rows: usize,
 }
 
+/// One decision's retained reverse activations in two checked contiguous
+/// arenas. Spans preserve every logical tensor and index slice while avoiding
+/// an independent heap allocation for each layer output. The layout is private
+/// update-local state and does not participate in a persisted schema.
 struct DecisionTapeV1 {
-    object_card_ids: Vec<usize>,
-    object_groups: Vec<usize>,
-    edge_source_indices: Vec<usize>,
-    edge_target_indices: Vec<usize>,
-    action_ref_action_indices: Vec<usize>,
-    action_ref_node_indices: Vec<usize>,
+    f32_arena: Vec<f32>,
+    usize_arena: Vec<usize>,
+    object_card_ids: TapeSpanV1,
+    object_groups: TapeSpanV1,
+    edge_source_indices: TapeSpanV1,
+    edge_target_indices: TapeSpanV1,
+    action_ref_action_indices: TapeSpanV1,
+    action_ref_node_indices: TapeSpanV1,
     object_encoder: TwoLayerTapeV1,
     edge_encoder: Option<TwoLayerTapeV1>,
     node_update: TwoLayerTapeV1,
     state_encoder: TwoLayerTapeV1,
     action_ref_encoder: Option<TwoLayerTapeV1>,
     action_encoder: TwoLayerTapeV1,
-    scorer_input: Vec<f32>,
-    scorer_hidden: Vec<f32>,
-    value_hidden: Vec<f32>,
-    logits: Vec<f32>,
-    value: f32,
+    scorer_input: TapeSpanV1,
+    scorer_hidden: TapeSpanV1,
+    value_hidden: TapeSpanV1,
+    logits: TapeSpanV1,
+    value: TapeSpanV1,
+}
+
+impl DecisionTapeV1 {
+    fn f32_values_v1(&self, span: TapeSpanV1) -> &[f32] {
+        span.values_v1(&self.f32_arena)
+    }
+
+    #[cfg(test)]
+    fn f32_values_mut_v1(&mut self, span: TapeSpanV1) -> &mut [f32] {
+        span.values_mut_v1(&mut self.f32_arena)
+    }
+
+    fn usize_values_v1(&self, span: TapeSpanV1) -> &[usize] {
+        span.values_v1(&self.usize_arena)
+    }
+
+    fn object_card_ids_v1(&self) -> &[usize] {
+        self.usize_values_v1(self.object_card_ids)
+    }
+
+    fn object_groups_v1(&self) -> &[usize] {
+        self.usize_values_v1(self.object_groups)
+    }
+
+    fn edge_source_indices_v1(&self) -> &[usize] {
+        self.usize_values_v1(self.edge_source_indices)
+    }
+
+    fn edge_target_indices_v1(&self) -> &[usize] {
+        self.usize_values_v1(self.edge_target_indices)
+    }
+
+    fn action_ref_action_indices_v1(&self) -> &[usize] {
+        self.usize_values_v1(self.action_ref_action_indices)
+    }
+
+    fn action_ref_node_indices_v1(&self) -> &[usize] {
+        self.usize_values_v1(self.action_ref_node_indices)
+    }
+
+    fn logits_v1(&self) -> &[f32] {
+        self.f32_values_v1(self.logits)
+    }
+
+    #[cfg(test)]
+    fn logits_mut_v1(&mut self) -> &mut [f32] {
+        let logits = self.logits;
+        self.f32_values_mut_v1(logits)
+    }
+
+    fn value_v1(&self) -> f32 {
+        self.f32_values_v1(self.value)[0]
+    }
 }
 
 /// Scorer-owned, update-local forward state.  The type is deliberately
@@ -1482,18 +1744,18 @@ impl std::fmt::Debug for NativePolicyPackedForwardTapeV1 {
         formatter
             .debug_struct("NativePolicyPackedForwardTapeV1")
             .field("model_generation_sha256", &self.model_generation_sha256)
-            .field("action_count", &self.tape.logits.len())
+            .field("action_count", &self.tape.logits_v1().len())
             .finish_non_exhaustive()
     }
 }
 
 impl NativePolicyPackedForwardTapeV1 {
     pub(crate) fn logits_v1(&self) -> &[f32] {
-        &self.tape.logits
+        self.tape.logits_v1()
     }
 
     pub(crate) fn value_v1(&self) -> f32 {
-        self.tape.value
+        self.tape.value_v1()
     }
 
     #[cfg(test)]
@@ -1506,14 +1768,14 @@ impl NativePolicyPackedForwardTapeV1 {
 
     #[cfg(test)]
     pub(crate) fn corrupt_logit_for_test_v1(&mut self, index: usize) -> Result<(), ()> {
-        let logit = self.tape.logits.get_mut(index).ok_or(())?;
+        let logit = self.tape.logits_mut_v1().get_mut(index).ok_or(())?;
         *logit = f32::from_bits(logit.to_bits() ^ 1);
         Ok(())
     }
 
     #[cfg(test)]
     pub(crate) fn corrupt_non_selected_logit_for_test_v1(&mut self, selected: usize) -> bool {
-        let index = match (0..self.tape.logits.len()).find(|index| *index != selected) {
+        let index = match (0..self.tape.logits_v1().len()).find(|index| *index != selected) {
             Some(index) => index,
             None => return false,
         };
@@ -1522,7 +1784,9 @@ impl NativePolicyPackedForwardTapeV1 {
 
     #[cfg(test)]
     pub(crate) fn corrupt_value_for_test_v1(&mut self) {
-        self.tape.value = f32::from_bits(self.tape.value.to_bits() ^ 1);
+        let value_span = self.tape.value;
+        let value = self.tape.f32_values_mut_v1(value_span);
+        value[0] = f32::from_bits(value[0].to_bits() ^ 1);
     }
 }
 
@@ -1655,191 +1919,277 @@ fn forward_with_tape(
     #[cfg(test)]
     FORWARD_WITH_TAPE_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
     let counts = encoded.validate(config)?;
-    let object_card_ids = encoded
-        .object_card_ids
-        .iter()
-        .map(|value| *value as usize)
-        .collect::<Vec<_>>();
-    let object_groups = encoded
-        .object_groups
-        .iter()
-        .map(|value| *value as usize)
-        .collect::<Vec<_>>();
-    let edge_source_indices = encoded
-        .edge_source_indices
-        .iter()
-        .map(|value| *value as usize)
-        .collect::<Vec<_>>();
-    let edge_target_indices = encoded
-        .edge_target_indices
-        .iter()
-        .map(|value| *value as usize)
-        .collect::<Vec<_>>();
-    let action_ref_action_indices = encoded
-        .action_ref_action_indices
-        .iter()
-        .map(|value| *value as usize)
-        .collect::<Vec<_>>();
-    let action_ref_node_indices = encoded
-        .action_ref_node_indices
-        .iter()
-        .map(|value| *value as usize)
-        .collect::<Vec<_>>();
+    let capacities = DecisionTapeArenaCapacityV1::checked_v1(counts)?;
+    let mut f32_arena = Vec::with_capacity(capacities.f32_count);
+    let mut usize_arena = Vec::with_capacity(capacities.usize_count);
+    let object_card_ids = append_usize_casts_v1(&mut usize_arena, encoded.object_card_ids)?;
+    let object_groups = append_usize_casts_v1(&mut usize_arena, encoded.object_groups)?;
+    let edge_source_indices = append_usize_casts_v1(&mut usize_arena, encoded.edge_source_indices)?;
+    let edge_target_indices = append_usize_casts_v1(&mut usize_arena, encoded.edge_target_indices)?;
+    let action_ref_action_indices =
+        append_usize_casts_v1(&mut usize_arena, encoded.action_ref_action_indices)?;
+    let action_ref_node_indices =
+        append_usize_casts_v1(&mut usize_arena, encoded.action_ref_node_indices)?;
 
     let embedding = &parameters[CARD_EMBEDDING].values;
-    let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT);
-    for (object, token) in object_card_ids.iter().copied().enumerate() {
+    let object_input_start = f32_arena.len();
+    for (object, token) in object_card_ids
+        .values_v1(&usize_arena)
+        .iter()
+        .copied()
+        .enumerate()
+    {
         let feature_begin = object * OBJECT_FEATURE_DIM_V1;
-        object_input.extend_from_slice(
+        append_external_f32_v1(
+            &mut f32_arena,
             &encoded.object_features[feature_begin..feature_begin + OBJECT_FEATURE_DIM_V1],
-        );
+        )?;
         let embedding_begin = token * CARD_EMBEDDING_DIM_V1;
-        object_input.extend_from_slice(
+        append_external_f32_v1(
+            &mut f32_arena,
             &embedding[embedding_begin..embedding_begin + CARD_EMBEDDING_DIM_V1],
-        );
+        )?;
     }
-    let object_encoder =
-        two_layer_forward(parameters, OBJECT_SPEC, object_input, counts.object_count)?;
+    let object_input =
+        TapeSpanV1::checked_v1(object_input_start, f32_arena.len() - object_input_start)?;
+    let object_encoder = two_layer_forward_into_arena_v1(
+        parameters,
+        OBJECT_SPEC,
+        object_input,
+        counts.object_count,
+        &mut f32_arena,
+    )?;
 
-    let mut edge_pooled = vec![0.0; counts.object_count * HIDDEN_DIM_V1];
+    let mut pooling_scratch = Vec::with_capacity(capacities.scratch_f32_count);
+    resize_tape_scratch_v1(
+        &mut pooling_scratch,
+        counts.object_count * HIDDEN_DIM_V1,
+        capacities.scratch_f32_count,
+    )?;
     let edge_encoder = if counts.edge_count == 0 {
         None
     } else {
-        let mut edge_input = Vec::with_capacity(counts.edge_count * EDGE_ENCODER_INPUT);
+        let edge_input_start = f32_arena.len();
         for edge in 0..counts.edge_count {
             let feature_begin = edge * EDGE_FEATURE_DIM_V1;
-            edge_input.extend_from_slice(
+            append_external_f32_v1(
+                &mut f32_arena,
                 &encoded.edge_features[feature_begin..feature_begin + EDGE_FEATURE_DIM_V1],
-            );
-            let source_begin = edge_source_indices[edge] * HIDDEN_DIM_V1;
-            edge_input.extend_from_slice(
-                &object_encoder.second_output[source_begin..source_begin + HIDDEN_DIM_V1],
-            );
-            let target_begin = edge_target_indices[edge] * HIDDEN_DIM_V1;
-            edge_input.extend_from_slice(
-                &object_encoder.second_output[target_begin..target_begin + HIDDEN_DIM_V1],
-            );
+            )?;
+            let source_begin = edge_source_indices.values_v1(&usize_arena)[edge] * HIDDEN_DIM_V1;
+            append_arena_f32_v1(
+                &mut f32_arena,
+                object_encoder
+                    .second_output
+                    .checked_subspan_v1(source_begin, HIDDEN_DIM_V1)?,
+            )?;
+            let target_begin = edge_target_indices.values_v1(&usize_arena)[edge] * HIDDEN_DIM_V1;
+            append_arena_f32_v1(
+                &mut f32_arena,
+                object_encoder
+                    .second_output
+                    .checked_subspan_v1(target_begin, HIDDEN_DIM_V1)?,
+            )?;
         }
-        let tape = two_layer_forward(parameters, EDGE_SPEC, edge_input, counts.edge_count)?;
-        add_indexed_rows(&mut edge_pooled, &tape.second_output, &edge_source_indices);
-        add_indexed_rows(&mut edge_pooled, &tape.second_output, &edge_target_indices);
+        let edge_input =
+            TapeSpanV1::checked_v1(edge_input_start, f32_arena.len() - edge_input_start)?;
+        let tape = two_layer_forward_into_arena_v1(
+            parameters,
+            EDGE_SPEC,
+            edge_input,
+            counts.edge_count,
+            &mut f32_arena,
+        )?;
+        add_indexed_rows(
+            &mut pooling_scratch,
+            tape.second_output.values_v1(&f32_arena),
+            edge_source_indices.values_v1(&usize_arena),
+        );
+        add_indexed_rows(
+            &mut pooling_scratch,
+            tape.second_output.values_v1(&f32_arena),
+            edge_target_indices.values_v1(&usize_arena),
+        );
         Some(tape)
     };
 
-    let mut node_input = Vec::with_capacity(counts.object_count * NODE_UPDATE_INPUT);
+    let node_input_start = f32_arena.len();
     for object in 0..counts.object_count {
         let begin = object * HIDDEN_DIM_V1;
-        node_input.extend_from_slice(&object_encoder.second_output[begin..begin + HIDDEN_DIM_V1]);
-        node_input.extend_from_slice(&edge_pooled[begin..begin + HIDDEN_DIM_V1]);
+        append_arena_f32_v1(
+            &mut f32_arena,
+            object_encoder
+                .second_output
+                .checked_subspan_v1(begin, HIDDEN_DIM_V1)?,
+        )?;
+        append_external_f32_v1(
+            &mut f32_arena,
+            &pooling_scratch[begin..begin + HIDDEN_DIM_V1],
+        )?;
     }
-    let node_update = two_layer_forward(parameters, NODE_SPEC, node_input, counts.object_count)?;
+    let node_input = TapeSpanV1::checked_v1(node_input_start, f32_arena.len() - node_input_start)?;
+    let node_update = two_layer_forward_into_arena_v1(
+        parameters,
+        NODE_SPEC,
+        node_input,
+        counts.object_count,
+        &mut f32_arena,
+    )?;
 
-    let mut pooled_objects = vec![0.0; OBJECT_GROUP_COUNT_V1 * HIDDEN_DIM_V1];
+    resize_tape_scratch_v1(
+        &mut pooling_scratch,
+        OBJECT_GROUP_COUNT_V1 * HIDDEN_DIM_V1,
+        capacities.scratch_f32_count,
+    )?;
     add_indexed_rows(
-        &mut pooled_objects,
-        &node_update.second_output,
-        &object_groups,
+        &mut pooling_scratch,
+        node_update.second_output.values_v1(&f32_arena),
+        object_groups.values_v1(&usize_arena),
     );
-    let mut state_input = Vec::with_capacity(STATE_ENCODER_INPUT);
-    state_input.extend_from_slice(encoded.state);
-    state_input.extend_from_slice(&pooled_objects);
-    let state_encoder = two_layer_forward(parameters, STATE_SPEC, state_input, 1)?;
+    let state_input_start = f32_arena.len();
+    append_external_f32_v1(&mut f32_arena, encoded.state)?;
+    append_external_f32_v1(&mut f32_arena, &pooling_scratch)?;
+    let state_input =
+        TapeSpanV1::checked_v1(state_input_start, f32_arena.len() - state_input_start)?;
+    let state_encoder =
+        two_layer_forward_into_arena_v1(parameters, STATE_SPEC, state_input, 1, &mut f32_arena)?;
 
-    let mut action_ref_pooled = vec![0.0; counts.action_count * HIDDEN_DIM_V1];
+    resize_tape_scratch_v1(
+        &mut pooling_scratch,
+        counts.action_count * HIDDEN_DIM_V1,
+        capacities.scratch_f32_count,
+    )?;
     let action_ref_encoder = if counts.action_ref_count == 0 {
         None
     } else {
-        let mut action_ref_input =
-            Vec::with_capacity(counts.action_ref_count * ACTION_REF_ENCODER_INPUT);
-        for (action_ref, node_index) in action_ref_node_indices.iter().copied().enumerate() {
+        let action_ref_input_start = f32_arena.len();
+        for (action_ref, node_index) in action_ref_node_indices
+            .values_v1(&usize_arena)
+            .iter()
+            .copied()
+            .enumerate()
+        {
             let feature_begin = action_ref * ACTION_REF_FEATURE_DIM_V1;
-            action_ref_input.extend_from_slice(
+            append_external_f32_v1(
+                &mut f32_arena,
                 &encoded.action_ref_features
                     [feature_begin..feature_begin + ACTION_REF_FEATURE_DIM_V1],
-            );
+            )?;
             let node_begin = node_index * HIDDEN_DIM_V1;
-            action_ref_input.extend_from_slice(
-                &node_update.second_output[node_begin..node_begin + HIDDEN_DIM_V1],
-            );
+            append_arena_f32_v1(
+                &mut f32_arena,
+                node_update
+                    .second_output
+                    .checked_subspan_v1(node_begin, HIDDEN_DIM_V1)?,
+            )?;
         }
-        let tape = two_layer_forward(
+        let action_ref_input = TapeSpanV1::checked_v1(
+            action_ref_input_start,
+            f32_arena.len() - action_ref_input_start,
+        )?;
+        let tape = two_layer_forward_into_arena_v1(
             parameters,
             ACTION_REF_SPEC,
             action_ref_input,
             counts.action_ref_count,
+            &mut f32_arena,
         )?;
         add_indexed_rows(
-            &mut action_ref_pooled,
-            &tape.second_output,
-            &action_ref_action_indices,
+            &mut pooling_scratch,
+            tape.second_output.values_v1(&f32_arena),
+            action_ref_action_indices.values_v1(&usize_arena),
         );
         Some(tape)
     };
 
-    let mut action_input = Vec::with_capacity(counts.action_count * ACTION_ENCODER_INPUT);
+    let action_input_start = f32_arena.len();
     for action in 0..counts.action_count {
         let feature_begin = action * ACTION_FEATURE_DIM_V1;
-        action_input.extend_from_slice(
+        append_external_f32_v1(
+            &mut f32_arena,
             &encoded.action_features[feature_begin..feature_begin + ACTION_FEATURE_DIM_V1],
-        );
+        )?;
         let pooled_begin = action * HIDDEN_DIM_V1;
-        action_input
-            .extend_from_slice(&action_ref_pooled[pooled_begin..pooled_begin + HIDDEN_DIM_V1]);
+        append_external_f32_v1(
+            &mut f32_arena,
+            &pooling_scratch[pooled_begin..pooled_begin + HIDDEN_DIM_V1],
+        )?;
     }
-    let action_encoder =
-        two_layer_forward(parameters, ACTION_SPEC, action_input, counts.action_count)?;
+    let action_input =
+        TapeSpanV1::checked_v1(action_input_start, f32_arena.len() - action_input_start)?;
+    let action_encoder = two_layer_forward_into_arena_v1(
+        parameters,
+        ACTION_SPEC,
+        action_input,
+        counts.action_count,
+        &mut f32_arena,
+    )?;
 
-    let mut scorer_input = Vec::with_capacity(counts.action_count * SCORER_INPUT);
+    let scorer_input_start = f32_arena.len();
     for action in 0..counts.action_count {
-        scorer_input.extend_from_slice(&state_encoder.second_output);
+        append_arena_f32_v1(&mut f32_arena, state_encoder.second_output)?;
         let action_begin = action * HIDDEN_DIM_V1;
-        scorer_input.extend_from_slice(
-            &action_encoder.second_output[action_begin..action_begin + HIDDEN_DIM_V1],
-        );
+        append_arena_f32_v1(
+            &mut f32_arena,
+            action_encoder
+                .second_output
+                .checked_subspan_v1(action_begin, HIDDEN_DIM_V1)?,
+        )?;
     }
-    let mut scorer_hidden = linear_forward(
+    let scorer_input =
+        TapeSpanV1::checked_v1(scorer_input_start, f32_arena.len() - scorer_input_start)?;
+    let scorer_hidden = linear_forward_into_arena_v1(
         parameters,
         SCORER_FIRST_WEIGHT,
         SCORER_FIRST_BIAS,
-        &scorer_input,
+        scorer_input,
         counts.action_count,
         SCORER_INPUT,
         HIDDEN_DIM_V1,
+        &mut f32_arena,
     )?;
-    tanh_in_place(&mut scorer_hidden);
-    let logits = linear_forward(
+    tanh_span_in_place_v1(&mut f32_arena, scorer_hidden);
+    let logits = linear_forward_into_arena_v1(
         parameters,
         SCORER_SECOND_WEIGHT,
         SCORER_SECOND_BIAS,
-        &scorer_hidden,
+        scorer_hidden,
         counts.action_count,
         HIDDEN_DIM_V1,
         1,
+        &mut f32_arena,
     )?;
 
-    let mut value_hidden = linear_forward(
+    let value_hidden = linear_forward_into_arena_v1(
         parameters,
         VALUE_FIRST_WEIGHT,
         VALUE_FIRST_BIAS,
-        &state_encoder.second_output,
+        state_encoder.second_output,
         1,
         HIDDEN_DIM_V1,
         HIDDEN_DIM_V1,
+        &mut f32_arena,
     )?;
-    tanh_in_place(&mut value_hidden);
-    let value = linear_forward(
+    tanh_span_in_place_v1(&mut f32_arena, value_hidden);
+    let value = linear_forward_into_arena_v1(
         parameters,
         VALUE_SECOND_WEIGHT,
         VALUE_SECOND_BIAS,
-        &value_hidden,
+        value_hidden,
         1,
         HIDDEN_DIM_V1,
         1,
-    )?[0];
-    validate_finite_slice("forward_logits", &logits)?;
-    finite_scalar("forward_value", 0, value)?;
+        &mut f32_arena,
+    )?;
+    validate_finite_slice("forward_logits", logits.values_v1(&f32_arena))?;
+    finite_scalar("forward_value", 0, value.values_v1(&f32_arena)[0])?;
+    if f32_arena.len() != capacities.f32_count || usize_arena.len() != capacities.usize_count {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    }
 
     Ok(DecisionTapeV1 {
+        f32_arena,
+        usize_arena,
         object_card_ids,
         object_groups,
         edge_source_indices,
@@ -1868,11 +2218,18 @@ fn reverse_decision(
     d_value: f32,
     workspace: &mut ReverseDecisionWorkspaceV1,
 ) -> Result<(), NativePolicyTrainErrorV1> {
-    let action_count = tape.logits.len();
+    let logits = tape.logits_v1();
+    let object_card_ids = tape.object_card_ids_v1();
+    let object_groups = tape.object_groups_v1();
+    let edge_source_indices = tape.edge_source_indices_v1();
+    let edge_target_indices = tape.edge_target_indices_v1();
+    let action_ref_action_indices = tape.action_ref_action_indices_v1();
+    let action_ref_node_indices = tape.action_ref_node_indices_v1();
+    let action_count = logits.len();
     if d_logits.len() != action_count {
         return Err(NativePolicyTrainErrorV1::ParameterManifest);
     }
-    let object_count = tape.object_card_ids.len();
+    let object_count = object_card_ids.len();
     let ReverseDecisionWorkspaceV1 {
         d_scorer_hidden,
         d_scorer_input,
@@ -1901,20 +2258,20 @@ fn reverse_decision(
         gradients,
         SCORER_SECOND_WEIGHT,
         SCORER_SECOND_BIAS,
-        &tape.scorer_hidden,
+        tape.f32_values_v1(tape.scorer_hidden),
         action_count,
         HIDDEN_DIM_V1,
         1,
         d_logits,
         d_scorer_hidden,
     )?;
-    apply_tanh_gradient(&tape.scorer_hidden, d_scorer_hidden)?;
+    apply_tanh_gradient(tape.f32_values_v1(tape.scorer_hidden), d_scorer_hidden)?;
     linear_backward_into(
         parameters,
         gradients,
         SCORER_FIRST_WEIGHT,
         SCORER_FIRST_BIAS,
-        &tape.scorer_input,
+        tape.f32_values_v1(tape.scorer_input),
         action_count,
         SCORER_INPUT,
         HIDDEN_DIM_V1,
@@ -1938,20 +2295,20 @@ fn reverse_decision(
         gradients,
         VALUE_SECOND_WEIGHT,
         VALUE_SECOND_BIAS,
-        &tape.value_hidden,
+        tape.f32_values_v1(tape.value_hidden),
         1,
         HIDDEN_DIM_V1,
         1,
         &d_value_output,
         d_value_hidden,
     )?;
-    apply_tanh_gradient(&tape.value_hidden, d_value_hidden)?;
+    apply_tanh_gradient(tape.f32_values_v1(tape.value_hidden), d_value_hidden)?;
     linear_backward_into(
         parameters,
         gradients,
         VALUE_FIRST_WEIGHT,
         VALUE_FIRST_BIAS,
-        &tape.state_encoder.second_output,
+        tape.f32_values_v1(tape.state_encoder.second_output),
         1,
         HIDDEN_DIM_V1,
         HIDDEN_DIM_V1,
@@ -1964,6 +2321,7 @@ fn reverse_decision(
         parameters,
         gradients,
         ACTION_SPEC,
+        &tape.f32_arena,
         &tape.action_encoder,
         d_action_hidden,
         two_layer_second_pre,
@@ -1980,10 +2338,10 @@ fn reverse_decision(
 
     resize_zeroed_v1(d_object_hidden, object_count * HIDDEN_DIM_V1);
     if let Some(action_ref_tape) = &tape.action_ref_encoder {
-        let action_ref_count = tape.action_ref_action_indices.len();
+        let action_ref_count = action_ref_action_indices.len();
         resize_zeroed_v1(d_action_ref_hidden, action_ref_count * HIDDEN_DIM_V1);
-        for action_ref in 0..action_ref_count {
-            let source = tape.action_ref_action_indices[action_ref] * HIDDEN_DIM_V1;
+        for (action_ref, &action_index) in action_ref_action_indices.iter().enumerate() {
+            let source = action_index * HIDDEN_DIM_V1;
             let destination = action_ref * HIDDEN_DIM_V1;
             d_action_ref_hidden[destination..destination + HIDDEN_DIM_V1]
                 .copy_from_slice(&d_action_ref_pooled[source..source + HIDDEN_DIM_V1]);
@@ -1992,15 +2350,16 @@ fn reverse_decision(
             parameters,
             gradients,
             ACTION_REF_SPEC,
+            &tape.f32_arena,
             action_ref_tape,
             d_action_ref_hidden,
             two_layer_second_pre,
             two_layer_first_output,
             d_action_ref_input,
         )?;
-        for action_ref in 0..action_ref_count {
+        for (action_ref, &node_index) in action_ref_node_indices.iter().enumerate() {
             let source = action_ref * ACTION_REF_ENCODER_INPUT + ACTION_REF_FEATURE_DIM_V1;
-            let destination = tape.action_ref_node_indices[action_ref] * HIDDEN_DIM_V1;
+            let destination = node_index * HIDDEN_DIM_V1;
             for hidden in 0..HIDDEN_DIM_V1 {
                 d_object_hidden[destination + hidden] += d_action_ref_input[source + hidden];
             }
@@ -2011,13 +2370,14 @@ fn reverse_decision(
         parameters,
         gradients,
         STATE_SPEC,
+        &tape.f32_arena,
         &tape.state_encoder,
         d_state_hidden,
         two_layer_second_pre,
         two_layer_first_output,
         d_state_input,
     )?;
-    for (object, group) in tape.object_groups.iter().copied().enumerate() {
+    for (object, group) in object_groups.iter().copied().enumerate() {
         let source = STATE_DIM_V1 + group * HIDDEN_DIM_V1;
         let destination = object * HIDDEN_DIM_V1;
         for hidden in 0..HIDDEN_DIM_V1 {
@@ -2029,6 +2389,7 @@ fn reverse_decision(
         parameters,
         gradients,
         NODE_SPEC,
+        &tape.f32_arena,
         &tape.node_update,
         d_object_hidden,
         two_layer_second_pre,
@@ -2047,12 +2408,12 @@ fn reverse_decision(
     }
 
     if let Some(edge_tape) = &tape.edge_encoder {
-        let edge_count = tape.edge_source_indices.len();
+        let edge_count = edge_source_indices.len();
         resize_zeroed_v1(d_edge_hidden, edge_count * HIDDEN_DIM_V1);
         for edge in 0..edge_count {
             let destination = edge * HIDDEN_DIM_V1;
-            let source_row = tape.edge_source_indices[edge] * HIDDEN_DIM_V1;
-            let target_row = tape.edge_target_indices[edge] * HIDDEN_DIM_V1;
+            let source_row = edge_source_indices[edge] * HIDDEN_DIM_V1;
+            let target_row = edge_target_indices[edge] * HIDDEN_DIM_V1;
             for hidden in 0..HIDDEN_DIM_V1 {
                 d_edge_hidden[destination + hidden] =
                     d_edge_pooled[source_row + hidden] + d_edge_pooled[target_row + hidden];
@@ -2062,6 +2423,7 @@ fn reverse_decision(
             parameters,
             gradients,
             EDGE_SPEC,
+            &tape.f32_arena,
             edge_tape,
             d_edge_hidden,
             two_layer_second_pre,
@@ -2070,8 +2432,8 @@ fn reverse_decision(
         )?;
         for edge in 0..edge_count {
             let source = edge * EDGE_ENCODER_INPUT + EDGE_FEATURE_DIM_V1;
-            let source_destination = tape.edge_source_indices[edge] * HIDDEN_DIM_V1;
-            let target_destination = tape.edge_target_indices[edge] * HIDDEN_DIM_V1;
+            let source_destination = edge_source_indices[edge] * HIDDEN_DIM_V1;
+            let target_destination = edge_target_indices[edge] * HIDDEN_DIM_V1;
             for hidden in 0..HIDDEN_DIM_V1 {
                 d_object_base[source_destination + hidden] += d_edge_input[source + hidden];
                 d_object_base[target_destination + hidden] +=
@@ -2084,13 +2446,14 @@ fn reverse_decision(
         parameters,
         gradients,
         OBJECT_SPEC,
+        &tape.f32_arena,
         &tape.object_encoder,
         d_object_base,
         two_layer_second_pre,
         two_layer_first_output,
         d_object_input,
     )?;
-    for (object, token) in tape.object_card_ids.iter().copied().enumerate() {
+    for (object, token) in object_card_ids.iter().copied().enumerate() {
         if token == 0 {
             continue;
         }
@@ -2104,32 +2467,51 @@ fn reverse_decision(
     Ok(())
 }
 
-fn two_layer_forward(
+fn resize_tape_scratch_v1(
+    scratch: &mut Vec<f32>,
+    len: usize,
+    capacity: usize,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    if len > capacity || len > scratch.capacity() {
+        return Err(decision_tape_arena_overflow_v1());
+    }
+    resize_zeroed_v1(scratch, len);
+    Ok(())
+}
+
+fn tanh_span_in_place_v1(arena: &mut [f32], span: TapeSpanV1) {
+    tanh_in_place(span.values_mut_v1(arena));
+}
+
+fn two_layer_forward_into_arena_v1(
     parameters: &[NativeNamedParameterV1],
     spec: TwoLayerSpecV1,
-    input: Vec<f32>,
+    input: TapeSpanV1,
     rows: usize,
+    arena: &mut Vec<f32>,
 ) -> Result<TwoLayerTapeV1, NativePolicyTrainErrorV1> {
-    let mut first_output = linear_forward(
+    let first_output = linear_forward_into_arena_v1(
         parameters,
         spec.first_weight,
         spec.first_bias,
-        &input,
+        input,
         rows,
         spec.input_dim,
         HIDDEN_DIM_V1,
+        arena,
     )?;
-    tanh_in_place(&mut first_output);
-    let mut second_output = linear_forward(
+    tanh_span_in_place_v1(arena, first_output);
+    let second_output = linear_forward_into_arena_v1(
         parameters,
         spec.second_weight,
         spec.second_bias,
-        &first_output,
+        first_output,
         rows,
         HIDDEN_DIM_V1,
         HIDDEN_DIM_V1,
+        arena,
     )?;
-    tanh_in_place(&mut second_output);
+    tanh_span_in_place_v1(arena, second_output);
     Ok(TwoLayerTapeV1 {
         input,
         first_output,
@@ -2143,6 +2525,7 @@ fn two_layer_backward_into(
     parameters: &[NativeNamedParameterV1],
     gradients: &mut [Vec<f32>],
     spec: TwoLayerSpecV1,
+    arena: &[f32],
     tape: &TwoLayerTapeV1,
     d_output: &[f32],
     d_second_pre: &mut Vec<f32>,
@@ -2151,26 +2534,26 @@ fn two_layer_backward_into(
 ) -> Result<(), NativePolicyTrainErrorV1> {
     d_second_pre.clear();
     d_second_pre.extend_from_slice(d_output);
-    apply_tanh_gradient(&tape.second_output, d_second_pre)?;
+    apply_tanh_gradient(tape.second_output.values_v1(arena), d_second_pre)?;
     linear_backward_into(
         parameters,
         gradients,
         spec.second_weight,
         spec.second_bias,
-        &tape.first_output,
+        tape.first_output.values_v1(arena),
         tape.rows,
         HIDDEN_DIM_V1,
         HIDDEN_DIM_V1,
         d_second_pre,
         d_first_output,
     )?;
-    apply_tanh_gradient(&tape.first_output, d_first_output)?;
+    apply_tanh_gradient(tape.first_output.values_v1(arena), d_first_output)?;
     linear_backward_into(
         parameters,
         gradients,
         spec.first_weight,
         spec.first_bias,
-        &tape.input,
+        tape.input.values_v1(arena),
         tape.rows,
         spec.input_dim,
         HIDDEN_DIM_V1,
@@ -2180,36 +2563,51 @@ fn two_layer_backward_into(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn linear_forward(
+fn linear_forward_into_arena_v1(
     parameters: &[NativeNamedParameterV1],
     weight_index: usize,
     bias_index: usize,
-    input: &[f32],
+    input: TapeSpanV1,
     rows: usize,
     input_dim: usize,
     output_dim: usize,
-) -> Result<Vec<f32>, NativePolicyTrainErrorV1> {
+    arena: &mut Vec<f32>,
+) -> Result<TapeSpanV1, NativePolicyTrainErrorV1> {
     let weight = &parameters[weight_index].values;
     let bias = &parameters[bias_index].values;
-    if input.len() != rows * input_dim
-        || weight.len() != output_dim * input_dim
-        || bias.len() != output_dim
-    {
+    let input_len = rows
+        .checked_mul(input_dim)
+        .ok_or_else(decision_tape_arena_overflow_v1)?;
+    let weight_len = output_dim
+        .checked_mul(input_dim)
+        .ok_or_else(decision_tape_arena_overflow_v1)?;
+    let output_len = rows
+        .checked_mul(output_dim)
+        .ok_or_else(decision_tape_arena_overflow_v1)?;
+    if input.len != input_len || weight.len() != weight_len || bias.len() != output_dim {
         return Err(NativePolicyTrainErrorV1::ParameterManifest);
     }
-    let mut output = Vec::with_capacity(rows * output_dim);
-    for row in 0..rows {
-        let input_begin = row * input_dim;
-        for (output_index, bias_value) in bias.iter().copied().enumerate() {
-            let weight_begin = output_index * input_dim;
-            let mut value = bias_value;
-            for input_index in 0..input_dim {
-                value += input[input_begin + input_index] * weight[weight_begin + input_index];
+    if input.end_v1() > arena.len() {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    }
+    let output = append_zeroed_f32_v1(arena, output_len)?;
+    {
+        let (input_arena, output_arena) = arena.split_at_mut(output.start);
+        let input = input.values_v1(input_arena);
+        let output_values = &mut output_arena[..output.len];
+        for row in 0..rows {
+            let input_begin = row * input_dim;
+            for (output_index, bias_value) in bias.iter().copied().enumerate() {
+                let weight_begin = output_index * input_dim;
+                let mut value = bias_value;
+                for input_index in 0..input_dim {
+                    value += input[input_begin + input_index] * weight[weight_begin + input_index];
+                }
+                output_values[row * output_dim + output_index] = value;
             }
-            output.push(value);
         }
     }
-    validate_finite_slice("linear_forward", &output)?;
+    validate_finite_slice("linear_forward", output.values_v1(arena))?;
     Ok(output)
 }
 
@@ -3467,6 +3865,300 @@ mod tests {
             );
         }
         actual_shrinks
+    }
+
+    fn assert_tape_span_v1(cursor: &mut usize, span: TapeSpanV1, expected_len: usize) {
+        assert_eq!(span.start, *cursor);
+        assert_eq!(span.len, expected_len);
+        *cursor += expected_len;
+    }
+
+    fn assert_two_layer_tape_spans_v1(
+        cursor: &mut usize,
+        tape: TwoLayerTapeV1,
+        rows: usize,
+        input_dim: usize,
+    ) {
+        assert_eq!(tape.rows, rows);
+        assert_tape_span_v1(cursor, tape.input, rows * input_dim);
+        assert_tape_span_v1(cursor, tape.first_output, rows * HIDDEN_DIM_V1);
+        assert_tape_span_v1(cursor, tape.second_output, rows * HIDDEN_DIM_V1);
+    }
+
+    #[test]
+    fn decision_tape_arenas_are_checked_contiguous_and_cover_optional_topologies() {
+        let (forward, _) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let builder = NativePolicyPackedForwardBuilderV1::from_model_v1(&model).unwrap();
+        for (name, expected_capacity) in [
+            (
+                "zero_edges_zero_action_refs",
+                DecisionTapeArenaCapacityV1 {
+                    f32_count: 3_848,
+                    usize_count: 4,
+                    scratch_f32_count: 1_280,
+                },
+            ),
+            (
+                "ordered_edges_and_action_refs",
+                DecisionTapeArenaCapacityV1 {
+                    f32_count: 6_685,
+                    usize_count: 20,
+                    scratch_f32_count: 1_280,
+                },
+            ),
+        ] {
+            let case = case_by_name(&forward, name);
+            let counts = encoded(case)
+                .validate(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+            assert_eq!(
+                DecisionTapeArenaCapacityV1::checked_v1(counts).unwrap(),
+                expected_capacity
+            );
+            let expected = model.forward_v1(encoded(case)).unwrap();
+            let packed = builder.forward_v1(encoded(case)).unwrap();
+            let tape = &packed.tape;
+            assert_eq!(tape.f32_arena.len(), expected_capacity.f32_count);
+            assert_eq!(tape.usize_arena.len(), expected_capacity.usize_count);
+            assert!(tape.f32_arena.capacity() >= tape.f32_arena.len());
+            assert!(tape.usize_arena.capacity() >= tape.usize_arena.len());
+            assert_eq!(tape.logits_v1(), expected.logits);
+            assert_eq!(tape.value_v1().to_bits(), expected.value.to_bits());
+            assert_eq!(
+                tape.object_card_ids_v1(),
+                case.object_card_ids
+                    .iter()
+                    .map(|value| *value as usize)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                tape.object_groups_v1(),
+                case.object_groups
+                    .iter()
+                    .map(|value| *value as usize)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                tape.edge_source_indices_v1(),
+                case.edge_source_indices
+                    .iter()
+                    .map(|value| *value as usize)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                tape.edge_target_indices_v1(),
+                case.edge_target_indices
+                    .iter()
+                    .map(|value| *value as usize)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                tape.action_ref_action_indices_v1(),
+                case.action_ref_action_indices
+                    .iter()
+                    .map(|value| *value as usize)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                tape.action_ref_node_indices_v1(),
+                case.action_ref_node_indices
+                    .iter()
+                    .map(|value| *value as usize)
+                    .collect::<Vec<_>>()
+            );
+
+            let mut usize_cursor = 0usize;
+            assert_tape_span_v1(&mut usize_cursor, tape.object_card_ids, counts.object_count);
+            assert_tape_span_v1(&mut usize_cursor, tape.object_groups, counts.object_count);
+            assert_tape_span_v1(
+                &mut usize_cursor,
+                tape.edge_source_indices,
+                counts.edge_count,
+            );
+            assert_tape_span_v1(
+                &mut usize_cursor,
+                tape.edge_target_indices,
+                counts.edge_count,
+            );
+            assert_tape_span_v1(
+                &mut usize_cursor,
+                tape.action_ref_action_indices,
+                counts.action_ref_count,
+            );
+            assert_tape_span_v1(
+                &mut usize_cursor,
+                tape.action_ref_node_indices,
+                counts.action_ref_count,
+            );
+            assert_eq!(usize_cursor, tape.usize_arena.len());
+
+            let mut f32_cursor = 0usize;
+            assert_two_layer_tape_spans_v1(
+                &mut f32_cursor,
+                tape.object_encoder,
+                counts.object_count,
+                OBJECT_ENCODER_INPUT,
+            );
+            match tape.edge_encoder {
+                Some(edge_encoder) => assert_two_layer_tape_spans_v1(
+                    &mut f32_cursor,
+                    edge_encoder,
+                    counts.edge_count,
+                    EDGE_ENCODER_INPUT,
+                ),
+                None => assert_eq!(counts.edge_count, 0),
+            }
+            assert_two_layer_tape_spans_v1(
+                &mut f32_cursor,
+                tape.node_update,
+                counts.object_count,
+                NODE_UPDATE_INPUT,
+            );
+            assert_two_layer_tape_spans_v1(
+                &mut f32_cursor,
+                tape.state_encoder,
+                1,
+                STATE_ENCODER_INPUT,
+            );
+            match tape.action_ref_encoder {
+                Some(action_ref_encoder) => assert_two_layer_tape_spans_v1(
+                    &mut f32_cursor,
+                    action_ref_encoder,
+                    counts.action_ref_count,
+                    ACTION_REF_ENCODER_INPUT,
+                ),
+                None => assert_eq!(counts.action_ref_count, 0),
+            }
+            assert_two_layer_tape_spans_v1(
+                &mut f32_cursor,
+                tape.action_encoder,
+                counts.action_count,
+                ACTION_ENCODER_INPUT,
+            );
+            assert_tape_span_v1(
+                &mut f32_cursor,
+                tape.scorer_input,
+                counts.action_count * SCORER_INPUT,
+            );
+            assert_tape_span_v1(
+                &mut f32_cursor,
+                tape.scorer_hidden,
+                counts.action_count * HIDDEN_DIM_V1,
+            );
+            assert_tape_span_v1(&mut f32_cursor, tape.logits, counts.action_count);
+            assert_tape_span_v1(&mut f32_cursor, tape.value_hidden, HIDDEN_DIM_V1);
+            assert_tape_span_v1(&mut f32_cursor, tape.value, 1);
+            assert_eq!(f32_cursor, tape.f32_arena.len());
+        }
+
+        assert_eq!(
+            DecisionTapeArenaCapacityV1::checked_v1(ValidatedCountsV1 {
+                object_count: usize::MAX,
+                edge_count: 0,
+                action_count: 1,
+                action_ref_count: 0,
+            }),
+            Err(NativePolicyTrainErrorV1::Model(
+                NativePolicyValueErrorV1::SizeOverflow("decision_tape_arena")
+            ))
+        );
+        assert_eq!(
+            TapeSpanV1::checked_v1(usize::MAX, 1),
+            Err(NativePolicyTrainErrorV1::Model(
+                NativePolicyValueErrorV1::SizeOverflow("decision_tape_arena")
+            ))
+        );
+        let oversized_f32_capacity = isize::MAX as usize / std::mem::size_of::<f32>() + 1;
+        assert_eq!(
+            checked_tape_vec_capacity_v1::<f32>(oversized_f32_capacity),
+            Err(NativePolicyTrainErrorV1::Model(
+                NativePolicyValueErrorV1::SizeOverflow("decision_tape_arena")
+            ))
+        );
+        let mut too_small_f32 = Vec::with_capacity(1);
+        assert_eq!(
+            append_external_f32_v1(&mut too_small_f32, &[1.0, 2.0]),
+            Err(NativePolicyTrainErrorV1::Model(
+                NativePolicyValueErrorV1::SizeOverflow("decision_tape_arena")
+            ))
+        );
+        assert!(too_small_f32.is_empty());
+        let mut too_small_usize = Vec::new();
+        assert_eq!(
+            append_usize_casts_v1(&mut too_small_usize, &[0]),
+            Err(NativePolicyTrainErrorV1::Model(
+                NativePolicyValueErrorV1::SizeOverflow("decision_tape_arena")
+            ))
+        );
+        assert!(too_small_usize.is_empty());
+
+        let mut invalid_source_f32 = Vec::with_capacity(2);
+        invalid_source_f32.push(7.0);
+        let invalid_source_before = invalid_source_f32.clone();
+        assert_eq!(
+            append_arena_f32_v1(
+                &mut invalid_source_f32,
+                TapeSpanV1::checked_v1(1, 1).unwrap()
+            ),
+            Err(NativePolicyTrainErrorV1::ParameterManifest)
+        );
+        assert_eq!(invalid_source_f32, invalid_source_before);
+
+        let mut too_small_copy = Vec::with_capacity(1);
+        while too_small_copy.len() < too_small_copy.capacity() {
+            too_small_copy.push(11.0);
+        }
+        let too_small_copy_before = too_small_copy.clone();
+        assert_eq!(
+            append_arena_f32_v1(&mut too_small_copy, TapeSpanV1::checked_v1(0, 1).unwrap()),
+            Err(NativePolicyTrainErrorV1::Model(
+                NativePolicyValueErrorV1::SizeOverflow("decision_tape_arena")
+            ))
+        );
+        assert_eq!(too_small_copy, too_small_copy_before);
+
+        let mut too_small_zero = Vec::with_capacity(1);
+        while too_small_zero.len() < too_small_zero.capacity() {
+            too_small_zero.push(13.0);
+        }
+        let too_small_zero_before = too_small_zero.clone();
+        assert_eq!(
+            append_zeroed_f32_v1(&mut too_small_zero, 1),
+            Err(NativePolicyTrainErrorV1::Model(
+                NativePolicyValueErrorV1::SizeOverflow("decision_tape_arena")
+            ))
+        );
+        assert_eq!(too_small_zero, too_small_zero_before);
+
+        let mut logical_scratch = Vec::with_capacity(2);
+        logical_scratch.push(17.0);
+        let logical_scratch_before = logical_scratch.clone();
+        assert_eq!(
+            resize_tape_scratch_v1(&mut logical_scratch, 2, 1),
+            Err(NativePolicyTrainErrorV1::Model(
+                NativePolicyValueErrorV1::SizeOverflow("decision_tape_arena")
+            ))
+        );
+        assert_eq!(logical_scratch, logical_scratch_before);
+
+        let mut physical_scratch = Vec::with_capacity(1);
+        physical_scratch.push(19.0);
+        let physical_scratch_before = physical_scratch.clone();
+        let beyond_physical_capacity = physical_scratch.capacity() + 1;
+        assert_eq!(
+            resize_tape_scratch_v1(
+                &mut physical_scratch,
+                beyond_physical_capacity,
+                beyond_physical_capacity
+            ),
+            Err(NativePolicyTrainErrorV1::Model(
+                NativePolicyValueErrorV1::SizeOverflow("decision_tape_arena")
+            ))
+        );
+        assert_eq!(physical_scratch, physical_scratch_before);
     }
 
     #[test]
