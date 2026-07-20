@@ -13,12 +13,14 @@
 //! optimizer canonicalizes exactly this one gauge. The value-head bias is not
 //! shift-invariant and is explicitly outside the gauge set.
 //!
-//! The sequential reverse pass remains the production numerical backend. An
-//! explicitly selected prototype may instead evaluate four fixed logical
-//! reverse partitions with private gradient state and reduce them in partition
-//! order. Worker topology never changes those logical partitions. Because the
-//! extra reduction changes binary32 association, the prototype owns a distinct
-//! numerical-backend identity and is not wired into persisted trainer records.
+//! The sequential reverse pass remains the default and the only backend admitted
+//! by the frozen Store V2 preparation contract. An explicitly selected
+//! production backend may instead evaluate four fixed logical reverse
+//! partitions with private gradient state and reduce them in partition order.
+//! Worker topology never changes those logical partitions. Because the extra
+//! reduction changes binary32 association, the fixed backend owns a distinct
+//! numerical-backend identity, is bound into checkpoint candidates, and fails
+//! closed before Store V2 preparation pending a future versioned run contract.
 //!
 //! The fail-closed bound is scale-derived, not an observed-residual literal.
 //! With binary32 unit roundoff `u = EPSILON/2` and
@@ -403,6 +405,13 @@ impl NativeTrainingNumericalBackendV1 {
             Self::FixedFourPartitions => {
                 FIXED_PARTITION_PARALLEL_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1
             }
+        }
+    }
+
+    pub const fn accepts_backward_worker_limit_v1(self, worker_limit: usize) -> bool {
+        match self {
+            Self::Sequential => worker_limit == 1,
+            Self::FixedFourPartitions => worker_limit >= 1 && worker_limit <= 4,
         }
     }
 }
@@ -1220,7 +1229,7 @@ impl NativePolicyValueTrainStateV1 {
                     let d_value = (value_coefficient / group_count) * (2.0 * group.value_error);
                     for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
                         // Keep the production reference arithmetic inline and
-                        // byte-for-byte ordered. The prototype helper below is
+                        // byte-for-byte ordered. The fixed-backend helper below is
                         // deliberately not on this default path.
                         resize_zeroed_v1(
                             &mut reverse_workspace.grad_output,
@@ -1523,7 +1532,7 @@ fn fixed_partition_backward_gradients_v1(
             if destination.len() != source.len() {
                 return Err(NativePolicyTrainErrorV1::ParameterManifest);
             }
-            // This exact nested order is part of the prototype backend: logical
+            // This exact nested order is part of the fixed backend: logical
             // partition ordinal, parameter ordinal, then flat tensor ordinal.
             for (destination, source) in destination.iter_mut().zip(source) {
                 *destination += source;
@@ -3714,6 +3723,32 @@ mod tests {
         "../../data/native_policy_value_net_v1/runner_fixed_forward_goldens_v1.json"
     );
 
+    fn recorded_fixed_partition_train_state_sha256_v1() -> (&'static str, &'static str) {
+        // Exact post-update state witnesses are scoped to the repository-pinned
+        // Rust toolchain and target tuple because f32 transcendental results may
+        // differ in their last bits across platform runtimes. Unknown targets
+        // fail closed instead of borrowing another target's numerical identity.
+        #[cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "msvc"))]
+        {
+            (
+                "x86_64-pc-windows-msvc",
+                "5bc4d2c93443c57172f432165c65fb6e098a044a2f5a5fe043b9d28b4481fb2d",
+            )
+        }
+        #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
+        {
+            (
+                "x86_64-unknown-linux-gnu",
+                "a93cf2fadf7d73515de931a3043f1e4fc7e836dd467a989a3cc006430f5f4129",
+            )
+        }
+        #[cfg(not(any(
+            all(target_arch = "x86_64", target_os = "windows", target_env = "msvc"),
+            all(target_arch = "x86_64", target_os = "linux", target_env = "gnu")
+        )))]
+        panic!("no reviewed exact fixed-partition numerical witness for this Rust target");
+    }
+
     #[derive(Debug, Deserialize)]
     struct LossReductionFixture {
         schema: String,
@@ -4926,7 +4961,7 @@ mod tests {
         let sequential_snapshot = sequential_state.snapshot_v1().unwrap();
 
         let mut topology_reference = None;
-        for worker_limit in [1, 2, 4, 4] {
+        for worker_limit in [1, 2, 3, 4] {
             let mut parallel_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
             let parallel_result = parallel_state
                 .train_step_with_fixed_partition_parallel_backward_v1(
@@ -4946,6 +4981,17 @@ mod tests {
             }
         }
         let (parallel_result, parallel_snapshot) = topology_reference.unwrap();
+
+        let parallel_state_sha256 = hash_owned_train_snapshot_v1(&parallel_snapshot);
+        let sequential_state_sha256 = hash_owned_train_snapshot_v1(&sequential_snapshot);
+        assert_ne!(parallel_state_sha256, sequential_state_sha256);
+        let (witness_target, expected_parallel_state_sha256) =
+            recorded_fixed_partition_train_state_sha256_v1();
+        assert_eq!(
+            hex_sha256(parallel_state_sha256),
+            expected_parallel_state_sha256,
+            "fixed-partition exact state witness drifted on {witness_target}"
+        );
 
         assert_eq!(
             parallel_result.policy_sum.to_bits(),
@@ -5023,12 +5069,12 @@ mod tests {
                     golden.value_coefficient,
                     golden.optimizer.learning_rate,
                     1,
-                    4,
+                    3,
                 )
                 .unwrap()
         };
         assert_eq!(fallback_control.attempted_partition_count_v1(), 4);
-        assert_eq!(fallback_control.spawn_counts_v1(), (4, 3, 1));
+        assert_eq!(fallback_control.spawn_counts_v1(), (2, 1, 1));
         assert_eq!(fallback_result, parallel_result);
         assert_eq!(fallback_state.snapshot_v1().unwrap(), parallel_snapshot);
 
@@ -5043,7 +5089,7 @@ mod tests {
                     golden.value_coefficient,
                     golden.optimizer.learning_rate,
                     1,
-                    4,
+                    3,
                 )
                 .unwrap_err()
         };
@@ -5052,7 +5098,7 @@ mod tests {
             control.attempted_partition_count_v1(),
             FIXED_BACKWARD_PARTITION_COUNT_V1
         );
-        assert_eq!(control.spawn_counts_v1(), (4, 4, 0));
+        assert_eq!(control.spawn_counts_v1(), (2, 2, 0));
         assert_eq!(failed_state.snapshot_v1().unwrap(), before_failure);
 
         let mut panicked_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
@@ -5067,7 +5113,7 @@ mod tests {
                     golden.value_coefficient,
                     golden.optimizer.learning_rate,
                     1,
-                    4,
+                    3,
                 )
                 .unwrap_err()
         };
@@ -5081,7 +5127,7 @@ mod tests {
             panic_control.attempted_partition_count_v1(),
             FIXED_BACKWARD_PARTITION_COUNT_V1
         );
-        assert_eq!(panic_control.spawn_counts_v1(), (4, 4, 0));
+        assert_eq!(panic_control.spawn_counts_v1(), (2, 2, 0));
         assert_eq!(panicked_state.snapshot_v1().unwrap(), before_panic);
 
         let mut zero_worker_state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();

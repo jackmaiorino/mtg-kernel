@@ -33,13 +33,14 @@ use crate::native_flat_tensorizer_v2::{
 };
 use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1;
 #[cfg(test)]
-use crate::native_policy_train_step_v1::packed_actual_recompute_call_count_for_test_v1;
+use crate::native_policy_train_step_v1::{
+    packed_actual_recompute_call_count_for_test_v1, FIXED_BACKWARD_PARTITION_COUNT_V1,
+};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPackedForwardBuilderV1,
     NativePolicyPackedForwardTapeV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
     NativePolicyTrainErrorV1, NativePolicyTrainStepResultV1, NativePolicyValueTrainStateV1,
     NativeScorerBiasGaugeRecordV1, NativeTrainingNumericalBackendV1,
-    FIXED_BACKWARD_PARTITION_COUNT_V1,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativeNamedParameterV1,
@@ -1912,20 +1913,13 @@ pub(crate) fn validate_update_config_v2(
     if !learning_rate.is_finite() || learning_rate <= 0.0 {
         return Err(NativeTrainerErrorV1::InvalidUpdateConfig("learning_rate"));
     }
-    match config.numerical_backend {
-        NativeTrainingNumericalBackendV1::Sequential if config.backward_worker_limit != 1 => {
-            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
-                "backward_worker_limit",
-            ));
-        }
-        NativeTrainingNumericalBackendV1::FixedFourPartitions
-            if !(1..=FIXED_BACKWARD_PARTITION_COUNT_V1).contains(&config.backward_worker_limit) =>
-        {
-            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
-                "backward_worker_limit",
-            ));
-        }
-        _ => {}
+    if !config
+        .numerical_backend
+        .accepts_backward_worker_limit_v1(config.backward_worker_limit)
+    {
+        return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+            "backward_worker_limit",
+        ));
     }
     Ok(())
 }
