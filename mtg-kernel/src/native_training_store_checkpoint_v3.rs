@@ -1,11 +1,11 @@
 //! Pure checkpoint-v3 record authority for Native Training Store V2.
 //!
 //! This module performs only in-memory canonical record and payload
-//! validation.  It owns no filesystem path, publication, recovery, receipt,
-//! executor mutation, or trained-evidence workflow.  Genesis authority is
-//! available now.  A syntactically valid trained record fails closed until a
-//! later complete Episode/UpdateGroup validator can supply a sealed cumulative
-//! evidence boundary.
+//! validation. It owns no filesystem path, publication, recovery, receipt, or
+//! executor mutation. Genesis authority remains independently available;
+//! trained authority additionally requires the opaque cumulative
+//! Episode/UpdateGroup evidence boundary and the exact final checkpoint
+//! candidate or payload.
 
 use crate::canonical_json_v1::{
     from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonErrorKindV1,
@@ -21,11 +21,15 @@ use crate::native_train_state_payload_v1::{
     NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1, NATIVE_TRAIN_STATE_PAYLOAD_ENCODING_V1,
     NATIVE_TRAIN_STATE_PAYLOAD_SCHEMA_V1, NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1,
 };
+use crate::native_training_executor_v1::{
+    NativeTrainingCheckpointCandidateV1, NativeTrainingNumericalBackendV1,
+};
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1, NativeTrainingStoreAtomSha256V1,
     NativeTrainingStoreDigestErrorV1,
 };
 use crate::native_training_store_run_v2::ValidatedTrainRunV2;
+use crate::native_training_store_update_group_v1::UpdateEvidenceChainContextV1;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -455,14 +459,105 @@ pub fn build_genesis_checkpoint_manifest_v3(
     decode_checkpoint_manifest_v3(&canonical_bytes, payload, run)
 }
 
-/// Decodes a pure checkpoint-v3 authority.  The current public authority is
-/// deliberately genesis-only; any nonzero generation requires the future
-/// sealed cumulative Episode/UpdateGroup evidence context.
+/// Builds the exact trained checkpoint authority from one sealed cumulative
+/// evidence chain and its final verified in-memory checkpoint candidate.
+///
+/// The evidence context is the only admitted authority for detailed progress
+/// and cumulative model/train-state identity. The candidate supplies the exact
+/// final payload and independently verified aggregate executor state. Neither
+/// input alone can authorize a trained checkpoint.
+pub fn build_trained_checkpoint_manifest_v3(
+    run: &ValidatedTrainRunV2,
+    evidence: &UpdateEvidenceChainContextV1,
+    candidate: &NativeTrainingCheckpointCandidateV1,
+) -> Result<CheckpointManifestV3> {
+    let generation_index = validate_trained_candidate_v3(run, evidence, candidate)?;
+    let record = run.record();
+    let digests = NativeTrainStatePayloadDigestsV1::from(candidate.digests());
+    decode_native_train_state_payload_verified_v1(
+        candidate.payload(),
+        candidate.adam_step(),
+        candidate.scorer_bias_anchor_bits(),
+        &digests,
+    )
+    .map_err(map_payload_error_v3)?;
+    let progress = *evidence.progress();
+    let logical_state_sha256 = logical_state_sha256_v1(
+        run.run_sha256(),
+        generation_index,
+        &progress,
+        digests.native_state_sha256,
+    )?;
+    let wire = CheckpointManifestWireV3 {
+        schema: CHECKPOINT_MANIFEST_SCHEMA_V3.to_owned(),
+        run_sha256: run.run_sha256().to_owned(),
+        identity_bundle_sha256: run.identity_bundle_sha256().to_owned(),
+        segment_ordinal: generation_index / run.checkpoint_segment_updates(),
+        generation_index,
+        batch_episodes: run.batch_episodes(),
+        checkpoint_segment_updates: run.checkpoint_segment_updates(),
+        progress,
+        train_state: CheckpointTrainStateBindingV3 {
+            schema: NATIVE_POLICY_VALUE_TRAIN_STATE_SCHEMA_V1.to_owned(),
+            adam_step: generation_index,
+            scorer_bias_anchor_f32_bits: u64::from(candidate.scorer_bias_anchor_bits()),
+            parameter_layout_sha256: record.model_snapshot.parameter_layout_sha256.clone(),
+            parameter_tensor_count: PARAMETER_TENSOR_COUNT_U64_V3,
+            parameter_element_count: PARAMETER_ELEMENT_COUNT_U64_V3,
+            model_parameter_sha256: lower_hex_raw32_v1(digests.model_parameter_sha256),
+            state_sha256: lower_hex_raw32_v1(digests.native_state_sha256),
+        },
+        payload: payload_binding_v1(&digests)?,
+        logical_state_sha256: lower_hex_raw32_v1(logical_state_sha256),
+    };
+    let canonical_bytes = to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid)?;
+    decode_trained_checkpoint_manifest_v3(&canonical_bytes, candidate.payload(), run, evidence)
+}
+
+/// Decodes a context-free checkpoint-v3 authority.
+///
+/// This entry point remains deliberately genesis-only. Any nonzero generation
+/// fails with [`CheckpointManifestV3ErrorKind::TrainedEvidenceContextRequired`]
+/// even when its bytes are otherwise well formed.
 pub fn decode_checkpoint_manifest_v3(
     manifest_cj: &[u8],
     payload: &[u8],
     run: &ValidatedTrainRunV2,
 ) -> Result<CheckpointManifestV3> {
+    let (wire, reencoded) = decode_checkpoint_wire_v3(manifest_cj)?;
+    if wire.generation_index != 0 {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::TrainedEvidenceContextRequired,
+        ));
+    }
+
+    validate_checkpoint_wire_v3(&wire, run)?;
+    let decoded = validate_payload_v3(&wire, payload, run)?;
+    validate_genesis_snapshot_v3(&wire, &decoded, run)?;
+    finish_checkpoint_manifest_v3(wire, reencoded, manifest_cj, decoded)
+}
+
+/// Decodes a nonzero checkpoint-v3 authority against the only cumulative
+/// evidence chain that may authorize its detailed progress and final state.
+pub fn decode_trained_checkpoint_manifest_v3(
+    manifest_cj: &[u8],
+    payload: &[u8],
+    run: &ValidatedTrainRunV2,
+    evidence: &UpdateEvidenceChainContextV1,
+) -> Result<CheckpointManifestV3> {
+    let (wire, reencoded) = decode_checkpoint_wire_v3(manifest_cj)?;
+    if wire.generation_index == 0 {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::CrossBinding,
+        ));
+    }
+    validate_checkpoint_wire_v3(&wire, run)?;
+    validate_trained_evidence_v3(&wire, run, evidence)?;
+    let decoded = validate_payload_v3(&wire, payload, run)?;
+    finish_checkpoint_manifest_v3(wire, reencoded, manifest_cj, decoded)
+}
+
+fn decode_checkpoint_wire_v3(manifest_cj: &[u8]) -> Result<(CheckpointManifestWireV3, Vec<u8>)> {
     if manifest_cj.len() > CHECKPOINT_MANIFEST_MAX_BYTES_V3 {
         return Err(CheckpointManifestV3Error::new(
             CheckpointManifestV3ErrorKind::RecordTooLarge,
@@ -488,16 +583,15 @@ pub fn decode_checkpoint_manifest_v3(
             CheckpointManifestV3ErrorKind::InvalidScalar,
         ));
     }
-    if wire.generation_index != 0 {
-        return Err(CheckpointManifestV3Error::new(
-            CheckpointManifestV3ErrorKind::TrainedEvidenceContextRequired,
-        ));
-    }
+    Ok((wire, reencoded))
+}
 
-    validate_genesis_wire_v3(&wire, run)?;
-    let decoded = validate_payload_v3(&wire, payload, run)?;
-    validate_genesis_snapshot_v3(&wire, &decoded, run)?;
-
+fn finish_checkpoint_manifest_v3(
+    wire: CheckpointManifestWireV3,
+    reencoded: Vec<u8>,
+    manifest_cj: &[u8],
+    decoded: NativeDecodedTrainStatePayloadV1,
+) -> Result<CheckpointManifestV3> {
     let logical_state_sha256 = logical_state_sha256_v1(
         &wire.run_sha256,
         wire.generation_index,
@@ -531,7 +625,7 @@ pub fn decode_genesis_checkpoint_manifest_v3(
     decode_checkpoint_manifest_v3(manifest_cj, payload, run)
 }
 
-fn validate_genesis_wire_v3(
+fn validate_checkpoint_wire_v3(
     wire: &CheckpointManifestWireV3,
     run: &ValidatedTrainRunV2,
 ) -> Result<()> {
@@ -649,6 +743,101 @@ fn validate_genesis_wire_v3(
         ));
     }
     validate_payload_layout_v1(&wire.payload)
+}
+
+fn trained_generation_from_evidence_v3(
+    run: &ValidatedTrainRunV2,
+    evidence: &UpdateEvidenceChainContextV1,
+) -> Result<u64> {
+    let generation_index = evidence.next_update_index().checked_sub(1).ok_or_else(|| {
+        CheckpointManifestV3Error::new(CheckpointManifestV3ErrorKind::InvalidArithmetic)
+    })?;
+    let segment_updates = run.checkpoint_segment_updates();
+    let progress = evidence.progress();
+    if evidence.run_sha256_raw_v1() != parse_digest_v3(run.run_sha256())?
+        || evidence.identity_bundle_sha256_raw_v1()
+            != parse_digest_v3(run.identity_bundle_sha256())?
+        || evidence.batch_episodes_v1() != run.batch_episodes()
+        || evidence.checkpoint_segment_updates_v1() != segment_updates
+        || evidence.scorer_bias_anchor_bits_v1()
+            != u32::try_from(run.record().model_snapshot.scorer_bias_anchor_f32_bits).map_err(
+                |_| CheckpointManifestV3Error::new(CheckpointManifestV3ErrorKind::CrossBinding),
+            )?
+        || generation_index == 0
+        || generation_index > run.requested_successful_updates()
+        || segment_updates == 0
+        || !generation_index.is_multiple_of(segment_updates)
+        || evidence.previous_update_evidence_sha256().is_none()
+        || progress.batch_episodes() != run.batch_episodes()
+        || progress.checkpoint_segment_updates() != segment_updates
+        || progress.successful_update_count() != generation_index
+    {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::CrossBinding,
+        ));
+    }
+    Ok(generation_index)
+}
+
+fn validate_trained_evidence_v3(
+    wire: &CheckpointManifestWireV3,
+    run: &ValidatedTrainRunV2,
+    evidence: &UpdateEvidenceChainContextV1,
+) -> Result<()> {
+    let generation_index = trained_generation_from_evidence_v3(run, evidence)?;
+    if wire.generation_index != generation_index
+        || wire.segment_ordinal != generation_index / run.checkpoint_segment_updates()
+        || wire.progress != *evidence.progress()
+        || wire.train_state.scorer_bias_anchor_f32_bits
+            != u64::from(evidence.scorer_bias_anchor_bits_v1())
+        || wire.train_state.model_parameter_sha256
+            != lower_hex_raw32_v1(evidence.model_parameter_sha256())
+        || wire.train_state.state_sha256 != lower_hex_raw32_v1(evidence.train_state_sha256())
+    {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::CrossBinding,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_trained_candidate_v3(
+    run: &ValidatedTrainRunV2,
+    evidence: &UpdateEvidenceChainContextV1,
+    candidate: &NativeTrainingCheckpointCandidateV1,
+) -> Result<u64> {
+    let generation_index = trained_generation_from_evidence_v3(run, evidence)?;
+    let detailed = evidence.progress();
+    let candidate_progress = candidate.progress();
+    let expected_policy_steps = checked_u63_add_v3(
+        detailed.learner_policy_steps_by_seat().p0(),
+        detailed.learner_policy_steps_by_seat().p1(),
+    )?;
+    let expected_physical_decisions = checked_u63_add_v3(
+        detailed.learner_physical_decisions_by_seat().p0(),
+        detailed.learner_physical_decisions_by_seat().p1(),
+    )?;
+    let candidate_digests = candidate.digests();
+    if candidate.base_seed() != run.record().schedule.base_seed
+        || candidate.batch_episodes() != run.batch_episodes()
+        || candidate.numerical_backend() != NativeTrainingNumericalBackendV1::Sequential
+        || candidate.backward_worker_limit() != 1
+        || candidate.adam_step() != generation_index
+        || candidate.scorer_bias_anchor_bits() != evidence.scorer_bias_anchor_bits_v1()
+        || candidate_progress.next_episode_index != detailed.next_episode_index()
+        || candidate_progress.successful_update_count != detailed.successful_update_count()
+        || candidate_progress.completed_episode_count != detailed.completed_episode_count()
+        || candidate_progress.learner_policy_step_count != expected_policy_steps
+        || candidate_progress.learner_physical_decision_count != expected_physical_decisions
+        || candidate_digests.model_parameter_sha256 != evidence.model_parameter_sha256()
+        || candidate_digests.native_state_sha256 != evidence.train_state_sha256()
+        || candidate.payload_byte_count() != NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+    {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::CrossBinding,
+        ));
+    }
+    Ok(generation_index)
 }
 
 fn validate_payload_layout_v1(payload: &CheckpointPayloadBindingV1) -> Result<()> {
@@ -869,6 +1058,14 @@ fn checked_u63_mul_v3(left: u64, right: u64) -> Result<u64> {
         })
 }
 
+fn checked_u63_add_v3(left: u64, right: u64) -> Result<u64> {
+    left.checked_add(right)
+        .filter(|value| is_u63_v3(*value))
+        .ok_or_else(|| {
+            CheckpointManifestV3Error::new(CheckpointManifestV3ErrorKind::InvalidArithmetic)
+        })
+}
+
 fn is_u63_v3(value: u64) -> bool {
     value <= U63_MAX_V3
 }
@@ -913,6 +1110,9 @@ mod tests {
         NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1, NativeTrainingNumericalBackendV1,
     };
     use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
+    use crate::native_training_store_update_group_v1::{
+        begin_update_evidence_chain_v1, build_update_group_v1, decode_update_group_v1,
+    };
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use std::sync::OnceLock;
@@ -933,36 +1133,52 @@ mod tests {
         manifest: Vec<u8>,
     }
 
+    struct TrainedFixtureV3 {
+        group_bytes: Vec<Vec<u8>>,
+        candidates: Vec<NativeTrainingCheckpointCandidateV1>,
+        payload: Vec<u8>,
+        manifest: Vec<u8>,
+    }
+
     static FIXTURE_V3: OnceLock<FixtureV3> = OnceLock::new();
+    static TRAINED_FIXTURE_V3: OnceLock<TrainedFixtureV3> = OnceLock::new();
+
+    fn execution_config_v3(run: &ValidatedTrainRunV2) -> NativeTrainingExecutionConfigV1 {
+        NativeTrainingExecutionConfigV1 {
+            run_base_seed: run.record().schedule.base_seed,
+            batch_episodes: run.batch_episodes(),
+            deck_ids: ["Rally".to_owned(), "Rally".to_owned()],
+            max_physical_decisions: run.record().limits.max_physical_decisions,
+            max_policy_steps: run.record().limits.max_policy_steps,
+            worker_count: usize::try_from(run.record().topology.worker_count).unwrap(),
+            sessions_per_worker: usize::try_from(run.record().topology.sessions_per_worker)
+                .unwrap(),
+            broker_batch_target: usize::try_from(run.record().topology.broker_batch_target)
+                .unwrap(),
+            scheduler_timeout: Duration::from_secs(30),
+            measure_broker_service_time: false,
+            value_coefficient_bits: 0.5_f32.to_bits(),
+            learning_rate_bits: 0.001_f32.to_bits(),
+            numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
+            backward_worker_limit: 1,
+        }
+    }
+
+    fn fresh_executor_v3(run: &ValidatedTrainRunV2) -> NativeTrainingExecutorV1 {
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v3(run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap()
+    }
 
     fn fixture_v3() -> &'static FixtureV3 {
         FIXTURE_V3.get_or_init(|| {
             let run_bytes = test_fixture_bytes_v2();
             let run = decode_train_run_v2(&run_bytes).unwrap();
-            let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
-            let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
-                NativeTrainingExecutionConfigV1 {
-                    run_base_seed: run.record().schedule.base_seed,
-                    batch_episodes: run.batch_episodes(),
-                    deck_ids: ["Rally".to_owned(), "Rally".to_owned()],
-                    max_physical_decisions: run.record().limits.max_physical_decisions,
-                    max_policy_steps: run.record().limits.max_policy_steps,
-                    worker_count: usize::try_from(run.record().topology.worker_count).unwrap(),
-                    sessions_per_worker: usize::try_from(run.record().topology.sessions_per_worker)
-                        .unwrap(),
-                    broker_batch_target: usize::try_from(run.record().topology.broker_batch_target)
-                        .unwrap(),
-                    scheduler_timeout: Duration::from_secs(30),
-                    measure_broker_service_time: false,
-                    value_coefficient_bits: 0.5_f32.to_bits(),
-                    learning_rate_bits: 0.001_f32.to_bits(),
-                    numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
-                    backward_worker_limit: 1,
-                },
-                &snapshot_manifest,
-                &snapshot_payload,
-            )
-            .unwrap();
+            let executor = fresh_executor_v3(&run);
             let checkpoint = executor.checkpoint_candidate_v1().unwrap();
             let payload = checkpoint.payload().to_vec();
             let authority = build_genesis_checkpoint_manifest_v3(&run, &payload).unwrap();
@@ -974,8 +1190,67 @@ mod tests {
         })
     }
 
+    fn trained_fixture_v3() -> &'static TrainedFixtureV3 {
+        TRAINED_FIXTURE_V3.get_or_init(|| {
+            let base = fixture_v3();
+            let run = decode_train_run_v2(&base.run_bytes).unwrap();
+            assert_eq!(run.batch_episodes(), 2);
+            assert_eq!(run.checkpoint_segment_updates(), 4);
+            let genesis =
+                decode_genesis_checkpoint_manifest_v3(&base.manifest, &base.payload, &run).unwrap();
+            let mut executor = fresh_executor_v3(&run);
+            let mut context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+            let mut group_bytes = Vec::new();
+            let mut candidates = Vec::new();
+            let update_count = usize::try_from(run.checkpoint_segment_updates()).unwrap();
+            for update_ordinal in 0..update_count {
+                let prepared = executor.prepare_update_v2().unwrap();
+                let built = build_update_group_v1(&run, context, &prepared).unwrap();
+                candidates.push(prepared.checkpoint_candidate().clone());
+                let (group, advanced_context) = built.into_parts();
+                group_bytes.push(group.canonical_bytes().to_vec());
+                context = advanced_context;
+                drop(prepared);
+                if update_ordinal + 1 < update_count {
+                    executor.run_update_v2().unwrap();
+                }
+            }
+            let (payload, manifest) = {
+                let candidate = candidates.last().unwrap();
+                let authority =
+                    build_trained_checkpoint_manifest_v3(&run, &context, candidate).unwrap();
+                (
+                    candidate.payload().to_vec(),
+                    authority.canonical_bytes().to_vec(),
+                )
+            };
+            TrainedFixtureV3 {
+                group_bytes,
+                candidates,
+                payload,
+                manifest,
+            }
+        })
+    }
+
     fn run_v3() -> ValidatedTrainRunV2 {
         decode_train_run_v2(&fixture_v3().run_bytes).unwrap()
+    }
+
+    fn trained_context_v3(update_count: usize) -> UpdateEvidenceChainContextV1 {
+        let base = fixture_v3();
+        let trained = trained_fixture_v3();
+        let run = run_v3();
+        let genesis =
+            decode_genesis_checkpoint_manifest_v3(&base.manifest, &base.payload, &run).unwrap();
+        let mut context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        for group_bytes in trained.group_bytes.iter().take(update_count) {
+            context = decode_update_group_v1(&run, context, group_bytes)
+                .unwrap()
+                .into_parts()
+                .1;
+        }
+        context
     }
 
     fn manifest_value_v3() -> Value {
@@ -984,6 +1259,16 @@ mod tests {
                 .manifest
                 .strip_suffix(b"\n")
                 .expect("fixture is canonical JSON"),
+        )
+        .unwrap()
+    }
+
+    fn trained_manifest_value_v3() -> Value {
+        serde_json::from_slice(
+            trained_fixture_v3()
+                .manifest
+                .strip_suffix(b"\n")
+                .expect("trained fixture is canonical JSON"),
         )
         .unwrap()
     }
@@ -997,6 +1282,22 @@ mod tests {
             &canonical_value_bytes_v3(value),
             &fixture_v3().payload,
             &run_v3(),
+        )
+        .unwrap_err()
+        .kind()
+    }
+
+    fn decode_trained_value_error_v3(
+        value: &Value,
+        payload: &[u8],
+    ) -> CheckpointManifestV3ErrorKind {
+        let run = run_v3();
+        let context = trained_context_v3(4);
+        decode_trained_checkpoint_manifest_v3(
+            &canonical_value_bytes_v3(value),
+            payload,
+            &run,
+            &context,
         )
         .unwrap_err()
         .kind()
@@ -1049,6 +1350,199 @@ mod tests {
             authority.model_parameter_sha256(),
             parse_lower_hex_raw32_v1(&run.record().model_snapshot.named_parameter_stream_sha256)
                 .unwrap()
+        );
+    }
+
+    #[test]
+    fn real_k2_s4_trained_authority_roundtrips_only_with_the_exact_chain() {
+        let fixture = trained_fixture_v3();
+        let run = run_v3();
+        let context = trained_context_v3(4);
+        let authority = decode_trained_checkpoint_manifest_v3(
+            &fixture.manifest,
+            &fixture.payload,
+            &run,
+            &context,
+        )
+        .unwrap();
+        let candidate = fixture.candidates.last().unwrap();
+
+        assert_eq!(authority.canonical_bytes(), fixture.manifest);
+        assert_eq!(authority.generation_index(), 4);
+        assert_eq!(authority.segment_ordinal(), 1);
+        assert_eq!(authority.batch_episodes(), 2);
+        assert_eq!(authority.checkpoint_segment_updates(), 4);
+        assert_eq!(authority.progress(), context.progress());
+        assert_eq!(authority.progress().successful_update_count(), 4);
+        assert_eq!(authority.progress().completed_episode_count(), 8);
+        assert_eq!(authority.train_state().adam_step(), 4);
+        assert_eq!(
+            authority.checkpoint_payload_sha256(),
+            candidate.digests().payload_sha256
+        );
+        assert_eq!(
+            authority.model_parameter_sha256(),
+            context.model_parameter_sha256()
+        );
+        assert_eq!(authority.train_state_sha256(), context.train_state_sha256());
+        assert_eq!(
+            build_trained_checkpoint_manifest_v3(&run, &context, candidate)
+                .unwrap()
+                .canonical_bytes(),
+            fixture.manifest
+        );
+
+        for context_free in [
+            decode_checkpoint_manifest_v3(&fixture.manifest, &fixture.payload, &run),
+            decode_genesis_checkpoint_manifest_v3(&fixture.manifest, &fixture.payload, &run),
+        ] {
+            assert_eq!(
+                context_free.unwrap_err().kind(),
+                CheckpointManifestV3ErrorKind::TrainedEvidenceContextRequired
+            );
+        }
+    }
+
+    #[test]
+    fn trained_builder_rejects_stale_chain_candidate_progress_and_backend() {
+        let fixture = trained_fixture_v3();
+        let run = run_v3();
+        let final_context = trained_context_v3(4);
+        let stale_context = trained_context_v3(3);
+        let final_candidate = fixture.candidates.last().unwrap();
+        let stale_candidate = &fixture.candidates[2];
+
+        assert_eq!(
+            build_trained_checkpoint_manifest_v3(&run, &final_context, stale_candidate)
+                .unwrap_err()
+                .kind(),
+            CheckpointManifestV3ErrorKind::CrossBinding
+        );
+        assert_eq!(
+            build_trained_checkpoint_manifest_v3(&run, &stale_context, final_candidate)
+                .unwrap_err()
+                .kind(),
+            CheckpointManifestV3ErrorKind::CrossBinding
+        );
+        assert_eq!(
+            build_trained_checkpoint_manifest_v3(&run, &stale_context, stale_candidate)
+                .unwrap_err()
+                .kind(),
+            CheckpointManifestV3ErrorKind::CrossBinding,
+            "generation three is not an S=4 durable boundary"
+        );
+
+        let mut wrong_progress_metadata = final_candidate.metadata();
+        wrong_progress_metadata.progress.learner_policy_step_count += 1;
+        let wrong_progress = NativeTrainingCheckpointCandidateV1::import_verified_v1(
+            wrong_progress_metadata,
+            final_candidate.payload(),
+            final_candidate.digests(),
+        )
+        .unwrap();
+        assert_eq!(
+            build_trained_checkpoint_manifest_v3(&run, &final_context, &wrong_progress)
+                .unwrap_err()
+                .kind(),
+            CheckpointManifestV3ErrorKind::CrossBinding
+        );
+
+        let mut fixed_metadata = final_candidate.metadata();
+        fixed_metadata.numerical_backend = NativeTrainingNumericalBackendV1::FixedFourPartitions;
+        fixed_metadata.backward_worker_limit = 4;
+        let fixed_candidate = NativeTrainingCheckpointCandidateV1::import_verified_v1(
+            fixed_metadata,
+            final_candidate.payload(),
+            final_candidate.digests(),
+        )
+        .unwrap();
+        assert_eq!(
+            build_trained_checkpoint_manifest_v3(&run, &final_context, &fixed_candidate)
+                .unwrap_err()
+                .kind(),
+            CheckpointManifestV3ErrorKind::CrossBinding,
+            "frozen Store V2 admits only sequential backward topology"
+        );
+    }
+
+    #[test]
+    fn trained_decoder_binds_full_progress_digests_payload_and_boundary() {
+        let fixture = trained_fixture_v3();
+
+        let mut value = trained_manifest_value_v3();
+        value["progress"]["learner_policy_steps_by_seat"]["p0"] = json!(
+            value["progress"]["learner_policy_steps_by_seat"]["p0"]
+                .as_u64()
+                .unwrap()
+                + 1
+        );
+        assert_eq!(
+            decode_trained_value_error_v3(&value, &fixture.payload),
+            CheckpointManifestV3ErrorKind::CrossBinding
+        );
+
+        let mut value = trained_manifest_value_v3();
+        value["train_state"]["model_parameter_sha256"] = json!("00".repeat(32));
+        assert_eq!(
+            decode_trained_value_error_v3(&value, &fixture.payload),
+            CheckpointManifestV3ErrorKind::CrossBinding
+        );
+        let mut value = trained_manifest_value_v3();
+        value["train_state"]["state_sha256"] = json!("00".repeat(32));
+        assert_eq!(
+            decode_trained_value_error_v3(&value, &fixture.payload),
+            CheckpointManifestV3ErrorKind::CrossBinding
+        );
+
+        let mut value = trained_manifest_value_v3();
+        value["payload"]["sha256"] = json!("00".repeat(32));
+        assert_eq!(
+            decode_trained_value_error_v3(&value, &fixture.payload),
+            CheckpointManifestV3ErrorKind::PayloadDigestMismatch
+        );
+        let mut corrupted_payload = fixture.payload.clone();
+        corrupted_payload[0] ^= 1;
+        assert_eq!(
+            decode_trained_value_error_v3(&trained_manifest_value_v3(), &corrupted_payload),
+            CheckpointManifestV3ErrorKind::PayloadDigestMismatch
+        );
+
+        let mut value = trained_manifest_value_v3();
+        value["logical_state_sha256"] = json!("00".repeat(32));
+        assert_eq!(
+            decode_trained_value_error_v3(&value, &fixture.payload),
+            CheckpointManifestV3ErrorKind::LogicalStateDigestMismatch
+        );
+
+        for (path, replacement) in [
+            (&["run_sha256"][..], json!("00".repeat(32))),
+            (&["identity_bundle_sha256"][..], json!("00".repeat(32))),
+            (&["batch_episodes"][..], json!(4)),
+            (&["checkpoint_segment_updates"][..], json!(2)),
+            (&["segment_ordinal"][..], json!(2)),
+            (&["generation_index"][..], json!(16)),
+        ] {
+            let mut value = trained_manifest_value_v3();
+            value[path[0]] = replacement;
+            assert_eq!(
+                decode_trained_value_error_v3(&value, &fixture.payload),
+                CheckpointManifestV3ErrorKind::CrossBinding,
+                "path {path:?}"
+            );
+        }
+
+        let run = run_v3();
+        let stale_context = trained_context_v3(3);
+        assert_eq!(
+            decode_trained_checkpoint_manifest_v3(
+                &fixture.manifest,
+                &fixture.payload,
+                &run,
+                &stale_context,
+            )
+            .unwrap_err()
+            .kind(),
+            CheckpointManifestV3ErrorKind::CrossBinding
         );
     }
 
