@@ -197,7 +197,7 @@ struct UpdateEvidenceWireV1 {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct UpdateGroupWireV1 {
+pub(crate) struct UpdateGroupWireV1 {
     update_index: u64,
     previous_update_evidence_sha256: Option<String>,
     evidence: UpdateEvidenceWireV1,
@@ -259,6 +259,10 @@ impl ValidatedUpdateGroupV1 {
 
     pub fn previous_update_evidence_sha256(&self) -> Option<&str> {
         self.wire.previous_update_evidence_sha256.as_deref()
+    }
+
+    pub(crate) fn into_embedded_wire_v1(self) -> UpdateGroupWireV1 {
+        self.wire
     }
 }
 
@@ -651,6 +655,26 @@ pub fn decode_update_group_v1(
         )));
     }
     validate_and_advance_wire_v1(run, context, wire, reencoded)
+}
+
+pub(crate) fn validate_embedded_update_group_wire_v1(
+    run: &ValidatedTrainRunV2,
+    context: UpdateEvidenceChainContextV1,
+    wire: UpdateGroupWireV1,
+) -> Result<ValidatedUpdateGroupAdvanceV1> {
+    validate_context_run_v1(run, &context)?;
+    let canonical_bytes = to_canonical_json_bytes_v1(&wire, GROUP_NULL_POLICY_V1)?;
+    if canonical_bytes.len() > CONSERVATIVE_STANDALONE_GROUP_CJ_CEILING_V1 {
+        return Err(error_v1(UpdateGroupV1ErrorKind::RecordTooLarge));
+    }
+    validate_and_advance_wire_v1(run, context, wire, canonical_bytes)
+}
+
+pub(crate) fn validate_update_evidence_chain_context_v1(
+    run: &ValidatedTrainRunV2,
+    context: &UpdateEvidenceChainContextV1,
+) -> Result<()> {
+    validate_context_run_v1(run, context)
 }
 
 fn episode_null_policy_v1() -> CanonicalJsonNullPolicyV1 {
