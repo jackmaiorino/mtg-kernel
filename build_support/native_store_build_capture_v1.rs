@@ -12,6 +12,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 #[cfg(any(not(test), windows))]
 use std::fs;
+#[cfg(any(not(test), windows))]
 use std::path::{Path, PathBuf};
 
 const PRODUCTION_FEATURE_NAME_V1: &str = "native-training-store-v2-production";
