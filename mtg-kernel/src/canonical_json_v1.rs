@@ -21,7 +21,7 @@ use serde::{
     },
     Serialize, Serializer,
 };
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{alloc::Layout, collections::BTreeMap, error::Error, fmt};
 
 pub const CANONICAL_JSON_MAX_DEPTH_V1: usize = 32;
 pub const CANONICAL_JSON_MAX_STRING_BYTES_V1: usize = 4096;
@@ -139,6 +139,24 @@ enum CanonicalJsonValueV1 {
     Object(BTreeMap<String, Self>),
 }
 
+/// Conservative architecture-dependent products for the private canonical
+/// tree. A complete JSON token contributes at least one byte, so charging the
+/// full token ceiling independently to values, strings, and object entries
+/// dominates every array/string/key population reached by that document.
+pub(crate) fn canonical_json_tree_allocation_layout_bytes_v1(
+    max_json_token_count: usize,
+) -> Option<[u64; 3]> {
+    Some([
+        allocation_layout_bytes_v1::<CanonicalJsonValueV1>(max_json_token_count)?,
+        allocation_layout_bytes_v1::<String>(max_json_token_count)?,
+        allocation_layout_bytes_v1::<(String, CanonicalJsonValueV1)>(max_json_token_count)?,
+    ])
+}
+
+fn allocation_layout_bytes_v1<T>(count: usize) -> Option<u64> {
+    u64::try_from(Layout::array::<T>(count).ok()?.size()).ok()
+}
+
 /// Serializes a serde value and emits its exact canonical Store V2 JSON bytes.
 ///
 /// A dedicated serde serializer rejects floats (including non-finite floats),
@@ -169,6 +187,292 @@ pub fn count_canonical_json_bytes_v1<T: Serialize + ?Sized>(
     let mut sink = CanonicalJsonCountSinkV1::default();
     emit_value_with_final_lf(&parsed, &mut sink)?;
     Ok(sink.encoded_len)
+}
+
+/// Allocation-free closed-grammar maximum used by the Store V2 preflight.
+///
+/// `token_bytes` excludes a document's final LF. Depth follows the codec's
+/// convention: a scalar root is zero and a root container is one. The other
+/// two fields retain the largest reachable object/string bounds so composing
+/// a closed shape cannot hide a codec-limit violation in a child.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CanonicalJsonClosedMaxV1 {
+    token_bytes: u64,
+    depth: usize,
+    max_object_keys: usize,
+    max_string_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CanonicalJsonClosedMaxErrorV1 {
+    Arithmetic,
+    InvalidLiteral,
+    UnsortedOrDuplicateKey,
+    Depth,
+    ObjectKeys,
+    StringBytes,
+}
+
+impl CanonicalJsonClosedMaxV1 {
+    pub(crate) const fn token_bytes(self) -> u64 {
+        self.token_bytes
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn depth(self) -> usize {
+        self.depth
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn max_object_keys(self) -> usize {
+        self.max_object_keys
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn max_string_bytes(self) -> usize {
+        self.max_string_bytes
+    }
+
+    pub(crate) const fn null_v1() -> Self {
+        Self::scalar_v1(4)
+    }
+
+    pub(crate) const fn bool_v1(value: bool) -> Self {
+        Self::scalar_v1(if value { 4 } else { 5 })
+    }
+
+    pub(crate) const fn max_u63_v1() -> Self {
+        Self::scalar_v1(19)
+    }
+
+    pub(crate) const fn max_u32_v1() -> Self {
+        Self::scalar_v1(10)
+    }
+
+    pub(crate) const fn terminal_return_i8_v1() -> Self {
+        Self::scalar_v1(2)
+    }
+
+    pub(crate) fn exact_unsigned_decimal_digits_v1(
+        digits: u8,
+    ) -> std::result::Result<Self, CanonicalJsonClosedMaxErrorV1> {
+        if !(1..=19).contains(&digits) {
+            return Err(CanonicalJsonClosedMaxErrorV1::InvalidLiteral);
+        }
+        Ok(Self::scalar_v1(u64::from(digits)))
+    }
+
+    pub(crate) fn exact_u64_v1(mut value: u64) -> Self {
+        let mut digits = 1_u64;
+        while value >= 10 {
+            value /= 10;
+            digits += 1;
+        }
+        Self::scalar_v1(digits)
+    }
+
+    const fn scalar_v1(token_bytes: u64) -> Self {
+        Self {
+            token_bytes,
+            depth: 0,
+            max_object_keys: 0,
+            max_string_bytes: 0,
+        }
+    }
+
+    pub(crate) fn fixed_ascii_string_v1(
+        literal: &str,
+    ) -> std::result::Result<Self, CanonicalJsonClosedMaxErrorV1> {
+        if literal.len() > CANONICAL_JSON_MAX_STRING_BYTES_V1 {
+            return Err(CanonicalJsonClosedMaxErrorV1::StringBytes);
+        }
+        let mut escaped_bytes = 0_u64;
+        for byte in literal.bytes() {
+            if !(0x20..=0x7e).contains(&byte) {
+                return Err(CanonicalJsonClosedMaxErrorV1::InvalidLiteral);
+            }
+            escaped_bytes = escaped_bytes
+                .checked_add(if matches!(byte, b'"' | b'\\') { 2 } else { 1 })
+                .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?;
+        }
+        Ok(Self {
+            token_bytes: escaped_bytes
+                .checked_add(2)
+                .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?,
+            depth: 0,
+            max_object_keys: 0,
+            max_string_bytes: literal.len(),
+        })
+    }
+
+    pub(crate) fn fixed_ascii_string_bytes_v1(
+        decoded_bytes: u64,
+    ) -> std::result::Result<Self, CanonicalJsonClosedMaxErrorV1> {
+        let decoded = usize::try_from(decoded_bytes)
+            .map_err(|_| CanonicalJsonClosedMaxErrorV1::StringBytes)?;
+        if decoded > CANONICAL_JSON_MAX_STRING_BYTES_V1 {
+            return Err(CanonicalJsonClosedMaxErrorV1::StringBytes);
+        }
+        Ok(Self {
+            token_bytes: decoded_bytes
+                .checked_add(2)
+                .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?,
+            depth: 0,
+            max_object_keys: 0,
+            max_string_bytes: decoded,
+        })
+    }
+
+    pub(crate) fn choice_v1(
+        left: Self,
+        right: Self,
+    ) -> std::result::Result<Self, CanonicalJsonClosedMaxErrorV1> {
+        Self::validate_composed_v1(Self {
+            token_bytes: left.token_bytes.max(right.token_bytes),
+            depth: left.depth.max(right.depth),
+            max_object_keys: left.max_object_keys.max(right.max_object_keys),
+            max_string_bytes: left.max_string_bytes.max(right.max_string_bytes),
+        })
+    }
+
+    pub(crate) fn array_v1(
+        count: u64,
+        child: Self,
+    ) -> std::result::Result<Self, CanonicalJsonClosedMaxErrorV1> {
+        let contents = if count == 0 {
+            0
+        } else {
+            count
+                .checked_mul(child.token_bytes)
+                .and_then(|value| value.checked_add(count - 1))
+                .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?
+        };
+        let depth = if count == 0 {
+            1
+        } else {
+            child
+                .depth
+                .checked_add(1)
+                .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?
+        };
+        Self::validate_composed_v1(Self {
+            token_bytes: contents
+                .checked_add(2)
+                .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?,
+            depth,
+            max_object_keys: child.max_object_keys,
+            max_string_bytes: child.max_string_bytes,
+        })
+    }
+
+    /// Exact fixed array whose positions have distinct closed semantic roles.
+    pub(crate) fn fixed_array_v1(
+        children: &[Self],
+    ) -> std::result::Result<Self, CanonicalJsonClosedMaxErrorV1> {
+        let mut token_bytes = 2_u64;
+        let mut max_child_depth = 0_usize;
+        let mut max_object_keys = 0_usize;
+        let mut max_string_bytes = 0_usize;
+        for (index, child) in children.iter().enumerate() {
+            if index != 0 {
+                token_bytes = token_bytes
+                    .checked_add(1)
+                    .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?;
+            }
+            token_bytes = token_bytes
+                .checked_add(child.token_bytes)
+                .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?;
+            max_child_depth = max_child_depth.max(child.depth);
+            max_object_keys = max_object_keys.max(child.max_object_keys);
+            max_string_bytes = max_string_bytes.max(child.max_string_bytes);
+        }
+        Self::validate_composed_v1(Self {
+            token_bytes,
+            depth: if children.is_empty() {
+                1
+            } else {
+                max_child_depth
+                    .checked_add(1)
+                    .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?
+            },
+            max_object_keys,
+            max_string_bytes,
+        })
+    }
+
+    /// Builds an object from fields already arranged in canonical ASCII key
+    /// order. Requiring the order here makes an omitted/renamed wire field a
+    /// visible change beside the private wire that owns its grammar.
+    pub(crate) fn object_v1(
+        fields: &[(&str, Self)],
+    ) -> std::result::Result<Self, CanonicalJsonClosedMaxErrorV1> {
+        if fields.len() > CANONICAL_JSON_MAX_OBJECT_KEYS_V1 {
+            return Err(CanonicalJsonClosedMaxErrorV1::ObjectKeys);
+        }
+        let mut previous_key = None;
+        let mut token_bytes = 2_u64;
+        let mut max_child_depth = 0_usize;
+        let mut max_object_keys = fields.len();
+        let mut max_string_bytes = 0_usize;
+        for (index, (key, child)) in fields.iter().enumerate() {
+            if previous_key.is_some_and(|previous: &str| previous.as_bytes() >= key.as_bytes()) {
+                return Err(CanonicalJsonClosedMaxErrorV1::UnsortedOrDuplicateKey);
+            }
+            let key_shape = Self::fixed_ascii_string_v1(key)?;
+            if index != 0 {
+                token_bytes = token_bytes
+                    .checked_add(1)
+                    .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?;
+            }
+            token_bytes = token_bytes
+                .checked_add(key_shape.token_bytes)
+                .and_then(|value| value.checked_add(1))
+                .and_then(|value| value.checked_add(child.token_bytes))
+                .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?;
+            max_child_depth = max_child_depth.max(child.depth);
+            max_object_keys = max_object_keys.max(child.max_object_keys);
+            max_string_bytes = max_string_bytes
+                .max(key_shape.max_string_bytes)
+                .max(child.max_string_bytes);
+            previous_key = Some(*key);
+        }
+        Self::validate_composed_v1(Self {
+            token_bytes,
+            depth: if fields.is_empty() {
+                1
+            } else {
+                max_child_depth
+                    .checked_add(1)
+                    .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)?
+            },
+            max_object_keys,
+            max_string_bytes,
+        })
+    }
+
+    pub(crate) fn canonical_document_bytes_v1(
+        self,
+    ) -> std::result::Result<u64, CanonicalJsonClosedMaxErrorV1> {
+        Self::validate_composed_v1(self)?
+            .token_bytes
+            .checked_add(1)
+            .ok_or(CanonicalJsonClosedMaxErrorV1::Arithmetic)
+    }
+
+    fn validate_composed_v1(
+        value: Self,
+    ) -> std::result::Result<Self, CanonicalJsonClosedMaxErrorV1> {
+        if value.depth > CANONICAL_JSON_MAX_DEPTH_V1 {
+            return Err(CanonicalJsonClosedMaxErrorV1::Depth);
+        }
+        if value.max_object_keys > CANONICAL_JSON_MAX_OBJECT_KEYS_V1 {
+            return Err(CanonicalJsonClosedMaxErrorV1::ObjectKeys);
+        }
+        if value.max_string_bytes > CANONICAL_JSON_MAX_STRING_BYTES_V1 {
+            return Err(CanonicalJsonClosedMaxErrorV1::StringBytes);
+        }
+        Ok(value)
+    }
 }
 
 /// Validates canonical bytes and returns a JSON value only after duplicate-key
@@ -1547,6 +1851,111 @@ mod tests {
         Deserialize, Serializer,
     };
     use std::{cell::Cell, collections::BTreeMap};
+
+    #[test]
+    fn closed_max_recurrence_checks_escaping_shapes_and_codec_limits() {
+        let escaped = CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("a\"\\z").unwrap();
+        assert_eq!(escaped.token_bytes(), 8);
+        assert_eq!(escaped.max_string_bytes(), 4);
+
+        let child = CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("a").unwrap();
+        let empty = CanonicalJsonClosedMaxV1::array_v1(0, child).unwrap();
+        assert_eq!(empty.token_bytes(), 2);
+        assert_eq!(empty.depth(), 1);
+        assert_eq!(empty.max_string_bytes(), 1);
+        let pair = CanonicalJsonClosedMaxV1::array_v1(2, child).unwrap();
+        assert_eq!(pair.token_bytes(), 9);
+        assert_eq!(pair.depth(), 1);
+
+        assert_eq!(CanonicalJsonClosedMaxV1::exact_u64_v1(0).token_bytes(), 1);
+        assert_eq!(CanonicalJsonClosedMaxV1::exact_u64_v1(33).token_bytes(), 2);
+        let heterogeneous = CanonicalJsonClosedMaxV1::fixed_array_v1(&[
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("a").unwrap(),
+            CanonicalJsonClosedMaxV1::null_v1(),
+        ])
+        .unwrap();
+        assert_eq!(heterogeneous.token_bytes(), 10);
+        assert_eq!(heterogeneous.depth(), 1);
+
+        let object = CanonicalJsonClosedMaxV1::object_v1(&[
+            ("a", CanonicalJsonClosedMaxV1::null_v1()),
+            ("b", CanonicalJsonClosedMaxV1::bool_v1(false)),
+        ])
+        .unwrap();
+        assert_eq!(object.token_bytes(), 20);
+        assert_eq!(object.canonical_document_bytes_v1().unwrap(), 21);
+        assert_eq!(object.max_object_keys(), 2);
+
+        assert_eq!(
+            CanonicalJsonClosedMaxV1::object_v1(&[
+                ("b", CanonicalJsonClosedMaxV1::null_v1()),
+                ("a", CanonicalJsonClosedMaxV1::null_v1()),
+            ])
+            .unwrap_err(),
+            CanonicalJsonClosedMaxErrorV1::UnsortedOrDuplicateKey
+        );
+        assert_eq!(
+            CanonicalJsonClosedMaxV1::object_v1(&[
+                ("a", CanonicalJsonClosedMaxV1::null_v1()),
+                ("a", CanonicalJsonClosedMaxV1::null_v1()),
+            ])
+            .unwrap_err(),
+            CanonicalJsonClosedMaxErrorV1::UnsortedOrDuplicateKey
+        );
+
+        let accepted = "a".repeat(CANONICAL_JSON_MAX_STRING_BYTES_V1);
+        assert!(CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(&accepted).is_ok());
+        let rejected = format!("{accepted}a");
+        assert_eq!(
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(&rejected).unwrap_err(),
+            CanonicalJsonClosedMaxErrorV1::StringBytes
+        );
+
+        let mut depth = CanonicalJsonClosedMaxV1::null_v1();
+        for _ in 0..CANONICAL_JSON_MAX_DEPTH_V1 {
+            depth = CanonicalJsonClosedMaxV1::array_v1(1, depth).unwrap();
+        }
+        assert_eq!(depth.depth(), CANONICAL_JSON_MAX_DEPTH_V1);
+        assert_eq!(
+            CanonicalJsonClosedMaxV1::array_v1(1, depth).unwrap_err(),
+            CanonicalJsonClosedMaxErrorV1::Depth
+        );
+        assert_eq!(
+            CanonicalJsonClosedMaxV1::array_v1(u64::MAX, CanonicalJsonClosedMaxV1::max_u63_v1(),)
+                .unwrap_err(),
+            CanonicalJsonClosedMaxErrorV1::Arithmetic
+        );
+        assert_eq!(
+            CanonicalJsonClosedMaxV1 {
+                token_bytes: u64::MAX,
+                depth: 0,
+                max_object_keys: 0,
+                max_string_bytes: 0,
+            }
+            .canonical_document_bytes_v1()
+            .unwrap_err(),
+            CanonicalJsonClosedMaxErrorV1::Arithmetic
+        );
+    }
+
+    #[test]
+    fn closed_max_rejects_object_key_and_literal_boundaries() {
+        let keys = (0..=CANONICAL_JSON_MAX_OBJECT_KEYS_V1)
+            .map(|index| format!("k{index:03}"))
+            .collect::<Vec<_>>();
+        let fields = keys
+            .iter()
+            .map(|key| (key.as_str(), CanonicalJsonClosedMaxV1::null_v1()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            CanonicalJsonClosedMaxV1::object_v1(&fields).unwrap_err(),
+            CanonicalJsonClosedMaxErrorV1::ObjectKeys
+        );
+        assert_eq!(
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("not\nprintable").unwrap_err(),
+            CanonicalJsonClosedMaxErrorV1::InvalidLiteral
+        );
+    }
 
     fn assert_kind<T>(result: Result<T>, expected: CanonicalJsonErrorKindV1) {
         match result {

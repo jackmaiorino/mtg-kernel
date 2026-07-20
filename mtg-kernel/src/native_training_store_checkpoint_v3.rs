@@ -8,8 +8,9 @@
 //! candidate or payload.
 
 use crate::canonical_json_v1::{
-    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonErrorKindV1,
-    CanonicalJsonErrorV1, CanonicalJsonNullPolicyV1,
+    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonClosedMaxErrorV1,
+    CanonicalJsonClosedMaxV1, CanonicalJsonErrorKindV1, CanonicalJsonErrorV1,
+    CanonicalJsonNullPolicyV1,
 };
 use crate::common_model_snapshot_v1::{
     PARAMETER_ELEMENT_COUNT_V1, PARAMETER_TENSOR_COUNT_V1, PAYLOAD_BYTE_COUNT_V1,
@@ -160,6 +161,30 @@ impl CheckpointProgressV3 {
     }
 }
 
+/// Complete closed-grammar maximum for `CheckpointProgressV3`.
+///
+/// This is type-owned so adding, removing, or renaming a private progress
+/// field must update the representability walk beside the wire definition.
+pub(crate) fn maximum_checkpoint_progress_json_shape_v3(
+) -> std::result::Result<CanonicalJsonClosedMaxV1, CanonicalJsonClosedMaxErrorV1> {
+    let u63 = CanonicalJsonClosedMaxV1::max_u63_v1();
+    let seat_counters = CanonicalJsonClosedMaxV1::object_v1(&[("p0", u63), ("p1", u63)])?;
+    let outcome_counts =
+        CanonicalJsonClosedMaxV1::object_v1(&[("draw", u63), ("loss", u63), ("win", u63)])?;
+    let outcomes_by_seat =
+        CanonicalJsonClosedMaxV1::object_v1(&[("p0", outcome_counts), ("p1", outcome_counts)])?;
+    CanonicalJsonClosedMaxV1::object_v1(&[
+        ("batch_episodes", u63),
+        ("checkpoint_segment_updates", u63),
+        ("completed_episode_count", u63),
+        ("learner_physical_decisions_by_seat", seat_counters),
+        ("learner_policy_steps_by_seat", seat_counters),
+        ("next_episode_index", u63),
+        ("outcomes_by_learner_seat", outcomes_by_seat),
+        ("successful_update_count", u63),
+    ])
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckpointTrainStateBindingV3 {
@@ -224,6 +249,109 @@ struct CheckpointManifestWireV3 {
     train_state: CheckpointTrainStateBindingV3,
     payload: CheckpointPayloadBindingV1,
     logical_state_sha256: String,
+}
+
+/// Complete closed-grammar maximum for either semantic checkpoint-v3 variant.
+/// The trained variant dominates the fixed-zero genesis variant.
+pub(crate) fn maximum_checkpoint_manifest_cj_bytes_v3(
+) -> std::result::Result<u64, CanonicalJsonClosedMaxErrorV1> {
+    let u63 = CanonicalJsonClosedMaxV1::max_u63_v1();
+    let u32_value = CanonicalJsonClosedMaxV1::max_u32_v1();
+    let digest = CanonicalJsonClosedMaxV1::fixed_ascii_string_bytes_v1(64)?;
+    let train_state = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("adam_step", u63),
+        ("model_parameter_sha256", digest),
+        (
+            "parameter_element_count",
+            CanonicalJsonClosedMaxV1::exact_u64_v1(
+                u64::try_from(PARAMETER_ELEMENT_COUNT_V1)
+                    .map_err(|_| CanonicalJsonClosedMaxErrorV1::Arithmetic)?,
+            ),
+        ),
+        ("parameter_layout_sha256", digest),
+        (
+            "parameter_tensor_count",
+            CanonicalJsonClosedMaxV1::exact_u64_v1(
+                u64::try_from(PARAMETER_TENSOR_COUNT_V1)
+                    .map_err(|_| CanonicalJsonClosedMaxErrorV1::Arithmetic)?,
+            ),
+        ),
+        (
+            "schema",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(
+                NATIVE_POLICY_VALUE_TRAIN_STATE_SCHEMA_V1,
+            )?,
+        ),
+        ("scorer_bias_anchor_f32_bits", u32_value),
+        ("state_sha256", digest),
+    ])?;
+    let payload_section = |index: usize| {
+        let section = NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[index];
+        CanonicalJsonClosedMaxV1::object_v1(&[
+            (
+                "byte_count",
+                CanonicalJsonClosedMaxV1::exact_u64_v1(
+                    u64::try_from(section.byte_count)
+                        .map_err(|_| CanonicalJsonClosedMaxErrorV1::Arithmetic)?,
+                ),
+            ),
+            (
+                "name",
+                CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(section.name)?,
+            ),
+            (
+                "offset_bytes",
+                CanonicalJsonClosedMaxV1::exact_u64_v1(
+                    u64::try_from(section.offset_bytes)
+                        .map_err(|_| CanonicalJsonClosedMaxErrorV1::Arithmetic)?,
+                ),
+            ),
+            ("sha256", digest),
+        ])
+    };
+    let sections = CanonicalJsonClosedMaxV1::fixed_array_v1(&[
+        payload_section(0)?,
+        payload_section(1)?,
+        payload_section(2)?,
+    ])?;
+    let payload = CanonicalJsonClosedMaxV1::object_v1(&[
+        (
+            "byte_count",
+            CanonicalJsonClosedMaxV1::exact_u64_v1(
+                u64::try_from(NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1)
+                    .map_err(|_| CanonicalJsonClosedMaxErrorV1::Arithmetic)?,
+            ),
+        ),
+        (
+            "encoding",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(
+                NATIVE_TRAIN_STATE_PAYLOAD_ENCODING_V1,
+            )?,
+        ),
+        (
+            "schema",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(NATIVE_TRAIN_STATE_PAYLOAD_SCHEMA_V1)?,
+        ),
+        ("sections", sections),
+        ("sha256", digest),
+    ])?;
+    CanonicalJsonClosedMaxV1::object_v1(&[
+        ("batch_episodes", u63),
+        ("checkpoint_segment_updates", u63),
+        ("generation_index", u63),
+        ("identity_bundle_sha256", digest),
+        ("logical_state_sha256", digest),
+        ("payload", payload),
+        ("progress", maximum_checkpoint_progress_json_shape_v3()?),
+        ("run_sha256", digest),
+        (
+            "schema",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(CHECKPOINT_MANIFEST_SCHEMA_V3)?,
+        ),
+        ("segment_ordinal", u63),
+        ("train_state", train_state),
+    ])?
+    .canonical_document_bytes_v1()
 }
 
 /// Fully validated pure checkpoint-v3 authority.
@@ -1126,6 +1254,18 @@ mod tests {
         "4306c612de240410aaf5f1603562bf659a49102a740b1ff3de9b71adff68d0bd";
     const GENESIS_TRAIN_STATE_SHA256_GOLDEN_V1: &str =
         "5854b477e2ce22dda199b5c9442824a339acd15d7eb8666f19895aa0d7c53c26";
+
+    #[test]
+    fn checkpoint_progress_closed_maximum_is_frozen() {
+        let shape = maximum_checkpoint_progress_json_shape_v3().unwrap();
+        assert_eq!(shape.token_bytes(), 595);
+        assert!(shape.depth() <= crate::canonical_json_v1::CANONICAL_JSON_MAX_DEPTH_V1);
+    }
+
+    #[test]
+    fn checkpoint_manifest_closed_maximum_is_frozen() {
+        assert_eq!(maximum_checkpoint_manifest_cj_bytes_v3().unwrap(), 2_204);
+    }
 
     struct FixtureV3 {
         run_bytes: Vec<u8>,

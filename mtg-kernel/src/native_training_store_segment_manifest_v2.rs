@@ -8,8 +8,8 @@
 
 use crate::canonical_json_v1::{
     count_canonical_json_bytes_v1, from_canonical_json_bytes_v1, to_canonical_json_bytes_v1,
-    CanonicalJsonErrorKindV1, CanonicalJsonErrorV1, CanonicalJsonNullPathSegmentV1,
-    CanonicalJsonNullPolicyV1,
+    CanonicalJsonClosedMaxErrorV1, CanonicalJsonClosedMaxV1, CanonicalJsonErrorKindV1,
+    CanonicalJsonErrorV1, CanonicalJsonNullPathSegmentV1, CanonicalJsonNullPolicyV1,
 };
 use crate::native_training_store_boundary_v2::ValidatedNativeTrainingBoundaryV2;
 use crate::native_training_store_checkpoint_v3::CheckpointManifestV3;
@@ -23,6 +23,7 @@ use crate::native_training_store_segment_continuation_v2::{
     SEGMENT_CONTINUATION_MAX_FIXED_DECIMAL_V2,
 };
 use serde::{Deserialize, Serialize};
+use std::alloc::Layout;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -137,6 +138,171 @@ struct SegmentManifestWireV2 {
     ordered_update_evidence_list_sha256: String,
     continuation_chain: ContinuationChainWireV2,
     final_checkpoint: FinalCheckpointBindingWireV2,
+}
+
+/// Exact architecture-dependent allocation products for the two private
+/// trained-manifest lists whose cardinality is the segment update count.
+pub(crate) fn segment_manifest_allocation_layout_bytes_v2(
+    checkpoint_segment_updates: usize,
+) -> Option<[u64; 2]> {
+    Some([
+        allocation_layout_bytes_v2::<ContinuationDescriptorWireV2>(checkpoint_segment_updates)?,
+        allocation_layout_bytes_v2::<OrderedUpdateEvidenceRowWireV1>(checkpoint_segment_updates)?,
+    ])
+}
+
+fn allocation_layout_bytes_v2<T>(count: usize) -> Option<u64> {
+    u64::try_from(Layout::array::<T>(count).ok()?.size()).ok()
+}
+
+fn maximum_final_checkpoint_binding_json_shape_v2(
+) -> std::result::Result<CanonicalJsonClosedMaxV1, CanonicalJsonClosedMaxErrorV1> {
+    let digest = CanonicalJsonClosedMaxV1::fixed_ascii_string_bytes_v1(64)?;
+    CanonicalJsonClosedMaxV1::object_v1(&[
+        ("checkpoint_manifest_sha256", digest),
+        ("checkpoint_payload_sha256", digest),
+        ("logical_state_sha256", digest),
+        ("model_parameter_sha256", digest),
+        ("train_state_sha256", digest),
+    ])
+}
+
+/// Complete trained SegmentManifestV2 maximum with exactly `S` ordered
+/// evidence rows and the mandatory conservative fallback of `S` continuation
+/// descriptors. Descriptor zero is intentionally charged at the homogeneous
+/// option maximum, as required by the frozen `array(n,T)` recurrence.
+pub(crate) fn maximum_trained_segment_manifest_cj_bytes_v2(
+    checkpoint_segment_updates: u64,
+) -> std::result::Result<u64, CanonicalJsonClosedMaxErrorV1> {
+    let u63 = CanonicalJsonClosedMaxV1::max_u63_v1();
+    let digest = CanonicalJsonClosedMaxV1::fixed_ascii_string_bytes_v1(64)?;
+    let optional_digest =
+        CanonicalJsonClosedMaxV1::choice_v1(CanonicalJsonClosedMaxV1::null_v1(), digest)?;
+    let ordered_evidence = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("update_evidence_sha256", digest),
+        ("update_index", u63),
+    ])?;
+    let descriptor = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("byte_count", u63),
+        ("continuation_index", u63),
+        ("logical_row_count", u63),
+        ("previous_continuation_sha256", optional_digest),
+        (
+            "relative_name",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(
+                "segment-99999999.continuation-99999999.json",
+            )?,
+        ),
+        ("sha256", digest),
+        ("update_group_count", u63),
+        ("update_group_start_ordinal", u63),
+    ])?;
+    let continuation_chain = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("continuation_count", u63),
+        (
+            "continuations",
+            CanonicalJsonClosedMaxV1::array_v1(checkpoint_segment_updates, descriptor)?,
+        ),
+        ("first_continuation_sha256", optional_digest),
+        ("last_continuation_sha256", optional_digest),
+        ("logical_row_count", u63),
+        ("update_group_count", u63),
+    ])?;
+    CanonicalJsonClosedMaxV1::object_v1(&[
+        ("batch_episodes", u63),
+        ("checkpoint_segment_updates", u63),
+        ("continuation_chain", continuation_chain),
+        ("episode_count", u63),
+        ("episode_end_exclusive", u63),
+        ("episode_start", u63),
+        (
+            "final_checkpoint",
+            maximum_final_checkpoint_binding_json_shape_v2()?,
+        ),
+        ("generation_index", u63),
+        ("identity_bundle_sha256", digest),
+        (
+            "kind",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("trained")?,
+        ),
+        (
+            "ordered_update_evidence",
+            CanonicalJsonClosedMaxV1::array_v1(checkpoint_segment_updates, ordered_evidence)?,
+        ),
+        ("ordered_update_evidence_count", u63),
+        ("ordered_update_evidence_list_sha256", digest),
+        (
+            "parent_generation_index",
+            CanonicalJsonClosedMaxV1::choice_v1(CanonicalJsonClosedMaxV1::null_v1(), u63)?,
+        ),
+        ("parent_head_sha256", optional_digest),
+        ("parent_last_update_evidence_sha256", optional_digest),
+        ("run_sha256", digest),
+        (
+            "schema",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(SEGMENT_MANIFEST_SCHEMA_V2)?,
+        ),
+        ("segment_ordinal", u63),
+        ("update_count", u63),
+        ("update_start_index", u63),
+    ])?
+    .canonical_document_bytes_v1()
+}
+
+/// Exact maximum of the semantic genesis variant. Fields fixed to zero/null by
+/// the variant use their fixed tokens; K and S retain positive-u63 maxima.
+pub(crate) fn maximum_genesis_segment_manifest_cj_bytes_v2(
+) -> std::result::Result<u64, CanonicalJsonClosedMaxErrorV1> {
+    let u63 = CanonicalJsonClosedMaxV1::max_u63_v1();
+    let zero = CanonicalJsonClosedMaxV1::exact_unsigned_decimal_digits_v1(1)?;
+    let null = CanonicalJsonClosedMaxV1::null_v1();
+    let digest = CanonicalJsonClosedMaxV1::fixed_ascii_string_bytes_v1(64)?;
+    let empty_descriptors =
+        CanonicalJsonClosedMaxV1::array_v1(0, CanonicalJsonClosedMaxV1::object_v1(&[])?)?;
+    let continuation_chain = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("continuation_count", zero),
+        ("continuations", empty_descriptors),
+        ("first_continuation_sha256", null),
+        ("last_continuation_sha256", null),
+        ("logical_row_count", zero),
+        ("update_group_count", zero),
+    ])?;
+    CanonicalJsonClosedMaxV1::object_v1(&[
+        ("batch_episodes", u63),
+        ("checkpoint_segment_updates", u63),
+        ("continuation_chain", continuation_chain),
+        ("episode_count", zero),
+        ("episode_end_exclusive", zero),
+        ("episode_start", zero),
+        (
+            "final_checkpoint",
+            maximum_final_checkpoint_binding_json_shape_v2()?,
+        ),
+        ("generation_index", zero),
+        ("identity_bundle_sha256", digest),
+        (
+            "kind",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("genesis")?,
+        ),
+        (
+            "ordered_update_evidence",
+            CanonicalJsonClosedMaxV1::array_v1(0, CanonicalJsonClosedMaxV1::object_v1(&[])?)?,
+        ),
+        ("ordered_update_evidence_count", zero),
+        ("ordered_update_evidence_list_sha256", digest),
+        ("parent_generation_index", null),
+        ("parent_head_sha256", null),
+        ("parent_last_update_evidence_sha256", null),
+        ("run_sha256", digest),
+        (
+            "schema",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(SEGMENT_MANIFEST_SCHEMA_V2)?,
+        ),
+        ("segment_ordinal", zero),
+        ("update_count", zero),
+        ("update_start_index", zero),
+    ])?
+    .canonical_document_bytes_v1()
 }
 
 struct DerivedTrainedManifestV2 {
@@ -1310,6 +1476,30 @@ mod tests {
         run: ValidatedTrainRunV2,
         checkpoint: CheckpointManifestV3,
         segment: SegmentManifestV2,
+    }
+
+    #[test]
+    fn segment_manifest_closed_maxima_match_frozen_recurrence() {
+        assert_eq!(
+            maximum_genesis_segment_manifest_cj_bytes_v2().unwrap(),
+            1_401
+        );
+        assert_eq!(
+            maximum_trained_segment_manifest_cj_bytes_v2(1).unwrap(),
+            2_431
+        );
+        assert_eq!(
+            maximum_trained_segment_manifest_cj_bytes_v2(4).unwrap(),
+            4_144
+        );
+        assert_eq!(
+            maximum_trained_segment_manifest_cj_bytes_v2(7_342).unwrap(),
+            4_194_142
+        );
+        assert_eq!(
+            maximum_trained_segment_manifest_cj_bytes_v2(7_343).unwrap(),
+            4_194_713
+        );
     }
 
     struct TrainedFixtureV2 {

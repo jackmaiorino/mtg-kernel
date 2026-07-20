@@ -14,8 +14,29 @@ use crate::native_policy_train_step_v1::{
 };
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use sha2::{Digest, Sha256};
+#[cfg(test)]
+use std::cell::Cell;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+
+#[cfg(test)]
+thread_local! {
+    static PAYLOAD_ENCODE_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
+    static PAYLOAD_ALLOCATION_COUNT_V1: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_payload_encode_counts_for_test_v1() {
+    PAYLOAD_ENCODE_CALL_COUNT_V1.with(|count| count.set(0));
+    PAYLOAD_ALLOCATION_COUNT_V1.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn payload_encode_counts_for_test_v1() -> (u64, u64) {
+    let encode_calls = PAYLOAD_ENCODE_CALL_COUNT_V1.with(Cell::get);
+    let allocations = PAYLOAD_ALLOCATION_COUNT_V1.with(Cell::get);
+    (encode_calls, allocations)
+}
 
 pub(crate) const NATIVE_TRAIN_STATE_PAYLOAD_SCHEMA_V1: &str =
     "mtg_kernel_native_train_state_payload/v1";
@@ -112,11 +133,15 @@ impl From<NativePolicyTrainErrorV1> for NativeTrainStatePayloadErrorV1 {
 pub(crate) fn encode_native_train_state_payload_v1(
     snapshot: &NativePolicyValueTrainSnapshotV1,
 ) -> Result<NativeEncodedTrainStatePayloadV1, NativeTrainStatePayloadErrorV1> {
+    #[cfg(test)]
+    PAYLOAD_ENCODE_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
     // This call is the authoritative structural and semantic precondition. It
     // covers the frozen manifest, finiteness, nonnegative second moments,
     // positive-zero padding/gauge moments, anchor, and bounded Adam step.
     let native_state_sha256 = snapshot.state_sha256_v1()?;
 
+    #[cfg(test)]
+    PAYLOAD_ALLOCATION_COUNT_V1.with(|count| count.set(count.get() + 1));
     let mut bytes = Vec::with_capacity(NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1);
     encode_section_v1(&mut bytes, &snapshot.parameters);
     encode_section_v1(&mut bytes, &snapshot.first_moments);

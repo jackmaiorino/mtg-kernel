@@ -8,16 +8,23 @@
 
 use crate::async_flat_scored_rollout_v2::ASYNC_FLAT_SCORED_MEMBERSHIP_DIGEST_IDENTITY_V1;
 use crate::canonical_json_v1::{
-    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonErrorKindV1,
-    CanonicalJsonErrorV1, CanonicalJsonNullPathSegmentV1, CanonicalJsonNullPolicyV1,
+    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonClosedMaxErrorV1,
+    CanonicalJsonClosedMaxV1, CanonicalJsonErrorKindV1, CanonicalJsonErrorV1,
+    CanonicalJsonNullPathSegmentV1, CanonicalJsonNullPolicyV1,
 };
-use crate::native_policy_train_step_v1::NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1;
+use crate::native_policy_train_step_v1::{
+    CANONICAL_GAUGE_PARAMETERS_V1, NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1,
+};
 use crate::native_training_executor_v1::{
     native_training_episode_schedule_v1, NativeTrainingCheckpointCandidateV1,
-    NativeTrainingExecutionConfigV1, NativeTrainingPreparedUpdateV2,
-    NativeTrainingUpdateObservationV2,
+    NativeTrainingExecutionConfigV1, NativeTrainingIntrinsicCheckpointFactsV2,
+    NativeTrainingNumericalBackendV1, NativeTrainingPreparedTransitionV2,
+    NativeTrainingPreparedUpdateV2, NativeTrainingProgressV1, NativeTrainingUpdateObservationV2,
 };
-use crate::native_training_store_checkpoint_v3::{CheckpointManifestV3, CheckpointProgressV3};
+use crate::native_training_store_boundary_v2::ValidatedNativeTrainingBoundaryV2;
+use crate::native_training_store_checkpoint_v3::{
+    maximum_checkpoint_progress_json_shape_v3, CheckpointManifestV3, CheckpointProgressV3,
+};
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, NativeTrainingStoreAtomSha256V1,
     NativeTrainingStoreDigestErrorV1,
@@ -25,6 +32,7 @@ use crate::native_training_store_digest_v1::{
 use crate::native_training_store_run_v2::ValidatedTrainRunV2;
 use crate::rl::{PlayerSeatV1, TerminalOutcomeV1};
 use serde::{Deserialize, Serialize};
+use std::alloc::Layout;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -42,6 +50,50 @@ const U63_MAX_V1: u64 = (1_u64 << 63) - 1;
 const MAX_LOGICAL_ROWS_V1: u64 = 262_144;
 const CONSERVATIVE_STANDALONE_GROUP_CJ_CEILING_V1: usize = 256 * 1024 * 1024;
 const MAX_LEGAL_ACTION_COUNT_V1: u64 = 64;
+
+#[derive(Clone, Copy)]
+struct UpdateCheckpointFactsV1 {
+    base_seed: u64,
+    batch_episodes: u64,
+    numerical_backend: NativeTrainingNumericalBackendV1,
+    backward_worker_limit: usize,
+    progress: NativeTrainingProgressV1,
+    adam_step: u64,
+    scorer_bias_anchor_bits: u32,
+    model_parameter_sha256: [u8; 32],
+    train_state_sha256: [u8; 32],
+}
+
+impl UpdateCheckpointFactsV1 {
+    fn from_checkpoint_v1(checkpoint: &NativeTrainingCheckpointCandidateV1) -> Self {
+        let digests = checkpoint.digests();
+        Self {
+            base_seed: checkpoint.base_seed(),
+            batch_episodes: checkpoint.batch_episodes(),
+            numerical_backend: checkpoint.numerical_backend(),
+            backward_worker_limit: checkpoint.backward_worker_limit(),
+            progress: checkpoint.progress(),
+            adam_step: checkpoint.adam_step(),
+            scorer_bias_anchor_bits: checkpoint.scorer_bias_anchor_bits(),
+            model_parameter_sha256: digests.model_parameter_sha256,
+            train_state_sha256: digests.native_state_sha256,
+        }
+    }
+
+    fn from_intrinsic_v2(facts: &NativeTrainingIntrinsicCheckpointFactsV2) -> Self {
+        Self {
+            base_seed: facts.base_seed_v2(),
+            batch_episodes: facts.batch_episodes_v2(),
+            numerical_backend: facts.numerical_backend_v2(),
+            backward_worker_limit: facts.backward_worker_limit_v2(),
+            progress: facts.progress_v2(),
+            adam_step: facts.adam_step_v2(),
+            scorer_bias_anchor_bits: facts.scorer_bias_anchor_bits_v2(),
+            model_parameter_sha256: facts.model_parameter_sha256_v2(),
+            train_state_sha256: facts.train_state_sha256_v2(),
+        }
+    }
+}
 
 const PREVIOUS_UPDATE_NULL_PATH_V1: &[CanonicalJsonNullPathSegmentV1] =
     &[CanonicalJsonNullPathSegmentV1::ObjectKey(
@@ -203,6 +255,220 @@ pub(crate) struct UpdateGroupWireV1 {
     evidence: UpdateEvidenceWireV1,
     update_evidence_sha256: String,
     logical_row_count: u64,
+}
+
+/// Complete allocation-free maximum for one embedded `UpdateGroupV1` JSON
+/// token. The standalone document is this value plus one final LF; a segment
+/// continuation embeds the token itself.
+///
+/// Cardinalities are supplied only by the sealed representability planner:
+/// exactly `K` episodes, `G_MAX` physical terms, and `P_MAX` gauge bounds.
+pub(crate) fn maximum_update_group_json_shape_v2(
+    episode_count: u64,
+    physical_term_count: u64,
+    gauge_bound_count: u64,
+) -> std::result::Result<CanonicalJsonClosedMaxV1, CanonicalJsonClosedMaxErrorV1> {
+    let u63 = CanonicalJsonClosedMaxV1::max_u63_v1();
+    let u32_value = CanonicalJsonClosedMaxV1::max_u32_v1();
+    let zero = CanonicalJsonClosedMaxV1::exact_unsigned_decimal_digits_v1(1)?;
+    let hex8 = CanonicalJsonClosedMaxV1::fixed_ascii_string_bytes_v1(8)?;
+    let hex16 = CanonicalJsonClosedMaxV1::fixed_ascii_string_bytes_v1(16)?;
+    let digest = CanonicalJsonClosedMaxV1::fixed_ascii_string_bytes_v1(64)?;
+    let seat = CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("p0")?;
+
+    let episode = CanonicalJsonClosedMaxV1::object_v1(&[
+        (
+            "deck_hashes_u64_hex",
+            CanonicalJsonClosedMaxV1::array_v1(2, hex16)?,
+        ),
+        (
+            "deck_ids",
+            CanonicalJsonClosedMaxV1::array_v1(
+                2,
+                CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("Rally")?,
+            )?,
+        ),
+        ("environment_seed_u64_hex", hex16),
+        ("episode_index", u63),
+        ("learner_physical_decision_count", u63),
+        ("learner_policy_step_count", u63),
+        (
+            "learner_return",
+            CanonicalJsonClosedMaxV1::terminal_return_i8_v1(),
+        ),
+        ("learner_seat", seat),
+        ("opponent_physical_decision_count", u63),
+        ("opponent_policy_step_count", u63),
+        ("physical_decision_count", u63),
+        ("policy_step_count", u63),
+        (
+            "schema",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(EPISODE_SCHEMA_V1)?,
+        ),
+        (
+            "terminal_classification",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("natural")?,
+        ),
+        (
+            "terminal_code",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("natural-game-over")?,
+        ),
+        (
+            "terminal_outcome",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("p0_win")?,
+        ),
+        ("trajectory_sha256", digest),
+        (
+            "winner",
+            CanonicalJsonClosedMaxV1::choice_v1(CanonicalJsonClosedMaxV1::null_v1(), seat)?,
+        ),
+    ])?;
+    let physical_term = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("joint_log_probability_f32_bits", hex8),
+        ("substep_count", u32_value),
+        (
+            "terminal_return_i8",
+            CanonicalJsonClosedMaxV1::terminal_return_i8_v1(),
+        ),
+        ("value_f32_bits", hex8),
+    ])?;
+    let loss = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("policy_sum_f32_bits", hex8),
+        ("total_f32_bits", hex8),
+        ("value_sum_f32_bits", hex8),
+    ])?;
+    let gauge_bound = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("abs_policy_coefficient_f64_bits", hex16),
+        ("action_count", u63),
+        ("bound_component_f64_bits", hex16),
+        ("gamma_f64_bits", hex16),
+        ("gamma_operation_count", u63),
+    ])?;
+    let gauge = CanonicalJsonClosedMaxV1::object_v1(&[
+        (
+            "canonical_gradient_f32_bits",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("00000000")?,
+        ),
+        ("cross_substep_bound_f64_bits", hex16),
+        ("derived_absolute_bound_f64_bits", hex16),
+        ("high_precision_residual_f64_bits", hex16),
+        (
+            "identity",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(
+                NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1,
+            )?,
+        ),
+        ("max_action_count", u63),
+        ("parameter_after_f32_bits", u32_value),
+        ("parameter_before_f32_bits", u32_value),
+        (
+            "parameter_name",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(CANONICAL_GAUGE_PARAMETERS_V1[0])?,
+        ),
+        ("per_substep_bound_sum_f64_bits", hex16),
+        ("raw_gradient_residual_f32_bits", hex8),
+        (
+            "substep_bounds",
+            CanonicalJsonClosedMaxV1::array_v1(gauge_bound_count, gauge_bound)?,
+        ),
+        ("substep_count", u63),
+        ("sum_abs_policy_coefficients_f64_bits", hex16),
+        ("total_action_count", u63),
+    ])?;
+    let rollout_counts = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("apply_error_count", zero),
+        ("association_failure_count", zero),
+        ("batch_membership_digest_hex", digest),
+        (
+            "batch_membership_digest_identity",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(BATCH_MEMBERSHIP_DIGEST_IDENTITY_V1)?,
+        ),
+        ("batch_width_sum", u63),
+        ("complete_round_count", u63),
+        ("full_target_batch_count", u63),
+        ("halted_count", zero),
+        ("max_batch_width", u63),
+        ("natural_terminal_count", u63),
+        ("partial_group_count", zero),
+        ("sampled_action_count", u63),
+        ("scored_action_logit_count", u63),
+        ("scored_decision_count", u63),
+        ("scorer_batch_count", u63),
+        ("short_batch_count", u63),
+        ("terminal_notification_count", u63),
+        ("truncated_count", zero),
+    ])?;
+    let evidence = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("adam_step_after", u63),
+        ("adam_step_before", u63),
+        ("batch_episodes", u63),
+        ("checkpoint_segment_updates", u63),
+        ("episode_count", u63),
+        ("episode_end_exclusive", u63),
+        ("episode_start", u63),
+        (
+            "episodes",
+            CanonicalJsonClosedMaxV1::array_v1(episode_count, episode)?,
+        ),
+        ("gauge", gauge),
+        ("identity_bundle_sha256", digest),
+        ("learner_group_count", u63),
+        ("learner_physical_decision_count", u63),
+        ("learner_policy_step_count", u63),
+        ("loss", loss),
+        ("model_parameter_sha256_after", digest),
+        ("model_parameter_sha256_before", digest),
+        ("optimizer_step", CanonicalJsonClosedMaxV1::bool_v1(true)),
+        (
+            "physical_terms",
+            CanonicalJsonClosedMaxV1::array_v1(physical_term_count, physical_term)?,
+        ),
+        (
+            "progress_after",
+            maximum_checkpoint_progress_json_shape_v3()?,
+        ),
+        ("rollout_counts", rollout_counts),
+        ("run_sha256", digest),
+        (
+            "schema",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(UPDATE_EVIDENCE_SCHEMA_V1)?,
+        ),
+        ("train_state_sha256_after", digest),
+        ("update_index", u63),
+    ])?;
+    CanonicalJsonClosedMaxV1::object_v1(&[
+        ("evidence", evidence),
+        ("logical_row_count", u63),
+        (
+            "previous_update_evidence_sha256",
+            CanonicalJsonClosedMaxV1::choice_v1(CanonicalJsonClosedMaxV1::null_v1(), digest)?,
+        ),
+        ("update_evidence_sha256", digest),
+        ("update_index", u63),
+    ])
+}
+
+/// Exact architecture-dependent allocation products for the private vectors
+/// created while validating one maximal update group.
+///
+/// Keeping this walk beside the private wire types prevents a preflight from
+/// substituting an unrelated public type with a different layout.
+pub(crate) fn update_group_allocation_layout_bytes_v2(
+    retained_episode_count: usize,
+    retained_physical_term_count: usize,
+    retained_gauge_bound_count: usize,
+    physical_term_scratch_count: usize,
+) -> Option<[u64; 4]> {
+    Some([
+        allocation_layout_bytes_v2::<EpisodeWireV1>(retained_episode_count)?,
+        allocation_layout_bytes_v2::<PhysicalLossTermWireV1>(retained_physical_term_count)?,
+        allocation_layout_bytes_v2::<GaugeSubstepBoundWireV1>(retained_gauge_bound_count)?,
+        allocation_layout_bytes_v2::<usize>(physical_term_scratch_count)?,
+    ])
+}
+
+fn allocation_layout_bytes_v2<T>(count: usize) -> Option<u64> {
+    u64::try_from(Layout::array::<T>(count).ok()?.size()).ok()
 }
 
 /// Fully validated, canonical one-update authority.
@@ -480,6 +746,83 @@ pub fn begin_update_evidence_chain_v1(
     })
 }
 
+/// Reconstructs a move-only evidence-chain context from one lineage-complete
+/// sealed boundary and its exact concrete checkpoint.
+///
+/// This is crate-private because Store currentness and resume orchestration are
+/// not record-layer authority. The constructor accepts no raw parent facts and
+/// independently rechecks every checkpoint fact needed by the next update.
+pub(crate) fn resume_update_evidence_chain_v1(
+    run: &ValidatedTrainRunV2,
+    parent: &ValidatedNativeTrainingBoundaryV2,
+    parent_checkpoint: &CheckpointManifestV3,
+) -> Result<UpdateEvidenceChainContextV1> {
+    let parent_facts = parent.boundary_facts_v2();
+    let generation_index = parent_facts.generation_index;
+    let segment_ordinal = parent_facts.segment_ordinal;
+    let checkpoint_segment_updates = run.checkpoint_segment_updates();
+    let expected_generation = segment_ordinal
+        .checked_mul(checkpoint_segment_updates)
+        .filter(|value| is_u63_v1(*value))
+        .ok_or_else(|| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
+    let next_update_index = generation_index
+        .checked_add(1)
+        .filter(|value| is_u63_v1(*value))
+        .ok_or_else(|| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
+    let scorer_bias_anchor_bits = u32::try_from(
+        parent_checkpoint
+            .train_state()
+            .scorer_bias_anchor_f32_bits(),
+    )
+    .map_err(|_| error_v1(UpdateGroupV1ErrorKind::CheckpointMismatch))?;
+    let expected_parent_options = generation_index != 0;
+    let progress = parent_checkpoint.progress();
+
+    if parent_facts.run_sha256 != run.run_sha256()
+        || parent_facts.identity_bundle_sha256 != run.identity_bundle_sha256()
+        || parent_facts.batch_episodes != run.batch_episodes()
+        || parent_facts.checkpoint_segment_updates != checkpoint_segment_updates
+        || parent_checkpoint.run_sha256() != run.run_sha256()
+        || parent_checkpoint.identity_bundle_sha256() != run.identity_bundle_sha256()
+        || parent_checkpoint.batch_episodes() != run.batch_episodes()
+        || parent_checkpoint.checkpoint_segment_updates() != checkpoint_segment_updates
+        || parent_checkpoint.segment_ordinal() != segment_ordinal
+        || parent_checkpoint.generation_index() != generation_index
+        || expected_generation != generation_index
+        || generation_index >= run.requested_successful_updates()
+        || progress.batch_episodes() != run.batch_episodes()
+        || progress.checkpoint_segment_updates() != checkpoint_segment_updates
+        || progress.successful_update_count() != generation_index
+        || progress.next_episode_index()
+            != checked_u63_mul_v1(run.batch_episodes(), generation_index)?
+        || progress.completed_episode_count() != progress.next_episode_index()
+        || parent_facts.parent_head_sha256.is_some() != expected_parent_options
+        || parent_facts.last_update_evidence_sha256.is_some() != expected_parent_options
+        || parent_facts.checkpoint_manifest_sha256 != parent_checkpoint.checkpoint_manifest_sha256()
+        || parent_facts.checkpoint_payload_sha256 != parent_checkpoint.checkpoint_payload_sha256()
+        || parent_facts.logical_state_sha256 != parent_checkpoint.logical_state_sha256()
+        || parent_facts.model_parameter_sha256 != parent_checkpoint.model_parameter_sha256()
+        || parent_facts.train_state_sha256 != parent_checkpoint.train_state_sha256()
+    {
+        return Err(error_v1(UpdateGroupV1ErrorKind::CheckpointMismatch));
+    }
+
+    let context = UpdateEvidenceChainContextV1 {
+        run_sha256: parse_digest_v1(run.run_sha256())?,
+        identity_bundle_sha256: parse_digest_v1(run.identity_bundle_sha256())?,
+        batch_episodes: run.batch_episodes(),
+        checkpoint_segment_updates,
+        next_update_index,
+        previous_update_evidence_sha256: parent_facts.last_update_evidence_sha256,
+        progress: *progress,
+        model_parameter_sha256: parent_checkpoint.model_parameter_sha256(),
+        train_state_sha256: parent_checkpoint.train_state_sha256(),
+        scorer_bias_anchor_bits,
+    };
+    validate_context_run_v1(run, &context)?;
+    Ok(context)
+}
+
 /// Builds a complete group from one opaque prepared-update guard and advances
 /// the consumed evidence context without mutating the live executor.
 ///
@@ -513,15 +856,55 @@ pub fn build_update_group_v1(
 ) -> Result<ValidatedUpdateGroupAdvanceV1> {
     validate_context_run_v1(run, &context)?;
     validate_prepared_execution_config_v1(run, prepared.execution_config_v1())?;
-    let predecessor = prepared
+    let predecessor_checkpoint = prepared
         .pre_update_checkpoint_candidate_v1()
         .map_err(|_| error_v1(UpdateGroupV1ErrorKind::CheckpointMismatch))?;
-    validate_predecessor_checkpoint_v1(run, &context, &predecessor)?;
-    let observation = prepared.observation();
-    let checkpoint = prepared.checkpoint_candidate();
-    validate_observation_checkpoint_v1(run, &context, observation, checkpoint)?;
+    let predecessor = UpdateCheckpointFactsV1::from_checkpoint_v1(&predecessor_checkpoint);
+    let successor = UpdateCheckpointFactsV1::from_checkpoint_v1(prepared.checkpoint_candidate());
+    build_update_group_from_parts_v1(
+        run,
+        context,
+        &predecessor,
+        prepared.observation(),
+        &successor,
+    )
+}
+
+pub(crate) fn build_compact_update_group_v2(
+    run: &ValidatedTrainRunV2,
+    context: UpdateEvidenceChainContextV1,
+    transition: NativeTrainingPreparedTransitionV2,
+) -> Result<(
+    ValidatedUpdateGroupAdvanceV1,
+    NativeTrainingIntrinsicCheckpointFactsV2,
+    Option<NativeTrainingCheckpointCandidateV1>,
+)> {
+    validate_context_run_v1(run, &context)?;
+    validate_prepared_execution_config_v1(run, transition.execution_config_v2())?;
+    let (predecessor, successor, observation, final_checkpoint) = transition.into_parts_v2();
+    let predecessor_view = UpdateCheckpointFactsV1::from_intrinsic_v2(&predecessor);
+    let successor_view = UpdateCheckpointFactsV1::from_intrinsic_v2(&successor);
+    let advance = build_update_group_from_parts_v1(
+        run,
+        context,
+        &predecessor_view,
+        &observation,
+        &successor_view,
+    )?;
+    Ok((advance, successor, final_checkpoint))
+}
+
+fn build_update_group_from_parts_v1(
+    run: &ValidatedTrainRunV2,
+    context: UpdateEvidenceChainContextV1,
+    predecessor: &UpdateCheckpointFactsV1,
+    observation: &NativeTrainingUpdateObservationV2,
+    successor: &UpdateCheckpointFactsV1,
+) -> Result<ValidatedUpdateGroupAdvanceV1> {
+    validate_predecessor_checkpoint_v1(run, &context, predecessor)?;
+    validate_observation_checkpoint_v1(run, &context, observation, successor)?;
     preflight_observation_cardinality_v1(observation)?;
-    let evidence = evidence_from_observation_v1(run, &context, observation, checkpoint)?;
+    let evidence = evidence_from_observation_v1(run, &context, observation, successor)?;
     let previous_update_evidence_sha256 = context
         .previous_update_evidence_sha256
         .map(lower_hex_raw32_v1);
@@ -547,7 +930,7 @@ pub fn build_update_group_v1(
     validate_and_advance_wire_v1(run, context, wire, canonical_bytes)
 }
 
-fn validate_prepared_execution_config_v1(
+pub(crate) fn validate_prepared_execution_config_v1(
     run: &ValidatedTrainRunV2,
     config: &NativeTrainingExecutionConfigV1,
 ) -> Result<()> {
@@ -580,6 +963,8 @@ fn validate_prepared_execution_config_v1(
         || config.measure_broker_service_time != record.topology.measure_broker_service_time
         || config.value_coefficient_bits != expected_value_coefficient
         || config.learning_rate_bits != expected_learning_rate
+        || config.numerical_backend != NativeTrainingNumericalBackendV1::Sequential
+        || config.backward_worker_limit != 1
     {
         return Err(error_v1(UpdateGroupV1ErrorKind::RunBinding));
     }
@@ -589,9 +974,9 @@ fn validate_prepared_execution_config_v1(
 fn validate_predecessor_checkpoint_v1(
     run: &ValidatedTrainRunV2,
     context: &UpdateEvidenceChainContextV1,
-    predecessor: &NativeTrainingCheckpointCandidateV1,
+    predecessor: &UpdateCheckpointFactsV1,
 ) -> Result<()> {
-    let progress = predecessor.progress();
+    let progress = predecessor.progress;
     let expected_policy = checked_u63_add_v1(
         context.progress.learner_policy_steps_by_seat().p0(),
         context.progress.learner_policy_steps_by_seat().p1(),
@@ -600,12 +985,14 @@ fn validate_predecessor_checkpoint_v1(
         context.progress.learner_physical_decisions_by_seat().p0(),
         context.progress.learner_physical_decisions_by_seat().p1(),
     )?;
-    if predecessor.base_seed() != run.record().schedule.base_seed
-        || predecessor.batch_episodes() != run.batch_episodes()
-        || predecessor.adam_step() != context.next_update_index - 1
-        || predecessor.scorer_bias_anchor_bits() != context.scorer_bias_anchor_bits
-        || predecessor.digests().model_parameter_sha256 != context.model_parameter_sha256
-        || predecessor.digests().native_state_sha256 != context.train_state_sha256
+    if predecessor.base_seed != run.record().schedule.base_seed
+        || predecessor.batch_episodes != run.batch_episodes()
+        || predecessor.numerical_backend != NativeTrainingNumericalBackendV1::Sequential
+        || predecessor.backward_worker_limit != 1
+        || predecessor.adam_step != context.next_update_index - 1
+        || predecessor.scorer_bias_anchor_bits != context.scorer_bias_anchor_bits
+        || predecessor.model_parameter_sha256 != context.model_parameter_sha256
+        || predecessor.train_state_sha256 != context.train_state_sha256
         || progress.next_episode_index != context.progress.next_episode_index()
         || progress.successful_update_count != context.progress.successful_update_count()
         || progress.completed_episode_count != context.progress.completed_episode_count()
@@ -724,7 +1111,7 @@ fn validate_observation_checkpoint_v1(
     run: &ValidatedTrainRunV2,
     context: &UpdateEvidenceChainContextV1,
     observation: &NativeTrainingUpdateObservationV2,
-    checkpoint: &NativeTrainingCheckpointCandidateV1,
+    successor: &UpdateCheckpointFactsV1,
 ) -> Result<()> {
     let record = run.record();
     let expected_before = context.next_update_index - 1;
@@ -736,13 +1123,15 @@ fn validate_observation_checkpoint_v1(
         || observation.episode_count != run.batch_episodes()
         || observation.adam_step_before != expected_before
         || observation.adam_step_after != context.next_update_index
-        || checkpoint.base_seed() != record.schedule.base_seed
-        || checkpoint.batch_episodes() != run.batch_episodes()
-        || checkpoint.adam_step() != context.next_update_index
-        || checkpoint.scorer_bias_anchor_bits() != context.scorer_bias_anchor_bits
-        || checkpoint.progress().successful_update_count != context.next_update_index
-        || checkpoint.progress().next_episode_index != expected_end
-        || checkpoint.progress().completed_episode_count != expected_end
+        || successor.base_seed != record.schedule.base_seed
+        || successor.batch_episodes != run.batch_episodes()
+        || successor.numerical_backend != NativeTrainingNumericalBackendV1::Sequential
+        || successor.backward_worker_limit != 1
+        || successor.adam_step != context.next_update_index
+        || successor.scorer_bias_anchor_bits != context.scorer_bias_anchor_bits
+        || successor.progress.successful_update_count != context.next_update_index
+        || successor.progress.next_episode_index != expected_end
+        || successor.progress.completed_episode_count != expected_end
         || u64::try_from(observation.worker_count).ok() != Some(topology.worker_count)
         || u64::try_from(observation.sessions_per_worker).ok() != Some(topology.sessions_per_worker)
         || u64::try_from(observation.logical_actor_count).ok() != Some(topology.logical_actor_count)
@@ -753,7 +1142,7 @@ fn validate_observation_checkpoint_v1(
     let model_before = parse_digest_v1(&observation.model_digest_before)?;
     let model_after = parse_digest_v1(&observation.model_digest_after)?;
     if model_before != context.model_parameter_sha256
-        || model_after != checkpoint.digests().model_parameter_sha256
+        || model_after != successor.model_parameter_sha256
     {
         return Err(error_v1(UpdateGroupV1ErrorKind::CheckpointMismatch));
     }
@@ -764,7 +1153,7 @@ fn evidence_from_observation_v1(
     run: &ValidatedTrainRunV2,
     context: &UpdateEvidenceChainContextV1,
     observation: &NativeTrainingUpdateObservationV2,
-    checkpoint: &NativeTrainingCheckpointCandidateV1,
+    successor: &UpdateCheckpointFactsV1,
 ) -> Result<UpdateEvidenceWireV1> {
     let expected_k = usize::try_from(run.batch_episodes())
         .map_err(|_| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
@@ -872,7 +1261,7 @@ fn evidence_from_observation_v1(
     let gauge = gauge_from_observation_v1(observation)?;
     let rollout_counts = rollout_from_observation_v1(observation)?;
     let progress_after = fold_progress_v1(&context.progress, &episodes)?;
-    validate_candidate_progress_v1(checkpoint, &progress_after)?;
+    validate_candidate_progress_v1(successor, &progress_after)?;
     let episode_end_exclusive =
         checked_u63_add_v1(observation.first_episode_index, observation.episode_count)?;
 
@@ -903,7 +1292,7 @@ fn evidence_from_observation_v1(
         episodes,
         model_parameter_sha256_before: observation.model_digest_before.clone(),
         model_parameter_sha256_after: observation.model_digest_after.clone(),
-        train_state_sha256_after: checkpoint.native_state_sha256_hex(),
+        train_state_sha256_after: lower_hex_raw32_v1(successor.train_state_sha256),
         progress_after,
     })
 }
@@ -1200,10 +1589,10 @@ fn fold_progress_v1(
 }
 
 fn validate_candidate_progress_v1(
-    checkpoint: &NativeTrainingCheckpointCandidateV1,
+    successor: &UpdateCheckpointFactsV1,
     expected: &CheckpointProgressV3,
 ) -> Result<()> {
-    let progress = checkpoint.progress();
+    let progress = successor.progress;
     let expected_policy = checked_u63_add_v1(
         expected.learner_policy_steps_by_seat().p0(),
         expected.learner_policy_steps_by_seat().p1(),
@@ -1217,7 +1606,7 @@ fn validate_candidate_progress_v1(
         || progress.completed_episode_count != expected.completed_episode_count()
         || progress.learner_policy_step_count != expected_policy
         || progress.learner_physical_decision_count != expected_physical
-        || checkpoint.adam_step() != expected.successful_update_count()
+        || successor.adam_step != expected.successful_update_count()
     {
         return Err(error_v1(UpdateGroupV1ErrorKind::ProgressMismatch));
     }
@@ -1954,10 +2343,12 @@ mod tests {
     use crate::native_training_executor_v1::{
         NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1,
     };
+    use crate::native_training_store_boundary_v2::build_genesis_native_training_boundary_v2;
     use crate::native_training_store_checkpoint_v3::{
         build_genesis_checkpoint_manifest_v3, decode_genesis_checkpoint_manifest_v3,
     };
     use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
+    use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
     use serde_json::Value;
     use sha2::{Digest, Sha256};
     use std::sync::OnceLock;
@@ -1972,6 +2363,17 @@ mod tests {
     }
 
     static FIXTURE_V1: OnceLock<FixtureV1> = OnceLock::new();
+
+    #[test]
+    fn update_group_closed_maximum_matches_frozen_recurrence() {
+        let one = maximum_update_group_json_shape_v2(1, 1, 1).unwrap();
+        assert_eq!(one.token_bytes(), 3_496 + 754 + 125 + 216);
+        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_592);
+
+        let current = maximum_update_group_json_shape_v2(2, 65_536, 131_072).unwrap();
+        assert_eq!(current.token_bytes(), 36_508_556);
+        assert_eq!(current.canonical_document_bytes_v1().unwrap(), 36_508_557);
+    }
 
     fn execution_config_v1(run: &ValidatedTrainRunV2) -> NativeTrainingExecutionConfigV1 {
         NativeTrainingExecutionConfigV1 {
@@ -2075,6 +2477,135 @@ mod tests {
         .unwrap();
         let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
         (run, context)
+    }
+
+    #[test]
+    fn sealed_genesis_boundary_reconstructs_the_exact_evidence_context() {
+        let fixture = fixture_v1();
+        let run = decode_train_run_v2(&fixture.run_bytes).unwrap();
+        let genesis = decode_genesis_checkpoint_manifest_v3(
+            &fixture.genesis_manifest_bytes,
+            &fixture.genesis_payload,
+            &run,
+        )
+        .unwrap();
+        let segment = build_genesis_segment_manifest_v2(&run, &genesis).unwrap();
+        let boundary = build_genesis_native_training_boundary_v2(&run, &segment, &genesis).unwrap();
+        let expected = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let reconstructed = resume_update_evidence_chain_v1(&run, &boundary, &genesis).unwrap();
+
+        assert_eq!(
+            reconstructed.next_update_index(),
+            expected.next_update_index()
+        );
+        assert_eq!(reconstructed.progress(), expected.progress());
+        assert_eq!(
+            reconstructed.previous_update_evidence_sha256(),
+            expected.previous_update_evidence_sha256()
+        );
+        assert_eq!(
+            reconstructed.model_parameter_sha256(),
+            expected.model_parameter_sha256()
+        );
+        assert_eq!(
+            reconstructed.train_state_sha256(),
+            expected.train_state_sha256()
+        );
+        assert_eq!(
+            reconstructed.run_sha256_raw_v1(),
+            expected.run_sha256_raw_v1()
+        );
+        assert_eq!(
+            reconstructed.identity_bundle_sha256_raw_v1(),
+            expected.identity_bundle_sha256_raw_v1()
+        );
+        assert_eq!(
+            reconstructed.batch_episodes_v1(),
+            expected.batch_episodes_v1()
+        );
+        assert_eq!(
+            reconstructed.checkpoint_segment_updates_v1(),
+            expected.checkpoint_segment_updates_v1()
+        );
+        assert_eq!(
+            reconstructed.scorer_bias_anchor_bits_v1(),
+            expected.scorer_bias_anchor_bits_v1()
+        );
+    }
+
+    #[test]
+    fn compact_and_full_prepared_authorities_emit_identical_update_groups() {
+        let fixture = fixture_v1();
+        let run = decode_train_run_v2(&fixture.run_bytes).unwrap();
+        let genesis = decode_genesis_checkpoint_manifest_v3(
+            &fixture.genesis_manifest_bytes,
+            &fixture.genesis_payload,
+            &run,
+        )
+        .unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let mut full_executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let mut compact_executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+
+        let full_context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let full_prepared = full_executor.prepare_update_v2().unwrap();
+        let full = build_update_group_v1(&run, full_context, &full_prepared).unwrap();
+        let full_checkpoint = full_prepared.checkpoint_candidate().clone();
+
+        let compact_context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let predecessor = compact_executor.intrinsic_checkpoint_facts_v2().unwrap();
+        let mut candidate = compact_executor.begin_segment_candidate_v2().unwrap();
+        let transition = candidate.prepare_transition_v2(predecessor, true).unwrap();
+        let (compact, successor, compact_checkpoint) =
+            build_compact_update_group_v2(&run, compact_context, transition).unwrap();
+        let compact_checkpoint = compact_checkpoint.unwrap();
+        assert_eq!(compact_checkpoint, full_checkpoint);
+        assert_eq!(
+            compact_checkpoint.digests().model_parameter_sha256,
+            successor.model_parameter_sha256_v2()
+        );
+        assert_eq!(
+            compact_checkpoint.digests().native_state_sha256,
+            successor.train_state_sha256_v2()
+        );
+
+        assert_eq!(
+            compact.group().canonical_bytes(),
+            full.group().canonical_bytes()
+        );
+        assert_eq!(
+            compact.group().update_evidence_sha256(),
+            full.group().update_evidence_sha256()
+        );
+        let compact_context = compact.advanced_context();
+        let full_context = full.advanced_context();
+        assert_eq!(
+            compact_context.next_update_index(),
+            full_context.next_update_index()
+        );
+        assert_eq!(compact_context.progress(), full_context.progress());
+        assert_eq!(
+            compact_context.previous_update_evidence_sha256(),
+            full_context.previous_update_evidence_sha256()
+        );
+        assert_eq!(
+            compact_context.model_parameter_sha256(),
+            full_context.model_parameter_sha256()
+        );
+        assert_eq!(
+            compact_context.train_state_sha256(),
+            full_context.train_state_sha256()
+        );
     }
 
     fn group_value_v1() -> Value {
@@ -2222,6 +2753,22 @@ mod tests {
             .kind(),
             UpdateGroupV1ErrorKind::RunBinding,
             "loss evidence alone cannot authorize an update made with the wrong learning rate"
+        );
+        drop(prepared);
+
+        let predecessor = wrong_executor.intrinsic_checkpoint_facts_v2().unwrap();
+        let mut candidate = wrong_executor.begin_segment_candidate_v2().unwrap();
+        let transition = candidate.prepare_transition_v2(predecessor, true).unwrap();
+        assert_eq!(
+            build_compact_update_group_v2(
+                &run,
+                begin_update_evidence_chain_v1(&run, &genesis).unwrap(),
+                transition,
+            )
+            .unwrap_err()
+            .kind(),
+            UpdateGroupV1ErrorKind::RunBinding,
+            "compact evidence must use the sealed config that produced its transition"
         );
     }
 

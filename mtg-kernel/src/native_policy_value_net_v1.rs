@@ -677,7 +677,7 @@ impl NativePolicyValueNetV1 {
         count
     }
 
-    pub(crate) fn parameter_manifest_sha256_v1(&self) -> String {
+    pub(crate) fn parameter_manifest_sha256_raw_v1(&self) -> [u8; 32] {
         let mut digest = Sha256::new();
         self.visit_parameters_v1(|name, shape, values| {
             let name_bytes = name.as_bytes();
@@ -692,7 +692,14 @@ impl NativePolicyValueNetV1 {
                 digest.update(value.to_le_bytes());
             }
         });
-        format!("{:x}", digest.finalize())
+        digest.finalize().into()
+    }
+
+    pub(crate) fn parameter_manifest_sha256_v1(&self) -> String {
+        self.parameter_manifest_sha256_raw_v1()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 
     pub(crate) fn parameter_snapshot_v1(&self) -> Vec<NativeNamedParameterV1> {
@@ -747,7 +754,7 @@ impl NativePolicyValueNetV1 {
         Ok(())
     }
 
-    fn validate_parameters_v1(&self) -> Result<(), NativePolicyValueErrorV1> {
+    pub(crate) fn validate_parameters_v1(&self) -> Result<(), NativePolicyValueErrorV1> {
         let expected_embedding = checked_product(
             self.config.card_vocab_size,
             self.config.card_embedding_dim,
@@ -786,7 +793,10 @@ impl NativePolicyValueNetV1 {
         Ok(())
     }
 
-    fn visit_parameters_v1(&self, mut visitor: impl FnMut(&'static str, &[usize], &[f32])) {
+    pub(crate) fn visit_parameters_v1(
+        &self,
+        mut visitor: impl FnMut(&'static str, &[usize], &[f32]),
+    ) {
         visitor(
             "card_embedding.weight",
             &[CARD_VOCAB_SIZE_V1, CARD_EMBEDDING_DIM_V1],
@@ -1344,6 +1354,14 @@ mod tests {
         assert_eq!(
             model.parameter_manifest_sha256_v1(),
             fixture.parameter_manifest.sha256
+        );
+        assert_eq!(
+            model
+                .parameter_manifest_sha256_raw_v1()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+            model.parameter_manifest_sha256_v1()
         );
 
         let mut actual = Vec::new();

@@ -1921,6 +1921,11 @@ pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
 }
 
 #[cfg(test)]
+pub(crate) fn test_fixture_bytes_with_base_seed_v2(base_seed: u64) -> Vec<u8> {
+    tests::fixture_bytes_with_base_seed(base_seed)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::{json, Value};
@@ -2311,6 +2316,13 @@ mod tests {
 
     pub(super) fn fixture_bytes() -> Vec<u8> {
         to_canonical_json_bytes_v1(&fixture_record(), CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    pub(super) fn fixture_bytes_with_base_seed(base_seed: u64) -> Vec<u8> {
+        let mut record = fixture_record();
+        record.schedule.base_seed = base_seed;
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
 
     fn assert_record_error(record: TrainRunV2, expected: TrainRunV2ErrorKind) {

@@ -48,10 +48,45 @@ pub use crate::native_training_phase_diagnostic_v1::{
 use crate::native_training_store_v2::NativeTrainingPersistenceReceiptV2;
 use crate::rl::PlayerSeatV1;
 use sha2::{Digest, Sha256};
+#[cfg(test)]
+use std::cell::Cell;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
+
+#[cfg(test)]
+thread_local! {
+    static SEGMENT_CANDIDATE_CLONE_COUNT_V2: Cell<u64> = const { Cell::new(0) };
+    static SEGMENT_CANDIDATE_UPDATE_ATTEMPT_COUNT_V2: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_segment_candidate_counts_for_test_v2() {
+    SEGMENT_CANDIDATE_CLONE_COUNT_V2.with(|count| count.set(0));
+    SEGMENT_CANDIDATE_UPDATE_ATTEMPT_COUNT_V2.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn segment_candidate_counts_for_test_v2() -> (u64, u64) {
+    let clones = SEGMENT_CANDIDATE_CLONE_COUNT_V2.with(Cell::get);
+    let update_attempts = SEGMENT_CANDIDATE_UPDATE_ATTEMPT_COUNT_V2.with(Cell::get);
+    (clones, update_attempts)
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeTrainingPrecloneMutationForTestV2 {
+    OptimizerMoment,
+    ModelParameter,
+    Progress,
+    ScorerAnchor,
+    BaseSeed,
+    BatchEpisodes,
+    NumericalBackend,
+    BackwardWorkerLimit,
+}
 
 /// In-process update configuration, not a serialized or CLI contract.
 ///
@@ -257,6 +292,130 @@ impl From<NativeTrainingProgressV1> for NativeTrainerProgressV2 {
             learner_policy_step_count: progress.learner_policy_step_count,
         }
     }
+}
+
+/// Payload-free intrinsic identity of one validated live checkpoint state.
+///
+/// This is a sealed in-process authority, not a record schema. It deliberately
+/// owns no checkpoint snapshot or payload and cannot be cloned or serialized.
+/// Store orchestration may compare these facts before it permits candidate
+/// cloning, rollout, or artifact allocation.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct NativeTrainingIntrinsicCheckpointFactsV2 {
+    base_seed: u64,
+    batch_episodes: u64,
+    numerical_backend: NativeTrainingNumericalBackendV1,
+    backward_worker_limit: usize,
+    progress: NativeTrainingProgressV1,
+    adam_step: u64,
+    scorer_bias_anchor_bits: u32,
+    model_parameter_sha256: [u8; 32],
+    train_state_sha256: [u8; 32],
+}
+
+impl NativeTrainingIntrinsicCheckpointFactsV2 {
+    pub(crate) const fn base_seed_v2(&self) -> u64 {
+        self.base_seed
+    }
+
+    pub(crate) const fn batch_episodes_v2(&self) -> u64 {
+        self.batch_episodes
+    }
+
+    pub(crate) const fn numerical_backend_v2(&self) -> NativeTrainingNumericalBackendV1 {
+        self.numerical_backend
+    }
+
+    pub(crate) const fn backward_worker_limit_v2(&self) -> usize {
+        self.backward_worker_limit
+    }
+
+    pub(crate) const fn progress_v2(&self) -> NativeTrainingProgressV1 {
+        self.progress
+    }
+
+    pub(crate) const fn adam_step_v2(&self) -> u64 {
+        self.adam_step
+    }
+
+    pub(crate) const fn scorer_bias_anchor_bits_v2(&self) -> u32 {
+        self.scorer_bias_anchor_bits
+    }
+
+    pub(crate) const fn model_parameter_sha256_v2(&self) -> [u8; 32] {
+        self.model_parameter_sha256
+    }
+
+    pub(crate) const fn train_state_sha256_v2(&self) -> [u8; 32] {
+        self.train_state_sha256
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mutate_for_test_v2(
+        &mut self,
+        mutation: NativeTrainingIntrinsicFactMutationForTestV2,
+    ) {
+        match mutation {
+            NativeTrainingIntrinsicFactMutationForTestV2::BaseSeed => self.base_seed ^= 1,
+            NativeTrainingIntrinsicFactMutationForTestV2::BatchEpisodes => self.batch_episodes ^= 1,
+            NativeTrainingIntrinsicFactMutationForTestV2::NumericalBackend => {
+                self.numerical_backend = match self.numerical_backend {
+                    NativeTrainingNumericalBackendV1::Sequential => {
+                        NativeTrainingNumericalBackendV1::FixedFourPartitions
+                    }
+                    NativeTrainingNumericalBackendV1::FixedFourPartitions => {
+                        NativeTrainingNumericalBackendV1::Sequential
+                    }
+                }
+            }
+            NativeTrainingIntrinsicFactMutationForTestV2::BackwardWorkerLimit => {
+                self.backward_worker_limit ^= 1
+            }
+            NativeTrainingIntrinsicFactMutationForTestV2::NextEpisodeIndex => {
+                self.progress.next_episode_index ^= 1
+            }
+            NativeTrainingIntrinsicFactMutationForTestV2::SuccessfulUpdateCount => {
+                self.progress.successful_update_count ^= 1
+            }
+            NativeTrainingIntrinsicFactMutationForTestV2::CompletedEpisodeCount => {
+                self.progress.completed_episode_count ^= 1
+            }
+            NativeTrainingIntrinsicFactMutationForTestV2::LearnerPhysicalDecisionCount => {
+                self.progress.learner_physical_decision_count ^= 1
+            }
+            NativeTrainingIntrinsicFactMutationForTestV2::LearnerPolicyStepCount => {
+                self.progress.learner_policy_step_count ^= 1
+            }
+            NativeTrainingIntrinsicFactMutationForTestV2::AdamStep => self.adam_step ^= 1,
+            NativeTrainingIntrinsicFactMutationForTestV2::ScorerBiasAnchorBits => {
+                self.scorer_bias_anchor_bits ^= 1
+            }
+            NativeTrainingIntrinsicFactMutationForTestV2::ModelParameterSha256 => {
+                self.model_parameter_sha256[0] ^= 1
+            }
+            NativeTrainingIntrinsicFactMutationForTestV2::TrainStateSha256 => {
+                self.train_state_sha256[0] ^= 1
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeTrainingIntrinsicFactMutationForTestV2 {
+    BaseSeed,
+    BatchEpisodes,
+    NumericalBackend,
+    BackwardWorkerLimit,
+    NextEpisodeIndex,
+    SuccessfulUpdateCount,
+    CompletedEpisodeCount,
+    LearnerPhysicalDecisionCount,
+    LearnerPolicyStepCount,
+    AdamStep,
+    ScorerBiasAnchorBits,
+    ModelParameterSha256,
+    TrainStateSha256,
 }
 
 /// Complete, verified checkpoint material held in memory. Persistence layers
@@ -645,6 +804,54 @@ fn bootstrap_executor_error_v1(
     NativeTrainingExecutorErrorV1::with_diagnostic(kind, code, error)
 }
 
+/// One validated candidate transition carrying its exact intrinsic predecessor
+/// and successor authorities. This crate-private value is move-only and owns
+/// no public record or serialization surface.
+#[derive(Debug)]
+pub(crate) struct NativeTrainingPreparedTransitionV2 {
+    execution_config: Arc<NativeTrainingExecutionConfigV1>,
+    predecessor: NativeTrainingIntrinsicCheckpointFactsV2,
+    successor: NativeTrainingIntrinsicCheckpointFactsV2,
+    observation: NativeTrainingUpdateObservationV2,
+    final_checkpoint: Option<NativeTrainingCheckpointCandidateV1>,
+}
+
+impl NativeTrainingPreparedTransitionV2 {
+    /// Returns the exact immutable configuration authority owned by the
+    /// candidate that produced this transition. Store construction must use
+    /// this sealed projection rather than accepting a second raw config.
+    pub(crate) fn execution_config_v2(&self) -> &NativeTrainingExecutionConfigV1 {
+        &self.execution_config
+    }
+
+    pub(crate) fn into_parts_v2(
+        self,
+    ) -> (
+        NativeTrainingIntrinsicCheckpointFactsV2,
+        NativeTrainingIntrinsicCheckpointFactsV2,
+        NativeTrainingUpdateObservationV2,
+        Option<NativeTrainingCheckpointCandidateV1>,
+    ) {
+        (
+            self.predecessor,
+            self.successor,
+            self.observation,
+            self.final_checkpoint,
+        )
+    }
+}
+
+/// One isolated trainer clone used for an ordered sequence of ordinary native
+/// updates. Dropping the guard discards every candidate mutation and leaves the
+/// exclusively borrowed live executor unchanged.
+#[must_use = "dropping a segment candidate aborts it without advancing the executor"]
+pub(crate) struct NativeTrainingSegmentCandidateV2<'executor> {
+    executor: &'executor mut NativeTrainingExecutorV1,
+    config: Arc<NativeTrainingExecutionConfigV1>,
+    update_config: NativeTrainerUpdateConfigV2,
+    candidate_trainer: NativeTrainerStateV2,
+}
+
 /// A prepared update owns the complete candidate trainer, observation, and
 /// checkpoint while exclusively borrowing the live executor.
 ///
@@ -657,8 +864,7 @@ fn bootstrap_executor_error_v1(
 /// publication is in flight.
 #[must_use = "dropping a prepared update aborts it without advancing the executor"]
 pub struct NativeTrainingPreparedUpdateV2<'executor> {
-    executor: &'executor mut NativeTrainingExecutorV1,
-    candidate_trainer: NativeTrainerStateV2,
+    candidate: NativeTrainingSegmentCandidateV2<'executor>,
     observation: NativeTrainingUpdateObservationV2,
     checkpoint: NativeTrainingCheckpointCandidateV1,
 }
@@ -679,7 +885,7 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
     /// run record to the actual executor without exposing the executor itself
     /// or adding a second, caller-supplied configuration authority.
     pub(crate) fn execution_config_v1(&self) -> &NativeTrainingExecutionConfigV1 {
-        self.executor.config()
+        self.candidate.executor.config()
     }
 
     /// Re-exports the unchanged live predecessor as a verified checkpoint.
@@ -692,7 +898,7 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
     pub(crate) fn pre_update_checkpoint_candidate_v1(
         &self,
     ) -> Result<NativeTrainingCheckpointCandidateV1, NativeTrainingExecutorErrorV1> {
-        self.executor.checkpoint_candidate_v1()
+        self.candidate.executor.checkpoint_candidate_v1()
     }
 
     /// Binds the exact opaque manifest bytes that a future persistence layer
@@ -711,14 +917,12 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
         let expected_generation_index = self.checkpoint.adam_step();
         let expected_payload_sha256 = self.checkpoint.digests().payload_sha256;
         let Self {
-            executor,
-            candidate_trainer,
+            candidate,
             observation,
             checkpoint,
         } = self;
         NativeTrainingBoundUpdateV2 {
-            executor,
-            candidate_trainer,
+            candidate,
             observation,
             checkpoint,
             manifest_bytes,
@@ -738,8 +942,7 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
 /// executor unchanged.
 #[must_use = "dropping a publication-bound update aborts it without advancing the executor"]
 pub struct NativeTrainingBoundUpdateV2<'executor> {
-    executor: &'executor mut NativeTrainingExecutorV1,
-    candidate_trainer: NativeTrainerStateV2,
+    candidate: NativeTrainingSegmentCandidateV2<'executor>,
     observation: NativeTrainingUpdateObservationV2,
     checkpoint: NativeTrainingCheckpointCandidateV1,
     manifest_bytes: Box<[u8]>,
@@ -796,12 +999,11 @@ impl NativeTrainingBoundUpdateV2<'_> {
         }
 
         let Self {
-            executor,
-            candidate_trainer,
+            candidate,
             observation,
             ..
         } = self;
-        executor.trainer = candidate_trainer;
+        candidate.install_infallibly_v2();
         Ok(observation)
     }
 }
@@ -838,6 +1040,97 @@ impl std::fmt::Debug for NativeTrainingExecutorV1 {
             .field("progress", &self.progress())
             .field("has_snapshot_receipt", &self.snapshot_receipt.is_some())
             .finish_non_exhaustive()
+    }
+}
+
+impl<'executor> NativeTrainingSegmentCandidateV2<'executor> {
+    /// Runs one ordinary K-episode update on the isolated candidate. The exact
+    /// predecessor authority is consumed and independently rederived before
+    /// any candidate mutation. Only a requested final step exports a payload.
+    pub(crate) fn prepare_transition_v2(
+        &mut self,
+        expected_predecessor: NativeTrainingIntrinsicCheckpointFactsV2,
+        export_final_checkpoint: bool,
+    ) -> Result<NativeTrainingPreparedTransitionV2, NativeTrainingExecutorErrorV1> {
+        let predecessor =
+            intrinsic_checkpoint_facts_from_parts_v2(&self.config, &self.candidate_trainer)?;
+        if predecessor != expected_predecessor {
+            return Err(NativeTrainingExecutorErrorV1::redacted(
+                NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+                "segment_candidate_predecessor_mismatch",
+            ));
+        }
+        #[cfg(test)]
+        SEGMENT_CANDIDATE_UPDATE_ATTEMPT_COUNT_V2.with(|count| count.set(count.get() + 1));
+        let observation = self
+            .candidate_trainer
+            .run_even_batch_update_v2(&self.update_config)
+            .map_err(trainer_executor_error_v1)?;
+        let successor =
+            intrinsic_checkpoint_facts_from_parts_v2(&self.config, &self.candidate_trainer)?;
+        validate_current_observation_from_parts_v2(
+            &self.config,
+            &self.candidate_trainer,
+            &observation,
+        )?;
+        let final_checkpoint = if export_final_checkpoint {
+            let checkpoint = checkpoint_candidate_from_parts_with_facts_v2(
+                &self.config,
+                &self.candidate_trainer,
+                &successor,
+            )?;
+            if !checkpoint_matches_intrinsic_facts_v2(&checkpoint, &successor) {
+                return Err(NativeTrainingExecutorErrorV1::redacted(
+                    NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+                    "segment_final_checkpoint_mismatch",
+                ));
+            }
+            Some(checkpoint)
+        } else {
+            None
+        };
+        Ok(NativeTrainingPreparedTransitionV2 {
+            execution_config: Arc::clone(&self.config),
+            predecessor,
+            successor,
+            observation,
+            final_checkpoint,
+        })
+    }
+
+    fn into_single_update_v2(
+        self,
+        transition: NativeTrainingPreparedTransitionV2,
+    ) -> Result<NativeTrainingPreparedUpdateV2<'executor>, NativeTrainingExecutorErrorV1> {
+        let NativeTrainingPreparedTransitionV2 {
+            execution_config: _,
+            predecessor: _,
+            successor: _,
+            observation,
+            final_checkpoint,
+        } = transition;
+        let checkpoint = final_checkpoint.ok_or_else(|| {
+            NativeTrainingExecutorErrorV1::redacted(
+                NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+                "single_update_missing_checkpoint",
+            )
+        })?;
+        Ok(NativeTrainingPreparedUpdateV2 {
+            candidate: self,
+            observation,
+            checkpoint,
+        })
+    }
+
+    /// The sole candidate-to-live assignment. Callers must complete every
+    /// fallible persistence check before invoking this consuming operation.
+    pub(crate) fn install_infallibly_v2(self) {
+        let Self {
+            executor,
+            candidate_trainer,
+            ..
+        } = self;
+        executor.trainer = candidate_trainer;
     }
 }
 
@@ -949,6 +1242,63 @@ impl NativeTrainingExecutorV1 {
         self.trainer.progress_v2().into()
     }
 
+    #[cfg(test)]
+    pub(crate) fn mutate_live_for_preclone_test_v2(
+        &mut self,
+        mutation: NativeTrainingPrecloneMutationForTestV2,
+    ) {
+        match mutation {
+            NativeTrainingPrecloneMutationForTestV2::OptimizerMoment => {
+                self.trainer.mutate_optimizer_moment_for_preclone_test_v2()
+            }
+            NativeTrainingPrecloneMutationForTestV2::ModelParameter => {
+                self.trainer.mutate_model_parameter_for_preclone_test_v2()
+            }
+            NativeTrainingPrecloneMutationForTestV2::Progress => {
+                self.trainer.mutate_progress_for_preclone_test_v2()
+            }
+            NativeTrainingPrecloneMutationForTestV2::ScorerAnchor => {
+                self.trainer.mutate_scorer_anchor_for_preclone_test_v2()
+            }
+            NativeTrainingPrecloneMutationForTestV2::BaseSeed => self.config.run_base_seed ^= 1,
+            NativeTrainingPrecloneMutationForTestV2::BatchEpisodes => {
+                self.config.batch_episodes = self.config.batch_episodes.saturating_add(2)
+            }
+            NativeTrainingPrecloneMutationForTestV2::NumericalBackend => {
+                self.config.numerical_backend =
+                    NativeTrainingNumericalBackendV1::FixedFourPartitions
+            }
+            NativeTrainingPrecloneMutationForTestV2::BackwardWorkerLimit => {
+                self.config.backward_worker_limit = 2
+            }
+        }
+    }
+
+    /// Derives the complete live checkpoint identity without materializing a
+    /// train-state snapshot or payload.
+    pub(crate) fn intrinsic_checkpoint_facts_v2(
+        &self,
+    ) -> Result<NativeTrainingIntrinsicCheckpointFactsV2, NativeTrainingExecutorErrorV1> {
+        intrinsic_checkpoint_facts_from_parts_v2(&self.config, &self.trainer)
+    }
+
+    /// Clones one isolated candidate only after the caller has completed its
+    /// payload-free parent and representability checks.
+    pub(crate) fn begin_segment_candidate_v2(
+        &mut self,
+    ) -> Result<NativeTrainingSegmentCandidateV2<'_>, NativeTrainingExecutorErrorV1> {
+        validate_store_preparation_config_v2(&self.config)?;
+        let candidate_trainer = self.trainer.clone();
+        #[cfg(test)]
+        SEGMENT_CANDIDATE_CLONE_COUNT_V2.with(|count| count.set(count.get() + 1));
+        Ok(NativeTrainingSegmentCandidateV2 {
+            config: Arc::new(self.config.clone()),
+            update_config: self.update_config.clone(),
+            candidate_trainer,
+            executor: self,
+        })
+    }
+
     /// Computes and validates one complete update against an isolated clone of
     /// the live trainer, then returns an exclusive prepared-update guard.
     ///
@@ -969,30 +1319,11 @@ impl NativeTrainingExecutorV1 {
     pub fn prepare_update_v2(
         &mut self,
     ) -> Result<NativeTrainingPreparedUpdateV2<'_>, NativeTrainingExecutorErrorV1> {
-        if self.config.numerical_backend != NativeTrainingNumericalBackendV1::Sequential {
-            return Err(NativeTrainingExecutorErrorV1::redacted(
-                NativeTrainingExecutorErrorKindV1::Configuration,
-                "store_v2_requires_sequential_numerical_backend",
-            ));
-        }
-        let mut candidate_executor = Self {
-            config: self.config.clone(),
-            update_config: self.update_config.clone(),
-            trainer: self.trainer.clone(),
-            snapshot_receipt: None,
-        };
-        let observation = candidate_executor
-            .trainer
-            .run_even_batch_update_v2(&candidate_executor.update_config)
-            .map_err(trainer_executor_error_v1)?;
-        let checkpoint =
-            candidate_executor.checkpoint_candidate_for_observation_v2(&observation)?;
-        Ok(NativeTrainingPreparedUpdateV2 {
-            executor: self,
-            candidate_trainer: candidate_executor.trainer,
-            observation,
-            checkpoint,
-        })
+        validate_store_preparation_config_v2(&self.config)?;
+        let predecessor = self.intrinsic_checkpoint_facts_v2()?;
+        let mut candidate = self.begin_segment_candidate_v2()?;
+        let transition = candidate.prepare_transition_v2(predecessor, true)?;
+        candidate.into_single_update_v2(transition)
     }
 
     /// Runs exactly one K-episode transactional update and moves out the complete
@@ -1077,130 +1408,223 @@ impl NativeTrainingExecutorV1 {
     pub fn checkpoint_candidate_v1(
         &self,
     ) -> Result<NativeTrainingCheckpointCandidateV1, NativeTrainingExecutorErrorV1> {
-        validate_resumed_parts_v2(
-            self.config.run_base_seed,
-            self.config.batch_episodes,
-            self.trainer.train_state_v1(),
-            self.trainer.progress_v2(),
-        )
-        .map_err(trainer_executor_error_v1)?;
-        let snapshot = self
-            .trainer
-            .train_state_v1()
-            .snapshot_v1()
-            .map_err(|error| {
-                NativeTrainingExecutorErrorV1::with_diagnostic(
-                    NativeTrainingExecutorErrorKindV1::TrainState,
-                    "live_train_state_invalid",
-                    error,
-                )
-            })?;
-        let encoded =
-            encode_native_train_state_payload_v1(&snapshot).map_err(payload_executor_error_v1)?;
-        Ok(NativeTrainingCheckpointCandidateV1 {
-            base_seed: self.config.run_base_seed,
-            batch_episodes: self.config.batch_episodes,
-            numerical_backend: self.config.numerical_backend,
-            backward_worker_limit: self.config.backward_worker_limit,
-            progress: self.progress(),
-            adam_step: snapshot.adam_step,
-            scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
-            payload: encoded.bytes,
-            digests: encoded.digests,
-        })
+        let facts = self.intrinsic_checkpoint_facts_v2()?;
+        checkpoint_candidate_from_parts_with_facts_v2(&self.config, &self.trainer, &facts)
     }
 
     fn validate_current_observation_v2(
         &self,
         observation: &NativeTrainingUpdateObservationV2,
     ) -> Result<(), NativeTrainingExecutorErrorV1> {
-        let progress = self.progress();
-        let expected_first_episode_index = observation
-            .adam_step_before
-            .checked_mul(self.config.batch_episodes)
-            .ok_or_else(checkpoint_observation_mismatch_v1)?;
-        let expected_end_episode_index = observation
-            .first_episode_index
-            .checked_add(observation.episode_count)
-            .ok_or_else(checkpoint_observation_mismatch_v1)?;
-        let expected_logical_actor_count = self
-            .config
-            .worker_count
-            .checked_mul(self.config.sessions_per_worker)
-            .ok_or_else(checkpoint_observation_mismatch_v1)?;
-        let expected_episode_len = usize::try_from(self.config.batch_episodes)
-            .map_err(|_| checkpoint_observation_mismatch_v1())?;
-
-        if observation.trainer_contract_identity != NATIVE_TRAINER_CONTRACT_IDENTITY_V2
-            || observation.episode_count != self.config.batch_episodes
-            || observation.first_episode_index != expected_first_episode_index
-            || expected_end_episode_index != progress.next_episode_index
-            || progress.completed_episode_count != expected_end_episode_index
-            || observation.adam_step_before.checked_add(1) != Some(observation.adam_step_after)
-            || observation.adam_step_after != progress.successful_update_count
-            || observation.worker_count != self.config.worker_count
-            || observation.sessions_per_worker != self.config.sessions_per_worker
-            || observation.logical_actor_count != expected_logical_actor_count
-            || observation.broker_batch_target != self.config.broker_batch_target
-            || observation.episodes.len() != expected_episode_len
-            || observation.selected_outputs.len()
-                != usize::try_from(observation.learner_policy_step_count)
-                    .map_err(|_| checkpoint_observation_mismatch_v1())?
-            || observation.physical_terms.len()
-                != usize::try_from(observation.learner_group_count)
-                    .map_err(|_| checkpoint_observation_mismatch_v1())?
-            || self
-                .trainer
-                .train_state_v1()
-                .model_v1()
-                .parameter_manifest_sha256_v1()
-                != observation.model_digest_after
-        {
-            return Err(checkpoint_observation_mismatch_v1());
-        }
-
-        let mut physical_decision_count = 0u64;
-        let mut policy_step_count = 0u64;
-        let mut learner_group_count = 0u64;
-        let mut learner_policy_step_count = 0u64;
-        for (offset, episode) in observation.episodes.iter().enumerate() {
-            let expected_episode_index = observation
-                .first_episode_index
-                .checked_add(
-                    u64::try_from(offset).map_err(|_| checkpoint_observation_mismatch_v1())?,
-                )
-                .ok_or_else(checkpoint_observation_mismatch_v1)?;
-            let receipt = &episode.full_trajectory_receipt;
-            if episode.episode_index != expected_episode_index
-                || receipt.episode_index != expected_episode_index
-                || receipt.learner_seat != episode.learner_seat
-                || receipt.learner_policy_step_count != episode.learner_policy_step_count
-                || receipt.learner_physical_decision_count != episode.learner_group_count
-            {
-                return Err(checkpoint_observation_mismatch_v1());
-            }
-            physical_decision_count = physical_decision_count
-                .checked_add(receipt.physical_decision_count)
-                .ok_or_else(checkpoint_observation_mismatch_v1)?;
-            policy_step_count = policy_step_count
-                .checked_add(receipt.policy_step_count)
-                .ok_or_else(checkpoint_observation_mismatch_v1)?;
-            learner_group_count = learner_group_count
-                .checked_add(episode.learner_group_count)
-                .ok_or_else(checkpoint_observation_mismatch_v1)?;
-            learner_policy_step_count = learner_policy_step_count
-                .checked_add(episode.learner_policy_step_count)
-                .ok_or_else(checkpoint_observation_mismatch_v1)?;
-        }
-        if physical_decision_count != observation.physical_decision_count
-            || policy_step_count != observation.policy_step_count
-            || learner_group_count != observation.learner_group_count
-            || learner_policy_step_count != observation.learner_policy_step_count
-        {
-            return Err(checkpoint_observation_mismatch_v1());
-        }
-        Ok(())
+        validate_current_observation_from_parts_v2(&self.config, &self.trainer, observation)
     }
+}
+
+fn checkpoint_candidate_from_parts_with_facts_v2(
+    config: &NativeTrainingExecutionConfigV1,
+    trainer: &NativeTrainerStateV2,
+    facts: &NativeTrainingIntrinsicCheckpointFactsV2,
+) -> Result<NativeTrainingCheckpointCandidateV1, NativeTrainingExecutorErrorV1> {
+    if facts.base_seed != config.run_base_seed
+        || facts.batch_episodes != config.batch_episodes
+        || facts.numerical_backend != config.numerical_backend
+        || facts.backward_worker_limit != config.backward_worker_limit
+        || facts.progress != NativeTrainingProgressV1::from(trainer.progress_v2())
+    {
+        return Err(NativeTrainingExecutorErrorV1::redacted(
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+            "checkpoint_intrinsic_facts_mismatch",
+        ));
+    }
+    let snapshot = trainer.train_state_v1().snapshot_v1().map_err(|error| {
+        NativeTrainingExecutorErrorV1::with_diagnostic(
+            NativeTrainingExecutorErrorKindV1::TrainState,
+            "live_train_state_invalid",
+            error,
+        )
+    })?;
+    let encoded =
+        encode_native_train_state_payload_v1(&snapshot).map_err(payload_executor_error_v1)?;
+    let decoded = decode_native_train_state_payload_verified_v1(
+        &encoded.bytes,
+        snapshot.adam_step,
+        snapshot.scorer_bias_anchor_bits,
+        &encoded.digests,
+    )
+    .map_err(payload_executor_error_v1)?;
+    if snapshot.adam_step != facts.adam_step
+        || snapshot.scorer_bias_anchor_bits != facts.scorer_bias_anchor_bits
+        || encoded.digests.model_parameter_sha256 != facts.model_parameter_sha256
+        || encoded.digests.native_state_sha256 != facts.train_state_sha256
+        || decoded.digests.model_parameter_sha256 != facts.model_parameter_sha256
+        || decoded.digests.native_state_sha256 != facts.train_state_sha256
+    {
+        return Err(NativeTrainingExecutorErrorV1::redacted(
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+            "checkpoint_intrinsic_facts_mismatch",
+        ));
+    }
+    Ok(NativeTrainingCheckpointCandidateV1 {
+        base_seed: facts.base_seed,
+        batch_episodes: facts.batch_episodes,
+        numerical_backend: facts.numerical_backend,
+        backward_worker_limit: facts.backward_worker_limit,
+        progress: facts.progress,
+        adam_step: facts.adam_step,
+        scorer_bias_anchor_bits: facts.scorer_bias_anchor_bits,
+        payload: encoded.bytes,
+        digests: encoded.digests,
+    })
+}
+
+fn validate_current_observation_from_parts_v2(
+    config: &NativeTrainingExecutionConfigV1,
+    trainer: &NativeTrainerStateV2,
+    observation: &NativeTrainingUpdateObservationV2,
+) -> Result<(), NativeTrainingExecutorErrorV1> {
+    let progress = NativeTrainingProgressV1::from(trainer.progress_v2());
+    let expected_first_episode_index = observation
+        .adam_step_before
+        .checked_mul(config.batch_episodes)
+        .ok_or_else(checkpoint_observation_mismatch_v1)?;
+    let expected_end_episode_index = observation
+        .first_episode_index
+        .checked_add(observation.episode_count)
+        .ok_or_else(checkpoint_observation_mismatch_v1)?;
+    let expected_logical_actor_count = config
+        .worker_count
+        .checked_mul(config.sessions_per_worker)
+        .ok_or_else(checkpoint_observation_mismatch_v1)?;
+    let expected_episode_len =
+        usize::try_from(config.batch_episodes).map_err(|_| checkpoint_observation_mismatch_v1())?;
+
+    if observation.trainer_contract_identity != NATIVE_TRAINER_CONTRACT_IDENTITY_V2
+        || observation.episode_count != config.batch_episodes
+        || observation.first_episode_index != expected_first_episode_index
+        || expected_end_episode_index != progress.next_episode_index
+        || progress.completed_episode_count != expected_end_episode_index
+        || observation.adam_step_before.checked_add(1) != Some(observation.adam_step_after)
+        || observation.adam_step_after != progress.successful_update_count
+        || observation.worker_count != config.worker_count
+        || observation.sessions_per_worker != config.sessions_per_worker
+        || observation.logical_actor_count != expected_logical_actor_count
+        || observation.broker_batch_target != config.broker_batch_target
+        || observation.episodes.len() != expected_episode_len
+        || observation.selected_outputs.len()
+            != usize::try_from(observation.learner_policy_step_count)
+                .map_err(|_| checkpoint_observation_mismatch_v1())?
+        || observation.physical_terms.len()
+            != usize::try_from(observation.learner_group_count)
+                .map_err(|_| checkpoint_observation_mismatch_v1())?
+        || trainer
+            .train_state_v1()
+            .model_v1()
+            .parameter_manifest_sha256_v1()
+            != observation.model_digest_after
+    {
+        return Err(checkpoint_observation_mismatch_v1());
+    }
+
+    let mut physical_decision_count = 0u64;
+    let mut policy_step_count = 0u64;
+    let mut learner_group_count = 0u64;
+    let mut learner_policy_step_count = 0u64;
+    for (offset, episode) in observation.episodes.iter().enumerate() {
+        let expected_episode_index = observation
+            .first_episode_index
+            .checked_add(u64::try_from(offset).map_err(|_| checkpoint_observation_mismatch_v1())?)
+            .ok_or_else(checkpoint_observation_mismatch_v1)?;
+        let receipt = &episode.full_trajectory_receipt;
+        if episode.episode_index != expected_episode_index
+            || receipt.episode_index != expected_episode_index
+            || receipt.learner_seat != episode.learner_seat
+            || receipt.learner_policy_step_count != episode.learner_policy_step_count
+            || receipt.learner_physical_decision_count != episode.learner_group_count
+        {
+            return Err(checkpoint_observation_mismatch_v1());
+        }
+        physical_decision_count = physical_decision_count
+            .checked_add(receipt.physical_decision_count)
+            .ok_or_else(checkpoint_observation_mismatch_v1)?;
+        policy_step_count = policy_step_count
+            .checked_add(receipt.policy_step_count)
+            .ok_or_else(checkpoint_observation_mismatch_v1)?;
+        learner_group_count = learner_group_count
+            .checked_add(episode.learner_group_count)
+            .ok_or_else(checkpoint_observation_mismatch_v1)?;
+        learner_policy_step_count = learner_policy_step_count
+            .checked_add(episode.learner_policy_step_count)
+            .ok_or_else(checkpoint_observation_mismatch_v1)?;
+    }
+    if physical_decision_count != observation.physical_decision_count
+        || policy_step_count != observation.policy_step_count
+        || learner_group_count != observation.learner_group_count
+        || learner_policy_step_count != observation.learner_policy_step_count
+    {
+        return Err(checkpoint_observation_mismatch_v1());
+    }
+    Ok(())
+}
+
+fn intrinsic_checkpoint_facts_from_parts_v2(
+    config: &NativeTrainingExecutionConfigV1,
+    trainer: &NativeTrainerStateV2,
+) -> Result<NativeTrainingIntrinsicCheckpointFactsV2, NativeTrainingExecutorErrorV1> {
+    validate_resumed_parts_v2(
+        config.run_base_seed,
+        config.batch_episodes,
+        trainer.train_state_v1(),
+        trainer.progress_v2(),
+    )
+    .map_err(trainer_executor_error_v1)?;
+    let train_state = trainer.train_state_v1();
+    let train_state_sha256 = train_state.state_sha256_v1().map_err(|error| {
+        NativeTrainingExecutorErrorV1::with_diagnostic(
+            NativeTrainingExecutorErrorKindV1::TrainState,
+            "live_train_state_invalid",
+            error,
+        )
+    })?;
+    Ok(NativeTrainingIntrinsicCheckpointFactsV2 {
+        base_seed: config.run_base_seed,
+        batch_episodes: config.batch_episodes,
+        numerical_backend: config.numerical_backend,
+        backward_worker_limit: config.backward_worker_limit,
+        progress: trainer.progress_v2().into(),
+        adam_step: train_state.adam_step_v1(),
+        scorer_bias_anchor_bits: train_state.scorer_bias_anchor_f32_bits_v1(),
+        model_parameter_sha256: train_state.model_v1().parameter_manifest_sha256_raw_v1(),
+        train_state_sha256,
+    })
+}
+
+fn validate_store_preparation_config_v2(
+    config: &NativeTrainingExecutionConfigV1,
+) -> Result<(), NativeTrainingExecutorErrorV1> {
+    if config.numerical_backend != NativeTrainingNumericalBackendV1::Sequential
+        || config.backward_worker_limit != 1
+    {
+        return Err(NativeTrainingExecutorErrorV1::redacted(
+            NativeTrainingExecutorErrorKindV1::Configuration,
+            "store_v2_requires_sequential_numerical_backend",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn checkpoint_matches_intrinsic_facts_v2(
+    checkpoint: &NativeTrainingCheckpointCandidateV1,
+    facts: &NativeTrainingIntrinsicCheckpointFactsV2,
+) -> bool {
+    checkpoint.base_seed == facts.base_seed
+        && checkpoint.batch_episodes == facts.batch_episodes
+        && checkpoint.numerical_backend == facts.numerical_backend
+        && checkpoint.backward_worker_limit == facts.backward_worker_limit
+        && checkpoint.progress == facts.progress
+        && checkpoint.adam_step == facts.adam_step
+        && checkpoint.scorer_bias_anchor_bits == facts.scorer_bias_anchor_bits
+        && checkpoint.digests.model_parameter_sha256 == facts.model_parameter_sha256
+        && checkpoint.digests.native_state_sha256 == facts.train_state_sha256
 }
 
 fn checkpoint_observation_mismatch_v1() -> NativeTrainingExecutorErrorV1 {
@@ -1276,6 +1700,13 @@ fn digest_hex_v1(digest: [u8; 32]) -> String {
 mod tests {
     use super::*;
     use crate::common_model_snapshot_v1::common_model_snapshot_paths_v1;
+    use crate::native_policy_train_step_v1::{
+        reset_train_state_snapshot_call_count_for_test_v1,
+        train_state_snapshot_call_count_for_test_v1,
+    };
+    use crate::native_train_state_payload_v1::{
+        payload_encode_counts_for_test_v1, reset_payload_encode_counts_for_test_v1,
+    };
 
     fn burn_config_v1(batch_episodes: u64) -> NativeTrainingExecutionConfigV1 {
         NativeTrainingExecutionConfigV1 {
@@ -1302,6 +1733,153 @@ mod tests {
         observation.update_elapsed_ns = 0;
         observation.rollout_metrics.total_elapsed_ns = 0;
         observation
+    }
+
+    #[test]
+    fn intrinsic_checkpoint_facts_are_payload_free_and_match_full_export() {
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let config = burn_config_v1(2);
+        let executor =
+            NativeTrainingExecutorV1::from_common_model_snapshot_v1(config, &manifest, &payload)
+                .unwrap();
+
+        reset_train_state_snapshot_call_count_for_test_v1();
+        reset_payload_encode_counts_for_test_v1();
+        let facts = executor.intrinsic_checkpoint_facts_v2().unwrap();
+        assert_eq!(train_state_snapshot_call_count_for_test_v1(), 0);
+        assert_eq!(payload_encode_counts_for_test_v1(), (0, 0));
+
+        let checkpoint = executor.checkpoint_candidate_v1().unwrap();
+        assert_eq!(train_state_snapshot_call_count_for_test_v1(), 1);
+        assert_eq!(payload_encode_counts_for_test_v1(), (1, 1));
+        assert_eq!(facts.base_seed, checkpoint.base_seed());
+        assert_eq!(facts.batch_episodes, checkpoint.batch_episodes());
+        assert_eq!(facts.numerical_backend, checkpoint.numerical_backend());
+        assert_eq!(
+            facts.backward_worker_limit,
+            checkpoint.backward_worker_limit()
+        );
+        assert_eq!(facts.progress, checkpoint.progress());
+        assert_eq!(facts.adam_step, checkpoint.adam_step());
+        assert_eq!(
+            facts.scorer_bias_anchor_bits,
+            checkpoint.scorer_bias_anchor_bits()
+        );
+        assert_eq!(
+            facts.model_parameter_sha256,
+            checkpoint.digests().model_parameter_sha256
+        );
+        assert_eq!(
+            facts.train_state_sha256,
+            checkpoint.digests().native_state_sha256
+        );
+    }
+
+    #[test]
+    fn segment_candidate_runs_four_ordered_updates_with_only_one_final_export() {
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let config = burn_config_v1(2);
+        let mut executor =
+            NativeTrainingExecutorV1::from_common_model_snapshot_v1(config, &manifest, &payload)
+                .unwrap();
+        let predecessor = executor.intrinsic_checkpoint_facts_v2().unwrap();
+        reset_train_state_snapshot_call_count_for_test_v1();
+        reset_payload_encode_counts_for_test_v1();
+        reset_segment_candidate_counts_for_test_v2();
+
+        let mut candidate = executor.begin_segment_candidate_v2().unwrap();
+        assert_eq!(segment_candidate_counts_for_test_v2(), (1, 0));
+        let mut predecessor = predecessor;
+        let mut initial_predecessor = None;
+        let mut final_checkpoint = None;
+        for step in 0..4u64 {
+            let expected_progress = predecessor.progress;
+            let expected_model_sha256 = predecessor.model_parameter_sha256;
+            let expected_train_sha256 = predecessor.train_state_sha256;
+            let transition = candidate
+                .prepare_transition_v2(predecessor, step == 3)
+                .unwrap();
+            assert_eq!(segment_candidate_counts_for_test_v2(), (1, step + 1));
+            let NativeTrainingPreparedTransitionV2 {
+                execution_config: _,
+                predecessor: actual_predecessor,
+                successor,
+                observation,
+                final_checkpoint: exported,
+            } = transition;
+            assert_eq!(actual_predecessor.progress, expected_progress);
+            assert_eq!(
+                actual_predecessor.model_parameter_sha256,
+                expected_model_sha256
+            );
+            assert_eq!(actual_predecessor.train_state_sha256, expected_train_sha256);
+            assert_eq!(observation.adam_step_before, step);
+            assert_eq!(observation.adam_step_after, step + 1);
+            assert_eq!(successor.progress.successful_update_count, step + 1);
+            assert_eq!(successor.adam_step, step + 1);
+            if step == 0 {
+                initial_predecessor = Some(actual_predecessor);
+            }
+            if step < 3 {
+                assert!(exported.is_none());
+                assert_eq!(train_state_snapshot_call_count_for_test_v1(), 0);
+                assert_eq!(payload_encode_counts_for_test_v1(), (0, 0));
+            } else {
+                let exported = exported.unwrap();
+                assert!(checkpoint_matches_intrinsic_facts_v2(&exported, &successor));
+                final_checkpoint = Some(exported);
+                assert_eq!(train_state_snapshot_call_count_for_test_v1(), 1);
+                assert_eq!(payload_encode_counts_for_test_v1(), (1, 1));
+            }
+            predecessor = successor;
+        }
+        assert_eq!(
+            final_checkpoint.unwrap().progress().successful_update_count,
+            4
+        );
+        assert_eq!(segment_candidate_counts_for_test_v2(), (1, 4));
+        drop(candidate);
+
+        let live_after_drop = executor.intrinsic_checkpoint_facts_v2().unwrap();
+        assert_eq!(live_after_drop, initial_predecessor.unwrap());
+    }
+
+    #[test]
+    fn segment_candidate_rejects_a_wrong_predecessor_before_candidate_mutation() {
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let config = burn_config_v1(2);
+        let mut executor =
+            NativeTrainingExecutorV1::from_common_model_snapshot_v1(config, &manifest, &payload)
+                .unwrap();
+        let mut candidate = executor.begin_segment_candidate_v2().unwrap();
+        let baseline = intrinsic_checkpoint_facts_from_parts_v2(
+            &candidate.config,
+            &candidate.candidate_trainer,
+        )
+        .unwrap();
+        let mut wrong = intrinsic_checkpoint_facts_from_parts_v2(
+            &candidate.config,
+            &candidate.candidate_trainer,
+        )
+        .unwrap();
+        wrong.train_state_sha256[0] ^= 1;
+        reset_train_state_snapshot_call_count_for_test_v1();
+        reset_payload_encode_counts_for_test_v1();
+
+        let error = candidate.prepare_transition_v2(wrong, false).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding
+        );
+        assert_eq!(error.code(), "segment_candidate_predecessor_mismatch");
+        assert_eq!(train_state_snapshot_call_count_for_test_v1(), 0);
+        assert_eq!(payload_encode_counts_for_test_v1(), (0, 0));
+        let after = intrinsic_checkpoint_facts_from_parts_v2(
+            &candidate.config,
+            &candidate.candidate_trainer,
+        )
+        .unwrap();
+        assert_eq!(after, baseline);
     }
 
     #[test]

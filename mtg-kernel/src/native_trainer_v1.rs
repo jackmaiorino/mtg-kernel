@@ -1277,6 +1277,39 @@ impl NativeTrainerStateV2 {
         &self.train_state
     }
 
+    #[cfg(test)]
+    pub(crate) fn mutate_optimizer_moment_for_preclone_test_v2(&mut self) {
+        self.train_state
+            .mutate_optimizer_moment_for_preclone_test_v2();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mutate_model_parameter_for_preclone_test_v2(&mut self) {
+        self.train_state
+            .mutate_model_parameter_for_preclone_test_v2();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mutate_progress_for_preclone_test_v2(&mut self) {
+        self.progress.learner_policy_step_count = self
+            .progress
+            .learner_policy_step_count
+            .checked_add(1)
+            .expect("test-only progress mutation must remain representable");
+        assert!(validate_resumed_parts_v2(
+            self.base_seed,
+            self.batch_episodes,
+            &self.train_state,
+            self.progress,
+        )
+        .is_ok());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mutate_scorer_anchor_for_preclone_test_v2(&mut self) {
+        self.train_state.mutate_scorer_anchor_for_preclone_test_v2();
+    }
+
     pub(crate) fn run_even_batch_update_v2(
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
@@ -1718,7 +1751,7 @@ pub(crate) fn validate_resumed_parts_v2(
 ) -> Result<(), NativeTrainerErrorV1> {
     validate_batch_episodes_v2(batch_episodes)?;
     train_state
-        .snapshot_v1()
+        .validate_state_v1()
         .map_err(NativeTrainerErrorV1::Train)?;
     validate_progress_u63_v2(progress)?;
 
