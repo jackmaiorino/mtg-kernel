@@ -37,6 +37,9 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --release --locked --workspace --all-targets -- -D warnings
 
+      - name: Run non-Windows native Store feature Clippy
+        run: cargo clippy --release --locked -p mtg-kernel --all-targets --features native-training-store-v2-production -- -D warnings
+
   cross-platform-tests:
     name: Tests (${{ matrix.os }})
     strategy:
@@ -66,6 +69,11 @@ jobs:
 
       - name: Run Rust release tests
         run: cargo test --release --locked --workspace --all-targets
+
+      - name: Validate native Store production feature boundary
+        run: |
+          cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
+          cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
 
       - name: Validate canonical Pauper manifests
         run: uv run --no-sync python python/tools/generate_pauper_manifests.py --check --repo-root .

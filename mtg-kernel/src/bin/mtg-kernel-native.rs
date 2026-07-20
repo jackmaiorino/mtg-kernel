@@ -170,9 +170,10 @@ fn validate_windows_path_lexical(value: &str) -> Result<(), ()> {
             || matches!(component, "." | "..")
             || component.ends_with('.')
             || component.ends_with(' ')
+            || component.chars().any(char::is_control)
             || component
                 .bytes()
-                .any(|byte| byte < 0x20 || matches!(byte, b'<' | b'>' | b'"' | b'|' | b'?' | b'*'))
+                .any(|byte| matches!(byte, b'<' | b'>' | b'"' | b'|' | b'?' | b'*'))
             || is_reserved_windows_component(component)
         {
             return Err(());
@@ -504,6 +505,8 @@ mod tests {
         assert!(validate_windows_path_lexical("relative\\path").is_err());
         assert!(validate_windows_path_lexical("C:\\COM1.txt").is_err());
         assert!(validate_windows_path_lexical("C:\\lpt³").is_err());
+        assert!(validate_windows_path_lexical("C:\\del\u{7f}").is_err());
+        assert!(validate_windows_path_lexical("C:\\c1\u{85}").is_err());
         assert!(validate_value(ValueKind::GenerationIndex, &OsString::from("100000000")).is_err());
     }
 

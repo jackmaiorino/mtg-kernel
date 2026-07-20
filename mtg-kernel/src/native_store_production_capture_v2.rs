@@ -707,9 +707,10 @@ fn validate_drive_absolute_local_path(path: &Path) -> Result<()> {
                 || matches!(component, "." | "..")
                 || component.ends_with('.')
                 || component.ends_with(' ')
-                || component.bytes().any(|byte| {
-                    byte < 0x20 || matches!(byte, b'<' | b'>' | b'"' | b'|' | b'?' | b'*')
-                })
+                || component.chars().any(char::is_control)
+                || component
+                    .bytes()
+                    .any(|byte| matches!(byte, b'<' | b'>' | b'"' | b'|' | b'?' | b'*'))
             {
                 return Err(capture_error(
                     NativeStoreProductionCaptureErrorKindV2::Path,
@@ -1410,6 +1411,13 @@ mod tests {
     }
 
     #[test]
+    fn runtime_path_validation_rejects_ascii_and_unicode_controls() {
+        assert!(validate_drive_absolute_local_path(Path::new("C:\\safe")).is_ok());
+        assert!(validate_drive_absolute_local_path(Path::new("C:\\del\u{7f}")).is_err());
+        assert!(validate_drive_absolute_local_path(Path::new("C:\\c1\u{85}")).is_err());
+    }
+
+    #[test]
     fn pe32_plus_header_requires_structural_image_extents() {
         let header = valid_pe32_plus_header();
         assert_eq!(
@@ -1443,6 +1451,20 @@ mod tests {
                 .code(),
             "executable_characteristics_invalid"
         );
+    }
+
+    #[test]
+    fn current_test_executable_has_a_stable_real_pe32_plus_snapshot() {
+        let path = current_module_path().unwrap();
+        let _parent_chain = validate_and_open_parent_chain(&path).unwrap();
+        let mut primary = open_regular_read_only(&path).unwrap();
+        let first = capture_executable_handle(&mut primary).unwrap();
+        let mut secondary = open_regular_read_only(&path).unwrap();
+        let second = capture_executable_handle(&mut secondary).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.pe_machine, compiled_target_machine());
+        assert!(first.byte_len > 0);
+        assert!(first.pe_size_of_image_bytes > 0);
     }
 
     #[test]
