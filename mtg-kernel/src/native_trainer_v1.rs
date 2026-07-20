@@ -1055,6 +1055,7 @@ pub struct NativeTrainerPhysicalTermEvidenceV1 {
     pub joint_log_probability_bits: u32,
     pub value_bits: u32,
     pub terminal_return: i8,
+    pub substep_count: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1149,6 +1150,8 @@ pub(crate) struct NativeTrainerStateV2 {
     pending_test_train_revalidation_mutation: Option<NativePolicyTrainRevalidationTestMutationV1>,
     #[cfg(test)]
     pending_test_forward_worker_panic: bool,
+    #[cfg(test)]
+    pending_test_physical_substep_count_mutation: bool,
 }
 
 impl NativeTrainerStateV2 {
@@ -1210,6 +1213,8 @@ impl NativeTrainerStateV2 {
             pending_test_train_revalidation_mutation: None,
             #[cfg(test)]
             pending_test_forward_worker_panic: false,
+            #[cfg(test)]
+            pending_test_physical_substep_count_mutation: false,
         })
     }
 
@@ -1238,6 +1243,8 @@ impl NativeTrainerStateV2 {
             pending_test_train_revalidation_mutation: None,
             #[cfg(test)]
             pending_test_forward_worker_panic: false,
+            #[cfg(test)]
+            pending_test_physical_substep_count_mutation: false,
         })
     }
 
@@ -1274,6 +1281,9 @@ impl NativeTrainerStateV2 {
         let test_train_revalidation_mutation = self.pending_test_train_revalidation_mutation.take();
         #[cfg(test)]
         let test_forward_worker_panic = std::mem::take(&mut self.pending_test_forward_worker_panic);
+        #[cfg(test)]
+        let test_physical_substep_count_mutation =
+            std::mem::take(&mut self.pending_test_physical_substep_count_mutation);
         validate_update_config_v2(config)?;
         if config.batch_episodes != self.batch_episodes {
             return Err(NativeTrainerErrorV1::InvalidUpdateConfig("batch_episodes"));
@@ -1423,6 +1433,8 @@ impl NativeTrainerStateV2 {
             f32::from_bits(config.value_coefficient_bits),
             f32::from_bits(config.learning_rate_bits),
             config.worker_count,
+            #[cfg(test)]
+            test_physical_substep_count_mutation,
         )?;
         let parameters_after = candidate_train_state.model_v1().parameter_snapshot_v1();
         let model_digest_after = candidate_train_state
@@ -1469,6 +1481,7 @@ impl NativeTrainerStateV2 {
                 joint_log_probability_bits: term.joint_log_probability.to_bits(),
                 value_bits: term.value.to_bits(),
                 terminal_return: term.terminal_return,
+                substep_count: term.substep_count,
             })
             .collect();
         let mut evidence = NativeTrainerUpdateEvidenceV2 {
@@ -1550,6 +1563,16 @@ impl NativeTrainerStateV2 {
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         assert!(!self.pending_test_forward_worker_panic);
         self.pending_test_forward_worker_panic = true;
+        self.run_even_batch_update_v2(config)
+    }
+
+    #[cfg(test)]
+    fn run_even_batch_update_with_physical_substep_count_mutation_v2(
+        &mut self,
+        config: &NativeTrainerUpdateConfigV2,
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+        assert!(!self.pending_test_physical_substep_count_mutation);
+        self.pending_test_physical_substep_count_mutation = true;
         self.run_even_batch_update_v2(config)
     }
 }
@@ -1882,6 +1905,7 @@ fn train_grouped_candidate_v1(
     value_coefficient: f32,
     learning_rate: f32,
     recompute_worker_limit: usize,
+    #[cfg(test)] test_physical_substep_count_mutation: bool,
 ) -> Result<
     (
         crate::native_policy_train_step_v1::NativePolicyTrainStepResultV1,
@@ -2000,6 +2024,19 @@ fn train_grouped_candidate_v1(
             recompute_worker_limit,
         )
         .map_err(NativeTrainerErrorV1::Train)?;
+    #[cfg(test)]
+    let mut result = result;
+    #[cfg(test)]
+    if test_physical_substep_count_mutation {
+        let term =
+            result
+                .physical_terms
+                .first_mut()
+                .ok_or(NativeTrainerErrorV1::GroupingInvariant(
+                    "test requires one physical loss term",
+                ))?;
+        term.substep_count ^= 1;
+    }
     verify_recomputed_outputs_v1(&source_groups, &terminal_returns, &result)?;
     if episode_evidence.len() != episode_capacity {
         return Err(NativeTrainerErrorV1::GroupingInvariant(
@@ -2030,6 +2067,7 @@ fn verify_recomputed_outputs_v1(
         ));
     }
     let mut output_index = 0usize;
+    let mut selected_output_group_counts = vec![0_u32; source_groups.len()];
     for (group_index, group) in source_groups.iter().enumerate() {
         for (substep_index, substep) in group.substeps.iter().enumerate() {
             let output = &result.selected_outputs[output_index];
@@ -2070,6 +2108,10 @@ fn verify_recomputed_outputs_v1(
                     substep_index,
                 });
             }
+            selected_output_group_counts[output.group_index] = selected_output_group_counts
+                [output.group_index]
+                .checked_add(1)
+                .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
             output_index += 1;
         }
         let term = &result.physical_terms[group_index];
@@ -2094,6 +2136,33 @@ fn verify_recomputed_outputs_v1(
                 substep_index: 0,
             });
         }
+        verify_physical_term_substep_count_v1(
+            group_index,
+            group.substeps.len(),
+            selected_output_group_counts[group_index],
+            term.substep_count,
+        )?;
+    }
+    Ok(())
+}
+
+fn verify_physical_term_substep_count_v1(
+    group_index: usize,
+    direct_group_substep_count: usize,
+    selected_output_substep_count: u32,
+    recorded_substep_count: u32,
+) -> Result<(), NativeTrainerErrorV1> {
+    let direct_group_substep_count = u32::try_from(direct_group_substep_count)
+        .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
+    if direct_group_substep_count == 0
+        || direct_group_substep_count != selected_output_substep_count
+        || direct_group_substep_count != recorded_substep_count
+    {
+        return Err(NativeTrainerErrorV1::RecomputedOutputMismatch {
+            field: "substep_count",
+            group_index,
+            substep_index: 0,
+        });
     }
     Ok(())
 }
@@ -2252,6 +2321,26 @@ mod tests {
             .unwrap()
             .values[0]
             .to_bits()
+    }
+
+    #[test]
+    fn physical_term_substep_count_requires_direct_positive_histogram_match() {
+        assert_eq!(verify_physical_term_substep_count_v1(7, 2, 2, 2), Ok(()));
+        for (direct, selected, recorded) in [(0, 0, 0), (2, 1, 2), (2, 2, 1)] {
+            assert_eq!(
+                verify_physical_term_substep_count_v1(7, direct, selected, recorded),
+                Err(NativeTrainerErrorV1::RecomputedOutputMismatch {
+                    field: "substep_count",
+                    group_index: 7,
+                    substep_index: 0,
+                })
+            );
+        }
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(
+            verify_physical_term_substep_count_v1(7, u32::MAX as usize + 1, 1, 1),
+            Err(NativeTrainerErrorV1::CounterOverflow)
+        );
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2699,6 +2788,27 @@ mod tests {
                 .selected_outputs
                 .iter()
                 .any(|output| output.substep_index > 0));
+            assert!(evidence
+                .physical_terms
+                .iter()
+                .all(|term| term.substep_count > 0));
+            assert_eq!(
+                evidence
+                    .physical_terms
+                    .iter()
+                    .map(|term| u64::from(term.substep_count))
+                    .sum::<u64>(),
+                evidence.learner_policy_step_count
+            );
+            let mut selected_output_group_counts = vec![0_u32; evidence.physical_terms.len()];
+            for output in &evidence.selected_outputs {
+                selected_output_group_counts[output.group_index] += 1;
+            }
+            assert!(evidence
+                .physical_terms
+                .iter()
+                .zip(selected_output_group_counts)
+                .all(|(term, selected_count)| term.substep_count == selected_count));
             assert_eq!(
                 evidence.rollout_metrics.scored_decision_count,
                 evidence.scorer_accepted_decision_count
@@ -3199,6 +3309,25 @@ mod tests {
                 }
             ) if action_index != selected_action_index && expected_bits != actual_bits
         ));
+        assert_eq!(exact_state_snapshot_v1(&trainer), before);
+    }
+
+    #[test]
+    fn physical_substep_count_corruption_is_transactional_before_live_commit() {
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        let mut trainer = trainer_v2(2);
+        let config = burn_pair_config_v2(1, 1, 1);
+        let before = exact_state_snapshot_v1(&trainer);
+        assert_eq!(
+            trainer
+                .run_even_batch_update_with_physical_substep_count_mutation_v2(&config)
+                .unwrap_err(),
+            NativeTrainerErrorV1::RecomputedOutputMismatch {
+                field: "substep_count",
+                group_index: 0,
+                substep_index: 0,
+            }
+        );
         assert_eq!(exact_state_snapshot_v1(&trainer), before);
     }
 

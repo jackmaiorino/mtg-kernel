@@ -395,6 +395,7 @@ pub(crate) struct NativePhysicalLossTermV1 {
     pub(crate) joint_log_probability: f32,
     pub(crate) value: f32,
     pub(crate) terminal_return: i8,
+    pub(crate) substep_count: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -442,6 +443,10 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     EmptyBatch,
     EmptyPhysicalDecision {
         group_index: usize,
+    },
+    PhysicalSubstepCountOverflow {
+        group_index: usize,
+        substep_count: usize,
     },
     InvalidTerminalReturn {
         group_index: usize,
@@ -779,6 +784,7 @@ impl NativePolicyValueTrainStateV1 {
             if group.substeps.is_empty() {
                 return Err(NativePolicyTrainErrorV1::EmptyPhysicalDecision { group_index });
             }
+            let substep_count = physical_substep_count_u32_v1(group_index, group.substeps.len())?;
             if !matches!(group.terminal_return, -1..=1) {
                 return Err(NativePolicyTrainErrorV1::InvalidTerminalReturn {
                     group_index,
@@ -884,6 +890,7 @@ impl NativePolicyValueTrainStateV1 {
                 joint_log_probability,
                 value,
                 terminal_return: group.terminal_return,
+                substep_count,
             });
             group_tapes.push(GroupTapeV1 {
                 tapes,
@@ -1027,6 +1034,7 @@ fn collect_parallel_packed_recomputes_v1(
     if worker_count < 2
         || groups.iter().any(|group| {
             group.substeps.is_empty()
+                || group.substeps.len() > u32::MAX as usize
                 || !matches!(group.terminal_return, -1..=1)
                 || group.substeps.iter().any(|substep| {
                     !matches!(&substep.forward, NativePolicyForwardInputV1::Packed { .. })
@@ -1347,6 +1355,18 @@ impl ScorerBiasGaugeAccumulatorV1 {
             parameter_after_bits: parameter_before_bits,
         })
     }
+}
+
+fn physical_substep_count_u32_v1(
+    group_index: usize,
+    substep_count: usize,
+) -> Result<u32, NativePolicyTrainErrorV1> {
+    u32::try_from(substep_count).map_err(|_| {
+        NativePolicyTrainErrorV1::PhysicalSubstepCountOverflow {
+            group_index,
+            substep_count,
+        }
+    })
 }
 
 fn exact_group_count_f32(group_count: usize) -> Result<f32, NativePolicyTrainErrorV1> {
@@ -3788,6 +3808,23 @@ mod tests {
     }
 
     #[test]
+    fn physical_substep_count_capture_is_exact_and_overflow_checked() {
+        assert_eq!(physical_substep_count_u32_v1(3, 1), Ok(1));
+        assert_eq!(
+            physical_substep_count_u32_v1(3, u32::MAX as usize),
+            Ok(u32::MAX)
+        );
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(
+            physical_substep_count_u32_v1(3, u32::MAX as usize + 1),
+            Err(NativePolicyTrainErrorV1::PhysicalSubstepCountOverflow {
+                group_index: 3,
+                substep_count: u32::MAX as usize + 1,
+            })
+        );
+    }
+
+    #[test]
     fn packed_parallel_recompute_rethrows_earliest_worker_panic_and_retries_cleanly() {
         let (forward, golden) = fixtures();
         let model =
@@ -4495,6 +4532,13 @@ mod tests {
             result.selected_outputs.len(),
             rung.provenance.policy_substep_count
         );
+        assert!(result
+            .physical_terms
+            .iter()
+            .zip(&expanded_groups)
+            .all(
+                |(term, group)| term.substep_count == u32::try_from(group.substeps.len()).unwrap()
+            ));
 
         let mut reproduced_policy_sum = 0.0f32;
         let mut reproduced_value_sum = 0.0f32;
@@ -4689,6 +4733,10 @@ mod tests {
             assert_eq!(result.physical_terms.len(), step.groups.len());
             for (actual, expected) in result.physical_terms.iter().zip(&step.groups) {
                 assert_eq!(actual.terminal_return, expected.terminal_return);
+                assert_eq!(
+                    actual.substep_count,
+                    u32::try_from(expected.substeps.len()).unwrap()
+                );
                 assert_close(
                     actual.joint_log_probability,
                     expected.joint_log_probability.value,
