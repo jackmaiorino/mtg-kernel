@@ -6,8 +6,8 @@
 
 use crate::canonical_json_v1::{
     count_canonical_json_bytes_v1, from_canonical_json_bytes_v1, to_canonical_json_bytes_v1,
-    CanonicalJsonErrorKindV1, CanonicalJsonErrorV1, CanonicalJsonNullPathSegmentV1,
-    CanonicalJsonNullPolicyV1,
+    CanonicalJsonClosedMaxErrorV1, CanonicalJsonClosedMaxV1, CanonicalJsonErrorKindV1,
+    CanonicalJsonErrorV1, CanonicalJsonNullPathSegmentV1, CanonicalJsonNullPolicyV1,
 };
 use crate::native_training_store_checkpoint_v3::CheckpointManifestV3;
 use crate::native_training_store_digest_v1::{
@@ -83,6 +83,72 @@ struct HeadRecordWireV2 {
     train_state_sha256: String,
     last_update_evidence_sha256: Option<String>,
     head_sha256: String,
+}
+
+fn maximum_boundary_common_fields_v2() -> std::result::Result<
+    (CanonicalJsonClosedMaxV1, CanonicalJsonClosedMaxV1),
+    CanonicalJsonClosedMaxErrorV1,
+> {
+    let digest = CanonicalJsonClosedMaxV1::fixed_ascii_string_bytes_v1(64)?;
+    let optional_digest =
+        CanonicalJsonClosedMaxV1::choice_v1(CanonicalJsonClosedMaxV1::null_v1(), digest)?;
+    Ok((digest, optional_digest))
+}
+
+pub(crate) fn maximum_trained_checkpoint_sidecar_cj_bytes_v2(
+) -> std::result::Result<u64, CanonicalJsonClosedMaxErrorV1> {
+    let u63 = CanonicalJsonClosedMaxV1::max_u63_v1();
+    let (digest, optional_digest) = maximum_boundary_common_fields_v2()?;
+    CanonicalJsonClosedMaxV1::object_v1(&[
+        ("batch_episodes", u63),
+        ("checkpoint_manifest_sha256", digest),
+        ("checkpoint_payload_sha256", digest),
+        ("checkpoint_segment_updates", u63),
+        ("generation_index", u63),
+        ("identity_bundle_sha256", digest),
+        ("last_update_evidence_sha256", optional_digest),
+        ("logical_state_sha256", digest),
+        ("model_parameter_sha256", digest),
+        ("parent_head_sha256", optional_digest),
+        ("run_sha256", digest),
+        (
+            "schema",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(CHECKPOINT_SIDECAR_SCHEMA_V2)?,
+        ),
+        ("segment_manifest_sha256", digest),
+        ("segment_ordinal", u63),
+        ("train_state_sha256", digest),
+    ])?
+    .canonical_document_bytes_v1()
+}
+
+pub(crate) fn maximum_trained_head_record_cj_bytes_v2(
+) -> std::result::Result<u64, CanonicalJsonClosedMaxErrorV1> {
+    let u63 = CanonicalJsonClosedMaxV1::max_u63_v1();
+    let (digest, optional_digest) = maximum_boundary_common_fields_v2()?;
+    CanonicalJsonClosedMaxV1::object_v1(&[
+        ("batch_episodes", u63),
+        ("checkpoint_manifest_sha256", digest),
+        ("checkpoint_payload_sha256", digest),
+        ("checkpoint_segment_updates", u63),
+        ("checkpoint_sidecar_sha256", digest),
+        ("generation_index", u63),
+        ("head_sha256", digest),
+        ("identity_bundle_sha256", digest),
+        ("last_update_evidence_sha256", optional_digest),
+        ("logical_state_sha256", digest),
+        ("model_parameter_sha256", digest),
+        ("parent_head_sha256", optional_digest),
+        ("run_sha256", digest),
+        (
+            "schema",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(HEAD_RECORD_SCHEMA_V2)?,
+        ),
+        ("segment_manifest_sha256", digest),
+        ("segment_ordinal", u63),
+        ("train_state_sha256", digest),
+    ])?
+    .canonical_document_bytes_v1()
 }
 
 struct ExpectedBoundaryFactsV2 {
@@ -1093,6 +1159,15 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::sync::OnceLock;
     use std::time::Duration;
+
+    #[test]
+    fn trained_boundary_closed_maxima_are_frozen() {
+        assert_eq!(
+            maximum_trained_checkpoint_sidecar_cj_bytes_v2().unwrap(),
+            1_133
+        );
+        assert_eq!(maximum_trained_head_record_cj_bytes_v2().unwrap(), 1_295);
+    }
 
     struct FixtureV2 {
         run: ValidatedTrainRunV2,

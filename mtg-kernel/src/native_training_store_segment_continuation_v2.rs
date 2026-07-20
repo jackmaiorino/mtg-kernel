@@ -10,20 +10,21 @@
 
 use crate::canonical_json_v1::{
     count_canonical_json_bytes_v1, from_canonical_json_bytes_v1, to_canonical_json_bytes_v1,
-    CanonicalJsonErrorKindV1, CanonicalJsonErrorV1, CanonicalJsonNullPathSegmentV1,
-    CanonicalJsonNullPolicyV1,
+    CanonicalJsonClosedMaxErrorV1, CanonicalJsonClosedMaxV1, CanonicalJsonErrorKindV1,
+    CanonicalJsonErrorV1, CanonicalJsonNullPathSegmentV1, CanonicalJsonNullPolicyV1,
 };
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1,
 };
 use crate::native_training_store_run_v2::ValidatedTrainRunV2;
 use crate::native_training_store_update_group_v1::{
-    validate_embedded_update_group_wire_v1, validate_update_evidence_chain_context_v1,
-    UpdateEvidenceChainContextV1, UpdateGroupV1Error, UpdateGroupV1ErrorKind, UpdateGroupWireV1,
-    ValidatedUpdateGroupV1,
+    maximum_update_group_json_shape_v2, validate_embedded_update_group_wire_v1,
+    validate_update_evidence_chain_context_v1, UpdateEvidenceChainContextV1, UpdateGroupV1Error,
+    UpdateGroupV1ErrorKind, UpdateGroupWireV1, ValidatedUpdateGroupV1,
 };
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize, Serializer};
+use std::alloc::Layout;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -111,6 +112,46 @@ struct SegmentContinuationEmitWireV2<'a> {
     update_group_count: u64,
     logical_row_count: u64,
     update_groups: UpdateGroupSequenceV2<'a>,
+}
+
+/// Closed-grammar maximum for one continuation containing exactly one maximal
+/// complete update group. This is the indivisible fallback admitted by the
+/// frozen largest-prefix partition rule.
+pub(crate) fn maximum_one_group_continuation_cj_bytes_v2(
+    episode_count: u64,
+    physical_term_count: u64,
+    gauge_bound_count: u64,
+) -> std::result::Result<u64, CanonicalJsonClosedMaxErrorV1> {
+    let u63 = CanonicalJsonClosedMaxV1::max_u63_v1();
+    let digest = CanonicalJsonClosedMaxV1::fixed_ascii_string_bytes_v1(64)?;
+    let group =
+        maximum_update_group_json_shape_v2(episode_count, physical_term_count, gauge_bound_count)?;
+    CanonicalJsonClosedMaxV1::object_v1(&[
+        ("batch_episodes", u63),
+        ("checkpoint_segment_updates", u63),
+        ("continuation_index", u63),
+        ("generation_index", u63),
+        ("identity_bundle_sha256", digest),
+        ("logical_row_count", u63),
+        ("parent_generation_index", u63),
+        (
+            "previous_continuation_sha256",
+            CanonicalJsonClosedMaxV1::choice_v1(CanonicalJsonClosedMaxV1::null_v1(), digest)?,
+        ),
+        ("run_sha256", digest),
+        (
+            "schema",
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(SEGMENT_CONTINUATION_SCHEMA_V2)?,
+        ),
+        ("segment_ordinal", u63),
+        ("update_group_count", u63),
+        ("update_group_start_ordinal", u63),
+        (
+            "update_groups",
+            CanonicalJsonClosedMaxV1::array_v1(1, group)?,
+        ),
+    ])?
+    .canonical_document_bytes_v1()
 }
 
 /// One validated complete update embedded in a continuation.
@@ -462,6 +503,26 @@ struct ParsedContinuationV2 {
     update_group_start_ordinal: usize,
     update_group_count: usize,
     logical_row_count: u64,
+}
+
+/// Exact architecture-dependent allocation products for every private vector
+/// element type retained by the trained continuation builder.
+pub(crate) fn segment_continuation_allocation_layout_bytes_v2(
+    update_group_count: usize,
+    continuation_count: usize,
+) -> Option<[u64; 6]> {
+    Some([
+        allocation_layout_bytes_v2::<SegmentContinuationUpdateGroupV2>(update_group_count)?,
+        allocation_layout_bytes_v2::<PlannedContinuationV2>(continuation_count)?,
+        allocation_layout_bytes_v2::<ValidatedSegmentContinuationV2>(continuation_count)?,
+        allocation_layout_bytes_v2::<(u64, [u8; 32])>(update_group_count)?,
+        allocation_layout_bytes_v2::<ParsedContinuationV2>(continuation_count)?,
+        allocation_layout_bytes_v2::<Vec<u8>>(continuation_count)?,
+    ])
+}
+
+fn allocation_layout_bytes_v2<T>(count: usize) -> Option<u64> {
+    u64::try_from(Layout::array::<T>(count).ok()?.size()).ok()
 }
 
 /// Builds the exact complete continuation chain from already validated update
@@ -1041,6 +1102,18 @@ mod tests {
     }
 
     static GENUINE_FIXTURE_V2: OnceLock<GenuineFixtureV2> = OnceLock::new();
+
+    #[test]
+    fn one_group_continuation_closed_maximum_matches_frozen_recurrence() {
+        assert_eq!(
+            maximum_one_group_continuation_cj_bytes_v2(1, 1, 1).unwrap(),
+            4_591 + 730
+        );
+        assert_eq!(
+            maximum_one_group_continuation_cj_bytes_v2(2, 65_536, 131_072).unwrap(),
+            36_509_286
+        );
+    }
 
     fn execution_config_v2(run: &ValidatedTrainRunV2) -> NativeTrainingExecutionConfigV1 {
         NativeTrainingExecutionConfigV1 {

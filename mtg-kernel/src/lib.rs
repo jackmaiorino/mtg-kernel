@@ -125,6 +125,13 @@ pub mod native_training_store_segment_continuation_v2;
 // Pure SegmentManifestV2 authority for genesis and explicit parent-bound
 // trained continuation/checkpoint state.
 pub mod native_training_store_segment_manifest_v2;
+// One-clone, one-final-payload trained segment guard. Filesystem publication
+// and receipt construction remain separate later layers.
+pub mod native_training_store_prepared_segment_v2;
+// Allocation-free closed-grammar admission plan for one trained segment.
+// The public coordinator consumes this sealed proof before cloning a trainer.
+#[allow(dead_code)]
+pub(crate) mod native_training_store_segment_representability_v2;
 // Pure Episode/UpdateEvidence/UpdateGroup authority. This validates one
 // complete update and advances a move-only evidence-chain context; it owns no
 // continuation partitioning, filesystem, publication, receipt, or mutation.
