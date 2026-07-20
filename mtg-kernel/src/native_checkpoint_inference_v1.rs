@@ -6,6 +6,9 @@
 //! complete train-state payload, and retains only a private immutable model and
 //! digest facts. Optimizer moments are validated during load and then dropped.
 
+use crate::async_flat_scored_rollout_v2::{
+    expected_scorer_contract, FlatBatchScorerErrorV2, FlatBatchScorerV2, FlatScoringBatchViewV2,
+};
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
 use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2, NativeFlatTensorizerV2,
@@ -29,6 +32,14 @@ use crate::native_training_store_digest_v1::{
 use crate::native_training_store_run_v2::ValidatedTrainRunV2;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
+
+// These codes intentionally match the equivalent native-trainer scorer
+// classes. They are scorer-protocol diagnostics, not persisted Store fields.
+pub const NATIVE_CHECKPOINT_SCORER_CONTRACT_CODE_V1: u32 = 1;
+pub const NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1: u32 = 2;
+pub const NATIVE_CHECKPOINT_SCORER_MISSING_DECISION_CODE_V1: u32 = 3;
+pub const NATIVE_CHECKPOINT_SCORER_DECISION_CODE_V1: u32 = 4;
+pub const NATIVE_CHECKPOINT_SCORER_MODEL_CODE_V1: u32 = 5;
 
 /// Stable failure classes for the pure checkpoint-to-inference boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -223,17 +234,205 @@ impl NativeCheckpointInferenceV1 {
     ) -> Result<NativeCheckpointInferenceOutputV1> {
         let mut tensorizer = NativeFlatTensorizerV2::new();
         let mut tensor = NativeFlatDecisionTensorV2::default();
+        self.score_decision_with_scratch_v1(decision, &mut tensorizer, &mut tensor)
+    }
+
+    /// Creates a reusable fail-closed adapter for the existing V2 rollout
+    /// scorer contract. The adapter borrows this immutable checkpoint handle;
+    /// no model or optimizer state is copied or exposed.
+    pub fn batch_scorer_v1(&self) -> NativeCheckpointBatchScorerV1<'_> {
+        NativeCheckpointBatchScorerV1::new_v1(self)
+    }
+
+    fn score_decision_with_scratch_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        tensorizer: &mut NativeFlatTensorizerV2,
+        tensor: &mut NativeFlatDecisionTensorV2,
+    ) -> Result<NativeCheckpointInferenceOutputV1> {
         tensorizer
-            .fill(decision, &mut tensor)
+            .fill(decision, tensor)
             .map_err(map_tensor_error_v1)?;
         let output = self
             .model
-            .forward_v1(encoded_decision_view_v1(&tensor))
+            .forward_v1(encoded_decision_view_v1(tensor))
             .map_err(map_scoring_error_v1)?;
+        if output.logits.len() != decision.actions().len()
+            || output.logits.is_empty()
+            || output.logits.iter().any(|value| !value.is_finite())
+            || !output.value.is_finite()
+        {
+            return Err(NativeCheckpointInferenceErrorV1::new(
+                NativeCheckpointInferenceErrorKindV1::ScoringInvalid,
+            ));
+        }
         Ok(NativeCheckpointInferenceOutputV1 {
             action_logits: output.logits,
             value: output.value,
         })
+    }
+}
+
+/// Reusable V2 rollout scorer borrowing one immutable checkpoint model.
+///
+/// The adapter validates the complete batch shape and scorer contract before
+/// inference. It stages every result privately and changes caller output
+/// slices only after the whole batch succeeds. Any failure permanently poisons
+/// that adapter instance with its first stable code; construct a fresh adapter
+/// from the unchanged inference handle to retry a corrected workload.
+///
+/// Its fields are private and it is deliberately neither cloneable nor
+/// serializable:
+///
+/// ```compile_fail
+/// use mtg_kernel::native_checkpoint_inference_v1::NativeCheckpointBatchScorerV1;
+/// let _ = NativeCheckpointBatchScorerV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtg_kernel::native_checkpoint_inference_v1::NativeCheckpointBatchScorerV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<NativeCheckpointBatchScorerV1<'static>>();
+/// ```
+pub struct NativeCheckpointBatchScorerV1<'a> {
+    inference: &'a NativeCheckpointInferenceV1,
+    tensorizer: NativeFlatTensorizerV2,
+    tensor: NativeFlatDecisionTensorV2,
+    candidate_logits: Vec<f32>,
+    candidate_values: Vec<f32>,
+    first_failure_code: Option<u32>,
+}
+
+impl Debug for NativeCheckpointBatchScorerV1<'_> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeCheckpointBatchScorerV1")
+            .field("generation_index", &self.inference.generation_index)
+            .field("first_failure_code", &self.first_failure_code)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> NativeCheckpointBatchScorerV1<'a> {
+    fn new_v1(inference: &'a NativeCheckpointInferenceV1) -> Self {
+        Self {
+            inference,
+            tensorizer: NativeFlatTensorizerV2::new(),
+            tensor: NativeFlatDecisionTensorV2::default(),
+            candidate_logits: Vec::new(),
+            candidate_values: Vec::new(),
+            first_failure_code: None,
+        }
+    }
+
+    pub const fn first_failure_code(&self) -> Option<u32> {
+        self.first_failure_code
+    }
+
+    fn score_batch_checked_v1(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logits: &mut [f32],
+        values: &mut [f32],
+    ) -> std::result::Result<(), u32> {
+        let contract = batch.contract();
+        if contract != expected_scorer_contract(contract.card_db_hash) {
+            return Err(NATIVE_CHECKPOINT_SCORER_CONTRACT_CODE_V1);
+        }
+
+        let decision_count = batch.decision_count();
+        let action_offsets = batch.action_offsets();
+        if decision_count == 0
+            || values.len() != decision_count
+            || action_logits.is_empty()
+            || action_logits.len() != batch.total_action_count()
+            || action_offsets.len() != decision_count + 1
+            || action_offsets.first().copied() != Some(0)
+            || action_offsets.last().copied() != Some(action_logits.len())
+        {
+            return Err(NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1);
+        }
+
+        self.candidate_logits.clear();
+        self.candidate_values.clear();
+        self.candidate_logits
+            .try_reserve_exact(action_logits.len())
+            .map_err(|_| NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1)?;
+        self.candidate_values
+            .try_reserve_exact(values.len())
+            .map_err(|_| NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1)?;
+
+        for decision_index in 0..decision_count {
+            let decision = batch
+                .decision(decision_index)
+                .ok_or(NATIVE_CHECKPOINT_SCORER_MISSING_DECISION_CODE_V1)?;
+            let begin = action_offsets[decision_index];
+            let end = action_offsets[decision_index + 1];
+            if end <= begin || end > action_logits.len() || end - begin != decision.actions().len()
+            {
+                return Err(NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1);
+            }
+            let output = self
+                .inference
+                .score_decision_with_scratch_v1(decision, &mut self.tensorizer, &mut self.tensor)
+                .map_err(batch_scorer_code_v1)?;
+            if output.action_logits.len() != end - begin
+                || output.action_logits.iter().any(|value| !value.is_finite())
+                || !output.value.is_finite()
+            {
+                return Err(NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1);
+            }
+            self.candidate_logits
+                .extend_from_slice(&output.action_logits);
+            self.candidate_values.push(output.value);
+        }
+
+        if self.candidate_logits.len() != action_logits.len()
+            || self.candidate_values.len() != values.len()
+        {
+            return Err(NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1);
+        }
+        action_logits.copy_from_slice(&self.candidate_logits);
+        values.copy_from_slice(&self.candidate_values);
+        Ok(())
+    }
+}
+
+impl FlatBatchScorerV2 for NativeCheckpointBatchScorerV1<'_> {
+    fn score_batch_v2(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logits: &mut [f32],
+        values: &mut [f32],
+    ) -> std::result::Result<(), FlatBatchScorerErrorV2> {
+        if let Some(code) = self.first_failure_code {
+            return Err(FlatBatchScorerErrorV2::new(code));
+        }
+        match self.score_batch_checked_v1(batch, action_logits, values) {
+            Ok(()) => Ok(()),
+            Err(code) => {
+                self.first_failure_code = Some(code);
+                Err(FlatBatchScorerErrorV2::new(code))
+            }
+        }
+    }
+}
+
+fn batch_scorer_code_v1(error: NativeCheckpointInferenceErrorV1) -> u32 {
+    match error.kind() {
+        NativeCheckpointInferenceErrorKindV1::DecisionInvalid => {
+            NATIVE_CHECKPOINT_SCORER_DECISION_CODE_V1
+        }
+        NativeCheckpointInferenceErrorKindV1::ScoringInvalid => {
+            NATIVE_CHECKPOINT_SCORER_MODEL_CODE_V1
+        }
+        NativeCheckpointInferenceErrorKindV1::AuthorityBinding
+        | NativeCheckpointInferenceErrorKindV1::PayloadExactLength
+        | NativeCheckpointInferenceErrorKindV1::PayloadDigestMismatch
+        | NativeCheckpointInferenceErrorKindV1::PayloadInvalid
+        | NativeCheckpointInferenceErrorKindV1::ModelInvalid => {
+            NATIVE_CHECKPOINT_SCORER_MODEL_CODE_V1
+        }
     }
 }
 
@@ -509,6 +708,8 @@ fn map_scoring_error_v1(error: NativePolicyValueErrorV1) -> NativeCheckpointInfe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::async_flat_scored_rollout_v2::run_async_flat_scored_rollout_v2;
+    use crate::async_rollout_v2::AsyncRolloutConfigV2;
     use crate::common_model_snapshot_v1::common_model_snapshot_paths_v1;
     use crate::flat_policy_v2::{
         FlatGlobalsV2, FlatRelativePlayerV2, FlatScorerActionCoreV2, FlatScoringDecisionViewV2,
@@ -525,6 +726,7 @@ mod tests {
     use crate::native_training_store_update_group_v1::{
         begin_update_evidence_chain_v1, build_update_group_v1,
     };
+    use crate::rl::PlayerSeatV1;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::OnceLock;
@@ -664,6 +866,101 @@ mod tests {
                 .kind(),
             NativeCheckpointInferenceErrorKindV1::PayloadDigestMismatch
         );
+    }
+
+    fn checkpoint_rollout_config_v1(run: &ValidatedTrainRunV2) -> AsyncRolloutConfigV2 {
+        AsyncRolloutConfigV2 {
+            deck_ids: run.record().environment().deck_ids().clone(),
+            learner_seat: PlayerSeatV1::P0,
+            environment_seed: 71_901,
+            opponent_policy_seed: 72_901,
+            learner_policy_seed: 73_901,
+            max_physical_decisions: run.record().limits().max_physical_decisions(),
+            max_policy_steps: run.record().limits().max_policy_steps(),
+            worker_count: 1,
+            sessions_per_worker: 1,
+            broker_batch_target: 1,
+            first_episode_id: 0,
+            episode_count: 1,
+            scheduler_timeout: Duration::from_secs(60),
+            measure_broker_service_time: false,
+        }
+    }
+
+    struct ComparingCheckpointScorerV1<'a> {
+        inference: &'a NativeCheckpointInferenceV1,
+        scorer: NativeCheckpointBatchScorerV1<'a>,
+        call_count: u64,
+        checked_transactional_failure: bool,
+    }
+
+    impl<'a> ComparingCheckpointScorerV1<'a> {
+        fn new_v1(inference: &'a NativeCheckpointInferenceV1) -> Self {
+            Self {
+                inference,
+                scorer: inference.batch_scorer_v1(),
+                call_count: 0,
+                checked_transactional_failure: false,
+            }
+        }
+    }
+
+    impl FlatBatchScorerV2 for ComparingCheckpointScorerV1<'_> {
+        fn score_batch_v2(
+            &mut self,
+            batch: &FlatScoringBatchViewV2<'_>,
+            action_logits: &mut [f32],
+            values: &mut [f32],
+        ) -> std::result::Result<(), FlatBatchScorerErrorV2> {
+            if !self.checked_transactional_failure {
+                let mut rejected = self.inference.batch_scorer_v1();
+                let mut wrong_logits = vec![123.25_f32; action_logits.len() + 1];
+                let mut wrong_values = vec![-456.5_f32; values.len()];
+                let before_wrong_logits = wrong_logits.clone();
+                let before_wrong_values = wrong_values.clone();
+                let error = rejected
+                    .score_batch_v2(batch, &mut wrong_logits, &mut wrong_values)
+                    .unwrap_err();
+                assert_eq!(error.code, NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1);
+                assert_eq!(rejected.first_failure_code(), Some(error.code));
+                assert_eq!(wrong_logits, before_wrong_logits);
+                assert_eq!(wrong_values, before_wrong_values);
+
+                let mut retry_logits = vec![789.75_f32; action_logits.len()];
+                let mut retry_values = vec![-987.25_f32; values.len()];
+                let before_retry_logits = retry_logits.clone();
+                let before_retry_values = retry_values.clone();
+                let retry_error = rejected
+                    .score_batch_v2(batch, &mut retry_logits, &mut retry_values)
+                    .unwrap_err();
+                assert_eq!(retry_error, error);
+                assert_eq!(retry_logits, before_retry_logits);
+                assert_eq!(retry_values, before_retry_values);
+                self.checked_transactional_failure = true;
+            }
+
+            self.scorer.score_batch_v2(batch, action_logits, values)?;
+            for (decision_index, actual_value) in values.iter().enumerate() {
+                let decision = batch.decision(decision_index).unwrap();
+                let expected = self.inference.score_decision_v1(decision).unwrap();
+                let begin = batch.action_offsets()[decision_index];
+                let end = batch.action_offsets()[decision_index + 1];
+                assert_eq!(
+                    action_logits[begin..end]
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    expected
+                        .action_logits()
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>()
+                );
+                assert_eq!(actual_value.to_bits(), expected.value().to_bits());
+            }
+            self.call_count += 1;
+            Ok(())
+        }
     }
 
     #[test]
@@ -820,6 +1117,16 @@ mod tests {
             parse_lower_hex_raw32_v1(&run.record().model_snapshot.named_parameter_stream_sha256)
                 .unwrap()
         );
+
+        let mut scorer = ComparingCheckpointScorerV1::new_v1(&handle);
+        let rollout =
+            run_async_flat_scored_rollout_v2(checkpoint_rollout_config_v1(&run), &mut scorer)
+                .unwrap();
+        assert_eq!(rollout.episodes.len(), 1);
+        assert!(rollout.all_natural());
+        assert!(scorer.call_count > 1);
+        assert!(scorer.checked_transactional_failure);
+        assert_eq!(scorer.scorer.first_failure_code(), None);
     }
 
     #[test]
