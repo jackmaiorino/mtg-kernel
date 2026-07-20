@@ -109,10 +109,11 @@ pub mod native_training_executor_v1;
     not(debug_assertions)
 ))]
 pub mod native_store_production_capture_v2;
-// Pure checkpoint-v3 authority. The public decoder is deliberately
-// genesis-only until complete Episode/UpdateGroup evidence can supply sealed
-// cumulative trained progress.
+// Pure checkpoint-v3 authority for genesis and evidence-bound trained state.
 pub mod native_training_store_checkpoint_v3;
+// Pure complete-chain continuation-v2 authority. Largest-prefix partitioning
+// is never claimed from one file in isolation.
+pub mod native_training_store_segment_continuation_v2;
 // Pure Episode/UpdateEvidence/UpdateGroup authority. This validates one
 // complete update and advances a move-only evidence-chain context; it owns no
 // continuation partitioning, filesystem, publication, receipt, or mutation.
