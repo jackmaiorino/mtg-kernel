@@ -636,6 +636,29 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
         &self.checkpoint
     }
 
+    /// Returns the exact validated execution configuration owned by the live
+    /// executor that this guard exclusively borrows.
+    ///
+    /// This crate-private projection lets the Store producer bind its frozen
+    /// run record to the actual executor without exposing the executor itself
+    /// or adding a second, caller-supplied configuration authority.
+    pub(crate) fn execution_config_v1(&self) -> &NativeTrainingExecutionConfigV1 {
+        self.executor.config()
+    }
+
+    /// Re-exports the unchanged live predecessor as a verified checkpoint.
+    ///
+    /// The prepared candidate was computed on an isolated trainer clone, so
+    /// the exclusively borrowed executor is still the exact pre-update state.
+    /// Store authority uses this checked export to bind the predecessor's full
+    /// train-state digest, model, Adam step, progress, and gauge anchor before
+    /// accepting this guard's observation and successor checkpoint.
+    pub(crate) fn pre_update_checkpoint_candidate_v1(
+        &self,
+    ) -> Result<NativeTrainingCheckpointCandidateV1, NativeTrainingExecutorErrorV1> {
+        self.executor.checkpoint_candidate_v1()
+    }
+
     /// Binds the exact opaque manifest bytes that a future persistence layer
     /// must publish alongside this checkpoint payload.
     ///

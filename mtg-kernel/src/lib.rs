@@ -107,6 +107,10 @@ pub mod native_store_production_capture_v2;
 // genesis-only until complete Episode/UpdateGroup evidence can supply sealed
 // cumulative trained progress.
 pub mod native_training_store_checkpoint_v3;
+// Pure Episode/UpdateEvidence/UpdateGroup authority. This validates one
+// complete update and advances a move-only evidence-chain context; it owns no
+// continuation partitioning, filesystem, publication, receipt, or mutation.
+pub mod native_training_store_update_group_v1;
 // Schema-neutral checked ATOM/raw32/SHA framing shared by Store records.
 #[allow(dead_code)]
 pub(crate) mod native_training_store_digest_v1;
