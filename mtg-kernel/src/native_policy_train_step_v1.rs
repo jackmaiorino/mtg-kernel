@@ -382,8 +382,30 @@ pub(crate) const TRAINER_ALGORITHM_V1: &str = "terminal_reinforce_value/v3";
 pub(crate) const TRAIN_STEP_IDENTITY_V1: &str = "native-policy-value-cpu-train-step-v1";
 pub const NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1: &str =
     "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-sequential";
-pub(crate) const FIXED_PARTITION_PARALLEL_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1: &str =
-    "rust-prototype-native-policy-train-step-v1-cpu-ieee754-binary32-fixed-reverse-partitions-4-v1";
+pub const FIXED_PARTITION_PARALLEL_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1: &str =
+    "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-fixed-reverse-partitions-4-v1";
+
+/// Explicit numerical backend for one native training update.
+///
+/// `FixedFourPartitions` freezes four logical reverse partitions. Its physical
+/// worker limit is configured separately and does not change reduction order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NativeTrainingNumericalBackendV1 {
+    #[default]
+    Sequential,
+    FixedFourPartitions,
+}
+
+impl NativeTrainingNumericalBackendV1 {
+    pub const fn identity_v1(self) -> &'static str {
+        match self {
+            Self::Sequential => NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1,
+            Self::FixedFourPartitions => {
+                FIXED_PARTITION_PARALLEL_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1
+            }
+        }
+    }
+}
 pub(crate) const NATIVE_OPTIMIZER_IDENTITY_V1: &str = "native-adam-canonical-scorer-bias-gauge-v1";
 pub(crate) const NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1: &str =
     "mtg-kernel-native-scorer-bias-gauge-evidence-v1";
@@ -406,7 +428,7 @@ const ACTION_ENCODER_INPUT: usize = ACTION_FEATURE_DIM_V1 + HIDDEN_DIM_V1;
 const SCORER_INPUT: usize = HIDDEN_DIM_V1 * 2;
 const PACKED_RECOMPUTE_MAX_WORKERS_V1: usize = 4;
 const PACKED_RECOMPUTE_MIN_SUBSTEPS_V1: usize = 64;
-const FIXED_BACKWARD_PARTITION_COUNT_V1: usize = 4;
+pub(crate) const FIXED_BACKWARD_PARTITION_COUNT_V1: usize = 4;
 
 const CARD_EMBEDDING: usize = 0;
 const OBJECT_FIRST_WEIGHT: usize = 1;
@@ -930,7 +952,8 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
-    /// Opt-in prototype for deterministic fixed-partition reverse evaluation.
+    /// Production entry point for deterministic fixed-partition reverse
+    /// evaluation.
     ///
     /// Logical partitioning is independent of `backward_worker_limit`; that
     /// value controls only how many scoped workers evaluate the four frozen
@@ -945,6 +968,25 @@ impl NativePolicyValueTrainStateV1 {
         backward_worker_limit: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
+        self.train_step_with_fixed_partition_parallel_backward_profiled_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            backward_worker_limit,
+            &mut phase_recorder,
+        )
+    }
+
+    pub(crate) fn train_step_with_fixed_partition_parallel_backward_profiled_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        backward_worker_limit: usize,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.train_step_with_recompute_workers_inner_v1(
             groups,
             value_coefficient,
@@ -953,7 +995,7 @@ impl NativePolicyValueTrainStateV1 {
             BackwardExecutionV1::FixedPartitions {
                 worker_limit: backward_worker_limit,
             },
-            &mut phase_recorder,
+            phase_recorder,
         )
     }
 
@@ -1353,7 +1395,7 @@ fn observe_scorer_bias_gauge_v1(
         let d_joint_log_probability = -group.advantage / group_count;
         for selected in group.tapes.iter().rev() {
             gauge_accumulator.observe(
-                &selected.tape.logits,
+                selected.tape.logits_v1(),
                 selected.selected_action_index,
                 d_joint_log_probability,
             )?;

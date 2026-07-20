@@ -8,9 +8,9 @@
 
 use mtg_kernel::native_training_executor_v1::{
     native_training_episode_schedule_v1, NativeTrainingExecutionConfigV1,
-    NativeTrainingExecutorErrorV1, NativeTrainingExecutorV1, NativeTrainingPhaseProfileV1,
-    NativeTrainingPhaseV1, NativeTrainingSnapshotReceiptV1, NativeTrainingUpdateObservationV2,
-    NATIVE_TRAINING_NUMERICAL_BACKEND_IDENTITY_V1,
+    NativeTrainingExecutorErrorV1, NativeTrainingExecutorV1, NativeTrainingNumericalBackendV1,
+    NativeTrainingPhaseProfileV1, NativeTrainingPhaseV1, NativeTrainingSnapshotReceiptV1,
+    NativeTrainingUpdateObservationV2, NATIVE_TRAINING_NUMERICAL_BACKEND_IDENTITY_V1,
 };
 use mtg_kernel::rl::{PlayerSeatV1, TerminalOutcomeV1};
 use mtg_kernel::strict_source_tree_attestation_v1::{
@@ -600,6 +600,8 @@ fn run_capture(args: Args) -> Result<(), AppError> {
         measure_broker_service_time: false,
         value_coefficient_bits: VALUE_COEFFICIENT.to_bits(),
         learning_rate_bits: LEARNING_RATE.to_bits(),
+        numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
+        backward_worker_limit: 1,
     };
     let mut executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
         config,

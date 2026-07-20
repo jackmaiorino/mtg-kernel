@@ -18,6 +18,8 @@ pub use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryRec
 pub use crate::native_policy_train_step_v1::{
     NativeGaugeSubstepBoundV1 as NativeTrainingGaugeSubstepObservationV1,
     NativeScorerBiasGaugeRecordV1 as NativeTrainingScorerBiasGaugeObservationV1,
+    NativeTrainingNumericalBackendV1,
+    FIXED_PARTITION_PARALLEL_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1 as NATIVE_TRAINING_FIXED_PARTITION_NUMERICAL_BACKEND_IDENTITY_V1,
     NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1 as NATIVE_TRAINING_NUMERICAL_BACKEND_IDENTITY_V1,
 };
 use crate::native_policy_train_step_v1::{
@@ -55,10 +57,13 @@ use std::time::Duration;
 ///
 /// `batch_episodes` is the immutable K for the executor and must be even in
 /// `2..=10_000`. Counts are exact integers; `scheduler_timeout` is a wall-clock
-/// duration; coefficients are raw IEEE-754 binary32 bits. Topology, caps, deck
-/// identifiers, coefficient finiteness, and K are validated before snapshot
-/// loading or state ownership. Strict callers must separately bind these values
-/// into their immutable run record.
+/// duration; coefficients are raw IEEE-754 binary32 bits. The sequential
+/// numerical backend requires `backward_worker_limit == 1`; the fixed-four
+/// backend accepts `1..=4`, with that limit controlling physical execution but
+/// not its frozen four-partition reduction order. Topology, caps, deck
+/// identifiers, coefficient finiteness, backend, and K are validated before
+/// snapshot loading or state ownership. Strict callers must separately bind
+/// these values into their immutable run record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeTrainingExecutionConfigV1 {
     pub run_base_seed: u64,
@@ -73,6 +78,8 @@ pub struct NativeTrainingExecutionConfigV1 {
     pub measure_broker_service_time: bool,
     pub value_coefficient_bits: u32,
     pub learning_rate_bits: u32,
+    pub numerical_backend: NativeTrainingNumericalBackendV1,
+    pub backward_worker_limit: usize,
 }
 
 /// Public read-only projection of the frozen production seed/seat schedule.
@@ -213,6 +220,8 @@ impl NativeTrainingExecutionConfigV1 {
             measure_broker_service_time: self.measure_broker_service_time,
             value_coefficient_bits: self.value_coefficient_bits,
             learning_rate_bits: self.learning_rate_bits,
+            numerical_backend: self.numerical_backend,
+            backward_worker_limit: self.backward_worker_limit,
         }
     }
 }
@@ -1221,6 +1230,8 @@ mod tests {
             measure_broker_service_time: false,
             value_coefficient_bits: 0.5f32.to_bits(),
             learning_rate_bits: 0.001f32.to_bits(),
+            numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
+            backward_worker_limit: 1,
         }
     }
 

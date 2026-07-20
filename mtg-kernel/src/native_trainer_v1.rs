@@ -38,7 +38,8 @@ use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPackedForwardBuilderV1,
     NativePolicyPackedForwardTapeV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
     NativePolicyTrainErrorV1, NativePolicyTrainStepResultV1, NativePolicyValueTrainStateV1,
-    NativeScorerBiasGaugeRecordV1,
+    NativeScorerBiasGaugeRecordV1, NativeTrainingNumericalBackendV1,
+    FIXED_BACKWARD_PARTITION_COUNT_V1,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativeNamedParameterV1,
@@ -1019,6 +1020,17 @@ pub(crate) struct NativeTrainerUpdateConfigV2 {
     pub(crate) measure_broker_service_time: bool,
     pub(crate) value_coefficient_bits: u32,
     pub(crate) learning_rate_bits: u32,
+    pub(crate) numerical_backend: NativeTrainingNumericalBackendV1,
+    pub(crate) backward_worker_limit: usize,
+}
+
+#[derive(Clone, Copy)]
+struct NativeTrainerGroupedTrainConfigV1 {
+    value_coefficient: f32,
+    learning_rate: f32,
+    recompute_worker_limit: usize,
+    numerical_backend: NativeTrainingNumericalBackendV1,
+    backward_worker_limit: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1462,9 +1474,13 @@ impl NativeTrainerStateV2 {
             &mut candidate_train_state,
             &grouped,
             &full_trajectory_receipts,
-            f32::from_bits(config.value_coefficient_bits),
-            f32::from_bits(config.learning_rate_bits),
-            config.worker_count,
+            NativeTrainerGroupedTrainConfigV1 {
+                value_coefficient: f32::from_bits(config.value_coefficient_bits),
+                learning_rate: f32::from_bits(config.learning_rate_bits),
+                recompute_worker_limit: config.worker_count,
+                numerical_backend: config.numerical_backend,
+                backward_worker_limit: config.backward_worker_limit,
+            },
             #[cfg(test)]
             test_physical_substep_count_mutation,
             phase_recorder,
@@ -1896,6 +1912,21 @@ pub(crate) fn validate_update_config_v2(
     if !learning_rate.is_finite() || learning_rate <= 0.0 {
         return Err(NativeTrainerErrorV1::InvalidUpdateConfig("learning_rate"));
     }
+    match config.numerical_backend {
+        NativeTrainingNumericalBackendV1::Sequential if config.backward_worker_limit != 1 => {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "backward_worker_limit",
+            ));
+        }
+        NativeTrainingNumericalBackendV1::FixedFourPartitions
+            if !(1..=FIXED_BACKWARD_PARTITION_COUNT_V1).contains(&config.backward_worker_limit) =>
+        {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "backward_worker_limit",
+            ));
+        }
+        _ => {}
+    }
     Ok(())
 }
 
@@ -1965,9 +1996,7 @@ fn train_grouped_candidate_v1(
     candidate: &mut NativePolicyValueTrainStateV1,
     grouped: &NativePolicyGroupedTrajectoryV1,
     full_trajectory_receipts: &[NativeFullEpisodeTrajectoryReceiptV1],
-    value_coefficient: f32,
-    learning_rate: f32,
-    recompute_worker_limit: usize,
+    execution: NativeTrainerGroupedTrainConfigV1,
     #[cfg(test)] test_physical_substep_count_mutation: bool,
     phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
 ) -> Result<
@@ -2082,15 +2111,26 @@ fn train_grouped_candidate_v1(
         )
         .collect::<Vec<_>>();
     phase_recorder.finish_v1(grouping_timer);
-    let result = candidate
-        .train_step_with_recompute_workers_profiled_v1(
-            &borrowed_groups,
-            value_coefficient,
-            learning_rate,
-            recompute_worker_limit,
-            phase_recorder,
-        )
-        .map_err(NativeTrainerErrorV1::Train)?;
+    let result = match execution.numerical_backend {
+        NativeTrainingNumericalBackendV1::Sequential => candidate
+            .train_step_with_recompute_workers_profiled_v1(
+                &borrowed_groups,
+                execution.value_coefficient,
+                execution.learning_rate,
+                execution.recompute_worker_limit,
+                phase_recorder,
+            ),
+        NativeTrainingNumericalBackendV1::FixedFourPartitions => candidate
+            .train_step_with_fixed_partition_parallel_backward_profiled_v1(
+                &borrowed_groups,
+                execution.value_coefficient,
+                execution.learning_rate,
+                execution.recompute_worker_limit,
+                execution.backward_worker_limit,
+                phase_recorder,
+            ),
+    }
+    .map_err(NativeTrainerErrorV1::Train)?;
     #[cfg(test)]
     let mut result = result;
     #[cfg(test)]
@@ -2348,6 +2388,8 @@ mod tests {
             measure_broker_service_time: false,
             value_coefficient_bits: 0.5f32.to_bits(),
             learning_rate_bits: 0.001f32.to_bits(),
+            numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
+            backward_worker_limit: 1,
         }
     }
 
@@ -3061,6 +3103,61 @@ mod tests {
         );
         assert_eq!(trainer.batch_episodes, 4);
         assert_eq!(exact_state_snapshot_v1(&trainer), before);
+    }
+
+    #[test]
+    fn numerical_backend_and_backward_worker_topology_are_validated_explicitly() {
+        assert_ne!(
+            NativeTrainingNumericalBackendV1::Sequential.identity_v1(),
+            NativeTrainingNumericalBackendV1::FixedFourPartitions.identity_v1()
+        );
+
+        let mut config = burn_pair_config_v2(1, 1, 1);
+        config.backward_worker_limit = 2;
+        assert_eq!(
+            validate_update_config_v2(&config),
+            Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "backward_worker_limit"
+            ))
+        );
+
+        config.numerical_backend = NativeTrainingNumericalBackendV1::FixedFourPartitions;
+        for worker_limit in 1..=FIXED_BACKWARD_PARTITION_COUNT_V1 {
+            config.backward_worker_limit = worker_limit;
+            validate_update_config_v2(&config).unwrap();
+        }
+        for worker_limit in [0, FIXED_BACKWARD_PARTITION_COUNT_V1 + 1] {
+            config.backward_worker_limit = worker_limit;
+            assert_eq!(
+                validate_update_config_v2(&config),
+                Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                    "backward_worker_limit"
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_four_backend_runs_a_real_update_and_is_worker_topology_invariant() {
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        let initial = trainer_v2(2);
+        let mut single_worker = initial.clone();
+        let mut four_workers = initial;
+        let mut config = burn_pair_config_v2(1, 1, 1);
+        config.numerical_backend = NativeTrainingNumericalBackendV1::FixedFourPartitions;
+        config.backward_worker_limit = 1;
+        let single_evidence = single_worker.run_even_batch_update_v2(&config).unwrap();
+        config.backward_worker_limit = FIXED_BACKWARD_PARTITION_COUNT_V1;
+        let four_evidence = four_workers.run_even_batch_update_v2(&config).unwrap();
+
+        assert_eq!(
+            without_observed_timing_v2(single_evidence),
+            without_observed_timing_v2(four_evidence)
+        );
+        assert_eq!(
+            exact_state_snapshot_v1(&single_worker),
+            exact_state_snapshot_v1(&four_workers)
+        );
     }
 
     #[test]

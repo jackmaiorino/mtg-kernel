@@ -910,7 +910,7 @@ mod tests {
     use crate::common_model_snapshot_v1::common_model_snapshot_paths_v1;
     use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
     use crate::native_training_executor_v1::{
-        NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1,
+        NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1, NativeTrainingNumericalBackendV1,
     };
     use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
     use serde_json::{json, Value};
@@ -956,6 +956,8 @@ mod tests {
                     measure_broker_service_time: false,
                     value_coefficient_bits: 0.5_f32.to_bits(),
                     learning_rate_bits: 0.001_f32.to_bits(),
+                    numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
+                    backward_worker_limit: 1,
                 },
                 &snapshot_manifest,
                 &snapshot_payload,
