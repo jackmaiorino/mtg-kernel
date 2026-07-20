@@ -28,6 +28,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
+      - name: Cache cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-quality-ubuntu-24.04-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-quality-ubuntu-24.04-
+
       - name: Report pinned toolchain
         run: rustc --version --verbose
 
@@ -40,11 +51,49 @@ jobs:
       - name: Run non-Windows native Store feature Clippy
         run: cargo clippy --release --locked -p mtg-kernel --all-targets --features native-training-store-v2-production -- -D warnings
 
-  cross-platform-tests:
-    name: Tests (${{ matrix.os }})
+  rust-tests:
+    name: Rust tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2025
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Cache cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-tests-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-tests-${{ matrix.os }}-
+
+      - name: Run Rust release tests
+        run: cargo test --release --locked --workspace --all-targets
+
+      - name: Validate native Store production feature boundary
+        run: |
+          cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
+          cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
+
+  python-tests:
+    name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2025
+        shard:
+          - 0
+          - 1
         include:
           - os: ubuntu-24.04
             kernel_bin: target/release/kernel_rl_env
@@ -57,6 +106,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
+      - name: Cache cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-python-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-python-${{ matrix.os }}-
+
       - name: Set up pinned Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -67,19 +127,12 @@ jobs:
           python -m pip install --disable-pip-version-check uv==0.11.29
           uv sync --locked --extra test
 
-      - name: Run Rust release tests
-        run: cargo test --release --locked --workspace --all-targets
-
-      - name: Validate native Store production feature boundary
-        run: |
-          cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
-          cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
-
       - name: Validate canonical Pauper manifests
+        if: matrix.shard == 0
         run: uv run --no-sync python python/tools/generate_pauper_manifests.py --check --repo-root .
 
       - name: Build release JSONL environment
         run: cargo build --release --locked --bin kernel_rl_env
 
-      - name: Run Python tests against the real Rust environment
-        run: uv run --no-sync python -m unittest discover -s python/tests -v
+      - name: Run Python test shard against the real Rust environment
+        run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count 2
