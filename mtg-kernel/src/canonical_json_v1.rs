@@ -48,6 +48,7 @@ pub enum CanonicalJsonNullPolicyV1 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CanonicalJsonErrorKindV1 {
     Serialization,
+    EncodedLengthOverflow,
     Deserialization,
     InvalidSyntax,
     MissingFinalLf,
@@ -68,6 +69,7 @@ impl CanonicalJsonErrorKindV1 {
     pub const fn code(self) -> &'static str {
         match self {
             Self::Serialization => "canonical_json_serialization",
+            Self::EncodedLengthOverflow => "canonical_json_encoded_length_overflow",
             Self::Deserialization => "canonical_json_deserialization",
             Self::InvalidSyntax => "canonical_json_invalid_syntax",
             Self::MissingFinalLf => "canonical_json_missing_final_lf",
@@ -148,12 +150,25 @@ pub fn to_canonical_json_bytes_v1<T: Serialize + ?Sized>(
     value: &T,
     null_policy: CanonicalJsonNullPolicyV1,
 ) -> Result<Vec<u8>> {
-    let parsed = value.serialize(ValueSerializerV1 {
-        null_policy,
-        containing_depth: 0,
-    })?;
-    require_allowed_null_paths(&parsed, null_policy)?;
-    Ok(encode_value_with_final_lf(&parsed))
+    let parsed = serialize_checked_value_v1(value, null_policy)?;
+    encode_value_with_final_lf(&parsed)
+}
+
+/// Returns the exact canonical Store V2 JSON byte count, including the final
+/// LF, without allocating the encoded byte vector.
+///
+/// This uses the same checked serialization and chunk traversal as
+/// [`to_canonical_json_bytes_v1`]. The input's `Serialize` implementation is
+/// invoked exactly once; malformed custom implementations therefore fail with
+/// the same first error as the byte-emitting path.
+pub fn count_canonical_json_bytes_v1<T: Serialize + ?Sized>(
+    value: &T,
+    null_policy: CanonicalJsonNullPolicyV1,
+) -> Result<u64> {
+    let parsed = serialize_checked_value_v1(value, null_policy)?;
+    let mut sink = CanonicalJsonCountSinkV1::default();
+    emit_value_with_final_lf(&parsed, &mut sink)?;
+    Ok(sink.encoded_len)
 }
 
 /// Validates canonical bytes and returns a JSON value only after duplicate-key
@@ -196,7 +211,7 @@ fn parse_and_require_canonical(
     };
     let parsed = ParserV1::parse_document(payload, null_policy)?;
     require_allowed_null_paths(&parsed, null_policy)?;
-    if encode_value_with_final_lf(&parsed) != bytes {
+    if encode_value_with_final_lf(&parsed)? != bytes {
         return Err(CanonicalJsonErrorV1::new(
             CanonicalJsonErrorKindV1::NonCanonicalBytes,
         ));
@@ -204,49 +219,99 @@ fn parse_and_require_canonical(
     Ok(parsed)
 }
 
-fn encode_value_with_final_lf(value: &CanonicalJsonValueV1) -> Vec<u8> {
+fn serialize_checked_value_v1<T: Serialize + ?Sized>(
+    value: &T,
+    null_policy: CanonicalJsonNullPolicyV1,
+) -> Result<CanonicalJsonValueV1> {
+    let parsed = value.serialize(ValueSerializerV1 {
+        null_policy,
+        containing_depth: 0,
+    })?;
+    require_allowed_null_paths(&parsed, null_policy)?;
+    Ok(parsed)
+}
+
+trait CanonicalJsonChunkSinkV1 {
+    fn emit_chunk(&mut self, chunk: &[u8]) -> Result<()>;
+}
+
+impl CanonicalJsonChunkSinkV1 for Vec<u8> {
+    fn emit_chunk(&mut self, chunk: &[u8]) -> Result<()> {
+        self.extend_from_slice(chunk);
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct CanonicalJsonCountSinkV1 {
+    encoded_len: u64,
+}
+
+impl CanonicalJsonChunkSinkV1 for CanonicalJsonCountSinkV1 {
+    fn emit_chunk(&mut self, chunk: &[u8]) -> Result<()> {
+        let chunk_len = u64::try_from(chunk.len()).map_err(|_| {
+            CanonicalJsonErrorV1::new(CanonicalJsonErrorKindV1::EncodedLengthOverflow)
+        })?;
+        self.encoded_len = self.encoded_len.checked_add(chunk_len).ok_or_else(|| {
+            CanonicalJsonErrorV1::new(CanonicalJsonErrorKindV1::EncodedLengthOverflow)
+        })?;
+        Ok(())
+    }
+}
+
+fn emit_value_with_final_lf<S: CanonicalJsonChunkSinkV1>(
+    value: &CanonicalJsonValueV1,
+    sink: &mut S,
+) -> Result<()> {
+    value.emit(sink)?;
+    sink.emit_chunk(b"\n")
+}
+
+fn encode_value_with_final_lf(value: &CanonicalJsonValueV1) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    value.encode(&mut bytes);
-    bytes.push(b'\n');
-    bytes
+    emit_value_with_final_lf(value, &mut bytes)?;
+    Ok(bytes)
 }
 
 impl CanonicalJsonValueV1 {
-    fn encode(&self, output: &mut Vec<u8>) {
+    fn emit<S: CanonicalJsonChunkSinkV1>(&self, sink: &mut S) -> Result<()> {
         match self {
-            Self::Null => output.extend_from_slice(b"null"),
-            Self::Bool(false) => output.extend_from_slice(b"false"),
-            Self::Bool(true) => output.extend_from_slice(b"true"),
+            Self::Null => sink.emit_chunk(b"null")?,
+            Self::Bool(false) => sink.emit_chunk(b"false")?,
+            Self::Bool(true) => sink.emit_chunk(b"true")?,
             Self::Number(CanonicalJsonNumberV1::Signed(value)) => {
-                output.extend_from_slice(value.to_string().as_bytes());
+                let encoded = value.to_string();
+                sink.emit_chunk(encoded.as_bytes())?;
             }
             Self::Number(CanonicalJsonNumberV1::Unsigned(value)) => {
-                output.extend_from_slice(value.to_string().as_bytes());
+                let encoded = value.to_string();
+                sink.emit_chunk(encoded.as_bytes())?;
             }
-            Self::String(value) => encode_string(value, output),
+            Self::String(value) => emit_string(value, sink)?,
             Self::Array(values) => {
-                output.push(b'[');
+                sink.emit_chunk(b"[")?;
                 for (index, value) in values.iter().enumerate() {
                     if index != 0 {
-                        output.push(b',');
+                        sink.emit_chunk(b",")?;
                     }
-                    value.encode(output);
+                    value.emit(sink)?;
                 }
-                output.push(b']');
+                sink.emit_chunk(b"]")?;
             }
             Self::Object(values) => {
-                output.push(b'{');
+                sink.emit_chunk(b"{")?;
                 for (index, (key, value)) in values.iter().enumerate() {
                     if index != 0 {
-                        output.push(b',');
+                        sink.emit_chunk(b",")?;
                     }
-                    encode_string(key, output);
-                    output.push(b':');
-                    value.encode(output);
+                    emit_string(key, sink)?;
+                    sink.emit_chunk(b":")?;
+                    value.emit(sink)?;
                 }
-                output.push(b'}');
+                sink.emit_chunk(b"}")?;
             }
         }
+        Ok(())
     }
 
     fn into_serde_json_value(self) -> serde_json::Value {
@@ -276,17 +341,23 @@ impl CanonicalJsonValueV1 {
     }
 }
 
-fn encode_string(value: &str, output: &mut Vec<u8>) {
+fn emit_string<S: CanonicalJsonChunkSinkV1>(value: &str, sink: &mut S) -> Result<()> {
     debug_assert!(value.bytes().all(|byte| (0x20..=0x7e).contains(&byte)));
-    output.push(b'"');
-    for byte in value.bytes() {
+    sink.emit_chunk(b"\"")?;
+    let bytes = value.as_bytes();
+    let mut chunk_start = 0;
+    for (index, byte) in bytes.iter().copied().enumerate() {
         match byte {
-            b'"' => output.extend_from_slice(b"\\\""),
-            b'\\' => output.extend_from_slice(b"\\\\"),
-            _ => output.push(byte),
+            b'"' | b'\\' => {
+                sink.emit_chunk(&bytes[chunk_start..index])?;
+                sink.emit_chunk(if byte == b'"' { b"\\\"" } else { b"\\\\" })?;
+                chunk_start = index + 1;
+            }
+            _ => {}
         }
     }
-    output.push(b'"');
+    sink.emit_chunk(&bytes[chunk_start..])?;
+    sink.emit_chunk(b"\"")
 }
 
 #[derive(Clone, Copy)]
@@ -1475,13 +1546,119 @@ mod tests {
         },
         Deserialize, Serializer,
     };
-    use std::collections::BTreeMap;
+    use std::{cell::Cell, collections::BTreeMap};
 
     fn assert_kind<T>(result: Result<T>, expected: CanonicalJsonErrorKindV1) {
         match result {
             Ok(_) => panic!("expected canonical JSON error {expected:?}"),
             Err(error) => assert_eq!(error.kind(), expected),
         }
+    }
+
+    fn assert_count_matches_bytes<T: Serialize + ?Sized>(
+        value: &T,
+        null_policy: CanonicalJsonNullPolicyV1,
+    ) -> Vec<u8> {
+        let bytes = to_canonical_json_bytes_v1(value, null_policy).unwrap();
+        let count = count_canonical_json_bytes_v1(value, null_policy).unwrap();
+        assert_eq!(count, u64::try_from(bytes.len()).unwrap());
+        bytes
+    }
+
+    fn assert_emit_count_same_error<T: Serialize + ?Sized>(
+        value: &T,
+        null_policy: CanonicalJsonNullPolicyV1,
+        expected: CanonicalJsonErrorKindV1,
+    ) {
+        let emit_error = to_canonical_json_bytes_v1(value, null_policy).unwrap_err();
+        let count_error = count_canonical_json_bytes_v1(value, null_policy).unwrap_err();
+        assert_eq!(emit_error.kind(), expected);
+        assert_eq!(count_error, emit_error);
+    }
+
+    struct SerializationCallCounter<'a> {
+        calls: &'a Cell<u32>,
+    }
+
+    impl Serialize for SerializationCallCounter<'_> {
+        fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let call = self.calls.get().checked_add(1).unwrap();
+            self.calls.set(call);
+            serializer.serialize_u32(call)
+        }
+    }
+
+    #[test]
+    fn byte_and_count_paths_each_invoke_checked_serialization_once() {
+        let byte_calls = Cell::new(0);
+        assert_eq!(
+            to_canonical_json_bytes_v1(
+                &SerializationCallCounter { calls: &byte_calls },
+                CanonicalJsonNullPolicyV1::Forbid,
+            )
+            .unwrap(),
+            b"1\n"
+        );
+        assert_eq!(byte_calls.get(), 1);
+
+        let count_calls = Cell::new(0);
+        assert_eq!(
+            count_canonical_json_bytes_v1(
+                &SerializationCallCounter {
+                    calls: &count_calls,
+                },
+                CanonicalJsonNullPolicyV1::Forbid,
+            )
+            .unwrap(),
+            2
+        );
+        assert_eq!(count_calls.get(), 1);
+    }
+
+    #[test]
+    fn count_sink_matches_exact_wire_bytes_including_escapes_and_final_lf() {
+        for value in [
+            serde_json::json!(false),
+            serde_json::json!(i64::MIN),
+            serde_json::json!(u64::MAX),
+            serde_json::json!([]),
+            serde_json::json!({}),
+            serde_json::json!({
+                "z\\\"": [true, "quote\"slash\\/", -17],
+                "a": {"nested": ""}
+            }),
+        ] {
+            let bytes = assert_count_matches_bytes(&value, CanonicalJsonNullPolicyV1::Forbid);
+            assert_eq!(bytes.last(), Some(&b'\n'));
+        }
+
+        let escaped = serde_json::json!({
+            "key\"\\": "value\"\\",
+        });
+        assert_eq!(
+            assert_count_matches_bytes(&escaped, CanonicalJsonNullPolicyV1::Forbid),
+            b"{\"key\\\"\\\\\":\"value\\\"\\\\\"}\n"
+        );
+    }
+
+    #[test]
+    fn count_sink_checked_add_rejects_final_lf_overflow_without_wrapping() {
+        let mut sink = CanonicalJsonCountSinkV1 {
+            encoded_len: u64::MAX - 4,
+        };
+        assert_kind(
+            emit_value_with_final_lf(&CanonicalJsonValueV1::Bool(true), &mut sink),
+            CanonicalJsonErrorKindV1::EncodedLengthOverflow,
+        );
+        assert_eq!(sink.encoded_len, u64::MAX);
+        assert_kind(
+            sink.emit_chunk(b"x"),
+            CanonicalJsonErrorKindV1::EncodedLengthOverflow,
+        );
+        assert_eq!(sink.encoded_len, u64::MAX);
     }
 
     #[test]
@@ -1491,7 +1668,7 @@ mod tests {
             "arr": [{"b": 2, "a": 1}, true],
             "a": {"z": -7, "a": "quote\"slash\\/"}
         });
-        let actual = to_canonical_json_bytes_v1(&value, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let actual = assert_count_matches_bytes(&value, CanonicalJsonNullPolicyV1::Forbid);
         let golden = b"{\"a\":{\"a\":\"quote\\\"slash\\\\/\",\"z\":-7},\"arr\":[{\"a\":1,\"b\":2},true],\"z\":9223372036854775807}\n";
         assert_eq!(actual, golden);
         validate_canonical_json_bytes_v1(&actual, CanonicalJsonNullPolicyV1::Forbid).unwrap();
@@ -1698,10 +1875,7 @@ mod tests {
                 CanonicalJsonErrorKindV1::FloatingPointForbidden,
             ),
         ] {
-            assert_kind(
-                to_canonical_json_bytes_v1(&fixture, CanonicalJsonNullPolicyV1::Forbid),
-                expected,
-            );
+            assert_emit_count_same_error(&fixture, CanonicalJsonNullPolicyV1::Forbid, expected);
         }
     }
 
@@ -1806,8 +1980,7 @@ mod tests {
     #[test]
     fn every_printable_ascii_byte_emits_and_rereads_symmetrically() {
         let printable = (0x20_u8..=0x7e).map(char::from).collect::<String>();
-        let bytes =
-            to_canonical_json_bytes_v1(&printable, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let bytes = assert_count_matches_bytes(&printable, CanonicalJsonNullPolicyV1::Forbid);
         assert!(bytes.windows(2).any(|pair| pair == b"\\\""));
         assert!(bytes.windows(2).any(|pair| pair == b"\\\\"));
         assert!(bytes.ends_with(b"\"\n"));
@@ -1984,6 +2157,83 @@ mod tests {
     }
 
     #[test]
+    fn byte_and_count_paths_match_at_null_depth_string_and_object_boundaries() {
+        const NULLABLE: &[CanonicalJsonNullPathSegmentV1] = &[
+            CanonicalJsonNullPathSegmentV1::ObjectKey("rows"),
+            CanonicalJsonNullPathSegmentV1::AnyArrayElement,
+            CanonicalJsonNullPathSegmentV1::ObjectKey("nullable"),
+        ];
+        const POLICY: CanonicalJsonNullPolicyV1 = CanonicalJsonNullPolicyV1::AllowOnly(&[NULLABLE]);
+
+        let allowed_nulls = serde_json::json!({
+            "rows": [{"nullable": null}, {"nullable": null}],
+        });
+        assert_count_matches_bytes(&allowed_nulls, POLICY);
+        assert_emit_count_same_error(
+            &serde_json::json!({"rows": [{"other": null}]}),
+            POLICY,
+            CanonicalJsonErrorKindV1::NullForbidden,
+        );
+
+        for use_object in [false, true] {
+            let mut boundary = serde_json::Value::from(0);
+            for _ in 0..CANONICAL_JSON_MAX_DEPTH_V1 {
+                boundary = if use_object {
+                    serde_json::json!({"a": boundary})
+                } else {
+                    serde_json::Value::Array(vec![boundary])
+                };
+            }
+            assert_count_matches_bytes(&boundary, CanonicalJsonNullPolicyV1::Forbid);
+
+            let too_deep = if use_object {
+                serde_json::json!({"a": boundary})
+            } else {
+                serde_json::Value::Array(vec![boundary])
+            };
+            assert_emit_count_same_error(
+                &too_deep,
+                CanonicalJsonNullPolicyV1::Forbid,
+                CanonicalJsonErrorKindV1::DepthTooDeep,
+            );
+        }
+
+        let escaped_at_string_bound = "\"\\".repeat(CANONICAL_JSON_MAX_STRING_BYTES_V1 / 2);
+        assert_eq!(
+            escaped_at_string_bound.len(),
+            CANONICAL_JSON_MAX_STRING_BYTES_V1
+        );
+        assert_count_matches_bytes(&escaped_at_string_bound, CanonicalJsonNullPolicyV1::Forbid);
+        let escaped_over_string_bound = format!("{escaped_at_string_bound}x");
+        assert_emit_count_same_error(
+            &escaped_over_string_bound,
+            CanonicalJsonNullPolicyV1::Forbid,
+            CanonicalJsonErrorKindV1::StringTooLong,
+        );
+
+        let mut key_at_string_bound = BTreeMap::new();
+        key_at_string_bound.insert(escaped_at_string_bound, 1_u8);
+        assert_count_matches_bytes(&key_at_string_bound, CanonicalJsonNullPolicyV1::Forbid);
+        let mut key_over_string_bound = BTreeMap::new();
+        key_over_string_bound.insert(escaped_over_string_bound, 1_u8);
+        assert_emit_count_same_error(
+            &key_over_string_bound,
+            CanonicalJsonNullPolicyV1::Forbid,
+            CanonicalJsonErrorKindV1::StringTooLong,
+        );
+
+        assert_count_matches_bytes(
+            &bounded_object(CANONICAL_JSON_MAX_OBJECT_KEYS_V1),
+            CanonicalJsonNullPolicyV1::Forbid,
+        );
+        assert_emit_count_same_error(
+            &bounded_object(CANONICAL_JSON_MAX_OBJECT_KEYS_V1 + 1),
+            CanonicalJsonNullPolicyV1::Forbid,
+            CanonicalJsonErrorKindV1::ObjectTooLarge,
+        );
+    }
+
+    #[test]
     fn object_key_count_bound_is_inclusive_at_every_depth() {
         let accepted = bounded_object(CANONICAL_JSON_MAX_OBJECT_KEYS_V1);
         let accepted_bytes =
@@ -2123,6 +2373,10 @@ mod tests {
             (
                 CanonicalJsonErrorKindV1::Serialization,
                 "canonical_json_serialization",
+            ),
+            (
+                CanonicalJsonErrorKindV1::EncodedLengthOverflow,
+                "canonical_json_encoded_length_overflow",
             ),
             (
                 CanonicalJsonErrorKindV1::Deserialization,
