@@ -135,6 +135,10 @@ pub(crate) mod native_training_store_digest_v1;
 // Pure typed run/v2 record validation and deterministic digest authority.
 // Capture, filesystem publication, and learning-quality claims live elsewhere.
 pub mod native_training_store_run_v2;
+// Pure checkpoint-reference/latest record authorities. These bind sealed
+// boundary facts only; filesystem location, publication, and currentness are
+// deliberately outside this module.
+pub mod native_training_store_reference_latest_v2;
 // Private-construction persistence receipt and the strict native generation
 // store boundary. The high-level publisher/read/recovery path lands here.
 pub mod native_training_store_v2;
