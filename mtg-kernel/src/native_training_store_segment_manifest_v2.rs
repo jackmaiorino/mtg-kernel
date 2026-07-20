@@ -1,10 +1,9 @@
 //! Pure SegmentManifestV2 authority for Native Training Store V2.
 //!
-//! This first slice intentionally authorizes only the genesis variant.  The
-//! complete frozen tagged-union wire is represented here so a later trained
-//! entry point can reuse it, but trained bytes cannot become authoritative
-//! without an explicit parent/head and complete continuation boundary.  This
-//! module owns no filesystem path, publisher, recovery, receipt, head, latest,
+//! Genesis authority is rooted directly in a validated update-zero checkpoint.
+//! Trained authority additionally requires a sealed logical parent boundary,
+//! the complete continuation-chain advance, and its exact trained checkpoint.
+//! This module owns no filesystem path, publisher, recovery, receipt, latest,
 //! reference, or executor mutation.
 
 use crate::canonical_json_v1::{
@@ -12,12 +11,17 @@ use crate::canonical_json_v1::{
     CanonicalJsonErrorKindV1, CanonicalJsonErrorV1, CanonicalJsonNullPathSegmentV1,
     CanonicalJsonNullPolicyV1,
 };
+use crate::native_training_store_boundary_v2::ValidatedNativeTrainingBoundaryV2;
 use crate::native_training_store_checkpoint_v3::CheckpointManifestV3;
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1, NativeTrainingStoreAtomSha256V1,
     NativeTrainingStoreDigestErrorV1,
 };
 use crate::native_training_store_run_v2::ValidatedTrainRunV2;
+use crate::native_training_store_segment_continuation_v2::{
+    ValidatedSegmentContinuationChainAdvanceV2, SEGMENT_CONTINUATION_MAX_BYTES_V2,
+    SEGMENT_CONTINUATION_MAX_FIXED_DECIMAL_V2,
+};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -133,6 +137,11 @@ struct SegmentManifestWireV2 {
     ordered_update_evidence_list_sha256: String,
     continuation_chain: ContinuationChainWireV2,
     final_checkpoint: FinalCheckpointBindingWireV2,
+}
+
+struct DerivedTrainedManifestV2 {
+    wire: SegmentManifestWireV2,
+    ordered_update_evidence_list_sha256: [u8; 32],
 }
 
 /// Fully validated pure SegmentManifestV2 authority.
@@ -259,6 +268,9 @@ pub enum SegmentManifestV2ErrorKind {
     InvalidArithmetic,
     RunBinding,
     GenesisInvariant,
+    TrainedInvariant,
+    ParentBoundaryBinding,
+    ContinuationBinding,
     FinalCheckpointBinding,
     OrderedEvidenceDigestMismatch,
     TrainedAuthorityRequired,
@@ -276,6 +288,11 @@ impl SegmentManifestV2ErrorKind {
             Self::InvalidArithmetic => "native_train_checkpoint_segment_v2_invalid_arithmetic",
             Self::RunBinding => "native_train_checkpoint_segment_v2_run_binding",
             Self::GenesisInvariant => "native_train_checkpoint_segment_v2_genesis_invariant",
+            Self::TrainedInvariant => "native_train_checkpoint_segment_v2_trained_invariant",
+            Self::ParentBoundaryBinding => {
+                "native_train_checkpoint_segment_v2_parent_boundary_binding"
+            }
+            Self::ContinuationBinding => "native_train_checkpoint_segment_v2_continuation_binding",
             Self::FinalCheckpointBinding => {
                 "native_train_checkpoint_segment_v2_final_checkpoint_binding"
             }
@@ -369,26 +386,25 @@ pub fn build_genesis_segment_manifest_v2(
             train_state_sha256: lower_hex_raw32_v1(checkpoint.train_state_sha256()),
         },
     };
-    let count = count_canonical_json_bytes_v1(&wire, SEGMENT_MANIFEST_NULL_POLICY_V2)?;
-    if count > SEGMENT_MANIFEST_MAX_BYTES_V2 {
-        return Err(SegmentManifestV2Error::new(
-            SegmentManifestV2ErrorKind::RecordTooLarge,
-        ));
-    }
-    let canonical_bytes = to_canonical_json_bytes_v1(&wire, SEGMENT_MANIFEST_NULL_POLICY_V2)?;
-    if u64::try_from(canonical_bytes.len())
-        .map_err(|_| SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic))?
-        != count
-    {
-        return Err(SegmentManifestV2Error::new(
-            SegmentManifestV2ErrorKind::InvalidArithmetic,
-        ));
-    }
+    let canonical_bytes = encode_segment_manifest_wire_v2(&wire)?;
     decode_genesis_segment_manifest_v2(&canonical_bytes, run, checkpoint)
 }
 
+/// Builds one trained SegmentManifestV2 from the sealed logical parent,
+/// complete continuation advance, and exact final trained checkpoint.
+pub fn build_trained_segment_manifest_v2(
+    run: &ValidatedTrainRunV2,
+    parent: &ValidatedNativeTrainingBoundaryV2,
+    continuations: &ValidatedSegmentContinuationChainAdvanceV2,
+    checkpoint: &CheckpointManifestV3,
+) -> Result<SegmentManifestV2> {
+    let derived = derive_trained_manifest_v2(run, parent, continuations, checkpoint)?;
+    let manifest_cj = encode_segment_manifest_wire_v2(&derived.wire)?;
+    decode_trained_segment_manifest_v2(&manifest_cj, run, parent, continuations, checkpoint)
+}
+
 /// Decodes and validates only the genesis SegmentManifestV2 variant.
-/// Canonical trained bytes always require a later explicit parent-bound API.
+/// Canonical trained bytes require the separate explicit parent-bound API.
 pub fn decode_genesis_segment_manifest_v2(
     manifest_cj: &[u8],
     run: &ValidatedTrainRunV2,
@@ -459,6 +475,515 @@ pub fn decode_genesis_segment_manifest_v2(
         model_parameter_sha256,
         train_state_sha256,
     })
+}
+
+/// Decodes and validates one trained SegmentManifestV2 against only sealed
+/// parent, continuation-advance, and checkpoint authorities.
+pub fn decode_trained_segment_manifest_v2(
+    manifest_cj: &[u8],
+    run: &ValidatedTrainRunV2,
+    parent: &ValidatedNativeTrainingBoundaryV2,
+    continuations: &ValidatedSegmentContinuationChainAdvanceV2,
+    checkpoint: &CheckpointManifestV3,
+) -> Result<SegmentManifestV2> {
+    require_manifest_cap_v2(manifest_cj)?;
+    let wire: SegmentManifestWireV2 =
+        from_canonical_json_bytes_v1(manifest_cj, SEGMENT_MANIFEST_NULL_POLICY_V2)?;
+    validate_trained_common_wire_v2(&wire)?;
+    let derived = derive_trained_manifest_v2(run, parent, continuations, checkpoint)?;
+
+    validate_trained_run_and_equations_v2(&wire, run, &derived.wire)?;
+    validate_trained_parent_fields_v2(&wire, &derived.wire)?;
+    let supplied_ordered_digest = ordered_update_evidence_list_sha256_v2(
+        &wire.run_sha256,
+        wire.generation_index,
+        wire.update_count,
+        &wire.ordered_update_evidence,
+    )?;
+    if wire.ordered_update_evidence_list_sha256 != lower_hex_raw32_v1(supplied_ordered_digest) {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::OrderedEvidenceDigestMismatch,
+        ));
+    }
+    if wire.ordered_update_evidence != derived.wire.ordered_update_evidence
+        || supplied_ordered_digest != derived.ordered_update_evidence_list_sha256
+        || wire.continuation_chain != derived.wire.continuation_chain
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::ContinuationBinding,
+        ));
+    }
+    if wire.final_checkpoint != derived.wire.final_checkpoint {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::FinalCheckpointBinding,
+        ));
+    }
+
+    authority_from_wire_v2(wire, manifest_cj, supplied_ordered_digest)
+}
+
+fn encode_segment_manifest_wire_v2(wire: &SegmentManifestWireV2) -> Result<Vec<u8>> {
+    let count = count_canonical_json_bytes_v1(wire, SEGMENT_MANIFEST_NULL_POLICY_V2)?;
+    if count > SEGMENT_MANIFEST_MAX_BYTES_V2 {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::RecordTooLarge,
+        ));
+    }
+    let canonical_bytes = to_canonical_json_bytes_v1(wire, SEGMENT_MANIFEST_NULL_POLICY_V2)?;
+    let emitted = u64::try_from(canonical_bytes.len())
+        .map_err(|_| SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic))?;
+    if emitted != count {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::InvalidArithmetic,
+        ));
+    }
+    Ok(canonical_bytes)
+}
+
+fn require_manifest_cap_v2(manifest_cj: &[u8]) -> Result<()> {
+    let byte_count = u64::try_from(manifest_cj.len())
+        .map_err(|_| SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::RecordTooLarge))?;
+    if byte_count > SEGMENT_MANIFEST_MAX_BYTES_V2 {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::RecordTooLarge,
+        ));
+    }
+    Ok(())
+}
+
+fn authority_from_wire_v2(
+    wire: SegmentManifestWireV2,
+    manifest_cj: &[u8],
+    ordered_update_evidence_list_sha256: [u8; 32],
+) -> Result<SegmentManifestV2> {
+    let checkpoint_manifest_sha256 =
+        parse_digest_v2(&wire.final_checkpoint.checkpoint_manifest_sha256)?;
+    let checkpoint_payload_sha256 =
+        parse_digest_v2(&wire.final_checkpoint.checkpoint_payload_sha256)?;
+    let logical_state_sha256 = parse_digest_v2(&wire.final_checkpoint.logical_state_sha256)?;
+    let model_parameter_sha256 = parse_digest_v2(&wire.final_checkpoint.model_parameter_sha256)?;
+    let train_state_sha256 = parse_digest_v2(&wire.final_checkpoint.train_state_sha256)?;
+    let parent_head_sha256 = wire
+        .parent_head_sha256
+        .as_deref()
+        .map(parse_digest_v2)
+        .transpose()?;
+    let parent_last_update_evidence_sha256 = wire
+        .parent_last_update_evidence_sha256
+        .as_deref()
+        .map(parse_digest_v2)
+        .transpose()?;
+    let last_update_evidence_sha256 = wire
+        .ordered_update_evidence
+        .last()
+        .map(|row| parse_digest_v2(&row.update_evidence_sha256))
+        .transpose()?;
+
+    Ok(SegmentManifestV2 {
+        wire,
+        canonical_bytes: manifest_cj.to_vec(),
+        segment_manifest_sha256: sha256_v1(manifest_cj),
+        ordered_update_evidence_list_sha256,
+        parent_head_sha256,
+        parent_last_update_evidence_sha256,
+        last_update_evidence_sha256,
+        checkpoint_manifest_sha256,
+        checkpoint_payload_sha256,
+        logical_state_sha256,
+        model_parameter_sha256,
+        train_state_sha256,
+    })
+}
+
+fn validate_trained_common_wire_v2(wire: &SegmentManifestWireV2) -> Result<()> {
+    if wire.schema != SEGMENT_MANIFEST_SCHEMA_V2 {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::InvalidSchema,
+        ));
+    }
+    match wire.kind.as_str() {
+        "trained" => {}
+        "genesis" => {
+            return Err(SegmentManifestV2Error::new(
+                SegmentManifestV2ErrorKind::TrainedInvariant,
+            ));
+        }
+        _ => {
+            return Err(SegmentManifestV2Error::new(
+                SegmentManifestV2ErrorKind::InvalidKind,
+            ));
+        }
+    }
+    validate_scalars_v2(wire)?;
+    validate_digest_encodings_v2(wire)?;
+    let ordered_count = u64::try_from(wire.ordered_update_evidence.len())
+        .map_err(|_| SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic))?;
+    let continuation_count = u64::try_from(wire.continuation_chain.continuations.len())
+        .map_err(|_| SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic))?;
+    if wire.ordered_update_evidence_count != wire.update_count
+        || wire.ordered_update_evidence_count != ordered_count
+        || wire.continuation_chain.continuation_count != continuation_count
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::TrainedInvariant,
+        ));
+    }
+    Ok(())
+}
+
+fn derive_trained_manifest_v2(
+    run: &ValidatedTrainRunV2,
+    parent: &ValidatedNativeTrainingBoundaryV2,
+    continuation_advance: &ValidatedSegmentContinuationChainAdvanceV2,
+    checkpoint: &CheckpointManifestV3,
+) -> Result<DerivedTrainedManifestV2> {
+    let checkpoint_segment_updates = run.checkpoint_segment_updates();
+    let batch_episodes = run.batch_episodes();
+    require_positive_u63_v2(checkpoint_segment_updates)?;
+    require_positive_u63_v2(batch_episodes)?;
+    let run_sha256_raw = parse_digest_v2(run.run_sha256())?;
+    let identity_bundle_sha256_raw = parse_digest_v2(run.identity_bundle_sha256())?;
+
+    let parent_facts = parent.boundary_facts_v2();
+    if parent_facts.run_sha256 != run.run_sha256()
+        || parent_facts.identity_bundle_sha256 != run.identity_bundle_sha256()
+        || parent_facts.batch_episodes != batch_episodes
+        || parent_facts.checkpoint_segment_updates != checkpoint_segment_updates
+        || parent_facts.head_sha256 != parent.head_sha256()
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::ParentBoundaryBinding,
+        ));
+    }
+    let parent_generation_index = parent_facts.generation_index;
+    require_u63_v2(parent_generation_index)?;
+    if parent_facts.last_update_evidence_sha256.is_none() != (parent_generation_index == 0) {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::ParentBoundaryBinding,
+        ));
+    }
+    let expected_parent_generation =
+        checked_u63_mul_v2(parent_facts.segment_ordinal, checkpoint_segment_updates)?;
+    if expected_parent_generation != parent_generation_index {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::ParentBoundaryBinding,
+        ));
+    }
+    let generation_index = checked_u63_add_v2(parent_generation_index, checkpoint_segment_updates)?;
+    let segment_ordinal = checked_u63_add_v2(parent_facts.segment_ordinal, 1)?;
+    if checked_u63_mul_v2(segment_ordinal, checkpoint_segment_updates)? != generation_index
+        || generation_index > run.requested_successful_updates()
+        || generation_index > SEGMENT_CONTINUATION_MAX_FIXED_DECIMAL_V2
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::TrainedInvariant,
+        ));
+    }
+    let update_start_index = checked_u63_add_v2(parent_generation_index, 1)?;
+    let episode_start = checked_u63_mul_v2(batch_episodes, parent_generation_index)?;
+    let episode_count = checked_u63_mul_v2(batch_episodes, checkpoint_segment_updates)?;
+    let episode_end_exclusive = checked_u63_mul_v2(batch_episodes, generation_index)?;
+
+    let chain = continuation_advance.chain();
+    if chain.segment_ordinal() != segment_ordinal
+        || chain.parent_generation_index() != parent_generation_index
+        || chain.generation_index() != generation_index
+        || chain.batch_episodes() != batch_episodes
+        || chain.checkpoint_segment_updates() != checkpoint_segment_updates
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::ContinuationBinding,
+        ));
+    }
+    let expected_group_count = usize::try_from(checkpoint_segment_updates)
+        .map_err(|_| SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic))?;
+    if chain.ordered_update_evidence().len() != expected_group_count
+        || chain.continuations().is_empty()
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::ContinuationBinding,
+        ));
+    }
+
+    let continuation_count = u64::try_from(chain.continuations().len())
+        .map_err(|_| SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic))?;
+    require_positive_u63_v2(continuation_count)?;
+    let mut descriptors = Vec::with_capacity(chain.continuations().len());
+    let mut ordered_rows = Vec::with_capacity(expected_group_count);
+    let mut expected_previous_continuation = None;
+    let mut expected_previous_update = parent_facts.last_update_evidence_sha256;
+    let mut cumulative_group_count = 0_u64;
+    let mut total_logical_rows = 0_u64;
+
+    for (continuation_position, continuation) in chain.continuations().iter().enumerate() {
+        let continuation_index = u64::try_from(continuation_position).map_err(|_| {
+            SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic)
+        })?;
+        if continuation_index > SEGMENT_CONTINUATION_MAX_FIXED_DECIMAL_V2
+            || continuation.run_sha256() != run.run_sha256()
+            || continuation.identity_bundle_sha256() != run.identity_bundle_sha256()
+            || continuation.segment_ordinal() != segment_ordinal
+            || continuation.parent_generation_index() != parent_generation_index
+            || continuation.generation_index() != generation_index
+            || continuation.batch_episodes() != batch_episodes
+            || continuation.checkpoint_segment_updates() != checkpoint_segment_updates
+            || continuation.continuation_index() != continuation_index
+            || continuation.previous_continuation_sha256() != expected_previous_continuation
+            || continuation.update_group_start_ordinal() != cumulative_group_count
+            || continuation.update_groups().is_empty()
+        {
+            return Err(SegmentManifestV2Error::new(
+                SegmentManifestV2ErrorKind::ContinuationBinding,
+            ));
+        }
+
+        let byte_count = u64::try_from(continuation.canonical_bytes().len()).map_err(|_| {
+            SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic)
+        })?;
+        require_positive_u63_v2(byte_count)?;
+        if byte_count > SEGMENT_CONTINUATION_MAX_BYTES_V2
+            || sha256_v1(continuation.canonical_bytes()) != continuation.continuation_sha256()
+        {
+            return Err(SegmentManifestV2Error::new(
+                SegmentManifestV2ErrorKind::ContinuationBinding,
+            ));
+        }
+
+        let update_group_count =
+            u64::try_from(continuation.update_group_count()).map_err(|_| {
+                SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic)
+            })?;
+        require_positive_u63_v2(update_group_count)?;
+        let mut continuation_logical_rows = 0_u64;
+        for group in continuation.update_groups() {
+            let global_group_ordinal = u64::try_from(ordered_rows.len()).map_err(|_| {
+                SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic)
+            })?;
+            if global_group_ordinal >= checkpoint_segment_updates {
+                return Err(SegmentManifestV2Error::new(
+                    SegmentManifestV2ErrorKind::ContinuationBinding,
+                ));
+            }
+            let expected_update_index = checked_u63_add_v2(
+                checked_u63_add_v2(parent_generation_index, global_group_ordinal)?,
+                1,
+            )?;
+            let logical_row_count = group.logical_row_count();
+            require_positive_u63_v2(logical_row_count)?;
+            if group.update_index() != expected_update_index
+                || group.previous_update_evidence_sha256() != expected_previous_update
+            {
+                return Err(SegmentManifestV2Error::new(
+                    SegmentManifestV2ErrorKind::ContinuationBinding,
+                ));
+            }
+            let evidence_sha256 = group.update_evidence_sha256();
+            if chain.ordered_update_evidence()[ordered_rows.len()]
+                != (expected_update_index, evidence_sha256)
+            {
+                return Err(SegmentManifestV2Error::new(
+                    SegmentManifestV2ErrorKind::ContinuationBinding,
+                ));
+            }
+            ordered_rows.push(OrderedUpdateEvidenceRowWireV1 {
+                update_index: expected_update_index,
+                update_evidence_sha256: lower_hex_raw32_v1(evidence_sha256),
+            });
+            expected_previous_update = Some(evidence_sha256);
+            continuation_logical_rows =
+                checked_u63_add_v2(continuation_logical_rows, logical_row_count)?;
+        }
+        if continuation_logical_rows != continuation.logical_row_count() {
+            return Err(SegmentManifestV2Error::new(
+                SegmentManifestV2ErrorKind::ContinuationBinding,
+            ));
+        }
+        total_logical_rows = checked_u63_add_v2(total_logical_rows, continuation_logical_rows)?;
+        descriptors.push(ContinuationDescriptorWireV2 {
+            continuation_index,
+            relative_name: continuation_relative_name_v2(generation_index, continuation_index)?,
+            byte_count,
+            sha256: lower_hex_raw32_v1(continuation.continuation_sha256()),
+            previous_continuation_sha256: expected_previous_continuation.map(lower_hex_raw32_v1),
+            update_group_start_ordinal: cumulative_group_count,
+            update_group_count,
+            logical_row_count: continuation_logical_rows,
+        });
+        cumulative_group_count = checked_u63_add_v2(cumulative_group_count, update_group_count)?;
+        expected_previous_continuation = Some(continuation.continuation_sha256());
+    }
+
+    if ordered_rows.len() != expected_group_count
+        || cumulative_group_count != checkpoint_segment_updates
+        || total_logical_rows == 0
+        || expected_previous_update != chain.ordered_update_evidence().last().map(|row| row.1)
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::ContinuationBinding,
+        ));
+    }
+    let first_continuation_sha256 = descriptors
+        .first()
+        .map(|descriptor| descriptor.sha256.clone());
+    let last_continuation_sha256 = descriptors
+        .last()
+        .map(|descriptor| descriptor.sha256.clone());
+
+    let advanced = continuation_advance.advanced_context();
+    let expected_next_update_index = checked_u63_add_v2(generation_index, 1)?;
+    if advanced.run_sha256_raw_v1() != run_sha256_raw
+        || advanced.identity_bundle_sha256_raw_v1() != identity_bundle_sha256_raw
+        || advanced.batch_episodes_v1() != batch_episodes
+        || advanced.checkpoint_segment_updates_v1() != checkpoint_segment_updates
+        || advanced.next_update_index() != expected_next_update_index
+        || advanced.previous_update_evidence_sha256() != expected_previous_update
+        || advanced.progress().batch_episodes() != batch_episodes
+        || advanced.progress().checkpoint_segment_updates() != checkpoint_segment_updates
+        || advanced.progress().next_episode_index() != episode_end_exclusive
+        || advanced.progress().successful_update_count() != generation_index
+        || advanced.progress().completed_episode_count() != episode_end_exclusive
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::ContinuationBinding,
+        ));
+    }
+
+    if checkpoint.run_sha256() != run.run_sha256()
+        || checkpoint.identity_bundle_sha256() != run.identity_bundle_sha256()
+        || checkpoint.segment_ordinal() != segment_ordinal
+        || checkpoint.generation_index() != generation_index
+        || checkpoint.batch_episodes() != batch_episodes
+        || checkpoint.checkpoint_segment_updates() != checkpoint_segment_updates
+        || checkpoint.progress() != advanced.progress()
+        || checkpoint.train_state().adam_step() != generation_index
+        || checkpoint.train_state().scorer_bias_anchor_f32_bits()
+            != u64::from(advanced.scorer_bias_anchor_bits_v1())
+        || checkpoint.model_parameter_sha256() != advanced.model_parameter_sha256()
+        || checkpoint.train_state_sha256() != advanced.train_state_sha256()
+        || sha256_v1(checkpoint.canonical_bytes()) != checkpoint.checkpoint_manifest_sha256()
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::FinalCheckpointBinding,
+        ));
+    }
+
+    let ordered_update_evidence_list_sha256 = ordered_update_evidence_list_sha256_v2(
+        run.run_sha256(),
+        generation_index,
+        checkpoint_segment_updates,
+        &ordered_rows,
+    )?;
+    Ok(DerivedTrainedManifestV2 {
+        wire: SegmentManifestWireV2 {
+            schema: SEGMENT_MANIFEST_SCHEMA_V2.to_owned(),
+            kind: "trained".to_owned(),
+            run_sha256: run.run_sha256().to_owned(),
+            identity_bundle_sha256: run.identity_bundle_sha256().to_owned(),
+            segment_ordinal,
+            parent_generation_index: Some(parent_generation_index),
+            generation_index,
+            batch_episodes,
+            checkpoint_segment_updates,
+            update_start_index,
+            update_count: checkpoint_segment_updates,
+            episode_start,
+            episode_count,
+            episode_end_exclusive,
+            parent_head_sha256: Some(lower_hex_raw32_v1(parent.head_sha256())),
+            parent_last_update_evidence_sha256: parent_facts
+                .last_update_evidence_sha256
+                .map(lower_hex_raw32_v1),
+            ordered_update_evidence_count: checkpoint_segment_updates,
+            ordered_update_evidence: ordered_rows,
+            ordered_update_evidence_list_sha256: lower_hex_raw32_v1(
+                ordered_update_evidence_list_sha256,
+            ),
+            continuation_chain: ContinuationChainWireV2 {
+                continuation_count,
+                update_group_count: checkpoint_segment_updates,
+                logical_row_count: total_logical_rows,
+                first_continuation_sha256,
+                last_continuation_sha256,
+                continuations: descriptors,
+            },
+            final_checkpoint: FinalCheckpointBindingWireV2 {
+                checkpoint_manifest_sha256: lower_hex_raw32_v1(
+                    checkpoint.checkpoint_manifest_sha256(),
+                ),
+                checkpoint_payload_sha256: lower_hex_raw32_v1(
+                    checkpoint.checkpoint_payload_sha256(),
+                ),
+                logical_state_sha256: lower_hex_raw32_v1(checkpoint.logical_state_sha256()),
+                model_parameter_sha256: lower_hex_raw32_v1(checkpoint.model_parameter_sha256()),
+                train_state_sha256: lower_hex_raw32_v1(checkpoint.train_state_sha256()),
+            },
+        },
+        ordered_update_evidence_list_sha256,
+    })
+}
+
+fn validate_trained_run_and_equations_v2(
+    wire: &SegmentManifestWireV2,
+    run: &ValidatedTrainRunV2,
+    expected: &SegmentManifestWireV2,
+) -> Result<()> {
+    if wire.schema != run.record().artifact_schemas.segment {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::InvalidSchema,
+        ));
+    }
+    if wire.run_sha256 != run.run_sha256()
+        || wire.identity_bundle_sha256 != run.identity_bundle_sha256()
+        || wire.batch_episodes != run.batch_episodes()
+        || wire.checkpoint_segment_updates != run.checkpoint_segment_updates()
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::RunBinding,
+        ));
+    }
+    if wire.kind != "trained"
+        || wire.segment_ordinal != expected.segment_ordinal
+        || wire.generation_index != expected.generation_index
+        || wire.update_start_index != expected.update_start_index
+        || wire.update_count != expected.update_count
+        || wire.episode_start != expected.episode_start
+        || wire.episode_count != expected.episode_count
+        || wire.episode_end_exclusive != expected.episode_end_exclusive
+        || wire.ordered_update_evidence_count != expected.ordered_update_evidence_count
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::TrainedInvariant,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_trained_parent_fields_v2(
+    wire: &SegmentManifestWireV2,
+    expected: &SegmentManifestWireV2,
+) -> Result<()> {
+    if wire.parent_generation_index != expected.parent_generation_index
+        || wire.parent_head_sha256 != expected.parent_head_sha256
+        || wire.parent_last_update_evidence_sha256 != expected.parent_last_update_evidence_sha256
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::ParentBoundaryBinding,
+        ));
+    }
+    Ok(())
+}
+
+fn continuation_relative_name_v2(generation_index: u64, continuation_index: u64) -> Result<String> {
+    if generation_index > SEGMENT_CONTINUATION_MAX_FIXED_DECIMAL_V2
+        || continuation_index > SEGMENT_CONTINUATION_MAX_FIXED_DECIMAL_V2
+    {
+        return Err(SegmentManifestV2Error::new(
+            SegmentManifestV2ErrorKind::InvalidScalar,
+        ));
+    }
+    Ok(format!(
+        "segment-{generation_index:08}.continuation-{continuation_index:08}.json"
+    ))
 }
 
 fn validate_common_wire_v2(wire: &SegmentManifestWireV2) -> Result<()> {
@@ -744,6 +1269,18 @@ fn require_positive_u63_v2(value: u64) -> Result<()> {
     require_u63_v2(value)
 }
 
+fn checked_u63_add_v2(left: u64, right: u64) -> Result<u64> {
+    left.checked_add(right)
+        .filter(|value| *value <= U63_MAX_V2)
+        .ok_or_else(|| SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic))
+}
+
+fn checked_u63_mul_v2(left: u64, right: u64) -> Result<u64> {
+    left.checked_mul(right)
+        .filter(|value| *value <= U63_MAX_V2)
+        .ok_or_else(|| SegmentManifestV2Error::new(SegmentManifestV2ErrorKind::InvalidArithmetic))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -751,8 +1288,19 @@ mod tests {
     use crate::native_training_executor_v1::{
         NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1, NativeTrainingNumericalBackendV1,
     };
-    use crate::native_training_store_checkpoint_v3::build_genesis_checkpoint_manifest_v3;
+    use crate::native_training_store_boundary_v2::build_genesis_native_training_boundary_v2;
+    use crate::native_training_store_checkpoint_v3::{
+        build_genesis_checkpoint_manifest_v3, build_trained_checkpoint_manifest_v3,
+    };
     use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
+    use crate::native_training_store_segment_continuation_v2::{
+        build_segment_continuations_v2, build_segment_continuations_with_test_limits_v2,
+        ValidatedSegmentContinuationChainAdvanceV2, SEGMENT_CONTINUATION_MAX_BYTES_V2,
+    };
+    use crate::native_training_store_update_group_v1::{
+        begin_update_evidence_chain_v1, build_update_group_v1, decode_update_group_v1,
+        UpdateEvidenceChainContextV1, ValidatedUpdateGroupV1,
+    };
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use std::sync::OnceLock;
@@ -764,7 +1312,20 @@ mod tests {
         segment: SegmentManifestV2,
     }
 
+    struct TrainedFixtureV2 {
+        run: ValidatedTrainRunV2,
+        genesis_checkpoint: CheckpointManifestV3,
+        parent: ValidatedNativeTrainingBoundaryV2,
+        group_bytes: Vec<Vec<u8>>,
+        continuations: ValidatedSegmentContinuationChainAdvanceV2,
+        checkpoint: CheckpointManifestV3,
+        wrong_continuations: ValidatedSegmentContinuationChainAdvanceV2,
+        wrong_checkpoint: CheckpointManifestV3,
+        manifest: SegmentManifestV2,
+    }
+
     static FIXTURE_V2: OnceLock<FixtureV2> = OnceLock::new();
+    static TRAINED_FIXTURE_V2: OnceLock<TrainedFixtureV2> = OnceLock::new();
 
     fn execution_config_v2(run: &ValidatedTrainRunV2) -> NativeTrainingExecutionConfigV1 {
         NativeTrainingExecutionConfigV1 {
@@ -787,16 +1348,20 @@ mod tests {
         }
     }
 
+    fn fresh_executor_v2(run: &ValidatedTrainRunV2) -> NativeTrainingExecutorV1 {
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v2(run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap()
+    }
+
     fn fixture_v2() -> &'static FixtureV2 {
         FIXTURE_V2.get_or_init(|| {
             let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
-            let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
-            let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
-                execution_config_v2(&run),
-                &snapshot_manifest,
-                &snapshot_payload,
-            )
-            .unwrap();
+            let executor = fresh_executor_v2(&run);
             let candidate = executor.checkpoint_candidate_v1().unwrap();
             let checkpoint =
                 build_genesis_checkpoint_manifest_v3(&run, candidate.payload()).unwrap();
@@ -805,6 +1370,134 @@ mod tests {
                 run,
                 checkpoint,
                 segment,
+            }
+        })
+    }
+
+    fn context_from_group_bytes_v2(
+        run: &ValidatedTrainRunV2,
+        genesis: &CheckpointManifestV3,
+        group_bytes: &[Vec<u8>],
+        update_count: usize,
+    ) -> UpdateEvidenceChainContextV1 {
+        let mut context = begin_update_evidence_chain_v1(run, genesis).unwrap();
+        for bytes in group_bytes.iter().take(update_count) {
+            context = decode_update_group_v1(run, context, bytes)
+                .unwrap()
+                .into_parts()
+                .1;
+        }
+        context
+    }
+
+    fn groups_from_bytes_v2(
+        run: &ValidatedTrainRunV2,
+        genesis: &CheckpointManifestV3,
+        group_bytes: &[Vec<u8>],
+        start: usize,
+        count: usize,
+    ) -> Vec<ValidatedUpdateGroupV1> {
+        let mut context = context_from_group_bytes_v2(run, genesis, group_bytes, start);
+        let mut groups = Vec::with_capacity(count);
+        for bytes in group_bytes.iter().skip(start).take(count) {
+            let advance = decode_update_group_v1(run, context, bytes).unwrap();
+            let (group, advanced) = advance.into_parts();
+            groups.push(group);
+            context = advanced;
+        }
+        groups
+    }
+
+    fn trained_fixture_v2() -> &'static TrainedFixtureV2 {
+        TRAINED_FIXTURE_V2.get_or_init(|| {
+            let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+            assert_eq!(run.batch_episodes(), 2);
+            assert_eq!(run.checkpoint_segment_updates(), 4);
+            assert!(run.requested_successful_updates() >= 8);
+            let mut executor = fresh_executor_v2(&run);
+            let genesis_payload = executor
+                .checkpoint_candidate_v1()
+                .unwrap()
+                .payload()
+                .to_vec();
+            let genesis_checkpoint =
+                build_genesis_checkpoint_manifest_v3(&run, &genesis_payload).unwrap();
+            let genesis_segment =
+                build_genesis_segment_manifest_v2(&run, &genesis_checkpoint).unwrap();
+            let parent = build_genesis_native_training_boundary_v2(
+                &run,
+                &genesis_segment,
+                &genesis_checkpoint,
+            )
+            .unwrap();
+
+            let mut context = begin_update_evidence_chain_v1(&run, &genesis_checkpoint).unwrap();
+            let mut group_bytes = Vec::new();
+            let mut boundary_candidates = Vec::new();
+            for update_ordinal in 0..8 {
+                let prepared = executor.prepare_update_v2().unwrap();
+                let advance = build_update_group_v1(&run, context, &prepared).unwrap();
+                if matches!(update_ordinal, 3 | 7) {
+                    boundary_candidates.push(prepared.checkpoint_candidate().clone());
+                }
+                let (group, advanced) = advance.into_parts();
+                group_bytes.push(group.canonical_bytes().to_vec());
+                context = advanced;
+                drop(prepared);
+                if update_ordinal + 1 < 8 {
+                    executor.run_update_v2().unwrap();
+                }
+            }
+
+            let segment_updates = usize::try_from(run.checkpoint_segment_updates()).unwrap();
+            let first_parent =
+                context_from_group_bytes_v2(&run, &genesis_checkpoint, &group_bytes, 0);
+            let first_groups =
+                groups_from_bytes_v2(&run, &genesis_checkpoint, &group_bytes, 0, segment_updates);
+            let continuations =
+                build_segment_continuations_v2(&run, first_parent, first_groups).unwrap();
+            let checkpoint = build_trained_checkpoint_manifest_v3(
+                &run,
+                continuations.advanced_context(),
+                &boundary_candidates[0],
+            )
+            .unwrap();
+            let manifest =
+                build_trained_segment_manifest_v2(&run, &parent, &continuations, &checkpoint)
+                    .unwrap();
+
+            let second_parent = context_from_group_bytes_v2(
+                &run,
+                &genesis_checkpoint,
+                &group_bytes,
+                segment_updates,
+            );
+            let second_groups = groups_from_bytes_v2(
+                &run,
+                &genesis_checkpoint,
+                &group_bytes,
+                segment_updates,
+                segment_updates,
+            );
+            let wrong_continuations =
+                build_segment_continuations_v2(&run, second_parent, second_groups).unwrap();
+            let wrong_checkpoint = build_trained_checkpoint_manifest_v3(
+                &run,
+                wrong_continuations.advanced_context(),
+                &boundary_candidates[1],
+            )
+            .unwrap();
+
+            TrainedFixtureV2 {
+                run,
+                genesis_checkpoint,
+                parent,
+                group_bytes,
+                continuations,
+                checkpoint,
+                wrong_continuations,
+                wrong_checkpoint,
+                manifest,
             }
         })
     }
@@ -833,6 +1526,86 @@ mod tests {
         )
         .unwrap_err()
         .kind()
+    }
+
+    fn trained_value_v2() -> Value {
+        serde_json::from_slice(
+            trained_fixture_v2()
+                .manifest
+                .canonical_bytes()
+                .strip_suffix(b"\n")
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn decode_trained_value_error_v2(value: &Value) -> SegmentManifestV2ErrorKind {
+        let fixture = trained_fixture_v2();
+        decode_trained_segment_manifest_v2(
+            &canonical_value_bytes_v2(value),
+            &fixture.run,
+            &fixture.parent,
+            &fixture.continuations,
+            &fixture.checkpoint,
+        )
+        .unwrap_err()
+        .kind()
+    }
+
+    fn refresh_trained_ordered_digest_v2(value: &mut Value) {
+        let wire: SegmentManifestWireV2 = serde_json::from_value(value.clone()).unwrap();
+        let digest = ordered_update_evidence_list_sha256_v2(
+            &wire.run_sha256,
+            wire.generation_index,
+            wire.update_count,
+            &wire.ordered_update_evidence,
+        )
+        .unwrap();
+        value["ordered_update_evidence_list_sha256"] = json!(lower_hex_raw32_v1(digest));
+    }
+
+    fn independent_ordered_digest_v2(
+        run_sha256: &str,
+        generation_index: u64,
+        rows: &[(u64, [u8; 32])],
+    ) -> [u8; 32] {
+        fn atom(reference: &mut Vec<u8>, tag: &str, payload: &[u8]) {
+            reference.extend_from_slice(&u32::try_from(tag.len()).unwrap().to_be_bytes());
+            reference.extend_from_slice(tag.as_bytes());
+            reference.extend_from_slice(&u64::try_from(payload.len()).unwrap().to_be_bytes());
+            reference.extend_from_slice(payload);
+        }
+
+        let mut reference = Vec::new();
+        atom(
+            &mut reference,
+            "domain",
+            ORDERED_UPDATE_EVIDENCE_LIST_DIGEST_IDENTITY_V1.as_bytes(),
+        );
+        atom(
+            &mut reference,
+            "run_sha256",
+            &parse_lower_hex_raw32_v1(run_sha256).unwrap(),
+        );
+        atom(
+            &mut reference,
+            "generation_index_u64be",
+            &generation_index.to_be_bytes(),
+        );
+        atom(
+            &mut reference,
+            "update_count_u64be",
+            &u64::try_from(rows.len()).unwrap().to_be_bytes(),
+        );
+        for (update_index, evidence_sha256) in rows {
+            atom(
+                &mut reference,
+                "update_index_u64be",
+                &update_index.to_be_bytes(),
+            );
+            atom(&mut reference, "update_evidence_sha256", evidence_sha256);
+        }
+        Sha256::digest(reference).into()
     }
 
     #[test]
@@ -1004,6 +1777,674 @@ mod tests {
                 .ordered_update_evidence_list_sha256,
             expected
         );
+    }
+
+    #[test]
+    fn genuine_k2_s4_trained_manifest_roundtrips_exact_authority() {
+        let fixture = trained_fixture_v2();
+        let authority = decode_trained_segment_manifest_v2(
+            fixture.manifest.canonical_bytes(),
+            &fixture.run,
+            &fixture.parent,
+            &fixture.continuations,
+            &fixture.checkpoint,
+        )
+        .unwrap();
+        let rebuilt = build_trained_segment_manifest_v2(
+            &fixture.run,
+            &fixture.parent,
+            &fixture.continuations,
+            &fixture.checkpoint,
+        )
+        .unwrap();
+        let facts = authority.boundary_facts_v2();
+        let chain = fixture.continuations.chain();
+
+        assert_eq!(
+            authority.canonical_bytes(),
+            fixture.manifest.canonical_bytes()
+        );
+        assert_eq!(rebuilt.canonical_bytes(), authority.canonical_bytes());
+        assert_eq!(facts.kind, "trained");
+        assert_eq!(facts.segment_ordinal, 1);
+        assert_eq!(facts.parent_generation_index, Some(0));
+        assert_eq!(facts.generation_index, 4);
+        assert_eq!(facts.batch_episodes, 2);
+        assert_eq!(facts.checkpoint_segment_updates, 4);
+        assert_eq!(authority.wire.update_start_index, 1);
+        assert_eq!(authority.wire.update_count, 4);
+        assert_eq!(authority.wire.episode_start, 0);
+        assert_eq!(authority.wire.episode_count, 8);
+        assert_eq!(authority.wire.episode_end_exclusive, 8);
+        assert_eq!(facts.parent_head_sha256, Some(fixture.parent.head_sha256()));
+        assert_eq!(facts.parent_last_update_evidence_sha256, None);
+        assert_eq!(
+            facts.last_update_evidence_sha256,
+            chain.ordered_update_evidence().last().map(|row| row.1)
+        );
+        assert_eq!(
+            authority.segment_manifest_sha256(),
+            sha256_v1(authority.canonical_bytes())
+        );
+        assert!(
+            u64::try_from(authority.canonical_bytes().len()).unwrap()
+                <= SEGMENT_MANIFEST_MAX_BYTES_V2
+        );
+
+        let value = trained_value_v2();
+        assert_eq!(value.as_object().unwrap().len(), 21);
+        assert_eq!(
+            value["ordered_update_evidence"].as_array().unwrap().len(),
+            4
+        );
+        assert_eq!(value["continuation_chain"].as_object().unwrap().len(), 6);
+        assert_eq!(
+            value["continuation_chain"]["continuations"][0]
+                .as_object()
+                .unwrap()
+                .len(),
+            8
+        );
+        assert_eq!(value["final_checkpoint"].as_object().unwrap().len(), 5);
+
+        assert_eq!(
+            decode_genesis_segment_manifest_v2(
+                authority.canonical_bytes(),
+                &fixture.run,
+                &fixture.checkpoint,
+            )
+            .unwrap_err()
+            .kind(),
+            SegmentManifestV2ErrorKind::TrainedAuthorityRequired
+        );
+        assert_eq!(
+            decode_trained_segment_manifest_v2(
+                fixture_v2().segment.canonical_bytes(),
+                &fixture.run,
+                &fixture.parent,
+                &fixture.continuations,
+                &fixture.checkpoint,
+            )
+            .unwrap_err()
+            .kind(),
+            SegmentManifestV2ErrorKind::TrainedInvariant
+        );
+    }
+
+    #[test]
+    fn trained_canonical_wire_and_ordered_digest_match_independent_references() {
+        let fixture = trained_fixture_v2();
+        let chain = fixture.continuations.chain();
+        assert_eq!(chain.continuations().len(), 1);
+        let continuation = &chain.continuations()[0];
+        let rows = chain
+            .ordered_update_evidence()
+            .iter()
+            .map(|(update_index, evidence_sha256)| {
+                format!(
+                    "{{\"update_evidence_sha256\":\"{}\",\"update_index\":{update_index}}}",
+                    lower_hex_raw32_v1(*evidence_sha256)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let independent_digest = independent_ordered_digest_v2(
+            fixture.run.run_sha256(),
+            chain.generation_index(),
+            chain.ordered_update_evidence(),
+        );
+        let descriptor = format!(
+            concat!(
+                "{{\"byte_count\":{},\"continuation_index\":0,",
+                "\"logical_row_count\":{},\"previous_continuation_sha256\":null,",
+                "\"relative_name\":\"segment-00000004.continuation-00000000.json\",",
+                "\"sha256\":\"{}\",\"update_group_count\":{},",
+                "\"update_group_start_ordinal\":0}}"
+            ),
+            continuation.canonical_bytes().len(),
+            continuation.logical_row_count(),
+            lower_hex_raw32_v1(continuation.continuation_sha256()),
+            continuation.update_group_count(),
+        );
+        let continuation_sha256 = lower_hex_raw32_v1(continuation.continuation_sha256());
+        let expected = format!(
+            concat!(
+                "{{\"batch_episodes\":2,\"checkpoint_segment_updates\":4,",
+                "\"continuation_chain\":{{\"continuation_count\":1,",
+                "\"continuations\":[{descriptor}],",
+                "\"first_continuation_sha256\":\"{continuation_sha256}\",",
+                "\"last_continuation_sha256\":\"{continuation_sha256}\",",
+                "\"logical_row_count\":{logical_row_count},\"update_group_count\":4}},",
+                "\"episode_count\":8,\"episode_end_exclusive\":8,",
+                "\"episode_start\":0,\"final_checkpoint\":{{",
+                "\"checkpoint_manifest_sha256\":\"{checkpoint_manifest}\",",
+                "\"checkpoint_payload_sha256\":\"{checkpoint_payload}\",",
+                "\"logical_state_sha256\":\"{logical_state}\",",
+                "\"model_parameter_sha256\":\"{model_parameter}\",",
+                "\"train_state_sha256\":\"{train_state}\"}},",
+                "\"generation_index\":4,\"identity_bundle_sha256\":\"{identity}\",",
+                "\"kind\":\"trained\",\"ordered_update_evidence\":[{rows}],",
+                "\"ordered_update_evidence_count\":4,",
+                "\"ordered_update_evidence_list_sha256\":\"{ordered_digest}\",",
+                "\"parent_generation_index\":0,",
+                "\"parent_head_sha256\":\"{parent_head}\",",
+                "\"parent_last_update_evidence_sha256\":null,",
+                "\"run_sha256\":\"{run}\",",
+                "\"schema\":\"mtg_kernel_native_train_checkpoint_segment/v2\",",
+                "\"segment_ordinal\":1,\"update_count\":4,",
+                "\"update_start_index\":1}}\n"
+            ),
+            descriptor = descriptor,
+            continuation_sha256 = continuation_sha256,
+            logical_row_count = continuation.logical_row_count(),
+            checkpoint_manifest =
+                lower_hex_raw32_v1(fixture.checkpoint.checkpoint_manifest_sha256()),
+            checkpoint_payload = lower_hex_raw32_v1(fixture.checkpoint.checkpoint_payload_sha256()),
+            logical_state = lower_hex_raw32_v1(fixture.checkpoint.logical_state_sha256()),
+            model_parameter = lower_hex_raw32_v1(fixture.checkpoint.model_parameter_sha256()),
+            train_state = lower_hex_raw32_v1(fixture.checkpoint.train_state_sha256()),
+            identity = fixture.run.identity_bundle_sha256(),
+            rows = rows,
+            ordered_digest = lower_hex_raw32_v1(independent_digest),
+            parent_head = lower_hex_raw32_v1(fixture.parent.head_sha256()),
+            run = fixture.run.run_sha256(),
+        );
+
+        assert_eq!(fixture.manifest.canonical_bytes(), expected.as_bytes());
+        assert_eq!(
+            fixture
+                .manifest
+                .boundary_facts_v2()
+                .ordered_update_evidence_list_sha256,
+            independent_digest
+        );
+        let independently_hashed: [u8; 32] = Sha256::digest(expected.as_bytes()).into();
+        assert_eq!(
+            fixture.manifest.segment_manifest_sha256(),
+            independently_hashed
+        );
+    }
+
+    #[test]
+    fn forced_multi_continuation_manifest_binds_every_descriptor_and_link() {
+        let fixture = trained_fixture_v2();
+        let parent_context = context_from_group_bytes_v2(
+            &fixture.run,
+            &fixture.genesis_checkpoint,
+            &fixture.group_bytes,
+            0,
+        );
+        let groups = groups_from_bytes_v2(
+            &fixture.run,
+            &fixture.genesis_checkpoint,
+            &fixture.group_bytes,
+            0,
+            usize::try_from(fixture.run.checkpoint_segment_updates()).unwrap(),
+        );
+        let max_single_group_rows = groups
+            .iter()
+            .map(ValidatedUpdateGroupV1::logical_row_count)
+            .max()
+            .unwrap();
+        let continuations = build_segment_continuations_with_test_limits_v2(
+            &fixture.run,
+            parent_context,
+            groups,
+            SEGMENT_CONTINUATION_MAX_BYTES_V2,
+            max_single_group_rows,
+        )
+        .unwrap();
+        assert!(continuations.chain().continuations().len() > 1);
+        let manifest = build_trained_segment_manifest_v2(
+            &fixture.run,
+            &fixture.parent,
+            &continuations,
+            &fixture.checkpoint,
+        )
+        .unwrap();
+        let value: Value =
+            serde_json::from_slice(manifest.canonical_bytes().strip_suffix(b"\n").unwrap())
+                .unwrap();
+        let descriptors = value["continuation_chain"]["continuations"]
+            .as_array()
+            .unwrap();
+        let mut cumulative_group_count = 0_u64;
+        let mut expected_previous = None;
+        let mut total_logical_rows = 0_u64;
+        for (position, (descriptor, continuation)) in descriptors
+            .iter()
+            .zip(continuations.chain().continuations())
+            .enumerate()
+        {
+            assert_eq!(descriptor["continuation_index"], json!(position));
+            assert_eq!(
+                descriptor["relative_name"],
+                json!(format!("segment-00000004.continuation-{position:08}.json"))
+            );
+            assert_eq!(
+                descriptor["byte_count"],
+                json!(continuation.canonical_bytes().len())
+            );
+            assert_eq!(
+                descriptor["sha256"],
+                json!(lower_hex_raw32_v1(sha256_v1(
+                    continuation.canonical_bytes()
+                )))
+            );
+            assert_eq!(
+                descriptor["previous_continuation_sha256"],
+                expected_previous
+                    .map(|digest| json!(lower_hex_raw32_v1(digest)))
+                    .unwrap_or(Value::Null)
+            );
+            assert_eq!(
+                descriptor["update_group_start_ordinal"],
+                json!(cumulative_group_count)
+            );
+            assert_eq!(
+                descriptor["update_group_count"],
+                json!(continuation.update_group_count())
+            );
+            assert_eq!(
+                descriptor["logical_row_count"],
+                json!(continuation.logical_row_count())
+            );
+            cumulative_group_count += u64::try_from(continuation.update_group_count()).unwrap();
+            total_logical_rows += continuation.logical_row_count();
+            expected_previous = Some(continuation.continuation_sha256());
+        }
+        assert_eq!(
+            descriptors.len(),
+            continuations.chain().continuations().len()
+        );
+        assert_eq!(
+            value["continuation_chain"]["continuation_count"],
+            json!(descriptors.len())
+        );
+        assert_eq!(
+            value["continuation_chain"]["update_group_count"],
+            json!(cumulative_group_count)
+        );
+        assert_eq!(
+            value["continuation_chain"]["logical_row_count"],
+            json!(total_logical_rows)
+        );
+        assert_eq!(
+            value["continuation_chain"]["first_continuation_sha256"],
+            descriptors[0]["sha256"]
+        );
+        assert_eq!(
+            value["continuation_chain"]["last_continuation_sha256"],
+            descriptors.last().unwrap()["sha256"]
+        );
+        let decoded = decode_trained_segment_manifest_v2(
+            manifest.canonical_bytes(),
+            &fixture.run,
+            &fixture.parent,
+            &continuations,
+            &fixture.checkpoint,
+        )
+        .unwrap();
+        assert_eq!(decoded.canonical_bytes(), manifest.canonical_bytes());
+
+        let multi_error = |mutated: &Value| {
+            decode_trained_segment_manifest_v2(
+                &canonical_value_bytes_v2(mutated),
+                &fixture.run,
+                &fixture.parent,
+                &continuations,
+                &fixture.checkpoint,
+            )
+            .unwrap_err()
+            .kind()
+        };
+        let mut broken_link = value.clone();
+        broken_link["continuation_chain"]["continuations"][1]["previous_continuation_sha256"] =
+            json!("ff".repeat(32));
+        assert_eq!(
+            multi_error(&broken_link),
+            SegmentManifestV2ErrorKind::ContinuationBinding
+        );
+        let mut reordered = value.clone();
+        reordered["continuation_chain"]["continuations"]
+            .as_array_mut()
+            .unwrap()
+            .swap(0, 1);
+        assert_eq!(
+            multi_error(&reordered),
+            SegmentManifestV2ErrorKind::ContinuationBinding
+        );
+        let mut duplicated = value;
+        let first_descriptor = duplicated["continuation_chain"]["continuations"][0].clone();
+        duplicated["continuation_chain"]["continuations"][1] = first_descriptor;
+        assert_eq!(
+            multi_error(&duplicated),
+            SegmentManifestV2ErrorKind::ContinuationBinding
+        );
+    }
+
+    #[test]
+    fn trained_root_parent_options_and_checked_arithmetic_fail_closed() {
+        let fixture = trained_fixture_v2();
+        assert_ne!(
+            fixture.parent.head_sha256(),
+            fixture.parent.head_record_sha256()
+        );
+        let mut role_swap = trained_value_v2();
+        role_swap["parent_head_sha256"] =
+            json!(lower_hex_raw32_v1(fixture.parent.head_record_sha256()));
+        assert_eq!(
+            decode_trained_value_error_v2(&role_swap),
+            SegmentManifestV2ErrorKind::ParentBoundaryBinding
+        );
+
+        for (field, replacement) in [
+            ("segment_ordinal", json!(2)),
+            ("generation_index", json!(3)),
+            ("update_start_index", json!(0)),
+            ("update_count", json!(3)),
+            ("episode_start", json!(1)),
+            ("episode_count", json!(7)),
+            ("episode_end_exclusive", json!(7)),
+            ("ordered_update_evidence_count", json!(3)),
+        ] {
+            let mut value = trained_value_v2();
+            value[field] = replacement;
+            assert_eq!(
+                decode_trained_value_error_v2(&value),
+                SegmentManifestV2ErrorKind::TrainedInvariant,
+                "field {field}"
+            );
+        }
+
+        for (field, replacement, expected) in [
+            (
+                "schema",
+                json!("mtg_kernel_native_train_checkpoint_segment/v1"),
+                SegmentManifestV2ErrorKind::InvalidSchema,
+            ),
+            (
+                "kind",
+                json!("TRAINED"),
+                SegmentManifestV2ErrorKind::InvalidKind,
+            ),
+            (
+                "run_sha256",
+                json!("ff".repeat(32)),
+                SegmentManifestV2ErrorKind::RunBinding,
+            ),
+            (
+                "identity_bundle_sha256",
+                json!("ff".repeat(32)),
+                SegmentManifestV2ErrorKind::RunBinding,
+            ),
+            (
+                "batch_episodes",
+                json!(4),
+                SegmentManifestV2ErrorKind::RunBinding,
+            ),
+            (
+                "checkpoint_segment_updates",
+                json!(2),
+                SegmentManifestV2ErrorKind::RunBinding,
+            ),
+        ] {
+            let mut value = trained_value_v2();
+            value[field] = replacement;
+            assert_eq!(
+                decode_trained_value_error_v2(&value),
+                expected,
+                "field {field}"
+            );
+        }
+
+        for (field, replacement) in [
+            ("parent_generation_index", Value::Null),
+            ("parent_head_sha256", Value::Null),
+            ("parent_last_update_evidence_sha256", json!("ff".repeat(32))),
+        ] {
+            let mut value = trained_value_v2();
+            value[field] = replacement;
+            assert_eq!(
+                decode_trained_value_error_v2(&value),
+                SegmentManifestV2ErrorKind::ParentBoundaryBinding,
+                "field {field}"
+            );
+        }
+
+        for field in ["first_continuation_sha256", "last_continuation_sha256"] {
+            let mut value = trained_value_v2();
+            value["continuation_chain"][field] = Value::Null;
+            assert_eq!(
+                decode_trained_value_error_v2(&value),
+                SegmentManifestV2ErrorKind::ContinuationBinding,
+                "field {field}"
+            );
+        }
+
+        let mut over_u63 = trained_value_v2();
+        over_u63["generation_index"] = json!(U63_MAX_V2 + 1);
+        assert_eq!(
+            decode_trained_value_error_v2(&over_u63),
+            SegmentManifestV2ErrorKind::InvalidScalar
+        );
+        assert_eq!(
+            checked_u63_add_v2(U63_MAX_V2, 1).unwrap_err().kind(),
+            SegmentManifestV2ErrorKind::InvalidArithmetic
+        );
+        assert_eq!(
+            checked_u63_mul_v2(U63_MAX_V2, 2).unwrap_err().kind(),
+            SegmentManifestV2ErrorKind::InvalidArithmetic
+        );
+        assert_eq!(
+            continuation_relative_name_v2(SEGMENT_CONTINUATION_MAX_FIXED_DECIMAL_V2 + 1, 0,)
+                .unwrap_err()
+                .kind(),
+            SegmentManifestV2ErrorKind::InvalidScalar
+        );
+
+        let canonical = String::from_utf8(fixture.manifest.canonical_bytes().to_vec()).unwrap();
+        let noncanonical = canonical.replacen(":", ": ", 1);
+        assert_eq!(
+            decode_trained_segment_manifest_v2(
+                noncanonical.as_bytes(),
+                &fixture.run,
+                &fixture.parent,
+                &fixture.continuations,
+                &fixture.checkpoint,
+            )
+            .unwrap_err()
+            .kind(),
+            SegmentManifestV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::NonCanonicalBytes)
+        );
+        let oversized = vec![b' '; usize::try_from(SEGMENT_MANIFEST_MAX_BYTES_V2).unwrap() + 1];
+        assert_eq!(
+            decode_trained_segment_manifest_v2(
+                &oversized,
+                &fixture.run,
+                &fixture.parent,
+                &fixture.continuations,
+                &fixture.checkpoint,
+            )
+            .unwrap_err()
+            .kind(),
+            SegmentManifestV2ErrorKind::RecordTooLarge
+        );
+    }
+
+    #[test]
+    fn trained_ordered_rows_are_exact_even_after_digest_recomputation() {
+        let mut stale_digest = trained_value_v2();
+        stale_digest["ordered_update_evidence"][0]["update_evidence_sha256"] =
+            json!("ff".repeat(32));
+        assert_eq!(
+            decode_trained_value_error_v2(&stale_digest),
+            SegmentManifestV2ErrorKind::OrderedEvidenceDigestMismatch
+        );
+
+        let mut shortened = trained_value_v2();
+        shortened["ordered_update_evidence"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        shortened["update_count"] = json!(3);
+        shortened["ordered_update_evidence_count"] = json!(3);
+        refresh_trained_ordered_digest_v2(&mut shortened);
+        assert_eq!(
+            decode_trained_value_error_v2(&shortened),
+            SegmentManifestV2ErrorKind::TrainedInvariant
+        );
+
+        let mut reordered = trained_value_v2();
+        reordered["ordered_update_evidence"]
+            .as_array_mut()
+            .unwrap()
+            .swap(0, 1);
+        refresh_trained_ordered_digest_v2(&mut reordered);
+        assert_eq!(
+            decode_trained_value_error_v2(&reordered),
+            SegmentManifestV2ErrorKind::ContinuationBinding
+        );
+
+        let mut duplicated = trained_value_v2();
+        let first = duplicated["ordered_update_evidence"][0].clone();
+        duplicated["ordered_update_evidence"][1] = first;
+        refresh_trained_ordered_digest_v2(&mut duplicated);
+        assert_eq!(
+            decode_trained_value_error_v2(&duplicated),
+            SegmentManifestV2ErrorKind::ContinuationBinding
+        );
+
+        for (field, replacement) in [
+            ("update_index", json!(2)),
+            ("update_evidence_sha256", json!("ff".repeat(32))),
+        ] {
+            let mut value = trained_value_v2();
+            value["ordered_update_evidence"][0][field] = replacement;
+            refresh_trained_ordered_digest_v2(&mut value);
+            assert_eq!(
+                decode_trained_value_error_v2(&value),
+                SegmentManifestV2ErrorKind::ContinuationBinding,
+                "field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn trained_descriptors_links_and_aggregate_counts_are_exact() {
+        let baseline = trained_value_v2();
+        let descriptor = &baseline["continuation_chain"]["continuations"][0];
+        let byte_count = descriptor["byte_count"].as_u64().unwrap();
+        let update_group_count = descriptor["update_group_count"].as_u64().unwrap();
+        let logical_row_count = descriptor["logical_row_count"].as_u64().unwrap();
+        for (field, replacement) in [
+            ("continuation_index", json!(1)),
+            (
+                "relative_name",
+                json!("segment-00000004.continuation-00000001.json"),
+            ),
+            ("byte_count", json!(byte_count + 1)),
+            ("sha256", json!("ff".repeat(32))),
+            ("previous_continuation_sha256", json!("ff".repeat(32))),
+            ("update_group_start_ordinal", json!(1)),
+            ("update_group_count", json!(update_group_count + 1)),
+            ("logical_row_count", json!(logical_row_count + 1)),
+        ] {
+            let mut value = trained_value_v2();
+            value["continuation_chain"]["continuations"][0][field] = replacement;
+            assert_eq!(
+                decode_trained_value_error_v2(&value),
+                SegmentManifestV2ErrorKind::ContinuationBinding,
+                "descriptor field {field}"
+            );
+        }
+
+        for (field, replacement) in [
+            ("update_group_count", json!(5)),
+            ("logical_row_count", json!(logical_row_count + 1)),
+            ("first_continuation_sha256", json!("ff".repeat(32))),
+            ("last_continuation_sha256", json!("ff".repeat(32))),
+        ] {
+            let mut value = trained_value_v2();
+            value["continuation_chain"][field] = replacement;
+            assert_eq!(
+                decode_trained_value_error_v2(&value),
+                SegmentManifestV2ErrorKind::ContinuationBinding,
+                "chain field {field}"
+            );
+        }
+
+        let mut wrong_count = trained_value_v2();
+        wrong_count["continuation_chain"]["continuation_count"] = json!(2);
+        assert_eq!(
+            decode_trained_value_error_v2(&wrong_count),
+            SegmentManifestV2ErrorKind::TrainedInvariant
+        );
+        let mut empty = trained_value_v2();
+        empty["continuation_chain"]["continuations"] = json!([]);
+        empty["continuation_chain"]["continuation_count"] = json!(0);
+        assert_eq!(
+            decode_trained_value_error_v2(&empty),
+            SegmentManifestV2ErrorKind::ContinuationBinding
+        );
+    }
+
+    #[test]
+    fn trained_checkpoint_context_and_all_five_digest_bindings_fail_closed() {
+        let fixture = trained_fixture_v2();
+        assert_eq!(
+            decode_trained_segment_manifest_v2(
+                fixture.manifest.canonical_bytes(),
+                &fixture.run,
+                &fixture.parent,
+                &fixture.wrong_continuations,
+                &fixture.checkpoint,
+            )
+            .unwrap_err()
+            .kind(),
+            SegmentManifestV2ErrorKind::ContinuationBinding
+        );
+        for wrong_checkpoint in [&fixture.genesis_checkpoint, &fixture.wrong_checkpoint] {
+            assert_eq!(
+                decode_trained_segment_manifest_v2(
+                    fixture.manifest.canonical_bytes(),
+                    &fixture.run,
+                    &fixture.parent,
+                    &fixture.continuations,
+                    wrong_checkpoint,
+                )
+                .unwrap_err()
+                .kind(),
+                SegmentManifestV2ErrorKind::FinalCheckpointBinding
+            );
+            assert_eq!(
+                build_trained_segment_manifest_v2(
+                    &fixture.run,
+                    &fixture.parent,
+                    &fixture.continuations,
+                    wrong_checkpoint,
+                )
+                .unwrap_err()
+                .kind(),
+                SegmentManifestV2ErrorKind::FinalCheckpointBinding
+            );
+        }
+
+        for field in [
+            "checkpoint_manifest_sha256",
+            "checkpoint_payload_sha256",
+            "logical_state_sha256",
+            "model_parameter_sha256",
+            "train_state_sha256",
+        ] {
+            let mut value = trained_value_v2();
+            value["final_checkpoint"][field] = json!("ff".repeat(32));
+            assert_eq!(
+                decode_trained_value_error_v2(&value),
+                SegmentManifestV2ErrorKind::FinalCheckpointBinding,
+                "field {field}"
+            );
+        }
     }
 
     #[test]
@@ -1413,11 +2854,21 @@ mod tests {
             "create_dir",
             "remove_file",
             "rename(",
+            "head_record_sha256",
+            "NativeTrainingBoundaryFactsV2",
+            "ValidatedNativeTrainingBoundaryV2 {",
+            "ValidatedSegmentContinuationChainV2",
         ] {
             assert!(
                 !production.contains(forbidden),
                 "production source unexpectedly contains {forbidden}"
             );
         }
+        assert!(production.contains("&ValidatedSegmentContinuationChainAdvanceV2"));
+        let continuation_source = include_str!("native_training_store_segment_continuation_v2.rs");
+        assert!(continuation_source.contains(concat!(
+            "#[cfg(test)]\n",
+            "pub(crate) fn build_segment_continuations_with_test_limits_v2"
+        )));
     }
 }

@@ -475,6 +475,36 @@ pub fn build_segment_continuations_v2(
     build_segment_continuations_with_limits_v2(run, parent_context, groups, PRODUCTION_LIMITS_V2)
 }
 
+/// Test-only access to the unchanged production planner under strictly
+/// reduced limits, used to force a genuine multi-continuation authority.
+#[cfg(test)]
+pub(crate) fn build_segment_continuations_with_test_limits_v2(
+    run: &ValidatedTrainRunV2,
+    parent_context: UpdateEvidenceChainContextV1,
+    groups: Vec<ValidatedUpdateGroupV1>,
+    max_bytes: u64,
+    max_logical_rows: u64,
+) -> Result<ValidatedSegmentContinuationChainAdvanceV2> {
+    if max_bytes == 0
+        || max_logical_rows == 0
+        || max_bytes > PRODUCTION_LIMITS_V2.max_bytes
+        || max_logical_rows > PRODUCTION_LIMITS_V2.max_logical_rows
+        || (max_bytes == PRODUCTION_LIMITS_V2.max_bytes
+            && max_logical_rows == PRODUCTION_LIMITS_V2.max_logical_rows)
+    {
+        return Err(error_v2(SegmentContinuationV2ErrorKind::InvalidScalar));
+    }
+    build_segment_continuations_with_limits_v2(
+        run,
+        parent_context,
+        groups,
+        ContinuationLimitsV2 {
+            max_bytes,
+            max_logical_rows,
+        },
+    )
+}
+
 /// Decodes and re-partitions a complete set of continuation files. A single
 /// file has no public decoder because it cannot prove largest-prefix
 /// maximality in isolation.
