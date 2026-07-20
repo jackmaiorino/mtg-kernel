@@ -14,6 +14,7 @@ use crate::canonical_json_v1::{
 use crate::native_policy_train_step_v1::NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1;
 use crate::native_training_executor_v1::{
     native_training_episode_schedule_v1, NativeTrainingCheckpointCandidateV1,
+    NativeTrainingExecutionConfigV1, NativeTrainingPreparedUpdateV2,
     NativeTrainingUpdateObservationV2,
 };
 use crate::native_training_store_checkpoint_v3::{CheckpointManifestV3, CheckpointProgressV3};
@@ -455,15 +456,45 @@ pub fn begin_update_evidence_chain_v1(
     })
 }
 
-/// Builds a complete group from one prepared observation/checkpoint pair and
-/// advances the consumed evidence context without mutating either producer.
+/// Builds a complete group from one opaque prepared-update guard and advances
+/// the consumed evidence context without mutating the live executor.
+///
+/// The guard is the sole public producer authority: its private fields bind the
+/// observation and successor checkpoint to the same isolated execution, while
+/// its exclusive live-executor borrow supplies the actual configuration and
+/// verified predecessor state. Raw observation/checkpoint parts are never a
+/// public construction path.
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::{
+///     NativeTrainingCheckpointCandidateV1, NativeTrainingUpdateObservationV2,
+/// };
+/// use mtg_kernel::native_training_store_run_v2::ValidatedTrainRunV2;
+/// use mtg_kernel::native_training_store_update_group_v1::{
+///     build_update_group_v1, UpdateEvidenceChainContextV1,
+/// };
+/// fn forged_raw_parts(
+///     run: &ValidatedTrainRunV2,
+///     context: UpdateEvidenceChainContextV1,
+///     observation: &NativeTrainingUpdateObservationV2,
+///     checkpoint: &NativeTrainingCheckpointCandidateV1,
+/// ) {
+///     let _ = build_update_group_v1(run, context, observation, checkpoint);
+/// }
+/// ```
 pub fn build_update_group_v1(
     run: &ValidatedTrainRunV2,
     context: UpdateEvidenceChainContextV1,
-    observation: &NativeTrainingUpdateObservationV2,
-    checkpoint: &NativeTrainingCheckpointCandidateV1,
+    prepared: &NativeTrainingPreparedUpdateV2<'_>,
 ) -> Result<ValidatedUpdateGroupAdvanceV1> {
     validate_context_run_v1(run, &context)?;
+    validate_prepared_execution_config_v1(run, prepared.execution_config_v1())?;
+    let predecessor = prepared
+        .pre_update_checkpoint_candidate_v1()
+        .map_err(|_| error_v1(UpdateGroupV1ErrorKind::CheckpointMismatch))?;
+    validate_predecessor_checkpoint_v1(run, &context, &predecessor)?;
+    let observation = prepared.observation();
+    let checkpoint = prepared.checkpoint_candidate();
     validate_observation_checkpoint_v1(run, &context, observation, checkpoint)?;
     preflight_observation_cardinality_v1(observation)?;
     let evidence = evidence_from_observation_v1(run, &context, observation, checkpoint)?;
@@ -490,6 +521,76 @@ pub fn build_update_group_v1(
         return Err(error_v1(UpdateGroupV1ErrorKind::RecordTooLarge));
     }
     validate_and_advance_wire_v1(run, context, wire, canonical_bytes)
+}
+
+fn validate_prepared_execution_config_v1(
+    run: &ValidatedTrainRunV2,
+    config: &NativeTrainingExecutionConfigV1,
+) -> Result<()> {
+    let record = run.record();
+    let worker_count = u64::try_from(config.worker_count)
+        .map_err(|_| error_v1(UpdateGroupV1ErrorKind::RunBinding))?;
+    let sessions_per_worker = u64::try_from(config.sessions_per_worker)
+        .map_err(|_| error_v1(UpdateGroupV1ErrorKind::RunBinding))?;
+    let broker_batch_target = u64::try_from(config.broker_batch_target)
+        .map_err(|_| error_v1(UpdateGroupV1ErrorKind::RunBinding))?;
+    let logical_actor_count = worker_count
+        .checked_mul(sessions_per_worker)
+        .filter(|value| is_u63_v1(*value))
+        .ok_or_else(|| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
+    let expected_value_coefficient =
+        parse_f32_hex_v1(&record.optimization.value_coefficient_f32_bits)?.to_bits();
+    let expected_learning_rate =
+        parse_f32_hex_v1(&record.optimization.learning_rate_f32_bits)?.to_bits();
+    if config.run_base_seed != record.schedule.base_seed
+        || config.batch_episodes != run.batch_episodes()
+        || config.deck_ids != record.environment.deck_ids
+        || config.max_physical_decisions != record.limits.max_physical_decisions
+        || config.max_policy_steps != record.limits.max_policy_steps
+        || worker_count != record.topology.worker_count
+        || sessions_per_worker != record.topology.sessions_per_worker
+        || logical_actor_count != record.topology.logical_actor_count
+        || broker_batch_target != record.topology.broker_batch_target
+        || config.scheduler_timeout
+            != std::time::Duration::from_millis(record.topology.scheduler_timeout_ms)
+        || config.measure_broker_service_time != record.topology.measure_broker_service_time
+        || config.value_coefficient_bits != expected_value_coefficient
+        || config.learning_rate_bits != expected_learning_rate
+    {
+        return Err(error_v1(UpdateGroupV1ErrorKind::RunBinding));
+    }
+    Ok(())
+}
+
+fn validate_predecessor_checkpoint_v1(
+    run: &ValidatedTrainRunV2,
+    context: &UpdateEvidenceChainContextV1,
+    predecessor: &NativeTrainingCheckpointCandidateV1,
+) -> Result<()> {
+    let progress = predecessor.progress();
+    let expected_policy = checked_u63_add_v1(
+        context.progress.learner_policy_steps_by_seat().p0(),
+        context.progress.learner_policy_steps_by_seat().p1(),
+    )?;
+    let expected_physical = checked_u63_add_v1(
+        context.progress.learner_physical_decisions_by_seat().p0(),
+        context.progress.learner_physical_decisions_by_seat().p1(),
+    )?;
+    if predecessor.base_seed() != run.record().schedule.base_seed
+        || predecessor.batch_episodes() != run.batch_episodes()
+        || predecessor.adam_step() != context.next_update_index - 1
+        || predecessor.scorer_bias_anchor_bits() != context.scorer_bias_anchor_bits
+        || predecessor.digests().model_parameter_sha256 != context.model_parameter_sha256
+        || predecessor.digests().native_state_sha256 != context.train_state_sha256
+        || progress.next_episode_index != context.progress.next_episode_index()
+        || progress.successful_update_count != context.progress.successful_update_count()
+        || progress.completed_episode_count != context.progress.completed_episode_count()
+        || progress.learner_policy_step_count != expected_policy
+        || progress.learner_physical_decision_count != expected_physical
+    {
+        return Err(error_v1(UpdateGroupV1ErrorKind::CheckpointMismatch));
+    }
+    Ok(())
 }
 
 fn preflight_observation_cardinality_v1(
@@ -662,6 +763,15 @@ fn evidence_from_observation_v1(
         if observed.learner_return != expected_return {
             return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
         }
+        validate_episode_count_lattice_v1(
+            run,
+            receipt.policy_step_count,
+            receipt.physical_decision_count,
+            receipt.learner_policy_step_count,
+            receipt.learner_physical_decision_count,
+            receipt.opponent_policy_step_count,
+            receipt.opponent_physical_decision_count,
+        )?;
         total_policy_steps = checked_u63_add_v1(total_policy_steps, receipt.policy_step_count)?;
         total_physical_decisions =
             checked_u63_add_v1(total_physical_decisions, receipt.physical_decision_count)?;
@@ -671,19 +781,6 @@ fn evidence_from_observation_v1(
             learner_physical_decisions,
             receipt.learner_physical_decision_count,
         )?;
-        let policy_parts = checked_u63_add_v1(
-            receipt.learner_policy_step_count,
-            receipt.opponent_policy_step_count,
-        )?;
-        let physical_parts = checked_u63_add_v1(
-            receipt.learner_physical_decision_count,
-            receipt.opponent_physical_decision_count,
-        )?;
-        if receipt.policy_step_count != policy_parts
-            || receipt.physical_decision_count != physical_parts
-        {
-            return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
-        }
         episodes.push(EpisodeWireV1 {
             schema: EPISODE_SCHEMA_V1.to_owned(),
             episode_index: expected_episode_index,
@@ -705,7 +802,10 @@ fn evidence_from_observation_v1(
             trajectory_sha256: lower_hex_raw32_v1(receipt.trajectory_sha256),
         });
     }
-    if total_policy_steps != observation.policy_step_count
+    if total_policy_steps == 0
+        || total_physical_decisions == 0
+        || total_physical_decisions > total_policy_steps
+        || total_policy_steps != observation.policy_step_count
         || total_physical_decisions != observation.physical_decision_count
         || learner_policy_steps != observation.learner_policy_step_count
         || learner_physical_decisions != observation.learner_group_count
@@ -762,6 +862,44 @@ fn evidence_from_observation_v1(
         train_state_sha256_after: checkpoint.native_state_sha256_hex(),
         progress_after,
     })
+}
+
+fn validate_episode_count_lattice_v1(
+    run: &ValidatedTrainRunV2,
+    policy_step_count: u64,
+    physical_decision_count: u64,
+    learner_policy_step_count: u64,
+    learner_physical_decision_count: u64,
+    opponent_policy_step_count: u64,
+    opponent_physical_decision_count: u64,
+) -> Result<()> {
+    let counts = [
+        policy_step_count,
+        physical_decision_count,
+        learner_policy_step_count,
+        learner_physical_decision_count,
+        opponent_policy_step_count,
+        opponent_physical_decision_count,
+    ];
+    let policy_parts = checked_u63_add_v1(learner_policy_step_count, opponent_policy_step_count)?;
+    let physical_parts = checked_u63_add_v1(
+        learner_physical_decision_count,
+        opponent_physical_decision_count,
+    )?;
+    if counts.into_iter().any(|value| !is_u63_v1(value))
+        || policy_step_count == 0
+        || physical_decision_count == 0
+        || policy_parts != policy_step_count
+        || physical_parts != physical_decision_count
+        || physical_decision_count > policy_step_count
+        || learner_physical_decision_count > learner_policy_step_count
+        || opponent_physical_decision_count > opponent_policy_step_count
+        || policy_step_count > run.record().limits.max_policy_steps
+        || physical_decision_count > run.record().limits.max_physical_decisions
+    {
+        return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+    }
+    Ok(())
 }
 
 fn gauge_from_observation_v1(
@@ -858,6 +996,7 @@ fn validate_direct_physical_lattice_v1(
     for episode in episodes {
         let episode_groups = usize::try_from(episode.learner_physical_decision_count)
             .map_err(|_| error_v1(UpdateGroupV1ErrorKind::PhysicalLattice))?;
+        let mut episode_policy_count = 0_u64;
         for _ in 0..episode_groups {
             let term = physical_terms
                 .get(group_index)
@@ -898,10 +1037,15 @@ fn validate_direct_physical_lattice_v1(
             if joint.map(f32::to_bits) != Some(expected_joint.to_bits()) {
                 return Err(error_v1(UpdateGroupV1ErrorKind::PhysicalLattice));
             }
-            policy_count = checked_u63_add_v1(policy_count, u64::from(term.substep_count))?;
+            let substep_count = u64::from(term.substep_count);
+            episode_policy_count = checked_u63_add_v1(episode_policy_count, substep_count)?;
+            policy_count = checked_u63_add_v1(policy_count, substep_count)?;
             group_index = group_index
                 .checked_add(1)
                 .ok_or_else(|| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
+        }
+        if episode_policy_count != episode.learner_policy_step_count {
+            return Err(error_v1(UpdateGroupV1ErrorKind::PhysicalLattice));
         }
     }
     if group_index != physical_terms.len()
@@ -1192,24 +1336,28 @@ fn validate_episodes_v1(run: &ValidatedTrainRunV2, evidence: &UpdateEvidenceWire
         if episode.winner != expected_winner
             || episode.learner_return
                 != learner_return_wire_v1(episode.learner_seat, episode.terminal_outcome)
-            || checked_u63_add_v1(
-                episode.learner_policy_step_count,
-                episode.opponent_policy_step_count,
-            )? != episode.policy_step_count
-            || checked_u63_add_v1(
-                episode.learner_physical_decision_count,
-                episode.opponent_physical_decision_count,
-            )? != episode.physical_decision_count
         {
             return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
         }
+        validate_episode_count_lattice_v1(
+            run,
+            episode.policy_step_count,
+            episode.physical_decision_count,
+            episode.learner_policy_step_count,
+            episode.learner_physical_decision_count,
+            episode.opponent_policy_step_count,
+            episode.opponent_physical_decision_count,
+        )?;
         total_policy = checked_u63_add_v1(total_policy, episode.policy_step_count)?;
         total_physical = checked_u63_add_v1(total_physical, episode.physical_decision_count)?;
         learner_policy = checked_u63_add_v1(learner_policy, episode.learner_policy_step_count)?;
         learner_physical =
             checked_u63_add_v1(learner_physical, episode.learner_physical_decision_count)?;
     }
-    if learner_policy != evidence.learner_policy_step_count
+    if total_policy == 0
+        || total_physical == 0
+        || total_physical > total_policy
+        || learner_policy != evidence.learner_policy_step_count
         || learner_physical != evidence.learner_physical_decision_count
         || learner_physical != evidence.learner_group_count
         || total_policy < learner_policy
@@ -1239,6 +1387,7 @@ fn validate_physical_and_loss_v1(
     for episode in &evidence.episodes {
         let episode_groups = usize::try_from(episode.learner_physical_decision_count)
             .map_err(|_| error_v1(UpdateGroupV1ErrorKind::PhysicalLattice))?;
+        let mut episode_policy_count = 0_u64;
         for _ in 0..episode_groups {
             let term = evidence
                 .physical_terms
@@ -1254,10 +1403,15 @@ fn validate_physical_and_loss_v1(
             {
                 return Err(error_v1(UpdateGroupV1ErrorKind::PhysicalLattice));
             }
-            policy_count = checked_u63_add_v1(policy_count, u64::from(term.substep_count))?;
+            let substep_count = u64::from(term.substep_count);
+            episode_policy_count = checked_u63_add_v1(episode_policy_count, substep_count)?;
+            policy_count = checked_u63_add_v1(policy_count, substep_count)?;
             term_index = term_index
                 .checked_add(1)
                 .ok_or_else(|| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
+        }
+        if episode_policy_count != episode.learner_policy_step_count {
+            return Err(error_v1(UpdateGroupV1ErrorKind::PhysicalLattice));
         }
     }
     if term_index != evidence.physical_terms.len()
@@ -1462,32 +1616,12 @@ fn validate_rollout_v1(run: &ValidatedTrainRunV2, evidence: &UpdateEvidenceWireV
         counts.partial_group_count,
         counts.association_failure_count,
     ];
-    let full_width = counts
-        .full_target_batch_count
-        .checked_mul(b)
-        .filter(|value| is_u63_v1(*value))
-        .ok_or_else(|| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
-    let short_width = counts
-        .batch_width_sum
-        .checked_sub(full_width)
-        .ok_or_else(|| error_v1(UpdateGroupV1ErrorKind::RolloutMismatch))?;
-    let maximum_short_width = counts
-        .short_batch_count
-        .checked_mul(b.saturating_sub(1))
-        .filter(|value| is_u63_v1(*value))
-        .ok_or_else(|| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
     if all_counts.into_iter().any(|value| !is_u63_v1(value))
         || counts.complete_round_count == 0
-        || counts.scorer_batch_count
-            != checked_u63_add_v1(counts.full_target_batch_count, counts.short_batch_count)?
         || counts.scored_decision_count != evidence.learner_policy_step_count
         || counts.sampled_action_count != evidence.learner_policy_step_count
         || counts.batch_width_sum != evidence.learner_policy_step_count
         || counts.scored_action_logit_count != evidence.gauge.total_action_count
-        || counts.max_batch_width == 0
-        || counts.max_batch_width > b
-        || (counts.full_target_batch_count > 0 && counts.max_batch_width != b)
-        || (counts.full_target_batch_count == 0 && counts.max_batch_width >= b)
         || b == 0
         || b > actors
         || actors > 1024
@@ -1500,11 +1634,66 @@ fn validate_rollout_v1(run: &ValidatedTrainRunV2, evidence: &UpdateEvidenceWireV
         || counts.association_failure_count != 0
         || counts.batch_membership_digest_identity != BATCH_MEMBERSHIP_DIGEST_IDENTITY_V1
         || parse_digest_v1(&counts.batch_membership_digest_hex).is_err()
-        || (counts.short_batch_count == 0 && short_width != 0)
-        || (counts.short_batch_count > 0
-            && (short_width < counts.short_batch_count || short_width > maximum_short_width))
     {
         return Err(error_v1(UpdateGroupV1ErrorKind::RolloutMismatch));
+    }
+    validate_batch_width_shape_v1(
+        b,
+        counts.full_target_batch_count,
+        counts.short_batch_count,
+        counts.batch_width_sum,
+        counts.max_batch_width,
+        counts.scorer_batch_count,
+    )?;
+    Ok(())
+}
+
+fn validate_batch_width_shape_v1(
+    batch_target: u64,
+    full_batch_count: u64,
+    short_batch_count: u64,
+    batch_width_sum: u64,
+    max_batch_width: u64,
+    scorer_batch_count: u64,
+) -> Result<()> {
+    if batch_target == 0
+        || batch_width_sum == 0
+        || max_batch_width == 0
+        || max_batch_width > batch_target
+    {
+        return Err(error_v1(UpdateGroupV1ErrorKind::RolloutMismatch));
+    }
+    let expected_batch_count = checked_u63_add_v1(full_batch_count, short_batch_count)?;
+    if scorer_batch_count != expected_batch_count {
+        return Err(error_v1(UpdateGroupV1ErrorKind::RolloutMismatch));
+    }
+    let full_width = checked_u63_mul_v1(full_batch_count, batch_target)?;
+    let short_width = batch_width_sum
+        .checked_sub(full_width)
+        .ok_or_else(|| error_v1(UpdateGroupV1ErrorKind::RolloutMismatch))?;
+    if full_batch_count > 0 {
+        if max_batch_width != batch_target {
+            return Err(error_v1(UpdateGroupV1ErrorKind::RolloutMismatch));
+        }
+        if short_batch_count == 0 {
+            if short_width != 0 {
+                return Err(error_v1(UpdateGroupV1ErrorKind::RolloutMismatch));
+            }
+        } else {
+            let maximum_short_width = checked_u63_mul_v1(short_batch_count, batch_target - 1)?;
+            if short_width < short_batch_count || short_width > maximum_short_width {
+                return Err(error_v1(UpdateGroupV1ErrorKind::RolloutMismatch));
+            }
+        }
+    } else {
+        if short_batch_count == 0 || max_batch_width >= batch_target {
+            return Err(error_v1(UpdateGroupV1ErrorKind::RolloutMismatch));
+        }
+        let minimum_width = checked_u63_add_v1(max_batch_width, short_batch_count - 1)?;
+        let maximum_width = checked_u63_mul_v1(short_batch_count, max_batch_width)?;
+        if batch_width_sum < minimum_width || batch_width_sum > maximum_width {
+            return Err(error_v1(UpdateGroupV1ErrorKind::RolloutMismatch));
+        }
     }
     Ok(())
 }
@@ -1739,38 +1928,38 @@ mod tests {
 
     static FIXTURE_V1: OnceLock<FixtureV1> = OnceLock::new();
 
+    fn execution_config_v1(run: &ValidatedTrainRunV2) -> NativeTrainingExecutionConfigV1 {
+        NativeTrainingExecutionConfigV1 {
+            run_base_seed: run.record().schedule.base_seed,
+            batch_episodes: run.batch_episodes(),
+            deck_ids: run.record().environment.deck_ids.clone(),
+            max_physical_decisions: run.record().limits.max_physical_decisions,
+            max_policy_steps: run.record().limits.max_policy_steps,
+            worker_count: usize::try_from(run.record().topology.worker_count).unwrap(),
+            sessions_per_worker: usize::try_from(run.record().topology.sessions_per_worker)
+                .unwrap(),
+            broker_batch_target: usize::try_from(run.record().topology.broker_batch_target)
+                .unwrap(),
+            scheduler_timeout: Duration::from_millis(run.record().topology.scheduler_timeout_ms),
+            measure_broker_service_time: run.record().topology.measure_broker_service_time,
+            value_coefficient_bits: parse_f32_hex_v1(
+                &run.record().optimization.value_coefficient_f32_bits,
+            )
+            .unwrap()
+            .to_bits(),
+            learning_rate_bits: parse_f32_hex_v1(&run.record().optimization.learning_rate_f32_bits)
+                .unwrap()
+                .to_bits(),
+        }
+    }
+
     fn fixture_v1() -> &'static FixtureV1 {
         FIXTURE_V1.get_or_init(|| {
             let run_bytes = test_fixture_bytes_v2();
             let run = decode_train_run_v2(&run_bytes).unwrap();
             let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
             let mut executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
-                NativeTrainingExecutionConfigV1 {
-                    run_base_seed: run.record().schedule.base_seed,
-                    batch_episodes: run.batch_episodes(),
-                    deck_ids: run.record().environment.deck_ids.clone(),
-                    max_physical_decisions: run.record().limits.max_physical_decisions,
-                    max_policy_steps: run.record().limits.max_policy_steps,
-                    worker_count: usize::try_from(run.record().topology.worker_count).unwrap(),
-                    sessions_per_worker: usize::try_from(run.record().topology.sessions_per_worker)
-                        .unwrap(),
-                    broker_batch_target: usize::try_from(run.record().topology.broker_batch_target)
-                        .unwrap(),
-                    scheduler_timeout: Duration::from_millis(
-                        run.record().topology.scheduler_timeout_ms,
-                    ),
-                    measure_broker_service_time: run.record().topology.measure_broker_service_time,
-                    value_coefficient_bits: parse_f32_hex_v1(
-                        &run.record().optimization.value_coefficient_f32_bits,
-                    )
-                    .unwrap()
-                    .to_bits(),
-                    learning_rate_bits: parse_f32_hex_v1(
-                        &run.record().optimization.learning_rate_f32_bits,
-                    )
-                    .unwrap()
-                    .to_bits(),
-                },
+                execution_config_v1(&run),
                 &snapshot_manifest,
                 &snapshot_payload,
             )
@@ -1780,58 +1969,44 @@ mod tests {
             let genesis = build_genesis_checkpoint_manifest_v3(&run, &genesis_payload).unwrap();
             let genesis_manifest_bytes = genesis.canonical_bytes().to_vec();
             let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
-            let group_bytes = {
+            let (group_bytes, second_context) = {
                 let prepared = executor.prepare_update_v2().unwrap();
-                let mut mismatched_observation = prepared.observation().clone();
-                mismatched_observation.model_digest_after = "00".repeat(32);
                 assert_eq!(
-                    build_update_group_v1(
-                        &run,
-                        begin_update_evidence_chain_v1(&run, &genesis).unwrap(),
-                        &mismatched_observation,
-                        prepared.checkpoint_candidate(),
-                    )
-                    .unwrap_err()
-                    .kind(),
+                    prepared.pre_update_checkpoint_candidate_v1().unwrap(),
+                    genesis_candidate
+                );
+                assert_ne!(prepared.checkpoint_candidate(), &genesis_candidate);
+                let mut mismatched_predecessor =
+                    begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+                mismatched_predecessor.train_state_sha256 = [0_u8; 32];
+                assert_eq!(
+                    build_update_group_v1(&run, mismatched_predecessor, &prepared)
+                        .unwrap_err()
+                        .kind(),
+                    UpdateGroupV1ErrorKind::CheckpointMismatch,
+                    "the opaque prepared guard must re-attest the full live predecessor state"
+                );
+                let mut mismatched_model = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+                mismatched_model.model_parameter_sha256 = [0_u8; 32];
+                assert_eq!(
+                    build_update_group_v1(&run, mismatched_model, &prepared)
+                        .unwrap_err()
+                        .kind(),
                     UpdateGroupV1ErrorKind::CheckpointMismatch
                 );
-                let built = build_update_group_v1(
-                    &run,
-                    context,
-                    prepared.observation(),
-                    prepared.checkpoint_candidate(),
-                )
-                .unwrap();
-                built.group().canonical_bytes().to_vec()
+                let built = build_update_group_v1(&run, context, &prepared).unwrap();
+                let (group, advanced_context) = built.into_parts();
+                (group.canonical_bytes().to_vec(), advanced_context)
             };
-            let committed_context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
-            let first_observation = executor.run_update_v2().unwrap();
-            let first_checkpoint = executor
-                .checkpoint_candidate_for_observation_v2(&first_observation)
-                .unwrap();
-            let committed_first = build_update_group_v1(
-                &run,
-                committed_context,
-                &first_observation,
-                &first_checkpoint,
-            )
-            .unwrap();
-            assert_eq!(committed_first.group().canonical_bytes(), group_bytes);
-            let (_, second_context) = committed_first.into_parts();
-            let second_observation = executor.run_update_v2().unwrap();
-            let second_checkpoint = executor
-                .checkpoint_candidate_for_observation_v2(&second_observation)
-                .unwrap();
-            let second_group_bytes = build_update_group_v1(
-                &run,
-                second_context,
-                &second_observation,
-                &second_checkpoint,
-            )
-            .unwrap()
-            .group()
-            .canonical_bytes()
-            .to_vec();
+            executor.run_update_v2().unwrap();
+            let second_group_bytes = {
+                let prepared = executor.prepare_update_v2().unwrap();
+                build_update_group_v1(&run, second_context, &prepared)
+                    .unwrap()
+                    .group()
+                    .canonical_bytes()
+                    .to_vec()
+            };
             FixtureV1 {
                 run_bytes,
                 genesis_manifest_bytes,
@@ -1918,6 +2093,275 @@ mod tests {
         );
         append_atom(&mut framed, "evidence_canonical_json", &evidence);
         Sha256::digest(framed).into()
+    }
+
+    #[test]
+    fn prepared_authority_binds_every_execution_config_field() {
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let expected = execution_config_v1(&run);
+        validate_prepared_execution_config_v1(&run, &expected).unwrap();
+
+        let mut mismatches = Vec::new();
+        let mut changed = expected.clone();
+        changed.run_base_seed ^= 1;
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.batch_episodes += 2;
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.deck_ids[0].push_str("-wrong");
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.max_physical_decisions -= 1;
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.max_policy_steps -= 1;
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.worker_count += 1;
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.sessions_per_worker += 1;
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.broker_batch_target += 1;
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.scheduler_timeout += Duration::from_nanos(1);
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.measure_broker_service_time = !changed.measure_broker_service_time;
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.value_coefficient_bits = 0.25_f32.to_bits();
+        mismatches.push(changed);
+        let mut changed = expected.clone();
+        changed.learning_rate_bits = 0.002_f32.to_bits();
+        mismatches.push(changed);
+
+        for changed in mismatches {
+            assert_eq!(
+                validate_prepared_execution_config_v1(&run, &changed)
+                    .unwrap_err()
+                    .kind(),
+                UpdateGroupV1ErrorKind::RunBinding
+            );
+        }
+
+        let fixture = fixture_v1();
+        let genesis = decode_genesis_checkpoint_manifest_v3(
+            &fixture.genesis_manifest_bytes,
+            &fixture.genesis_payload,
+            &run,
+        )
+        .unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let mut wrong_config = expected;
+        wrong_config.learning_rate_bits = 0.002_f32.to_bits();
+        let mut wrong_executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            wrong_config,
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let prepared = wrong_executor.prepare_update_v2().unwrap();
+        assert_eq!(
+            build_update_group_v1(
+                &run,
+                begin_update_evidence_chain_v1(&run, &genesis).unwrap(),
+                &prepared,
+            )
+            .unwrap_err()
+            .kind(),
+            UpdateGroupV1ErrorKind::RunBinding,
+            "loss evidence alone cannot authorize an update made with the wrong learning rate"
+        );
+    }
+
+    #[test]
+    fn batch_width_maximum_is_exactly_feasible() {
+        let pass = |full, short, width, maximum| {
+            validate_batch_width_shape_v1(16, full, short, width, maximum, full + short).unwrap();
+        };
+        let reject = |full, short, width, maximum| {
+            assert_eq!(
+                validate_batch_width_shape_v1(16, full, short, width, maximum, full + short,)
+                    .unwrap_err()
+                    .kind(),
+                UpdateGroupV1ErrorKind::RolloutMismatch
+            );
+        };
+
+        pass(0, 3, 6, 4);
+        pass(0, 3, 12, 4);
+        pass(1, 0, 16, 16);
+        pass(1, 3, 19, 16);
+        pass(1, 3, 61, 16);
+        reject(0, 3, 3, 2);
+        reject(0, 3, 4, 1);
+        reject(1, 0, 16, 15);
+        reject(1, 3, 18, 16);
+        reject(1, 3, 62, 16);
+        assert!(validate_batch_width_shape_v1(1, 1, 0, 1, 1, 1).is_ok());
+        assert_eq!(
+            validate_batch_width_shape_v1(1, 0, 1, 1, 1, 1)
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::RolloutMismatch
+        );
+        assert_eq!(
+            validate_batch_width_shape_v1(
+                U63_MAX_V1, U63_MAX_V1, 0, U63_MAX_V1, U63_MAX_V1, U63_MAX_V1,
+            )
+            .unwrap_err()
+            .kind(),
+            UpdateGroupV1ErrorKind::InvalidArithmetic
+        );
+    }
+
+    #[test]
+    fn episode_count_lattice_and_per_episode_policy_partition_fail_closed() {
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let limits = &run.record().limits;
+        validate_episode_count_lattice_v1(&run, 3, 2, 0, 0, 3, 2).unwrap();
+
+        let rejected = [
+            (0, 0, 0, 0, 0, 0),
+            (1, 0, 1, 0, 0, 0),
+            (1, 2, 1, 2, 0, 0),
+            (2, 2, 1, 2, 1, 0),
+            (2, 2, 1, 0, 1, 2),
+            (
+                limits.max_policy_steps + 1,
+                1,
+                0,
+                0,
+                limits.max_policy_steps + 1,
+                1,
+            ),
+            (
+                limits.max_physical_decisions + 1,
+                limits.max_physical_decisions + 1,
+                0,
+                0,
+                limits.max_physical_decisions + 1,
+                limits.max_physical_decisions + 1,
+            ),
+        ];
+        for (
+            policy,
+            physical,
+            learner_policy,
+            learner_physical,
+            opponent_policy,
+            opponent_physical,
+        ) in rejected
+        {
+            assert_eq!(
+                validate_episode_count_lattice_v1(
+                    &run,
+                    policy,
+                    physical,
+                    learner_policy,
+                    learner_physical,
+                    opponent_policy,
+                    opponent_physical,
+                )
+                .unwrap_err()
+                .kind(),
+                UpdateGroupV1ErrorKind::EpisodeBinding
+            );
+        }
+
+        let mut empty_episode = group_value_v1();
+        for field in [
+            "policy_step_count",
+            "physical_decision_count",
+            "learner_policy_step_count",
+            "learner_physical_decision_count",
+            "opponent_policy_step_count",
+            "opponent_physical_decision_count",
+        ] {
+            empty_episode["evidence"]["episodes"][0][field] = Value::from(0_u64);
+        }
+        assert_eq!(
+            decode_value_error_v1(&empty_episode),
+            UpdateGroupV1ErrorKind::EpisodeBinding
+        );
+
+        let mut actor_violation = group_value_v1();
+        let learner_policy = actor_violation["evidence"]["episodes"][0]
+            ["learner_policy_step_count"]
+            .as_u64()
+            .unwrap();
+        let learner_physical = actor_violation["evidence"]["episodes"][0]
+            ["learner_physical_decision_count"]
+            .as_u64()
+            .unwrap();
+        actor_violation["evidence"]["episodes"][0]["opponent_policy_step_count"] =
+            Value::from(0_u64);
+        actor_violation["evidence"]["episodes"][0]["opponent_physical_decision_count"] =
+            Value::from(1_u64);
+        actor_violation["evidence"]["episodes"][0]["policy_step_count"] =
+            Value::from(learner_policy);
+        actor_violation["evidence"]["episodes"][0]["physical_decision_count"] =
+            Value::from(learner_physical + 1);
+        assert_eq!(
+            decode_value_error_v1(&actor_violation),
+            UpdateGroupV1ErrorKind::EpisodeBinding
+        );
+
+        let mut limit_violation = group_value_v1();
+        let learner_policy = limit_violation["evidence"]["episodes"][0]
+            ["learner_policy_step_count"]
+            .as_u64()
+            .unwrap();
+        limit_violation["evidence"]["episodes"][0]["opponent_policy_step_count"] =
+            Value::from(limits.max_policy_steps);
+        limit_violation["evidence"]["episodes"][0]["policy_step_count"] =
+            Value::from(limits.max_policy_steps + learner_policy);
+        assert_eq!(
+            decode_value_error_v1(&limit_violation),
+            UpdateGroupV1ErrorKind::EpisodeBinding
+        );
+
+        let mut wire: UpdateGroupWireV1 = serde_json::from_value(group_value_v1()).unwrap();
+        let first_episode_groups =
+            usize::try_from(wire.evidence.episodes[0].learner_physical_decision_count).unwrap();
+        let second_episode_groups =
+            usize::try_from(wire.evidence.episodes[1].learner_physical_decision_count).unwrap();
+        assert!(first_episode_groups > 0 && second_episode_groups > 0);
+        let first_range = 0..first_episode_groups;
+        let second_range = first_episode_groups..first_episode_groups + second_episode_groups;
+        let transfer = first_range
+            .clone()
+            .find(|index| wire.evidence.physical_terms[*index].substep_count > 1)
+            .map(|donor| (donor, second_range.start))
+            .or_else(|| {
+                second_range
+                    .clone()
+                    .find(|index| wire.evidence.physical_terms[*index].substep_count > 1)
+                    .map(|donor| (donor, first_range.start))
+            })
+            .expect("the real K=2 fixture must exercise a multi-substep physical decision");
+        let original_global_policy = wire.evidence.learner_policy_step_count;
+        wire.evidence.physical_terms[transfer.0].substep_count -= 1;
+        wire.evidence.physical_terms[transfer.1].substep_count += 1;
+        assert_eq!(
+            wire.evidence
+                .physical_terms
+                .iter()
+                .map(|term| u64::from(term.substep_count))
+                .sum::<u64>(),
+            original_global_policy,
+            "the corruption preserves the old update-wide P check"
+        );
+        assert_eq!(
+            validate_physical_and_loss_v1(&run, &wire.evidence)
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::PhysicalLattice
+        );
     }
 
     #[test]
