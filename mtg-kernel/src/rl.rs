@@ -3480,14 +3480,13 @@ fn validate_episode_decision_payload(
     Ok(())
 }
 
-fn validate_terminal_tuple(
-    episode_id: u64,
+pub(crate) const fn terminal_tuple_is_valid_v1(
     outcome: TerminalOutcomeV1,
     classification: TerminalClassificationV1,
     winner: Option<PlayerSeatV1>,
     reward: [i32; 2],
-) -> Result<()> {
-    let valid = matches!(
+) -> bool {
+    matches!(
         (outcome, classification, winner, reward),
         (
             TerminalOutcomeV1::P0Win,
@@ -3515,8 +3514,17 @@ fn validate_terminal_tuple(
             None,
             [0, 0]
         )
-    );
-    if valid {
+    )
+}
+
+fn validate_terminal_tuple(
+    episode_id: u64,
+    outcome: TerminalOutcomeV1,
+    classification: TerminalClassificationV1,
+    winner: Option<PlayerSeatV1>,
+    reward: [i32; 2],
+) -> Result<()> {
+    if terminal_tuple_is_valid_v1(outcome, classification, winner, reward) {
         Ok(())
     } else {
         Err(RlContractError(format!(
