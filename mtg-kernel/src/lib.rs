@@ -70,6 +70,9 @@ pub(crate) mod native_policy_value_net_v1;
 // Pure in-memory bridge from already-validated Store authorities and exact
 // train-state bytes to a private, immutable native inference model.
 pub mod native_checkpoint_inference_v1;
+// Trainer-schedule-compatible in-memory checkpoint runner. It derives the
+// engine/topology contract from a validated run and publishes no artifacts.
+pub mod native_checkpoint_runner_v1;
 // Exact CPU loss/backward/Adam reference for terminal_reinforce_value/v3;
 // deliberately not a scheduler, checkpoint format, or performance backend.
 #[cfg(feature = "native-flat-tensorizer-diagnostic")]
