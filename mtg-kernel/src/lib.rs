@@ -146,6 +146,10 @@ pub(crate) mod native_training_store_digest_v1;
 // Idempotent B0-B8 root-skeleton bootstrap and pre-run recovery. Run-record
 // byte authority, generation publication, and resume remain later layers.
 pub mod native_training_store_bootstrap_v2;
+// Store-wide currentness validation and resume orchestration: shared-lock
+// full-chain walk, exclusive-lock recognized-stage cleanup, the exact P=N
+// no-op, and latest-checkpoint executor reconstruction.
+pub mod native_training_store_resume_v2;
 // Path-backed Store root authority: no-follow retained handles, local
 // fixed-NTFS admission, identity recapture, and the nonblocking LockFileEx
 // range locks. Non-Windows callers receive the stable unsupported-platform

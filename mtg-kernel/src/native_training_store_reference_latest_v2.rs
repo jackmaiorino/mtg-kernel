@@ -516,6 +516,27 @@ pub fn build_latest_v2(
     decode_latest_v2(&canonical_bytes, boundary, reference)
 }
 
+/// Parse only the durable generation index out of exact canonical latest
+/// bytes, with no binding or authority claim. Resume orchestration uses this
+/// to learn the walk target before the full decode proves the pointer.
+pub(crate) fn peek_latest_generation_index_v2(
+    latest_cj: &[u8],
+) -> std::result::Result<u64, NativeTrainingReferenceLatestV2Error> {
+    require_cap_v2(
+        latest_cj,
+        LATEST_RECORD_MAX_BYTES_V2,
+        NativeTrainingReferenceLatestV2ErrorKind::LatestRecordTooLarge,
+    )?;
+    let wire: LatestRecordWireV2 =
+        from_canonical_json_bytes_v1(latest_cj, CanonicalJsonNullPolicyV1::Forbid)?;
+    if wire.schema != LATEST_RECORD_SCHEMA_V2 {
+        return Err(NativeTrainingReferenceLatestV2Error::new(
+            NativeTrainingReferenceLatestV2ErrorKind::InvalidSchema,
+        ));
+    }
+    Ok(wire.generation_index)
+}
+
 /// Decodes an exact latest-v2 record against independent sealed boundary and
 /// reference authorities. This does not establish Store pointer currentness.
 pub fn decode_latest_v2(

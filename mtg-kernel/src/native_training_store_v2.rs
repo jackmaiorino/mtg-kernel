@@ -1377,6 +1377,134 @@ mod windows_publisher_tests {
         prepared.commit_v2(receipt).unwrap();
     }
 
+    /// The mandatory replay witness: termination is injected at the exact
+    /// point after all immutable finals for boundary `U` have passed the
+    /// complete-generation revalidation but before latest replacement. The
+    /// restarted process must treat parent `U-S` as authoritative, replay
+    /// exactly the lost window from recorded facts, reproduce every immutable
+    /// candidate byte, reuse the candidate-equal finals, publish latest, and
+    /// resume successfully. Equality of only model parameters, losses, or
+    /// logical progress is insufficient: the receipt hashes bind the full
+    /// reopened train-state payload bytes.
+    #[test]
+    fn killed_before_latest_replay_witness_reproduces_every_candidate_byte() {
+        use crate::native_training_store_resume_v2::{
+            resume_native_training_store_v2, NativeTrainingStoreResumeV2,
+        };
+
+        let store = TestStoreV2::with_skeleton("replay-witness");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let mut executor = fresh_executor_v2(&run);
+        let genesis = genesis_authorities_v2(&run, &executor);
+        let _ = publish_genesis_v2(&root, &run, &genesis).unwrap();
+        let genesis_latest_bytes = genesis.latest.canonical_bytes().to_vec();
+
+        // Prepare the first trained window and record the test-only oracle
+        // outside the store: every candidate hash plus the latest bytes.
+        let prepared =
+            prepare_segment_v2(&mut executor, &run, &genesis.boundary, &genesis.checkpoint)
+                .unwrap();
+        let generation_index = prepared.expected_generation_index();
+        let view = prepared.publication_view_v2();
+        let oracle_payload_sha256 = view.checkpoint_payload_sha256_v2();
+        let oracle_manifest_sha256 = view.checkpoint_manifest_sha256_v2();
+        let oracle_latest_bytes = view.latest_canonical_bytes_v2().to_vec();
+
+        // Inject termination after the complete-generation revalidation but
+        // strictly before latest replacement, then drop the guard and the
+        // live executor to simulate the killed process.
+        let injected = publisher_error_v2(NativeTrainingStorePublisherV2ErrorKind::StoreBusy);
+        let interrupted = publish_prepared_segment_with_hook_v2(
+            &root,
+            &run,
+            &genesis.boundary,
+            &genesis.checkpoint,
+            &prepared,
+            |reached| {
+                if reached == PublisherBoundaryV2::BeforeLatestReplacement {
+                    Err(injected)
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(
+            interrupted.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::StoreBusy
+        );
+        drop(prepared);
+        drop(executor);
+        let latest_path = final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest);
+        assert_eq!(
+            fs::read(&latest_path).unwrap(),
+            genesis_latest_bytes,
+            "the prior latest must remain authoritative after the kill"
+        );
+        let payload_final = final_path_v2(
+            &root,
+            NativeTrainingStoreFinalNameV2::StatePayload { generation_index },
+        );
+        let partial_payload_bytes = fs::read(&payload_final).unwrap();
+        assert_eq!(sha256_v1(&partial_payload_bytes), oracle_payload_sha256);
+
+        // Restart: resume treats parent U-S as authoritative and hands back a
+        // reconstructed executor for the exact lost window.
+        let resumed = resume_native_training_store_v2(
+            &root,
+            &run,
+            crate::native_training_store_resume_v2::test_execution_config_v2(&run),
+        )
+        .unwrap();
+        let mut continuation = match resumed {
+            NativeTrainingStoreResumeV2::Continue(continuation) => continuation,
+            NativeTrainingStoreResumeV2::Complete { .. } => {
+                panic!("a killed-before-latest store must resume, not no-op")
+            }
+        };
+        assert_eq!(continuation.parent_generation_index, 0);
+
+        // Replay the window and republish: every immutable candidate byte
+        // must reproduce so the candidate-equal finals are reused, latest is
+        // published, and the receipt binds the reopened payload bytes.
+        let replayed = prepare_segment_v2(
+            &mut continuation.executor,
+            &run,
+            &continuation.parent_boundary,
+            &continuation.parent_checkpoint,
+        )
+        .unwrap();
+        assert_eq!(replayed.expected_generation_index(), generation_index);
+        let replay_view = replayed.publication_view_v2();
+        assert_eq!(
+            replay_view.checkpoint_payload_sha256_v2(),
+            oracle_payload_sha256
+        );
+        assert_eq!(
+            replay_view.checkpoint_manifest_sha256_v2(),
+            oracle_manifest_sha256
+        );
+        let receipt = publish_prepared_segment_v2(
+            &root,
+            &run,
+            &continuation.parent_boundary,
+            &continuation.parent_checkpoint,
+            &replayed,
+        )
+        .unwrap();
+        assert_eq!(receipt.generation_index(), generation_index);
+        assert_eq!(receipt.checkpoint_payload_sha256(), oracle_payload_sha256);
+        assert_eq!(receipt.checkpoint_manifest_sha256(), oracle_manifest_sha256);
+        replayed.commit_v2(receipt).unwrap();
+
+        assert_eq!(
+            fs::read(&payload_final).unwrap(),
+            partial_payload_bytes,
+            "the candidate-equal final must be reused, never rewritten"
+        );
+        assert_eq!(fs::read(&latest_path).unwrap(), oracle_latest_bytes);
+    }
+
     #[test]
     fn stage_hygiene_and_run_authority_fail_closed_and_preserve_evidence() {
         let store = TestStoreV2::with_skeleton("hygiene");
