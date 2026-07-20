@@ -271,7 +271,6 @@ impl NativeTrainingPreparedSegmentV2<'_> {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub(crate) const fn publication_view_v2(
         &self,
     ) -> NativeTrainingPreparedSegmentPublicationViewV2<'_, '_> {
@@ -281,7 +280,6 @@ impl NativeTrainingPreparedSegmentV2<'_> {
 
 /// Borrowed, allocation-free Store publisher projection. It is crate-private
 /// so public callers cannot extract a candidate or bypass receipt construction.
-#[allow(dead_code)]
 pub(crate) struct NativeTrainingPreparedSegmentPublicationViewV2<'a, 'executor> {
     prepared: &'a NativeTrainingPreparedSegmentV2<'executor>,
 }

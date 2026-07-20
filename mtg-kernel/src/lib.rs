@@ -125,6 +125,10 @@ pub mod native_training_store_segment_continuation_v2;
 // Pure SegmentManifestV2 authority for genesis and explicit parent-bound
 // trained continuation/checkpoint state.
 pub mod native_training_store_segment_manifest_v2;
+// Pure Store layout and same-parent stage-leaf grammar authority. This owns
+// exact final basenames and `.B.stage-v2` recognition; it performs no
+// filesystem access and makes no durability or publication claim.
+pub mod native_training_store_layout_v2;
 // One-clone, one-final-payload trained segment guard. Filesystem publication
 // and receipt construction remain separate later layers.
 pub mod native_training_store_prepared_segment_v2;
@@ -139,6 +143,11 @@ pub mod native_training_store_update_group_v1;
 // Schema-neutral checked ATOM/raw32/SHA framing shared by Store records.
 #[allow(dead_code)]
 pub(crate) mod native_training_store_digest_v1;
+// Path-backed Store root authority: no-follow retained handles, local
+// fixed-NTFS admission, identity recapture, and the nonblocking LockFileEx
+// range locks. Non-Windows callers receive the stable unsupported-platform
+// error before any filesystem access.
+pub mod native_training_store_root_v2;
 // Pure typed run/v2 record validation and deterministic digest authority.
 // Capture, filesystem publication, and learning-quality claims live elsewhere.
 pub mod native_training_store_run_v2;
