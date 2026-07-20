@@ -18,6 +18,8 @@ pub use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryRec
 pub use crate::native_policy_train_step_v1::{
     NativeGaugeSubstepBoundV1 as NativeTrainingGaugeSubstepObservationV1,
     NativeScorerBiasGaugeRecordV1 as NativeTrainingScorerBiasGaugeObservationV1,
+    NativeTrainingNumericalBackendV1,
+    FIXED_PARTITION_PARALLEL_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1 as NATIVE_TRAINING_FIXED_PARTITION_NUMERICAL_BACKEND_IDENTITY_V1,
     NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1 as NATIVE_TRAINING_NUMERICAL_BACKEND_IDENTITY_V1,
 };
 use crate::native_policy_train_step_v1::{
@@ -40,6 +42,9 @@ pub use crate::native_trainer_v1::{
     NativeTrainerSelectedOutputEvidenceV1 as NativeTrainingSelectedOutputObservationV1,
     NativeTrainerUpdateEvidenceV2 as NativeTrainingUpdateObservationV2,
 };
+pub use crate::native_training_phase_diagnostic_v1::{
+    NativeTrainingPhaseProfileV1, NativeTrainingPhaseRecordV1, NativeTrainingPhaseV1,
+};
 use crate::native_training_store_v2::NativeTrainingPersistenceReceiptV2;
 use crate::rl::PlayerSeatV1;
 use sha2::{Digest, Sha256};
@@ -52,10 +57,13 @@ use std::time::Duration;
 ///
 /// `batch_episodes` is the immutable K for the executor and must be even in
 /// `2..=10_000`. Counts are exact integers; `scheduler_timeout` is a wall-clock
-/// duration; coefficients are raw IEEE-754 binary32 bits. Topology, caps, deck
-/// identifiers, coefficient finiteness, and K are validated before snapshot
-/// loading or state ownership. Strict callers must separately bind these values
-/// into their immutable run record.
+/// duration; coefficients are raw IEEE-754 binary32 bits. The sequential
+/// numerical backend requires `backward_worker_limit == 1`; the fixed-four
+/// backend accepts `1..=4`, with that limit controlling physical execution but
+/// not its frozen four-partition reduction order. Topology, caps, deck
+/// identifiers, coefficient finiteness, backend, and K are validated before
+/// snapshot loading or state ownership. Strict callers must separately bind
+/// these values into their immutable run record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeTrainingExecutionConfigV1 {
     pub run_base_seed: u64,
@@ -70,6 +78,8 @@ pub struct NativeTrainingExecutionConfigV1 {
     pub measure_broker_service_time: bool,
     pub value_coefficient_bits: u32,
     pub learning_rate_bits: u32,
+    pub numerical_backend: NativeTrainingNumericalBackendV1,
+    pub backward_worker_limit: usize,
 }
 
 /// Public read-only projection of the frozen production seed/seat schedule.
@@ -210,6 +220,8 @@ impl NativeTrainingExecutionConfigV1 {
             measure_broker_service_time: self.measure_broker_service_time,
             value_coefficient_bits: self.value_coefficient_bits,
             learning_rate_bits: self.learning_rate_bits,
+            numerical_backend: self.numerical_backend,
+            backward_worker_limit: self.backward_worker_limit,
         }
     }
 }
@@ -249,11 +261,15 @@ impl From<NativeTrainingProgressV1> for NativeTrainerProgressV2 {
 
 /// Complete, verified checkpoint material held in memory. Persistence layers
 /// must add their own immutable metadata, atomic-publication, and recovery
-/// contracts; this candidate is only the payload/progress handoff.
+/// contracts; this candidate is only the payload/progress handoff. Numerical
+/// backend and backward-worker topology are nevertheless bound here so a
+/// checkpoint cannot silently cross arithmetic or run-identity boundaries.
 #[derive(Clone, PartialEq, Eq)]
 pub struct NativeTrainingCheckpointCandidateV1 {
     base_seed: u64,
     batch_episodes: u64,
+    numerical_backend: NativeTrainingNumericalBackendV1,
+    backward_worker_limit: usize,
     progress: NativeTrainingProgressV1,
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
@@ -267,6 +283,8 @@ impl std::fmt::Debug for NativeTrainingCheckpointCandidateV1 {
             .debug_struct("NativeTrainingCheckpointCandidateV1")
             .field("base_seed", &self.base_seed)
             .field("batch_episodes", &self.batch_episodes)
+            .field("numerical_backend", &self.numerical_backend)
+            .field("backward_worker_limit", &self.backward_worker_limit)
             .field("progress", &self.progress)
             .field("adam_step", &self.adam_step)
             .field("scorer_bias_anchor_bits", &self.scorer_bias_anchor_bits)
@@ -324,6 +342,8 @@ impl From<NativeTrainingCheckpointDigestsV1> for NativeTrainStatePayloadDigestsV
 pub struct NativeTrainingCheckpointMetadataV1 {
     pub base_seed: u64,
     pub batch_episodes: u64,
+    pub numerical_backend: NativeTrainingNumericalBackendV1,
+    pub backward_worker_limit: usize,
     pub progress: NativeTrainingProgressV1,
     pub adam_step: u64,
     pub scorer_bias_anchor_bits: u32,
@@ -335,6 +355,10 @@ impl NativeTrainingCheckpointCandidateV1 {
         payload: &[u8],
         digests: NativeTrainingCheckpointDigestsV1,
     ) -> Result<Self, NativeTrainingExecutorErrorV1> {
+        validate_checkpoint_backend_metadata_v1(
+            metadata.numerical_backend,
+            metadata.backward_worker_limit,
+        )?;
         let internal_digests = digests.into();
         let decoded = decode_native_train_state_payload_verified_v1(
             payload,
@@ -354,6 +378,8 @@ impl NativeTrainingCheckpointCandidateV1 {
         Ok(Self {
             base_seed: metadata.base_seed,
             batch_episodes: metadata.batch_episodes,
+            numerical_backend: metadata.numerical_backend,
+            backward_worker_limit: metadata.backward_worker_limit,
             progress: metadata.progress,
             adam_step: metadata.adam_step,
             scorer_bias_anchor_bits: metadata.scorer_bias_anchor_bits,
@@ -370,6 +396,14 @@ impl NativeTrainingCheckpointCandidateV1 {
 
     pub fn batch_episodes(&self) -> u64 {
         self.batch_episodes
+    }
+
+    pub fn numerical_backend(&self) -> NativeTrainingNumericalBackendV1 {
+        self.numerical_backend
+    }
+
+    pub fn backward_worker_limit(&self) -> usize {
+        self.backward_worker_limit
     }
 
     pub fn progress(&self) -> NativeTrainingProgressV1 {
@@ -396,6 +430,8 @@ impl NativeTrainingCheckpointCandidateV1 {
         NativeTrainingCheckpointMetadataV1 {
             base_seed: self.base_seed,
             batch_episodes: self.batch_episodes,
+            numerical_backend: self.numerical_backend,
+            backward_worker_limit: self.backward_worker_limit,
             progress: self.progress,
             adam_step: self.adam_step,
             scorer_bias_anchor_bits: self.scorer_bias_anchor_bits,
@@ -843,9 +879,9 @@ impl NativeTrainingExecutorV1 {
     ///
     /// # Errors
     ///
-    /// Rejects config/K/base-seed mismatch, payload drift, invalid train state,
-    /// incoherent progress/Adam counters, or an invalid next schedule before
-    /// returning an executor.
+    /// Rejects config/K/base-seed/backend/backward-topology mismatch, payload
+    /// drift, invalid train state, incoherent progress/Adam counters, or an
+    /// invalid next schedule before returning an executor.
     pub fn from_checkpoint_candidate_v1(
         config: NativeTrainingExecutionConfigV1,
         checkpoint: &NativeTrainingCheckpointCandidateV1,
@@ -861,6 +897,18 @@ impl NativeTrainingExecutorV1 {
             return Err(NativeTrainingExecutorErrorV1::redacted(
                 NativeTrainingExecutorErrorKindV1::CheckpointBinding,
                 "checkpoint_batch_episodes_mismatch",
+            ));
+        }
+        if checkpoint.numerical_backend != config.numerical_backend {
+            return Err(NativeTrainingExecutorErrorV1::redacted(
+                NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+                "checkpoint_numerical_backend_mismatch",
+            ));
+        }
+        if checkpoint.backward_worker_limit != config.backward_worker_limit {
+            return Err(NativeTrainingExecutorErrorV1::redacted(
+                NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+                "checkpoint_backward_worker_limit_mismatch",
             ));
         }
 
@@ -916,9 +964,17 @@ impl NativeTrainingExecutorV1 {
     ///
     /// Returns a classified error with the live executor unchanged for every
     /// candidate rollout, training, validation, or checkpoint-export failure.
+    /// Frozen Store RunV2 is sequential-only, so this V2 preparation boundary
+    /// rejects the fixed-four backend before cloning or rollout.
     pub fn prepare_update_v2(
         &mut self,
     ) -> Result<NativeTrainingPreparedUpdateV2<'_>, NativeTrainingExecutorErrorV1> {
+        if self.config.numerical_backend != NativeTrainingNumericalBackendV1::Sequential {
+            return Err(NativeTrainingExecutorErrorV1::redacted(
+                NativeTrainingExecutorErrorKindV1::Configuration,
+                "store_v2_requires_sequential_numerical_backend",
+            ));
+        }
         let mut candidate_executor = Self {
             config: self.config.clone(),
             update_config: self.update_config.clone(),
@@ -956,6 +1012,25 @@ impl NativeTrainingExecutorV1 {
     ) -> Result<NativeTrainingUpdateObservationV2, NativeTrainingExecutorErrorV1> {
         self.trainer
             .run_even_batch_update_v2(&self.update_config)
+            .map_err(trainer_executor_error_v1)
+    }
+
+    /// Runs one in-memory update while collecting non-authoritative phase wall
+    /// timings. The returned profile is diagnostic only: it has no serializer,
+    /// identity, Store mapping, or benchmark-record mapping. Training inputs,
+    /// arithmetic, validation, and the committed observation are shared with
+    /// [`Self::run_update_v2`].
+    pub fn run_update_with_phase_profile_v1(
+        &mut self,
+    ) -> Result<
+        (
+            NativeTrainingUpdateObservationV2,
+            NativeTrainingPhaseProfileV1,
+        ),
+        NativeTrainingExecutorErrorV1,
+    > {
+        self.trainer
+            .run_even_batch_update_profiled_v2(&self.update_config)
             .map_err(trainer_executor_error_v1)
     }
 
@@ -997,7 +1072,8 @@ impl NativeTrainingExecutorV1 {
     /// # Errors
     ///
     /// Returns a classified error without a candidate when live state, progress,
-    /// K, Adam, next schedule, payload layout, or digest construction fails.
+    /// K, Adam, backend topology, next schedule, payload layout, or digest
+    /// construction fails.
     pub fn checkpoint_candidate_v1(
         &self,
     ) -> Result<NativeTrainingCheckpointCandidateV1, NativeTrainingExecutorErrorV1> {
@@ -1024,6 +1100,8 @@ impl NativeTrainingExecutorV1 {
         Ok(NativeTrainingCheckpointCandidateV1 {
             base_seed: self.config.run_base_seed,
             batch_episodes: self.config.batch_episodes,
+            numerical_backend: self.config.numerical_backend,
+            backward_worker_limit: self.config.backward_worker_limit,
             progress: self.progress(),
             adam_step: snapshot.adam_step,
             scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
@@ -1132,6 +1210,20 @@ fn checkpoint_observation_mismatch_v1() -> NativeTrainingExecutorErrorV1 {
     )
 }
 
+fn validate_checkpoint_backend_metadata_v1(
+    numerical_backend: NativeTrainingNumericalBackendV1,
+    backward_worker_limit: usize,
+) -> Result<(), NativeTrainingExecutorErrorV1> {
+    if numerical_backend.accepts_backward_worker_limit_v1(backward_worker_limit) {
+        Ok(())
+    } else {
+        Err(NativeTrainingExecutorErrorV1::redacted(
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+            "checkpoint_backend_metadata_invalid",
+        ))
+    }
+}
+
 fn validated_update_config_v1(
     config: &NativeTrainingExecutionConfigV1,
 ) -> Result<NativeTrainerUpdateConfigV2, NativeTrainingExecutorErrorV1> {
@@ -1199,6 +1291,8 @@ mod tests {
             measure_broker_service_time: false,
             value_coefficient_bits: 0.5f32.to_bits(),
             learning_rate_bits: 0.001f32.to_bits(),
+            numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
+            backward_worker_limit: 1,
         }
     }
 
@@ -1337,6 +1431,95 @@ mod tests {
             resumed.checkpoint_candidate_v1().unwrap(),
             uninterrupted.checkpoint_candidate_v1().unwrap()
         );
+    }
+
+    #[test]
+    fn fixed_backend_checkpoint_binding_is_exact_and_store_v2_preparation_fails_closed() {
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let mut fixed_config = burn_config_v1(2);
+        fixed_config.numerical_backend = NativeTrainingNumericalBackendV1::FixedFourPartitions;
+        fixed_config.backward_worker_limit = 4;
+        let mut fixed = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            fixed_config.clone(),
+            &manifest,
+            &payload,
+        )
+        .unwrap();
+        fixed.run_update_v2().unwrap();
+        let checkpoint = fixed.checkpoint_candidate_v1().unwrap();
+        assert_eq!(
+            checkpoint.numerical_backend(),
+            NativeTrainingNumericalBackendV1::FixedFourPartitions
+        );
+        assert_eq!(checkpoint.backward_worker_limit(), 4);
+        assert_eq!(
+            NativeTrainingExecutorV1::from_checkpoint_candidate_v1(
+                fixed_config.clone(),
+                &checkpoint
+            )
+            .unwrap()
+            .checkpoint_candidate_v1()
+            .unwrap(),
+            checkpoint
+        );
+
+        let sequential_error =
+            NativeTrainingExecutorV1::from_checkpoint_candidate_v1(burn_config_v1(2), &checkpoint)
+                .unwrap_err();
+        assert_eq!(
+            sequential_error.kind(),
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding
+        );
+        assert_eq!(
+            sequential_error.code(),
+            "checkpoint_numerical_backend_mismatch"
+        );
+
+        let mut other_topology = fixed_config.clone();
+        other_topology.backward_worker_limit = 1;
+        let topology_error =
+            NativeTrainingExecutorV1::from_checkpoint_candidate_v1(other_topology, &checkpoint)
+                .unwrap_err();
+        assert_eq!(
+            topology_error.kind(),
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding
+        );
+        assert_eq!(
+            topology_error.code(),
+            "checkpoint_backward_worker_limit_mismatch"
+        );
+
+        let mut invalid_metadata = checkpoint.metadata();
+        invalid_metadata.backward_worker_limit = 0;
+        let metadata_error = NativeTrainingCheckpointCandidateV1::import_verified_v1(
+            invalid_metadata,
+            &[],
+            checkpoint.digests(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            metadata_error.kind(),
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding
+        );
+        assert_eq!(metadata_error.code(), "checkpoint_backend_metadata_invalid");
+
+        let mut fresh_fixed = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            fixed_config,
+            &manifest,
+            &payload,
+        )
+        .unwrap();
+        let before = fresh_fixed.checkpoint_candidate_v1().unwrap();
+        let prepare_error = fresh_fixed.prepare_update_v2().err().unwrap();
+        assert_eq!(
+            prepare_error.kind(),
+            NativeTrainingExecutorErrorKindV1::Configuration
+        );
+        assert_eq!(
+            prepare_error.code(),
+            "store_v2_requires_sequential_numerical_backend"
+        );
+        assert_eq!(fresh_fixed.checkpoint_candidate_v1().unwrap(), before);
     }
 
     #[test]

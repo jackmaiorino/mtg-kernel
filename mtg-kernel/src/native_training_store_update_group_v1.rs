@@ -1906,6 +1906,7 @@ mod tests {
     use super::*;
     use crate::canonical_json_v1::to_canonical_json_bytes_v1;
     use crate::common_model_snapshot_v1::common_model_snapshot_paths_v1;
+    use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
     use crate::native_training_executor_v1::{
         NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1,
     };
@@ -1950,6 +1951,8 @@ mod tests {
             learning_rate_bits: parse_f32_hex_v1(&run.record().optimization.learning_rate_f32_bits)
                 .unwrap()
                 .to_bits(),
+            numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
+            backward_worker_limit: 1,
         }
     }
 
