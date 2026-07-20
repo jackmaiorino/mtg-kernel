@@ -114,6 +114,9 @@ pub mod native_training_store_checkpoint_v3;
 // Pure complete-chain continuation-v2 authority. Largest-prefix partitioning
 // is never claimed from one file in isolation.
 pub mod native_training_store_segment_continuation_v2;
+// Pure SegmentManifestV2 authority. This first slice authorizes genesis only;
+// trained manifests require a later explicit parent-bound entry point.
+pub mod native_training_store_segment_manifest_v2;
 // Pure Episode/UpdateEvidence/UpdateGroup authority. This validates one
 // complete update and advances a move-only evidence-chain context; it owns no
 // continuation partitioning, filesystem, publication, receipt, or mutation.
