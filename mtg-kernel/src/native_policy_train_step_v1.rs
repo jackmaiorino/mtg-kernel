@@ -224,17 +224,43 @@ impl PackedRecomputeExecutionContextV1 {
 
 #[cfg(test)]
 struct FixedPartitionBackwardTestControlV1 {
+    force_spawn_failure_worker_index: Option<usize>,
     fail_partition_ordinal: Option<usize>,
+    panic_partition_ordinal: Option<usize>,
     attempted_partition_count: AtomicUsize,
+    spawn_attempt_count: AtomicUsize,
+    spawn_success_count: AtomicUsize,
+    inline_fallback_chunk_count: AtomicUsize,
 }
 
 #[cfg(test)]
 impl FixedPartitionBackwardTestControlV1 {
-    fn new_v1(fail_partition_ordinal: Option<usize>) -> Arc<Self> {
+    fn new_v1(
+        force_spawn_failure_worker_index: Option<usize>,
+        fail_partition_ordinal: Option<usize>,
+        panic_partition_ordinal: Option<usize>,
+    ) -> Arc<Self> {
         Arc::new(Self {
+            force_spawn_failure_worker_index,
             fail_partition_ordinal,
+            panic_partition_ordinal,
             attempted_partition_count: AtomicUsize::new(0),
+            spawn_attempt_count: AtomicUsize::new(0),
+            spawn_success_count: AtomicUsize::new(0),
+            inline_fallback_chunk_count: AtomicUsize::new(0),
         })
+    }
+
+    fn attempted_partition_count_v1(&self) -> usize {
+        self.attempted_partition_count.load(Ordering::SeqCst)
+    }
+
+    fn spawn_counts_v1(&self) -> (usize, usize, usize) {
+        (
+            self.spawn_attempt_count.load(Ordering::SeqCst),
+            self.spawn_success_count.load(Ordering::SeqCst),
+            self.inline_fallback_chunk_count.load(Ordering::SeqCst),
+        )
     }
 }
 
@@ -298,6 +324,57 @@ impl FixedPartitionBackwardExecutionContextV1 {
         #[cfg(not(test))]
         let _ = partition_ordinal;
         false
+    }
+
+    fn record_spawn_attempt_v1(&self) {
+        #[cfg(test)]
+        if let Some(control) = self.test_control.as_ref() {
+            control.spawn_attempt_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn record_spawn_success_v1(&self) {
+        #[cfg(test)]
+        if let Some(control) = self.test_control.as_ref() {
+            control.spawn_success_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn record_inline_fallback_v1(&self) {
+        #[cfg(test)]
+        if let Some(control) = self.test_control.as_ref() {
+            control
+                .inline_fallback_chunk_count
+                .fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn force_spawn_failure_v1(&self, worker_index: usize) -> bool {
+        #[cfg(test)]
+        {
+            self.test_control.as_ref().is_some_and(|control| {
+                control.force_spawn_failure_worker_index == Some(worker_index)
+            })
+        }
+        #[cfg(not(test))]
+        {
+            let _ = worker_index;
+            false
+        }
+    }
+
+    fn force_partition_panic_v1(&self, partition_ordinal: usize) -> bool {
+        #[cfg(test)]
+        {
+            self.test_control
+                .as_ref()
+                .is_some_and(|control| control.panic_partition_ordinal == Some(partition_ordinal))
+        }
+        #[cfg(not(test))]
+        {
+            let _ = partition_ordinal;
+            false
+        }
     }
 }
 
@@ -1308,8 +1385,7 @@ fn fixed_partition_backward_gradients_v1(
     if worker_limit == 0 {
         return Err(NativePolicyTrainErrorV1::FixedPartitionBackwardWorkerLimitZero);
     }
-    let partition_count = FIXED_BACKWARD_PARTITION_COUNT_V1.min(groups.len());
-    debug_assert_ne!(partition_count, 0);
+    let partition_count = FIXED_BACKWARD_PARTITION_COUNT_V1;
     let partition_ordinals = (0..partition_count).collect::<Vec<_>>();
     let worker_count = worker_limit.min(partition_count);
     let outcomes = if worker_count == 1 {
@@ -1329,19 +1405,29 @@ fn fixed_partition_backward_gradients_v1(
             for (worker_index, chunk) in
                 partition_ordinals.chunks(partitions_per_worker).enumerate()
             {
-                let spawned = thread::Builder::new()
-                    .name(format!("native-fixed-backward-{worker_index}"))
-                    .spawn_scoped(scope, move || {
-                        fixed_partition_backward_outcomes_v1(
-                            parameters,
-                            groups,
-                            group_count,
-                            value_coefficient,
-                            partition_count,
-                            chunk,
-                            execution_context,
-                        )
-                    });
+                execution_context.record_spawn_attempt_v1();
+                let spawned = if execution_context.force_spawn_failure_v1(worker_index) {
+                    Err(std::io::Error::other(
+                        "injected fixed-partition backward worker spawn failure",
+                    ))
+                } else {
+                    thread::Builder::new()
+                        .name(format!("native-fixed-backward-{worker_index}"))
+                        .spawn_scoped(scope, move || {
+                            fixed_partition_backward_outcomes_v1(
+                                parameters,
+                                groups,
+                                group_count,
+                                value_coefficient,
+                                partition_count,
+                                chunk,
+                                execution_context,
+                            )
+                        })
+                };
+                if spawned.is_ok() {
+                    execution_context.record_spawn_success_v1();
+                }
                 jobs.push((spawned, chunk));
             }
 
@@ -1354,21 +1440,27 @@ fn fixed_partition_backward_gradients_v1(
                             partition_ordinal: chunk[0],
                         }),
                     },
-                    Err(_) => outcomes.extend(fixed_partition_backward_outcomes_v1(
-                        parameters,
-                        groups,
-                        group_count,
-                        value_coefficient,
-                        partition_count,
-                        chunk,
-                        execution_context,
-                    )),
+                    Err(_) => {
+                        execution_context.record_inline_fallback_v1();
+                        outcomes.extend(fixed_partition_backward_outcomes_v1(
+                            parameters,
+                            groups,
+                            group_count,
+                            value_coefficient,
+                            partition_count,
+                            chunk,
+                            execution_context,
+                        ));
+                    }
                 }
             }
             outcomes
         })
     };
 
+    if outcomes.len() != partition_count {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    }
     for (expected_ordinal, outcome) in outcomes.into_iter().enumerate() {
         let partition = match outcome {
             FixedPartitionBackwardOutcomeV1::Completed(result) => result?,
@@ -1416,6 +1508,11 @@ fn fixed_partition_backward_outcomes_v1(
                 if execution_context.begin_partition_v1(partition_ordinal) {
                     return Err(NativePolicyTrainErrorV1::ParameterManifest);
                 }
+                if execution_context.force_partition_panic_v1(partition_ordinal) {
+                    panic!(
+                        "injected fixed-partition backward panic at partition {partition_ordinal}"
+                    );
+                }
                 fixed_partition_backward_v1(
                     parameters,
                     groups,
@@ -1439,7 +1536,6 @@ fn fixed_partition_reverse_bounds_v1(
     partition_ordinal: usize,
 ) -> (usize, usize) {
     debug_assert!(partition_count != 0);
-    debug_assert!(partition_count <= group_count);
     debug_assert!(partition_ordinal < partition_count);
     let base = group_count / partition_count;
     let longer_partition_count = group_count % partition_count;
@@ -4655,6 +4751,39 @@ mod tests {
         assert_eq!(physical_scratch, physical_scratch_before);
     }
 
+    fn assert_fixed_partition_bounds_v1(group_count: usize, expected_bounds: &[(usize, usize)]) {
+        let bounds = (0..FIXED_BACKWARD_PARTITION_COUNT_V1)
+            .map(|partition_ordinal| {
+                fixed_partition_reverse_bounds_v1(
+                    group_count,
+                    FIXED_BACKWARD_PARTITION_COUNT_V1,
+                    partition_ordinal,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bounds, expected_bounds);
+        assert_eq!(bounds.len(), FIXED_BACKWARD_PARTITION_COUNT_V1);
+
+        let mut cursor = 0;
+        let mut lengths = Vec::with_capacity(bounds.len());
+        for &(start, end) in &bounds {
+            assert_eq!(start, cursor);
+            assert!(start <= end);
+            assert!(end <= group_count);
+            lengths.push(end - start);
+            cursor = end;
+        }
+        assert_eq!(cursor, group_count);
+        assert!(lengths.iter().max().unwrap() - lengths.iter().min().unwrap() <= 1);
+        assert_eq!(
+            bounds
+                .iter()
+                .flat_map(|&(start, end)| start..end)
+                .collect::<Vec<_>>(),
+            (0..group_count).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn fixed_partition_parallel_backward_is_deterministic_topology_invariant_and_bounded() {
         const GRADIENT_ABSOLUTE_BOUND: f32 = 1.0e-5;
@@ -4667,12 +4796,16 @@ mod tests {
             NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1
         );
         assert_eq!(FIXED_BACKWARD_PARTITION_COUNT_V1, 4);
-        assert_eq!(
-            (0..4)
-                .map(|ordinal| fixed_partition_reverse_bounds_v1(10, 4, ordinal))
-                .collect::<Vec<_>>(),
-            vec![(0, 3), (3, 6), (6, 8), (8, 10)]
-        );
+        for (group_count, expected_bounds) in [
+            (1, &[(0, 1), (1, 1), (1, 1), (1, 1)][..]),
+            (2, &[(0, 1), (1, 2), (2, 2), (2, 2)][..]),
+            (3, &[(0, 1), (1, 2), (2, 3), (3, 3)][..]),
+            (4, &[(0, 1), (1, 2), (2, 3), (3, 4)][..]),
+            (5, &[(0, 2), (2, 3), (3, 4), (4, 5)][..]),
+            (10, &[(0, 3), (3, 6), (6, 8), (8, 10)][..]),
+        ] {
+            assert_fixed_partition_bounds_v1(group_count, expected_bounds);
+        }
 
         let (forward, golden) = fixtures();
         let model =
@@ -4682,6 +4815,62 @@ mod tests {
         let expected_outputs = expected_outputs_for_step(&model, &forward, step);
         let substeps = substeps_for_step(&forward, step, &expected_outputs);
         let all_groups = groups_for_step(step, &substeps);
+        assert!(all_groups.len() >= 10);
+        for group_count in [1, 2, 3, 4, 5, 10] {
+            let selected_groups = &all_groups[..group_count];
+            let single_worker_control =
+                FixedPartitionBackwardTestControlV1::new_v1(None, None, None);
+            let mut single_worker_state =
+                NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+            let single_worker_result = {
+                let _guard = install_fixed_partition_backward_test_control_v1(Arc::clone(
+                    &single_worker_control,
+                ));
+                single_worker_state
+                    .train_step_with_fixed_partition_parallel_backward_v1(
+                        selected_groups,
+                        golden.value_coefficient,
+                        golden.optimizer.learning_rate,
+                        1,
+                        1,
+                    )
+                    .unwrap()
+            };
+            let single_worker_snapshot = single_worker_state.snapshot_v1().unwrap();
+            assert_eq!(
+                single_worker_control.attempted_partition_count_v1(),
+                FIXED_BACKWARD_PARTITION_COUNT_V1
+            );
+            assert_eq!(single_worker_control.spawn_counts_v1(), (0, 0, 0));
+
+            let four_worker_control = FixedPartitionBackwardTestControlV1::new_v1(None, None, None);
+            let mut four_worker_state =
+                NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+            let four_worker_result = {
+                let _guard = install_fixed_partition_backward_test_control_v1(Arc::clone(
+                    &four_worker_control,
+                ));
+                four_worker_state
+                    .train_step_with_fixed_partition_parallel_backward_v1(
+                        selected_groups,
+                        golden.value_coefficient,
+                        golden.optimizer.learning_rate,
+                        1,
+                        4,
+                    )
+                    .unwrap()
+            };
+            assert_eq!(
+                four_worker_control.attempted_partition_count_v1(),
+                FIXED_BACKWARD_PARTITION_COUNT_V1
+            );
+            assert_eq!(four_worker_control.spawn_counts_v1(), (4, 4, 0));
+            assert_eq!(four_worker_result, single_worker_result);
+            assert_eq!(
+                four_worker_state.snapshot_v1().unwrap(),
+                single_worker_snapshot
+            );
+        }
         let groups = &all_groups[..8];
 
         let mut sequential_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
@@ -4781,9 +4970,29 @@ mod tests {
             TRAIN_STATE_RELATIVE_BOUND,
         );
 
-        let mut failed_state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let fallback_control = FixedPartitionBackwardTestControlV1::new_v1(Some(1), None, None);
+        let mut fallback_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        let fallback_result = {
+            let _guard =
+                install_fixed_partition_backward_test_control_v1(Arc::clone(&fallback_control));
+            fallback_state
+                .train_step_with_fixed_partition_parallel_backward_v1(
+                    groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                    1,
+                    4,
+                )
+                .unwrap()
+        };
+        assert_eq!(fallback_control.attempted_partition_count_v1(), 4);
+        assert_eq!(fallback_control.spawn_counts_v1(), (4, 3, 1));
+        assert_eq!(fallback_result, parallel_result);
+        assert_eq!(fallback_state.snapshot_v1().unwrap(), parallel_snapshot);
+
+        let mut failed_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
         let before_failure = failed_state.snapshot_v1().unwrap();
-        let control = FixedPartitionBackwardTestControlV1::new_v1(Some(2));
+        let control = FixedPartitionBackwardTestControlV1::new_v1(None, Some(2), None);
         let error = {
             let _guard = install_fixed_partition_backward_test_control_v1(Arc::clone(&control));
             failed_state
@@ -4798,10 +5007,64 @@ mod tests {
         };
         assert_eq!(error, NativePolicyTrainErrorV1::ParameterManifest);
         assert_eq!(
-            control.attempted_partition_count.load(Ordering::SeqCst),
+            control.attempted_partition_count_v1(),
             FIXED_BACKWARD_PARTITION_COUNT_V1
         );
+        assert_eq!(control.spawn_counts_v1(), (4, 4, 0));
         assert_eq!(failed_state.snapshot_v1().unwrap(), before_failure);
+
+        let mut panicked_state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        let before_panic = panicked_state.snapshot_v1().unwrap();
+        let panic_control = FixedPartitionBackwardTestControlV1::new_v1(None, None, Some(2));
+        let panic_error = {
+            let _guard =
+                install_fixed_partition_backward_test_control_v1(Arc::clone(&panic_control));
+            panicked_state
+                .train_step_with_fixed_partition_parallel_backward_v1(
+                    groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                    1,
+                    4,
+                )
+                .unwrap_err()
+        };
+        assert_eq!(
+            panic_error,
+            NativePolicyTrainErrorV1::FixedPartitionBackwardWorkerPanicked {
+                partition_ordinal: 2
+            }
+        );
+        assert_eq!(
+            panic_control.attempted_partition_count_v1(),
+            FIXED_BACKWARD_PARTITION_COUNT_V1
+        );
+        assert_eq!(panic_control.spawn_counts_v1(), (4, 4, 0));
+        assert_eq!(panicked_state.snapshot_v1().unwrap(), before_panic);
+
+        let mut zero_worker_state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let before_zero_worker = zero_worker_state.snapshot_v1().unwrap();
+        let zero_worker_control = FixedPartitionBackwardTestControlV1::new_v1(None, None, None);
+        let zero_worker_error = {
+            let _guard =
+                install_fixed_partition_backward_test_control_v1(Arc::clone(&zero_worker_control));
+            zero_worker_state
+                .train_step_with_fixed_partition_parallel_backward_v1(
+                    groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                    1,
+                    0,
+                )
+                .unwrap_err()
+        };
+        assert_eq!(
+            zero_worker_error,
+            NativePolicyTrainErrorV1::FixedPartitionBackwardWorkerLimitZero
+        );
+        assert_eq!(zero_worker_control.attempted_partition_count_v1(), 0);
+        assert_eq!(zero_worker_control.spawn_counts_v1(), (0, 0, 0));
+        assert_eq!(zero_worker_state.snapshot_v1().unwrap(), before_zero_worker);
     }
 
     #[test]
