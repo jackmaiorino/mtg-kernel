@@ -9,14 +9,15 @@
 
 use super::*;
 use crate::native_policy_train_step_v1::{
-    NativePolicyPhysicalDecisionV1, NativePolicySubstepV1, NativePolicyValueTrainSnapshotV1,
-    ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1,
+    NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
+    NativePolicyValueTrainSnapshotV1, ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1,
 };
 use burn::backend::Autodiff;
 use burn::module::{AutodiffModule, ModuleMapper, ModuleVisitor, ParamId};
 use burn::optim::GradientsParams;
 use burn::tensor::activation::log_softmax;
 use burn::tensor::backend::Backend;
+use burn::tensor::{Int, TensorData};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::process::Command;
@@ -491,6 +492,60 @@ impl ExperimentalDeviceTrainStateV1 {
                 full_us: elapsed_us(full_started),
             },
         })
+    }
+
+    /// Lean production-shaped step: dense-padded loss, backward, essential
+    /// scorer-bias gauge canonicalization (gradient zeroed, no diagnostic
+    /// monitor), Adam, and commit. No per-step host export or snapshot.
+    /// Correctness is anchored by the CPU-oracle tolerance comparison and
+    /// within-GPU run-to-run determinism.
+    fn train_one_step_lean_v1(
+        &mut self,
+        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+        plan: &DenseLossPlanV1,
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<(), Box<dyn Error>> {
+        let (logits, values) = self.model.forward(batch);
+        let loss = one_substep_grouped_loss_dense_v1(logits, values, plan, value_coefficient)?;
+        let raw_gradients = loss.backward();
+        let mut gradients = GradientsParams::from_grads(raw_gradients, &self.model);
+        if gradients.len() != PARAMETER_TENSOR_COUNT_V1 {
+            return Err(training_error(format!(
+                "CUDA gradient tensor count mismatch: {} != {PARAMETER_TENSOR_COUNT_V1}",
+                gradients.len()
+            )));
+        }
+        let gauge_parameter = self
+            .model
+            .scorer
+            .output
+            .bias
+            .as_ref()
+            .ok_or_else(|| training_error("scorer output has no bias"))?;
+        let gauge_gradient = gradients
+            .remove::<CudaBackendV1, 1>(gauge_parameter.id)
+            .ok_or_else(|| training_error("scorer output bias gradient is missing"))?;
+        gradients.register(gauge_parameter.id, gauge_gradient.zeros_like());
+        let next_step = self
+            .adam_step
+            .checked_add(1)
+            .ok_or_else(|| training_error("experimental Adam step overflow"))?;
+        let mut mapper = DeviceAdamMapperV1::new(
+            gradients,
+            &self.first_moments,
+            &self.second_moments,
+            next_step,
+            learning_rate,
+        )?;
+        let candidate_model = self.model.clone().map(&mut mapper);
+        let (candidate_first_moments, candidate_second_moments) = mapper.finish_v1()?;
+        self.model = candidate_model;
+        self.first_moments = candidate_first_moments;
+        self.second_moments = candidate_second_moments;
+        self.adam_step = next_step;
+        CudaAutodiffBackendV1::sync(&self.device)?;
+        Ok(())
     }
 }
 
@@ -1210,6 +1265,118 @@ impl ModuleMapper<CudaAutodiffBackendV1> for DeviceAdamMapperV1<'_> {
     }
 }
 
+/// Device-resident dense-padded loss plan, built once per packed batch. The
+/// ragged action rows are padded to `[decisions, max_actions]` with an
+/// additive mask so the whole loss is a fixed handful of dense kernels
+/// regardless of batch size, instead of a per-decision graph chain.
+struct DenseLossPlanV1 {
+    pad_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
+    pad_mask: Tensor<CudaAutodiffBackendV1, 2>,
+    selected_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
+    targets: Tensor<CudaAutodiffBackendV1, 1>,
+    decisions: usize,
+    max_actions: usize,
+}
+
+const DENSE_PAD_MASK_NEGATIVE_V1: f32 = -1.0e30;
+
+fn build_dense_loss_plan_v1(
+    host: &HostPackingWorkspace,
+    selected_action_indices: &[usize],
+    terminal_returns: &[i8],
+    device: &burn_cuda::CudaDevice,
+) -> Result<DenseLossPlanV1, Box<dyn Error>> {
+    let decisions = selected_action_indices.len();
+    if decisions == 0
+        || terminal_returns.len() != decisions
+        || host.action_offsets.len() != decisions + 1
+    {
+        return Err(training_error("dense loss plan cardinality mismatch"));
+    }
+    let mut max_actions = 0_usize;
+    for offsets in host.action_offsets.windows(2) {
+        let count = offsets[1]
+            .checked_sub(offsets[0])
+            .filter(|count| *count > 0)
+            .ok_or_else(|| training_error("dense loss plan found an empty action row"))?;
+        max_actions = max_actions.max(count);
+    }
+    let mut pad_gather = Vec::with_capacity(decisions * max_actions);
+    let mut pad_mask = Vec::with_capacity(decisions * max_actions);
+    let mut selected_gather = Vec::with_capacity(decisions);
+    let mut targets = Vec::with_capacity(decisions);
+    for decision in 0..decisions {
+        let begin = host.action_offsets[decision];
+        let end = host.action_offsets[decision + 1];
+        let count = end - begin;
+        let selected = selected_action_indices[decision];
+        if selected >= count || !matches!(terminal_returns[decision], -1..=1) {
+            return Err(training_error(format!(
+                "dense loss plan decision {decision} is invalid"
+            )));
+        }
+        for action in 0..max_actions {
+            if action < count {
+                pad_gather.push(i32::try_from(begin + action)?);
+                pad_mask.push(0.0_f32);
+            } else {
+                pad_gather.push(i32::try_from(begin)?);
+                pad_mask.push(DENSE_PAD_MASK_NEGATIVE_V1);
+            }
+        }
+        selected_gather.push(i32::try_from(begin + selected)?);
+        targets.push(f32::from(terminal_returns[decision]));
+    }
+    Ok(DenseLossPlanV1 {
+        pad_gather: Tensor::from_data(
+            TensorData::new(pad_gather, [decisions * max_actions]),
+            device,
+        ),
+        pad_mask: Tensor::from_data(TensorData::new(pad_mask, [decisions, max_actions]), device),
+        selected_gather: Tensor::from_data(TensorData::new(selected_gather, [decisions]), device),
+        targets: Tensor::from_data(TensorData::new(targets, [decisions]), device),
+        decisions,
+        max_actions,
+    })
+}
+
+/// Dense-padded terminal REINFORCE + value loss: semantically the grouped
+/// loss above, with reduction order changed by dense kernels. Correctness is
+/// anchored on the CPU-oracle tolerance comparison and within-GPU
+/// determinism, never on bit equality with the ragged chain.
+fn one_substep_grouped_loss_dense_v1(
+    logits: Tensor<CudaAutodiffBackendV1, 1>,
+    values: Tensor<CudaAutodiffBackendV1, 1>,
+    plan: &DenseLossPlanV1,
+    value_coefficient: f32,
+) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
+    if values.dims()[0] != plan.decisions
+        || !value_coefficient.is_finite()
+        || value_coefficient <= 0.0
+    {
+        return Err(training_error(
+            "dense grouped-loss shape/parameter mismatch",
+        ));
+    }
+    let padded = logits
+        .clone()
+        .select(0, plan.pad_gather.clone())
+        .reshape([plan.decisions, plan.max_actions])
+        + plan.pad_mask.clone();
+    let row_max = padded.clone().max_dim(1).detach();
+    let log_sum_exp = (padded - row_max.clone()).exp().sum_dim(1).log() + row_max;
+    let selected_logits = logits.select(0, plan.selected_gather.clone());
+    let selected_log_probabilities = selected_logits - log_sum_exp.squeeze_dim::<1>(1);
+    let advantage = plan.targets.clone() - values.clone().detach();
+    let policy_sum = selected_log_probabilities
+        .mul(advantage)
+        .mul_scalar(-1.0)
+        .sum();
+    let value_error = values - plan.targets.clone();
+    let value_sum = value_error.clone().mul(value_error).sum();
+    Ok((policy_sum + value_sum.mul_scalar(value_coefficient)).div_scalar(plan.decisions as f32))
+}
+
 fn one_substep_grouped_loss_v1(
     logits: Tensor<CudaAutodiffBackendV1, 1>,
     values: Tensor<CudaAutodiffBackendV1, 1>,
@@ -1305,15 +1472,39 @@ fn cpu_train_step_v1(
     value_coefficient: f32,
     learning_rate: f32,
 ) -> Result<crate::native_policy_train_step_v1::NativePolicyTrainStepResultV1, Box<dyn Error>> {
+    // The production train step revalidates transported scorer bits before
+    // any backward or optimizer work; the oracle harness supplies them from
+    // an independent CPU forward over the exact encoded cases.
+    struct ExpectedForwardBitsV1 {
+        raw_action_logit_bits: Vec<u32>,
+        value_bits: u32,
+    }
+    let expected_forward_bits = host
+        .case_indices
+        .iter()
+        .map(|&case_index| {
+            let output = state
+                .model_v1()
+                .forward_v1(cases[case_index].view())
+                .map_err(|error| training_error(format!("expected forward: {error}")))?;
+            Ok(ExpectedForwardBitsV1 {
+                raw_action_logit_bits: output.logits.iter().map(|value| value.to_bits()).collect(),
+                value_bits: output.value.to_bits(),
+            })
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     let substeps = host
         .case_indices
         .iter()
         .copied()
         .zip(selected_action_indices.iter().copied())
+        .zip(expected_forward_bits.iter())
         .map(
-            |(case_index, selected_action_index)| NativePolicySubstepV1 {
-                encoded: cases[case_index].view(),
+            |((case_index, selected_action_index), expected)| NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Encoded(Box::new(cases[case_index].view())),
                 selected_action_index,
+                expected_raw_action_logit_bits: &expected.raw_action_logit_bits,
+                expected_value_bits: expected.value_bits,
             },
         )
         .collect::<Vec<_>>();
@@ -2480,6 +2671,7 @@ pub(super) fn run_cuda_training_v1() -> Result<(), Box<dyn Error>> {
         )?);
     }
     let mut resident_samples = PhaseSamplesV1::with_capacity(iterations);
+    let mut resident_final_state_sha256: Option<[u8; 32]> = None;
     for _ in 0..iterations {
         let evidence = resident_state.train_one_step_v1(
             &benchmark_workspace,
@@ -2493,8 +2685,12 @@ pub(super) fn run_cuda_training_v1() -> Result<(), Box<dyn Error>> {
             false,
         )?;
         resident_samples.push(evidence.timings);
-        black_box(evidence.snapshot.state_sha256_v1()?);
+        let state_sha256 = evidence.snapshot.state_sha256_v1()?;
+        black_box(state_sha256);
+        resident_final_state_sha256 = Some(state_sha256);
     }
+    let _ = resident_final_state_sha256
+        .ok_or_else(|| training_error("resident benchmark arm produced no iterations"))?;
 
     let mut fresh_state =
         ExperimentalDeviceTrainStateV1::import_snapshot_v1(&patterned_snapshot, &device)?;
@@ -2527,6 +2723,131 @@ pub(super) fn run_cuda_training_v1() -> Result<(), Box<dyn Error>> {
         fresh_samples.push(evidence.timings);
         black_box(evidence.snapshot.state_sha256_v1()?);
     }
+
+    // Lean production-shaped arm with the dense-padded loss. Correctness
+    // anchors: (a) one dense-lean step from the identical snapshot stays
+    // within the oracle update tolerances of the CPU reference step, with the
+    // gauge parameter bit-exact and its moments positive zero; (b) the whole
+    // arm run twice from the identical snapshot terminates bit-identically.
+    let dense_plan = build_dense_loss_plan_v1(
+        &benchmark_workspace,
+        &benchmark_selected,
+        &benchmark_returns,
+        &device,
+    )?;
+
+    let mut oracle_cpu_state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        loaded_native_state.model_v1().clone(),
+        &patterned_snapshot,
+    )?;
+    let _ = cpu_train_step_v1(
+        &mut oracle_cpu_state,
+        &cases,
+        &benchmark_workspace,
+        &benchmark_selected,
+        &benchmark_returns,
+        VALUE_COEFFICIENT_V1,
+        BENCHMARK_LEARNING_RATE_V1,
+    )?;
+    let lean_oracle_cpu_after = oracle_cpu_state.snapshot_v1()?;
+    let mut lean_oracle_state =
+        ExperimentalDeviceTrainStateV1::import_snapshot_v1(&patterned_snapshot, &device)?;
+    lean_oracle_state.train_one_step_lean_v1(
+        &resident_batch,
+        &dense_plan,
+        VALUE_COEFFICIENT_V1,
+        BENCHMARK_LEARNING_RATE_V1,
+    )?;
+    let lean_oracle_gpu_after = lean_oracle_state.export_snapshot_v1()?;
+    let lean_parameter_parity = compare_named_tensors_v1(
+        &lean_oracle_cpu_after.parameters,
+        &lean_oracle_gpu_after.parameters,
+        UPDATE_ABSOLUTE_TOLERANCE_V1,
+        UPDATE_RELATIVE_TOLERANCE_V1,
+    )?;
+    let lean_first_moment_parity = compare_named_tensors_v1(
+        &lean_oracle_cpu_after.first_moments,
+        &lean_oracle_gpu_after.first_moments,
+        UPDATE_ABSOLUTE_TOLERANCE_V1,
+        UPDATE_RELATIVE_TOLERANCE_V1,
+    )?;
+    let lean_second_moment_parity = compare_named_tensors_v1(
+        &lean_oracle_cpu_after.second_moments,
+        &lean_oracle_gpu_after.second_moments,
+        UPDATE_ABSOLUTE_TOLERANCE_V1,
+        UPDATE_RELATIVE_TOLERANCE_V1,
+    )?;
+    let lean_gauge_parameter_bit_exact =
+        lean_oracle_cpu_after.parameters[SCORER_SECOND_BIAS_ORDINAL_V1].values[0].to_bits()
+            == lean_oracle_gpu_after.parameters[SCORER_SECOND_BIAS_ORDINAL_V1].values[0].to_bits();
+    let lean_gauge_moments_zero =
+        lean_oracle_gpu_after.first_moments[SCORER_SECOND_BIAS_ORDINAL_V1].values[0].to_bits() == 0
+            && lean_oracle_gpu_after.second_moments[SCORER_SECOND_BIAS_ORDINAL_V1].values[0]
+                .to_bits()
+                == 0;
+    if !lean_gauge_parameter_bit_exact || !lean_gauge_moments_zero {
+        return Err(training_error(
+            "dense lean step scorer-bias gauge is not canonical",
+        ));
+    }
+
+    let run_lean_arm = || -> Result<([u8; 32], f64), Box<dyn Error>> {
+        let mut lean_state =
+            ExperimentalDeviceTrainStateV1::import_snapshot_v1(&patterned_snapshot, &device)?;
+        CudaAutodiffBackendV1::sync(&device)?;
+        for _ in 0..warmup {
+            lean_state.train_one_step_lean_v1(
+                &resident_batch,
+                &dense_plan,
+                VALUE_COEFFICIENT_V1,
+                BENCHMARK_LEARNING_RATE_V1,
+            )?;
+        }
+        let loop_started = Instant::now();
+        for _ in 0..iterations {
+            lean_state.train_one_step_lean_v1(
+                &resident_batch,
+                &dense_plan,
+                VALUE_COEFFICIENT_V1,
+                BENCHMARK_LEARNING_RATE_V1,
+            )?;
+        }
+        let loop_us = elapsed_us(loop_started);
+        let snapshot = lean_state.export_snapshot_v1()?;
+        Ok((snapshot.state_sha256_v1()?, loop_us))
+    };
+    let (lean_first_sha, lean_loop_us) = run_lean_arm()?;
+    let (lean_second_sha, _) = run_lean_arm()?;
+    if lean_first_sha != lean_second_sha {
+        return Err(training_error(
+            "dense lean loop is not run-to-run deterministic",
+        ));
+    }
+    let lean_decisions_per_second =
+        (training_decisions as f64 * iterations as f64) / (lean_loop_us / 1.0e6);
+    println!(
+        "{}",
+        serde_json::json!({
+            "schema": "mtg-kernel-experimental-burn-net8-cuda-lean-loop/v2",
+            "claim": "diagnostic-only-not-end-to-end-training",
+            "loss_shape": "dense-padded-max-actions",
+            "max_actions": dense_plan.max_actions,
+            "decisions_per_step": training_decisions,
+            "warmup_steps": warmup,
+            "timed_steps": iterations,
+            "loop_wall_us": lean_loop_us,
+            "mean_step_us": lean_loop_us / iterations as f64,
+            "decisions_per_second": lean_decisions_per_second,
+            "run_to_run_bit_deterministic": true,
+            "oracle_parity": {
+                "parameters": parity_json_v1(lean_parameter_parity),
+                "first_moments": parity_json_v1(lean_first_moment_parity),
+                "second_moments": parity_json_v1(lean_second_moment_parity),
+                "gauge_parameter_bit_exact": lean_gauge_parameter_bit_exact,
+                "gauge_moments_positive_zero": lean_gauge_moments_zero,
+            },
+        })
+    );
 
     if resident_state.adam_step != fresh_state.adam_step {
         return Err(training_error(
