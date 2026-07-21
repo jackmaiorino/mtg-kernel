@@ -54,6 +54,8 @@ pub(crate) mod common_model_snapshot_v1;
 pub mod effect;
 pub mod engine;
 pub mod event;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+mod experimental_burn_net8_packed_v1;
 pub mod fast_sampler;
 pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
@@ -189,3 +191,20 @@ pub mod trace;
 pub mod trigger;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
+
+/// Runs the opt-in production-parameter Burn/CUDA diagnostic. This surface is
+/// intentionally hidden from normal documentation and absent from normal
+/// builds; it is not a production trainer backend contract.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[doc(hidden)]
+pub fn run_experimental_burn_net8_packed_cuda_v1() -> Result<(), Box<dyn std::error::Error>> {
+    experimental_burn_net8_packed_v1::run_cuda_v1()
+}
+
+/// Runs the opt-in Burn/CUDA training-feasibility diagnostic. This is an
+/// experimental gradient/optimizer mapping probe, not a production trainer.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[doc(hidden)]
+pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::error::Error>> {
+    experimental_burn_net8_packed_v1::run_cuda_training_v1()
+}
