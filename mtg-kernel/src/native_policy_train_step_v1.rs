@@ -664,6 +664,10 @@ pub struct NativeGaugeSubstepBoundV1 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NativePolicyTrainErrorV1 {
     Model(NativePolicyValueErrorV1),
+    /// Stable CudaBurnDense bridge failure classification.
+    CudaBackend {
+        code: &'static str,
+    },
     EmptyBatch,
     EmptyPhysicalDecision {
         group_index: usize,
@@ -1986,7 +1990,7 @@ fn validate_forward_output_bits_v1(
 }
 
 #[derive(Default)]
-struct ScorerBiasGaugeAccumulatorV1 {
+pub(crate) struct ScorerBiasGaugeAccumulatorV1 {
     substep_count: usize,
     total_action_count: usize,
     max_action_count: usize,
@@ -1997,7 +2001,7 @@ struct ScorerBiasGaugeAccumulatorV1 {
 }
 
 impl ScorerBiasGaugeAccumulatorV1 {
-    fn observe(
+    pub(crate) fn observe(
         &mut self,
         logits: &[f32],
         selected_action_index: usize,
@@ -2057,7 +2061,7 @@ impl ScorerBiasGaugeAccumulatorV1 {
         Ok(())
     }
 
-    fn finish(
+    pub(crate) fn finish(
         self,
         raw_gradient_residual: f32,
         parameter_before_bits: u32,
@@ -3416,7 +3420,7 @@ fn resize_zeroed_v1(values: &mut Vec<f32>, len: usize) {
     values.resize(len, 0.0);
 }
 
-fn selected_log_softmax(
+pub(crate) fn selected_log_softmax(
     logits: &[f32],
     selected: usize,
 ) -> Result<(f32, Vec<f32>), NativePolicyTrainErrorV1> {

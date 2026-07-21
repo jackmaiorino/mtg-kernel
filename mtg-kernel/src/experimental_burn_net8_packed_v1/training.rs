@@ -292,7 +292,7 @@ struct ExperimentalStepEvidenceV1 {
     timings: PhaseTimingsV1,
 }
 
-struct ExperimentalDeviceTrainStateV1 {
+pub(crate) struct ExperimentalDeviceTrainStateV1 {
     model: ProductionNet8<CudaAutodiffBackendV1>,
     first_moments: GradientsParams,
     second_moments: GradientsParams,
@@ -302,7 +302,7 @@ struct ExperimentalDeviceTrainStateV1 {
 }
 
 impl ExperimentalDeviceTrainStateV1 {
-    fn import_snapshot_v1(
+    pub(crate) fn import_snapshot_v1(
         snapshot: &NativePolicyValueTrainSnapshotV1,
         device: &burn_cuda::CudaDevice,
     ) -> Result<Self, Box<dyn Error>> {
@@ -329,7 +329,9 @@ impl ExperimentalDeviceTrainStateV1 {
         })
     }
 
-    fn export_snapshot_v1(&self) -> Result<NativePolicyValueTrainSnapshotV1, Box<dyn Error>> {
+    pub(crate) fn export_snapshot_v1(
+        &self,
+    ) -> Result<NativePolicyValueTrainSnapshotV1, Box<dyn Error>> {
         CudaBackendV1::sync(&self.device)?;
         let parameters = self.model.valid().export_native_v1(&self.device)?;
         let first_moments = export_named_state_v1(&self.model, &self.first_moments, &parameters)?;
@@ -546,6 +548,76 @@ impl ExperimentalDeviceTrainStateV1 {
         self.adam_step = next_step;
         CudaAutodiffBackendV1::sync(&self.device)?;
         Ok(())
+    }
+
+    /// Non-autodiff forward readback of flat logits and values for the
+    /// current device model, used by the bridge's host evidence
+    /// recomputation before the training step advances the model.
+    pub(crate) fn forward_outputs_v1(
+        &self,
+        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+    ) -> Result<(Vec<f32>, Vec<f32>), Box<dyn Error>> {
+        let (logits, values) = self.model.forward(batch);
+        CudaAutodiffBackendV1::sync(&self.device)?;
+        let logits = logits.into_data().to_vec::<f32>()?;
+        let values = values.into_data().to_vec::<f32>()?;
+        Ok((logits, values))
+    }
+
+    /// Bridge step for the production trainer: dense group loss, backward,
+    /// raw scorer-bias residual readback, essential gauge canonicalization,
+    /// Adam, commit. Returns the raw residual for the host gauge record.
+    pub(crate) fn train_one_step_bridge_v1(
+        &mut self,
+        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+        plan: &DenseGroupLossPlanV1,
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<f32, Box<dyn Error>> {
+        let (logits, values) = self.model.forward(batch);
+        let loss = dense_group_loss_v1(logits, values, plan, value_coefficient)?;
+        let raw_gradients = loss.backward();
+        let mut gradients = GradientsParams::from_grads(raw_gradients, &self.model);
+        if gradients.len() != PARAMETER_TENSOR_COUNT_V1 {
+            return Err(training_error(format!(
+                "CUDA gradient tensor count mismatch: {} != {PARAMETER_TENSOR_COUNT_V1}",
+                gradients.len()
+            )));
+        }
+        let gauge_parameter = self
+            .model
+            .scorer
+            .output
+            .bias
+            .as_ref()
+            .ok_or_else(|| training_error("scorer output has no bias"))?;
+        let gauge_gradient = gradients
+            .remove::<CudaBackendV1, 1>(gauge_parameter.id)
+            .ok_or_else(|| training_error("scorer output bias gradient is missing"))?;
+        let raw_residual = gauge_gradient.clone().into_data().to_vec::<f32>()?;
+        let raw_residual = *raw_residual
+            .first()
+            .ok_or_else(|| training_error("scorer output bias gradient is empty"))?;
+        gradients.register(gauge_parameter.id, gauge_gradient.zeros_like());
+        let next_step = self
+            .adam_step
+            .checked_add(1)
+            .ok_or_else(|| training_error("experimental Adam step overflow"))?;
+        let mut mapper = DeviceAdamMapperV1::new(
+            gradients,
+            &self.first_moments,
+            &self.second_moments,
+            next_step,
+            learning_rate,
+        )?;
+        let candidate_model = self.model.clone().map(&mut mapper);
+        let (candidate_first_moments, candidate_second_moments) = mapper.finish_v1()?;
+        self.model = candidate_model;
+        self.first_moments = candidate_first_moments;
+        self.second_moments = candidate_second_moments;
+        self.adam_step = next_step;
+        CudaAutodiffBackendV1::sync(&self.device)?;
+        Ok(raw_residual)
     }
 }
 
@@ -1265,6 +1337,148 @@ impl ModuleMapper<CudaAutodiffBackendV1> for DeviceAdamMapperV1<'_> {
     }
 }
 
+/// Device-resident dense plan for multi-substep production groups: rows are
+/// all substeps flat across groups; joint log-probabilities reduce by
+/// scatter-add over the group index; the group value gathers at each group's
+/// first substep, matching the CPU reference semantics exactly.
+pub(crate) struct DenseGroupLossPlanV1 {
+    pad_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
+    pad_mask: Tensor<CudaAutodiffBackendV1, 2>,
+    selected_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
+    group_scatter: Tensor<CudaAutodiffBackendV1, 1, Int>,
+    group_first_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
+    targets: Tensor<CudaAutodiffBackendV1, 1>,
+    substeps: usize,
+    group_count: usize,
+    max_actions: usize,
+}
+
+pub(crate) fn build_dense_group_loss_plan_v1(
+    host: &HostPackingWorkspace,
+    selected_action_indices: &[usize],
+    substep_group_indices: &[usize],
+    group_first_substeps: &[usize],
+    terminal_returns: &[i8],
+    device: &burn_cuda::CudaDevice,
+) -> Result<DenseGroupLossPlanV1, Box<dyn Error>> {
+    let substeps = selected_action_indices.len();
+    let group_count = terminal_returns.len();
+    if substeps == 0
+        || group_count == 0
+        || substep_group_indices.len() != substeps
+        || group_first_substeps.len() != group_count
+        || host.action_offsets.len() != substeps + 1
+    {
+        return Err(training_error("dense group plan cardinality mismatch"));
+    }
+    let mut max_actions = 0_usize;
+    for offsets in host.action_offsets.windows(2) {
+        let count = offsets[1]
+            .checked_sub(offsets[0])
+            .filter(|count| *count > 0)
+            .ok_or_else(|| training_error("dense group plan found an empty action row"))?;
+        max_actions = max_actions.max(count);
+    }
+    let mut pad_gather = Vec::with_capacity(substeps * max_actions);
+    let mut pad_mask = Vec::with_capacity(substeps * max_actions);
+    let mut selected_gather = Vec::with_capacity(substeps);
+    let mut group_scatter = Vec::with_capacity(substeps);
+    for substep in 0..substeps {
+        let begin = host.action_offsets[substep];
+        let end = host.action_offsets[substep + 1];
+        let count = end - begin;
+        let selected = selected_action_indices[substep];
+        let group = substep_group_indices[substep];
+        if selected >= count || group >= group_count {
+            return Err(training_error(format!(
+                "dense group plan substep {substep} is invalid"
+            )));
+        }
+        for action in 0..max_actions {
+            if action < count {
+                pad_gather.push(i32::try_from(begin + action)?);
+                pad_mask.push(0.0_f32);
+            } else {
+                pad_gather.push(i32::try_from(begin)?);
+                pad_mask.push(DENSE_PAD_MASK_NEGATIVE_V1);
+            }
+        }
+        selected_gather.push(i32::try_from(begin + selected)?);
+        group_scatter.push(i32::try_from(group)?);
+    }
+    let mut group_first_gather = Vec::with_capacity(group_count);
+    let mut targets = Vec::with_capacity(group_count);
+    for group in 0..group_count {
+        let first = group_first_substeps[group];
+        if first >= substeps
+            || substep_group_indices[first] != group
+            || !matches!(terminal_returns[group], -1..=1)
+        {
+            return Err(training_error(format!(
+                "dense group plan group {group} is invalid"
+            )));
+        }
+        group_first_gather.push(i32::try_from(first)?);
+        targets.push(f32::from(terminal_returns[group]));
+    }
+    Ok(DenseGroupLossPlanV1 {
+        pad_gather: Tensor::from_data(
+            TensorData::new(pad_gather, [substeps * max_actions]),
+            device,
+        ),
+        pad_mask: Tensor::from_data(TensorData::new(pad_mask, [substeps, max_actions]), device),
+        selected_gather: Tensor::from_data(TensorData::new(selected_gather, [substeps]), device),
+        group_scatter: Tensor::from_data(TensorData::new(group_scatter, [substeps]), device),
+        group_first_gather: Tensor::from_data(
+            TensorData::new(group_first_gather, [group_count]),
+            device,
+        ),
+        targets: Tensor::from_data(TensorData::new(targets, [group_count]), device),
+        substeps,
+        group_count,
+        max_actions,
+    })
+}
+
+fn dense_group_loss_v1(
+    logits: Tensor<CudaAutodiffBackendV1, 1>,
+    values: Tensor<CudaAutodiffBackendV1, 1>,
+    plan: &DenseGroupLossPlanV1,
+    value_coefficient: f32,
+) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
+    if values.dims()[0] != plan.substeps
+        || !value_coefficient.is_finite()
+        || value_coefficient <= 0.0
+    {
+        return Err(training_error("dense group loss shape/parameter mismatch"));
+    }
+    let padded = logits
+        .clone()
+        .select(0, plan.pad_gather.clone())
+        .reshape([plan.substeps, plan.max_actions])
+        + plan.pad_mask.clone();
+    let row_max = padded.clone().max_dim(1).detach();
+    let log_sum_exp = (padded - row_max.clone()).exp().sum_dim(1).log() + row_max;
+    let selected_logits = logits.select(0, plan.selected_gather.clone());
+    let selected_log_probabilities = selected_logits - log_sum_exp.squeeze_dim::<1>(1);
+    let joint_log_probabilities = Tensor::zeros([plan.group_count], &plan.targets.device())
+        .scatter(
+            0,
+            plan.group_scatter.clone(),
+            selected_log_probabilities,
+            IndexingUpdateOp::Add,
+        );
+    let group_values = values.select(0, plan.group_first_gather.clone());
+    let advantage = plan.targets.clone() - group_values.clone().detach();
+    let policy_sum = joint_log_probabilities
+        .mul(advantage)
+        .mul_scalar(-1.0)
+        .sum();
+    let value_error = group_values - plan.targets.clone();
+    let value_sum = value_error.clone().mul(value_error).sum();
+    Ok((policy_sum + value_sum.mul_scalar(value_coefficient)).div_scalar(plan.group_count as f32))
+}
+
 /// Device-resident dense-padded loss plan, built once per packed batch. The
 /// ragged action rows are padded to `[decisions, max_actions]` with an
 /// additive mask so the whole loss is a fixed handful of dense kernels
@@ -1645,6 +1859,167 @@ fn compare_scalar_v1(
         absolute_tolerance,
         relative_tolerance,
     )
+}
+
+/// Production-trainer bridge parity: multi-substep groups built from the real
+/// tensorized fixture cases run through both the CPU reference step and the
+/// CudaBurnDense bridge from identical snapshots; parameters, moments, loss,
+/// physical terms, and selected outputs must agree within the oracle
+/// tolerances, with the gauge parameter bit-exact on both sides.
+fn run_bridge_parity_v1(
+    cases: &[EncodedDecisionOwned],
+    reference_state: &NativePolicyValueTrainStateV1,
+    snapshot: &NativePolicyValueTrainSnapshotV1,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    use crate::native_policy_train_step_v1::{NativePolicyForwardInputV1, NativePolicySubstepV1};
+
+    let group_sizes = [1_usize, 2, 1, 3, 1];
+    let substep_total: usize = group_sizes.iter().sum();
+    let mut cpu_state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        reference_state.model_v1().clone(),
+        snapshot,
+    )?;
+    let mut bridge_state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        reference_state.model_v1().clone(),
+        snapshot,
+    )?;
+
+    struct ExpectedBitsV1 {
+        case_index: usize,
+        selected: usize,
+        logit_bits: Vec<u32>,
+        value_bits: u32,
+    }
+    let mut expected = Vec::with_capacity(substep_total);
+    for flat in 0..substep_total {
+        let case_index = flat % cases.len();
+        let output = cpu_state
+            .model_v1()
+            .forward_v1(cases[case_index].view())
+            .map_err(|error| training_error(format!("parity expected forward: {error:?}")))?;
+        let selected = flat % output.logits.len();
+        expected.push(ExpectedBitsV1 {
+            case_index,
+            selected,
+            logit_bits: output.logits.iter().map(|value| value.to_bits()).collect(),
+            value_bits: output.value.to_bits(),
+        });
+    }
+    let mut group_substeps: Vec<Vec<NativePolicySubstepV1<'_>>> =
+        Vec::with_capacity(group_sizes.len());
+    let mut flat = 0_usize;
+    for size in group_sizes {
+        let mut substeps = Vec::with_capacity(size);
+        for _ in 0..size {
+            let entry = &expected[flat];
+            substeps.push(NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                    cases[entry.case_index].view(),
+                )),
+                selected_action_index: entry.selected,
+                expected_raw_action_logit_bits: &entry.logit_bits,
+                expected_value_bits: entry.value_bits,
+            });
+            flat += 1;
+        }
+        group_substeps.push(substeps);
+    }
+    let terminal_pattern = [1_i8, -1, 0, 1, -1];
+    let groups = group_substeps
+        .iter()
+        .zip(terminal_pattern)
+        .map(
+            |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
+                substeps,
+                terminal_return,
+            },
+        )
+        .collect::<Vec<_>>();
+
+    let cpu_result = cpu_state
+        .train_step_v1(&groups, VALUE_COEFFICIENT_V1, BENCHMARK_LEARNING_RATE_V1)
+        .map_err(|error| training_error(format!("parity CPU step: {error:?}")))?;
+    let bridge_result = super::bridge::train_step_cuda_burn_dense_v1(
+        &mut bridge_state,
+        &groups,
+        VALUE_COEFFICIENT_V1,
+        BENCHMARK_LEARNING_RATE_V1,
+    )
+    .map_err(|error| training_error(format!("parity bridge step: {error:?}")))?;
+
+    let cpu_after = cpu_state.snapshot_v1()?;
+    let bridge_after = bridge_state.snapshot_v1()?;
+    let parameter_parity = compare_named_tensors_v1(
+        &cpu_after.parameters,
+        &bridge_after.parameters,
+        UPDATE_ABSOLUTE_TOLERANCE_V1,
+        UPDATE_RELATIVE_TOLERANCE_V1,
+    )?;
+    let first_moment_parity = compare_named_tensors_v1(
+        &cpu_after.first_moments,
+        &bridge_after.first_moments,
+        UPDATE_ABSOLUTE_TOLERANCE_V1,
+        UPDATE_RELATIVE_TOLERANCE_V1,
+    )?;
+    let second_moment_parity = compare_named_tensors_v1(
+        &cpu_after.second_moments,
+        &bridge_after.second_moments,
+        UPDATE_ABSOLUTE_TOLERANCE_V1,
+        UPDATE_RELATIVE_TOLERANCE_V1,
+    )?;
+    let loss_parity = compare_scalar_v1(
+        cpu_result.loss,
+        bridge_result.loss,
+        LOSS_ABSOLUTE_TOLERANCE_V1,
+        LOSS_RELATIVE_TOLERANCE_V1,
+    )?;
+    if cpu_result.physical_terms.len() != bridge_result.physical_terms.len()
+        || cpu_result.selected_outputs.len() != bridge_result.selected_outputs.len()
+        || cpu_result.adam_step != bridge_result.adam_step
+    {
+        return Err(training_error("parity result cardinality mismatch"));
+    }
+    let mut max_term_delta = 0.0_f32;
+    for (cpu_term, bridge_term) in cpu_result
+        .physical_terms
+        .iter()
+        .zip(&bridge_result.physical_terms)
+    {
+        if cpu_term.terminal_return != bridge_term.terminal_return
+            || cpu_term.substep_count != bridge_term.substep_count
+        {
+            return Err(training_error("parity physical term structure mismatch"));
+        }
+        max_term_delta = max_term_delta
+            .max((cpu_term.joint_log_probability - bridge_term.joint_log_probability).abs())
+            .max((cpu_term.value - bridge_term.value).abs());
+    }
+    if max_term_delta > LOSS_ABSOLUTE_TOLERANCE_V1 {
+        return Err(training_error(format!(
+            "parity physical terms exceed tolerance: {max_term_delta}"
+        )));
+    }
+    let gauge_parameter_bit_exact = cpu_after.parameters[SCORER_SECOND_BIAS_ORDINAL_V1].values[0]
+        .to_bits()
+        == bridge_after.parameters[SCORER_SECOND_BIAS_ORDINAL_V1].values[0].to_bits();
+    if !gauge_parameter_bit_exact {
+        return Err(training_error("parity gauge parameter not bit-exact"));
+    }
+
+    Ok(serde_json::json!({
+        "schema": "mtg-kernel-experimental-burn-net8-cuda-bridge-parity/v1",
+        "claim": "diagnostic-only-not-end-to-end-training",
+        "group_sizes": group_sizes,
+        "substep_total": substep_total,
+        "parameters": parity_json_v1(parameter_parity),
+        "first_moments": parity_json_v1(first_moment_parity),
+        "second_moments": parity_json_v1(second_moment_parity),
+        "loss": parity_json_v1(loss_parity),
+        "max_physical_term_delta": max_term_delta,
+        "gauge_parameter_bit_exact": gauge_parameter_bit_exact,
+        "bridge_gauge_raw_residual": bridge_result.scorer_bias_gauge.raw_gradient_residual,
+        "bridge_gauge_bound": bridge_result.scorer_bias_gauge.derived_absolute_bound,
+    }))
 }
 
 fn parity_json_v1(summary: NamedParitySummaryV1) -> serde_json::Value {
@@ -2823,6 +3198,9 @@ pub(super) fn run_cuda_training_v1() -> Result<(), Box<dyn Error>> {
             "dense lean loop is not run-to-run deterministic",
         ));
     }
+    let bridge_parity = run_bridge_parity_v1(&cases, &loaded_native_state, &patterned_snapshot)?;
+    println!("{bridge_parity}");
+
     let lean_decisions_per_second =
         (training_decisions as f64 * iterations as f64) / (lean_loop_us / 1.0e6);
     println!(

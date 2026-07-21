@@ -363,7 +363,8 @@ impl NativeTrainingIntrinsicCheckpointFactsV2 {
                     NativeTrainingNumericalBackendV1::Sequential => {
                         NativeTrainingNumericalBackendV1::FixedFourPartitions
                     }
-                    NativeTrainingNumericalBackendV1::FixedFourPartitions => {
+                    NativeTrainingNumericalBackendV1::FixedFourPartitions
+                    | NativeTrainingNumericalBackendV1::CudaBurnDense => {
                         NativeTrainingNumericalBackendV1::Sequential
                     }
                 }
