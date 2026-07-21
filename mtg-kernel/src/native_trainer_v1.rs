@@ -19,7 +19,7 @@ use crate::async_flat_scored_rollout_v2::{
     AsyncFlatScoredObservedRunErrorV2, AsyncFlatScoredRolloutErrorV2,
     AsyncFlatScoredRolloutMetricsV2, FlatBatchScorerErrorV2, FlatBatchScorerV2,
     FlatScoredObserverPhaseV2, FlatScoredSelectedEventV2, FlatScoredTerminalEventV2,
-    FlatScoredTrajectoryObserverV2, FlatScoringBatchViewV2,
+    FlatScoredTrajectoryObserverV2, FlatScoringBatchViewV2, ValidatedOwnedFlatScoringDecisionV2,
 };
 use crate::async_rollout_v2::{
     AsyncRolloutConfigV2, ASYNC_ROLLOUT_MAX_SESSIONS_PER_WORKER_V2, ASYNC_ROLLOUT_MAX_WORKERS_V2,
@@ -345,25 +345,44 @@ impl NativePolicyScorerFailureV1 {
     }
 }
 
-struct NativePolicyForwardTaskV1 {
+/// The batch is split into at most this many chunk tasks. Chunking bounds the
+/// number of parked worker threads woken per scored batch: at the observed
+/// mean batch widths (~16-32 decisions) per-decision tasks spend more broker
+/// wall on wakeup cascades than on scoring work.
+const NATIVE_POLICY_FORWARD_CHUNK_TARGET_V1: usize = 8;
+
+struct NativePolicyForwardTaskDecisionV1 {
     ordinal: usize,
-    tensor: NativeFlatDecisionTensorV2,
+    packet: ValidatedOwnedFlatScoringDecisionV2,
     #[cfg(test)]
     force_panic: bool,
+}
+
+struct NativePolicyForwardTaskV1 {
+    decisions: Vec<NativePolicyForwardTaskDecisionV1>,
 }
 
 struct NativePolicyForwardResultV1 {
     ordinal: usize,
     tensor: NativeFlatDecisionTensorV2,
     tape: Option<NativePolicyPackedForwardTapeV1>,
+    tensor_error: Option<NativeFlatTensorErrorV2>,
     error: Option<NativePolicyTrainErrorV1>,
     panicked: bool,
 }
 
-/// Per-update bounded workers for independent CPU forwards. Tensorization and
-/// result publication remain on the broker thread; workers see only owned
-/// tensors and one immutable parameter snapshot. Results are reassembled by
-/// input ordinal before any caller-visible slice or association is changed.
+enum NativePolicyForwardTaskErrorV1 {
+    Tensor(NativeFlatTensorErrorV2),
+    Forward(NativePolicyTrainErrorV1),
+}
+
+/// Per-update bounded workers for independent CPU tensorize+forward. Each
+/// worker owns its tensorizer and sees only an owned validated packet clone
+/// and one immutable parameter snapshot; encoding is decision-pure, so
+/// worker-local tensorizers reproduce the broker's bytes bit-exactly (the
+/// trainer's recompute revalidation depends on and proves the same property).
+/// Result publication stays on the broker thread, reassembled by input
+/// ordinal before any caller-visible slice or association is changed.
 struct NativePolicyForwardPoolV1 {
     task_sender: Option<mpsc::SyncSender<NativePolicyForwardTaskV1>>,
     result_receiver: mpsc::Receiver<NativePolicyForwardResultV1>,
@@ -389,41 +408,62 @@ impl NativePolicyForwardPoolV1 {
             let worker_results = result_sender.clone();
             let handle = match thread::Builder::new()
                 .name(format!("native-policy-forward-{worker_index}"))
-                .spawn(move || loop {
-                    let task = {
-                        let receiver = match worker_tasks.lock() {
-                            Ok(receiver) => receiver,
-                            Err(_) => break,
+                .spawn(move || {
+                    let mut worker_tensorizer = NativeFlatTensorizerV2::new();
+                    'tasks: loop {
+                        let task = {
+                            let receiver = match worker_tasks.lock() {
+                                Ok(receiver) => receiver,
+                                Err(_) => break,
+                            };
+                            match receiver.recv() {
+                                Ok(task) => task,
+                                Err(_) => break,
+                            }
                         };
-                        match receiver.recv() {
-                            Ok(task) => task,
-                            Err(_) => break,
+                        for decision in task.decisions {
+                            let ordinal = decision.ordinal;
+                            let mut tensor = NativeFlatDecisionTensorV2::default();
+                            let completed = catch_unwind(AssertUnwindSafe(|| {
+                                #[cfg(test)]
+                                if decision.force_panic {
+                                    panic!("injected native policy forward worker panic");
+                                }
+                                match worker_tensorizer
+                                    .fill(decision.packet.scorer_view_v1(), &mut tensor)
+                                {
+                                    Ok(()) => worker_builder
+                                        .forward_v1(native_encoded_decision_view_v1(&tensor))
+                                        .map_err(NativePolicyForwardTaskErrorV1::Forward),
+                                    Err(error) => {
+                                        Err(NativePolicyForwardTaskErrorV1::Tensor(error))
+                                    }
+                                }
+                            }));
+                            let (tape, tensor_error, error, panicked) = match completed {
+                                Ok(Ok(tape)) => (Some(tape), None, None, false),
+                                Ok(Err(NativePolicyForwardTaskErrorV1::Forward(error))) => {
+                                    (None, None, Some(error), false)
+                                }
+                                Ok(Err(NativePolicyForwardTaskErrorV1::Tensor(error))) => {
+                                    (None, Some(error), None, false)
+                                }
+                                Err(_) => (None, None, None, true),
+                            };
+                            if worker_results
+                                .send(NativePolicyForwardResultV1 {
+                                    ordinal,
+                                    tensor,
+                                    tape,
+                                    tensor_error,
+                                    error,
+                                    panicked,
+                                })
+                                .is_err()
+                            {
+                                break 'tasks;
+                            }
                         }
-                    };
-                    let ordinal = task.ordinal;
-                    let completed = catch_unwind(AssertUnwindSafe(|| {
-                        #[cfg(test)]
-                        if task.force_panic {
-                            panic!("injected native policy forward worker panic");
-                        }
-                        worker_builder.forward_v1(native_encoded_decision_view_v1(&task.tensor))
-                    }));
-                    let (tape, error, panicked) = match completed {
-                        Ok(Ok(tape)) => (Some(tape), None, false),
-                        Ok(Err(error)) => (None, Some(error), false),
-                        Err(_) => (None, None, true),
-                    };
-                    if worker_results
-                        .send(NativePolicyForwardResultV1 {
-                            ordinal,
-                            tensor: task.tensor,
-                            tape,
-                            error,
-                            panicked,
-                        })
-                        .is_err()
-                    {
-                        break;
                     }
                 }) {
                 Ok(handle) => handle,
@@ -577,6 +617,55 @@ impl NativePolicyBatchScorerV2 {
         let mut submitted = 0usize;
         let mut synchronous_failure = None;
 
+        // Submitting one chunk instead of one task per decision bounds the
+        // parked-worker wakeups per batch. A flush commits its whole chunk:
+        // bindings and the submitted count advance only after the pool accepts
+        // the task, so collection never waits on decisions that never ran, and
+        // every decision validated before a broker-side failure is still
+        // scored, exactly as per-decision submission behaved.
+        fn flush_chunk_v1(
+            pool: &NativePolicyForwardPoolV1,
+            pending_decisions: &mut Vec<NativePolicyForwardTaskDecisionV1>,
+            pending_metadata: &mut Vec<(FlatDecisionBindingV2, usize)>,
+            bindings: &mut Vec<FlatDecisionBindingV2>,
+            expected_logit_counts: &mut Vec<usize>,
+            submitted: &mut usize,
+        ) -> Result<(), ()> {
+            if pending_decisions.is_empty() {
+                return Ok(());
+            }
+            let count = pending_decisions.len();
+            pool.submit_v1(NativePolicyForwardTaskV1 {
+                decisions: std::mem::take(pending_decisions),
+            })?;
+            for (binding, expected) in pending_metadata.drain(..) {
+                bindings.push(binding);
+                expected_logit_counts.push(expected);
+            }
+            *submitted += count;
+            Ok(())
+        }
+        let chunk_capacity = batch
+            .decision_count()
+            .div_ceil(NATIVE_POLICY_FORWARD_CHUNK_TARGET_V1)
+            .max(1);
+        let mut pending_decisions =
+            Vec::<NativePolicyForwardTaskDecisionV1>::with_capacity(chunk_capacity);
+        let mut pending_metadata =
+            Vec::<(FlatDecisionBindingV2, usize)>::with_capacity(chunk_capacity);
+        macro_rules! flush_pending_v1 {
+            () => {
+                flush_chunk_v1(
+                    pool,
+                    &mut pending_decisions,
+                    &mut pending_metadata,
+                    &mut bindings,
+                    &mut expected_logit_counts,
+                    &mut submitted,
+                )
+            };
+        }
+
         for decision_index in 0..batch.decision_count() {
             #[cfg(test)]
             // Pair the injected ordinal-zero worker panic with a later
@@ -585,47 +674,70 @@ impl NativePolicyBatchScorerV2 {
             // precedence instead of returning the failure observed first in
             // wall-clock order.
             if force_worker_panic && decision_index == 1 {
-                synchronous_failure = Some(NativePolicyScorerFailureV1::OutputShape);
+                synchronous_failure = Some(if flush_pending_v1!().is_err() {
+                    NativePolicyScorerFailureV1::ForwardWorker
+                } else {
+                    NativePolicyScorerFailureV1::OutputShape
+                });
                 break;
             }
             let decision = match batch.decision(decision_index) {
                 Some(decision) => decision,
                 None => {
-                    synchronous_failure = Some(NativePolicyScorerFailureV1::MissingDecision);
+                    synchronous_failure = Some(if flush_pending_v1!().is_err() {
+                        NativePolicyScorerFailureV1::ForwardWorker
+                    } else {
+                        NativePolicyScorerFailureV1::MissingDecision
+                    });
                     break;
                 }
             };
             let binding = match batch.binding(decision_index) {
                 Some(binding) => binding,
                 None => {
-                    synchronous_failure = Some(NativePolicyScorerFailureV1::MissingDecision);
+                    synchronous_failure = Some(if flush_pending_v1!().is_err() {
+                        NativePolicyScorerFailureV1::ForwardWorker
+                    } else {
+                        NativePolicyScorerFailureV1::MissingDecision
+                    });
                     break;
                 }
             };
             let begin = batch.action_offsets()[decision_index];
             let end = batch.action_offsets()[decision_index + 1];
             if end < begin || end > action_logit_count || end - begin != decision.actions().len() {
-                synchronous_failure = Some(NativePolicyScorerFailureV1::OutputShape);
+                synchronous_failure = Some(if flush_pending_v1!().is_err() {
+                    NativePolicyScorerFailureV1::ForwardWorker
+                } else {
+                    NativePolicyScorerFailureV1::OutputShape
+                });
                 break;
             }
-            let mut tensor = NativeFlatDecisionTensorV2::default();
-            if let Err(error) = self.tensorizer.fill(decision, &mut tensor) {
-                synchronous_failure = Some(NativePolicyScorerFailureV1::Tensor(error));
-                break;
-            }
-            let task = NativePolicyForwardTaskV1 {
+            let packet = match batch.cloned_validated_packet(decision_index) {
+                Some(packet) => packet,
+                None => {
+                    synchronous_failure = Some(if flush_pending_v1!().is_err() {
+                        NativePolicyScorerFailureV1::ForwardWorker
+                    } else {
+                        NativePolicyScorerFailureV1::MissingDecision
+                    });
+                    break;
+                }
+            };
+            pending_decisions.push(NativePolicyForwardTaskDecisionV1 {
                 ordinal: decision_index,
-                tensor,
+                packet,
                 #[cfg(test)]
                 force_panic: force_worker_panic && decision_index == 0,
-            };
-            if pool.submit_v1(task).is_err() {
+            });
+            pending_metadata.push((binding, end - begin));
+            if pending_decisions.len() == chunk_capacity && flush_pending_v1!().is_err() {
                 synchronous_failure = Some(NativePolicyScorerFailureV1::ForwardWorker);
                 break;
             }
-            bindings.push(binding);
-            expected_logit_counts.push(end - begin);
-            submitted += 1;
+        }
+        if synchronous_failure.is_none() && flush_pending_v1!().is_err() {
+            synchronous_failure = Some(NativePolicyScorerFailureV1::ForwardWorker);
         }
 
         let mut result_slots = (0..submitted)
@@ -658,6 +770,12 @@ impl NativePolicyBatchScorerV2 {
                     return Err(NativePolicyScorerFailureV1::ForwardWorker);
                 }
                 Some(mut result) => {
+                    if let Some(error) = result.tensor_error.take() {
+                        if result.tape.is_some() || result.error.is_some() {
+                            return Err(NativePolicyScorerFailureV1::ForwardWorker);
+                        }
+                        return Err(NativePolicyScorerFailureV1::Tensor(error));
+                    }
                     let tape = match (result.tape.take(), result.error.take()) {
                         (Some(tape), None) => tape,
                         (None, Some(error)) => {
