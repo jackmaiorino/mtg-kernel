@@ -106,6 +106,18 @@ impl<'a> FlatScoringBatchViewV2<'a> {
             .map(|decision| FlatScoredFamilyV2::packet_binding(&decision.packet))
     }
 
+    /// Crate-private owned clone of the validated packet, so a scorer can
+    /// tensorize on worker threads that outlive this borrowed view. The clone
+    /// carries exactly the validated content `decision` exposes.
+    pub(crate) fn cloned_validated_packet(
+        &self,
+        index: usize,
+    ) -> Option<ValidatedOwnedFlatScoringDecisionV2> {
+        self.decisions
+            .get(index)
+            .map(|decision| decision.packet.clone())
+    }
+
     pub fn action_offsets(&self) -> &[usize] {
         self.action_offsets
     }
@@ -524,7 +536,7 @@ impl fmt::Display for AsyncFlatScoredRolloutErrorV2 {
 
 impl std::error::Error for AsyncFlatScoredRolloutErrorV2 {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct OwnedFlatScoringDecisionV2 {
     decision: FlatDecisionV2,
     objects: Vec<FlatObjectCoreV2>,
@@ -597,7 +609,16 @@ impl OwnedFlatScoringDecisionV2 {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct ValidatedOwnedFlatScoringDecisionV2(OwnedFlatScoringDecisionV2);
+
+impl ValidatedOwnedFlatScoringDecisionV2 {
+    /// Crate-private typed view over the validated owned content, for
+    /// worker-side tensorization away from the broker's borrowed batch.
+    pub(crate) fn scorer_view_v1(&self) -> FlatScoringDecisionViewV2<'_> {
+        self.0.scorer_view()
+    }
+}
 
 fn active_prefix<T>(buffer: &[T], count: u32) -> &[T] {
     let end = usize::try_from(count).expect("u32 active count must fit usize");
