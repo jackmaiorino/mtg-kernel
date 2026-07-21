@@ -2,12 +2,15 @@
 //!
 //! One update: snapshot the CPU train state, import it to the device, pack
 //! the update's encoded decision views, run the dense group loss step, read
-//! back logits/values, recompute every evidence field host-side in the exact
-//! CPU f32 fold order over the CUDA outputs, tolerance-check the transported
-//! scorer bits (the CUDA identity's semantic difference from the CPU
-//! backends' bit-exact revalidation), build the gauge record through the
-//! production accumulator, export the device state, and replace the CPU
-//! state. Transactional semantics stay CPU-owned.
+//! back logits/values, tolerance-check the CUDA outputs against the
+//! transported scorer bits (the CUDA identity's semantic difference from the
+//! CPU backends' bit-exact revalidation), then build every evidence field
+//! from the transported bits in the exact CPU f32 fold order so the trainer's
+//! bit-exact evidence revalidation holds unchanged. The gauge record observes
+//! the transported rows and coefficients in the CPU backward traversal order,
+//! with the device's raw scorer-bias gradient as the residual witness. The
+//! device state is exported and replaces the CPU state; transactional
+//! semantics stay CPU-owned.
 
 use super::training::{
     build_dense_group_loss_plan_v1, DenseGroupLossPlanV1, ExperimentalDeviceTrainStateV1,
@@ -106,25 +109,28 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         .train_one_step_bridge_v1(&batch, &plan, value_coefficient, learning_rate)
         .map_err(bridge_error_v1)?;
 
-    // Host recomputation of every evidence field from the CUDA outputs, in
-    // the exact CPU f32 fold order, plus the transported-bits tolerance gate.
+    // Tolerance-gate the CUDA outputs against the transported scorer bits,
+    // then build every evidence field from the transported bits in the exact
+    // CPU f32 fold order: the trainer revalidates evidence bit-exactly against
+    // the rollout transport, so evidence stays CPU-canonical while the device
+    // update itself uses the CUDA outputs.
     let mut selected_outputs = Vec::with_capacity(selected_action_indices.len());
     let mut physical_terms = Vec::with_capacity(groups.len());
-    let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
+    let mut transported_advantages = Vec::with_capacity(groups.len());
     let mut policy_sum = 0.0_f32;
     let mut value_sum = 0.0_f32;
     let group_count = groups.len() as f32;
     let mut flat_substep = 0_usize;
     for (group_index, group) in groups.iter().enumerate() {
         let mut joint_log_probability: Option<f32> = None;
-        let group_first_value = value_outputs
-            .get(group_first_substeps[group_index])
-            .copied()
-            .ok_or(NativePolicyTrainErrorV1::CudaBackend {
+        value_outputs.get(group_first_substeps[group_index]).ok_or(
+            NativePolicyTrainErrorV1::CudaBackend {
                 code: "cuda-burn-dense-bridge-value-cardinality",
-            })?;
+            },
+        )?;
+        let transported_first_value = f32::from_bits(group.substeps[0].expected_value_bits);
         let target = f32::from(group.terminal_return);
-        let advantage = target - group_first_value;
+        let advantage = target - transported_first_value;
         for (substep_index, substep) in group.substeps.iter().enumerate() {
             let begin = workspace.action_offsets[flat_substep];
             let end = workspace.action_offsets[flat_substep + 1];
@@ -158,8 +164,13 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                     code: "cuda-burn-dense-bridge-transported-value-tolerance",
                 });
             }
+            let transported_row = substep
+                .expected_raw_action_logit_bits
+                .iter()
+                .map(|bits| f32::from_bits(*bits))
+                .collect::<Vec<f32>>();
             let (selected_log_probability, _log_probabilities) =
-                selected_log_softmax(row, substep.selected_action_index)?;
+                selected_log_softmax(&transported_row, substep.selected_action_index)?;
             joint_log_probability = Some(match joint_log_probability {
                 None => selected_log_probability,
                 Some(active) => active + selected_log_probability,
@@ -168,17 +179,13 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                 group_index,
                 substep_index,
                 selected_action_index: substep.selected_action_index,
-                selected_logit: row[substep.selected_action_index],
-                value: substep_value,
+                selected_logit: transported_row[substep.selected_action_index],
+                value: f32::from_bits(substep.expected_value_bits),
                 selected_log_probability,
             });
-            gauge_accumulator.observe(
-                row,
-                substep.selected_action_index,
-                -advantage / group_count,
-            )?;
             flat_substep += 1;
         }
+        transported_advantages.push(advantage);
         let joint_log_probability = joint_log_probability.expect("nonempty group checked above");
         let substep_count = u32::try_from(group.substeps.len()).map_err(|_| {
             NativePolicyTrainErrorV1::PhysicalSubstepCountOverflow {
@@ -187,18 +194,43 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
             }
         })?;
         let policy_term = -joint_log_probability * advantage;
-        let value_error = group_first_value - target;
+        let value_error = transported_first_value - target;
         let value_term = value_error * value_error;
         policy_sum += policy_term;
         value_sum += value_term;
         physical_terms.push(NativePhysicalLossTermV1 {
             joint_log_probability,
-            value: group_first_value,
+            value: transported_first_value,
             terminal_return: group.terminal_return,
             substep_count,
         });
     }
     let loss = (policy_sum + value_coefficient * value_sum) / group_count;
+
+    // The gauge accumulator observes substeps in the CPU backward traversal
+    // order (groups reversed, substeps reversed within each group) with the
+    // transported rows and coefficients: the store lattice validation binds
+    // the recorded bounds to that order and rederives every coefficient
+    // bit-exactly from the evidence terms. The device's raw scorer-bias
+    // gradient stays the residual witness of the softmax gauge identity.
+    let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
+    for group_index in (0..groups.len()).rev() {
+        let group = &groups[group_index];
+        let coefficient = -transported_advantages[group_index] / group_count;
+        for substep_index in (0..group.substeps.len()).rev() {
+            let substep = &group.substeps[substep_index];
+            let transported_row = substep
+                .expected_raw_action_logit_bits
+                .iter()
+                .map(|bits| f32::from_bits(*bits))
+                .collect::<Vec<f32>>();
+            gauge_accumulator.observe(
+                &transported_row,
+                substep.selected_action_index,
+                coefficient,
+            )?;
+        }
+    }
     let scorer_bias_gauge = gauge_accumulator.finish(raw_residual, parameter_before_bits)?;
 
     // Export the device state and replace the CPU state through the
