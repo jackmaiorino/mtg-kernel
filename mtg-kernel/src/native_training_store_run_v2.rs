@@ -178,6 +178,21 @@ const FROZEN_LOSS_IDENTITY_V2: &str = "terminal_reinforce_value/v3";
 const FROZEN_TRAIN_STEP_IDENTITY_V2: &str = "native-policy-value-cpu-train-step-v1";
 const FROZEN_NUMERICAL_BACKEND_IDENTITY_V2: &str =
     "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-sequential";
+const CPU_RUNTIME_TUPLE_IDENTITY_V2: &str = "mtg-kernel-native-windows-cpu-runtime-tuple-v1";
+const CUDA_RUNTIME_TUPLE_IDENTITY_V2: &str = "mtg-kernel-native-windows-cuda-runtime-tuple-v1";
+
+/// The store-admitted (runtime tuple, numerical backend identity) pairs. A
+/// record may declare either pair; a CPU tuple can never carry the CUDA
+/// backend identity or vice versa.
+fn store_backend_identity_for_runtime_tuple_v2(tuple_identity: &str) -> Option<&'static str> {
+    match tuple_identity {
+        CPU_RUNTIME_TUPLE_IDENTITY_V2 => Some(FROZEN_NUMERICAL_BACKEND_IDENTITY_V2),
+        CUDA_RUNTIME_TUPLE_IDENTITY_V2 => {
+            Some(crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1)
+        }
+        _ => None,
+    }
+}
 const FROZEN_OPTIMIZER_IDENTITY_V2: &str = "native-adam-canonical-scorer-bias-gauge-v1";
 const FROZEN_GAUGE_EVIDENCE_IDENTITY_V2: &str = "mtg-kernel-native-scorer-bias-gauge-evidence-v1";
 const FROZEN_ENVIRONMENT_SEED_DERIVATION_IDENTITY_V2: &str = "train-env/base_seed/pair_index";
@@ -772,6 +787,29 @@ impl ValidatedTrainRunV2 {
         &self.standalone_semantics_sha256
     }
 
+    /// The store-admitted numerical backend this run declares, derived from
+    /// the validated train-step backend identity literal.
+    pub(crate) fn store_numerical_backend_v2(
+        &self,
+    ) -> Option<crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1> {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        match self
+            .record
+            .contracts
+            .train_step
+            .numerical_backend_identity
+            .as_str()
+        {
+            FROZEN_NUMERICAL_BACKEND_IDENTITY_V2 => {
+                Some(NativeTrainingNumericalBackendV1::Sequential)
+            }
+            crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1 => {
+                Some(NativeTrainingNumericalBackendV1::CudaBurnDense)
+            }
+            _ => None,
+        }
+    }
+
     pub fn batch_episodes(&self) -> u64 {
         self.batch_episodes
     }
@@ -1158,7 +1196,7 @@ fn validate_source_v2(source: &TrainRunSourceV2) -> Result<()> {
 }
 
 fn validate_runtime_v2(runtime: &TrainRunRuntimeV2, toolchain: &TrainRunToolchainV2) -> Result<()> {
-    if runtime.tuple_identity != "mtg-kernel-native-windows-cpu-runtime-tuple-v1"
+    if store_backend_identity_for_runtime_tuple_v2(&runtime.tuple_identity).is_none()
         || runtime.os_capture_identity != "windows-rtlgetversion-native-system-info-v1"
         || runtime.os_system != "windows"
         || !is_u63(runtime.os_major)
@@ -1171,7 +1209,8 @@ fn validate_runtime_v2(runtime: &TrainRunRuntimeV2, toolchain: &TrainRunToolchai
         || !matches!(runtime.native_architecture.as_str(), "amd64" | "arm64")
         || !matches!(runtime.process_architecture.as_str(), "amd64" | "arm64")
         || runtime.byte_order != "little"
-        || runtime.numerical_backend_identity != FROZEN_NUMERICAL_BACKEND_IDENTITY_V2
+        || store_backend_identity_for_runtime_tuple_v2(&runtime.tuple_identity)
+            != Some(runtime.numerical_backend_identity.as_str())
         || runtime.build_profile != "release"
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
@@ -1306,7 +1345,11 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
         || contracts.model.parameter_element_count != FROZEN_PARAMETER_ELEMENT_COUNT_V2
         || contracts.loss.identity != FROZEN_LOSS_IDENTITY_V2
         || contracts.train_step.identity != FROZEN_TRAIN_STEP_IDENTITY_V2
-        || contracts.train_step.numerical_backend_identity != FROZEN_NUMERICAL_BACKEND_IDENTITY_V2
+        || !matches!(
+            contracts.train_step.numerical_backend_identity.as_str(),
+            FROZEN_NUMERICAL_BACKEND_IDENTITY_V2
+                | crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1
+        )
         || contracts.optimizer.identity != FROZEN_OPTIMIZER_IDENTITY_V2
         || contracts.optimizer.gauge_identity != FROZEN_OPTIMIZER_IDENTITY_V2
         || contracts.optimizer.gauge_evidence_identity != FROZEN_GAUGE_EVIDENCE_IDENTITY_V2
@@ -1920,6 +1963,15 @@ pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
     tests::fixture_bytes()
 }
 
+/// Backend-parametrized fixture: the matched runtime tuple and train-step
+/// backend identity pair for the requested store-admitted backend.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_with_backend_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_backend(backend)
+}
+
 #[cfg(test)]
 pub(crate) fn test_fixture_bytes_with_base_seed_v2(base_seed: u64) -> Vec<u8> {
     tests::fixture_bytes_with_base_seed(base_seed)
@@ -2316,6 +2368,62 @@ mod tests {
 
     pub(super) fn fixture_bytes() -> Vec<u8> {
         to_canonical_json_bytes_v1(&fixture_record(), CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[test]
+    fn cuda_backend_records_validate_and_mismatched_pairs_reject() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        let bytes =
+            test_fixture_bytes_with_backend_v2(NativeTrainingNumericalBackendV1::CudaBurnDense);
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.store_numerical_backend_v2(),
+            Some(NativeTrainingNumericalBackendV1::CudaBurnDense)
+        );
+
+        let cpu_bytes = fixture_bytes();
+        let cpu_validated = decode_train_run_v2(&cpu_bytes).unwrap();
+        assert_eq!(
+            cpu_validated.store_numerical_backend_v2(),
+            Some(NativeTrainingNumericalBackendV1::Sequential)
+        );
+
+        // A CUDA tuple with the CPU backend identity is a mismatched pair.
+        let mut record = fixture_record();
+        record.runtime.tuple_identity = CUDA_RUNTIME_TUPLE_IDENTITY_V2.to_owned();
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+
+        // A CPU tuple with the CUDA backend identity is likewise rejected.
+        let mut record = fixture_record();
+        record.runtime.numerical_backend_identity =
+            crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1
+                .to_owned();
+        record.contracts.train_step.numerical_backend_identity =
+            record.runtime.numerical_backend_identity.clone();
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    pub(super) fn fixture_bytes_with_backend(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    ) -> Vec<u8> {
+        let mut record = fixture_record();
+        let (tuple, identity) = match backend {
+            crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1::CudaBurnDense => (
+                CUDA_RUNTIME_TUPLE_IDENTITY_V2,
+                crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1,
+            ),
+            _ => (
+                CPU_RUNTIME_TUPLE_IDENTITY_V2,
+                FROZEN_NUMERICAL_BACKEND_IDENTITY_V2,
+            ),
+        };
+        record.runtime.tuple_identity = tuple.to_owned();
+        record.runtime.numerical_backend_identity = identity.to_owned();
+        record.contracts.train_step.numerical_backend_identity = identity.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
 
     pub(super) fn fixture_bytes_with_base_seed(base_seed: u64) -> Vec<u8> {

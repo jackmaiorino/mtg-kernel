@@ -22,9 +22,7 @@ use crate::native_train_state_payload_v1::{
     NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1, NATIVE_TRAIN_STATE_PAYLOAD_ENCODING_V1,
     NATIVE_TRAIN_STATE_PAYLOAD_SCHEMA_V1, NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1,
 };
-use crate::native_training_executor_v1::{
-    NativeTrainingCheckpointCandidateV1, NativeTrainingNumericalBackendV1,
-};
+use crate::native_training_executor_v1::NativeTrainingCheckpointCandidateV1;
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1, NativeTrainingStoreAtomSha256V1,
     NativeTrainingStoreDigestErrorV1,
@@ -948,7 +946,7 @@ fn validate_trained_candidate_v3(
     let candidate_digests = candidate.digests();
     if candidate.base_seed() != run.record().schedule.base_seed
         || candidate.batch_episodes() != run.batch_episodes()
-        || candidate.numerical_backend() != NativeTrainingNumericalBackendV1::Sequential
+        || Some(candidate.numerical_backend()) != run.store_numerical_backend_v2()
         || candidate.backward_worker_limit() != 1
         || candidate.adam_step() != generation_index
         || candidate.scorer_bias_anchor_bits() != evidence.scorer_bias_anchor_bits_v1()

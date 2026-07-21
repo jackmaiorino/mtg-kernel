@@ -963,7 +963,7 @@ pub(crate) fn validate_prepared_execution_config_v1(
         || config.measure_broker_service_time != record.topology.measure_broker_service_time
         || config.value_coefficient_bits != expected_value_coefficient
         || config.learning_rate_bits != expected_learning_rate
-        || config.numerical_backend != NativeTrainingNumericalBackendV1::Sequential
+        || Some(config.numerical_backend) != run.store_numerical_backend_v2()
         || config.backward_worker_limit != 1
     {
         return Err(error_v1(UpdateGroupV1ErrorKind::RunBinding));
@@ -987,7 +987,7 @@ fn validate_predecessor_checkpoint_v1(
     )?;
     if predecessor.base_seed != run.record().schedule.base_seed
         || predecessor.batch_episodes != run.batch_episodes()
-        || predecessor.numerical_backend != NativeTrainingNumericalBackendV1::Sequential
+        || Some(predecessor.numerical_backend) != run.store_numerical_backend_v2()
         || predecessor.backward_worker_limit != 1
         || predecessor.adam_step != context.next_update_index - 1
         || predecessor.scorer_bias_anchor_bits != context.scorer_bias_anchor_bits
@@ -1125,7 +1125,7 @@ fn validate_observation_checkpoint_v1(
         || observation.adam_step_after != context.next_update_index
         || successor.base_seed != record.schedule.base_seed
         || successor.batch_episodes != run.batch_episodes()
-        || successor.numerical_backend != NativeTrainingNumericalBackendV1::Sequential
+        || Some(successor.numerical_backend) != run.store_numerical_backend_v2()
         || successor.backward_worker_limit != 1
         || successor.adam_step != context.next_update_index
         || successor.scorer_bias_anchor_bits != context.scorer_bias_anchor_bits
