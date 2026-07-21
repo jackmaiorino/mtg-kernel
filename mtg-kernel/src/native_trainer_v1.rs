@@ -2156,6 +2156,14 @@ fn train_grouped_candidate_v1(
                 execution.backward_worker_limit,
                 phase_recorder,
             ),
+        // The device-resident CUDA path is wired at the executor level, not
+        // through the CPU candidate; reaching this arm means the executor
+        // dispatched a CUDA-configured update onto the CPU train path.
+        NativeTrainingNumericalBackendV1::CudaBurnDense => {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "cuda-burn-dense-backend-not-wired-into-the-cpu-train-path",
+            ));
+        }
     }
     .map_err(NativeTrainerErrorV1::Train)?;
     #[cfg(test)]
