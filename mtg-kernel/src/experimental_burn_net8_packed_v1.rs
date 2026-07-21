@@ -5,6 +5,7 @@
 //! Python-authoritative encoded decisions can be packed into a ragged Burn
 //! graph without changing the normal CPU reference or trainer contracts.
 
+pub(crate) mod bridge;
 mod training;
 
 use crate::common_model_snapshot_v1::{
@@ -805,6 +806,60 @@ impl HostPackingWorkspace {
         self.action_ref_features.clear();
         self.action_ref_action_indices.clear();
         self.action_ref_node_indices.clear();
+    }
+
+    /// Pack one production encoded-decision view per decision, in order.
+    /// A field-for-field mirror of `pack` over borrowed production views.
+    pub(crate) fn pack_views(
+        &mut self,
+        views: &[crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1<'_>],
+    ) -> Result<(), Box<dyn Error>> {
+        self.clear();
+        self.action_offsets.push(0);
+        for (decision_index, case) in views.iter().enumerate() {
+            let object_offset = self.object_card_ids.len();
+            let action_offset = self.action_decision_indices.len();
+            self.case_indices.push(decision_index);
+            self.state.extend_from_slice(case.state);
+            self.object_features.extend_from_slice(case.object_features);
+            for card_id in case.object_card_ids.iter().copied() {
+                self.object_card_ids.push(checked_i32(card_id)?);
+            }
+            for group in case.object_groups.iter().copied() {
+                let group = usize::try_from(group)?;
+                let global = decision_index
+                    .checked_mul(OBJECT_GROUP_COUNT_V1)
+                    .and_then(|base| base.checked_add(group))
+                    .ok_or("object group index overflow")?;
+                self.object_group_indices.push(i32::try_from(global)?);
+            }
+            self.edge_features.extend_from_slice(case.edge_features);
+            for index in case.edge_source_indices.iter().copied() {
+                self.edge_source_indices
+                    .push(checked_offset_i32(index, object_offset)?);
+            }
+            for index in case.edge_target_indices.iter().copied() {
+                self.edge_target_indices
+                    .push(checked_offset_i32(index, object_offset)?);
+            }
+            self.action_features.extend_from_slice(case.action_features);
+            self.action_decision_indices.extend(std::iter::repeat_n(
+                i32::try_from(decision_index)?,
+                case.action_features.len() / ACTION_FEATURE_DIM_V1,
+            ));
+            self.action_ref_features
+                .extend_from_slice(case.action_ref_features);
+            for index in case.action_ref_action_indices.iter().copied() {
+                self.action_ref_action_indices
+                    .push(checked_offset_i32(index, action_offset)?);
+            }
+            for index in case.action_ref_node_indices.iter().copied() {
+                self.action_ref_node_indices
+                    .push(checked_offset_i32(index, object_offset)?);
+            }
+            self.action_offsets.push(self.action_decision_indices.len());
+        }
+        Ok(())
     }
 
     fn pack(

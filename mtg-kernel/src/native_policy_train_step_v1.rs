@@ -397,6 +397,12 @@ pub const NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1: &str =
     "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-sequential";
 pub const FIXED_PARTITION_PARALLEL_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1: &str =
     "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-fixed-reverse-partitions-4-v1";
+/// Separately versioned CUDA backend identity: dense-padded loss on the
+/// burn/cubecl device path. Tolerance-bounded against the CPU reference and
+/// run-to-run bit-deterministic on one device; never bit-identical to the
+/// CPU identities.
+pub const CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1: &str =
+    "rust-experimental-native-policy-train-step-v1-cuda-burn-dense-padded-v1";
 
 /// Explicit numerical backend for one native training update.
 ///
@@ -407,6 +413,9 @@ pub enum NativeTrainingNumericalBackendV1 {
     #[default]
     Sequential,
     FixedFourPartitions,
+    /// Device-resident burn/cubecl backend with the dense-padded loss. One
+    /// CUDA stream; the backward worker limit is fixed at one.
+    CudaBurnDense,
 }
 
 impl NativeTrainingNumericalBackendV1 {
@@ -416,6 +425,7 @@ impl NativeTrainingNumericalBackendV1 {
             Self::FixedFourPartitions => {
                 FIXED_PARTITION_PARALLEL_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1
             }
+            Self::CudaBurnDense => CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1,
         }
     }
 
@@ -423,6 +433,7 @@ impl NativeTrainingNumericalBackendV1 {
         match self {
             Self::Sequential => worker_limit == 1,
             Self::FixedFourPartitions => worker_limit >= 1 && worker_limit <= 4,
+            Self::CudaBurnDense => worker_limit == 1,
         }
     }
 }
@@ -653,6 +664,10 @@ pub struct NativeGaugeSubstepBoundV1 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NativePolicyTrainErrorV1 {
     Model(NativePolicyValueErrorV1),
+    /// Stable CudaBurnDense bridge failure classification.
+    CudaBackend {
+        code: &'static str,
+    },
     EmptyBatch,
     EmptyPhysicalDecision {
         group_index: usize,
@@ -1975,7 +1990,7 @@ fn validate_forward_output_bits_v1(
 }
 
 #[derive(Default)]
-struct ScorerBiasGaugeAccumulatorV1 {
+pub(crate) struct ScorerBiasGaugeAccumulatorV1 {
     substep_count: usize,
     total_action_count: usize,
     max_action_count: usize,
@@ -1986,7 +2001,7 @@ struct ScorerBiasGaugeAccumulatorV1 {
 }
 
 impl ScorerBiasGaugeAccumulatorV1 {
-    fn observe(
+    pub(crate) fn observe(
         &mut self,
         logits: &[f32],
         selected_action_index: usize,
@@ -2046,7 +2061,7 @@ impl ScorerBiasGaugeAccumulatorV1 {
         Ok(())
     }
 
-    fn finish(
+    pub(crate) fn finish(
         self,
         raw_gradient_residual: f32,
         parameter_before_bits: u32,
@@ -3405,7 +3420,7 @@ fn resize_zeroed_v1(values: &mut Vec<f32>, len: usize) {
     values.resize(len, 0.0);
 }
 
-fn selected_log_softmax(
+pub(crate) fn selected_log_softmax(
     logits: &[f32],
     selected: usize,
 ) -> Result<(f32, Vec<f32>), NativePolicyTrainErrorV1> {

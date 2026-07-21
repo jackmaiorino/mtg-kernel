@@ -12,7 +12,7 @@ use crate::native_training_executor_v1::NativeTrainingIntrinsicFactMutationForTe
 use crate::native_training_executor_v1::{
     checkpoint_matches_intrinsic_facts_v2, NativeTrainingCheckpointCandidateV1,
     NativeTrainingExecutorV1, NativeTrainingIntrinsicCheckpointFactsV2,
-    NativeTrainingNumericalBackendV1, NativeTrainingSegmentCandidateV2,
+    NativeTrainingSegmentCandidateV2,
 };
 use crate::native_training_store_boundary_v2::{
     build_trained_native_training_boundary_v2, ValidatedNativeTrainingBoundaryV2,
@@ -796,7 +796,7 @@ fn intrinsic_matches_context_v2(
     };
     intrinsic.base_seed_v2() == run.record().schedule.base_seed
         && intrinsic.batch_episodes_v2() == run.batch_episodes()
-        && intrinsic.numerical_backend_v2() == NativeTrainingNumericalBackendV1::Sequential
+        && Some(intrinsic.numerical_backend_v2()) == run.store_numerical_backend_v2()
         && intrinsic.backward_worker_limit_v2() == 1
         && context.batch_episodes_v1() == run.batch_episodes()
         && context.checkpoint_segment_updates_v1() == run.checkpoint_segment_updates()
@@ -868,7 +868,7 @@ fn live_parent_matches_v2(
         && progress.completed_episode_count() == progress.next_episode_index()
         && live.base_seed_v2() == run.record().schedule.base_seed
         && live.batch_episodes_v2() == run.batch_episodes()
-        && live.numerical_backend_v2() == NativeTrainingNumericalBackendV1::Sequential
+        && Some(live.numerical_backend_v2()) == run.store_numerical_backend_v2()
         && live.backward_worker_limit_v2() == 1
         && live_progress.next_episode_index == progress.next_episode_index()
         && live_progress.successful_update_count == progress.successful_update_count()
@@ -958,7 +958,7 @@ mod tests {
     use crate::common_model_snapshot_v1::common_model_snapshot_paths_v1;
     use crate::native_policy_train_step_v1::{
         reset_train_state_snapshot_call_count_for_test_v1,
-        train_state_snapshot_call_count_for_test_v1,
+        train_state_snapshot_call_count_for_test_v1, NativeTrainingNumericalBackendV1,
     };
     use crate::native_train_state_payload_v1::{
         payload_encode_counts_for_test_v1, reset_payload_encode_counts_for_test_v1,
@@ -1116,7 +1116,7 @@ mod tests {
         let aggregate = checkpoint.progress();
         checkpoint.base_seed() == run.record().schedule.base_seed
             && checkpoint.batch_episodes() == run.batch_episodes()
-            && checkpoint.numerical_backend() == NativeTrainingNumericalBackendV1::Sequential
+            && Some(checkpoint.numerical_backend()) == run.store_numerical_backend_v2()
             && checkpoint.backward_worker_limit() == 1
             && aggregate.next_episode_index == progress.next_episode_index()
             && aggregate.successful_update_count == progress.successful_update_count()

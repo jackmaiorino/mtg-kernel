@@ -363,7 +363,8 @@ impl NativeTrainingIntrinsicCheckpointFactsV2 {
                     NativeTrainingNumericalBackendV1::Sequential => {
                         NativeTrainingNumericalBackendV1::FixedFourPartitions
                     }
-                    NativeTrainingNumericalBackendV1::FixedFourPartitions => {
+                    NativeTrainingNumericalBackendV1::FixedFourPartitions
+                    | NativeTrainingNumericalBackendV1::CudaBurnDense => {
                         NativeTrainingNumericalBackendV1::Sequential
                     }
                 }
@@ -1601,12 +1602,15 @@ fn intrinsic_checkpoint_facts_from_parts_v2(
 fn validate_store_preparation_config_v2(
     config: &NativeTrainingExecutionConfigV1,
 ) -> Result<(), NativeTrainingExecutorErrorV1> {
-    if config.numerical_backend != NativeTrainingNumericalBackendV1::Sequential
-        || config.backward_worker_limit != 1
+    if !matches!(
+        config.numerical_backend,
+        NativeTrainingNumericalBackendV1::Sequential
+            | NativeTrainingNumericalBackendV1::CudaBurnDense
+    ) || config.backward_worker_limit != 1
     {
         return Err(NativeTrainingExecutorErrorV1::redacted(
             NativeTrainingExecutorErrorKindV1::Configuration,
-            "store_v2_requires_sequential_numerical_backend",
+            "store_v2_requires_store_admitted_numerical_backend",
         ));
     }
     Ok(())
@@ -2095,7 +2099,7 @@ mod tests {
         );
         assert_eq!(
             prepare_error.code(),
-            "store_v2_requires_sequential_numerical_backend"
+            "store_v2_requires_store_admitted_numerical_backend"
         );
         assert_eq!(fresh_fixed.checkpoint_candidate_v1().unwrap(), before);
     }

@@ -2156,6 +2156,24 @@ fn train_grouped_candidate_v1(
                 execution.backward_worker_limit,
                 phase_recorder,
             ),
+        // The device-resident bridge: dense group loss on the GPU, evidence
+        // recomputed host-side from the CUDA outputs, CPU state replaced
+        // through the validating snapshot constructor.
+        #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+        NativeTrainingNumericalBackendV1::CudaBurnDense => {
+            crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
+                candidate,
+                &borrowed_groups,
+                execution.value_coefficient,
+                execution.learning_rate,
+            )
+        }
+        #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+        NativeTrainingNumericalBackendV1::CudaBurnDense => {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "cuda-burn-dense-backend-not-compiled",
+            ));
+        }
     }
     .map_err(NativeTrainerErrorV1::Train)?;
     #[cfg(test)]

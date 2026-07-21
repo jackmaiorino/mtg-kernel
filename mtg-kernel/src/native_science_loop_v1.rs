@@ -349,6 +349,193 @@ mod windows_science_loop_tests {
         }
     }
 
+    /// Temporary GPU K-scaling measurement probe: end-to-end durable training
+    /// throughput at K = 2/16/64/256 with the CudaBurnDense train-step backend
+    /// and the same scaled topology grid as the CPU probe, one segment
+    /// (S=4, N=4) per configuration, cold-start inclusive.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn timing_probe_gpu_k_scaling_throughput() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_with_schedule_v2, ValidatedTrainRunV2,
+        };
+
+        fn cuda_execution_config_v2(
+            run: &ValidatedTrainRunV2,
+        ) -> crate::native_training_executor_v1::NativeTrainingExecutionConfigV1 {
+            let mut config = test_execution_config_v2(run);
+            config.numerical_backend = NativeTrainingNumericalBackendV1::CudaBurnDense;
+            config
+        }
+
+        let configurations: [(u64, u64, u64, u64, u64, u64); 4] = [
+            // (K, workers, sessions, broker, max_physical, max_policy)
+            (2, 0, 0, 0, 32_768, 65_536),
+            (16, 4, 4, 8, 2_048, 4_096),
+            (64, 8, 8, 32, 1_024, 2_048),
+            (256, 16, 16, 128, 448, 896),
+        ];
+        let updates = 4_u64;
+
+        for (batch_episodes, workers, sessions, broker, max_physical, max_policy) in configurations
+        {
+            let patched = if workers == 0 {
+                test_fixture_bytes_with_schedule_v2(
+                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                    batch_episodes,
+                    4,
+                    updates,
+                    1,
+                    2,
+                    2,
+                    max_physical,
+                    max_policy,
+                )
+            } else {
+                test_fixture_bytes_with_schedule_v2(
+                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                    batch_episodes,
+                    4,
+                    updates,
+                    workers,
+                    sessions,
+                    broker,
+                    max_physical,
+                    max_policy,
+                )
+            };
+            let run = match decode_train_run_v2(&patched) {
+                Ok(run) => run,
+                Err(error) => {
+                    println!("K={batch_episodes}: run record rejected: {error}");
+                    continue;
+                }
+            };
+            let episodes = batch_episodes * updates;
+            let target = run.requested_successful_updates();
+
+            let parent = TestParentV1::new("gpu-kscale");
+            let started = std::time::Instant::now();
+            let bootstrapped =
+                crate::native_training_store_bootstrap_v2::bootstrap_native_training_store_v2(
+                    &parent.parent,
+                    "store",
+                )
+                .unwrap();
+            let root = bootstrapped.into_root();
+            let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+            let executor = crate::native_training_executor_v1::NativeTrainingExecutorV1::
+                from_common_model_snapshot_v1(
+                    cuda_execution_config_v2(&run),
+                    &snapshot_manifest,
+                    &snapshot_payload,
+                )
+                .unwrap();
+            let candidate = executor.checkpoint_candidate_v1().unwrap();
+            let payload = candidate.payload().to_vec();
+            let checkpoint =
+                crate::native_training_store_checkpoint_v3::build_genesis_checkpoint_manifest_v3(
+                    &run, &payload,
+                )
+                .unwrap();
+            let segment = crate::native_training_store_segment_manifest_v2::
+                build_genesis_segment_manifest_v2(&run, &checkpoint)
+            .unwrap();
+            let boundary = crate::native_training_store_boundary_v2::
+                build_genesis_native_training_boundary_v2(&run, &segment, &checkpoint)
+            .unwrap();
+            let reference =
+                crate::native_training_store_reference_latest_v2::build_checkpoint_reference_v2(
+                    &run, &boundary,
+                )
+                .unwrap();
+            let latest = crate::native_training_store_reference_latest_v2::build_latest_v2(
+                &boundary, &reference,
+            )
+            .unwrap();
+            let _ = crate::native_training_store_v2::publish_genesis_generation_v2(
+                &root,
+                &run,
+                &payload,
+                &checkpoint,
+                &segment,
+                &boundary,
+                &reference,
+                &latest,
+            )
+            .unwrap();
+            let genesis_done = started.elapsed().as_secs_f64();
+
+            let mut train_result = Ok(());
+            loop {
+                match crate::native_training_store_resume_v2::resume_native_training_store_v2(
+                    &root,
+                    &run,
+                    cuda_execution_config_v2(&run),
+                ) {
+                    Ok(
+                        crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2::Complete {
+                            latest_generation_index,
+                        },
+                    ) => {
+                        assert_eq!(latest_generation_index, target);
+                        break;
+                    }
+                    Ok(
+                        crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2::Continue(
+                            mut continuation,
+                        ),
+                    ) => {
+                        let prepared = match crate::native_training_store_prepared_segment_v2::
+                            prepare_segment_v2(
+                                &mut continuation.executor,
+                                &run,
+                                &continuation.parent_boundary,
+                                &continuation.parent_checkpoint,
+                            ) {
+                            Ok(prepared) => prepared,
+                            Err(error) => {
+                                train_result = Err(format!("prepare: {error}"));
+                                break;
+                            }
+                        };
+                        let receipt = crate::native_training_store_v2::
+                            publish_prepared_segment_v2(
+                                &root,
+                                &run,
+                                &continuation.parent_boundary,
+                                &continuation.parent_checkpoint,
+                                &prepared,
+                            )
+                            .unwrap();
+                        prepared.commit_v2(receipt).unwrap();
+                    }
+                    Err(error) => {
+                        train_result = Err(format!("resume: {error}"));
+                        break;
+                    }
+                }
+            }
+            let wall = started.elapsed().as_secs_f64();
+            match train_result {
+                Ok(()) => {
+                    let rate = episodes as f64 / wall;
+                    println!(
+                        "K={batch_episodes}: {episodes} episodes over {wall:.3}s \
+                         (genesis {genesis_done:.3}s) = {rate:.4} eps/s \
+                         [vs floor 0.2925: {:.1}x]",
+                        rate / 0.2925
+                    );
+                }
+                Err(message) => {
+                    println!("K={batch_episodes}: training failed after {wall:.3}s: {message}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn one_command_science_loop_trains_runs_evaluates_and_reruns_deterministically() {
         let parent = TestParentV1::new("smoke");
