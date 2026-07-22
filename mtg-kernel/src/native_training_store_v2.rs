@@ -1490,14 +1490,12 @@ mod windows_publisher_tests {
             .join(final_name.final_basename().unwrap())
     }
 
-    fn snapshot_store_tree_v2(
-        root: &ValidatedNativeTrainingStoreRootV2,
-    ) -> BTreeMap<PathBuf, Option<(u64, [u8; 16], Vec<u8>)>> {
-        fn walk_v2(
-            base: &Path,
-            directory: &Path,
-            snapshot: &mut BTreeMap<PathBuf, Option<(u64, [u8; 16], Vec<u8>)>>,
-        ) {
+    /// Per-file volume serial, file identity, and exact bytes; directories
+    /// map to `None`.
+    type StoreTreeSnapshotV2 = BTreeMap<PathBuf, Option<(u64, [u8; 16], Vec<u8>)>>;
+
+    fn snapshot_store_tree_v2(root: &ValidatedNativeTrainingStoreRootV2) -> StoreTreeSnapshotV2 {
+        fn walk_v2(base: &Path, directory: &Path, snapshot: &mut StoreTreeSnapshotV2) {
             let mut entries: Vec<_> = fs::read_dir(directory)
                 .expect("read Store directory")
                 .map(|entry| entry.expect("read Store entry"))
@@ -1539,7 +1537,7 @@ mod windows_publisher_tests {
 
         let base = root.directory_path_v2(NativeTrainingStoreDirectoryV2::Root);
         let mut snapshot = BTreeMap::new();
-        walk_v2(&base, &base, &mut snapshot);
+        walk_v2(base, base, &mut snapshot);
         snapshot
     }
 
