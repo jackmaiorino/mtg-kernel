@@ -1982,7 +1982,7 @@ pub(crate) fn test_fixture_bytes_with_base_seed_v2(base_seed: u64) -> Vec<u8> {
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(
-    not(feature = "experimental-burn-net8-packed-cuda-v1"),
+    not(all(windows, feature = "experimental-burn-net8-packed-cuda-v1")),
     allow(dead_code)
 )]
 pub(crate) fn test_fixture_bytes_with_schedule_v2(
@@ -2467,7 +2467,7 @@ mod tests {
 
     #[allow(clippy::too_many_arguments)]
     #[cfg_attr(
-        not(feature = "experimental-burn-net8-packed-cuda-v1"),
+        not(all(windows, feature = "experimental-burn-net8-packed-cuda-v1")),
         allow(dead_code)
     )]
     pub(super) fn fixture_bytes_with_schedule(
