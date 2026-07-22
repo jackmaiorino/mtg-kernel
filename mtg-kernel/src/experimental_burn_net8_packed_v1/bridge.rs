@@ -114,6 +114,52 @@ fn tolerance_ok_v1(actual: f32, expected: f32) -> bool {
             <= TRANSPORTED_OUTPUT_RELATIVE_TOLERANCE_V1 * expected.abs().max(f32::MIN_POSITIVE)
 }
 
+const TRANSPORTED_LOGIT_RANGE_ABSOLUTE_TOLERANCE_V2: f64 = 2.0e-3;
+const TRANSPORTED_LOGIT_RANGE_RELATIVE_TOLERANCE_V2: f64 = 3.0e-3;
+const TRANSPORTED_LOGIT_COMMON_SHIFT_CAP_V2: f64 = 5.0e-2;
+
+/// Scale-aware transported-logit gate. The retired raw per-element 5e-3
+/// rule tripped at training depth on proportionate f32 forward drift (the
+/// measured 128-update trajectory holds a ~1e-3 ratio of discrepancy to row
+/// magnitude at every depth while row magnitude grows with the sharpening
+/// policy). What a softmax can observe is the per-row RANGE of
+/// discrepancies, equal to the maximum log-odds error, so the gate bounds
+/// that range in f64 against the row's transported magnitude, caps the
+/// common shift absolutely so f32 resolution loss cannot hide inside a
+/// softmax-invariant offset, and rejects nonfinite device or transported
+/// values outright.
+pub(super) fn validate_transported_logit_row_v2(
+    actual_row: &[f32],
+    expected_bits: &[u32],
+) -> Result<(), &'static str> {
+    let mut min_delta = f64::INFINITY;
+    let mut max_delta = f64::NEG_INFINITY;
+    let mut row_magnitude = 0.0_f64;
+    for (actual, bits) in actual_row.iter().zip(expected_bits) {
+        if !actual.is_finite() {
+            return Err("cuda-burn-dense-bridge-nonfinite-device-output");
+        }
+        let expected = f64::from(f32::from_bits(*bits));
+        if !expected.is_finite() {
+            return Err("cuda-burn-dense-bridge-nonfinite-transported-logit");
+        }
+        let delta = f64::from(*actual) - expected;
+        min_delta = min_delta.min(delta);
+        max_delta = max_delta.max(delta);
+        row_magnitude = row_magnitude.max(expected.abs());
+    }
+    if max_delta.abs().max(min_delta.abs()) > TRANSPORTED_LOGIT_COMMON_SHIFT_CAP_V2 {
+        return Err("cuda-burn-dense-bridge-transported-logit-shift-cap");
+    }
+    let range = max_delta - min_delta;
+    let bound = TRANSPORTED_LOGIT_RANGE_ABSOLUTE_TOLERANCE_V2
+        + TRANSPORTED_LOGIT_RANGE_RELATIVE_TOLERANCE_V2 * row_magnitude;
+    if range > bound {
+        return Err("cuda-burn-dense-bridge-transported-logit-range-tolerance");
+    }
+    Ok(())
+}
+
 /// Run one production training update on the CudaBurnDense backend.
 pub(crate) fn train_step_cuda_burn_dense_v1(
     state: &mut NativePolicyValueTrainStateV1,
@@ -297,14 +343,21 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                     actual: row.len(),
                 });
             }
-            for (actual, expected_bits) in row.iter().zip(substep.expected_raw_action_logit_bits) {
-                if !tolerance_ok_v1(*actual, f32::from_bits(*expected_bits)) {
-                    return Err(NativePolicyTrainErrorV1::CudaBackend {
-                        code: "cuda-burn-dense-bridge-transported-logit-tolerance",
-                    });
-                }
+            if let Err(code) =
+                validate_transported_logit_row_v2(row, substep.expected_raw_action_logit_bits)
+            {
+                eprintln!(
+                    "cuda bridge transported-logit rejection: group={group_index} \
+                     substep={substep_index} code={code}"
+                );
+                return Err(NativePolicyTrainErrorV1::CudaBackend { code });
             }
             let substep_value = value_outputs[flat_substep];
+            if !substep_value.is_finite() {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-nonfinite-device-output",
+                });
+            }
             if !tolerance_ok_v1(substep_value, f32::from_bits(substep.expected_value_bits)) {
                 return Err(NativePolicyTrainErrorV1::CudaBackend {
                     code: "cuda-burn-dense-bridge-transported-value-tolerance",

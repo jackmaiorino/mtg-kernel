@@ -2070,7 +2070,11 @@ impl ScorerBiasGaugeAccumulatorV1 {
             * 2.0
             * self.sum_abs_policy_coefficients;
         let derived_absolute_bound = self.per_substep_bound_sum + cross_substep_bound;
-        if !derived_absolute_bound.is_finite()
+        // A nonfinite raw residual must fail closed: NaN compares false
+        // against every bound, so without this check a NaN residual would
+        // silently pass the exceedance test.
+        if !raw_gradient_residual.is_finite()
+            || !derived_absolute_bound.is_finite()
             || f64::from(raw_gradient_residual).abs() > derived_absolute_bound
         {
             return Err(NativePolicyTrainErrorV1::GaugeResidualExceeded {
@@ -7236,6 +7240,18 @@ mod tests {
             exceeded.finish(1.0, (-0.05f32).to_bits()),
             Err(NativePolicyTrainErrorV1::GaugeResidualExceeded { .. })
         ));
+
+        // A nonfinite raw residual must fail closed rather than slipping
+        // through the exceedance comparison, which NaN answers false.
+        for nonfinite in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut poisoned = ScorerBiasGaugeAccumulatorV1::default();
+            poisoned.observe(&logits, 2, -0.75).unwrap();
+            assert!(matches!(
+                poisoned.finish(nonfinite, (-0.05f32).to_bits()),
+                Err(NativePolicyTrainErrorV1::GaugeResidualExceeded { residual_bits, .. })
+                    if residual_bits == nonfinite.to_bits()
+            ));
+        }
         assert_eq!(
             f32_gamma(1usize << f32::MANTISSA_DIGITS),
             Err(NativePolicyTrainErrorV1::GaugeBoundOverflow)

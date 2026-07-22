@@ -410,6 +410,200 @@ mod windows_science_loop_tests {
         }
     }
 
+    /// Learning smoke at the settled K=64 operating point: train a real
+    /// episode count through the one-command loop on the CudaBurnDense
+    /// backend, then report the seat-swapped uniform reward delta of the
+    /// trained boundary against update-zero over enough evaluation pairs to
+    /// see a direction. Diagnostic only: prints the delta and outcome
+    /// counts, makes no learning-quality gate claim (the ratified gate has
+    /// its own frozen estimands, seeds, and thresholds).
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn learning_smoke_k64_uniform_delta_v1() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_v2;
+
+        let updates = 128_u64;
+        let patched = test_fixture_bytes_with_schedule_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            updates,
+            8,
+            8,
+            32,
+            1_024,
+            2_048,
+        );
+        let run = decode_train_run_v2(&patched).expect("smoke run record");
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let mut execution_config = test_execution_config_v2(&run);
+        execution_config.numerical_backend = NativeTrainingNumericalBackendV1::CudaBurnDense;
+        let runner_config = NativeCheckpointRunnerConfigV1 {
+            evaluation_base_seed: 7_777,
+            first_episode_index: 0,
+            episode_count: 256,
+            scheduler_timeout: Duration::from_secs(3_600),
+            measure_broker_service_time: false,
+        };
+
+        let parent = TestParentV1::new("learning-smoke");
+        let started = std::time::Instant::now();
+        let report = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            execution_config,
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config,
+        )
+        .expect("learning smoke loop");
+        let wall = started.elapsed().as_secs_f64();
+
+        let evaluation = report.evaluation();
+        let reference = evaluation.reference_learner_outcomes();
+        let candidate = evaluation.candidate_learner_outcomes();
+        println!(
+            "learning smoke: K=64 updates={updates} episodes={} wall={wall:.1}s",
+            64 * updates
+        );
+        println!(
+            "reference (update-zero) W/L/D: {}/{}/{} of {}",
+            reference.wins(),
+            reference.losses(),
+            reference.draws(),
+            reference.total()
+        );
+        println!(
+            "candidate (gen {}) W/L/D: {}/{}/{} of {}",
+            report.latest_generation_index(),
+            candidate.wins(),
+            candidate.losses(),
+            candidate.draws(),
+            candidate.total()
+        );
+        println!(
+            "pairs={} total candidate-minus-reference reward delta = {}",
+            evaluation.pair_count(),
+            evaluation.total_candidate_minus_reference_reward_delta()
+        );
+    }
+
+    /// Diagnostic twin of the learning smoke: same K=64 x 128-update run
+    /// driven through the manual bootstrap/genesis/resume loop so the
+    /// underlying trainer error is printed with full detail instead of the
+    /// loop's redacted phase classification. Reports the failing update
+    /// window by counting successful segment commits.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn learning_smoke_k64_failure_diagnostic_v1() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_v2;
+
+        let updates = 128_u64;
+        let patched = test_fixture_bytes_with_schedule_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            updates,
+            8,
+            8,
+            32,
+            1_024,
+            2_048,
+        );
+        let run = decode_train_run_v2(&patched).expect("diagnostic run record");
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let mut execution_config = test_execution_config_v2(&run);
+        execution_config.numerical_backend = NativeTrainingNumericalBackendV1::CudaBurnDense;
+
+        let parent = TestParentV1::new("learning-smoke-diag");
+        let bootstrapped =
+            crate::native_training_store_bootstrap_v2::bootstrap_native_training_store_v2(
+                &parent.parent,
+                "store",
+            )
+            .unwrap();
+        let root = bootstrapped.into_root();
+        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config.clone(),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let candidate = executor.checkpoint_candidate_v1().unwrap();
+        let payload = candidate.payload().to_vec();
+        let checkpoint = build_genesis_checkpoint_manifest_v3(&run, &payload).unwrap();
+        let segment = build_genesis_segment_manifest_v2(&run, &checkpoint).unwrap();
+        let boundary =
+            build_genesis_native_training_boundary_v2(&run, &segment, &checkpoint).unwrap();
+        let reference = build_checkpoint_reference_v2(&run, &boundary).unwrap();
+        let latest = build_latest_v2(&boundary, &reference).unwrap();
+        publish_genesis_generation_v2(
+            &root, &run, &payload, &checkpoint, &segment, &boundary, &reference, &latest,
+        )
+        .unwrap();
+
+        let mut committed_segments = 0_u64;
+        loop {
+            match resume_native_training_store_v2(&root, &run, execution_config.clone()) {
+                Ok(NativeTrainingStoreResumeV2::Complete {
+                    latest_generation_index,
+                }) => {
+                    println!(
+                        "diagnostic: COMPLETE at generation {latest_generation_index} \
+                         ({committed_segments} segments committed this process)"
+                    );
+                    break;
+                }
+                Ok(NativeTrainingStoreResumeV2::Continue(mut continuation)) => {
+                    let prepared = match prepare_segment_v2(
+                        &mut continuation.executor,
+                        &run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                    ) {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            panic!(
+                                "diagnostic: prepare FAILED after {committed_segments} committed \
+                                 segments (updates {}..{}): {error:?}",
+                                committed_segments * 4,
+                                committed_segments * 4 + 4,
+                            );
+                        }
+                    };
+                    let receipt = crate::native_training_store_v2::publish_prepared_segment_v2(
+                        &root,
+                        &run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                        &prepared,
+                    )
+                    .unwrap();
+                    prepared.commit_v2(receipt).unwrap();
+                    committed_segments += 1;
+                    if committed_segments.is_multiple_of(8) {
+                        println!(
+                            "diagnostic: {committed_segments} segments \
+                             ({} updates) committed",
+                            committed_segments * 4
+                        );
+                    }
+                }
+                Err(error) => {
+                    panic!(
+                        "diagnostic: resume FAILED after {committed_segments} committed \
+                         segments: {error:?}"
+                    );
+                }
+            }
+        }
+    }
+
     /// Temporary GPU K-scaling measurement probe: end-to-end durable training
     /// throughput at K = 2/16/64/256 with the CudaBurnDense train-step backend
     /// and the same scaled topology grid as the CPU probe, one segment

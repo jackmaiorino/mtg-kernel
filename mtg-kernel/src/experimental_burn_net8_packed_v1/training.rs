@@ -3404,6 +3404,61 @@ mod tests {
     }
 
     #[test]
+    fn transported_logit_range_gate_is_scale_aware_and_fail_closed() {
+        use super::bridge::validate_transported_logit_row_v2 as validate;
+        let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<u32>>();
+
+        // A proportionate common shift at large magnitude passes: every
+        // element sits far beyond the retired 5e-3 elementwise rule, but the
+        // range (the only component a softmax can observe) is tiny and the
+        // shift is under the cap.
+        let expected_large = [7.0f32, -7.0, 3.5];
+        let shifted: Vec<f32> = expected_large.iter().map(|v| v + 0.02).collect();
+        assert!(validate(&shifted, &bits(&expected_large)).is_ok());
+
+        // Range violation at unit magnitude: one element drifting 2e-2
+        // against its row exceeds 2e-3 + 3e-3 * 1.0.
+        let expected_small = [1.0f32, -1.0, 0.5];
+        let mut ranged = expected_small.to_vec();
+        ranged[0] += 0.02;
+        assert_eq!(
+            validate(&ranged, &bits(&expected_small)),
+            Err("cuda-burn-dense-bridge-transported-logit-range-tolerance")
+        );
+
+        // Pass/fail straddle of the absolute term at zero magnitude.
+        let zero_row = [0.0f32, 0.0];
+        assert!(validate(&[1.9e-3, 0.0], &bits(&zero_row)).is_ok());
+        assert_eq!(
+            validate(&[2.1e-3, 0.0], &bits(&zero_row)),
+            Err("cuda-burn-dense-bridge-transported-logit-range-tolerance")
+        );
+
+        // An enormous softmax-invariant shift is rejected by the cap even
+        // though its range is zero: resolution loss cannot hide there.
+        let capped: Vec<f32> = expected_small.iter().map(|v| v + 1.0).collect();
+        assert_eq!(
+            validate(&capped, &bits(&expected_small)),
+            Err("cuda-burn-dense-bridge-transported-logit-shift-cap")
+        );
+
+        // Nonfinite device output and nonfinite transported bits both fail
+        // closed with distinct codes.
+        let mut poisoned_actual = expected_small.to_vec();
+        poisoned_actual[1] = f32::NAN;
+        assert_eq!(
+            validate(&poisoned_actual, &bits(&expected_small)),
+            Err("cuda-burn-dense-bridge-nonfinite-device-output")
+        );
+        let mut poisoned_bits = bits(&expected_small);
+        poisoned_bits[2] = f32::INFINITY.to_bits();
+        assert_eq!(
+            validate(&expected_small, &poisoned_bits),
+            Err("cuda-burn-dense-bridge-nonfinite-transported-logit")
+        );
+    }
+
+    #[test]
     fn resident_snapshot_bit_identity_is_bitwise_not_float_equality() {
         use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 
