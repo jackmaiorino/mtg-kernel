@@ -47,7 +47,9 @@ pub const UPDATE_GROUP_RECORD_CONTRACT_SHA256_V1: &str =
     crate::native_training_store_checkpoint_v3::NATIVE_TRAINING_STORE_RECORD_CONTRACT_SHA256_V1;
 
 const U63_MAX_V1: u64 = (1_u64 << 63) - 1;
-const MAX_LOGICAL_ROWS_V1: u64 = 262_144;
+// Widened 2026-07-21 (ledger #307) in lockstep with the segment continuation
+// row bound to admit K=256+ update groups.
+const MAX_LOGICAL_ROWS_V1: u64 = 4_194_304;
 const CONSERVATIVE_STANDALONE_GROUP_CJ_CEILING_V1: usize = 256 * 1024 * 1024;
 const MAX_LEGAL_ACTION_COUNT_V1: u64 = 64;
 

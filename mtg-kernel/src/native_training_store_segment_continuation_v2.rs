@@ -29,8 +29,13 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 pub const SEGMENT_CONTINUATION_SCHEMA_V2: &str = "mtg_kernel_native_train_segment_continuation/v2";
-pub const SEGMENT_CONTINUATION_MAX_BYTES_V2: u64 = 268_435_456;
-pub const SEGMENT_CONTINUATION_MAX_LOGICAL_ROWS_V2: u64 = 262_144;
+// Widened 2026-07-21 (ledger #307) from 268_435_456 bytes / 262_144 rows to
+// admit K=256+ batch schedules: the worst-case per-segment evidence bound at
+// realistic per-episode caps exceeded the original limits while actual
+// continuation files stay far smaller (reads and validation buffers size to
+// actual content, never to these admission ceilings).
+pub const SEGMENT_CONTINUATION_MAX_BYTES_V2: u64 = 2_147_483_648;
+pub const SEGMENT_CONTINUATION_MAX_LOGICAL_ROWS_V2: u64 = 4_194_304;
 pub const SEGMENT_CONTINUATION_MAX_FIXED_DECIMAL_V2: u64 = 99_999_999;
 pub const SEGMENT_CONTINUATION_RECORD_CONTRACT_SHA256_V2: &str =
     crate::native_training_store_checkpoint_v3::NATIVE_TRAINING_STORE_RECORD_CONTRACT_SHA256_V1;

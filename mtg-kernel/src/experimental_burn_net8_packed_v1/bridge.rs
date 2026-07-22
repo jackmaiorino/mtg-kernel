@@ -26,6 +26,10 @@ use std::error::Error;
 const TRANSPORTED_OUTPUT_ABSOLUTE_TOLERANCE_V1: f32 = 5.0e-3;
 const TRANSPORTED_OUTPUT_RELATIVE_TOLERANCE_V1: f32 = 5.0e-3;
 const SCORER_SECOND_BIAS_ORDINAL_V1: usize = 28;
+/// Group-aligned training chunk size in substeps. Bounds peak backward
+/// activation memory; the value keeps a chunk comfortably inside the device
+/// while staying large enough that dense-kernel launch overhead is amortized.
+const BRIDGE_CHUNK_SUBSTEP_TARGET_V1: usize = 8_192;
 
 fn bridge_error_v1(_error: Box<dyn Error>) -> NativePolicyTrainErrorV1 {
     NativePolicyTrainErrorV1::CudaBackend {
@@ -92,21 +96,72 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         .map_err(bridge_error_v1)?;
     let mut workspace = HostPackingWorkspace::default();
     workspace.pack_views(&views).map_err(bridge_error_v1)?;
-    let plan: DenseGroupLossPlanV1 = build_dense_group_loss_plan_v1(
-        &workspace,
-        &selected_action_indices,
-        &substep_group_indices,
-        &group_first_substeps,
-        &terminal_returns,
-        &device,
-    )
-    .map_err(bridge_error_v1)?;
     let batch = DevicePackedBatch::upload(&device, &workspace);
     let (logit_outputs, value_outputs) = device_state
         .forward_outputs_v1(&batch)
         .map_err(bridge_error_v1)?;
-    let raw_residual = device_state
-        .train_one_step_bridge_v1(&batch, &plan, value_coefficient, learning_rate)
+    drop(batch);
+
+    // The training step runs in group-aligned chunks with device-side
+    // gradient accumulation and a single Adam application: peak activation
+    // memory stays bounded by one chunk regardless of the update's substep
+    // count, and each chunk's loss divides by the whole update's group count
+    // so the accumulated gradient is the full-batch gradient.
+    let mut chunk_group_starts = vec![0_usize];
+    for (group_index, group_first) in group_first_substeps.iter().enumerate().skip(1) {
+        let chunk_start_group = *chunk_group_starts.last().expect("nonempty starts");
+        let chunk_first = group_first_substeps[chunk_start_group];
+        if group_first - chunk_first >= BRIDGE_CHUNK_SUBSTEP_TARGET_V1 {
+            chunk_group_starts.push(group_index);
+        }
+    }
+    let mut accumulator = burn::optim::GradientsAccumulator::new();
+    let mut raw_residual = 0.0_f32;
+    let total_group_count = groups.len() as f32;
+    for (ordinal, chunk_start_group) in chunk_group_starts.iter().copied().enumerate() {
+        let chunk_end_group = chunk_group_starts
+            .get(ordinal + 1)
+            .copied()
+            .unwrap_or(groups.len());
+        let substep_begin = group_first_substeps[chunk_start_group];
+        let substep_end = group_first_substeps
+            .get(chunk_end_group)
+            .copied()
+            .unwrap_or(views.len());
+        let chunk_group_first_substeps = group_first_substeps[chunk_start_group..chunk_end_group]
+            .iter()
+            .map(|first| first - substep_begin)
+            .collect::<Vec<_>>();
+        let chunk_substep_group_indices = substep_group_indices[substep_begin..substep_end]
+            .iter()
+            .map(|group| group - chunk_start_group)
+            .collect::<Vec<_>>();
+        let mut chunk_workspace = HostPackingWorkspace::default();
+        chunk_workspace
+            .pack_views(&views[substep_begin..substep_end])
+            .map_err(bridge_error_v1)?;
+        let chunk_plan: DenseGroupLossPlanV1 = build_dense_group_loss_plan_v1(
+            &chunk_workspace,
+            &selected_action_indices[substep_begin..substep_end],
+            &chunk_substep_group_indices,
+            &chunk_group_first_substeps,
+            &terminal_returns[chunk_start_group..chunk_end_group],
+            &device,
+        )
+        .map_err(bridge_error_v1)?;
+        let chunk_batch = DevicePackedBatch::upload(&device, &chunk_workspace);
+        raw_residual += device_state
+            .chunk_backward_v1(
+                &mut accumulator,
+                &chunk_batch,
+                &chunk_plan,
+                value_coefficient,
+                total_group_count,
+            )
+            .map_err(bridge_error_v1)?;
+    }
+    device_state
+        .apply_accumulated_v1(accumulator, learning_rate)
         .map_err(bridge_error_v1)?;
 
     // Tolerance-gate the CUDA outputs against the transported scorer bits,
