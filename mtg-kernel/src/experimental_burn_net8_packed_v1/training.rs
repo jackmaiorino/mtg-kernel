@@ -3817,25 +3817,40 @@ mod composition_invariance_probe_tests {
         );
     }
 
-    /// Cell-zero raw forward evidence probe, evidence-contract form: one
-    /// frozen batch (all fixture cases in fixture order after the synthetic
-    /// filter) through the device forward at the common snapshot, compared
-    /// against the sequential CPU forward in f64, emitted as one typed
-    /// serde_json record carrying full provenance: configuration identity
-    /// (CELL_ZERO_CONFIG, required), build git head, fork upstream SHA,
-    /// snapshot and fixture SHAs, device runtime manifest digest, kernel-log
-    /// digest when CELL_ZERO_KERNEL_LOG names the CUBECL_DEBUG_LOG file,
-    /// CPU- and device-output bit digests, per-case stats, and the worst
-    /// case with exact endpoint bits. Every f64 is finiteness-checked before
-    /// serialization.
+    /// Cell-zero raw forward evidence probe, second evidence-contract
+    /// revision closing the six P1 blockers: compile-bound arm identity
+    /// (build git head, cleanliness, and tracked-tree SHA come from the
+    /// build system's rustc-env exports, so a stale binary self-reports its
+    /// own compiled identity and the tracked-tree SHA cryptographically
+    /// separates the stock and fork arms), the sealed characterization
+    /// criteria digest with the non-authorizing state pinned in-record,
+    /// closed arm identity validated against the allowed set, strict raw
+    /// finiteness on every scalar before any fold, framed COMPLETE raw
+    /// input/output bit arrays per case so the shared metric core can
+    /// independently recompute every channel, required executable and
+    /// kernel-log digests, and value-channel worst location with endpoint
+    /// bits. Characterization until the shared-core recompute and typed
+    /// launcher land; the record says so itself.
     #[test]
     #[ignore = "measurement probe, run explicitly"]
     fn cell_zero_raw_forward_probe_v1() {
         use sha2::{Digest, Sha256};
 
+        const CRITERIA_SHA256_V1: &str =
+            "4c3d3249003bc34cae59166fc6dbcf1a71f0fd1d34758372564af394284aba28";
+        const ALLOWED_ARMS_V1: [&str; 2] = ["stock-cmma", "simple-unit-fork"];
+
         fn finite(value: f64, name: &str) -> f64 {
             assert!(value.is_finite(), "nonfinite {name} in evidence record");
             value
+        }
+
+        fn finite_f32_bits(bits: u32, name: &str) -> u32 {
+            assert!(
+                f32::from_bits(bits).is_finite(),
+                "nonfinite raw {name} (bits {bits:#010x})"
+            );
+            bits
         }
 
         fn hex(bytes: impl AsRef<[u8]>) -> String {
@@ -3847,59 +3862,76 @@ mod composition_invariance_probe_tests {
         }
 
         #[derive(serde::Serialize)]
-        struct CellZeroCaseStatV1 {
+        struct CellZeroCaseRawV1 {
             case: usize,
             actions: usize,
+            device_logit_bits: Vec<u32>,
+            cpu_logit_bits: Vec<u32>,
+            device_value_bits: u32,
+            cpu_value_bits: u32,
             max_abs: f64,
             range: f64,
+            min_delta_index: usize,
+            max_delta_index: usize,
             value_abs: f64,
         }
 
         #[derive(serde::Serialize)]
-        struct CellZeroWorstCaseV1 {
+        struct CellZeroWorstValueV1 {
             case: usize,
-            actions: usize,
-            min_delta_index: usize,
-            max_delta_index: usize,
-            min_delta: f64,
-            max_delta: f64,
-            min_endpoint_device_bits: u32,
-            min_endpoint_cpu_bits: u32,
-            max_endpoint_device_bits: u32,
-            max_endpoint_cpu_bits: u32,
+            device_value_bits: u32,
+            cpu_value_bits: u32,
+            abs_error: f64,
         }
 
         #[derive(serde::Serialize)]
-        struct CellZeroEvidenceRecordV1 {
+        struct CellZeroEvidenceRecordV2 {
             schema: &'static str,
-            configuration: String,
-            build_git_head: String,
+            evidence_status: &'static str,
+            training_restart_authorized: bool,
+            criteria_sha256: &'static str,
+            arm: String,
+            build_git_head: &'static str,
+            build_git_clean: &'static str,
+            build_tracked_tree_sha256: &'static str,
+            build_tracked_tree_contract: &'static str,
+            executable_sha256: String,
             fork_upstream_burn_cubecl_sha: &'static str,
             snapshot_state_sha256: String,
             fixture_sha256: String,
             case_count: usize,
             case_order: &'static str,
             device_runtime_manifest_sha256: String,
-            kernel_log_sha256: Option<String>,
+            device_manifest_numerical_mode_note: &'static str,
+            kernel_log_sha256: String,
             cpu_bits_sha256: String,
             device_bits_sha256: String,
             global_max_abs: f64,
             global_max_range: f64,
             global_max_value_abs: f64,
-            worst_case: CellZeroWorstCaseV1,
-            per_case: Vec<CellZeroCaseStatV1>,
+            worst_value: CellZeroWorstValueV1,
+            per_case: Vec<CellZeroCaseRawV1>,
         }
 
-        let configuration = std::env::var("CELL_ZERO_CONFIG")
-            .expect("CELL_ZERO_CONFIG must name the configuration (stock or simple-unit)");
-        let build_git_head = {
-            let output = std::process::Command::new("git")
-                .args(["rev-parse", "HEAD"])
-                .output()
-                .expect("git rev-parse for evidence identity");
-            assert!(output.status.success(), "git rev-parse failed");
-            String::from_utf8(output.stdout).unwrap().trim().to_owned()
-        };
+        let arm = std::env::var("CELL_ZERO_CONFIG").expect("CELL_ZERO_CONFIG must name the arm");
+        assert!(
+            ALLOWED_ARMS_V1.contains(&arm.as_str()),
+            "CELL_ZERO_CONFIG {arm} is not in the closed arm set"
+        );
+        let executable_sha256 = std::env::var("CELL_ZERO_EXE_SHA256")
+            .expect("CELL_ZERO_EXE_SHA256 must carry the launcher-computed executable digest");
+        assert_eq!(
+            executable_sha256.len(),
+            64,
+            "executable digest must be sha256 hex"
+        );
+        let kernel_log_path = std::env::var("CELL_ZERO_KERNEL_LOG")
+            .expect("CELL_ZERO_KERNEL_LOG must name the CUBECL_DEBUG_LOG file");
+        assert_eq!(
+            env!("MTG_KERNEL_BUILD_GIT_CLEAN"),
+            "true",
+            "evidence builds require a clean tree"
+        );
 
         let native_model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -3922,7 +3954,7 @@ mod composition_invariance_probe_tests {
         let mut global_max_abs = 0.0_f64;
         let mut global_max_range = 0.0_f64;
         let mut global_max_value_abs = 0.0_f64;
-        let mut worst_case: Option<CellZeroWorstCaseV1> = None;
+        let mut worst_value: Option<CellZeroWorstValueV1> = None;
         let mut per_case = Vec::with_capacity(cases.len());
         for (case_index, (logit_bits, value_bits)) in device_rows.iter().enumerate() {
             let cpu = state
@@ -3930,24 +3962,45 @@ mod composition_invariance_probe_tests {
                 .forward_v1(cases[case_index].view())
                 .unwrap();
             assert_eq!(cpu.logits.len(), logit_bits.len());
-            for bits in logit_bits {
+            let cpu_logit_bits: Vec<u32> = cpu
+                .logits
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    finite_f32_bits(value.to_bits(), &format!("cpu logit {case_index}/{index}"))
+                })
+                .collect();
+            let device_logit_bits: Vec<u32> = logit_bits
+                .iter()
+                .enumerate()
+                .map(|(index, bits)| {
+                    finite_f32_bits(*bits, &format!("device logit {case_index}/{index}"))
+                })
+                .collect();
+            let device_value_bits =
+                finite_f32_bits(*value_bits, &format!("device value {case_index}"));
+            let cpu_value_bits =
+                finite_f32_bits(cpu.value.to_bits(), &format!("cpu value {case_index}"));
+
+            for bits in &device_logit_bits {
                 device_bits_hasher.update(bits.to_le_bytes());
             }
-            device_bits_hasher.update(value_bits.to_le_bytes());
-            for cpu_value in &cpu.logits {
-                cpu_bits_hasher.update(cpu_value.to_bits().to_le_bytes());
+            device_bits_hasher.update(device_value_bits.to_le_bytes());
+            for bits in &cpu_logit_bits {
+                cpu_bits_hasher.update(bits.to_le_bytes());
             }
-            cpu_bits_hasher.update(cpu.value.to_bits().to_le_bytes());
+            cpu_bits_hasher.update(cpu_value_bits.to_le_bytes());
 
             let mut min_delta = f64::INFINITY;
             let mut max_delta = f64::NEG_INFINITY;
             let mut min_delta_index = 0_usize;
             let mut max_delta_index = 0_usize;
             let mut max_abs = 0.0_f64;
-            for (action_index, (device_bits, cpu_value)) in
-                logit_bits.iter().zip(&cpu.logits).enumerate()
+            for (action_index, (device_bits, cpu_bits)) in
+                device_logit_bits.iter().zip(&cpu_logit_bits).enumerate()
             {
-                let delta = f64::from(f32::from_bits(*device_bits)) - f64::from(*cpu_value);
+                let delta =
+                    f64::from(f32::from_bits(*device_bits)) - f64::from(f32::from_bits(*cpu_bits));
                 if delta < min_delta {
                     min_delta = delta;
                     min_delta_index = action_index;
@@ -3959,44 +4012,53 @@ mod composition_invariance_probe_tests {
                 max_abs = max_abs.max(delta.abs());
             }
             let range = max_delta - min_delta;
-            let value_abs = (f64::from(f32::from_bits(*value_bits)) - f64::from(cpu.value)).abs();
+            let value_abs = (f64::from(f32::from_bits(device_value_bits))
+                - f64::from(f32::from_bits(cpu_value_bits)))
+            .abs();
             global_max_abs = global_max_abs.max(max_abs);
-            global_max_value_abs = global_max_value_abs.max(value_abs);
-            if worst_case.is_none() || range > global_max_range {
-                worst_case = Some(CellZeroWorstCaseV1 {
+            global_max_range = global_max_range.max(range);
+            if worst_value.is_none() || value_abs > global_max_value_abs {
+                worst_value = Some(CellZeroWorstValueV1 {
                     case: case_index,
-                    actions: logit_bits.len(),
-                    min_delta_index,
-                    max_delta_index,
-                    min_delta: finite(min_delta, "min_delta"),
-                    max_delta: finite(max_delta, "max_delta"),
-                    min_endpoint_device_bits: logit_bits[min_delta_index],
-                    min_endpoint_cpu_bits: cpu.logits[min_delta_index].to_bits(),
-                    max_endpoint_device_bits: logit_bits[max_delta_index],
-                    max_endpoint_cpu_bits: cpu.logits[max_delta_index].to_bits(),
+                    device_value_bits,
+                    cpu_value_bits,
+                    abs_error: finite(value_abs, "worst value abs_error"),
                 });
             }
-            global_max_range = global_max_range.max(range);
-            per_case.push(CellZeroCaseStatV1 {
+            global_max_value_abs = global_max_value_abs.max(value_abs);
+            per_case.push(CellZeroCaseRawV1 {
                 case: case_index,
-                actions: logit_bits.len(),
+                actions: device_logit_bits.len(),
+                device_logit_bits,
+                cpu_logit_bits,
+                device_value_bits,
+                cpu_value_bits,
                 max_abs: finite(max_abs, "case max_abs"),
                 range: finite(range, "case range"),
+                min_delta_index,
+                max_delta_index,
                 value_abs: finite(value_abs, "case value_abs"),
             });
         }
 
-        let kernel_log_sha256 = std::env::var("CELL_ZERO_KERNEL_LOG").ok().map(|path| {
-            let bytes = std::fs::read(&path).expect("kernel log readable for digest");
+        let kernel_log_sha256 = {
+            let bytes = std::fs::read(&kernel_log_path).expect("kernel log readable for digest");
             let mut hasher = Sha256::new();
             hasher.update(&bytes);
             hex(hasher.finalize())
-        });
+        };
 
-        let record = CellZeroEvidenceRecordV1 {
-            schema: "mtg-kernel-cell-zero-raw-forward-evidence/v1",
-            configuration,
-            build_git_head,
+        let record = CellZeroEvidenceRecordV2 {
+            schema: "mtg-kernel-cell-zero-raw-forward-evidence/v2",
+            evidence_status: "characterization-pending-shared-core-and-typed-launcher",
+            training_restart_authorized: false,
+            criteria_sha256: CRITERIA_SHA256_V1,
+            arm,
+            build_git_head: env!("MTG_KERNEL_BUILD_GIT_HEAD"),
+            build_git_clean: env!("MTG_KERNEL_BUILD_GIT_CLEAN"),
+            build_tracked_tree_sha256: env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
+            build_tracked_tree_contract: env!("MTG_KERNEL_BUILD_TRACKED_TREE_CONTRACT"),
+            executable_sha256,
             fork_upstream_burn_cubecl_sha: "546cacb55fe00168854d19bdf0a5d79bd8060e03",
             snapshot_state_sha256,
             fixture_sha256: super::sha256_hex(super::FIXTURE_BYTES),
@@ -4005,13 +4067,16 @@ mod composition_invariance_probe_tests {
             device_runtime_manifest_sha256: DeviceRuntimeManifestV1::collect_v1()
                 .expect("device runtime manifest for evidence identity")
                 .sha256_v1(),
+            device_manifest_numerical_mode_note:
+                "manifest numerical_mode is a stock-scoped constant; route identity binds \
+                 via arm + tracked-tree SHA + kernel-log digest pending route-derived mode",
             kernel_log_sha256,
             cpu_bits_sha256: hex(cpu_bits_hasher.finalize()),
             device_bits_sha256: hex(device_bits_hasher.finalize()),
             global_max_abs: finite(global_max_abs, "global_max_abs"),
             global_max_range: finite(global_max_range, "global_max_range"),
             global_max_value_abs: finite(global_max_value_abs, "global_max_value_abs"),
-            worst_case: worst_case.expect("at least one case observed"),
+            worst_value: worst_value.expect("at least one case observed"),
             per_case,
         };
         println!(
