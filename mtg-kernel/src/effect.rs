@@ -218,6 +218,12 @@ pub enum EffectOp {
     TapObject {
         object: ObjectRef,
     },
+    /// The permanent does not untap during its current controller's next
+    /// untap step. The marker is incarnation-local and is cleared by any
+    /// zone change through `ObjectStateV4::reset_for_zone_change`.
+    SkipNextUntap {
+        object: ObjectRef,
+    },
     AddMana {
         player: PlayerRef,
         colors: Vec<ManaColor>,
@@ -3465,6 +3471,10 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let object = ctx.resolve_object(*object);
             event::propose_and_commit(state, event::ProposedEvent::tap(object));
         }
+        EffectOp::SkipNextUntap { object } => {
+            let object = ctx.resolve_object(*object);
+            state.objects.get_mut(object).v4.skip_next_untap = true;
+        }
         EffectOp::AddMana { player, colors } => {
             let player = ctx.resolve_player(*player, state);
             event::propose_and_commit(
@@ -4027,6 +4037,38 @@ mod tests {
         execute(&op, &ctx, &mut state);
         assert!(state.objects.get(land).tapped);
         assert_eq!(state.players[0].mana_pool[ManaColor::R.pool_index()], 1);
+    }
+
+    #[test]
+    fn skip_next_untap_is_incarnation_local_and_snapshot_deterministic() {
+        let mut state = two_card_libraries();
+        let permanent = state.draw_card(PlayerId::P0).unwrap();
+        state.move_hand_to_battlefield(PlayerId::P0, permanent);
+        let before_hash = state.diagnostic_state_hash();
+
+        execute(
+            &EffectOp::SkipNextUntap {
+                object: ObjectRef::ThisSource,
+            },
+            &ExecCtx::no_targets(permanent, PlayerId::P0),
+            &mut state,
+        );
+
+        assert!(state.objects.get(permanent).v4.skip_next_untap);
+        assert_ne!(state.diagnostic_state_hash(), before_hash);
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        let restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+        assert_eq!(restored, state);
+        assert_eq!(
+            restored.diagnostic_state_hash(),
+            state.diagnostic_state_hash()
+        );
+
+        event::propose_and_commit(
+            &mut state,
+            event::ProposedEvent::zone_change(permanent, Zone::Graveyard),
+        );
+        assert!(!state.objects.get(permanent).v4.skip_next_untap);
     }
 
     #[test]
