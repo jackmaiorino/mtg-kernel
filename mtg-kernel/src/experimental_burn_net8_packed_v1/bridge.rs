@@ -340,7 +340,7 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     #[cfg(test)]
     let measurement_mode = TOLERANCE_MEASUREMENT_MODE_V1.load(std::sync::atomic::Ordering::Relaxed);
     #[cfg(test)]
-    #[derive(Default)]
+    #[derive(Clone, serde::Serialize)]
     struct QualificationWorstRowV1 {
         group: usize,
         substep: usize,
@@ -349,23 +349,50 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         max_delta_index: usize,
         min_delta: f64,
         max_delta: f64,
+        min_endpoint_expected_bits: u32,
+        min_endpoint_actual_bits: u32,
+        max_endpoint_expected_bits: u32,
+        max_endpoint_actual_bits: u32,
         expected_span: f64,
         expected_magnitude: f64,
         selected_index: usize,
     }
     #[cfg(test)]
+    #[derive(Clone, serde::Serialize)]
+    struct QualificationWorstValueV1 {
+        group: usize,
+        substep: usize,
+        actual_bits: u32,
+        expected_bits: u32,
+        abs_error: f64,
+    }
+    #[cfg(test)]
     #[derive(Default)]
     struct QualificationRowStatsV1 {
         max_range: f64,
-        worst: QualificationWorstRowV1,
+        worst: Option<QualificationWorstRowV1>,
         max_selected_logprob_delta: f64,
         max_joint_logprob_delta: f64,
         max_sum_abs_logprob_delta: f64,
+        max_decision_d_sum: f64,
+        decisions_over_b_cap: u64,
+        rows_over_row_candidate: u64,
         rows_over_5e3: u64,
         rows_over_ln101: u64,
+        max_value_abs_error: f64,
+        worst_value: Option<QualificationWorstValueV1>,
+        values_over_value_cap: u64,
     }
     #[cfg(test)]
     let mut qualification_stats = QualificationRowStatsV1::default();
+    // Predeclared characterization thresholds (joint ruling): row candidate
+    // 1.8e-3, per-decision B cap 1e-2, value cap 2e-3.
+    #[cfg(test)]
+    const MEASUREMENT_ROW_CANDIDATE_V1: f64 = 1.8e-3;
+    #[cfg(test)]
+    const MEASUREMENT_DECISION_B_CAP_V1: f64 = 1.0e-2;
+    #[cfg(test)]
+    const MEASUREMENT_VALUE_CAP_V1: f64 = 2.0e-3;
     #[cfg(test)]
     let measurement_scale_proxies = if measurement_mode {
         let norm = |name: &str| {
@@ -381,7 +408,9 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                         .sum::<f64>()
                         .sqrt()
                 })
-                .unwrap_or(f64::NAN)
+                .unwrap_or_else(|| {
+                    panic!("measurement mode requires snapshot parameter {name}")
+                })
         };
         Some((norm("scorer.2.weight"), norm("value_head.2.weight")))
     } else {
@@ -391,6 +420,8 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         let mut joint_log_probability: Option<f32> = None;
         #[cfg(test)]
         let mut measurement_joint_delta = (0.0_f64, 0.0_f64);
+        #[cfg(test)]
+        let mut measurement_decision_d_sum = 0.0_f64;
         value_outputs.get(group_first_substeps[group_index]).ok_or(
             NativePolicyTrainErrorV1::CudaBackend {
                 code: "cuda-burn-dense-bridge-value-cardinality",
@@ -469,9 +500,14 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                     max_expected = max_expected.max(expected);
                 }
                 let range = max_delta - min_delta;
-                if range > qualification_stats.max_range {
+                measurement_decision_d_sum += range;
+                // Option-initialized from the first observed row so a
+                // perfect-parity update still emits a genuine identity.
+                if qualification_stats.worst.is_none()
+                    || range > qualification_stats.max_range
+                {
                     qualification_stats.max_range = range;
-                    qualification_stats.worst = QualificationWorstRowV1 {
+                    qualification_stats.worst = Some(QualificationWorstRowV1 {
                         group: group_index,
                         substep: substep_index,
                         action_count: row.len(),
@@ -479,10 +515,19 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                         max_delta_index,
                         min_delta,
                         max_delta,
+                        min_endpoint_expected_bits: substep.expected_raw_action_logit_bits
+                            [min_delta_index],
+                        min_endpoint_actual_bits: row[min_delta_index].to_bits(),
+                        max_endpoint_expected_bits: substep.expected_raw_action_logit_bits
+                            [max_delta_index],
+                        max_endpoint_actual_bits: row[max_delta_index].to_bits(),
                         expected_span: max_expected - min_expected,
                         expected_magnitude: max_expected.abs().max(min_expected.abs()),
                         selected_index: substep.selected_action_index,
-                    };
+                    });
+                }
+                if range > MEASUREMENT_ROW_CANDIDATE_V1 {
+                    qualification_stats.rows_over_row_candidate += 1;
                 }
                 if range > 5.0e-3 {
                     qualification_stats.rows_over_5e3 += 1;
@@ -518,6 +563,27 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                     code: "cuda-burn-dense-bridge-nonfinite-transported-value",
                 });
             }
+            #[cfg(test)]
+            if measurement_mode {
+                let value_error = (f64::from(substep_value)
+                    - f64::from(f32::from_bits(substep.expected_value_bits)))
+                .abs();
+                if qualification_stats.worst_value.is_none()
+                    || value_error > qualification_stats.max_value_abs_error
+                {
+                    qualification_stats.max_value_abs_error = value_error;
+                    qualification_stats.worst_value = Some(QualificationWorstValueV1 {
+                        group: group_index,
+                        substep: substep_index,
+                        actual_bits: substep_value.to_bits(),
+                        expected_bits: substep.expected_value_bits,
+                        abs_error: value_error,
+                    });
+                }
+                if value_error > MEASUREMENT_VALUE_CAP_V1 {
+                    qualification_stats.values_over_value_cap += 1;
+                }
+            }
             if !tolerance_ok_v1(substep_value, f32::from_bits(substep.expected_value_bits)) {
                 return Err(NativePolicyTrainErrorV1::CudaBackend {
                     code: "cuda-burn-dense-bridge-transported-value-tolerance",
@@ -552,6 +618,12 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
             qualification_stats.max_sum_abs_logprob_delta = qualification_stats
                 .max_sum_abs_logprob_delta
                 .max(measurement_joint_delta.1);
+            qualification_stats.max_decision_d_sum = qualification_stats
+                .max_decision_d_sum
+                .max(measurement_decision_d_sum);
+            if measurement_decision_d_sum > MEASUREMENT_DECISION_B_CAP_V1 {
+                qualification_stats.decisions_over_b_cap += 1;
+            }
         }
         transported_advantages.push(advantage);
         let joint_log_probability = joint_log_probability.expect("nonempty group checked above");
@@ -576,46 +648,65 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     let loss = (policy_sum + value_coefficient * value_sum) / group_count;
     #[cfg(test)]
     if measurement_mode {
-        let worst = &qualification_stats.worst;
+        #[derive(serde::Serialize)]
+        struct QualificationUpdateRecordV1 {
+            adam_step_before: u64,
+            snapshot_state_sha256: String,
+            max_d: f64,
+            worst_row: QualificationWorstRowV1,
+            max_lp_delta: f64,
+            max_joint_lp_delta: f64,
+            max_sum_abs_lp_delta: f64,
+            max_decision_d_sum: f64,
+            decisions_over_b_cap: u64,
+            rows_over_row_candidate: u64,
+            rows_over_5e3: u64,
+            rows_over_ln101: u64,
+            max_value_abs_error: f64,
+            worst_value: QualificationWorstValueV1,
+            values_over_value_cap: u64,
+            scorer2_weight_l2: f64,
+            value2_weight_l2: f64,
+        }
+        // Evidence identity must be complete and valid: hash failure or a
+        // missing worst record fails the probe rather than serializing a
+        // sentinel.
         let (scorer_weight_norm, value_weight_norm) =
-            measurement_scale_proxies.unwrap_or((f64::NAN, f64::NAN));
+            measurement_scale_proxies.expect("measurement mode set");
         let snapshot_digest = snapshot
             .state_sha256_v1()
-            .map(|digest| {
-                digest[..8]
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>()
-            })
-            .unwrap_or_else(|_| "invalid".to_owned());
+            .expect("measurement snapshot hash")
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let record = QualificationUpdateRecordV1 {
+            adam_step_before: snapshot.adam_step,
+            snapshot_state_sha256: snapshot_digest,
+            max_d: qualification_stats.max_range,
+            worst_row: qualification_stats
+                .worst
+                .clone()
+                .expect("measurement update observed at least one row"),
+            max_lp_delta: qualification_stats.max_selected_logprob_delta,
+            max_joint_lp_delta: qualification_stats.max_joint_logprob_delta,
+            max_sum_abs_lp_delta: qualification_stats.max_sum_abs_logprob_delta,
+            max_decision_d_sum: qualification_stats.max_decision_d_sum,
+            decisions_over_b_cap: qualification_stats.decisions_over_b_cap,
+            rows_over_row_candidate: qualification_stats.rows_over_row_candidate,
+            rows_over_5e3: qualification_stats.rows_over_5e3,
+            rows_over_ln101: qualification_stats.rows_over_ln101,
+            max_value_abs_error: qualification_stats.max_value_abs_error,
+            worst_value: qualification_stats
+                .worst_value
+                .clone()
+                .expect("measurement update observed at least one value"),
+            values_over_value_cap: qualification_stats.values_over_value_cap,
+            scorer2_weight_l2: scorer_weight_norm,
+            value2_weight_l2: value_weight_norm,
+        };
         eprintln!(
-            "QUALIFICATION_JSONL {{\"adam_step_before\":{},\"snapshot_sha_prefix\":\"{}\",\
-             \"max_D\":{:e},\"worst\":{{\"group\":{},\"substep\":{},\"action_count\":{},\
-             \"min_delta_index\":{},\"max_delta_index\":{},\"min_delta\":{:e},\
-             \"max_delta\":{:e},\"expected_span\":{:e},\"expected_magnitude\":{:e},\
-             \"selected_index\":{}}},\"max_lp_delta\":{:e},\"max_joint_lp_delta\":{:e},\
-             \"max_sum_abs_lp_delta\":{:e},\"rows_over_5e3\":{},\"rows_over_ln101\":{},\
-             \"scorer2_weight_l2\":{:e},\"value2_weight_l2\":{:e}}}",
-            snapshot.adam_step,
-            snapshot_digest,
-            qualification_stats.max_range,
-            worst.group,
-            worst.substep,
-            worst.action_count,
-            worst.min_delta_index,
-            worst.max_delta_index,
-            worst.min_delta,
-            worst.max_delta,
-            worst.expected_span,
-            worst.expected_magnitude,
-            worst.selected_index,
-            qualification_stats.max_selected_logprob_delta,
-            qualification_stats.max_joint_logprob_delta,
-            qualification_stats.max_sum_abs_logprob_delta,
-            qualification_stats.rows_over_5e3,
-            qualification_stats.rows_over_ln101,
-            scorer_weight_norm,
-            value_weight_norm,
+            "QUALIFICATION_JSONL {}",
+            serde_json::to_string(&record).expect("measurement record serializes")
         );
     }
 

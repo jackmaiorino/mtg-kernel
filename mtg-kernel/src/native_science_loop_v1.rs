@@ -498,16 +498,37 @@ mod windows_science_loop_tests {
     /// selected-log-probability delta, per-decision cumulative joint error)
     /// instead of failing at the unratified bound. Measurement evidence for
     /// the gate qualification campaign; banks nothing.
+    /// RAII guard for the bridge's measurement flag: arming sets it, and the
+    /// drop runs on every exit path including panics, so no early failure
+    /// can leak record-only mode into later same-process tests.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    struct MeasurementModeGuardV1;
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    impl MeasurementModeGuardV1 {
+        fn arm() -> Self {
+            crate::experimental_burn_net8_packed_v1::bridge::TOLERANCE_MEASUREMENT_MODE_V1
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            Self
+        }
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    impl Drop for MeasurementModeGuardV1 {
+        fn drop(&mut self) {
+            crate::experimental_burn_net8_packed_v1::bridge::TOLERANCE_MEASUREMENT_MODE_V1
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     #[test]
     #[ignore = "measurement probe, run explicitly"]
     fn qualification_measurement_k64_depth256_v1() {
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
         use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_v2;
-        use std::sync::atomic::Ordering;
 
-        crate::experimental_burn_net8_packed_v1::bridge::TOLERANCE_MEASUREMENT_MODE_V1
-            .store(true, Ordering::Relaxed);
+        let _measurement_mode = MeasurementModeGuardV1::arm();
 
         let updates = 256_u64;
         let patched = test_fixture_bytes_with_schedule_v2(
@@ -590,9 +611,6 @@ mod windows_science_loop_tests {
                 Err(error) => panic!("measurement resume: {error:?}"),
             }
         }
-
-        crate::experimental_burn_net8_packed_v1::bridge::TOLERANCE_MEASUREMENT_MODE_V1
-            .store(false, Ordering::Relaxed);
     }
 
     /// Diagnostic twin of the learning smoke: same K=64 x 128-update run
