@@ -6,7 +6,7 @@
 //! graph without changing the normal CPU reference or trainer contracts.
 
 pub(crate) mod bridge;
-mod training;
+pub(crate) mod training;
 
 use crate::common_model_snapshot_v1::{
     common_model_snapshot_paths_v1, load_common_model_snapshot_v1,
@@ -724,8 +724,8 @@ fn decode_f32_hex(raw: &str) -> Result<Vec<f32>, Box<dyn Error>> {
 }
 
 #[derive(Default)]
-struct HostPackingWorkspace {
-    action_offsets: Vec<usize>,
+pub(crate) struct HostPackingWorkspace {
+    pub(crate) action_offsets: Vec<usize>,
     case_indices: Vec<usize>,
     state: Vec<f32>,
     object_features: Vec<f32>,
@@ -957,7 +957,7 @@ fn checked_offset_i32(value: i64, offset: usize) -> Result<i32, Box<dyn Error>> 
     )?)
 }
 
-struct DevicePackedBatch<B: Backend> {
+pub(crate) struct DevicePackedBatch<B: Backend> {
     device: B::Device,
     decision_count: usize,
     object_count: usize,
@@ -979,7 +979,7 @@ struct DevicePackedBatch<B: Backend> {
 }
 
 impl<B: Backend> DevicePackedBatch<B> {
-    fn upload(device: &B::Device, host: &HostPackingWorkspace) -> Self {
+    pub(crate) fn upload(device: &B::Device, host: &HostPackingWorkspace) -> Self {
         let decision_count = host.case_indices.len();
         let object_count = host.object_card_ids.len();
         let edge_count = host.edge_source_indices.len();

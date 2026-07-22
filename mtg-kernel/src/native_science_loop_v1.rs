@@ -349,6 +349,74 @@ mod windows_science_loop_tests {
         }
     }
 
+    /// Temporary steady-state probe, never committed: in-memory K=64 updates
+    /// on the CUDA backend (GPU scorer lane) across topology variants.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn timing_probe_gpu_scorer_topologies() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_phase_diagnostic_v1::NativeTrainingPhaseV1;
+
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        for (workers, sessions, broker) in
+            [(8_usize, 8_usize, 32_usize), (8, 16, 64), (16, 16, 128)]
+        {
+            let config = crate::native_training_executor_v1::NativeTrainingExecutionConfigV1 {
+                run_base_seed: 20_260_721,
+                batch_episodes: 64,
+                deck_ids: ["Rally".to_owned(), "Rally".to_owned()],
+                max_physical_decisions: 1024,
+                max_policy_steps: 2048,
+                worker_count: workers,
+                sessions_per_worker: sessions,
+                broker_batch_target: broker,
+                scheduler_timeout: Duration::from_secs(60),
+                measure_broker_service_time: true,
+                value_coefficient_bits: 0.5_f32.to_bits(),
+                learning_rate_bits: 0.001_f32.to_bits(),
+                numerical_backend: NativeTrainingNumericalBackendV1::CudaBurnDense,
+                backward_worker_limit: 1,
+            };
+            let mut executor =
+                crate::native_training_executor_v1::NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+                    config,
+                    &snapshot_manifest,
+                    &snapshot_payload,
+                )
+                .unwrap();
+            let updates = 12_u32;
+            let mut steady_update_ns = 0_u64;
+            let mut steady_rollout_ns = 0_u64;
+            let mut steady_broker_ns = 0_u64;
+            let mut steady_width = 0.0_f64;
+            let mut steady_updates = 0_u32;
+            for update_index in 0..updates {
+                let update_started = std::time::Instant::now();
+                let (observation, profile) = executor.run_update_with_phase_profile_v1().unwrap();
+                let update_ns =
+                    u64::try_from(update_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                if update_index >= 4 {
+                    steady_update_ns += update_ns;
+                    steady_rollout_ns +=
+                        profile.phase_elapsed_ns_v1(NativeTrainingPhaseV1::Rollout);
+                    steady_broker_ns += observation.rollout_metrics.broker_service_ns;
+                    steady_width += observation.rollout_metrics.mean_batch_width();
+                    steady_updates += 1;
+                }
+            }
+            println!(
+                "topology {workers}x{sessions} broker {broker}: steady {:.3}s/update = \
+                 {:.3} eps/s, rollout {:.3}s, broker_service {:.3}s, mean_width {:.1}",
+                steady_update_ns as f64 / 1e9 / f64::from(steady_updates),
+                64.0 * f64::from(steady_updates) / (steady_update_ns as f64 / 1e9),
+                steady_rollout_ns as f64 / 1e9 / f64::from(steady_updates),
+                steady_broker_ns as f64 / 1e9 / f64::from(steady_updates),
+                steady_width / f64::from(steady_updates),
+            );
+        }
+    }
+
     /// Temporary GPU K-scaling measurement probe: end-to-end durable training
     /// throughput at K = 2/16/64/256 with the CudaBurnDense train-step backend
     /// and the same scaled topology grid as the CPU probe, one segment

@@ -14,6 +14,9 @@
 //! sampler identity, seed identity, schedule identity, loss identity, or gauge
 //! identity.  Those frozen contracts are consumed unchanged.
 
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+use crate::experimental_burn_net8_packed_v1::{DevicePackedBatch, HostPackingWorkspace};
+
 use crate::async_flat_scored_rollout_v2::{
     expected_scorer_contract, run_async_flat_scored_rollout_native_observed_v2,
     AsyncFlatScoredObservedRunErrorV2, AsyncFlatScoredRolloutErrorV2,
@@ -99,10 +102,75 @@ pub(crate) enum NativePolicyAssociationErrorV1 {
     ResidualScoredDecisions,
 }
 
+/// The scorer's recorded forward outputs for one decision. CPU scorers retain
+/// the exact packed forward tape; the CUDA batch scorer transports the device
+/// outputs plus the generation stamp of the imported parameters. CPU train
+/// backends consume only the tape variant and reject transported CUDA outputs
+/// fail-closed at grouping time.
+#[derive(Debug)]
+enum NativePolicyScoredForwardRecordV1 {
+    CpuTape(NativePolicyPackedForwardTapeV1),
+    #[cfg_attr(
+        not(feature = "experimental-burn-net8-packed-cuda-v1"),
+        allow(dead_code)
+    )]
+    TransportedCudaOutputs {
+        logits: Vec<f32>,
+        value: f32,
+    },
+}
+
+impl NativePolicyScoredForwardRecordV1 {
+    fn logits_v1(&self) -> &[f32] {
+        match self {
+            Self::CpuTape(tape) => tape.logits_v1(),
+            Self::TransportedCudaOutputs { logits, .. } => logits,
+        }
+    }
+
+    fn value_v1(&self) -> f32 {
+        match self {
+            Self::CpuTape(tape) => tape.value_v1(),
+            Self::TransportedCudaOutputs { value, .. } => *value,
+        }
+    }
+}
+
+#[cfg(test)]
+impl NativePolicyScoredForwardRecordV1 {
+    fn corrupt_logit_for_test_v1(&mut self, index: usize) -> Result<(), ()> {
+        match self {
+            Self::CpuTape(tape) => tape.corrupt_logit_for_test_v1(index).map_err(|_| ()),
+            Self::TransportedCudaOutputs { logits, .. } => {
+                let logit = logits.get_mut(index).ok_or(())?;
+                *logit += 1.0;
+                Ok(())
+            }
+        }
+    }
+
+    fn corrupt_value_for_test_v1(&mut self) {
+        match self {
+            Self::CpuTape(tape) => tape.corrupt_value_for_test_v1(),
+            Self::TransportedCudaOutputs { value, .. } => *value += 1.0,
+        }
+    }
+
+    fn corrupt_model_generation_for_test_v1(&mut self) {
+        match self {
+            Self::CpuTape(tape) => tape.corrupt_model_generation_for_test_v1(),
+            // The transported record carries no generation stamp: the CUDA
+            // scorer imports the update's snapshot itself, so the binding is
+            // structural rather than recorded.
+            Self::TransportedCudaOutputs { .. } => {}
+        }
+    }
+}
+
 #[derive(Debug)]
 struct NativePolicyScoredTrainingInputV1 {
     tensor: NativeFlatDecisionTensorV2,
-    tape: NativePolicyPackedForwardTapeV1,
+    forward_record: NativePolicyScoredForwardRecordV1,
 }
 
 #[cfg(test)]
@@ -256,17 +324,20 @@ impl NativePolicyAssociationConsumerV1 {
                 NativePolicyAssociationTestMutationV1::SelectedLogit => {
                     staged
                         .training_input
-                        .tape
+                        .forward_record
                         .corrupt_logit_for_test_v1(selected_index)
                         .map_err(|_| NativePolicyAssociationErrorV1::LogitCountMismatch)?;
                 }
                 NativePolicyAssociationTestMutationV1::Value => {
-                    staged.training_input.tape.corrupt_value_for_test_v1();
+                    staged
+                        .training_input
+                        .forward_record
+                        .corrupt_value_for_test_v1();
                 }
                 NativePolicyAssociationTestMutationV1::ModelGeneration => {
                     staged
                         .training_input
-                        .tape
+                        .forward_record
                         .corrupt_model_generation_for_test_v1();
                 }
                 NativePolicyAssociationTestMutationV1::CanonicalTensor => {
@@ -277,20 +348,22 @@ impl NativePolicyAssociationConsumerV1 {
                 }
             }
         }
-        let tape_logits = staged.training_input.tape.logits_v1();
+        let forward_logits = staged.training_input.forward_record.logits_v1();
         let error = if staged.binding != event.binding {
             Some(NativePolicyAssociationErrorV1::BindingMismatch)
-        } else if tape_logits.len() != event.raw_action_logits.len() {
+        } else if forward_logits.len() != event.raw_action_logits.len() {
             Some(NativePolicyAssociationErrorV1::LogitCountMismatch)
-        } else if tape_logits[selected_index].to_bits()
+        } else if forward_logits[selected_index].to_bits()
             != event.raw_action_logits[selected_index].to_bits()
-            || tape_logits
+            || forward_logits
                 .iter()
                 .zip(event.raw_action_logits)
                 .any(|(expected, actual)| expected.to_bits() != actual.to_bits())
         {
             Some(NativePolicyAssociationErrorV1::LogitBitsMismatch)
-        } else if staged.training_input.tape.value_v1().to_bits() != event.predicted_value_bits {
+        } else if staged.training_input.forward_record.value_v1().to_bits()
+            != event.predicted_value_bits
+        {
             Some(NativePolicyAssociationErrorV1::ValueBitsMismatch)
         } else {
             None
@@ -360,6 +433,10 @@ struct NativePolicyForwardTaskDecisionV1 {
 
 struct NativePolicyForwardTaskV1 {
     decisions: Vec<NativePolicyForwardTaskDecisionV1>,
+    /// When set, workers tensorize only and return no tape: the broker runs
+    /// one batched device forward over the collected tensors instead of
+    /// per-decision CPU forwards.
+    fill_only: bool,
 }
 
 struct NativePolicyForwardResultV1 {
@@ -421,6 +498,7 @@ impl NativePolicyForwardPoolV1 {
                                 Err(_) => break,
                             }
                         };
+                        let fill_only = task.fill_only;
                         for decision in task.decisions {
                             let ordinal = decision.ordinal;
                             let mut tensor = NativeFlatDecisionTensorV2::default();
@@ -432,8 +510,10 @@ impl NativePolicyForwardPoolV1 {
                                 match worker_tensorizer
                                     .fill(decision.packet.scorer_view_v1(), &mut tensor)
                                 {
+                                    Ok(()) if fill_only => Ok(None),
                                     Ok(()) => worker_builder
                                         .forward_v1(native_encoded_decision_view_v1(&tensor))
+                                        .map(Some)
                                         .map_err(NativePolicyForwardTaskErrorV1::Forward),
                                     Err(error) => {
                                         Err(NativePolicyForwardTaskErrorV1::Tensor(error))
@@ -441,7 +521,7 @@ impl NativePolicyForwardPoolV1 {
                                 }
                             }));
                             let (tape, tensor_error, error, panicked) = match completed {
-                                Ok(Ok(tape)) => (Some(tape), None, None, false),
+                                Ok(Ok(tape)) => (tape, None, None, false),
                                 Ok(Err(NativePolicyForwardTaskErrorV1::Forward(error))) => {
                                     (None, None, Some(error), false)
                                 }
@@ -508,6 +588,36 @@ impl Drop for NativePolicyForwardPoolV1 {
     }
 }
 
+/// Device-resident scoring lane for the CudaBurnDense backend: the update's
+/// imported parameters, the device handle, and one neutral self-contained
+/// dummy decision used to keep every packed family nonempty.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+struct NativeCudaScorerLaneV1 {
+    device: burn_cuda::CudaDevice,
+    device_state: crate::experimental_burn_net8_packed_v1::training::ExperimentalDeviceTrainStateV1,
+    dummy_tensor: NativeFlatDecisionTensorV2,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn cuda_dummy_padding_tensor_v1() -> NativeFlatDecisionTensorV2 {
+    let schema = NativeEncodedDecisionSchemaV1::contract_v1();
+    NativeFlatDecisionTensorV2 {
+        state: vec![0.0; schema.state_dim],
+        object_features: vec![0.0; schema.object_feature_dim],
+        object_card_ids: vec![0],
+        object_groups: vec![0],
+        object_node_ids: vec![0],
+        edge_features: vec![0.0; schema.edge_feature_dim],
+        edge_source_indices: vec![0],
+        edge_target_indices: vec![0],
+        action_features: vec![0.0; schema.action_feature_dim],
+        action_ref_features: vec![0.0; schema.action_ref_feature_dim],
+        action_ref_card_ids: vec![0],
+        action_ref_action_indices: vec![0],
+        action_ref_node_indices: vec![0],
+    }
+}
+
 /// Production V2 scorer backed by the exact native thirteen-tensor encoder and
 /// native policy/value network. It owns one immutable parameter snapshot for
 /// the update so every scored decision can retain the exact backward tape.
@@ -519,6 +629,8 @@ struct NativePolicyBatchScorerV2 {
     last_failure: Option<NativePolicyScorerFailureV1>,
     accepted_batch_count: u64,
     accepted_decision_count: u64,
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    cuda: Option<NativeCudaScorerLaneV1>,
     #[cfg(test)]
     force_next_parallel_worker_panic: bool,
 }
@@ -545,9 +657,33 @@ impl NativePolicyBatchScorerV2 {
             last_failure: None,
             accepted_batch_count: 0,
             accepted_decision_count: 0,
+            #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+            cuda: None,
             #[cfg(test)]
             force_next_parallel_worker_panic: false,
         })
+    }
+
+    /// Enables device-side scoring for the update: imports the update's exact
+    /// parameter snapshot to the device once and routes every batch through
+    /// one packed forward instead of per-decision CPU forwards.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn enable_cuda_lane_v1(
+        &mut self,
+        snapshot: &crate::native_policy_train_step_v1::NativePolicyValueTrainSnapshotV1,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        use crate::experimental_burn_net8_packed_v1::training::ExperimentalDeviceTrainStateV1;
+        let device = burn_cuda::CudaDevice::new(0);
+        let device_state = ExperimentalDeviceTrainStateV1::import_snapshot_v1(snapshot, &device)
+            .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-scorer-lane-import-failure",
+            })?;
+        self.cuda = Some(NativeCudaScorerLaneV1 {
+            device,
+            device_state,
+            dummy_tensor: cuda_dummy_padding_tensor_v1(),
+        });
+        Ok(())
     }
 
     fn score_decisions_scalar_v1(
@@ -586,7 +722,10 @@ impl NativePolicyBatchScorerV2 {
             candidate_values.push(tape.value_v1());
             candidate_associations.push(NativeScoredDecisionAssociationV1 {
                 binding,
-                training_input: NativePolicyScoredTrainingInputV1 { tensor, tape },
+                training_input: NativePolicyScoredTrainingInputV1 {
+                    tensor,
+                    forward_record: NativePolicyScoredForwardRecordV1::CpuTape(tape),
+                },
             });
         }
         Ok(())
@@ -625,6 +764,7 @@ impl NativePolicyBatchScorerV2 {
         // scored, exactly as per-decision submission behaved.
         fn flush_chunk_v1(
             pool: &NativePolicyForwardPoolV1,
+            fill_only: bool,
             pending_decisions: &mut Vec<NativePolicyForwardTaskDecisionV1>,
             pending_metadata: &mut Vec<(FlatDecisionBindingV2, usize)>,
             bindings: &mut Vec<FlatDecisionBindingV2>,
@@ -637,6 +777,7 @@ impl NativePolicyBatchScorerV2 {
             let count = pending_decisions.len();
             pool.submit_v1(NativePolicyForwardTaskV1 {
                 decisions: std::mem::take(pending_decisions),
+                fill_only,
             })?;
             for (binding, expected) in pending_metadata.drain(..) {
                 bindings.push(binding);
@@ -657,6 +798,7 @@ impl NativePolicyBatchScorerV2 {
             () => {
                 flush_chunk_v1(
                     pool,
+                    false,
                     &mut pending_decisions,
                     &mut pending_metadata,
                     &mut bindings,
@@ -794,7 +936,10 @@ impl NativePolicyBatchScorerV2 {
             candidate_values.push(tape.value_v1());
             candidate_associations.push(NativeScoredDecisionAssociationV1 {
                 binding,
-                training_input: NativePolicyScoredTrainingInputV1 { tensor, tape },
+                training_input: NativePolicyScoredTrainingInputV1 {
+                    tensor,
+                    forward_record: NativePolicyScoredForwardRecordV1::CpuTape(tape),
+                },
             });
         }
         if pool_protocol_failed {
@@ -805,6 +950,221 @@ impl NativePolicyBatchScorerV2 {
         }
         if submitted != batch.decision_count() {
             return Err(NativePolicyScorerFailureV1::ForwardWorker);
+        }
+        Ok(())
+    }
+
+    /// Scores one batch on the CUDA lane: pool workers tensorize in parallel
+    /// (fill-only tasks), the broker packs every tensor plus, when any packed
+    /// family would otherwise be empty, one self-contained dummy decision, and
+    /// a single device forward produces every row. Per-decision outputs are
+    /// composition-invariant on this backend (bit-stable across companions,
+    /// slots, and batch sizes), so the canonical stream stays schedule
+    /// invariant exactly as with the CPU scorer.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn score_decisions_cuda_v1(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logit_count: usize,
+        candidate_logits: &mut Vec<f32>,
+        candidate_values: &mut Vec<f32>,
+        candidate_associations: &mut Vec<NativeScoredDecisionAssociationV1>,
+    ) -> Result<(), NativePolicyScorerFailureV1> {
+        let lane = self
+            .cuda
+            .as_ref()
+            .ok_or(NativePolicyScorerFailureV1::ForwardWorker)?;
+        let decision_count = batch.decision_count();
+        let mut bindings = Vec::new();
+        bindings
+            .try_reserve_exact(decision_count)
+            .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
+        let mut expected_logit_counts = Vec::new();
+        expected_logit_counts
+            .try_reserve_exact(decision_count)
+            .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
+
+        // Tensorize every decision, through the pool when it exists.
+        let mut tensors: Vec<NativeFlatDecisionTensorV2> = Vec::new();
+        tensors
+            .try_reserve_exact(decision_count)
+            .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
+        let mut synchronous_failure: Option<NativePolicyScorerFailureV1> = None;
+        for decision_index in 0..decision_count {
+            let decision = match batch.decision(decision_index) {
+                Some(decision) => decision,
+                None => {
+                    synchronous_failure = Some(NativePolicyScorerFailureV1::MissingDecision);
+                    break;
+                }
+            };
+            let binding = match batch.binding(decision_index) {
+                Some(binding) => binding,
+                None => {
+                    synchronous_failure = Some(NativePolicyScorerFailureV1::MissingDecision);
+                    break;
+                }
+            };
+            let begin = batch.action_offsets()[decision_index];
+            let end = batch.action_offsets()[decision_index + 1];
+            if end < begin || end > action_logit_count || end - begin != decision.actions().len() {
+                synchronous_failure = Some(NativePolicyScorerFailureV1::OutputShape);
+                break;
+            }
+            bindings.push(binding);
+            expected_logit_counts.push(end - begin);
+        }
+        if let Some(error) = synchronous_failure {
+            return Err(error);
+        }
+
+        if let Some(pool) = self.forward_pool.as_ref() {
+            let chunk_capacity = decision_count
+                .div_ceil(NATIVE_POLICY_FORWARD_CHUNK_TARGET_V1)
+                .max(1);
+            let mut pending = Vec::with_capacity(chunk_capacity);
+            let mut submitted = 0usize;
+            let mut submit_failed = false;
+            for decision_index in 0..decision_count {
+                let packet = match batch.cloned_validated_packet(decision_index) {
+                    Some(packet) => packet,
+                    None => {
+                        submit_failed = true;
+                        break;
+                    }
+                };
+                pending.push(NativePolicyForwardTaskDecisionV1 {
+                    ordinal: decision_index,
+                    packet,
+                    #[cfg(test)]
+                    force_panic: false,
+                });
+                if pending.len() == chunk_capacity {
+                    if pool
+                        .submit_v1(NativePolicyForwardTaskV1 {
+                            decisions: std::mem::take(&mut pending),
+                            fill_only: true,
+                        })
+                        .is_err()
+                    {
+                        submit_failed = true;
+                        break;
+                    }
+                    submitted += chunk_capacity;
+                }
+            }
+            if !submit_failed && !pending.is_empty() {
+                let count = pending.len();
+                if pool
+                    .submit_v1(NativePolicyForwardTaskV1 {
+                        decisions: std::mem::take(&mut pending),
+                        fill_only: true,
+                    })
+                    .is_err()
+                {
+                    submit_failed = true;
+                } else {
+                    submitted += count;
+                }
+            }
+            // Always drain exactly the accepted results so no stale result
+            // leaks into a later batch's collection.
+            let mut tensor_slots = (0..submitted).map(|_| None).collect::<Vec<_>>();
+            let mut pool_protocol_failed = false;
+            for _ in 0..submitted {
+                match pool.receive_v1() {
+                    Ok(result)
+                        if result.ordinal < submitted && tensor_slots[result.ordinal].is_none() =>
+                    {
+                        let ordinal = result.ordinal;
+                        tensor_slots[ordinal] = Some(result);
+                    }
+                    Ok(_) => pool_protocol_failed = true,
+                    Err(()) => {
+                        pool_protocol_failed = true;
+                        break;
+                    }
+                }
+            }
+            if submit_failed || pool_protocol_failed || submitted != decision_count {
+                return Err(NativePolicyScorerFailureV1::ForwardWorker);
+            }
+            for slot in tensor_slots {
+                let result = slot.ok_or(NativePolicyScorerFailureV1::ForwardWorker)?;
+                if result.panicked {
+                    return Err(NativePolicyScorerFailureV1::ForwardWorker);
+                }
+                if let Some(error) = result.tensor_error {
+                    return Err(NativePolicyScorerFailureV1::Tensor(error));
+                }
+                if result.tape.is_some() || result.error.is_some() {
+                    return Err(NativePolicyScorerFailureV1::ForwardWorker);
+                }
+                tensors.push(result.tensor);
+            }
+        } else {
+            for decision_index in 0..decision_count {
+                let decision = batch
+                    .decision(decision_index)
+                    .ok_or(NativePolicyScorerFailureV1::MissingDecision)?;
+                let mut tensor = NativeFlatDecisionTensorV2::default();
+                self.tensorizer
+                    .fill(decision, &mut tensor)
+                    .map_err(NativePolicyScorerFailureV1::Tensor)?;
+                tensors.push(tensor);
+            }
+        }
+
+        // Pack every tensor; append the neutral dummy decision only when a
+        // packed family would otherwise be empty (an all-empty family panics
+        // inside the device graph). The dummy is a self-contained companion,
+        // so by composition invariance it cannot perturb any real row.
+        let needs_dummy = tensors.iter().all(|tensor| tensor.edge_features.is_empty())
+            || tensors
+                .iter()
+                .all(|tensor| tensor.action_ref_features.is_empty());
+        let mut views = Vec::with_capacity(tensors.len() + usize::from(needs_dummy));
+        for tensor in &tensors {
+            views.push(native_encoded_decision_view_v1(tensor));
+        }
+        if needs_dummy {
+            views.push(native_encoded_decision_view_v1(&lane.dummy_tensor));
+        }
+        let mut workspace = HostPackingWorkspace::default();
+        workspace
+            .pack_views(&views)
+            .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
+        let device_batch = DevicePackedBatch::upload(&lane.device, &workspace);
+        let (logit_outputs, value_outputs) = lane
+            .device_state
+            .forward_outputs_v1(&device_batch)
+            .map_err(|_| NativePolicyScorerFailureV1::ForwardWorker)?;
+
+        for (decision_index, (binding, expected_logit_count)) in
+            bindings.into_iter().zip(expected_logit_counts).enumerate()
+        {
+            let begin = workspace.action_offsets[decision_index];
+            let end = workspace.action_offsets[decision_index + 1];
+            if end < begin || end - begin != expected_logit_count {
+                return Err(NativePolicyScorerFailureV1::OutputShape);
+            }
+            let row = &logit_outputs[begin..end];
+            let value = value_outputs[decision_index];
+            if !value.is_finite() || row.iter().any(|logit| !logit.is_finite()) {
+                return Err(NativePolicyScorerFailureV1::OutputShape);
+            }
+            candidate_logits.extend_from_slice(row);
+            candidate_values.push(value);
+            candidate_associations.push(NativeScoredDecisionAssociationV1 {
+                binding,
+                training_input: NativePolicyScoredTrainingInputV1 {
+                    tensor: std::mem::take(&mut tensors[decision_index]),
+                    forward_record: NativePolicyScoredForwardRecordV1::TransportedCudaOutputs {
+                        logits: row.to_vec(),
+                        value,
+                    },
+                },
+            });
         }
         Ok(())
     }
@@ -852,22 +1212,45 @@ impl NativePolicyBatchScorerV2 {
             .try_reserve_exact(batch.decision_count())
             .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
 
-        if self.forward_pool.is_some() && batch.decision_count() > 1 {
-            self.score_decisions_parallel_v1(
-                batch,
-                action_logits.len(),
-                &mut candidate_logits,
-                &mut candidate_values,
-                &mut candidate_associations,
-            )?;
-        } else {
-            self.score_decisions_scalar_v1(
-                batch,
-                action_logits.len(),
-                &mut candidate_logits,
-                &mut candidate_values,
-                &mut candidate_associations,
-            )?;
+        let scored_on_cuda = {
+            #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+            {
+                if self.cuda.is_some() {
+                    self.score_decisions_cuda_v1(
+                        batch,
+                        action_logits.len(),
+                        &mut candidate_logits,
+                        &mut candidate_values,
+                        &mut candidate_associations,
+                    )?;
+                    true
+                } else {
+                    false
+                }
+            }
+            #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+            {
+                false
+            }
+        };
+        if !scored_on_cuda {
+            if self.forward_pool.is_some() && batch.decision_count() > 1 {
+                self.score_decisions_parallel_v1(
+                    batch,
+                    action_logits.len(),
+                    &mut candidate_logits,
+                    &mut candidate_values,
+                    &mut candidate_associations,
+                )?;
+            } else {
+                self.score_decisions_scalar_v1(
+                    batch,
+                    action_logits.len(),
+                    &mut candidate_logits,
+                    &mut candidate_values,
+                    &mut candidate_associations,
+                )?;
+            }
         }
         if candidate_logits.len() != action_logits.len() || candidate_values.len() != values.len() {
             return Err(NativePolicyScorerFailureV1::OutputShape);
@@ -999,7 +1382,7 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
             .associations
             .pop_verified_v1(&event)
             .map_err(NativePolicyTrajectoryErrorV1::Association)?;
-        let scorer_action_count = training_input.tape.logits_v1().len();
+        let scorer_action_count = training_input.forward_record.logits_v1().len();
         self.core
             .observe_selected(
                 FlatSelectedSampleCore {
@@ -1537,6 +1920,22 @@ impl NativeTrainerStateV2 {
             config.broker_batch_target.min(logical_actor_count),
         )
         .map_err(NativeTrainerErrorV1::Train)?;
+        // The scorer choice is bound to the numerical backend: CudaBurnDense
+        // runs always score on the device (transporting device bits as the
+        // evidence canon), CPU backends always score on the CPU. The pairing
+        // keeps same-seed transcripts a function of the run's declared
+        // backend alone.
+        #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+        if config.numerical_backend == NativeTrainingNumericalBackendV1::CudaBurnDense {
+            let snapshot = self.train_state.snapshot_v1().map_err(|_| {
+                NativeTrainerErrorV1::Train(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-scorer-lane-snapshot-failure",
+                })
+            })?;
+            scorer
+                .enable_cuda_lane_v1(&snapshot)
+                .map_err(NativeTrainerErrorV1::Train)?;
+        }
         #[cfg(test)]
         if test_forward_worker_panic {
             scorer.force_next_parallel_worker_panic = true;
@@ -1554,6 +1953,8 @@ impl NativeTrainerStateV2 {
         let scorer_accepted_decision_count = scorer.accepted_decision_count;
         #[cfg(test)]
         let scorer_forward_call_count = scorer.forward_builder.forward_call_count_for_test_v1();
+        #[cfg(all(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+        let scorer_cuda_scored = scorer.cuda.is_some();
         let scorer_failure = scorer.last_failure.clone();
         if phase_recorder.is_enabled_v1() {
             let cleanup_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::CleanupDrop);
@@ -1589,7 +1990,19 @@ impl NativeTrainerStateV2 {
             scorer_accepted_decision_count,
             &rollout.metrics,
         )?;
-        #[cfg(test)]
+        #[cfg(all(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+        if scorer_cuda_scored {
+            assert_eq!(
+                scorer_forward_call_count, 0,
+                "the cuda scorer lane must never run the CPU forward builder"
+            );
+        } else {
+            assert_eq!(
+                scorer_forward_call_count, scorer_accepted_decision_count,
+                "the shared scorer builder must run exactly once per accepted decision"
+            );
+        }
+        #[cfg(all(test, not(feature = "experimental-burn-net8-packed-cuda-v1")))]
         assert_eq!(
             scorer_forward_call_count, scorer_accepted_decision_count,
             "the shared scorer builder must run exactly once per accepted decision"
@@ -2224,13 +2637,28 @@ fn train_grouped_candidate_v1(
                 .iter()
                 .enumerate()
                 .map(|(substep_index, substep)| {
+                    let encoded = Box::new(native_encoded_decision_view_v1(
+                        &substep.scoring_inputs.tensor,
+                    ));
+                    let forward = match &substep.scoring_inputs.forward_record {
+                        NativePolicyScoredForwardRecordV1::CpuTape(tape) => {
+                            NativePolicyForwardInputV1::Packed { encoded, tape }
+                        }
+                        NativePolicyScoredForwardRecordV1::TransportedCudaOutputs { .. } => {
+                            // Transported CUDA outputs carry no CPU tape; only
+                            // the CudaBurnDense backend may consume them.
+                            if execution.numerical_backend
+                                != NativeTrainingNumericalBackendV1::CudaBurnDense
+                            {
+                                return Err(NativeTrainerErrorV1::GroupingInvariant(
+                                    "cuda-scored inputs require the cuda backend",
+                                ));
+                            }
+                            NativePolicyForwardInputV1::Encoded(encoded)
+                        }
+                    };
                     Ok(NativePolicySubstepV1 {
-                        forward: NativePolicyForwardInputV1::Packed {
-                            encoded: Box::new(native_encoded_decision_view_v1(
-                                &substep.scoring_inputs.tensor,
-                            )),
-                            tape: &substep.scoring_inputs.tape,
-                        },
+                        forward,
                         selected_action_index: usize::try_from(substep.selected_index).map_err(
                             |_| NativeTrainerErrorV1::RecomputedOutputMismatch {
                                 field: "selected_action_index",
