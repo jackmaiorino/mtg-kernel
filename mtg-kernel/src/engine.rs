@@ -1115,7 +1115,8 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::AnyPermanent
         | TargetSpec::BluePermanent
         | TargetSpec::RedPermanent
-        | TargetSpec::NonlandPermanent => 1,
+        | TargetSpec::NonlandPermanent
+        | TargetSpec::Creature => 1,
         TargetSpec::PlayerThenTheirCreature => 2,
     }
 }
@@ -1583,6 +1584,13 @@ pub fn legal_targets_for(
             .filter(|&id| {
                 let def_idx = state.objects.get(id).card_def;
                 !card_def::CARD_DEFS[def_idx as usize].has_type(CardType::Land)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::Creature => battlefield_objects(state)
+            .filter(|&id| {
+                let def_idx = state.objects.get(id).card_def;
+                card_def::CARD_DEFS[def_idx as usize].has_type(CardType::Creature)
             })
             .map(Target::Object)
             .collect(),
@@ -8648,6 +8656,95 @@ mod tests {
             ),
             vec![Target::Object(creature)]
         );
+    }
+
+    #[test]
+    fn creature_target_spec_counts_one_and_only_enumerates_battlefield_creatures() {
+        let mut state = empty_game();
+        let own_creature = put_on_battlefield(&mut state, PlayerId::P0, "Goblin Bushwhacker");
+        let land = put_on_battlefield(&mut state, PlayerId::P0, "Island");
+        let noncreature = put_on_battlefield(&mut state, PlayerId::P0, "Blood Token");
+        let opposing_creature = put_on_battlefield(&mut state, PlayerId::P1, "Cryptic Serpent");
+
+        assert_eq!(target_count(TargetSpec::Creature), 1);
+        let legal = legal_targets_for(TargetSpec::Creature, &[], &state);
+        assert_eq!(
+            legal,
+            vec![
+                Target::Object(own_creature),
+                Target::Object(opposing_creature),
+            ]
+        );
+        assert!(!legal.contains(&Target::Player(PlayerId::P0)));
+        assert!(!legal.contains(&Target::Player(PlayerId::P1)));
+        assert!(!legal.contains(&Target::Object(land)));
+        assert!(!legal.contains(&Target::Object(noncreature)));
+    }
+
+    #[test]
+    fn creature_target_contract_preserves_staleness_but_rejects_wrong_zone_shape() {
+        let mut state = empty_game();
+        let creature = put_on_battlefield(&mut state, PlayerId::P1, "Cryptic Serpent");
+        let target = Target::Object(creature);
+        let contract = StackTargetContractV4::capture(&state, target);
+
+        assert!(stack_target_contract_is_structurally_valid(
+            &state,
+            TargetSpec::Creature,
+            0,
+            target,
+            contract,
+        ));
+        assert!(target_contract_matches_live(&state, target, contract));
+        assert!(!stack_target_contract_is_structurally_valid(
+            &state,
+            TargetSpec::Creature,
+            0,
+            Target::Player(PlayerId::P1),
+            StackTargetContractV4::Player(PlayerId::P1),
+        ));
+
+        let StackTargetContractV4::Object {
+            object,
+            card_def,
+            owner,
+            controller,
+            zone_change_count,
+            spell_copy_origin,
+            ..
+        } = contract
+        else {
+            panic!("creature target should capture an object contract")
+        };
+        let wrong_zone_contract = StackTargetContractV4::Object {
+            object,
+            card_def,
+            owner,
+            controller,
+            zone: Zone::Graveyard,
+            zone_change_count,
+            spell_copy_origin,
+        };
+        assert!(!stack_target_contract_is_structurally_valid(
+            &state,
+            TargetSpec::Creature,
+            0,
+            target,
+            wrong_zone_contract,
+        ));
+
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(creature, Zone::Graveyard),
+        );
+        assert!(stack_target_contract_is_structurally_valid(
+            &state,
+            TargetSpec::Creature,
+            0,
+            target,
+            contract,
+        ));
+        assert!(!target_contract_matches_live(&state, target, contract));
     }
 
     #[test]
