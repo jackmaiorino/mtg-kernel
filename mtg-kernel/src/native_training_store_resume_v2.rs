@@ -13,6 +13,7 @@
 //! every unknown or mismatching object. Generation publication and the
 //! product CLI remain separate layers.
 
+use crate::durable_publication_v1::DurableFileExpectationV1;
 use crate::native_train_state_payload_v1::NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1;
 use crate::native_training_executor_v1::{
     NativeTrainingCheckpointCandidateV1, NativeTrainingCheckpointDigestsV1,
@@ -118,6 +119,22 @@ const fn resume_error_v2(
     NativeTrainingStoreResumeV2Error { kind }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NativeTrainingStoreFinalExpectationV2 {
+    final_name: NativeTrainingStoreFinalNameV2,
+    expectation: DurableFileExpectationV1,
+}
+
+impl NativeTrainingStoreFinalExpectationV2 {
+    pub(crate) const fn final_name(self) -> NativeTrainingStoreFinalNameV2 {
+        self.final_name
+    }
+
+    pub(crate) const fn expectation(self) -> DurableFileExpectationV1 {
+        self.expectation
+    }
+}
+
 /// Sealed proof that the whole Store validated as one coherent chain.
 #[derive(Debug)]
 pub struct ValidatedNativeTrainingStoreStateV2 {
@@ -127,6 +144,7 @@ pub struct ValidatedNativeTrainingStoreStateV2 {
     latest_reference: ValidatedCheckpointReferenceV2,
     latest_payload: Vec<u8>,
     recognized_stage_paths: Vec<PathBuf>,
+    final_expectations: Vec<NativeTrainingStoreFinalExpectationV2>,
 }
 
 impl ValidatedNativeTrainingStoreStateV2 {
@@ -149,6 +167,10 @@ impl ValidatedNativeTrainingStoreStateV2 {
 
     pub const fn latest_reference(&self) -> &ValidatedCheckpointReferenceV2 {
         &self.latest_reference
+    }
+
+    pub(crate) fn final_expectations_v2(&self) -> &[NativeTrainingStoreFinalExpectationV2] {
+        &self.final_expectations
     }
 }
 
@@ -391,6 +413,19 @@ struct WalkedGenerationV2 {
     reference: ValidatedCheckpointReferenceV2,
     payload: Vec<u8>,
     continuation_count: u64,
+    final_expectations: Vec<NativeTrainingStoreFinalExpectationV2>,
+}
+
+fn final_expectation_v2(
+    final_name: NativeTrainingStoreFinalNameV2,
+    bytes: &[u8],
+) -> Result<NativeTrainingStoreFinalExpectationV2> {
+    let expectation = DurableFileExpectationV1::from_bytes(bytes)
+        .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::GenerationInvalid))?;
+    Ok(NativeTrainingStoreFinalExpectationV2 {
+        final_name,
+        expectation,
+    })
 }
 
 fn load_generation_v2(
@@ -438,6 +473,7 @@ fn load_generation_v2(
         kind,
     )?;
 
+    let mut continuation_bytes: Vec<Vec<u8>> = Vec::new();
     let (checkpoint, boundary, continuation_count) = match parent {
         None => {
             let checkpoint =
@@ -455,7 +491,6 @@ fn load_generation_v2(
             (checkpoint, boundary, 0_u64)
         }
         Some(parent) => {
-            let mut continuation_bytes: Vec<Vec<u8>> = Vec::new();
             loop {
                 let continuation_index =
                     u64::try_from(continuation_bytes.len()).map_err(|_| error)?;
@@ -515,12 +550,48 @@ fn load_generation_v2(
     }
     let reference =
         decode_checkpoint_reference_v2(&reference_bytes, run, &boundary).map_err(|_| error)?;
+    let mut final_expectations = Vec::with_capacity(6 + continuation_bytes.len());
+    final_expectations.push(final_expectation_v2(
+        NativeTrainingStoreFinalNameV2::StatePayload { generation_index },
+        &payload,
+    )?);
+    final_expectations.push(final_expectation_v2(
+        NativeTrainingStoreFinalNameV2::CheckpointManifest { generation_index },
+        &manifest,
+    )?);
+    for (continuation_index, continuation) in continuation_bytes.iter().enumerate() {
+        let continuation_index = u64::try_from(continuation_index).map_err(|_| error)?;
+        final_expectations.push(final_expectation_v2(
+            NativeTrainingStoreFinalNameV2::SegmentContinuation {
+                generation_index,
+                continuation_index,
+            },
+            continuation,
+        )?);
+    }
+    final_expectations.push(final_expectation_v2(
+        NativeTrainingStoreFinalNameV2::SegmentManifest { generation_index },
+        &segment_manifest,
+    )?);
+    final_expectations.push(final_expectation_v2(
+        NativeTrainingStoreFinalNameV2::CheckpointSidecar { generation_index },
+        &sidecar,
+    )?);
+    final_expectations.push(final_expectation_v2(
+        NativeTrainingStoreFinalNameV2::HeadRecord { generation_index },
+        &head,
+    )?);
+    final_expectations.push(final_expectation_v2(
+        NativeTrainingStoreFinalNameV2::CheckpointReference { generation_index },
+        &reference_bytes,
+    )?);
     Ok(WalkedGenerationV2 {
         checkpoint,
         boundary,
         reference,
         payload,
         continuation_count,
+        final_expectations,
     })
 }
 
@@ -578,6 +649,11 @@ fn walk_complete_store_v2(
         ));
     }
 
+    let mut final_expectations = vec![
+        final_expectation_v2(NativeTrainingStoreFinalNameV2::Run, &run_bytes)?,
+        final_expectation_v2(NativeTrainingStoreFinalNameV2::Latest, &latest_bytes)?,
+    ];
+
     // Fully validate every reachable boundary generation in order.
     let mut walked: Option<WalkedGenerationV2> = None;
     let mut continuation_counts: BTreeMap<u64, u64> = BTreeMap::new();
@@ -585,6 +661,7 @@ fn walk_complete_store_v2(
     loop {
         let generation = load_generation_v2(root, run, walked.as_ref(), generation_index)?;
         continuation_counts.insert(generation_index, generation.continuation_count);
+        final_expectations.extend(generation.final_expectations.iter().copied());
         walked = Some(generation);
         if generation_index == latest_generation_index {
             break;
@@ -698,7 +775,21 @@ fn walk_complete_store_v2(
         latest_reference: latest_walked.reference,
         latest_payload: latest_walked.payload,
         recognized_stage_paths,
+        final_expectations,
     })
+}
+
+/// Read-only whole-Store validation for a publisher that already owns the
+/// exclusive mutator lock. The sealed walked state lets publication compare
+/// its supplied parent with the current disk authority, while the cleanup plan
+/// remains private and untouched. Every committed prior generation, the
+/// current latest pointer, and the at-most-one partial next generation must
+/// form an admissible inventory before the publisher mutates anything.
+pub(crate) fn validate_native_training_store_for_publication_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+) -> std::result::Result<ValidatedNativeTrainingStoreStateV2, NativeTrainingStoreResumeV2Error> {
+    walk_complete_store_v2(root, run)
 }
 
 /// Decode the latest checkpoint into a private candidate and swap it into a

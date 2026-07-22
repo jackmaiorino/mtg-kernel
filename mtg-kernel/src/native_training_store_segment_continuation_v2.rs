@@ -574,10 +574,10 @@ pub(crate) fn build_segment_continuations_with_test_limits_v2(
 /// Decodes and re-partitions a complete set of continuation files. A single
 /// file has no public decoder because it cannot prove largest-prefix
 /// maximality in isolation.
-pub fn decode_segment_continuations_v2(
+pub fn decode_segment_continuations_v2<B: AsRef<[u8]>>(
     run: &ValidatedTrainRunV2,
     parent_context: UpdateEvidenceChainContextV1,
-    continuation_cjs: &[Vec<u8>],
+    continuation_cjs: &[B],
 ) -> Result<ValidatedSegmentContinuationChainAdvanceV2> {
     decode_segment_continuations_with_limits_v2(
         run,
@@ -609,10 +609,10 @@ fn build_segment_continuations_with_limits_v2(
     assemble_chain_v2(run, bounds, embedded, plans, context)
 }
 
-fn decode_segment_continuations_with_limits_v2(
+fn decode_segment_continuations_with_limits_v2<B: AsRef<[u8]>>(
     run: &ValidatedTrainRunV2,
     mut context: UpdateEvidenceChainContextV1,
-    continuation_cjs: &[Vec<u8>],
+    continuation_cjs: &[B],
     limits: ContinuationLimitsV2,
 ) -> Result<ValidatedSegmentContinuationChainAdvanceV2> {
     let bounds = validate_segment_start_v2(run, &context)?;
@@ -628,6 +628,7 @@ fn decode_segment_continuations_with_limits_v2(
     let mut parsed_files = Vec::with_capacity(continuation_cjs.len());
     let mut previous_continuation_sha256 = None;
     for (continuation_index, canonical_bytes) in continuation_cjs.iter().enumerate() {
+        let canonical_bytes = canonical_bytes.as_ref();
         let byte_count = u64::try_from(canonical_bytes.len())
             .map_err(|_| error_v2(SegmentContinuationV2ErrorKind::InvalidArithmetic))?;
         if byte_count > limits.max_bytes {
@@ -636,7 +637,7 @@ fn decode_segment_continuations_with_limits_v2(
         let wire: SegmentContinuationDecodeWireV2 =
             from_canonical_json_bytes_v1(canonical_bytes, CONTINUATION_NULL_POLICY_V2)?;
         let reencoded = to_canonical_json_bytes_v1(&wire, CONTINUATION_NULL_POLICY_V2)?;
-        if reencoded.as_slice() != canonical_bytes.as_slice() {
+        if reencoded.as_slice() != canonical_bytes {
             return Err(error_v2(SegmentContinuationV2ErrorKind::CanonicalJson(
                 CanonicalJsonErrorKindV1::NonCanonicalBytes,
             )));
