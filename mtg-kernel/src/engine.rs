@@ -4733,10 +4733,23 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
     match step {
         Step::Untap => {
             let p = state.active_player;
-            let permanents = state.players[p.index()].battlefield.clone();
+            // Battlefield zone vectors are ownership-oriented. Untap is
+            // controller-oriented, so inspect live objects to cover control
+            // changes without consuming another player's skip marker.
+            let permanents = state
+                .objects
+                .iter()
+                .filter_map(|(id, object)| {
+                    (object.zone == Zone::Battlefield && object.controller == p).then_some(id)
+                })
+                .collect::<Vec<_>>();
             for id in permanents {
                 let obj = state.objects.get_mut(id);
-                obj.tapped = false;
+                if obj.v4.skip_next_untap {
+                    obj.v4.skip_next_untap = false;
+                } else {
+                    obj.tapped = false;
+                }
                 obj.summoning_sick = false;
             }
             state.players[0].draws_this_turn = 0;
@@ -7700,6 +7713,59 @@ mod tests {
             legal.is_empty(),
             "a non-flying, non-reach creature should not be able to block a flyer"
         );
+    }
+
+    #[test]
+    fn skip_next_untap_follows_current_controller_and_clears_exactly_once() {
+        let mut state = empty_game();
+        let controlled = put_on_battlefield(&mut state, PlayerId::P1, "Guttersnipe");
+        let controlled_later = put_on_battlefield(&mut state, PlayerId::P0, "Guttersnipe");
+        let ordinary = put_on_battlefield(&mut state, PlayerId::P0, "Guttersnipe");
+        let already_untapped = put_on_battlefield(&mut state, PlayerId::P0, "Guttersnipe");
+
+        // Keep the ownership-oriented battlefield vectors unchanged while
+        // changing current control in both directions.
+        state.objects.get_mut(controlled).controller = PlayerId::P0;
+        state.objects.get_mut(controlled_later).controller = PlayerId::P1;
+        for object in [controlled, controlled_later, ordinary] {
+            let object = state.objects.get_mut(object);
+            object.tapped = true;
+            object.summoning_sick = true;
+        }
+        state.objects.get_mut(controlled).v4.skip_next_untap = true;
+        state.objects.get_mut(controlled_later).v4.skip_next_untap = true;
+        state.objects.get_mut(already_untapped).v4.skip_next_untap = true;
+
+        state.active_player = PlayerId::P0;
+        run_step_entry_action(&mut state, Step::Untap);
+
+        let controlled_object = state.objects.get(controlled);
+        assert!(controlled_object.tapped);
+        assert!(!controlled_object.v4.skip_next_untap);
+        assert!(!controlled_object.summoning_sick);
+        let ordinary_object = state.objects.get(ordinary);
+        assert!(!ordinary_object.tapped);
+        assert!(!ordinary_object.summoning_sick);
+        let already_untapped_object = state.objects.get(already_untapped);
+        assert!(!already_untapped_object.tapped);
+        assert!(!already_untapped_object.v4.skip_next_untap);
+        let waiting_object = state.objects.get(controlled_later);
+        assert!(waiting_object.tapped);
+        assert!(waiting_object.v4.skip_next_untap);
+        assert!(waiting_object.summoning_sick);
+
+        state.active_player = PlayerId::P1;
+        run_step_entry_action(&mut state, Step::Untap);
+        let waiting_object = state.objects.get(controlled_later);
+        assert!(waiting_object.tapped);
+        assert!(!waiting_object.v4.skip_next_untap);
+        assert!(!waiting_object.summoning_sick);
+
+        // The effect was consumed, so the following untap step behaves
+        // normally if the permanent becomes tapped again.
+        state.objects.get_mut(controlled_later).tapped = true;
+        run_step_entry_action(&mut state, Step::Untap);
+        assert!(!state.objects.get(controlled_later).tapped);
     }
 
     /// Regression test for the increment-13 fix (root-caused against
