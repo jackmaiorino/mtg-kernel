@@ -3419,3 +3419,123 @@ mod tests {
         assert!(higher_multiplicity > larger);
     }
 }
+
+/// Composition-invariance gate for device-side scoring designs: a decision's
+/// forward outputs on the packed device graph must be bit-stable regardless
+/// of batch companions, slot position, or batch size, because the rollout's
+/// canonical stream is schedule invariant and batch composition is not. The
+/// probe prints per-comparison bit equality; every row must report bit-equal
+/// logits and value. Measured bit-exact on the RTX 4070 SUPER (2026-07-21);
+/// any future scorer lane must keep this gate green on its target device.
+#[cfg(test)]
+mod composition_invariance_probe_tests {
+    use super::*;
+
+    fn score_composition_v1(
+        device_state: &ExperimentalDeviceTrainStateV1,
+        device: &burn_cuda::CudaDevice,
+        cases: &[EncodedDecisionOwned],
+        indices: &[usize],
+    ) -> Vec<(Vec<u32>, u32)> {
+        let views = indices
+            .iter()
+            .map(|index| cases[*index].view())
+            .collect::<Vec<_>>();
+        let mut workspace = HostPackingWorkspace::default();
+        workspace.pack_views(&views).unwrap();
+        let batch = DevicePackedBatch::upload(device, &workspace);
+        let (logits, values) = device_state.forward_outputs_v1(&batch).unwrap();
+        (0..indices.len())
+            .map(|slot| {
+                let begin = workspace.action_offsets[slot];
+                let end = workspace.action_offsets[slot + 1];
+                (
+                    logits[begin..end]
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect(),
+                    values[slot].to_bits(),
+                )
+            })
+            .collect()
+    }
+
+    fn compare_case_rows_v1(label: &str, left: &(Vec<u32>, u32), right: &(Vec<u32>, u32)) {
+        let logits_equal = left.0 == right.0;
+        let value_equal = left.1 == right.1;
+        let max_abs = left
+            .0
+            .iter()
+            .zip(&right.0)
+            .map(|(a, b)| (f32::from_bits(*a) - f32::from_bits(*b)).abs())
+            .fold(0.0_f32, f32::max)
+            .max((f32::from_bits(left.1) - f32::from_bits(right.1)).abs());
+        println!(
+            "{label}: logits_bit_equal={logits_equal} value_bit_equal={value_equal} \
+             max_abs_diff={max_abs:e}"
+        );
+    }
+
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn probe_forward_composition_invariance() {
+        let native_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(native_model).unwrap();
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        load_common_model_snapshot_v1(&manifest_path, &payload_path, &mut state).unwrap();
+        let snapshot = state.snapshot_v1().unwrap();
+        let cases = load_real_fixture_cases().unwrap();
+        for (index, case) in cases.iter().enumerate() {
+            println!(
+                "case {index}: objects {} edges {} actions {} refs {}",
+                case.object_count(),
+                case.edge_count(),
+                case.action_count(),
+                case.action_ref_count(),
+            );
+        }
+        let device = burn_cuda::CudaDevice::new(0);
+        let device_state =
+            ExperimentalDeviceTrainStateV1::import_snapshot_v1(&snapshot, &device).unwrap();
+
+        // Case 0 in composition A is the reference row.
+        println!("scoring A");
+        let a = score_composition_v1(&device_state, &device, &cases, &[0, 1, 2, 3, 4, 5, 6, 7]);
+        // Same batch size, same slot, different companions.
+        println!("scoring B");
+        let b = score_composition_v1(
+            &device_state,
+            &device,
+            &cases,
+            &[0, 8, 9, 10, 11, 12, 13, 1],
+        );
+        // Same batch size, same companions, case 0 in the last slot.
+        println!("scoring C");
+        let c = score_composition_v1(&device_state, &device, &cases, &[7, 1, 2, 3, 4, 5, 6, 0]);
+        // Batch size 2 (case 5 keeps the batch's edge total nonzero).
+        println!("scoring E");
+        let e = score_composition_v1(&device_state, &device, &cases, &[0, 5]);
+        // Batch size 14.
+        println!("scoring F");
+        let f = score_composition_v1(
+            &device_state,
+            &device,
+            &cases,
+            &(0..cases.len().min(14)).collect::<Vec<_>>(),
+        );
+        // Identical repeat of A: run-to-run determinism control.
+        println!("scoring A2");
+        let a2 = score_composition_v1(&device_state, &device, &cases, &[0, 1, 2, 3, 4, 5, 6, 7]);
+
+        compare_case_rows_v1("control_same_batch_rerun", &a[0], &a2[0]);
+        compare_case_rows_v1("same_size_same_slot_different_companions", &a[0], &b[0]);
+        compare_case_rows_v1("same_size_same_companions_last_slot", &a[0], &c[7]);
+        compare_case_rows_v1("size_8_vs_size_2", &a[0], &e[0]);
+        compare_case_rows_v1("size_8_vs_size_14", &a[0], &f[0]);
+
+        // Sweep every shared case across A/B to bound row-level agreement.
+        compare_case_rows_v1("case_1_slot_1_vs_slot_7", &a[1], &b[7]);
+    }
+}
