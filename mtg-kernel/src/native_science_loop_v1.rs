@@ -22,8 +22,7 @@ use crate::native_training_executor_v1::{
     NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1,
 };
 use crate::native_training_store_bootstrap_v2::{
-    bootstrap_native_training_store_v2, NativeTrainingStoreBootstrapOutcomeV2,
-    NativeTrainingStoreBootstrapV2ErrorKind,
+    bootstrap_native_training_store_v2, NativeTrainingStoreBootstrapV2ErrorKind,
 };
 use crate::native_training_store_boundary_v2::build_genesis_native_training_boundary_v2;
 use crate::native_training_store_checkpoint_v3::build_genesis_checkpoint_manifest_v3;
@@ -39,7 +38,9 @@ use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
 use crate::native_training_store_run_v2::ValidatedTrainRunV2;
 use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
 use crate::native_training_store_update_group_v1::validate_prepared_execution_config_v1;
-use crate::native_training_store_v2::publish_genesis_generation_v2;
+use crate::native_training_store_v2::{
+    publish_genesis_generation_v2, NativeTrainingStorePublisherV2ErrorKind,
+};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
@@ -105,53 +106,6 @@ const fn loop_error_v1(kind: NativeScienceLoopV1ErrorKind) -> NativeScienceLoopV
     NativeScienceLoopV1Error { kind }
 }
 
-/// Publish `run.json` and the genesis generation from the pristine
-/// snapshot-built executor; the receipt must witness publication of exactly
-/// generation zero. Used for the fresh-skeleton path and for interrupted
-/// genesis recovery, where the publisher validates the existing run
-/// authority byte-exactly and resumes candidate-equal partial finals.
-fn publish_genesis_v1(
-    root: &ValidatedNativeTrainingStoreRootV2,
-    run: &ValidatedTrainRunV2,
-    execution_config: &NativeTrainingExecutionConfigV1,
-    snapshot_manifest_path: &Path,
-    snapshot_payload_path: &Path,
-) -> Result<()> {
-    let genesis_error = loop_error_v1(NativeScienceLoopV1ErrorKind::GenesisFailed);
-    let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
-        execution_config.clone(),
-        snapshot_manifest_path,
-        snapshot_payload_path,
-    )
-    .map_err(|_| genesis_error)?;
-    let candidate = executor
-        .checkpoint_candidate_v1()
-        .map_err(|_| genesis_error)?;
-    let payload = candidate.payload().to_vec();
-    let checkpoint =
-        build_genesis_checkpoint_manifest_v3(run, &payload).map_err(|_| genesis_error)?;
-    let segment = build_genesis_segment_manifest_v2(run, &checkpoint).map_err(|_| genesis_error)?;
-    let boundary = build_genesis_native_training_boundary_v2(run, &segment, &checkpoint)
-        .map_err(|_| genesis_error)?;
-    let reference = build_checkpoint_reference_v2(run, &boundary).map_err(|_| genesis_error)?;
-    let latest = build_latest_v2(&boundary, &reference).map_err(|_| genesis_error)?;
-    let receipt = publish_genesis_generation_v2(
-        root,
-        run,
-        &payload,
-        &checkpoint,
-        &segment,
-        &boundary,
-        &reference,
-        &latest,
-    )
-    .map_err(|_| genesis_error)?;
-    if receipt.generation_index() != 0 {
-        return Err(genesis_error);
-    }
-    Ok(())
-}
-
 fn map_busy_v1<K>(
     kind: NativeScienceLoopV1ErrorKind,
     busy: impl Fn(&K) -> bool,
@@ -166,6 +120,20 @@ fn map_busy_v1<K>(
             kind
         })
     }
+}
+
+const fn map_genesis_publisher_error_kind_v1(
+    kind: NativeTrainingStorePublisherV2ErrorKind,
+) -> NativeScienceLoopV1Error {
+    loop_error_v1(match kind {
+        NativeTrainingStorePublisherV2ErrorKind::UnsupportedPlatform => {
+            NativeScienceLoopV1ErrorKind::UnsupportedPlatform
+        }
+        NativeTrainingStorePublisherV2ErrorKind::StoreBusy => {
+            NativeScienceLoopV1ErrorKind::StoreBusy
+        }
+        _ => NativeScienceLoopV1ErrorKind::GenesisFailed,
+    })
 }
 
 /// Move-only report of one complete science-loop invocation.
@@ -202,9 +170,9 @@ impl NativeScienceLoopReportV1 {
 /// Run the complete one-command science loop.
 ///
 /// Bootstrap or reopen the Store under `parent/root_basename`, publish the
-/// genesis generation when the skeleton is fresh, train to the run's target
-/// entirely through resume-reconstructed executors, validate the complete
-/// Store, then run and evaluate the update-zero and latest boundaries.
+/// genesis generation whenever no `latest.json` final exists, train to the
+/// run's target entirely through resume-reconstructed executors, validate the
+/// complete Store, then run and evaluate the update-zero and latest boundaries.
 pub fn run_native_science_loop_v1(
     parent: impl AsRef<Path>,
     root_basename: &str,
@@ -228,66 +196,63 @@ pub fn run_native_science_loop_v1(
         },
         |error| error.kind() == NativeTrainingStoreBootstrapV2ErrorKind::UnsupportedPlatform,
     ))?;
-    let fresh_skeleton = matches!(
-        bootstrapped.outcome(),
-        NativeTrainingStoreBootstrapOutcomeV2::SkeletonReady
-    );
+    // A missing latest final includes both a fresh skeleton and interrupted
+    // bootstrap after exact run authority (and possibly candidate-equal
+    // generation-zero finals or a latest stage). The publisher revalidates
+    // the complete state under its own exclusive lock before any mutation.
+    let genesis_required = !bootstrapped.latest_final_present();
     let root: ValidatedNativeTrainingStoreRootV2 = bootstrapped.into_root();
 
-    // Fresh bootstrap publishes run.json and the genesis generation from the
-    // pristine snapshot-built executor; the receipt witnesses publication of
-    // exactly generation zero.
-    if fresh_skeleton {
-        publish_genesis_v1(
-            &root,
-            run,
-            &execution_config,
+    // Train-new bootstrap and interrupted-bootstrap recovery both reconstruct
+    // the exact genesis candidate from the independently attested common
+    // snapshot. The receipt witnesses publication of exactly generation zero.
+    if genesis_required {
+        let genesis_error = loop_error_v1(NativeScienceLoopV1ErrorKind::GenesisFailed);
+        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config.clone(),
             snapshot_manifest_path,
             snapshot_payload_path,
-        )?;
+        )
+        .map_err(|_| genesis_error)?;
+        let candidate = executor
+            .checkpoint_candidate_v1()
+            .map_err(|_| genesis_error)?;
+        let payload = candidate.payload().to_vec();
+        let checkpoint =
+            build_genesis_checkpoint_manifest_v3(run, &payload).map_err(|_| genesis_error)?;
+        let segment =
+            build_genesis_segment_manifest_v2(run, &checkpoint).map_err(|_| genesis_error)?;
+        let boundary = build_genesis_native_training_boundary_v2(run, &segment, &checkpoint)
+            .map_err(|_| genesis_error)?;
+        let reference = build_checkpoint_reference_v2(run, &boundary).map_err(|_| genesis_error)?;
+        let latest = build_latest_v2(&boundary, &reference).map_err(|_| genesis_error)?;
+        let receipt = publish_genesis_generation_v2(
+            &root,
+            run,
+            &payload,
+            &checkpoint,
+            &segment,
+            &boundary,
+            &reference,
+            &latest,
+        )
+        .map_err(|error| map_genesis_publisher_error_kind_v1(error.kind()))?;
+        if receipt.generation_index() != 0 {
+            return Err(genesis_error);
+        }
     }
 
     // Train to the exact target: every window runs on a reconstructed
     // executor and commits only through the durable receipt.
-    let mut genesis_recovery_attempted = false;
     let latest_generation_index = loop {
-        let resumed = match resume_native_training_store_v2(&root, run, execution_config.clone()) {
-            Ok(resumed) => resumed,
-            // Interrupted genesis: a crash between run-authority and latest
-            // publication leaves run.json (bootstrap B8) with latest.json
-            // never written; resume classifies the missing pointer as
-            // latest-invalid only AFTER proving run.json byte-equal to this
-            // run, so the retry can never adopt a foreign store. The frozen
-            // draft requires train-new to recover exactly this state: retry
-            // genesis publication once, letting the publisher resume
-            // candidate-equal partial finals and fail closed on every other
-            // latest-invalid store (mismatching immutables, corrupt
-            // pointer), which surfaces as GenesisFailed.
-            Err(error)
-                if !fresh_skeleton
-                    && !genesis_recovery_attempted
-                    && error.kind() == NativeTrainingStoreResumeV2ErrorKind::LatestInvalid =>
-            {
-                genesis_recovery_attempted = true;
-                publish_genesis_v1(
-                    &root,
-                    run,
-                    &execution_config,
-                    snapshot_manifest_path,
-                    snapshot_payload_path,
-                )?;
-                continue;
-            }
-            Err(error) => {
-                return Err(map_busy_v1(
-                    NativeScienceLoopV1ErrorKind::TrainFailed,
-                    |error: &crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2Error| {
-                        error.kind() == NativeTrainingStoreResumeV2ErrorKind::StoreBusy
-                    },
-                    |error| error.kind() == NativeTrainingStoreResumeV2ErrorKind::UnsupportedPlatform,
-                )(error));
-            }
-        };
+        let resumed = resume_native_training_store_v2(&root, run, execution_config.clone())
+            .map_err(map_busy_v1(
+            NativeScienceLoopV1ErrorKind::TrainFailed,
+            |error: &crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2Error| {
+                error.kind() == NativeTrainingStoreResumeV2ErrorKind::StoreBusy
+            },
+            |error| error.kind() == NativeTrainingStoreResumeV2ErrorKind::UnsupportedPlatform,
+        ))?;
         match resumed {
             NativeTrainingStoreResumeV2::Complete {
                 latest_generation_index,
@@ -360,8 +325,14 @@ pub fn run_native_science_loop_v1(
 mod windows_science_loop_tests {
     use super::*;
     use crate::common_model_snapshot_v1::common_model_snapshot_paths_v1;
+    use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+    use crate::native_training_store_bootstrap_v2::{
+        bootstrap_native_training_store_v2, NativeTrainingStoreBootstrapOutcomeV2,
+    };
     use crate::native_training_store_resume_v2::test_execution_config_v2;
-    use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
+    use crate::native_training_store_run_v2::{
+        decode_train_run_v2, test_fixture_bytes_v2, test_fixture_bytes_with_schedule_v2,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -397,6 +368,45 @@ mod windows_science_loop_tests {
             episode_count: 2,
             scheduler_timeout: Duration::from_secs(300),
             measure_broker_service_time: false,
+        }
+    }
+
+    fn one_segment_run_v1() -> ValidatedTrainRunV2 {
+        decode_train_run_v2(&test_fixture_bytes_with_schedule_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            2,
+            4,
+            4,
+            2,
+            4,
+            8,
+            32_768,
+            65_536,
+        ))
+        .unwrap()
+    }
+
+    fn establish_exact_run_only_v1(parent: &TestParentV1, run: &ValidatedTrainRunV2) -> PathBuf {
+        let bootstrapped = bootstrap_native_training_store_v2(&parent.parent, "store").unwrap();
+        assert_eq!(
+            bootstrapped.outcome(),
+            NativeTrainingStoreBootstrapOutcomeV2::SkeletonReady
+        );
+        assert!(!bootstrapped.latest_final_present());
+        drop(bootstrapped);
+
+        let root_path = parent.parent.join("store");
+        fs::write(root_path.join("run.json"), run.canonical_bytes()).unwrap();
+        root_path
+    }
+
+    fn assert_generation_directories_empty_v1(root_path: &Path) {
+        for directory in ["segments", "checkpoints", "heads", "refs"] {
+            assert_eq!(
+                fs::read_dir(root_path.join(directory)).unwrap().count(),
+                0,
+                "{directory} must remain empty"
+            );
         }
     }
 
@@ -626,6 +636,142 @@ mod windows_science_loop_tests {
         .unwrap();
         assert_eq!(report.latest_generation_index(), target);
         assert_eq!(report.candidate_run().generation_index(), target);
+    }
+
+    #[test]
+    fn genesis_publisher_mapping_preserves_global_busy_and_platform_errors() {
+        assert_eq!(
+            map_genesis_publisher_error_kind_v1(
+                NativeTrainingStorePublisherV2ErrorKind::UnsupportedPlatform
+            )
+            .kind(),
+            NativeScienceLoopV1ErrorKind::UnsupportedPlatform
+        );
+        assert_eq!(
+            map_genesis_publisher_error_kind_v1(NativeTrainingStorePublisherV2ErrorKind::StoreBusy)
+                .kind(),
+            NativeScienceLoopV1ErrorKind::StoreBusy
+        );
+        for kind in [
+            NativeTrainingStorePublisherV2ErrorKind::RootInvalid,
+            NativeTrainingStorePublisherV2ErrorKind::InputInvalid,
+            NativeTrainingStorePublisherV2ErrorKind::StageCorruption,
+            NativeTrainingStorePublisherV2ErrorKind::PublicationFailed,
+            NativeTrainingStorePublisherV2ErrorKind::ImmutableFinalMismatchCorruption,
+            NativeTrainingStorePublisherV2ErrorKind::GenerationInvalid,
+            NativeTrainingStorePublisherV2ErrorKind::LatestInvalid,
+        ] {
+            assert_eq!(
+                map_genesis_publisher_error_kind_v1(kind).kind(),
+                NativeScienceLoopV1ErrorKind::GenesisFailed
+            );
+        }
+    }
+
+    #[test]
+    fn one_command_recovers_exact_run_only_and_candidate_equal_partial_genesis() {
+        let parent = TestParentV1::new("run-only-recovery");
+        let run = one_segment_run_v1();
+        let root_path = establish_exact_run_only_v1(&parent, &run);
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+
+        // Reproduce a real interrupted publisher state: exact run authority,
+        // the first candidate-equal generation-zero immutable, a recognized
+        // latest stage, and no latest final.
+        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let partial_payload = executor
+            .checkpoint_candidate_v1()
+            .unwrap()
+            .payload()
+            .to_vec();
+        let partial_payload_path = root_path
+            .join("checkpoints")
+            .join("update-00000000.state.f32le");
+        fs::write(&partial_payload_path, &partial_payload).unwrap();
+        let latest_stage_path = root_path.join(".latest.json.stage-v2");
+        fs::write(&latest_stage_path, b"interrupted-latest-stage").unwrap();
+
+        let report = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+        )
+        .unwrap();
+        assert_eq!(report.latest_generation_index(), 4);
+        assert_eq!(report.reference_run().generation_index(), 0);
+        assert_eq!(report.candidate_run().generation_index(), 4);
+        assert_eq!(fs::read(&partial_payload_path).unwrap(), partial_payload);
+        assert!(fs::symlink_metadata(&latest_stage_path).is_err());
+
+        let reopened = bootstrap_native_training_store_v2(&parent.parent, "store").unwrap();
+        assert_eq!(
+            reopened.outcome(),
+            NativeTrainingStoreBootstrapOutcomeV2::RunAuthorityPresent
+        );
+        assert!(reopened.latest_final_present());
+        let state = validate_native_training_store_v2(reopened.root(), &run).unwrap();
+        assert_eq!(state.latest_generation_index(), 4);
+    }
+
+    #[test]
+    fn run_only_mismatching_run_fails_as_genesis_without_mutation() {
+        let parent = TestParentV1::new("run-only-mismatching-run");
+        let run = one_segment_run_v1();
+        let root_path = establish_exact_run_only_v1(&parent, &run);
+        let run_path = root_path.join("run.json");
+        let mut mismatching_run = run.canonical_bytes().to_vec();
+        let flip = mismatching_run.len() / 2;
+        mismatching_run[flip] ^= 0x01;
+        fs::write(&run_path, &mismatching_run).unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+
+        let error = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), NativeScienceLoopV1ErrorKind::GenesisFailed);
+        assert_eq!(fs::read(run_path).unwrap(), mismatching_run);
+        assert!(fs::symlink_metadata(root_path.join("latest.json")).is_err());
+        assert_generation_directories_empty_v1(&root_path);
+    }
+
+    #[test]
+    fn present_but_invalid_latest_is_not_misclassified_as_recoverable_genesis() {
+        let parent = TestParentV1::new("invalid-latest");
+        let run = one_segment_run_v1();
+        let root_path = establish_exact_run_only_v1(&parent, &run);
+        let latest_path = root_path.join("latest.json");
+        fs::write(&latest_path, b"{}").unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+
+        let error = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), NativeScienceLoopV1ErrorKind::TrainFailed);
+        assert_eq!(fs::read(latest_path).unwrap(), b"{}");
+        assert_generation_directories_empty_v1(&root_path);
     }
 
     #[test]
