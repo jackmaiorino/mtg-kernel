@@ -3753,6 +3753,13 @@ mod composition_invariance_probe_tests {
             "{label}: logits_bit_equal={logits_equal} value_bit_equal={value_equal} \
              max_abs_diff={max_abs:e}"
         );
+        // The composition-invariance gate is bit-level: a report alone would
+        // let a regression pass silently.
+        assert!(
+            logits_equal && value_equal,
+            "{label}: device forward is not composition-invariant \
+             (max_abs_diff={max_abs:e})"
+        );
     }
 
     #[test]

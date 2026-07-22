@@ -105,6 +105,53 @@ const fn loop_error_v1(kind: NativeScienceLoopV1ErrorKind) -> NativeScienceLoopV
     NativeScienceLoopV1Error { kind }
 }
 
+/// Publish `run.json` and the genesis generation from the pristine
+/// snapshot-built executor; the receipt must witness publication of exactly
+/// generation zero. Used for the fresh-skeleton path and for interrupted
+/// genesis recovery, where the publisher validates the existing run
+/// authority byte-exactly and resumes candidate-equal partial finals.
+fn publish_genesis_v1(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    execution_config: &NativeTrainingExecutionConfigV1,
+    snapshot_manifest_path: &Path,
+    snapshot_payload_path: &Path,
+) -> Result<()> {
+    let genesis_error = loop_error_v1(NativeScienceLoopV1ErrorKind::GenesisFailed);
+    let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+        execution_config.clone(),
+        snapshot_manifest_path,
+        snapshot_payload_path,
+    )
+    .map_err(|_| genesis_error)?;
+    let candidate = executor
+        .checkpoint_candidate_v1()
+        .map_err(|_| genesis_error)?;
+    let payload = candidate.payload().to_vec();
+    let checkpoint =
+        build_genesis_checkpoint_manifest_v3(run, &payload).map_err(|_| genesis_error)?;
+    let segment = build_genesis_segment_manifest_v2(run, &checkpoint).map_err(|_| genesis_error)?;
+    let boundary = build_genesis_native_training_boundary_v2(run, &segment, &checkpoint)
+        .map_err(|_| genesis_error)?;
+    let reference = build_checkpoint_reference_v2(run, &boundary).map_err(|_| genesis_error)?;
+    let latest = build_latest_v2(&boundary, &reference).map_err(|_| genesis_error)?;
+    let receipt = publish_genesis_generation_v2(
+        root,
+        run,
+        &payload,
+        &checkpoint,
+        &segment,
+        &boundary,
+        &reference,
+        &latest,
+    )
+    .map_err(|_| genesis_error)?;
+    if receipt.generation_index() != 0 {
+        return Err(genesis_error);
+    }
+    Ok(())
+}
+
 fn map_busy_v1<K>(
     kind: NativeScienceLoopV1ErrorKind,
     busy: impl Fn(&K) -> bool,
@@ -191,52 +238,56 @@ pub fn run_native_science_loop_v1(
     // pristine snapshot-built executor; the receipt witnesses publication of
     // exactly generation zero.
     if fresh_skeleton {
-        let genesis_error = loop_error_v1(NativeScienceLoopV1ErrorKind::GenesisFailed);
-        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
-            execution_config.clone(),
-            snapshot_manifest_path,
-            snapshot_payload_path,
-        )
-        .map_err(|_| genesis_error)?;
-        let candidate = executor
-            .checkpoint_candidate_v1()
-            .map_err(|_| genesis_error)?;
-        let payload = candidate.payload().to_vec();
-        let checkpoint =
-            build_genesis_checkpoint_manifest_v3(run, &payload).map_err(|_| genesis_error)?;
-        let segment =
-            build_genesis_segment_manifest_v2(run, &checkpoint).map_err(|_| genesis_error)?;
-        let boundary = build_genesis_native_training_boundary_v2(run, &segment, &checkpoint)
-            .map_err(|_| genesis_error)?;
-        let reference = build_checkpoint_reference_v2(run, &boundary).map_err(|_| genesis_error)?;
-        let latest = build_latest_v2(&boundary, &reference).map_err(|_| genesis_error)?;
-        let receipt = publish_genesis_generation_v2(
+        publish_genesis_v1(
             &root,
             run,
-            &payload,
-            &checkpoint,
-            &segment,
-            &boundary,
-            &reference,
-            &latest,
-        )
-        .map_err(|_| genesis_error)?;
-        if receipt.generation_index() != 0 {
-            return Err(genesis_error);
-        }
+            &execution_config,
+            snapshot_manifest_path,
+            snapshot_payload_path,
+        )?;
     }
 
     // Train to the exact target: every window runs on a reconstructed
     // executor and commits only through the durable receipt.
+    let mut genesis_recovery_attempted = false;
     let latest_generation_index = loop {
-        let resumed = resume_native_training_store_v2(&root, run, execution_config.clone())
-            .map_err(map_busy_v1(
-            NativeScienceLoopV1ErrorKind::TrainFailed,
-            |error: &crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2Error| {
-                error.kind() == NativeTrainingStoreResumeV2ErrorKind::StoreBusy
-            },
-            |error| error.kind() == NativeTrainingStoreResumeV2ErrorKind::UnsupportedPlatform,
-        ))?;
+        let resumed = match resume_native_training_store_v2(&root, run, execution_config.clone()) {
+            Ok(resumed) => resumed,
+            // Interrupted genesis: a crash between run-authority and latest
+            // publication leaves run.json (bootstrap B8) with latest.json
+            // never written; resume classifies the missing pointer as
+            // latest-invalid only AFTER proving run.json byte-equal to this
+            // run, so the retry can never adopt a foreign store. The frozen
+            // draft requires train-new to recover exactly this state: retry
+            // genesis publication once, letting the publisher resume
+            // candidate-equal partial finals and fail closed on every other
+            // latest-invalid store (mismatching immutables, corrupt
+            // pointer), which surfaces as GenesisFailed.
+            Err(error)
+                if !fresh_skeleton
+                    && !genesis_recovery_attempted
+                    && error.kind() == NativeTrainingStoreResumeV2ErrorKind::LatestInvalid =>
+            {
+                genesis_recovery_attempted = true;
+                publish_genesis_v1(
+                    &root,
+                    run,
+                    &execution_config,
+                    snapshot_manifest_path,
+                    snapshot_payload_path,
+                )?;
+                continue;
+            }
+            Err(error) => {
+                return Err(map_busy_v1(
+                    NativeScienceLoopV1ErrorKind::TrainFailed,
+                    |error: &crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2Error| {
+                        error.kind() == NativeTrainingStoreResumeV2ErrorKind::StoreBusy
+                    },
+                    |error| error.kind() == NativeTrainingStoreResumeV2ErrorKind::UnsupportedPlatform,
+                )(error));
+            }
+        };
         match resumed {
             NativeTrainingStoreResumeV2::Complete {
                 latest_generation_index,
@@ -409,8 +460,7 @@ mod windows_science_loop_tests {
             let run = match decode_train_run_v2(&patched) {
                 Ok(run) => run,
                 Err(error) => {
-                    println!("K={batch_episodes}: run record rejected: {error}");
-                    continue;
+                    panic!("K={batch_episodes}: run record rejected: {error}");
                 }
             };
             let episodes = batch_episodes * updates;
@@ -530,10 +580,52 @@ mod windows_science_loop_tests {
                     );
                 }
                 Err(message) => {
-                    println!("K={batch_episodes}: training failed after {wall:.3}s: {message}");
+                    panic!("K={batch_episodes}: training failed after {wall:.3}s: {message}");
                 }
             }
         }
+    }
+
+    /// A crash between run-authority and latest publication leaves run.json
+    /// present with latest.json never written (bootstrap B8). The loop must
+    /// recover by retrying genesis and then train to the exact target, per
+    /// the frozen draft's train-new recovery clause. The state is
+    /// constructed literally: bootstrap the empty skeleton, then write the
+    /// run's exact canonical bytes as run.json, which is byte-identical to
+    /// what the interrupted publisher leaves behind.
+    #[test]
+    fn science_loop_recovers_interrupted_genesis() {
+        let parent = TestParentV1::new("genesis-recovery");
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let target = run.requested_successful_updates();
+
+        let bootstrapped =
+            crate::native_training_store_bootstrap_v2::bootstrap_native_training_store_v2(
+                &parent.parent,
+                "store",
+            )
+            .unwrap();
+        assert!(matches!(
+            bootstrapped.outcome(),
+            crate::native_training_store_bootstrap_v2::NativeTrainingStoreBootstrapOutcomeV2::SkeletonReady
+        ));
+        let root = bootstrapped.into_root();
+        fs::write(root.root_path().join("run.json"), run.canonical_bytes()).unwrap();
+        drop(root);
+
+        let report = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+        )
+        .unwrap();
+        assert_eq!(report.latest_generation_index(), target);
+        assert_eq!(report.candidate_run().generation_index(), target);
     }
 
     #[test]

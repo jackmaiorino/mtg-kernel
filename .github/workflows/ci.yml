@@ -51,6 +51,12 @@ jobs:
       - name: Run non-Windows native Store feature Clippy
         run: cargo clippy --release --locked -p mtg-kernel --all-targets --features native-training-store-v2-production -- -D warnings
 
+      # Hosted runners have no CUDA device, so behavioral CUDA gates run
+      # under the local merge protocol; this step still fails closed on any
+      # merged change that breaks the CUDA feature's compilation or lints.
+      - name: Run CUDA backend feature Clippy (compile gate, no device)
+        run: cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1 -- -D warnings
+
   rust-tests:
     name: Rust tests (${{ matrix.os }})
     strategy:
