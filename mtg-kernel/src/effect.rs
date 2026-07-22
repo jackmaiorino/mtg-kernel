@@ -4046,16 +4046,21 @@ mod tests {
         state.move_hand_to_battlefield(PlayerId::P0, permanent);
         let before_hash = state.diagnostic_state_hash();
 
-        execute(
-            &EffectOp::SkipNextUntap {
-                object: ObjectRef::ThisSource,
-            },
-            &ExecCtx::no_targets(permanent, PlayerId::P0),
-            &mut state,
-        );
+        let skip = EffectOp::SkipNextUntap {
+            object: ObjectRef::ThisSource,
+        };
+        let ctx = ExecCtx::no_targets(permanent, PlayerId::P0);
+        execute(&skip, &ctx, &mut state);
 
         assert!(state.objects.get(permanent).v4.skip_next_untap);
         assert_ne!(state.diagnostic_state_hash(), before_hash);
+        let once_hash = state.diagnostic_state_hash();
+
+        // Multiple applications before the affected untap step deliberately
+        // merge into the same one-shot marker rather than queueing skips.
+        execute(&skip, &ctx, &mut state);
+        assert_eq!(state.diagnostic_state_hash(), once_hash);
+
         let snapshot = serde_json::to_vec(&state).unwrap();
         let restored: GameState = serde_json::from_slice(&snapshot).unwrap();
         assert_eq!(restored, state);
