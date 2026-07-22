@@ -3817,6 +3817,90 @@ mod composition_invariance_probe_tests {
         );
     }
 
+    /// Cell-zero raw forward evidence: one frozen batch (all fixture cases
+    /// in fixed order) through the device forward at the common snapshot,
+    /// compared against the sequential CPU forward in f64, emitted as one
+    /// machine-parseable line. Run identically under the stock build and
+    /// the SimpleUnit qualification-fork build in fresh processes; the
+    /// device-bits SHA and per-case discrepancy stats are the comparison
+    /// artifact. Route identity is witnessed externally (CUBECL_DEBUG_LOG
+    /// kernel names); this probe records outputs only.
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn cell_zero_raw_forward_probe_v1() {
+        use sha2::{Digest, Sha256};
+
+        let native_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(native_model).unwrap();
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        load_common_model_snapshot_v1(&manifest_path, &payload_path, &mut state).unwrap();
+        let snapshot = state.snapshot_v1().unwrap();
+        let snapshot_sha = snapshot
+            .state_sha256_v1()
+            .unwrap()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let cases = load_real_fixture_cases().unwrap();
+        let device = burn_cuda::CudaDevice::new(0);
+        let device_state =
+            ExperimentalDeviceTrainStateV1::import_snapshot_v1(&snapshot, &device).unwrap();
+
+        let indices: Vec<usize> = (0..cases.len()).collect();
+        let device_rows = score_composition_v1(&device_state, &device, &cases, &indices);
+
+        let mut device_bits_hasher = Sha256::new();
+        let mut global_max_abs = 0.0_f64;
+        let mut global_max_range = 0.0_f64;
+        let mut global_max_value_abs = 0.0_f64;
+        let mut per_case = Vec::with_capacity(cases.len());
+        for (case_index, (logit_bits, value_bits)) in device_rows.iter().enumerate() {
+            for bits in logit_bits {
+                device_bits_hasher.update(bits.to_le_bytes());
+            }
+            device_bits_hasher.update(value_bits.to_le_bytes());
+            let cpu = state
+                .model_v1()
+                .forward_v1(cases[case_index].view())
+                .unwrap();
+            assert_eq!(cpu.logits.len(), logit_bits.len());
+            let mut min_delta = f64::INFINITY;
+            let mut max_delta = f64::NEG_INFINITY;
+            let mut max_abs = 0.0_f64;
+            for (device_bits, cpu_value) in logit_bits.iter().zip(&cpu.logits) {
+                let delta = f64::from(f32::from_bits(*device_bits)) - f64::from(*cpu_value);
+                min_delta = min_delta.min(delta);
+                max_delta = max_delta.max(delta);
+                max_abs = max_abs.max(delta.abs());
+            }
+            let range = max_delta - min_delta;
+            let value_abs = (f64::from(f32::from_bits(*value_bits)) - f64::from(cpu.value)).abs();
+            global_max_abs = global_max_abs.max(max_abs);
+            global_max_range = global_max_range.max(range);
+            global_max_value_abs = global_max_value_abs.max(value_abs);
+            per_case.push(format!(
+                "{{\"case\":{case_index},\"actions\":{},\"max_abs\":{max_abs:e},\
+                 \"range\":{range:e},\"value_abs\":{value_abs:e}}}",
+                logit_bits.len()
+            ));
+        }
+        let device_bits_sha = device_bits_hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        println!(
+            "CELL_ZERO_JSONL {{\"snapshot_state_sha256\":\"{snapshot_sha}\",\
+             \"case_count\":{},\"device_bits_sha256\":\"{device_bits_sha}\",\
+             \"global_max_abs\":{global_max_abs:e},\"global_max_range\":{global_max_range:e},\
+             \"global_max_value_abs\":{global_max_value_abs:e},\"per_case\":[{}]}}",
+            cases.len(),
+            per_case.join(",")
+        );
+    }
+
     #[test]
     #[ignore = "measurement probe, run explicitly"]
     fn probe_forward_composition_invariance() {

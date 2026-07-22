@@ -408,9 +408,7 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                         .sum::<f64>()
                         .sqrt()
                 })
-                .unwrap_or_else(|| {
-                    panic!("measurement mode requires snapshot parameter {name}")
-                })
+                .unwrap_or_else(|| panic!("measurement mode requires snapshot parameter {name}"))
         };
         Some((norm("scorer.2.weight"), norm("value_head.2.weight")))
     } else {
@@ -503,9 +501,7 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                 measurement_decision_d_sum += range;
                 // Option-initialized from the first observed row so a
                 // perfect-parity update still emits a genuine identity.
-                if qualification_stats.worst.is_none()
-                    || range > qualification_stats.max_range
-                {
+                if qualification_stats.worst.is_none() || range > qualification_stats.max_range {
                     qualification_stats.max_range = range;
                     qualification_stats.worst = Some(QualificationWorstRowV1 {
                         group: group_index,
