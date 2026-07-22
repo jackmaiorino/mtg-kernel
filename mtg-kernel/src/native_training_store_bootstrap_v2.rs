@@ -95,6 +95,7 @@ pub enum NativeTrainingStoreBootstrapOutcomeV2 {
 pub struct NativeTrainingStoreBootstrapV2 {
     root: ValidatedNativeTrainingStoreRootV2,
     outcome: NativeTrainingStoreBootstrapOutcomeV2,
+    latest_final_present: bool,
 }
 
 impl NativeTrainingStoreBootstrapV2 {
@@ -104,6 +105,13 @@ impl NativeTrainingStoreBootstrapV2 {
 
     pub const fn root(&self) -> &ValidatedNativeTrainingStoreRootV2 {
         &self.root
+    }
+
+    /// Whether a regular `latest.json` final was present in the locked B8
+    /// inventory. This is only a routing fact: callers must still pass the
+    /// Store through publisher or resume validation under their own lock.
+    pub const fn latest_final_present(&self) -> bool {
+        self.latest_final_present
     }
 
     pub fn into_root(self) -> ValidatedNativeTrainingStoreRootV2 {
@@ -242,6 +250,7 @@ mod windows_bootstrap_v2 {
         run_stage_present: bool,
         run_present: bool,
         latest_content_present: bool,
+        latest_final_present: bool,
     }
 
     struct HeldBootstrapLockV2<'handle> {
@@ -271,6 +280,7 @@ mod windows_bootstrap_v2 {
             run_stage_present: false,
             run_present: false,
             latest_content_present: false,
+            latest_final_present: false,
         };
         let mut seen_directories = [false; 4];
         for entry in fs::read_dir(root_path).map_err(|_| corrupt)? {
@@ -302,10 +312,20 @@ mod windows_bootstrap_v2 {
                     }
                     inventory.run_stage_present = true;
                 }
-                LATEST_LEAF_V2 | LATEST_STAGE_LEAF_V2 => {
+                LATEST_LEAF_V2 => {
                     // Generation content is admissible only at B8, where
                     // ordinary generation recovery applies; before B8 it
                     // makes the root corrupt.
+                    if !file_type.is_file() {
+                        return Err(corrupt);
+                    }
+                    inventory.latest_content_present = true;
+                    inventory.latest_final_present = true;
+                }
+                LATEST_STAGE_LEAF_V2 => {
+                    // A recognized latest stage is admissible at B8 but is
+                    // not authority. Train-new must still replay the candidate
+                    // and let the publisher replace latest last.
                     if !file_type.is_file() {
                         return Err(corrupt);
                     }
@@ -624,7 +644,11 @@ mod windows_bootstrap_v2 {
         })?;
         drop(held_lock);
         let _ = retained_directories;
-        Ok(NativeTrainingStoreBootstrapV2 { root, outcome })
+        Ok(NativeTrainingStoreBootstrapV2 {
+            root,
+            outcome,
+            latest_final_present: rescanned.latest_final_present,
+        })
     }
 }
 
@@ -740,6 +764,7 @@ mod tests {
                 first.outcome(),
                 NativeTrainingStoreBootstrapOutcomeV2::SkeletonReady
             );
+            assert!(!first.latest_final_present());
             let root_path = parent.path().join("store");
             drop(first);
             assert_complete_skeleton(&root_path);
@@ -749,6 +774,7 @@ mod tests {
                 second.outcome(),
                 NativeTrainingStoreBootstrapOutcomeV2::SkeletonReady
             );
+            assert!(!second.latest_final_present());
             drop(second);
 
             // Run-authority presence flips the outcome without byte claims.
@@ -758,7 +784,23 @@ mod tests {
                 third.outcome(),
                 NativeTrainingStoreBootstrapOutcomeV2::RunAuthorityPresent
             );
+            assert!(!third.latest_final_present());
             drop(third);
+
+            // A recognized latest stage is recoverable content, not a final
+            // latest authority, and must route train-new back through genesis
+            // publication.
+            let latest_stage = root_path.join(".latest.json.stage-v2");
+            fs::write(&latest_stage, b"{}").unwrap();
+            let staged = bootstrap_native_training_store_v2(parent.path(), "store").unwrap();
+            assert_eq!(
+                staged.outcome(),
+                NativeTrainingStoreBootstrapOutcomeV2::RunAuthorityPresent
+            );
+            assert!(!staged.latest_final_present());
+            drop(staged);
+            assert_eq!(fs::read(&latest_stage).unwrap(), b"{}");
+            fs::remove_file(latest_stage).unwrap();
 
             // At B8 ordinary generation recovery applies: latest.json and
             // generation content are admissible and preserved.
@@ -773,6 +815,7 @@ mod tests {
                 reopened.outcome(),
                 NativeTrainingStoreBootstrapOutcomeV2::RunAuthorityPresent
             );
+            assert!(reopened.latest_final_present());
             assert_eq!(fs::read(root_path.join("latest.json")).unwrap(), b"{}");
         }
 
