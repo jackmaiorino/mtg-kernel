@@ -3404,6 +3404,203 @@ mod tests {
     }
 
     #[test]
+    fn resident_snapshot_bit_identity_is_bitwise_not_float_equality() {
+        use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+
+        let named = |values: Vec<f32>| NativeNamedParameterV1 {
+            name: "p",
+            shape: vec![values.len()],
+            values,
+        };
+        let base = NativePolicyValueTrainSnapshotV1 {
+            adam_step: 3,
+            scorer_bias_anchor_bits: 0x3f80_0000,
+            parameters: vec![named(vec![0.0, 1.5])],
+            first_moments: vec![named(vec![0.25, -0.5])],
+            second_moments: vec![named(vec![0.125, 0.75])],
+        };
+        assert!(super::bridge::snapshots_bit_identical_v1(&base, &base));
+
+        // Derived float equality conflates the zero signs; the state hash and
+        // therefore the reuse gate must not.
+        let mut negative_zero = base.clone();
+        negative_zero.parameters[0].values[0] = -0.0;
+        assert_eq!(negative_zero, base);
+        assert!(!super::bridge::snapshots_bit_identical_v1(
+            &negative_zero,
+            &base
+        ));
+
+        let mut stepped = base.clone();
+        stepped.adam_step += 1;
+        assert!(!super::bridge::snapshots_bit_identical_v1(&stepped, &base));
+
+        let mut anchored = base.clone();
+        anchored.scorer_bias_anchor_bits ^= 1;
+        assert!(!super::bridge::snapshots_bit_identical_v1(&anchored, &base));
+
+        let mut moment_ulp = base.clone();
+        moment_ulp.second_moments[0].values[1] =
+            f32::from_bits(moment_ulp.second_moments[0].values[1].to_bits() ^ 1);
+        assert!(!super::bridge::snapshots_bit_identical_v1(
+            &moment_ulp,
+            &base
+        ));
+
+        let mut reshaped = base.clone();
+        reshaped.first_moments[0].shape = vec![2, 1];
+        assert!(!super::bridge::snapshots_bit_identical_v1(&reshaped, &base));
+    }
+
+    /// Two production bridge updates with the resident device state reused on
+    /// the second, against the same two updates with the resident slot
+    /// cleared between them (the import-every-update behavior): every commit
+    /// must be bit-identical, and the counters must prove the reuse actually
+    /// happened. Run explicitly and alone: the resident slot and counters are
+    /// process-wide, so concurrent bridge-driving tests would perturb the
+    /// counter deltas (never the correctness of either lane).
+    #[test]
+    #[ignore = "requires a CUDA device, run explicitly"]
+    fn resident_reuse_is_bit_identical_to_fresh_import() {
+        use crate::native_policy_train_step_v1::{
+            NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
+            NativePolicyTrainStepResultV1,
+        };
+        use std::sync::atomic::Ordering;
+
+        let native_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut seed_state = NativePolicyValueTrainStateV1::new_v1(native_model).unwrap();
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        load_common_model_snapshot_v1(&manifest_path, &payload_path, &mut seed_state).unwrap();
+        let seed_snapshot = seed_state.snapshot_v1().unwrap();
+        let cases = load_real_fixture_cases().unwrap();
+
+        // One production bridge update; the expected transported bits are
+        // recomputed from the current CPU model exactly as the rollout
+        // scorer would after the preceding commit.
+        let one_update = |state: &mut NativePolicyValueTrainStateV1| -> (
+            NativePolicyTrainStepResultV1,
+            [u8; 32],
+        ) {
+            let group_sizes = [1_usize, 2, 1, 3, 1];
+            let substep_total: usize = group_sizes.iter().sum();
+            struct ExpectedBits {
+                case_index: usize,
+                selected: usize,
+                logit_bits: Vec<u32>,
+                value_bits: u32,
+            }
+            let mut expected = Vec::with_capacity(substep_total);
+            for flat in 0..substep_total {
+                let case_index = flat % cases.len();
+                let output = state
+                    .model_v1()
+                    .forward_v1(cases[case_index].view())
+                    .unwrap();
+                let selected = flat % output.logits.len();
+                expected.push(ExpectedBits {
+                    case_index,
+                    selected,
+                    logit_bits: output.logits.iter().map(|value| value.to_bits()).collect(),
+                    value_bits: output.value.to_bits(),
+                });
+            }
+            let mut group_substeps: Vec<Vec<NativePolicySubstepV1<'_>>> =
+                Vec::with_capacity(group_sizes.len());
+            let mut flat = 0_usize;
+            for size in group_sizes {
+                let mut substeps = Vec::with_capacity(size);
+                for _ in 0..size {
+                    let entry = &expected[flat];
+                    substeps.push(NativePolicySubstepV1 {
+                        forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                            cases[entry.case_index].view(),
+                        )),
+                        selected_action_index: entry.selected,
+                        expected_raw_action_logit_bits: &entry.logit_bits,
+                        expected_value_bits: entry.value_bits,
+                    });
+                    flat += 1;
+                }
+                group_substeps.push(substeps);
+            }
+            let terminal_pattern = [1_i8, -1, 0, 1, -1];
+            let groups = group_substeps
+                .iter()
+                .zip(terminal_pattern)
+                .map(
+                    |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
+                        substeps,
+                        terminal_return,
+                    },
+                )
+                .collect::<Vec<_>>();
+            let result = super::bridge::train_step_cuda_burn_dense_v1(
+                state,
+                &groups,
+                VALUE_COEFFICIENT_V1,
+                BENCHMARK_LEARNING_RATE_V1,
+            )
+            .unwrap();
+            let sha = state.snapshot_v1().unwrap().state_sha256_v1().unwrap();
+            (result, sha)
+        };
+
+        // Resident lane: update one imports, update two must reuse.
+        super::bridge::clear_resident_device_state_for_test_v1();
+        let reuse_before = super::bridge::RESIDENT_REUSE_COUNT_V1.load(Ordering::Relaxed);
+        let import_before = super::bridge::RESIDENT_IMPORT_COUNT_V1.load(Ordering::Relaxed);
+        let mut resident_state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+            seed_state.model_v1().clone(),
+            &seed_snapshot,
+        )
+        .unwrap();
+        let (resident_first, resident_first_sha) = one_update(&mut resident_state);
+        let (resident_second, resident_second_sha) = one_update(&mut resident_state);
+        assert_eq!(
+            super::bridge::RESIDENT_IMPORT_COUNT_V1.load(Ordering::Relaxed),
+            import_before + 1,
+            "the second update must not re-import"
+        );
+        assert_eq!(
+            super::bridge::RESIDENT_REUSE_COUNT_V1.load(Ordering::Relaxed),
+            reuse_before + 1,
+            "the second update must reuse the resident device state"
+        );
+
+        // Fresh lane: identical inputs with the resident slot cleared between
+        // updates, forcing the import-every-update behavior.
+        super::bridge::clear_resident_device_state_for_test_v1();
+        let mut fresh_state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+            seed_state.model_v1().clone(),
+            &seed_snapshot,
+        )
+        .unwrap();
+        let (fresh_first, fresh_first_sha) = one_update(&mut fresh_state);
+        super::bridge::clear_resident_device_state_for_test_v1();
+        let (fresh_second, fresh_second_sha) = one_update(&mut fresh_state);
+        super::bridge::clear_resident_device_state_for_test_v1();
+
+        assert_eq!(resident_first_sha, fresh_first_sha);
+        assert_eq!(
+            resident_second_sha, fresh_second_sha,
+            "resident reuse must commit bit-identically to a fresh import"
+        );
+        for (resident, fresh) in [
+            (&resident_first, &fresh_first),
+            (&resident_second, &fresh_second),
+        ] {
+            assert_eq!(resident.loss.to_bits(), fresh.loss.to_bits());
+            assert_eq!(resident.policy_sum.to_bits(), fresh.policy_sum.to_bits());
+            assert_eq!(resident.value_sum.to_bits(), fresh.value_sum.to_bits());
+            assert_eq!(resident.adam_step, fresh.adam_step);
+            assert_eq!(resident.scorer_bias_gauge, fresh.scorer_bias_gauge);
+        }
+    }
+
+    #[test]
     fn every_device_runtime_manifest_field_breaks_the_digest() {
         let baseline = DeviceRuntimeManifestV1 {
             gpu_model: "gpu".to_owned(),

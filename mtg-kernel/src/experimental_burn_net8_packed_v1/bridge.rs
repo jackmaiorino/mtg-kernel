@@ -1,16 +1,18 @@
 //! Production trainer bridge for the CudaBurnDense backend.
 //!
-//! One update: snapshot the CPU train state, import it to the device, pack
-//! the update's encoded decision views, run the dense group loss step, read
-//! back logits/values, tolerance-check the CUDA outputs against the
-//! transported scorer bits (the CUDA identity's semantic difference from the
-//! CPU backends' bit-exact revalidation), then build every evidence field
-//! from the transported bits in the exact CPU f32 fold order so the trainer's
-//! bit-exact evidence revalidation holds unchanged. The gauge record observes
-//! the transported rows and coefficients in the CPU backward traversal order,
-//! with the device's raw scorer-bias gradient as the residual witness. The
-//! device state is exported and replaces the CPU state; transactional
-//! semantics stay CPU-owned.
+//! One update: snapshot the CPU train state, reuse the resident device state
+//! when the snapshot is bit-identical to the one the device already holds
+//! (otherwise import fresh), pack the update's encoded decision views, run
+//! the dense group loss step, read back logits/values, tolerance-check the
+//! CUDA outputs against the transported scorer bits (the CUDA identity's
+//! semantic difference from the CPU backends' bit-exact revalidation), then
+//! build every evidence field from the transported bits in the exact CPU f32
+//! fold order so the trainer's bit-exact evidence revalidation holds
+//! unchanged. The gauge record observes the transported rows and coefficients
+//! in the CPU backward traversal order, with the device's raw scorer-bias
+//! gradient as the residual witness. The device state is exported and
+//! replaces the CPU state; transactional semantics stay CPU-owned, and the
+//! exported device state is parked for the next update.
 
 use super::training::{
     build_dense_group_loss_plan_v1, DenseGroupLossPlanV1, ExperimentalDeviceTrainStateV1,
@@ -19,9 +21,12 @@ use super::{DevicePackedBatch, HostPackingWorkspace};
 use crate::native_policy_train_step_v1::{
     selected_log_softmax, NativePhysicalLossTermV1, NativePolicyForwardInputV1,
     NativePolicyPhysicalDecisionV1, NativePolicyTrainErrorV1, NativePolicyTrainStepResultV1,
-    NativePolicyValueTrainStateV1, NativeSelectedOutputV1, ScorerBiasGaugeAccumulatorV1,
+    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, NativeSelectedOutputV1,
+    ScorerBiasGaugeAccumulatorV1,
 };
+use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use std::error::Error;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 const TRANSPORTED_OUTPUT_ABSOLUTE_TOLERANCE_V1: f32 = 5.0e-3;
 const TRANSPORTED_OUTPUT_RELATIVE_TOLERANCE_V1: f32 = 5.0e-3;
@@ -35,6 +40,71 @@ fn bridge_error_v1(_error: Box<dyn Error>) -> NativePolicyTrainErrorV1 {
     NativePolicyTrainErrorV1::CudaBackend {
         code: "cuda-burn-dense-bridge-device-failure",
     }
+}
+
+/// Device-resident trainer state parked between updates.
+///
+/// `exported` is the exact snapshot the resident device tensors hold: the
+/// snapshot exported by the update that parked them. Reuse requires the next
+/// update's candidate snapshot to be bit-identical to it, so the resident
+/// path is numerically indistinguishable from a fresh import, and a resumed,
+/// rolled-back, or foreign candidate always falls back to importing.
+struct ResidentDeviceStateV1 {
+    exported: NativePolicyValueTrainSnapshotV1,
+    device_state: ExperimentalDeviceTrainStateV1,
+}
+
+static RESIDENT_DEVICE_STATE_V1: Mutex<Option<ResidentDeviceStateV1>> = Mutex::new(None);
+
+fn resident_device_state_slot_v1() -> MutexGuard<'static, Option<ResidentDeviceStateV1>> {
+    // A poisoned lock only means a panicking thread once held it; any
+    // surviving entry stays safe to consider because reuse is gated on exact
+    // content equality, never on how the entry got there.
+    RESIDENT_DEVICE_STATE_V1
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+pub(super) static RESIDENT_REUSE_COUNT_V1: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+#[cfg(test)]
+pub(super) static RESIDENT_IMPORT_COUNT_V1: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(test)]
+pub(super) fn clear_resident_device_state_for_test_v1() {
+    *resident_device_state_slot_v1() = None;
+}
+
+fn named_tensors_bit_identical_v1(
+    left: &[NativeNamedParameterV1],
+    right: &[NativeNamedParameterV1],
+) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(a, b)| {
+            a.name == b.name
+                && a.shape == b.shape
+                && a.values.len() == b.values.len()
+                && a.values
+                    .iter()
+                    .zip(&b.values)
+                    .all(|(x, y)| x.to_bits() == y.to_bits())
+        })
+}
+
+/// Bit-level snapshot identity. The state hash covers f32 bit patterns, so
+/// the reuse gate must too: derived float equality would conflate -0.0 with
+/// +0.0 and admit a resident state whose exported hash differs.
+pub(super) fn snapshots_bit_identical_v1(
+    left: &NativePolicyValueTrainSnapshotV1,
+    right: &NativePolicyValueTrainSnapshotV1,
+) -> bool {
+    left.adam_step == right.adam_step
+        && left.scorer_bias_anchor_bits == right.scorer_bias_anchor_bits
+        && named_tensors_bit_identical_v1(&left.parameters, &right.parameters)
+        && named_tensors_bit_identical_v1(&left.first_moments, &right.first_moments)
+        && named_tensors_bit_identical_v1(&left.second_moments, &right.second_moments)
 }
 
 fn tolerance_ok_v1(actual: f32, expected: f32) -> bool {
@@ -83,7 +153,8 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         }
     }
 
-    // Snapshot, import to device, pack, plan, step.
+    // Snapshot, then reuse the resident device state or import fresh, pack,
+    // plan, step.
     let snapshot = state
         .snapshot_v1()
         .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
@@ -92,8 +163,28 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     let parameter_before_bits =
         snapshot.parameters[SCORER_SECOND_BIAS_ORDINAL_V1].values[0].to_bits();
     let device = burn_cuda::CudaDevice::new(0);
-    let mut device_state = ExperimentalDeviceTrainStateV1::import_snapshot_v1(&snapshot, &device)
-        .map_err(bridge_error_v1)?;
+    // Take (not borrow) the resident entry for the whole update: every
+    // failure path below leaves the slot empty, so a partially stepped
+    // device state can never become eligible for reuse; the slot is refilled
+    // only after the update commits host-side. On the reuse path the
+    // incoming snapshot needs no fresh validation: it is bit-identical to
+    // the parked exported snapshot, which `export_snapshot_v1` validated.
+    let resident = resident_device_state_slot_v1().take();
+    let mut device_state = match resident {
+        Some(resident) if snapshots_bit_identical_v1(&resident.exported, &snapshot) => {
+            #[cfg(test)]
+            RESIDENT_REUSE_COUNT_V1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            resident.device_state
+        }
+        stale => {
+            // Free any stale resident tensors before importing the new set.
+            drop(stale);
+            #[cfg(test)]
+            RESIDENT_IMPORT_COUNT_V1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            ExperimentalDeviceTrainStateV1::import_snapshot_v1(&snapshot, &device)
+                .map_err(bridge_error_v1)?
+        }
+    };
     let mut workspace = HostPackingWorkspace::default();
     workspace.pack_views(&views).map_err(bridge_error_v1)?;
     let batch = DevicePackedBatch::upload(&device, &workspace);
@@ -299,6 +390,12 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
         code: "cuda-burn-dense-bridge-state-reimport-failure",
     })?;
+    // The update is committed host-side: park the device state for the next
+    // update, keyed by the exact snapshot its tensors now hold.
+    *resident_device_state_slot_v1() = Some(ResidentDeviceStateV1 {
+        exported: updated_snapshot,
+        device_state,
+    });
 
     Ok(NativePolicyTrainStepResultV1 {
         policy_sum,
