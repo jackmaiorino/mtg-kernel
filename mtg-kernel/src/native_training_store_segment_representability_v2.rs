@@ -998,10 +998,10 @@ mod tests {
         row.batch_episodes = 1;
         row.checkpoint_segment_updates = 1;
         row.requested_successful_updates = 1;
-        row.max_physical_decisions = 131_071;
-        row.max_policy_steps = 131_071;
+        row.max_physical_decisions = 2_097_151;
+        row.max_policy_steps = 2_097_151;
         let accepted = plan_from_inputs_v2(row, production).unwrap();
-        assert_eq!(accepted.max_logical_rows_per_update_v2(), 262_144);
+        assert_eq!(accepted.max_logical_rows_per_update_v2(), 4_194_304);
         row.max_physical_decisions += 1;
         assert_bound_error_v2(plan_from_inputs_v2(row, production));
 

@@ -552,35 +552,52 @@ impl ExperimentalDeviceTrainStateV1 {
 
     /// Non-autodiff forward readback of flat logits and values for the
     /// current device model, used by the bridge's host evidence
-    /// recomputation before the training step advances the model.
+    /// recomputation before the training step advances the model. The forward
+    /// runs on the validated inner backend so no autodiff graph or retained
+    /// activations exist: on large update batches the previous autodiff-typed
+    /// readback pinned a full never-backwarded activation set alongside the
+    /// training step's own graph and drove the device out of memory.
     pub(crate) fn forward_outputs_v1(
         &self,
         batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
     ) -> Result<(Vec<f32>, Vec<f32>), Box<dyn Error>> {
-        let (logits, values) = self.model.forward(batch);
-        CudaAutodiffBackendV1::sync(&self.device)?;
+        let inner_model = self.model.valid();
+        let inner_batch = inner_readback_batch_v1(batch);
+        let (logits, values) = inner_model.forward(&inner_batch);
+        CudaBackendV1::sync(&self.device)?;
         let logits = logits.into_data().to_vec::<f32>()?;
         let values = values.into_data().to_vec::<f32>()?;
         Ok((logits, values))
     }
 
-    /// Bridge step for the production trainer: dense group loss, backward,
-    /// raw scorer-bias residual readback, essential gauge canonicalization,
-    /// Adam, commit. Returns the raw residual for the host gauge record.
-    pub(crate) fn train_one_step_bridge_v1(
-        &mut self,
+    /// Runs one chunk's forward, scaled dense group loss, and backward, and
+    /// folds the gradients into `accumulator`. The loss divides by the whole
+    /// update's group count, so the accumulated gradient over all chunks is
+    /// the full-batch gradient with only reduction-order rounding differences
+    /// while peak device memory stays bounded by one chunk's activations.
+    /// Returns the chunk's raw scorer-bias gradient component for the gauge
+    /// witness.
+    pub(crate) fn chunk_backward_v1(
+        &self,
+        accumulator: &mut burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
         batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
         plan: &DenseGroupLossPlanV1,
         value_coefficient: f32,
-        learning_rate: f32,
+        normalization_group_count: f32,
     ) -> Result<f32, Box<dyn Error>> {
         let (logits, values) = self.model.forward(batch);
-        let loss = dense_group_loss_v1(logits, values, plan, value_coefficient)?;
+        let loss = dense_group_loss_v1(
+            logits,
+            values,
+            plan,
+            value_coefficient,
+            normalization_group_count,
+        )?;
         let raw_gradients = loss.backward();
         let mut gradients = GradientsParams::from_grads(raw_gradients, &self.model);
         if gradients.len() != PARAMETER_TENSOR_COUNT_V1 {
             return Err(training_error(format!(
-                "CUDA gradient tensor count mismatch: {} != {PARAMETER_TENSOR_COUNT_V1}",
+                "CUDA chunk gradient tensor count mismatch: {} != {PARAMETER_TENSOR_COUNT_V1}",
                 gradients.len()
             )));
         }
@@ -594,10 +611,41 @@ impl ExperimentalDeviceTrainStateV1 {
         let gauge_gradient = gradients
             .remove::<CudaBackendV1, 1>(gauge_parameter.id)
             .ok_or_else(|| training_error("scorer output bias gradient is missing"))?;
-        let raw_residual = gauge_gradient.clone().into_data().to_vec::<f32>()?;
-        let raw_residual = *raw_residual
+        let chunk_raw = gauge_gradient.clone().into_data().to_vec::<f32>()?;
+        let chunk_raw = *chunk_raw
             .first()
             .ok_or_else(|| training_error("scorer output bias gradient is empty"))?;
+        gradients.register(gauge_parameter.id, gauge_gradient);
+        accumulator.accumulate(&self.model, gradients);
+        Ok(chunk_raw)
+    }
+
+    /// Canonicalizes the accumulated gauge gradient to exact zero, applies one
+    /// Adam step over the accumulated gradients, and commits the candidate
+    /// model and moments.
+    pub(crate) fn apply_accumulated_v1(
+        &mut self,
+        accumulator: burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
+        learning_rate: f32,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut accumulator = accumulator;
+        let mut gradients = accumulator.grads();
+        if gradients.len() != PARAMETER_TENSOR_COUNT_V1 {
+            return Err(training_error(format!(
+                "CUDA accumulated gradient tensor count mismatch: {} != {PARAMETER_TENSOR_COUNT_V1}",
+                gradients.len()
+            )));
+        }
+        let gauge_parameter = self
+            .model
+            .scorer
+            .output
+            .bias
+            .as_ref()
+            .ok_or_else(|| training_error("scorer output has no bias"))?;
+        let gauge_gradient = gradients
+            .remove::<CudaBackendV1, 1>(gauge_parameter.id)
+            .ok_or_else(|| training_error("scorer output bias gradient is missing"))?;
         gradients.register(gauge_parameter.id, gauge_gradient.zeros_like());
         let next_step = self
             .adam_step
@@ -617,7 +665,7 @@ impl ExperimentalDeviceTrainStateV1 {
         self.second_moments = candidate_second_moments;
         self.adam_step = next_step;
         CudaAutodiffBackendV1::sync(&self.device)?;
-        Ok(raw_residual)
+        Ok(())
     }
 }
 
@@ -1440,15 +1488,46 @@ pub(crate) fn build_dense_group_loss_plan_v1(
     })
 }
 
+/// Reinterprets an autodiff-typed device batch on the inner backend. Tensor
+/// handles are shared, not copied; the returned batch simply cannot record an
+/// autodiff graph.
+fn inner_readback_batch_v1(
+    batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+) -> DevicePackedBatch<CudaBackendV1> {
+    DevicePackedBatch {
+        device: batch.device.clone(),
+        decision_count: batch.decision_count,
+        object_count: batch.object_count,
+        edge_count: batch.edge_count,
+        action_count: batch.action_count,
+        action_ref_count: batch.action_ref_count,
+        state: batch.state.clone().inner(),
+        object_features: batch.object_features.clone().inner(),
+        object_card_ids: batch.object_card_ids.clone().inner(),
+        object_group_indices: batch.object_group_indices.clone().inner(),
+        edge_features: batch.edge_features.clone().inner(),
+        edge_source_indices: batch.edge_source_indices.clone().inner(),
+        edge_target_indices: batch.edge_target_indices.clone().inner(),
+        action_features: batch.action_features.clone().inner(),
+        action_decision_indices: batch.action_decision_indices.clone().inner(),
+        action_ref_features: batch.action_ref_features.clone().inner(),
+        action_ref_action_indices: batch.action_ref_action_indices.clone().inner(),
+        action_ref_node_indices: batch.action_ref_node_indices.clone().inner(),
+    }
+}
+
 fn dense_group_loss_v1(
     logits: Tensor<CudaAutodiffBackendV1, 1>,
     values: Tensor<CudaAutodiffBackendV1, 1>,
     plan: &DenseGroupLossPlanV1,
     value_coefficient: f32,
+    normalization_group_count: f32,
 ) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
     if values.dims()[0] != plan.substeps
         || !value_coefficient.is_finite()
         || value_coefficient <= 0.0
+        || !normalization_group_count.is_finite()
+        || normalization_group_count < plan.group_count as f32
     {
         return Err(training_error("dense group loss shape/parameter mismatch"));
     }
@@ -1476,7 +1555,10 @@ fn dense_group_loss_v1(
         .sum();
     let value_error = group_values - plan.targets.clone();
     let value_sum = value_error.clone().mul(value_error).sum();
-    Ok((policy_sum + value_sum.mul_scalar(value_coefficient)).div_scalar(plan.group_count as f32))
+    Ok(
+        (policy_sum + value_sum.mul_scalar(value_coefficient))
+            .div_scalar(normalization_group_count),
+    )
 }
 
 /// Device-resident dense-padded loss plan, built once per packed batch. The
