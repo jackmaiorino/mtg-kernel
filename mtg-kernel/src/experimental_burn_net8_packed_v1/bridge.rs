@@ -78,7 +78,9 @@ pub(crate) static TOLERANCE_MEASUREMENT_MODE_V1: std::sync::atomic::AtomicBool =
 /// not carry f32 evaluation noise.
 #[cfg(test)]
 fn log_softmax_f64_for_measurement_v1(row: &[f32], index: usize) -> f64 {
-    let maximum = row.iter().fold(f64::NEG_INFINITY, |m, v| m.max(f64::from(*v)));
+    let maximum = row
+        .iter()
+        .fold(f64::NEG_INFINITY, |m, v| m.max(f64::from(*v)));
     let log_sum = row
         .iter()
         .map(|v| (f64::from(*v) - maximum).exp())
@@ -336,30 +338,59 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     let group_count = groups.len() as f32;
     let mut flat_substep = 0_usize;
     #[cfg(test)]
-    let measurement_mode =
-        TOLERANCE_MEASUREMENT_MODE_V1.load(std::sync::atomic::Ordering::Relaxed);
+    let measurement_mode = TOLERANCE_MEASUREMENT_MODE_V1.load(std::sync::atomic::Ordering::Relaxed);
     #[cfg(test)]
-    struct QualificationRowStatsV1 {
-        max_range: f64,
-        max_range_identity: (usize, usize, usize, f64, f64),
-        max_selected_logprob_delta: f64,
-        max_joint_logprob_delta: f64,
-        rows_over_5e3: u64,
-        rows_over_1e2: u64,
+    #[derive(Default)]
+    struct QualificationWorstRowV1 {
+        group: usize,
+        substep: usize,
+        action_count: usize,
+        min_delta_index: usize,
+        max_delta_index: usize,
+        min_delta: f64,
+        max_delta: f64,
+        expected_span: f64,
+        expected_magnitude: f64,
+        selected_index: usize,
     }
     #[cfg(test)]
-    let mut qualification_stats = QualificationRowStatsV1 {
-        max_range: 0.0,
-        max_range_identity: (0, 0, 0, 0.0, 0.0),
-        max_selected_logprob_delta: 0.0,
-        max_joint_logprob_delta: 0.0,
-        rows_over_5e3: 0,
-        rows_over_1e2: 0,
+    #[derive(Default)]
+    struct QualificationRowStatsV1 {
+        max_range: f64,
+        worst: QualificationWorstRowV1,
+        max_selected_logprob_delta: f64,
+        max_joint_logprob_delta: f64,
+        max_sum_abs_logprob_delta: f64,
+        rows_over_5e3: u64,
+        rows_over_ln101: u64,
+    }
+    #[cfg(test)]
+    let mut qualification_stats = QualificationRowStatsV1::default();
+    #[cfg(test)]
+    let measurement_scale_proxies = if measurement_mode {
+        let norm = |name: &str| {
+            snapshot
+                .parameters
+                .iter()
+                .find(|parameter| parameter.name == name)
+                .map(|parameter| {
+                    parameter
+                        .values
+                        .iter()
+                        .map(|v| f64::from(*v) * f64::from(*v))
+                        .sum::<f64>()
+                        .sqrt()
+                })
+                .unwrap_or(f64::NAN)
+        };
+        Some((norm("scorer.2.weight"), norm("value_head.2.weight")))
+    } else {
+        None
     };
     for (group_index, group) in groups.iter().enumerate() {
         let mut joint_log_probability: Option<f32> = None;
         #[cfg(test)]
-        let mut measurement_joint_delta = 0.0_f64;
+        let mut measurement_joint_delta = (0.0_f64, 0.0_f64);
         value_outputs.get(group_first_substeps[group_index]).ok_or(
             NativePolicyTrainErrorV1::CudaBackend {
                 code: "cuda-burn-dense-bridge-value-cardinality",
@@ -395,70 +426,96 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                     "cuda bridge transported-logit rejection: group={group_index} \
                      substep={substep_index} code={code}"
                 );
+                // Measurement mode bypasses ONLY the two tolerance codes
+                // under joint review; structural and finiteness rejections
+                // stay fail-closed in every mode.
+                let bypassable = code == "cuda-burn-dense-bridge-transported-logit-range-tolerance"
+                    || code == "cuda-burn-dense-bridge-transported-logit-shift-cap";
                 #[cfg(test)]
-                let fail_closed = !measurement_mode;
+                let fail_closed = !(measurement_mode && bypassable);
                 #[cfg(not(test))]
-                let fail_closed = true;
+                let fail_closed = {
+                    let _ = bypassable;
+                    true
+                };
                 if fail_closed {
                     return Err(NativePolicyTrainErrorV1::CudaBackend { code });
                 }
             }
             #[cfg(test)]
             if measurement_mode {
-                let expected_row_f64: Vec<f64> = substep
-                    .expected_raw_action_logit_bits
-                    .iter()
-                    .map(|bits| f64::from(f32::from_bits(*bits)))
-                    .collect();
                 let mut min_delta = f64::INFINITY;
                 let mut max_delta = f64::NEG_INFINITY;
+                let mut min_delta_index = 0_usize;
+                let mut max_delta_index = 0_usize;
                 let mut min_expected = f64::INFINITY;
                 let mut max_expected = f64::NEG_INFINITY;
-                for (actual, expected) in row.iter().zip(&expected_row_f64) {
+                for (action_index, (actual, bits)) in row
+                    .iter()
+                    .zip(substep.expected_raw_action_logit_bits)
+                    .enumerate()
+                {
+                    let expected = f64::from(f32::from_bits(*bits));
                     let delta = f64::from(*actual) - expected;
-                    min_delta = min_delta.min(delta);
-                    max_delta = max_delta.max(delta);
-                    min_expected = min_expected.min(*expected);
-                    max_expected = max_expected.max(*expected);
+                    if delta < min_delta {
+                        min_delta = delta;
+                        min_delta_index = action_index;
+                    }
+                    if delta > max_delta {
+                        max_delta = delta;
+                        max_delta_index = action_index;
+                    }
+                    min_expected = min_expected.min(expected);
+                    max_expected = max_expected.max(expected);
                 }
                 let range = max_delta - min_delta;
                 if range > qualification_stats.max_range {
                     qualification_stats.max_range = range;
-                    qualification_stats.max_range_identity = (
-                        group_index,
-                        substep_index,
-                        row.len(),
-                        max_expected - min_expected,
-                        max_expected.abs().max(min_expected.abs()),
-                    );
+                    qualification_stats.worst = QualificationWorstRowV1 {
+                        group: group_index,
+                        substep: substep_index,
+                        action_count: row.len(),
+                        min_delta_index,
+                        max_delta_index,
+                        min_delta,
+                        max_delta,
+                        expected_span: max_expected - min_expected,
+                        expected_magnitude: max_expected.abs().max(min_expected.abs()),
+                        selected_index: substep.selected_action_index,
+                    };
                 }
                 if range > 5.0e-3 {
                     qualification_stats.rows_over_5e3 += 1;
                 }
-                if range > 1.0e-2 {
-                    qualification_stats.rows_over_1e2 += 1;
+                if range > 1.01_f64.ln() {
+                    qualification_stats.rows_over_ln101 += 1;
                 }
                 let transported_row_f32: Vec<f32> = substep
                     .expected_raw_action_logit_bits
                     .iter()
                     .map(|bits| f32::from_bits(*bits))
                     .collect();
-                let lp_delta = log_softmax_f64_for_measurement_v1(
-                    row,
-                    substep.selected_action_index,
-                ) - log_softmax_f64_for_measurement_v1(
-                    &transported_row_f32,
-                    substep.selected_action_index,
-                );
+                let lp_delta =
+                    log_softmax_f64_for_measurement_v1(row, substep.selected_action_index)
+                        - log_softmax_f64_for_measurement_v1(
+                            &transported_row_f32,
+                            substep.selected_action_index,
+                        );
                 qualification_stats.max_selected_logprob_delta = qualification_stats
                     .max_selected_logprob_delta
                     .max(lp_delta.abs());
-                measurement_joint_delta += lp_delta;
+                measurement_joint_delta.0 += lp_delta;
+                measurement_joint_delta.1 += lp_delta.abs();
             }
             let substep_value = value_outputs[flat_substep];
             if !substep_value.is_finite() {
                 return Err(NativePolicyTrainErrorV1::CudaBackend {
                     code: "cuda-burn-dense-bridge-nonfinite-device-output",
+                });
+            }
+            if !f32::from_bits(substep.expected_value_bits).is_finite() {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-nonfinite-transported-value",
                 });
             }
             if !tolerance_ok_v1(substep_value, f32::from_bits(substep.expected_value_bits)) {
@@ -491,7 +548,10 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         if measurement_mode {
             qualification_stats.max_joint_logprob_delta = qualification_stats
                 .max_joint_logprob_delta
-                .max(measurement_joint_delta.abs());
+                .max(measurement_joint_delta.0.abs());
+            qualification_stats.max_sum_abs_logprob_delta = qualification_stats
+                .max_sum_abs_logprob_delta
+                .max(measurement_joint_delta.1);
         }
         transported_advantages.push(advantage);
         let joint_log_probability = joint_log_probability.expect("nonempty group checked above");
@@ -516,19 +576,46 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     let loss = (policy_sum + value_coefficient * value_sum) / group_count;
     #[cfg(test)]
     if measurement_mode {
-        let (max_group, max_substep, max_actions, max_row_spread, max_row_magnitude) =
-            qualification_stats.max_range_identity;
+        let worst = &qualification_stats.worst;
+        let (scorer_weight_norm, value_weight_norm) =
+            measurement_scale_proxies.unwrap_or((f64::NAN, f64::NAN));
+        let snapshot_digest = snapshot
+            .state_sha256_v1()
+            .map(|digest| {
+                digest[..8]
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            })
+            .unwrap_or_else(|_| "invalid".to_owned());
         eprintln!(
-            "QUALIFICATION row-stats: adam_step_before={} max_D={:e} at group={max_group} \
-             substep={max_substep} actions={max_actions} S={max_row_spread:e} \
-             rowmag={max_row_magnitude:e} max_lp_delta={:e} max_joint_lp_delta={:e} \
-             rows_over_5e3={} rows_over_1e2={}",
+            "QUALIFICATION_JSONL {{\"adam_step_before\":{},\"snapshot_sha_prefix\":\"{}\",\
+             \"max_D\":{:e},\"worst\":{{\"group\":{},\"substep\":{},\"action_count\":{},\
+             \"min_delta_index\":{},\"max_delta_index\":{},\"min_delta\":{:e},\
+             \"max_delta\":{:e},\"expected_span\":{:e},\"expected_magnitude\":{:e},\
+             \"selected_index\":{}}},\"max_lp_delta\":{:e},\"max_joint_lp_delta\":{:e},\
+             \"max_sum_abs_lp_delta\":{:e},\"rows_over_5e3\":{},\"rows_over_ln101\":{},\
+             \"scorer2_weight_l2\":{:e},\"value2_weight_l2\":{:e}}}",
             snapshot.adam_step,
+            snapshot_digest,
             qualification_stats.max_range,
+            worst.group,
+            worst.substep,
+            worst.action_count,
+            worst.min_delta_index,
+            worst.max_delta_index,
+            worst.min_delta,
+            worst.max_delta,
+            worst.expected_span,
+            worst.expected_magnitude,
+            worst.selected_index,
             qualification_stats.max_selected_logprob_delta,
             qualification_stats.max_joint_logprob_delta,
+            qualification_stats.max_sum_abs_logprob_delta,
             qualification_stats.rows_over_5e3,
-            qualification_stats.rows_over_1e2,
+            qualification_stats.rows_over_ln101,
+            scorer_weight_norm,
+            value_weight_norm,
         );
     }
 

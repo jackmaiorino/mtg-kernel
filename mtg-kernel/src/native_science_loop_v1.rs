@@ -548,10 +548,18 @@ mod windows_science_loop_tests {
             build_genesis_native_training_boundary_v2(&run, &segment, &checkpoint).unwrap();
         let reference = build_checkpoint_reference_v2(&run, &boundary).unwrap();
         let latest = build_latest_v2(&boundary, &reference).unwrap();
-        publish_genesis_generation_v2(
-            &root, &run, &payload, &checkpoint, &segment, &boundary, &reference, &latest,
+        let genesis_receipt = publish_genesis_generation_v2(
+            &root,
+            &run,
+            &payload,
+            &checkpoint,
+            &segment,
+            &boundary,
+            &reference,
+            &latest,
         )
         .unwrap();
+        assert_eq!(genesis_receipt.generation_index(), 0);
 
         loop {
             match resume_native_training_store_v2(&root, &run, execution_config.clone()) {
@@ -638,10 +646,18 @@ mod windows_science_loop_tests {
             build_genesis_native_training_boundary_v2(&run, &segment, &checkpoint).unwrap();
         let reference = build_checkpoint_reference_v2(&run, &boundary).unwrap();
         let latest = build_latest_v2(&boundary, &reference).unwrap();
-        publish_genesis_generation_v2(
-            &root, &run, &payload, &checkpoint, &segment, &boundary, &reference, &latest,
+        let genesis_receipt = publish_genesis_generation_v2(
+            &root,
+            &run,
+            &payload,
+            &checkpoint,
+            &segment,
+            &boundary,
+            &reference,
+            &latest,
         )
         .unwrap();
+        assert_eq!(genesis_receipt.generation_index(), 0);
 
         let mut committed_segments = 0_u64;
         loop {
