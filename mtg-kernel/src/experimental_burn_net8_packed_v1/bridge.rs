@@ -65,6 +65,28 @@ fn resident_device_state_slot_v1() -> MutexGuard<'static, Option<ResidentDeviceS
         .unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Test-only qualification-measurement mode: when set, the transported-logit
+/// gate records rejections and per-row metrics instead of failing, so
+/// measurement probes can traverse training depths past the gate's current
+/// (unratified) bound. Production builds compile without this flag and stay
+/// fail-closed unconditionally.
+#[cfg(test)]
+pub(crate) static TOLERANCE_MEASUREMENT_MODE_V1: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// f64 log-softmax of one row, for measurement only: the metric itself must
+/// not carry f32 evaluation noise.
+#[cfg(test)]
+fn log_softmax_f64_for_measurement_v1(row: &[f32], index: usize) -> f64 {
+    let maximum = row.iter().fold(f64::NEG_INFINITY, |m, v| m.max(f64::from(*v)));
+    let log_sum = row
+        .iter()
+        .map(|v| (f64::from(*v) - maximum).exp())
+        .sum::<f64>()
+        .ln();
+    (f64::from(row[index]) - maximum) - log_sum
+}
+
 #[cfg(test)]
 pub(super) static RESIDENT_REUSE_COUNT_V1: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
@@ -313,8 +335,31 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     let mut value_sum = 0.0_f32;
     let group_count = groups.len() as f32;
     let mut flat_substep = 0_usize;
+    #[cfg(test)]
+    let measurement_mode =
+        TOLERANCE_MEASUREMENT_MODE_V1.load(std::sync::atomic::Ordering::Relaxed);
+    #[cfg(test)]
+    struct QualificationRowStatsV1 {
+        max_range: f64,
+        max_range_identity: (usize, usize, usize, f64, f64),
+        max_selected_logprob_delta: f64,
+        max_joint_logprob_delta: f64,
+        rows_over_5e3: u64,
+        rows_over_1e2: u64,
+    }
+    #[cfg(test)]
+    let mut qualification_stats = QualificationRowStatsV1 {
+        max_range: 0.0,
+        max_range_identity: (0, 0, 0, 0.0, 0.0),
+        max_selected_logprob_delta: 0.0,
+        max_joint_logprob_delta: 0.0,
+        rows_over_5e3: 0,
+        rows_over_1e2: 0,
+    };
     for (group_index, group) in groups.iter().enumerate() {
         let mut joint_log_probability: Option<f32> = None;
+        #[cfg(test)]
+        let mut measurement_joint_delta = 0.0_f64;
         value_outputs.get(group_first_substeps[group_index]).ok_or(
             NativePolicyTrainErrorV1::CudaBackend {
                 code: "cuda-burn-dense-bridge-value-cardinality",
@@ -350,7 +395,65 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                     "cuda bridge transported-logit rejection: group={group_index} \
                      substep={substep_index} code={code}"
                 );
-                return Err(NativePolicyTrainErrorV1::CudaBackend { code });
+                #[cfg(test)]
+                let fail_closed = !measurement_mode;
+                #[cfg(not(test))]
+                let fail_closed = true;
+                if fail_closed {
+                    return Err(NativePolicyTrainErrorV1::CudaBackend { code });
+                }
+            }
+            #[cfg(test)]
+            if measurement_mode {
+                let expected_row_f64: Vec<f64> = substep
+                    .expected_raw_action_logit_bits
+                    .iter()
+                    .map(|bits| f64::from(f32::from_bits(*bits)))
+                    .collect();
+                let mut min_delta = f64::INFINITY;
+                let mut max_delta = f64::NEG_INFINITY;
+                let mut min_expected = f64::INFINITY;
+                let mut max_expected = f64::NEG_INFINITY;
+                for (actual, expected) in row.iter().zip(&expected_row_f64) {
+                    let delta = f64::from(*actual) - expected;
+                    min_delta = min_delta.min(delta);
+                    max_delta = max_delta.max(delta);
+                    min_expected = min_expected.min(*expected);
+                    max_expected = max_expected.max(*expected);
+                }
+                let range = max_delta - min_delta;
+                if range > qualification_stats.max_range {
+                    qualification_stats.max_range = range;
+                    qualification_stats.max_range_identity = (
+                        group_index,
+                        substep_index,
+                        row.len(),
+                        max_expected - min_expected,
+                        max_expected.abs().max(min_expected.abs()),
+                    );
+                }
+                if range > 5.0e-3 {
+                    qualification_stats.rows_over_5e3 += 1;
+                }
+                if range > 1.0e-2 {
+                    qualification_stats.rows_over_1e2 += 1;
+                }
+                let transported_row_f32: Vec<f32> = substep
+                    .expected_raw_action_logit_bits
+                    .iter()
+                    .map(|bits| f32::from_bits(*bits))
+                    .collect();
+                let lp_delta = log_softmax_f64_for_measurement_v1(
+                    row,
+                    substep.selected_action_index,
+                ) - log_softmax_f64_for_measurement_v1(
+                    &transported_row_f32,
+                    substep.selected_action_index,
+                );
+                qualification_stats.max_selected_logprob_delta = qualification_stats
+                    .max_selected_logprob_delta
+                    .max(lp_delta.abs());
+                measurement_joint_delta += lp_delta;
             }
             let substep_value = value_outputs[flat_substep];
             if !substep_value.is_finite() {
@@ -384,6 +487,12 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
             });
             flat_substep += 1;
         }
+        #[cfg(test)]
+        if measurement_mode {
+            qualification_stats.max_joint_logprob_delta = qualification_stats
+                .max_joint_logprob_delta
+                .max(measurement_joint_delta.abs());
+        }
         transported_advantages.push(advantage);
         let joint_log_probability = joint_log_probability.expect("nonempty group checked above");
         let substep_count = u32::try_from(group.substeps.len()).map_err(|_| {
@@ -405,6 +514,23 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         });
     }
     let loss = (policy_sum + value_coefficient * value_sum) / group_count;
+    #[cfg(test)]
+    if measurement_mode {
+        let (max_group, max_substep, max_actions, max_row_spread, max_row_magnitude) =
+            qualification_stats.max_range_identity;
+        eprintln!(
+            "QUALIFICATION row-stats: adam_step_before={} max_D={:e} at group={max_group} \
+             substep={max_substep} actions={max_actions} S={max_row_spread:e} \
+             rowmag={max_row_magnitude:e} max_lp_delta={:e} max_joint_lp_delta={:e} \
+             rows_over_5e3={} rows_over_1e2={}",
+            snapshot.adam_step,
+            qualification_stats.max_range,
+            qualification_stats.max_selected_logprob_delta,
+            qualification_stats.max_joint_logprob_delta,
+            qualification_stats.rows_over_5e3,
+            qualification_stats.rows_over_1e2,
+        );
+    }
 
     // The gauge accumulator observes substeps in the CPU backward traversal
     // order (groups reversed, substeps reversed within each group) with the

@@ -491,6 +491,102 @@ mod windows_science_loop_tests {
         );
     }
 
+    /// Qualification measurement at 256-update depth: the diagnostic loop
+    /// with the bridge's test-only measurement mode enabled, so the
+    /// transported-logit gate records per-row f64 promotion metrics (delta
+    /// range with worst-row identity and gauge-invariant row scale,
+    /// selected-log-probability delta, per-decision cumulative joint error)
+    /// instead of failing at the unratified bound. Measurement evidence for
+    /// the gate qualification campaign; banks nothing.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn qualification_measurement_k64_depth256_v1() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_v2;
+        use std::sync::atomic::Ordering;
+
+        crate::experimental_burn_net8_packed_v1::bridge::TOLERANCE_MEASUREMENT_MODE_V1
+            .store(true, Ordering::Relaxed);
+
+        let updates = 256_u64;
+        let patched = test_fixture_bytes_with_schedule_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            updates,
+            8,
+            8,
+            32,
+            1_024,
+            2_048,
+        );
+        let run = decode_train_run_v2(&patched).expect("measurement run record");
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let mut execution_config = test_execution_config_v2(&run);
+        execution_config.numerical_backend = NativeTrainingNumericalBackendV1::CudaBurnDense;
+
+        let parent = TestParentV1::new("qualification-depth256");
+        let bootstrapped =
+            crate::native_training_store_bootstrap_v2::bootstrap_native_training_store_v2(
+                &parent.parent,
+                "store",
+            )
+            .unwrap();
+        let root = bootstrapped.into_root();
+        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config.clone(),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let candidate = executor.checkpoint_candidate_v1().unwrap();
+        let payload = candidate.payload().to_vec();
+        let checkpoint = build_genesis_checkpoint_manifest_v3(&run, &payload).unwrap();
+        let segment = build_genesis_segment_manifest_v2(&run, &checkpoint).unwrap();
+        let boundary =
+            build_genesis_native_training_boundary_v2(&run, &segment, &checkpoint).unwrap();
+        let reference = build_checkpoint_reference_v2(&run, &boundary).unwrap();
+        let latest = build_latest_v2(&boundary, &reference).unwrap();
+        publish_genesis_generation_v2(
+            &root, &run, &payload, &checkpoint, &segment, &boundary, &reference, &latest,
+        )
+        .unwrap();
+
+        loop {
+            match resume_native_training_store_v2(&root, &run, execution_config.clone()) {
+                Ok(NativeTrainingStoreResumeV2::Complete {
+                    latest_generation_index,
+                }) => {
+                    println!("measurement: COMPLETE at generation {latest_generation_index}");
+                    break;
+                }
+                Ok(NativeTrainingStoreResumeV2::Continue(mut continuation)) => {
+                    let prepared = prepare_segment_v2(
+                        &mut continuation.executor,
+                        &run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                    )
+                    .expect("measurement prepare");
+                    let receipt = crate::native_training_store_v2::publish_prepared_segment_v2(
+                        &root,
+                        &run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                        &prepared,
+                    )
+                    .unwrap();
+                    prepared.commit_v2(receipt).unwrap();
+                }
+                Err(error) => panic!("measurement resume: {error:?}"),
+            }
+        }
+
+        crate::experimental_burn_net8_packed_v1::bridge::TOLERANCE_MEASUREMENT_MODE_V1
+            .store(false, Ordering::Relaxed);
+    }
+
     /// Diagnostic twin of the learning smoke: same K=64 x 128-update run
     /// driven through the manual bootstrap/genesis/resume loop so the
     /// underlying trainer error is printed with full detail instead of the
