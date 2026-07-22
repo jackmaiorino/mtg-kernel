@@ -521,6 +521,123 @@ mod windows_science_loop_tests {
         }
     }
 
+    /// Overnight non-banked pathfinding run: K=64 vs uniform on the
+    /// CudaBurnDense backend in record-only measurement mode to thousands of
+    /// updates. Purpose: uniform-opponent saturation depth, durable-store
+    /// behavior at real depth, and drift trajectory far past the measured
+    /// 256-update horizon. Wall-clock and throughput from this probe are
+    /// explicitly non-evidence (it runs concurrent with other lanes); the
+    /// per-update QUALIFICATION_JSONL drift series and the store artifacts
+    /// are its products. Direct the store under a roomy drive via TMP.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn pathfinding_run_k64_deep_v1() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_v2;
+
+        let _measurement_mode = MeasurementModeGuardV1::arm();
+
+        let updates = 8_192_u64;
+        let patched = test_fixture_bytes_with_schedule_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            updates,
+            8,
+            8,
+            32,
+            1_024,
+            2_048,
+        );
+        let run = decode_train_run_v2(&patched).expect("pathfinding run record");
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let mut execution_config = test_execution_config_v2(&run);
+        execution_config.numerical_backend = NativeTrainingNumericalBackendV1::CudaBurnDense;
+
+        let parent = TestParentV1::new("pathfinding-deep");
+        println!("pathfinding store parent: {}", parent.parent.display());
+        let bootstrapped =
+            crate::native_training_store_bootstrap_v2::bootstrap_native_training_store_v2(
+                &parent.parent,
+                "store",
+            )
+            .unwrap();
+        let root = bootstrapped.into_root();
+        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config.clone(),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let candidate = executor.checkpoint_candidate_v1().unwrap();
+        let payload = candidate.payload().to_vec();
+        let checkpoint = build_genesis_checkpoint_manifest_v3(&run, &payload).unwrap();
+        let segment = build_genesis_segment_manifest_v2(&run, &checkpoint).unwrap();
+        let boundary =
+            build_genesis_native_training_boundary_v2(&run, &segment, &checkpoint).unwrap();
+        let reference = build_checkpoint_reference_v2(&run, &boundary).unwrap();
+        let latest = build_latest_v2(&boundary, &reference).unwrap();
+        let genesis_receipt = publish_genesis_generation_v2(
+            &root,
+            &run,
+            &payload,
+            &checkpoint,
+            &segment,
+            &boundary,
+            &reference,
+            &latest,
+        )
+        .unwrap();
+        assert_eq!(genesis_receipt.generation_index(), 0);
+
+        let started = std::time::Instant::now();
+        let mut committed_segments = 0_u64;
+        loop {
+            match resume_native_training_store_v2(&root, &run, execution_config.clone()) {
+                Ok(NativeTrainingStoreResumeV2::Complete {
+                    latest_generation_index,
+                }) => {
+                    println!(
+                        "pathfinding: COMPLETE at generation {latest_generation_index} \
+                         after {:.0}s",
+                        started.elapsed().as_secs_f64()
+                    );
+                    break;
+                }
+                Ok(NativeTrainingStoreResumeV2::Continue(mut continuation)) => {
+                    let prepared = prepare_segment_v2(
+                        &mut continuation.executor,
+                        &run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                    )
+                    .expect("pathfinding prepare");
+                    let receipt = crate::native_training_store_v2::publish_prepared_segment_v2(
+                        &root,
+                        &run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                        &prepared,
+                    )
+                    .unwrap();
+                    prepared.commit_v2(receipt).unwrap();
+                    committed_segments += 1;
+                    if committed_segments.is_multiple_of(64) {
+                        println!(
+                            "pathfinding: {} updates committed, {:.0}s elapsed, \
+                             {:.2} eps/s cumulative (non-evidence)",
+                            committed_segments * 4,
+                            started.elapsed().as_secs_f64(),
+                            (committed_segments * 4 * 64) as f64 / started.elapsed().as_secs_f64()
+                        );
+                    }
+                }
+                Err(error) => panic!("pathfinding resume: {error:?}"),
+            }
+        }
+    }
+
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     #[test]
     #[ignore = "measurement probe, run explicitly"]
