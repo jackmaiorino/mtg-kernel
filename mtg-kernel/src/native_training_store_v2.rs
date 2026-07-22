@@ -1716,6 +1716,12 @@ mod windows_publisher_tests {
         );
     }
 
+    /// Regression guard for the preflight itself, not proof of the repair:
+    /// the pre-preflight publisher already recovered the run-only state, and
+    /// this scenario stays recoverable only because the Genesis authority arm
+    /// returns early when latest.json is absent (the lineage walk needs
+    /// latest to anchor). Reverting the currentness fix does not flip this
+    /// test; removing that early return would.
     #[test]
     fn genesis_retry_recovers_after_run_authority_without_latest() {
         let store = TestStoreV2::with_skeleton("genesis-run-only-retry");
