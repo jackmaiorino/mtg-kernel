@@ -89,6 +89,10 @@ jobs:
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
 
+      - name: Test host-safe experimental CUDA feature surface
+        run: |
+          cargo test --release --locked -p mtg-kernel --features experimental-burn-net8-packed-cuda-v1 --lib experimental_burn_net8_packed_v1::
+
   python-tests:
     name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
     strategy:
