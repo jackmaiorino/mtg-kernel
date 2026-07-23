@@ -541,14 +541,17 @@ mod windows_science_loop_tests {
         let handles: Vec<_> = (0..run_count)
             .map(|ordinal| {
                 std::thread::spawn(move || {
+                    // Topology divides the machine: each run gets 2 worker
+                    // threads (64 actors as 2x32) instead of the solo-run 8x8,
+                    // so N runs share cores instead of oversubscribing them.
                     let patched = test_fixture_bytes_with_schedule_and_base_seed_v2(
                         NativeTrainingNumericalBackendV1::CudaBurnDense,
                         64,
                         4,
                         updates,
-                        8,
-                        8,
+                        2,
                         32,
+                        16,
                         1_024,
                         2_048,
                         424_242 + ordinal as u64,
