@@ -7,6 +7,7 @@
 
 pub(crate) mod bridge;
 pub(crate) mod cell_zero_arm_v1;
+pub(crate) mod shared_metric_core_v1;
 mod training;
 
 use crate::common_model_snapshot_v1::{
