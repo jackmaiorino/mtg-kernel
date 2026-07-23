@@ -131,7 +131,7 @@ pub(super) fn snapshots_bit_identical_v1(
         && named_tensors_bit_identical_v1(&left.second_moments, &right.second_moments)
 }
 
-fn tolerance_ok_v1(actual: f32, expected: f32) -> bool {
+pub(super) fn tolerance_ok_v1(actual: f32, expected: f32) -> bool {
     let difference = (actual - expected).abs();
     difference <= TRANSPORTED_OUTPUT_ABSOLUTE_TOLERANCE_V1
         || difference
@@ -263,19 +263,13 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                 .map_err(bridge_error_v1)?
         }
     };
-    let mut workspace = HostPackingWorkspace::default();
-    workspace.pack_views(&views).map_err(bridge_error_v1)?;
-    let batch = DevicePackedBatch::upload(&device, &workspace);
-    let (logit_outputs, value_outputs) = device_state
-        .forward_outputs_v1(&batch)
-        .map_err(bridge_error_v1)?;
-    drop(batch);
-
     // The training step runs in group-aligned chunks with device-side
     // gradient accumulation and a single Adam application: peak activation
     // memory stays bounded by one chunk regardless of the update's substep
     // count, and each chunk's loss divides by the whole update's group count
-    // so the accumulated gradient is the full-batch gradient.
+    // so the accumulated gradient is the full-batch gradient. Each chunk
+    // also reads back detached outputs from that same forward, removing the
+    // former whole-update upload and duplicate forward.
     let mut chunk_group_starts = vec![0_usize];
     for (group_index, group_first) in group_first_substeps.iter().enumerate().skip(1) {
         let chunk_start_group = *chunk_group_starts.last().expect("nonempty starts");
@@ -286,6 +280,10 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     }
     let mut accumulator = burn::optim::GradientsAccumulator::new();
     let mut raw_residual = 0.0_f32;
+    let mut logit_outputs = Vec::new();
+    let mut value_outputs = Vec::with_capacity(views.len());
+    let mut global_action_offsets = Vec::with_capacity(views.len() + 1);
+    global_action_offsets.push(0_usize);
     let total_group_count = groups.len() as f32;
     for (ordinal, chunk_start_group) in chunk_group_starts.iter().copied().enumerate() {
         let chunk_end_group = chunk_group_starts
@@ -319,7 +317,7 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         )
         .map_err(bridge_error_v1)?;
         let chunk_batch = DevicePackedBatch::upload(&device, &chunk_workspace);
-        raw_residual += device_state
+        let chunk_outputs = device_state
             .chunk_backward_v1(
                 &mut accumulator,
                 &chunk_batch,
@@ -328,6 +326,55 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                 total_group_count,
             )
             .map_err(bridge_error_v1)?;
+        let chunk_substep_count = substep_end - substep_begin;
+        if chunk_workspace.action_offsets.len() != chunk_substep_count + 1 {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-chunk-action-offset-cardinality",
+            });
+        }
+        let expected_chunk_logits = chunk_workspace.action_offsets.last().copied().ok_or(
+            NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-chunk-action-offset-empty",
+            },
+        )?;
+        if chunk_outputs.logit_outputs.len() != expected_chunk_logits {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-chunk-logit-cardinality",
+            });
+        }
+        if chunk_outputs.value_outputs.len() != chunk_substep_count {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-chunk-value-cardinality",
+            });
+        }
+        let global_action_base = *global_action_offsets
+            .last()
+            .expect("global action offsets are initialized");
+        for local_end in chunk_workspace.action_offsets.iter().copied().skip(1) {
+            global_action_offsets.push(global_action_base.checked_add(local_end).ok_or(
+                NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-action-offset-overflow",
+                },
+            )?);
+        }
+        raw_residual += chunk_outputs.raw_gauge_residual;
+        logit_outputs.extend(chunk_outputs.logit_outputs);
+        value_outputs.extend(chunk_outputs.value_outputs);
+    }
+    if global_action_offsets.len() != views.len() + 1 {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-action-offset-cardinality",
+        });
+    }
+    if global_action_offsets.last().copied() != Some(logit_outputs.len()) {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-logit-cardinality",
+        });
+    }
+    if value_outputs.len() != views.len() {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-value-cardinality",
+        });
     }
     device_state
         .apply_accumulated_v1(accumulator, learning_rate)
@@ -439,8 +486,8 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         let target = f32::from(group.terminal_return);
         let advantage = target - transported_first_value;
         for (substep_index, substep) in group.substeps.iter().enumerate() {
-            let begin = workspace.action_offsets[flat_substep];
-            let end = workspace.action_offsets[flat_substep + 1];
+            let begin = global_action_offsets[flat_substep];
+            let end = global_action_offsets[flat_substep + 1];
             let row = &logit_outputs[begin..end];
             if substep.selected_action_index >= row.len() {
                 return Err(NativePolicyTrainErrorV1::SelectedActionOutOfRange {

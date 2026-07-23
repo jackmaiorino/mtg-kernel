@@ -17,7 +17,7 @@ use burn::module::{AutodiffModule, ModuleMapper, ModuleVisitor, ParamId};
 use burn::optim::GradientsParams;
 use burn::tensor::activation::log_softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Int, TensorData};
+use burn::tensor::{Int, TensorData, Transaction};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::process::Command;
@@ -301,6 +301,16 @@ pub(crate) struct ExperimentalDeviceTrainStateV1 {
     device: burn_cuda::CudaDevice,
 }
 
+/// Host-owned outputs recovered from the same autodiff forward that supplied
+/// one training chunk's loss. The detached device handles are consumed before
+/// this result is returned, so no tensor or autodiff graph can cross a chunk
+/// boundary.
+pub(crate) struct ChunkBackwardOutputsV1 {
+    pub(crate) raw_gauge_residual: f32,
+    pub(crate) logit_outputs: Vec<f32>,
+    pub(crate) value_outputs: Vec<f32>,
+}
+
 impl ExperimentalDeviceTrainStateV1 {
     pub(crate) fn import_snapshot_v1(
         snapshot: &NativePolicyValueTrainSnapshotV1,
@@ -557,6 +567,7 @@ impl ExperimentalDeviceTrainStateV1 {
     /// activations exist: on large update batches the previous autodiff-typed
     /// readback pinned a full never-backwarded activation set alongside the
     /// training step's own graph and drove the device out of memory.
+    #[cfg(test)]
     pub(crate) fn forward_outputs_v1(
         &self,
         batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
@@ -576,7 +587,8 @@ impl ExperimentalDeviceTrainStateV1 {
     /// the full-batch gradient with only reduction-order rounding differences
     /// while peak device memory stays bounded by one chunk's activations.
     /// Returns the chunk's raw scorer-bias gradient component for the gauge
-    /// witness.
+    /// witness together with host-owned logits and values detached from that
+    /// same forward.
     pub(crate) fn chunk_backward_v1(
         &self,
         accumulator: &mut burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
@@ -584,8 +596,13 @@ impl ExperimentalDeviceTrainStateV1 {
         plan: &DenseGroupLossPlanV1,
         value_coefficient: f32,
         normalization_group_count: f32,
-    ) -> Result<f32, Box<dyn Error>> {
+    ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
         let (logits, values) = self.model.forward(batch);
+        // Clone only the two output handles, then immediately cross to the
+        // validated inner backend. The clones share the forward's output
+        // storage but retain neither autodiff nodes nor a second graph.
+        let logit_outputs = logits.clone().inner();
+        let value_outputs = values.clone().inner();
         let loss = dense_group_loss_v1(
             logits,
             values,
@@ -611,13 +628,31 @@ impl ExperimentalDeviceTrainStateV1 {
         let gauge_gradient = gradients
             .remove::<CudaBackendV1, 1>(gauge_parameter.id)
             .ok_or_else(|| training_error("scorer output bias gradient is missing"))?;
-        let chunk_raw = gauge_gradient.clone().into_data().to_vec::<f32>()?;
+        let readback = Transaction::<CudaBackendV1>::default()
+            .register(logit_outputs)
+            .register(value_outputs)
+            .register(gauge_gradient.clone());
+        let readback = readback.try_execute()?;
+        let readback_count = readback.len();
+        let [logit_data, value_data, gauge_data]: [TensorData; 3] =
+            readback.try_into().map_err(|_| {
+                training_error(format!(
+                    "CUDA chunk readback cardinality mismatch: {readback_count} != 3"
+                ))
+            })?;
+        let logit_outputs = logit_data.into_vec::<f32>()?;
+        let value_outputs = value_data.into_vec::<f32>()?;
+        let chunk_raw = gauge_data.into_vec::<f32>()?;
         let chunk_raw = *chunk_raw
             .first()
             .ok_or_else(|| training_error("scorer output bias gradient is empty"))?;
         gradients.register(gauge_parameter.id, gauge_gradient);
         accumulator.accumulate(&self.model, gradients);
-        Ok(chunk_raw)
+        Ok(ChunkBackwardOutputsV1 {
+            raw_gauge_residual: chunk_raw,
+            logit_outputs,
+            value_outputs,
+        })
     }
 
     /// Canonicalizes the accumulated gauge gradient to exact zero, applies one
@@ -1491,6 +1526,7 @@ pub(crate) fn build_dense_group_loss_plan_v1(
 /// Reinterprets an autodiff-typed device batch on the inner backend. Tensor
 /// handles are shared, not copied; the returned batch simply cannot record an
 /// autodiff graph.
+#[cfg(test)]
 fn inner_readback_batch_v1(
     batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
 ) -> DevicePackedBatch<CudaBackendV1> {
@@ -3653,6 +3689,163 @@ mod tests {
             assert_eq!(resident.adam_step, fresh.adam_step);
             assert_eq!(resident.scorer_bias_gauge, fresh.scorer_bias_gauge);
         }
+    }
+
+    /// Each fused chunk must expose the exact outputs from the existing
+    /// readback path at the same batch composition. The assembled stream must
+    /// preserve global substep/action order and stay inside the production
+    /// tolerance gates relative to the old whole-update composition, without
+    /// mutating the device model.
+    #[test]
+    #[ignore = "requires a CUDA device, run explicitly"]
+    fn fused_chunk_outputs_match_whole_readback_without_mutation() {
+        let native_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut native_state = NativePolicyValueTrainStateV1::new_v1(native_model).unwrap();
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        load_common_model_snapshot_v1(&manifest_path, &payload_path, &mut native_state).unwrap();
+        let snapshot = native_state.snapshot_v1().unwrap();
+        let initial_sha = snapshot.state_sha256_v1().unwrap();
+        let device = burn_cuda::CudaDevice::new(0);
+        let device_state =
+            ExperimentalDeviceTrainStateV1::import_snapshot_v1(&snapshot, &device).unwrap();
+        let cases = load_real_fixture_cases().unwrap();
+        let fixture_indices = [2_usize, 7, 2, 7];
+        let views = fixture_indices
+            .iter()
+            .map(|index| cases[*index % cases.len()].view())
+            .collect::<Vec<_>>();
+
+        let mut whole_workspace = HostPackingWorkspace::default();
+        whole_workspace.pack_views(&views).unwrap();
+        let whole_batch =
+            DevicePackedBatch::<CudaAutodiffBackendV1>::upload(&device, &whole_workspace);
+        let (whole_logits, whole_values) = device_state.forward_outputs_v1(&whole_batch).unwrap();
+        drop(whole_batch);
+
+        let fused_outputs_for_layout = |chunk_sizes: &[usize]| -> (Vec<f32>, Vec<f32>, Vec<usize>) {
+            let mut accumulator = burn::optim::GradientsAccumulator::new();
+            let mut logits = Vec::new();
+            let mut values = Vec::new();
+            let mut action_offsets = vec![0_usize];
+            let mut substep_begin = 0_usize;
+            for chunk_size in chunk_sizes.iter().copied() {
+                assert!(chunk_size > 0);
+                let substep_end = substep_begin + chunk_size;
+                let mut chunk_workspace = HostPackingWorkspace::default();
+                chunk_workspace
+                    .pack_views(&views[substep_begin..substep_end])
+                    .unwrap();
+                let selected = vec![0_usize; chunk_size];
+                let group_indices = (0..chunk_size).collect::<Vec<_>>();
+                let group_first_substeps = (0..chunk_size).collect::<Vec<_>>();
+                let terminal_returns = (substep_begin..substep_end)
+                    .map(|index| [-1_i8, 0, 1][index % 3])
+                    .collect::<Vec<_>>();
+                let plan = build_dense_group_loss_plan_v1(
+                    &chunk_workspace,
+                    &selected,
+                    &group_indices,
+                    &group_first_substeps,
+                    &terminal_returns,
+                    &device,
+                )
+                .unwrap();
+                let chunk_batch =
+                    DevicePackedBatch::<CudaAutodiffBackendV1>::upload(&device, &chunk_workspace);
+                let (oracle_logits, oracle_values) =
+                    device_state.forward_outputs_v1(&chunk_batch).unwrap();
+                let outputs = device_state
+                    .chunk_backward_v1(
+                        &mut accumulator,
+                        &chunk_batch,
+                        &plan,
+                        VALUE_COEFFICIENT_V1,
+                        views.len() as f32,
+                    )
+                    .unwrap();
+                assert!(outputs.raw_gauge_residual.is_finite());
+                assert_eq!(
+                    outputs
+                        .logit_outputs
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    oracle_logits
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    "fused logits differ from the same-composition readback"
+                );
+                assert_eq!(
+                    outputs
+                        .value_outputs
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    oracle_values
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    "fused values differ from the same-composition readback"
+                );
+                let action_base = *action_offsets.last().unwrap();
+                action_offsets.extend(
+                    chunk_workspace
+                        .action_offsets
+                        .iter()
+                        .copied()
+                        .skip(1)
+                        .map(|local_end| action_base + local_end),
+                );
+                logits.extend(outputs.logit_outputs);
+                values.extend(outputs.value_outputs);
+                substep_begin = substep_end;
+            }
+            assert_eq!(substep_begin, views.len());
+            (logits, values, action_offsets)
+        };
+
+        for chunk_sizes in [vec![views.len()], vec![1, views.len() - 1]] {
+            let (fused_logits, fused_values, fused_offsets) =
+                fused_outputs_for_layout(&chunk_sizes);
+            assert_eq!(fused_offsets, whole_workspace.action_offsets);
+            assert_eq!(fused_logits.len(), whole_logits.len());
+            assert_eq!(fused_values.len(), whole_values.len());
+            for substep in 0..views.len() {
+                let begin = whole_workspace.action_offsets[substep];
+                let end = whole_workspace.action_offsets[substep + 1];
+                let whole_bits = whole_logits[begin..end]
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>();
+                super::bridge::validate_transported_logit_row_v2(
+                    &fused_logits[begin..end],
+                    &whole_bits,
+                )
+                .unwrap_or_else(|code| {
+                    panic!(
+                        "whole/fused composition logit tolerance failed for \
+                         chunks {chunk_sizes:?}, substep {substep}: {code}"
+                    )
+                });
+                assert!(
+                    super::bridge::tolerance_ok_v1(fused_values[substep], whole_values[substep]),
+                    "whole/fused composition value tolerance failed for \
+                     chunks {chunk_sizes:?}, substep {substep}"
+                );
+            }
+        }
+        assert_eq!(
+            device_state
+                .export_snapshot_v1()
+                .unwrap()
+                .state_sha256_v1()
+                .unwrap(),
+            initial_sha,
+            "forward/backward output fusion must not mutate device state"
+        );
     }
 
     #[test]
