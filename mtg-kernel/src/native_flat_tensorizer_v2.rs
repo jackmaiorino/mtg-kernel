@@ -479,6 +479,633 @@ fn encode_full_decision_reference_v2(
     Ok((output, canonical_json))
 }
 
+// --- Device-tensorization hash-share timing probe support (test-only). ---
+//
+// These functions add no production code paths: they are compiled only
+// under #[cfg(test)] and are never reachable from release builds. Each one
+// mirrors an existing private encoder function closely enough to measure
+// the wall-clock cost of everything EXCEPT the canonical-JSON write and
+// SHA-512 digest calls, so that (real fill time) minus (this skip-hash
+// time) isolates the JSON-plus-hash portion of the pipeline. The action
+// match arm is a verbatim copy of the one in encode_action_with_scratch_v1,
+// including the "semantic" JSON-value construction; only the final
+// write_canonical_action_json_v1 and action_hash_features_v1 calls are
+// removed. Semantic-map construction therefore still counts toward the
+// non-hash bucket here, making the measured hash share a conservative
+// (lower-bound) estimate: see the probe test's own doc comment for the
+// interpretation caveat this implies.
+
+#[cfg(test)]
+struct SkipEncodedActionV1 {
+    features: [f32; NATIVE_FLAT_ACTION_FEATURE_DIM_V1],
+    ref_features: Vec<[f32; NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1]>,
+    ref_card_ids: Vec<i64>,
+    ref_node_indices: Vec<i64>,
+}
+
+#[cfg(test)]
+fn encode_state_skip_hash_v1(
+    decision: FlatScoringDecisionViewV1<'_>,
+) -> Result<Vec<f32>, NativeFlatTensorErrorV2> {
+    let globals = decision.globals();
+    let mut state = Vec::with_capacity(NATIVE_FLAT_STATE_FEATURE_DIM_V2);
+    append_one_hot_v2(&mut state, globals.phase as usize, 12)?;
+    state.extend(relative_features_v2(globals.active_player)?);
+    state.extend(relative_features_v2(globals.priority_player)?);
+    state.extend(relative_features_v2(globals.initiative)?);
+    for player in globals.players {
+        state.push(scaled_i64_v2(i64::from(player.life), 20.0));
+        state.extend(
+            player
+                .mana
+                .into_iter()
+                .map(|value| scaled_i64_v2(i64::from(value), 10.0)),
+        );
+        state.push(scaled_u64_v2(player.hand_count, 16.0));
+        state.push(scaled_u64_v2(player.library_count, 64.0));
+        state.push(f32::from(player.has_lost));
+        state.push(scaled_i64_v2(i64::from(player.lands_played_this_turn), 4.0));
+        state.push(f32::from(player.drew_from_empty));
+        state.push(scaled_i64_v2(i64::from(player.draws_this_turn), 8.0));
+        state.push(scaled_i64_v2(i64::from(player.spells_cast_this_turn), 8.0));
+        state.push(f32::from(player.dungeon_id.is_some()));
+        state.push(scaled_i64_v2(
+            i64::from(player.dungeon_id.unwrap_or(0)),
+            32.0,
+        ));
+        state.push(f32::from(player.room_id.is_some()));
+        state.push(scaled_i64_v2(i64::from(player.room_id.unwrap_or(0)), 32.0));
+        state.push(scaled_i64_v2(
+            i64::from(player.completed_dungeon_count),
+            8.0,
+        ));
+    }
+    let attacker_count = count_role_v2(decision.relations(), FlatRelationRoleV2::CombatAttacker);
+    let blocker_relation_count =
+        count_role_v2(decision.relations(), FlatRelationRoleV2::CombatBlocker);
+    if !blocker_relation_count.is_multiple_of(2) {
+        return Err(NativeFlatTensorErrorV2::RelationShape);
+    }
+    state.push(f32::from(globals.attackers_declared));
+    state.push(f32::from(globals.blockers_declared));
+    state.push(scaled_u64_v2(attacker_count as u64, 16.0));
+    state.push(scaled_u64_v2((blocker_relation_count / 2) as u64, 32.0));
+    state.push(scaled_u64_v2(
+        decision
+            .relations()
+            .iter()
+            .filter(|relation| {
+                relation.role == FlatRelationRoleV2::StackTarget && relation.secondary_order == 0
+            })
+            .count() as u64,
+        32.0,
+    ));
+    state.push(scaled_u64_v2(
+        count_role_v2(decision.relations(), FlatRelationRoleV2::EffectSource) as u64,
+        32.0,
+    ));
+    state.push(scaled_u64_v2(
+        count_role_v2(decision.relations(), FlatRelationRoleV2::Permission) as u64,
+        32.0,
+    ));
+    state.push(scaled_u64_v2(
+        count_role_v2(decision.relations(), FlatRelationRoleV2::AttachedTo) as u64,
+        32.0,
+    ));
+    state.push(scaled_u64_v2(
+        count_role_v2(decision.relations(), FlatRelationRoleV2::ExiledBy) as u64,
+        32.0,
+    ));
+    for role in [
+        FlatRelationRoleV2::KnownLibrary,
+        FlatRelationRoleV2::KnownHand,
+    ] {
+        for owner in [
+            FlatRelativePlayerV1::SelfPlayer,
+            FlatRelativePlayerV1::Opponent,
+        ] {
+            state.push(scaled_u64_v2(
+                decision
+                    .relations()
+                    .iter()
+                    .filter(|relation| {
+                        relation.role == role
+                            && matches!(
+                                relation.payload,
+                                FlatRelationPayloadV2::Known { owner: candidate }
+                                    if candidate == owner
+                            )
+                    })
+                    .count() as u64,
+                16.0,
+            ));
+        }
+    }
+    let engine = globals.engine;
+    state.extend(engine.priority_passes.into_iter().map(f32::from));
+    state.push(f32::from(engine.stack_nonempty));
+    state.push(f32::from(engine.stack_activity_since_priority_boundary));
+    state.push(f32::from(engine.mana_activity_since_priority_boundary));
+    state.extend(relative_features_v2(engine.last_mana_ability_activator)?);
+    append_one_hot_v2(&mut state, usize::from(engine.current_stage), 10)?;
+    state.extend(
+        [
+            engine.pending_cast.is_some(),
+            engine.pending_activation.is_some(),
+            engine.pending_discard.is_some(),
+            engine.pending_optional_cost.is_some(),
+            engine.pending_optional_sacrifice.is_some(),
+            engine.pending_spell_copy.is_some(),
+            engine.pending_effect.is_some(),
+        ]
+        .into_iter()
+        .map(f32::from),
+    );
+    state.push(scaled_i64_v2(i64::from(engine.pending_trigger_count), 16.0));
+    let surface = globals.surface;
+    append_one_hot_v2(&mut state, usize::from(surface.current_stage), 5)?;
+    state.extend(surface.combat_priority_spent.into_iter().map(f32::from));
+    state.push(f32::from(surface.combat_priority_rearmed_by_stack_activity));
+    state.push(f32::from(surface.combat_priority_rearmed_by_mana_activity));
+    state.push(f32::from(surface.stack_grew_since_round_open));
+    state.push(f32::from(surface.mana_activity_since_round_open));
+    state.push(f32::from(
+        surface.stack_length_changed_since_observed.unwrap_or(false),
+    ));
+    state.push(f32::from(surface.mana_activity_since_last_stack_change));
+    state.push(f32::from(surface.madness_cast_reprompt_source_present));
+    state.push(f32::from(surface.private_blockers_present));
+    state.push(f32::from(
+        surface.private_discard_remaining_needed.is_some(),
+    ));
+    state.push(f32::from(surface.private_optional_stage.is_some()));
+    let policy = globals.policy_surface;
+    append_one_hot_v2(&mut state, usize::from(policy.current_stage), 3)?;
+    state.push(f32::from(policy.private_combat_present));
+    state.push(scaled_i64_v2(i64::from(policy.candidate_index), 32.0));
+    state.push(scaled_i64_v2(i64::from(policy.candidate_count), 32.0));
+    state.push(scaled_i64_v2(i64::from(policy.selected_count), 32.0));
+    state.push(scaled_i64_v2(i64::from(policy.remaining_count), 32.0));
+    if state.len() != NATIVE_FLAT_STATE_FEATURE_DIM_V2 - NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2 {
+        return Err(NativeFlatTensorErrorV2::OutputInvariant);
+    }
+    Ok(state)
+}
+
+#[cfg(test)]
+fn encode_action_with_scratch_skip_hash_v1<'a>(
+    decision: FlatScoringDecisionViewV1<'a>,
+    action_index: usize,
+    action: &FlatScorerActionCoreV1,
+    raw_refs: &'a [FlatScorerActionRefV1],
+    projection: Option<&ObjectProjectionV2>,
+) -> Result<SkipEncodedActionV1, NativeFlatTensorErrorV1> {
+    let resolved = resolve_action_refs_v1(decision, action_index, raw_refs)?;
+    let mut expected = FlatScorerActionCoreV1 {
+        kind: action.kind,
+        ref_start: action.ref_start,
+        ref_len: action.ref_len,
+        ..FlatScorerActionCoreV1::default()
+    };
+    let mut semantic = Map::<String, Value>::new();
+    semantic.insert(
+        "action_kind".to_owned(),
+        Value::String(action_kind_name_v1(action.kind).to_owned()),
+    );
+    semantic.insert("actor".to_owned(), Value::String("self".to_owned()));
+    let mut projected_refs = Vec::<ProjectedActionRefV1<'a>>::new();
+
+    match action.kind {
+        FlatScorerActionKindV1::Pass => require_no_refs(&resolved)?,
+        FlatScorerActionKindV1::PlayLand
+        | FlatScorerActionKindV1::CastSpell
+        | FlatScorerActionKindV1::PlotSpell => {
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ActivateManaAbility => {
+            if action.mana_choice > 6 {
+                return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+            }
+            expected.mana_choice = action.mana_choice;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert(
+                "mana_choice".to_owned(),
+                optional_one_based_name(action.mana_choice, &MANA_COLORS_V1),
+            );
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ActivateAbility => {
+            expected.ability_index = action.ability_index;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert(
+                "ability_index".to_owned(),
+                Value::from(action.ability_index),
+            );
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ChooseTarget => {
+            if action.remaining == 0 {
+                return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+            }
+            expected.remaining = action.remaining;
+            expected.target_kind = action.target_kind;
+            expected.target_player = action.target_player;
+            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert("remaining".to_owned(), Value::from(action.remaining));
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+            let (target, target_ref) = canonical_target_v1(action, &resolved, 1)?;
+            semantic.insert("target".to_owned(), target);
+            if let Some(target_ref) = target_ref {
+                projected_refs.push(projected_singular(target_ref, ROLE_TARGET_OBJECT_V1));
+            }
+        }
+        FlatScorerActionKindV1::ChooseCostTarget => {
+            if action.remaining == 0 || !(1..=11).contains(&action.cost_kind) {
+                return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+            }
+            expected.remaining = action.remaining;
+            expected.cost_kind = action.cost_kind;
+            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
+            let candidate = require_singular_ref(&resolved, 1, ROLE_CANDIDATE_V1)?;
+            require_ref_count(&resolved, 2)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert("candidate".to_owned(), canonical_card_ref_v1(candidate)?);
+            semantic.insert("remaining".to_owned(), Value::from(action.remaining));
+            semantic.insert(
+                "cost_kind".to_owned(),
+                Value::String(one_based_name(action.cost_kind, &COST_KINDS_V1)?.to_owned()),
+            );
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+            projected_refs.push(projected_singular(candidate, ROLE_CANDIDATE_V1));
+        }
+        FlatScorerActionKindV1::ChooseCastMode => {
+            if !(1..=2).contains(&action.cast_mode) {
+                return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+            }
+            expected.cast_mode = action.cast_mode;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert(
+                "mode".to_owned(),
+                Value::String(one_based_name(action.cast_mode, &CAST_MODES_V1)?.to_owned()),
+            );
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ChooseKicker | FlatScorerActionKindV1::ChooseSpellCopyPayment => {
+            validate_only_flag(action.flags, FLAT_ACTION_FLAG_PAY_V1)?;
+            expected.flags = action.flags;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert(
+                "pay".to_owned(),
+                Value::Bool(action.flags & FLAT_ACTION_FLAG_PAY_V1 != 0),
+            );
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ChooseSpellMode => {
+            if action.mode_count == 0 || action.mode_index >= action.mode_count {
+                return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+            }
+            expected.mode_index = action.mode_index;
+            expected.mode_count = action.mode_count;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert("mode_index".to_owned(), Value::from(action.mode_index));
+            semantic.insert("mode_count".to_owned(), Value::from(action.mode_count));
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ChooseEffectOption => {
+            if action.option_count < 2 || action.option_index >= action.option_count {
+                return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+            }
+            expected.option_index = action.option_index;
+            expected.option_count = action.option_count;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert("option_index".to_owned(), Value::from(action.option_index));
+            semantic.insert("option_count".to_owned(), Value::from(action.option_count));
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ChooseEffectTarget => {
+            if action.min_targets > action.max_targets
+                || action.selected_count >= action.max_targets
+            {
+                return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+            }
+            expected.selected_count = action.selected_count;
+            expected.min_targets = action.min_targets;
+            expected.max_targets = action.max_targets;
+            expected.target_kind = action.target_kind;
+            expected.target_player = action.target_player;
+            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert(
+                "selected_count".to_owned(),
+                Value::from(action.selected_count),
+            );
+            semantic.insert("min_targets".to_owned(), Value::from(action.min_targets));
+            semantic.insert("max_targets".to_owned(), Value::from(action.max_targets));
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+            let (target, target_ref) = canonical_target_v1(action, &resolved, 1)?;
+            semantic.insert("target".to_owned(), target);
+            if let Some(target_ref) = target_ref {
+                projected_refs.push(projected_singular(target_ref, ROLE_TARGET_OBJECT_V1));
+            }
+        }
+        FlatScorerActionKindV1::FinishEffectSelection
+        | FlatScorerActionKindV1::FinishTargetSelection => {
+            expected.selected_count = action.selected_count;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert(
+                "selected_count".to_owned(),
+                Value::from(action.selected_count),
+            );
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ChooseEffectColor => {
+            if !(1..=6).contains(&action.color) {
+                return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+            }
+            expected.color = action.color;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert(
+                "color".to_owned(),
+                Value::String(one_based_name(action.color, &MANA_COLORS_V1)?.to_owned()),
+            );
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ChooseEffectNumber => {
+            if action.minimum > action.maximum
+                || action.number < action.minimum
+                || action.number > action.maximum
+            {
+                return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+            }
+            expected.number = action.number;
+            expected.minimum = action.minimum;
+            expected.maximum = action.maximum;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert("number".to_owned(), Value::from(action.number));
+            semantic.insert("minimum".to_owned(), Value::from(action.minimum));
+            semantic.insert("maximum".to_owned(), Value::from(action.maximum));
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ChooseEffectBoolean => {
+            validate_only_flag(action.flags, FLAT_ACTION_FLAG_VALUE_V1)?;
+            expected.flags = action.flags;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert(
+                "value".to_owned(),
+                Value::Bool(action.flags & FLAT_ACTION_FLAG_VALUE_V1 != 0),
+            );
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ChooseOptionalCostUse => {
+            validate_only_flag(action.flags, FLAT_ACTION_FLAG_USE_COST_V1)?;
+            expected.flags = action.flags;
+            require_no_refs(&resolved)?;
+            semantic.insert(
+                "use_cost".to_owned(),
+                Value::Bool(action.flags & FLAT_ACTION_FLAG_USE_COST_V1 != 0),
+            );
+        }
+        FlatScorerActionKindV1::ChooseOptionalCostWhich => {
+            if !(1..=3).contains(&action.optional_cost_choice) {
+                return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+            }
+            expected.optional_cost_choice = action.optional_cost_choice;
+            require_no_refs(&resolved)?;
+            semantic.insert(
+                "choice".to_owned(),
+                Value::String(
+                    one_based_name(action.optional_cost_choice, &OPTIONAL_COST_CHOICES_V1)?
+                        .to_owned(),
+                ),
+            );
+        }
+        FlatScorerActionKindV1::ChooseSpellCopyRetarget => {
+            validate_only_flag(action.flags, FLAT_ACTION_FLAG_CHANGE_TARGET_V1)?;
+            expected.flags = action.flags;
+            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
+            semantic.insert(
+                "change_target".to_owned(),
+                Value::Bool(action.flags & FLAT_ACTION_FLAG_CHANGE_TARGET_V1 != 0),
+            );
+            projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+        }
+        FlatScorerActionKindV1::ChooseMadnessCast => {
+            validate_only_flag(action.flags, FLAT_ACTION_FLAG_CAST_IT_V1)?;
+            expected.flags = action.flags;
+            let card = require_only_ref(&resolved, ROLE_CARD_V1)?;
+            semantic.insert("card".to_owned(), canonical_card_ref_v1(card)?);
+            semantic.insert(
+                "cast_it".to_owned(),
+                Value::Bool(action.flags & FLAT_ACTION_FLAG_CAST_IT_V1 != 0),
+            );
+            projected_refs.push(projected_singular(card, ROLE_CARD_V1));
+        }
+        FlatScorerActionKindV1::Discard => {
+            if resolved.is_empty() {
+                return Err(NativeFlatTensorErrorV1::ActionReferenceShape);
+            }
+            let mut semantic_order = order_indexed_refs(&resolved, ROLE_CARDS_V1)?;
+            let mut cards = semantic_order
+                .iter()
+                .map(|reference| canonical_card_ref_v1(*reference))
+                .collect::<Result<Vec<_>, _>>()?;
+            cards.sort_by_cached_key(canonical_value_bytes);
+            semantic.insert("cards".to_owned(), Value::Array(cards));
+            semantic_order.sort_by_key(|reference| {
+                projected_node_index_v2(reference.raw.model_object_index, projection)
+                    .unwrap_or(usize::MAX)
+            });
+            if semantic_order.iter().any(|reference| {
+                projected_node_index_v2(reference.raw.model_object_index, projection).is_err()
+            }) {
+                return Err(NativeFlatTensorErrorV1::ActionReferenceObject);
+            }
+            for (order, reference) in semantic_order.into_iter().enumerate() {
+                projected_refs.push(ProjectedActionRefV1 {
+                    resolved: reference,
+                    role: ROLE_CARDS_V1,
+                    order_index: u16::try_from(order)
+                        .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?,
+                    associated_order: 0,
+                });
+            }
+        }
+        FlatScorerActionKindV1::ChooseAttackerInclusion => {
+            validate_only_flag(action.flags, FLAT_ACTION_FLAG_INCLUDE_V1)?;
+            expected.flags = action.flags;
+            let attacker = require_only_ref(&resolved, ROLE_ATTACKER_V1)?;
+            semantic.insert("attacker".to_owned(), canonical_card_ref_v1(attacker)?);
+            semantic.insert(
+                "include".to_owned(),
+                Value::Bool(action.flags & FLAT_ACTION_FLAG_INCLUDE_V1 != 0),
+            );
+            projected_refs.push(projected_singular(attacker, ROLE_ATTACKER_V1));
+        }
+        FlatScorerActionKindV1::ChooseBlockerInclusion => {
+            validate_only_flag(action.flags, FLAT_ACTION_FLAG_INCLUDE_V1)?;
+            expected.flags = action.flags;
+            let attacker = require_singular_ref(&resolved, 0, ROLE_ATTACKER_V1)?;
+            let blocker = require_singular_ref(&resolved, 1, ROLE_BLOCKER_V1)?;
+            require_ref_count(&resolved, 2)?;
+            semantic.insert("attacker".to_owned(), canonical_card_ref_v1(attacker)?);
+            semantic.insert("blocker".to_owned(), canonical_card_ref_v1(blocker)?);
+            semantic.insert(
+                "include".to_owned(),
+                Value::Bool(action.flags & FLAT_ACTION_FLAG_INCLUDE_V1 != 0),
+            );
+            projected_refs.push(projected_singular(attacker, ROLE_ATTACKER_V1));
+            projected_refs.push(projected_singular(blocker, ROLE_BLOCKER_V1));
+        }
+        FlatScorerActionKindV1::OrderTriggers => {
+            if resolved.is_empty() || resolved.len() > MAX_TRIGGER_REFS_V1 {
+                return Err(NativeFlatTensorErrorV1::InvalidTriggerOrder);
+            }
+            let ordered = order_indexed_refs(&resolved, ROLE_PENDING_SOURCES_V1)?;
+            let mut seen = 0u8;
+            let mut pending = Vec::with_capacity(ordered.len());
+            let mut order = Vec::with_capacity(ordered.len());
+            for reference in ordered {
+                let associated = usize::from(reference.raw.associated_order);
+                if associated >= resolved.len() {
+                    return Err(NativeFlatTensorErrorV1::InvalidTriggerOrder);
+                }
+                let bit = 1u8 << associated;
+                if seen & bit != 0 {
+                    return Err(NativeFlatTensorErrorV1::InvalidTriggerOrder);
+                }
+                seen |= bit;
+                pending.push(canonical_card_ref_v1(reference)?);
+                order.push(Value::from(reference.raw.associated_order));
+                projected_refs.push(ProjectedActionRefV1 {
+                    resolved: reference,
+                    role: ROLE_PENDING_SOURCES_V1,
+                    order_index: reference.raw.order_index,
+                    associated_order: reference.raw.associated_order,
+                });
+            }
+            let expected_seen = ((1u16 << resolved.len()) - 1) as u8;
+            if seen != expected_seen {
+                return Err(NativeFlatTensorErrorV1::InvalidTriggerOrder);
+            }
+            semantic.insert("pending_sources".to_owned(), Value::Array(pending));
+            semantic.insert("order".to_owned(), Value::Array(order));
+        }
+    }
+
+    if *action != expected {
+        return Err(NativeFlatTensorErrorV1::NonCanonicalActionCore);
+    }
+    if projected_refs.len() != resolved.len() {
+        return Err(NativeFlatTensorErrorV1::ActionReferenceShape);
+    }
+    // Hash share probe cut point: production calls
+    // write_canonical_action_json_v1(semantic, canonical_json_scratch) and
+    // action_hash_features_v1(canonical_json_scratch) here. Both are
+    // skipped; black_box keeps the semantic-map construction above from
+    // being proven dead (and removed) by the optimizer now that nothing
+    // downstream reads it.
+    std::hint::black_box(&semantic);
+    let features = explicit_action_features_v1(action, &resolved)?;
+    let mut ref_features = try_vec_capacity(projected_refs.len())?;
+    let mut ref_card_ids = try_vec_capacity(projected_refs.len())?;
+    let mut ref_node_indices = try_vec_capacity(projected_refs.len())?;
+    for reference in projected_refs {
+        ref_features.push(action_ref_features_v1(reference)?);
+        ref_card_ids.push(i64::from(reference.resolved.raw.card_token));
+        ref_node_indices.push(
+            i64::try_from(projected_node_index_v2(
+                reference.resolved.raw.model_object_index,
+                projection,
+            )?)
+            .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?,
+        );
+    }
+    Ok(SkipEncodedActionV1 {
+        features,
+        ref_features,
+        ref_card_ids,
+        ref_node_indices,
+    })
+}
+
+#[cfg(test)]
+fn encode_full_decision_skip_hash_v1(
+    decision: FlatScoringDecisionViewV1<'_>,
+) -> Result<u64, NativeFlatTensorErrorV2> {
+    if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
+        return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
+    }
+    validate_auxiliary_tables_v2(decision)?;
+    let objects = encode_objects_v2(decision)?;
+    let edges = encode_edges_v2(decision, &objects.projection)?;
+    // Hash share probe cut point: production calls write_canonical_observation_v2
+    // here to build the whole-decision canonical JSON before encode_state_v2
+    // hashes it. Both are skipped below.
+    let state = encode_state_skip_hash_v1(decision)?;
+    let actions = decision.actions();
+    let refs = decision.action_refs();
+    if actions.is_empty() {
+        return Err(NativeFlatTensorErrorV2::EmptyActionTable);
+    }
+    let mut checksum: u64 = 0;
+    let mut ref_cursor = 0usize;
+    for (action_index, action) in actions.iter().enumerate() {
+        let start = usize::try_from(action.ref_start)
+            .map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)?;
+        let end = start
+            .checked_add(usize::from(action.ref_len))
+            .ok_or(NativeFlatTensorErrorV2::CheckedIntegerRange)?;
+        if start != ref_cursor || end > refs.len() {
+            return Err(NativeFlatTensorErrorV2::ActionReferenceRange);
+        }
+        let encoded = encode_action_with_scratch_skip_hash_v1(
+            decision,
+            action_index,
+            action,
+            &refs[start..end],
+            Some(&objects.projection),
+        )?;
+        for value in &encoded.features {
+            checksum = checksum.wrapping_add(u64::from(value.to_bits()));
+        }
+        for row in &encoded.ref_features {
+            for value in row {
+                checksum = checksum.wrapping_add(u64::from(value.to_bits()));
+            }
+        }
+        checksum = checksum.wrapping_add(encoded.ref_card_ids.len() as u64);
+        checksum = checksum.wrapping_add(encoded.ref_node_indices.len() as u64);
+        ref_cursor = end;
+    }
+    if ref_cursor != refs.len() {
+        return Err(NativeFlatTensorErrorV2::ActionReferenceRange);
+    }
+    for value in &state {
+        checksum = checksum.wrapping_add(u64::from(value.to_bits()));
+    }
+    for value in &objects.features {
+        checksum = checksum.wrapping_add(u64::from(value.to_bits()));
+    }
+    for value in &edges.features {
+        checksum = checksum.wrapping_add(u64::from(value.to_bits()));
+    }
+    Ok(checksum)
+}
+
 fn object_output_group_rank_v2(group: FlatObjectGroupV2) -> Option<usize> {
     OBJECT_OUTPUT_GROUP_ORDER_V2
         .iter()
@@ -7566,5 +8193,243 @@ mod tests {
                 .step(expected.episode_id, expected.step, selected)
                 .unwrap();
         }
+    }
+
+    /// Device-tensorization hash-share go/no-go probe (optimization program
+    /// item 6). Measures, over at least 200 genuine production-shaped
+    /// decisions captured from real rollouts, what fraction of
+    /// NativeFlatTensorizerV2::fill's wall-clock cost is the canonical-JSON
+    /// serialization plus SHA-512 digest work (write_canonical_observation_v2
+    /// / append_digest_features_v2 for the state tail, and per action row
+    /// the canonical action JSON plus action_hash_features_v1). That portion
+    /// can never move to a GPU tensorization path since it is a
+    /// serialize-and-hash step, not a tensor op; a large share means device
+    /// tensorization is Amdahl-capped, a small share means it stays live.
+    ///
+    /// Method: encode_full_decision_skip_hash_v1 is a test-only
+    /// reimplementation (see its definition near
+    /// encode_full_decision_with_scratch_v2) that calls every real,
+    /// unmodified private encoder function EXCEPT it skips
+    /// write_canonical_observation_v2 and the write_canonical_action_json_v1
+    /// / action_hash_features_v1 calls. The action-kind match arm inside it
+    /// is a byte-for-byte copy of the real one, including the "semantic"
+    /// JSON-value construction, so semantic-map building is still counted
+    /// as non-hash cost here. That makes the reported hash share a
+    /// conservative lower bound: it counts the SHA-512 hashing and JSON
+    /// serialization calls themselves, but not the cost of building the
+    /// serde_json::Value content that is fed to them (which exists solely to
+    /// be serialized and hashed, and would also disappear from a
+    /// hash-eliminating GPU path). std::hint::black_box is used throughout
+    /// so the optimizer cannot prove any of the skip-path's work is unused
+    /// and delete it, which is what produced a fake speedup number
+    /// elsewhere in this project previously.
+    #[test]
+    #[ignore = "manual timing probe: run explicitly with --ignored --exact --nocapture"]
+    fn device_tensorization_hash_share_probe_v1() {
+        fn next_random(state: &mut u64) -> u64 {
+            *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut value = *state;
+            value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            value ^ (value >> 31)
+        }
+
+        fn mean_ns(samples: &[u64]) -> f64 {
+            samples.iter().sum::<u64>() as f64 / samples.len() as f64
+        }
+
+        fn median_ns(samples: &mut [u64]) -> f64 {
+            samples.sort_unstable();
+            let n = samples.len();
+            if n % 2 == 0 {
+                (samples[n / 2 - 1] as f64 + samples[n / 2] as f64) / 2.0
+            } else {
+                samples[n / 2] as f64
+            }
+        }
+
+        // Six independent rollouts (both mirror and cross-deck matchups),
+        // stepped with a randomized legal-action choice so decisions vary
+        // naturally in object count, action-table size, and game phase,
+        // exactly like streamed_encoder_matches_value_reference_on_seeded_randomized_replays
+        // above. This is real game data, not synthetic minimal decisions.
+        let scenarios = [
+            (
+                81_101_u64,
+                0x9d4a_feb8_91c2_0041_u64,
+                ["Burn".to_string(), "Burn".to_string()],
+            ),
+            (
+                81_102_u64,
+                0xc87f_516a_42d9_1073_u64,
+                ["Rally".to_string(), "Rally".to_string()],
+            ),
+            (
+                81_103_u64,
+                0x0ab3_7639_d21e_f184_u64,
+                ["Burn".to_string(), "Rally".to_string()],
+            ),
+            (
+                81_104_u64,
+                0x765e_409b_3f18_c2ad_u64,
+                ["Rally".to_string(), "Burn".to_string()],
+            ),
+            (
+                81_105_u64,
+                0x1235_9871_ab34_de56_u64,
+                ["Burn".to_string(), "Burn".to_string()],
+            ),
+            (
+                81_106_u64,
+                0x9988_7766_5544_3322_u64,
+                ["Rally".to_string(), "Rally".to_string()],
+            ),
+        ];
+
+        let mut corpus: Vec<OwnedScoringDecisionV2> = Vec::new();
+        for (episode_id, environment_seed, deck_ids) in scenarios {
+            let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+                episode_id,
+                environment_seed,
+                512,
+                65_536,
+                deck_ids,
+            )
+            .unwrap();
+            let mut random_state = environment_seed ^ episode_id.rotate_left(17);
+            for _ in 0..96 {
+                let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                    break;
+                };
+                let owned = OwnedScoringDecisionV2::from_session(&session);
+                corpus.push(owned);
+                let selected = (next_random(&mut random_state)
+                    % u64::from(expected.legal_action_count)) as u32;
+                session
+                    .step(expected.episode_id, expected.step, selected)
+                    .unwrap();
+            }
+        }
+        assert!(
+            corpus.len() >= 200,
+            "hash-share probe needs at least 200 genuine decisions, got {}",
+            corpus.len()
+        );
+
+        // Confirm every captured decision passes the real, unmodified fill
+        // path (this both sanity-checks the corpus and guarantees the
+        // skip-hash reimplementation's action-ref handling is operating on
+        // already-validated, well-formed data) before timing anything.
+        let mut tensorizer = NativeFlatTensorizerV2::new();
+        let mut output = NativeFlatDecisionTensorV2::default();
+        let mut action_counts = Vec::with_capacity(corpus.len());
+        for (index, owned) in corpus.iter().enumerate() {
+            tensorizer
+                .fill(owned.view(), &mut output)
+                .unwrap_or_else(|error| {
+                    panic!("corpus decision {index} failed real fill: {error:?}")
+                });
+            action_counts.push(owned.actions.len());
+            let checksum = encode_full_decision_skip_hash_v1(owned.view())
+                .unwrap_or_else(|error| {
+                    panic!("corpus decision {index} failed skip-hash fill: {error:?}")
+                });
+            std::hint::black_box(checksum);
+        }
+
+        let decision_count = corpus.len();
+        let min_actions = *action_counts.iter().min().unwrap();
+        let max_actions = *action_counts.iter().max().unwrap();
+        let mean_actions = action_counts.iter().sum::<usize>() as f64 / decision_count as f64;
+
+        const WARMUP_ROUNDS: usize = 3;
+        const TIMED_ROUNDS: usize = 40;
+
+        // Unmeasured warm-up: page faults, allocator growth, branch
+        // predictor state, and (best effort) CPU frequency ramp-up should
+        // not land inside the timed samples below.
+        for _ in 0..WARMUP_ROUNDS {
+            for owned in &corpus {
+                tensorizer.fill(owned.view(), &mut output).unwrap();
+                std::hint::black_box(&output);
+                let checksum = encode_full_decision_skip_hash_v1(owned.view()).unwrap();
+                std::hint::black_box(checksum);
+            }
+        }
+
+        let mut full_samples_ns: Vec<u64> = Vec::with_capacity(decision_count * TIMED_ROUNDS);
+        let mut skip_samples_ns: Vec<u64> = Vec::with_capacity(decision_count * TIMED_ROUNDS);
+
+        // Alternate which side is measured first each round so neither
+        // measurement systematically benefits (or suffers) from residual
+        // cache/branch-predictor warmth left by the other.
+        for round in 0..TIMED_ROUNDS {
+            let full_first = round % 2 == 0;
+            let sides: [bool; 2] = if full_first {
+                [true, false]
+            } else {
+                [false, true]
+            };
+            for measure_full in sides {
+                if measure_full {
+                    for owned in &corpus {
+                        let view = owned.view();
+                        let start = std::time::Instant::now();
+                        tensorizer.fill(view, &mut output).unwrap();
+                        let elapsed = start.elapsed();
+                        std::hint::black_box(&output);
+                        full_samples_ns.push(elapsed.as_nanos() as u64);
+                    }
+                } else {
+                    for owned in &corpus {
+                        let view = owned.view();
+                        let start = std::time::Instant::now();
+                        let checksum = encode_full_decision_skip_hash_v1(view).unwrap();
+                        let elapsed = start.elapsed();
+                        std::hint::black_box(checksum);
+                        skip_samples_ns.push(elapsed.as_nanos() as u64);
+                    }
+                }
+            }
+        }
+
+        let full_mean = mean_ns(&full_samples_ns);
+        let full_median = median_ns(&mut full_samples_ns);
+        let skip_mean = mean_ns(&skip_samples_ns);
+        let skip_median = median_ns(&mut skip_samples_ns);
+
+        let hash_share_mean_pct = (full_mean - skip_mean) / full_mean * 100.0;
+        let hash_share_median_pct = (full_median - skip_median) / full_median * 100.0;
+
+        println!(
+            "device-tensorization hash-share probe (LOWER BOUND: semantic-map \
+             construction is counted as non-hash cost; see test doc comment)"
+        );
+        println!(
+            "decisions: {decision_count} (actions per decision: min {min_actions}, \
+             mean {mean_actions:.1}, max {max_actions})"
+        );
+        println!(
+            "samples per side: {} ({} rounds x {} decisions)",
+            full_samples_ns.len(),
+            TIMED_ROUNDS,
+            decision_count
+        );
+        println!("full fill   (NativeFlatTensorizerV2::fill): mean {full_mean:.1} ns, median {full_median:.1} ns");
+        println!(
+            "skip hash   (same pipeline minus JSON+digest): mean {skip_mean:.1} ns, median {skip_median:.1} ns"
+        );
+        println!(
+            "hash share  (JSON serialize + SHA-512, lower bound): mean {hash_share_mean_pct:.2}%, median {hash_share_median_pct:.2}%"
+        );
+
+        assert!(decision_count >= 200);
+        assert!(full_mean > 0.0);
+        assert!(skip_mean > 0.0);
+        assert!(
+            full_mean >= skip_mean,
+            "skip-hash path should never be slower than the full path on average \
+             (full {full_mean:.1} ns vs skip {skip_mean:.1} ns)"
+        );
     }
 }
