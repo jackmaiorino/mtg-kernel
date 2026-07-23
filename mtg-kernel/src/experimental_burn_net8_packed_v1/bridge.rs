@@ -232,7 +232,15 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         })?;
     let parameter_before_bits =
         snapshot.parameters[SCORER_SECOND_BIAS_ORDINAL_V1].values[0].to_bits();
-    let device = burn_cuda::CudaDevice::new(0);
+    // Diagnostic-only device ordinal override for multi-GPU economics probes
+    // (process-wide; per-run placement uses one process per device). Absent or
+    // unparsable means ordinal 0, the qualified default. Non-authorizing: any
+    // evidence path must still capture and pin the actual device identity.
+    let device_ordinal = std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(0);
+    let device = burn_cuda::CudaDevice::new(device_ordinal);
     // Take (not borrow) the resident entry for the whole update: every
     // failure path below leaves the slot empty, so a partially stepped
     // device state can never become eligible for reuse; the slot is refilled

@@ -528,6 +528,13 @@ mod windows_science_loop_tests {
     /// content-keyed resident device slot, per-run rollout state) and
     /// measures real aggregate throughput under contention. Non-banked
     /// diagnostic; wall-clock numbers are environment-dependent.
+    ///
+    /// Sweep knobs arrive via env so one binary serves every point:
+    /// MULTIRUN_RUNS, MULTIRUN_UPDATES, MULTIRUN_WORKERS,
+    /// MULTIRUN_SESSIONS, MULTIRUN_BROKER_TARGET. The broker target is
+    /// the contention knob: the trainer sizes its forward pool as
+    /// min(broker_batch_target, actors, cores), so N runs partition the
+    /// machine's scoring cores only when N * target <= cores.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     #[test]
     #[ignore = "measurement probe, run explicitly"]
@@ -535,23 +542,34 @@ mod windows_science_loop_tests {
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
         use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_v2;
 
-        let run_count = 4_usize;
-        let updates = 16_u64;
+        fn env_knob_v1(name: &str, default: u64) -> u64 {
+            match std::env::var(name) {
+                Ok(raw) => raw.parse().expect("multirun knob must be a u64"),
+                Err(_) => default,
+            }
+        }
+
+        let run_count = usize::try_from(env_knob_v1("MULTIRUN_RUNS", 4)).unwrap();
+        let updates = env_knob_v1("MULTIRUN_UPDATES", 16);
+        let workers = env_knob_v1("MULTIRUN_WORKERS", 2);
+        let sessions = env_knob_v1("MULTIRUN_SESSIONS", 32);
+        let broker_target = env_knob_v1("MULTIRUN_BROKER_TARGET", 16);
+        println!(
+            "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
+             broker_target={broker_target}"
+        );
         let started = std::time::Instant::now();
         let handles: Vec<_> = (0..run_count)
             .map(|ordinal| {
                 std::thread::spawn(move || {
-                    // Topology divides the machine: each run gets 2 worker
-                    // threads (64 actors as 2x32) instead of the solo-run 8x8,
-                    // so N runs share cores instead of oversubscribing them.
                     let patched = test_fixture_bytes_with_schedule_and_base_seed_v2(
                         NativeTrainingNumericalBackendV1::CudaBurnDense,
                         64,
                         4,
                         updates,
-                        2,
-                        32,
-                        16,
+                        workers,
+                        sessions,
+                        broker_target,
                         1_024,
                         2_048,
                         424_242 + ordinal as u64,
