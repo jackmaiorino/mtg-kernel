@@ -3838,7 +3838,8 @@ mod composition_invariance_probe_tests {
 
         const CRITERIA_SHA256_V1: &str =
             "4c3d3249003bc34cae59166fc6dbcf1a71f0fd1d34758372564af394284aba28";
-        const ALLOWED_ARMS_V1: [&str; 2] = ["stock-cmma", "simple-unit-fork"];
+        const CRITERIA_BYTES_V1: &[u8] =
+            include_bytes!("../../data/native_cuda_qualification_v1/criteria_v1.json");
 
         fn finite(value: f64, name: &str) -> f64 {
             assert!(value.is_finite(), "nonfinite {name} in evidence record");
@@ -3902,6 +3903,7 @@ mod composition_invariance_probe_tests {
             case_count: usize,
             case_order: &'static str,
             device_runtime_manifest_sha256: String,
+            numerical_mode_claim: &'static str,
             device_manifest_numerical_mode_note: &'static str,
             kernel_log_sha256: String,
             cpu_bits_sha256: String,
@@ -3913,11 +3915,43 @@ mod composition_invariance_probe_tests {
             per_case: Vec<CellZeroCaseRawV1>,
         }
 
+        // Compile-bound arm identity: the launcher-declared arm must match
+        // the constant compiled into THIS binary, so an executable-argument
+        // swap cannot relabel arms. The constant differs between the arm
+        // commits and is therefore bound by the tracked-tree SHA.
         let arm = std::env::var("CELL_ZERO_CONFIG").expect("CELL_ZERO_CONFIG must name the arm");
-        assert!(
-            ALLOWED_ARMS_V1.contains(&arm.as_str()),
-            "CELL_ZERO_CONFIG {arm} is not in the closed arm set"
+        assert_eq!(
+            arm,
+            super::cell_zero_arm_v1::CELL_ZERO_ARM_V1,
+            "declared arm does not match this binary's compiled arm constant"
         );
+
+        // The sealed characterization criteria are compiled into the arm:
+        // digest-verified, parsed, and their non-authorizing state enforced
+        // before any measurement is taken.
+        {
+            let mut hasher = Sha256::new();
+            hasher.update(CRITERIA_BYTES_V1);
+            assert_eq!(
+                hex(hasher.finalize()),
+                CRITERIA_SHA256_V1,
+                "vendored criteria bytes do not match the sealed digest"
+            );
+            let criteria: serde_json::Value =
+                serde_json::from_slice(CRITERIA_BYTES_V1).expect("criteria parse");
+            assert_eq!(
+                criteria["identity"],
+                "mtg-kernel-native-cuda-characterization-contract-v1"
+            );
+            assert_eq!(
+                criteria["authorization"]["qualification_state"],
+                "incomplete-unratified"
+            );
+            assert_eq!(
+                criteria["authorization"]["training_restart_authorized"],
+                false
+            );
+        }
         let executable_sha256 = std::env::var("CELL_ZERO_EXE_SHA256")
             .expect("CELL_ZERO_EXE_SHA256 must carry the launcher-computed executable digest");
         assert_eq!(
@@ -4049,11 +4083,11 @@ mod composition_invariance_probe_tests {
         };
 
         let record = CellZeroEvidenceRecordV2 {
-            schema: "mtg-kernel-cell-zero-raw-forward-evidence/v2",
-            evidence_status: "characterization-pending-shared-core-and-typed-launcher",
+            schema: "mtg-kernel-cell-zero-raw-forward-evidence/v3",
+            evidence_status: "characterization-pending-shared-core",
             training_restart_authorized: false,
             criteria_sha256: CRITERIA_SHA256_V1,
-            arm,
+            arm: super::cell_zero_arm_v1::CELL_ZERO_ARM_V1.to_owned(),
             build_git_head: env!("MTG_KERNEL_BUILD_GIT_HEAD"),
             build_git_clean: env!("MTG_KERNEL_BUILD_GIT_CLEAN"),
             build_tracked_tree_sha256: env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
@@ -4067,9 +4101,10 @@ mod composition_invariance_probe_tests {
             device_runtime_manifest_sha256: DeviceRuntimeManifestV1::collect_v1()
                 .expect("device runtime manifest for evidence identity")
                 .sha256_v1(),
+            numerical_mode_claim: super::cell_zero_arm_v1::CELL_ZERO_ARM_NUMERICAL_MODE_V1,
             device_manifest_numerical_mode_note:
-                "manifest numerical_mode is a stock-scoped constant; route identity binds \
-                 via arm + tracked-tree SHA + kernel-log digest pending route-derived mode",
+                "manifest numerical_mode field is stock-scoped; the per-arm claim above is \
+                 compile-bound with the arm constant and corroborated by the kernel-log digest",
             kernel_log_sha256,
             cpu_bits_sha256: hex(cpu_bits_hasher.finalize()),
             device_bits_sha256: hex(device_bits_hasher.finalize()),

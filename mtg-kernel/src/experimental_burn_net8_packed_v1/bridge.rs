@@ -340,6 +340,8 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     #[cfg(test)]
     let measurement_mode = TOLERANCE_MEASUREMENT_MODE_V1.load(std::sync::atomic::Ordering::Relaxed);
     #[cfg(test)]
+    let mut measurement_deferred_error: Option<&'static str> = None;
+    #[cfg(test)]
     #[derive(Clone, serde::Serialize)]
     struct QualificationWorstRowV1 {
         group: usize,
@@ -581,9 +583,24 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
                 }
             }
             if !tolerance_ok_v1(substep_value, f32::from_bits(substep.expected_value_bits)) {
-                return Err(NativePolicyTrainErrorV1::CudaBackend {
-                    code: "cuda-burn-dense-bridge-transported-value-tolerance",
-                });
+                // In measurement mode the rejection is DEFERRED past record
+                // emission so a value failure cannot lose the worst-identity
+                // evidence; the error still returns fail-closed afterward.
+                #[cfg(test)]
+                let defer = measurement_mode;
+                #[cfg(not(test))]
+                let defer = false;
+                if defer {
+                    #[cfg(test)]
+                    if measurement_deferred_error.is_none() {
+                        measurement_deferred_error =
+                            Some("cuda-burn-dense-bridge-transported-value-tolerance");
+                    }
+                } else {
+                    return Err(NativePolicyTrainErrorV1::CudaBackend {
+                        code: "cuda-burn-dense-bridge-transported-value-tolerance",
+                    });
+                }
             }
             let transported_row = substep
                 .expected_raw_action_logit_bits
@@ -704,6 +721,11 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
             "QUALIFICATION_JSONL {}",
             serde_json::to_string(&record).expect("measurement record serializes")
         );
+    }
+    // A rejection deferred for record completeness still fails closed.
+    #[cfg(test)]
+    if let Some(code) = measurement_deferred_error {
+        return Err(NativePolicyTrainErrorV1::CudaBackend { code });
     }
 
     // The gauge accumulator observes substeps in the CPU backward traversal
