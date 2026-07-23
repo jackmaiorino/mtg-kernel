@@ -521,6 +521,80 @@ mod windows_science_loop_tests {
         }
     }
 
+    /// Saturation-curve evaluation over a surviving pathfinding store:
+    /// loads the boundary at each requested generation and runs the
+    /// checkpoint runner against uniform opponents, printing win/loss/draw
+    /// per generation. Non-banked diagnostic; the store root arrives via
+    /// PATHFINDING_STORE_ROOT and generations via PATHFINDING_EVAL_GENS
+    /// (comma-separated).
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn pathfinding_saturation_eval_v1() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_v2;
+
+        let root_path = std::env::var("PATHFINDING_STORE_ROOT")
+            .expect("PATHFINDING_STORE_ROOT must name the surviving store root");
+        let generations: Vec<u64> = std::env::var("PATHFINDING_EVAL_GENS")
+            .expect("PATHFINDING_EVAL_GENS must list generations")
+            .split(',')
+            .map(|token| token.trim().parse().expect("generation index"))
+            .collect();
+
+        let patched = test_fixture_bytes_with_schedule_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            8_192,
+            8,
+            8,
+            32,
+            1_024,
+            2_048,
+        );
+        let run = decode_train_run_v2(&patched).expect("pathfinding run record");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap();
+        let runner_config = NativeCheckpointRunnerConfigV1 {
+            evaluation_base_seed: 7_777,
+            first_episode_index: 0,
+            episode_count: 256,
+            scheduler_timeout: Duration::from_secs(3_600),
+            measure_broker_service_time: false,
+        };
+
+        let reference_boundary = load_native_training_boundary_v2(&root, &run, 0).unwrap();
+        let reference_run = run_native_checkpoint_v1(
+            &run,
+            reference_boundary.checkpoint(),
+            reference_boundary.payload(),
+            runner_config,
+        )
+        .unwrap();
+        for generation in generations {
+            let boundary = load_native_training_boundary_v2(&root, &run, generation).unwrap();
+            let candidate_run = run_native_checkpoint_v1(
+                &run,
+                boundary.checkpoint(),
+                boundary.payload(),
+                runner_config,
+            )
+            .unwrap();
+            let evaluation =
+                evaluate_native_checkpoint_uniform_delta_v1(&reference_run, &candidate_run)
+                    .unwrap();
+            let outcomes = evaluation.candidate_learner_outcomes();
+            println!(
+                "SATURATION gen={generation} W/L/D {}/{}/{} of {} (delta vs gen0 {})",
+                outcomes.wins(),
+                outcomes.losses(),
+                outcomes.draws(),
+                outcomes.total(),
+                evaluation.total_candidate_minus_reference_reward_delta()
+            );
+        }
+    }
+
     /// Overnight non-banked pathfinding run: K=64 vs uniform on the
     /// CudaBurnDense backend in record-only measurement mode to thousands of
     /// updates. Purpose: uniform-opponent saturation depth, durable-store
