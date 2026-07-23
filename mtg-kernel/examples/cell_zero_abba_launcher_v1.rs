@@ -18,6 +18,7 @@
 //! Usage:
 //!   cell_zero_abba_launcher_v1 <stock_exe> <unit_exe> <fresh_output_dir>
 
+use mtg_kernel::native_cuda_qualification_metrics_v1 as metrics;
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -267,6 +268,67 @@ fn main() -> Result<(), Box<dyn Error>> {
         records.push(record);
     }
 
+    // Independent shared-metric-core recompute over the framed raw arrays:
+    // every recomputable channel is rebuilt from bits and bit-compared to
+    // the in-record aggregates, and the sealed caps are evaluated per case.
+    let row_cap = metrics::cap_from_bits_v1("3f5d7dbf487fcb92");
+    let value_cap = metrics::cap_from_bits_v1("3f60624dd2f1a9fb");
+    let kl_cap = metrics::cap_from_bits_v1("3ee9f4631cd6b312");
+    let mut recompute_all_match = true;
+    let mut recompute_detail = String::new();
+    let mut cap_summary = Vec::new();
+    for (run_ordinal, record) in records.iter().enumerate() {
+        let mut worst_kl = 0.0_f64;
+        let mut rows_over_row_cap = 0_u64;
+        let mut values_over_cap = 0_u64;
+        let mut global_max_range = 0.0_f64;
+        let mut global_max_abs = 0.0_f64;
+        let mut global_max_value = 0.0_f64;
+        for case in &record.per_case {
+            let stats = metrics::row_delta_stats_v1(&case.device_logit_bits, &case.cpu_logit_bits);
+            if stats.range.to_bits() != case.range.to_bits()
+                || stats.max_abs.to_bits() != case.max_abs.to_bits()
+                || stats.min_delta_index != case.min_delta_index
+                || stats.max_delta_index != case.max_delta_index
+            {
+                recompute_all_match = false;
+                recompute_detail =
+                    format!("run {run_ordinal} case {} delta stats mismatch", case.case);
+            }
+            let value_abs = (f64::from(f32::from_bits(case.device_value_bits))
+                - f64::from(f32::from_bits(case.cpu_value_bits)))
+            .abs();
+            if value_abs.to_bits() != case.value_abs.to_bits() {
+                recompute_all_match = false;
+                recompute_detail = format!("run {run_ordinal} case {} value mismatch", case.case);
+            }
+            let kl_forward = metrics::row_kl_v1(&case.cpu_logit_bits, &case.device_logit_bits);
+            let kl_backward = metrics::row_kl_v1(&case.device_logit_bits, &case.cpu_logit_bits);
+            worst_kl = worst_kl.max(kl_forward).max(kl_backward);
+            if !metrics::within_cap_v1(stats.range, row_cap) {
+                rows_over_row_cap += 1;
+            }
+            if !metrics::within_cap_v1(value_abs, value_cap) {
+                values_over_cap += 1;
+            }
+            global_max_range = global_max_range.max(stats.range);
+            global_max_abs = global_max_abs.max(stats.max_abs);
+            global_max_value = global_max_value.max(value_abs);
+        }
+        if global_max_range.to_bits() != record.global_max_range.to_bits()
+            || global_max_abs.to_bits() != record.global_max_abs.to_bits()
+            || global_max_value.to_bits() != record.global_max_value_abs.to_bits()
+        {
+            recompute_all_match = false;
+            recompute_detail = format!("run {run_ordinal} global aggregate mismatch");
+        }
+        cap_summary.push(format!(
+            "run {run_ordinal} ({}): rows_over_row_cap={rows_over_row_cap}              values_over_cap={values_over_cap} worst_row_kl={worst_kl:e}              kl_within_cap={}",
+            record.arm,
+            metrics::within_cap_v1(worst_kl, kl_cap)
+        ));
+    }
+
     let mut invariants = Vec::new();
     let mut check = |name: &'static str, passed: bool, detail: String| {
         invariants.push(LauncherInvariantV1 {
@@ -365,6 +427,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             "stock '{}' unit '{}'",
             records[0].numerical_mode_claim, records[1].numerical_mode_claim
         ),
+    );
+
+    check(
+        "shared_metric_core_recompute_matches_records",
+        recompute_all_match,
+        recompute_detail,
+    );
+    check(
+        "cap_verdicts_characterization",
+        true,
+        cap_summary.join("; "),
     );
 
     let all_invariants_passed = invariants.iter().all(|invariant| invariant.passed);

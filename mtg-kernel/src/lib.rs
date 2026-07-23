@@ -78,6 +78,7 @@ pub mod native_checkpoint_runner_v1;
 // Exact, schema-neutral comparison of two same-run checkpoint rollouts against
 // the frozen native uniform opponent. It publishes no artifacts or statistics.
 pub mod native_checkpoint_evaluator_v1;
+pub mod native_cuda_qualification_metrics_v1;
 // Exact CPU loss/backward/Adam reference for terminal_reinforce_value/v3;
 // deliberately not a scheduler, checkpoint format, or performance backend.
 #[cfg(feature = "native-flat-tensorizer-diagnostic")]

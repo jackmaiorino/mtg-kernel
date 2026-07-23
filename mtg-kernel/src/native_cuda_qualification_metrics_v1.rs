@@ -18,7 +18,7 @@
 
 /// Promote one exported f32 bit pattern to f64 exactly once, rejecting
 /// nonfinite values before any fold.
-pub(crate) fn promote_bits_v1(bits: u32, name: &str) -> f64 {
+pub fn promote_bits_v1(bits: u32, name: &str) -> f64 {
     let value = f32::from_bits(bits);
     assert!(
         value.is_finite(),
@@ -30,16 +30,16 @@ pub(crate) fn promote_bits_v1(bits: u32, name: &str) -> f64 {
 /// Per-row delta statistics under the contract fold: deltas are CUDA minus
 /// CPU in action-index-ascending order, min/max keep the FIRST tie, and
 /// the range is max minus min.
-pub(crate) struct RowDeltaStatsV1 {
-    pub(crate) min_delta: f64,
-    pub(crate) max_delta: f64,
-    pub(crate) min_delta_index: usize,
-    pub(crate) max_delta_index: usize,
-    pub(crate) range: f64,
-    pub(crate) max_abs: f64,
+pub struct RowDeltaStatsV1 {
+    pub min_delta: f64,
+    pub max_delta: f64,
+    pub min_delta_index: usize,
+    pub max_delta_index: usize,
+    pub range: f64,
+    pub max_abs: f64,
 }
 
-pub(crate) fn row_delta_stats_v1(cuda_bits: &[u32], cpu_bits: &[u32]) -> RowDeltaStatsV1 {
+pub fn row_delta_stats_v1(cuda_bits: &[u32], cpu_bits: &[u32]) -> RowDeltaStatsV1 {
     assert_eq!(cuda_bits.len(), cpu_bits.len(), "row width mismatch");
     assert!(!cuda_bits.is_empty(), "empty row");
     let mut min_delta = f64::INFINITY;
@@ -73,7 +73,7 @@ pub(crate) fn row_delta_stats_v1(cuda_bits: &[u32], cpu_bits: &[u32]) -> RowDelt
 /// Stable f64 log-softmax over one row of exported f32 bits: first-max tie
 /// shift, exp, action-index-ascending sum, natural log; no f32 round trip
 /// anywhere.
-pub(crate) fn stable_log_softmax_v1(row_bits: &[u32]) -> Vec<f64> {
+pub fn stable_log_softmax_v1(row_bits: &[u32]) -> Vec<f64> {
     assert!(!row_bits.is_empty(), "empty softmax row");
     let promoted: Vec<f64> = row_bits
         .iter()
@@ -100,7 +100,7 @@ pub(crate) fn stable_log_softmax_v1(row_bits: &[u32]) -> Vec<f64> {
 /// Row KL from the `own` distribution to the `other`: sum over actions of
 /// own probability times (own log-probability minus other log-probability),
 /// action-index-ascending.
-pub(crate) fn row_kl_v1(own_bits: &[u32], other_bits: &[u32]) -> f64 {
+pub fn row_kl_v1(own_bits: &[u32], other_bits: &[u32]) -> f64 {
     let own_logp = stable_log_softmax_v1(own_bits);
     let other_logp = stable_log_softmax_v1(other_bits);
     assert_eq!(own_logp.len(), other_logp.len(), "row width mismatch");
@@ -114,7 +114,7 @@ pub(crate) fn row_kl_v1(own_bits: &[u32], other_bits: &[u32]) -> f64 {
 
 /// Unscaled gradient metric for one row: the L1 distance between the two
 /// probability vectors, action-index-ascending.
-pub(crate) fn row_probability_l1_v1(candidate_bits: &[u32], reference_bits: &[u32]) -> f64 {
+pub fn row_probability_l1_v1(candidate_bits: &[u32], reference_bits: &[u32]) -> f64 {
     let candidate = stable_log_softmax_v1(candidate_bits);
     let reference = stable_log_softmax_v1(reference_bits);
     assert_eq!(candidate.len(), reference.len(), "row width mismatch");
@@ -127,7 +127,7 @@ pub(crate) fn row_probability_l1_v1(candidate_bits: &[u32], reference_bits: &[u3
 
 /// Selected log-probability delta for one row: candidate selected
 /// log-probability minus reference selected log-probability.
-pub(crate) fn selected_logp_delta_v1(
+pub fn selected_logp_delta_v1(
     candidate_bits: &[u32],
     reference_bits: &[u32],
     selected_index: usize,
@@ -139,7 +139,7 @@ pub(crate) fn selected_logp_delta_v1(
 }
 
 /// Decode a directed f64 cap from its exact bit string.
-pub(crate) fn cap_from_bits_v1(bits_hex: &str) -> f64 {
+pub fn cap_from_bits_v1(bits_hex: &str) -> f64 {
     let bits = u64::from_str_radix(bits_hex, 16).expect("cap bit string");
     let cap = f64::from_bits(bits);
     assert!(cap.is_finite() && cap > 0.0, "cap must be finite positive");
@@ -148,7 +148,7 @@ pub(crate) fn cap_from_bits_v1(bits_hex: &str) -> f64 {
 
 /// Contract cap comparison: the observed value must be finite and
 /// nonnegative, and within the cap inclusively; no epsilon, no clamp.
-pub(crate) fn within_cap_v1(observed: f64, cap: f64) -> bool {
+pub fn within_cap_v1(observed: f64, cap: f64) -> bool {
     observed.is_finite() && observed >= 0.0 && observed <= cap
 }
 
