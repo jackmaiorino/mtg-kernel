@@ -157,6 +157,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn serde_json_f64_round_trip_preserves_bits_for_campaign_values() {
+        let device_bits = 0xbd195f04_u32;
+        let cpu_bits = 0xbd195ea5_u32;
+        let value_abs =
+            (f64::from(f32::from_bits(device_bits)) - f64::from(f32::from_bits(cpu_bits))).abs();
+        let json = serde_json::to_string(&value_abs).unwrap();
+        let parsed: f64 = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.to_bits(),
+            value_abs.to_bits(),
+            "json {json} parsed to {parsed:e}"
+        );
+        assert_eq!(value_abs.to_bits(), 0x3e97c00000000000);
+    }
+
+    #[test]
     fn delta_fold_keeps_first_tie_and_exact_range() {
         // Two actions share the identical maximal delta; the first index
         // must win. Values chosen exactly representable so the recompute is
