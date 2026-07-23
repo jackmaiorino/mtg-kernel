@@ -521,6 +521,91 @@ mod windows_science_loop_tests {
         }
     }
 
+    /// Multirun orchestration pilot: N concurrent science loops in one
+    /// process, each with a distinct held-out base seed via the combined
+    /// fixture helper, a distinct store root, and the full durable
+    /// pipeline. Proves same-process isolation (per-root store locks,
+    /// content-keyed resident device slot, per-run rollout state) and
+    /// measures real aggregate throughput under contention. Non-banked
+    /// diagnostic; wall-clock numbers are environment-dependent.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn multirun_pilot_v1() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_v2;
+
+        let run_count = 4_usize;
+        let updates = 16_u64;
+        let started = std::time::Instant::now();
+        let handles: Vec<_> = (0..run_count)
+            .map(|ordinal| {
+                std::thread::spawn(move || {
+                    let patched = test_fixture_bytes_with_schedule_and_base_seed_v2(
+                        NativeTrainingNumericalBackendV1::CudaBurnDense,
+                        64,
+                        4,
+                        updates,
+                        8,
+                        8,
+                        32,
+                        1_024,
+                        2_048,
+                        424_242 + ordinal as u64,
+                    );
+                    let run = decode_train_run_v2(&patched).expect("pilot run record");
+                    let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+                    let mut execution_config = test_execution_config_v2(&run);
+                    execution_config.numerical_backend =
+                        NativeTrainingNumericalBackendV1::CudaBurnDense;
+                    let parent = TestParentV1::new(&format!("multirun-pilot-{ordinal}"));
+                    let runner_config = NativeCheckpointRunnerConfigV1 {
+                        evaluation_base_seed: 7_777,
+                        first_episode_index: 0,
+                        episode_count: 32,
+                        scheduler_timeout: Duration::from_secs(3_600),
+                        measure_broker_service_time: false,
+                    };
+                    let run_started = std::time::Instant::now();
+                    let report = run_native_science_loop_v1(
+                        &parent.parent,
+                        "store",
+                        &run,
+                        execution_config,
+                        &snapshot_manifest,
+                        &snapshot_payload,
+                        runner_config,
+                    )
+                    .expect("pilot loop");
+                    let wall = run_started.elapsed().as_secs_f64();
+                    let outcomes = report.evaluation().candidate_learner_outcomes();
+                    (
+                        ordinal,
+                        report.latest_generation_index(),
+                        wall,
+                        outcomes.wins(),
+                        outcomes.losses(),
+                    )
+                })
+            })
+            .collect();
+        let mut total_episodes = 0_u64;
+        for handle in handles {
+            let (ordinal, generation, wall, wins, losses) = handle.join().expect("pilot thread");
+            assert_eq!(generation, updates);
+            total_episodes += 64 * updates;
+            println!(
+                "MULTIRUN run={ordinal} gen={generation} wall={wall:.1}s eval W/L {wins}/{losses}"
+            );
+        }
+        let aggregate_wall = started.elapsed().as_secs_f64();
+        println!(
+            "MULTIRUN AGGREGATE runs={run_count} episodes={total_episodes} \
+             wall={aggregate_wall:.1}s eps_per_s={:.2} (non-evidence)",
+            total_episodes as f64 / aggregate_wall
+        );
+    }
+
     /// Saturation-curve evaluation over a surviving pathfinding store:
     /// loads the boundary at each requested generation and runs the
     /// checkpoint runner against uniform opponents, printing win/loss/draw
