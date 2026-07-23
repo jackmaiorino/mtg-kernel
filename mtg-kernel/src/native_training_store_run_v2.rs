@@ -2009,6 +2009,42 @@ pub(crate) fn test_fixture_bytes_with_schedule_v2(
     )
 }
 
+/// Combined schedule/topology plus held-out base-seed fixture: builds one
+/// record, applies the backend pair and schedule/topology fields, sets the
+/// base seed BEFORE derived refresh, and canonical-encodes, producing an
+/// honestly re-digested run rather than a JSON patch of derived fields.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(
+    not(all(windows, feature = "experimental-burn-net8-packed-cuda-v1")),
+    allow(dead_code)
+)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2481,7 +2517,35 @@ mod tests {
         max_physical_decisions: u64,
         max_policy_steps: u64,
     ) -> Vec<u8> {
+        fixture_bytes_with_schedule_and_base_seed(
+            backend,
+            batch_episodes,
+            checkpoint_segment_updates,
+            requested_successful_updates,
+            worker_count,
+            sessions_per_worker,
+            broker_batch_target,
+            max_physical_decisions,
+            max_policy_steps,
+            71501,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+    ) -> Vec<u8> {
         let mut record = fixture_record();
+        record.schedule.base_seed = base_seed;
         apply_backend_pair(&mut record, backend);
         record.limits.max_physical_decisions = max_physical_decisions;
         record.limits.max_policy_steps = max_policy_steps;
