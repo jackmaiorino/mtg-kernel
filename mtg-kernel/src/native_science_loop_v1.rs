@@ -554,14 +554,25 @@ mod windows_science_loop_tests {
         let workers = env_knob_v1("MULTIRUN_WORKERS", 2);
         let sessions = env_knob_v1("MULTIRUN_SESSIONS", 32);
         let broker_target = env_knob_v1("MULTIRUN_BROKER_TARGET", 16);
+        // S1 mirror-validation knobs (test-harness only; no model or
+        // schedule semantics change): MULTIRUN_BASE_SEED replaces the
+        // hardcoded 424_242, MULTIRUN_SEED_OFFSET disambiguates ordinals
+        // across concurrent device processes so N seeds stay globally
+        // distinct, and MULTIRUN_STORE_PARENT retains per-run stores under
+        // a durable directory instead of the auto-deleting temp parent.
+        let base_seed = env_knob_v1("MULTIRUN_BASE_SEED", 424_242);
+        let seed_offset = env_knob_v1("MULTIRUN_SEED_OFFSET", 0);
+        let durable_parent = std::env::var("MULTIRUN_STORE_PARENT").ok();
         println!(
             "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
-             broker_target={broker_target}"
+             broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset}"
         );
         let started = std::time::Instant::now();
         let handles: Vec<_> = (0..run_count)
             .map(|ordinal| {
+                let durable_parent = durable_parent.clone();
                 std::thread::spawn(move || {
+                    let run_seed = base_seed + seed_offset + ordinal as u64;
                     let patched = test_fixture_bytes_with_schedule_and_base_seed_v2(
                         NativeTrainingNumericalBackendV1::CudaBurnDense,
                         64,
@@ -572,14 +583,30 @@ mod windows_science_loop_tests {
                         broker_target,
                         1_024,
                         2_048,
-                        424_242 + ordinal as u64,
+                        run_seed,
                     );
                     let run = decode_train_run_v2(&patched).expect("pilot run record");
                     let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
                     let mut execution_config = test_execution_config_v2(&run);
                     execution_config.numerical_backend =
                         NativeTrainingNumericalBackendV1::CudaBurnDense;
-                    let parent = TestParentV1::new(&format!("multirun-pilot-{ordinal}"));
+                    let (parent_path, _ephemeral_guard) = match durable_parent {
+                        Some(dir) => {
+                            let path = std::path::PathBuf::from(dir)
+                                .join(format!("run-{ordinal}"));
+                            fs::create_dir_all(&path).expect("durable multirun parent");
+                            (path, None)
+                        }
+                        None => {
+                            let guard =
+                                TestParentV1::new(&format!("multirun-pilot-{ordinal}"));
+                            (guard.parent.clone(), Some(guard))
+                        }
+                    };
+                    println!(
+                        "MULTIRUN run={ordinal} seed={run_seed} store_root={}",
+                        parent_path.join("store").display()
+                    );
                     let runner_config = NativeCheckpointRunnerConfigV1 {
                         evaluation_base_seed: 7_777,
                         first_episode_index: 0,
@@ -589,7 +616,7 @@ mod windows_science_loop_tests {
                     };
                     let run_started = std::time::Instant::now();
                     let report = run_native_science_loop_v1(
-                        &parent.parent,
+                        &parent_path,
                         "store",
                         &run,
                         execution_config,
