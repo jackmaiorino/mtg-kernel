@@ -106,6 +106,14 @@ pub(crate) mod native_trainer_schedule_v1;
 // (Self-Play Ladder Design Contract S2, Section 2): two new namespaces only.
 #[allow(dead_code)]
 pub(crate) mod native_trainer_schedule_v2;
+// Ladder opponent engine: runtime bridge from a validated ladder pool
+// contract plus three loaded frozen-checkpoint inference handles to
+// per-decision opponent action selection (Self-Play Ladder Design Contract
+// S2, Sections 2, 3, 5). Layers on native_opponent_policy_v2,
+// native_trainer_schedule_v2, native_opponent_sampler_v1, and
+// native_checkpoint_inference_v1.
+#[allow(dead_code)]
+pub(crate) mod native_ladder_opponent_v1;
 // Opt-in in-memory wall-clock diagnostics. These types are intentionally not a
 // Store, benchmark, checkpoint, or evidence schema and implement no codec.
 pub mod native_training_phase_diagnostic_v1;
