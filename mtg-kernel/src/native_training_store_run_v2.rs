@@ -34,6 +34,13 @@ use crate::native_full_episode_trajectory_v1::{
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
 };
+use crate::native_opponent_policy_v2::{
+    FROZEN_CHECKPOINT_OPPONENT_POLICY_IDENTITY_V2, FROZEN_CHECKPOINT_OPPONENT_POLICY_MODEL_RULE_V2,
+    FROZEN_CHECKPOINT_OPPONENT_POLICY_SAMPLING_RULE_V2, OPPONENT_LADDER_POOL_IDENTITY_V2,
+    OPPONENT_LADDER_POOL_SIZE_V2, OPPONENT_LADDER_POOL_WEIGHT_PREDECESSOR_A_V2,
+    OPPONENT_LADDER_POOL_WEIGHT_PREDECESSOR_B_V2, OPPONENT_LADDER_POOL_WEIGHT_PRIMARY_V2,
+    OPPONENT_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2,
+};
 use crate::native_opponent_sampler_v1::{
     NATIVE_OPPONENT_SAMPLER_VECTORS_FILE_SHA256_V1,
     NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1,
@@ -218,6 +225,25 @@ const FROZEN_OPPONENT_VECTORS_FILE_SHA256_V2: &str =
     "9e5898308d30614a4a09cecb584200521b1a3b727606d8cf78dbe70b51106e18";
 const FROZEN_OPPONENT_VECTOR_STREAM_SHA256_V2: &str =
     "2b65520a528dcf9eba8d7baded50cc9ad50cf507704c2b4410e2afb4b34d7fad";
+
+// Ladder-opponent successor identities (Self-Play Ladder Design Contract S2,
+// Section 2). The uniform literals above stay frozen forever; a record
+// carries EITHER the uniform pair above OR this ladder pair below in its
+// `opponent_policy`, never a mix, and only the ladder identity admits a
+// present `opponent_ladder_pool` section (Section 3).
+const FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2: &str =
+    "mtg-kernel-trainer-frozen-checkpoint-policy-v2";
+const FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2: &str =
+    "frozen-checkpoint-softmax-t1-one-seed-per-decision";
+const FROZEN_LADDER_POLICY_SAMPLING_RULE_V2: &str =
+    "seeded-categorical-sample-from-softmax-temperature-1.0-checkpoint-policy-one-seed-per-decision";
+const FROZEN_LADDER_POOL_IDENTITY_V2: &str = "mtg-kernel-opponent-ladder-pool-v1";
+const FROZEN_LADDER_POOL_SIZE_V2: u64 = 4;
+const FROZEN_LADDER_POOL_WEIGHT_PRIMARY_V2: u64 = 40;
+const FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_A_V2: u64 = 20;
+const FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_B_V2: u64 = 20;
+const FROZEN_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2: u64 = 20;
+
 const FROZEN_TRAJECTORY_IDENTITY_V2: &str = "mtg-kernel-native-full-episode-trajectory-sha256-v1";
 const FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2: &str =
     "mtg_kernel_native_full_episode_trajectory_goldens/v1";
@@ -485,6 +511,13 @@ pub struct TrainRunContractsV2 {
     pub(crate) learner_sampler: LearnerSamplerContractV2,
     pub(crate) opponent_policy: OpponentPolicyContractV2,
     pub(crate) opponent_sampler: OpponentSamplerContractV2,
+    /// Present if and only if `opponent_policy.identity` carries the ladder
+    /// identity (Self-Play Ladder Design Contract S2, Section 3). Absent for
+    /// every uniform-identity record; omitted entirely from canonical bytes
+    /// when absent, so existing uniform run records are byte-for-byte
+    /// unaffected by this field's addition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) opponent_ladder_pool: Option<OpponentLadderPoolContractV1>,
     pub(crate) trajectory: TrajectoryContractV2,
     pub(crate) standalone_semantics: StandaloneSemanticsV2,
 }
@@ -570,6 +603,55 @@ pub struct OpponentSamplerContractV2 {
     pub(crate) cross_language_vectors_file_sha256: String,
     pub(crate) cross_language_vector_stream_sha256: String,
     pub(crate) width_one_consumes_seed: bool,
+}
+
+/// One checkpoint reference in the ladder pool (contract Section 3):
+/// PRIMARY, PREDECESSOR-A, or PREDECESSOR-B. Hash-pins the source run, the
+/// generation within that run, and the three artifact digests re-validated
+/// at checkpoint load (checkpoint/sidecar/state).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpponentLadderCheckpointRefV1 {
+    pub(crate) source_run_sha256: String,
+    pub(crate) generation: u64,
+    pub(crate) checkpoint_sha256: String,
+    pub(crate) sidecar_sha256: String,
+    pub(crate) state_sha256: String,
+}
+
+/// The fourth pool slot: the uniform sampler, reused verbatim via the
+/// superseded-identity semantics preserved for this slot only (contract
+/// Section 3). These fields are pinned equal to the frozen uniform
+/// `OpponentPolicyContractV2`/`OpponentSamplerContractV2` literals; the
+/// uniform identities are not edited or repurposed by this reuse.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpponentLadderUniformFloorV1 {
+    pub(crate) identity: String,
+    pub(crate) model_rule: String,
+    pub(crate) sampler_identity: String,
+    pub(crate) sampler_algorithm: String,
+}
+
+/// The K = 4 ladder opponent pool (contract Section 3). Present if and only
+/// if `opponent_policy` carries the ladder identity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpponentLadderPoolContractV1 {
+    pub(crate) identity: String,
+    pub(crate) size: u64,
+    /// The softmax-temperature-1.0 seeded categorical selection rule
+    /// governing the three policy-driven slots (primary/predecessor-a/
+    /// predecessor-b). The uniform floor slot has its own rule fields.
+    pub(crate) policy_member_sampling_rule: String,
+    pub(crate) weight_primary: u64,
+    pub(crate) weight_predecessor_a: u64,
+    pub(crate) weight_predecessor_b: u64,
+    pub(crate) weight_uniform_floor: u64,
+    pub(crate) primary: OpponentLadderCheckpointRefV1,
+    pub(crate) predecessor_a: OpponentLadderCheckpointRefV1,
+    pub(crate) predecessor_b: OpponentLadderCheckpointRefV1,
+    pub(crate) uniform_floor: OpponentLadderUniformFloorV1,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1106,6 +1188,21 @@ fn validate_frozen_rev3_authorities_v2() -> Result<()> {
         || NATIVE_OPPONENT_SAMPLER_VECTORS_FILE_SHA256_V1 != FROZEN_OPPONENT_VECTORS_FILE_SHA256_V2
         || NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1
             != FROZEN_OPPONENT_VECTOR_STREAM_SHA256_V2
+        || FROZEN_CHECKPOINT_OPPONENT_POLICY_IDENTITY_V2
+            != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
+        || FROZEN_CHECKPOINT_OPPONENT_POLICY_MODEL_RULE_V2
+            != FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2
+        || FROZEN_CHECKPOINT_OPPONENT_POLICY_SAMPLING_RULE_V2
+            != FROZEN_LADDER_POLICY_SAMPLING_RULE_V2
+        || OPPONENT_LADDER_POOL_IDENTITY_V2 != FROZEN_LADDER_POOL_IDENTITY_V2
+        || OPPONENT_LADDER_POOL_SIZE_V2 != FROZEN_LADDER_POOL_SIZE_V2
+        || OPPONENT_LADDER_POOL_WEIGHT_PRIMARY_V2 != FROZEN_LADDER_POOL_WEIGHT_PRIMARY_V2
+        || OPPONENT_LADDER_POOL_WEIGHT_PREDECESSOR_A_V2
+            != FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_A_V2
+        || OPPONENT_LADDER_POOL_WEIGHT_PREDECESSOR_B_V2
+            != FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_B_V2
+        || OPPONENT_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2
+            != FROZEN_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2
         || NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1 != FROZEN_TRAJECTORY_IDENTITY_V2
         || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1 != FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2
         || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1
@@ -1380,8 +1477,6 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
             .learner_sampler
             .cross_language_vector_stream_sha256
             != FROZEN_LEARNER_VECTOR_STREAM_SHA256_V2
-        || contracts.opponent_policy.identity != FROZEN_OPPONENT_POLICY_IDENTITY_V2
-        || contracts.opponent_policy.model_rule != FROZEN_OPPONENT_POLICY_MODEL_RULE_V2
         || contracts.opponent_sampler.identity != FROZEN_OPPONENT_SAMPLER_IDENTITY_V2
         || contracts.opponent_sampler.algorithm != FROZEN_OPPONENT_SAMPLER_ALGORITHM_V2
         || contracts.opponent_sampler.seed_derivation_identity
@@ -1416,6 +1511,63 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
         || !is_sha256(&contracts.standalone_semantics.sha256)
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    validate_opponent_policy_and_ladder_pool_v2(contracts)?;
+    Ok(())
+}
+
+/// Lockstep validator for the opponent-policy/ladder-pool pair (contract
+/// Section 2/3). A record carrying the uniform identity validates exactly as
+/// before and MUST NOT carry a ladder pool section (fail-closed). A record
+/// carrying the ladder identity MUST carry a structurally valid ladder pool
+/// section (fail-closed). Any other `opponent_policy.identity` is rejected.
+fn validate_opponent_policy_and_ladder_pool_v2(contracts: &TrainRunContractsV2) -> Result<()> {
+    match contracts.opponent_policy.identity.as_str() {
+        FROZEN_OPPONENT_POLICY_IDENTITY_V2 => {
+            if contracts.opponent_policy.model_rule != FROZEN_OPPONENT_POLICY_MODEL_RULE_V2
+                || contracts.opponent_ladder_pool.is_some()
+            {
+                return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+            }
+            Ok(())
+        }
+        FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2 => {
+            if contracts.opponent_policy.model_rule != FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2 {
+                return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+            }
+            match &contracts.opponent_ladder_pool {
+                Some(pool) => validate_opponent_ladder_pool_v2(pool),
+                None => Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
+            }
+        }
+        _ => Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
+    }
+}
+
+fn validate_opponent_ladder_pool_v2(pool: &OpponentLadderPoolContractV1) -> Result<()> {
+    if pool.identity != FROZEN_LADDER_POOL_IDENTITY_V2
+        || pool.size != FROZEN_LADDER_POOL_SIZE_V2
+        || pool.policy_member_sampling_rule != FROZEN_LADDER_POLICY_SAMPLING_RULE_V2
+        || pool.weight_primary != FROZEN_LADDER_POOL_WEIGHT_PRIMARY_V2
+        || pool.weight_predecessor_a != FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_A_V2
+        || pool.weight_predecessor_b != FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_B_V2
+        || pool.weight_uniform_floor != FROZEN_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2
+        || pool.uniform_floor.identity != FROZEN_OPPONENT_POLICY_IDENTITY_V2
+        || pool.uniform_floor.model_rule != FROZEN_OPPONENT_POLICY_MODEL_RULE_V2
+        || pool.uniform_floor.sampler_identity != FROZEN_OPPONENT_SAMPLER_IDENTITY_V2
+        || pool.uniform_floor.sampler_algorithm != FROZEN_OPPONENT_SAMPLER_ALGORITHM_V2
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    for entry in [&pool.primary, &pool.predecessor_a, &pool.predecessor_b] {
+        if !is_sha256(&entry.source_run_sha256)
+            || !is_u63(entry.generation)
+            || !is_sha256(&entry.checkpoint_sha256)
+            || !is_sha256(&entry.sidecar_sha256)
+            || !is_sha256(&entry.state_sha256)
+        {
+            return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidScalar));
+        }
     }
     Ok(())
 }
@@ -3193,5 +3345,256 @@ mod tests {
         assert_eq!(workload.checkpoint_episode_interval, 3584);
         assert_eq!(workload.requested_successful_updates, 21);
         assert_eq!(workload.requested_episode_count, 10_752);
+    }
+
+    fn hex64(fill: char) -> String {
+        std::iter::repeat(fill).take(64).collect()
+    }
+
+    fn valid_ladder_checkpoint_ref(fill: char, generation: u64) -> OpponentLadderCheckpointRefV1 {
+        OpponentLadderCheckpointRefV1 {
+            source_run_sha256: hex64(fill),
+            generation,
+            checkpoint_sha256: hex64(fill),
+            sidecar_sha256: hex64(fill),
+            state_sha256: hex64(fill),
+        }
+    }
+
+    fn valid_ladder_pool_fixture() -> OpponentLadderPoolContractV1 {
+        OpponentLadderPoolContractV1 {
+            identity: FROZEN_LADDER_POOL_IDENTITY_V2.to_owned(),
+            size: FROZEN_LADDER_POOL_SIZE_V2,
+            policy_member_sampling_rule: FROZEN_LADDER_POLICY_SAMPLING_RULE_V2.to_owned(),
+            weight_primary: FROZEN_LADDER_POOL_WEIGHT_PRIMARY_V2,
+            weight_predecessor_a: FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_A_V2,
+            weight_predecessor_b: FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_B_V2,
+            weight_uniform_floor: FROZEN_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2,
+            primary: valid_ladder_checkpoint_ref('a', 256),
+            predecessor_a: valid_ladder_checkpoint_ref('b', 256),
+            predecessor_b: valid_ladder_checkpoint_ref('c', 256),
+            uniform_floor: OpponentLadderUniformFloorV1 {
+                identity: FROZEN_OPPONENT_POLICY_IDENTITY_V2.to_owned(),
+                model_rule: FROZEN_OPPONENT_POLICY_MODEL_RULE_V2.to_owned(),
+                sampler_identity: FROZEN_OPPONENT_SAMPLER_IDENTITY_V2.to_owned(),
+                sampler_algorithm: FROZEN_OPPONENT_SAMPLER_ALGORITHM_V2.to_owned(),
+            },
+        }
+    }
+
+    fn ladder_record() -> TrainRunV2 {
+        let mut record = fixture_record();
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
+        refresh_derived(&mut record);
+        record
+    }
+
+    #[test]
+    fn ladder_identity_with_valid_pool_validates() {
+        let record = ladder_record();
+        let validated = validate_train_run_record_v2(record).unwrap();
+        assert_eq!(
+            validated.record().contracts().opponent_ladder_pool,
+            Some(valid_ladder_pool_fixture())
+        );
+    }
+
+    #[test]
+    fn ladder_pool_round_trips_through_canonical_bytes() {
+        let record = ladder_record();
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.record().contracts().opponent_ladder_pool,
+            Some(valid_ladder_pool_fixture())
+        );
+        // The pool key sorts between "model" and "opponent_policy".
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("\"opponent_ladder_pool\":{"));
+        let pool_pos = text.find("\"opponent_ladder_pool\":{").unwrap();
+        let policy_pos = text.find("\"opponent_policy\":{").unwrap();
+        assert!(pool_pos < policy_pos);
+    }
+
+    #[test]
+    fn ladder_identity_without_pool_fails_closed() {
+        let mut record = fixture_record();
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    #[test]
+    fn uniform_identity_with_pool_present_fails_closed() {
+        let mut record = fixture_record();
+        record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    #[test]
+    fn ladder_identity_with_mismatched_model_rule_fails_closed() {
+        let mut record = ladder_record();
+        record.contracts.opponent_policy.model_rule = "some-other-rule".to_owned();
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    #[test]
+    fn unknown_opponent_policy_identity_fails_closed() {
+        let mut record = fixture_record();
+        record.contracts.opponent_policy.identity = "some-unknown-identity".to_owned();
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    #[test]
+    fn ladder_pool_weight_and_identity_corruption_matrix_fails_closed() {
+        let mut cases = Vec::new();
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_ladder_pool
+            .as_mut()
+            .unwrap()
+            .weight_primary = 41;
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record.contracts.opponent_ladder_pool.as_mut().unwrap().size = 5;
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_ladder_pool
+            .as_mut()
+            .unwrap()
+            .identity = "wrong".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_ladder_pool
+            .as_mut()
+            .unwrap()
+            .policy_member_sampling_rule = "wrong".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_ladder_pool
+            .as_mut()
+            .unwrap()
+            .uniform_floor
+            .identity = "wrong".to_owned();
+        cases.push(record);
+
+        for record in cases {
+            assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+        }
+    }
+
+    #[test]
+    fn ladder_pool_checkpoint_ref_scalar_corruption_matrix_fails_closed() {
+        let mut cases = Vec::new();
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_ladder_pool
+            .as_mut()
+            .unwrap()
+            .primary
+            .source_run_sha256 = "not-hex".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_ladder_pool
+            .as_mut()
+            .unwrap()
+            .primary
+            .generation = U63_MAX + 1;
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_ladder_pool
+            .as_mut()
+            .unwrap()
+            .predecessor_a
+            .checkpoint_sha256 = hex64('a').to_ascii_uppercase();
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_ladder_pool
+            .as_mut()
+            .unwrap()
+            .predecessor_b
+            .sidecar_sha256 = "short".to_owned();
+        cases.push(record);
+
+        for record in cases {
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+    }
+
+    /// HARD CONSTRAINT regression (S2 ladder contract Deliverable 1): every
+    /// EXISTING uniform run record's canonical bytes, and therefore its
+    /// `run_sha256`, must remain bit-identical after adding the optional
+    /// `opponent_ladder_pool` section. This reads a REAL, already-published
+    /// S1 run record (read-only; not a fixture, not modified by this test)
+    /// and proves the updated decoder still accepts it and recomputes the
+    /// exact same `run_sha256` the store already published for it (the same
+    /// value the checkpoint sidecar `update-00000000.checkpoint.json` in
+    /// that store binds against). This test depends on that external
+    /// evidence directory remaining present on this machine.
+    #[test]
+    fn real_s1_mirror_run_json_validates_with_unchanged_run_sha256() {
+        const REAL_RUN_JSON_PATH: &str =
+            r"D:\mtg-kernel-s1-mirror-20260724\dev0\run-0\store\run.json";
+        // Independently confirmed via `certutil -hashfile run.json SHA256`
+        // and cross-checked against the `run_sha256` field stored in that
+        // store's `checkpoints\update-00000000.checkpoint.json` sidecar.
+        const STORED_RUN_SHA256: &str =
+            "47bc46634de718439ea93fbad105cbf96a6339913856805dccca87773760e7ef";
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!("could not read the real S1 mirror run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes)
+            .unwrap_or_else(|error| panic!("real S1 mirror run.json failed validation: {error:?}"));
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+
+        // This is a uniform-identity run: the ladder pool section must be
+        // absent, and the uniform identities validate exactly as before.
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_none());
+        assert_eq!(
+            validated.record().contracts().opponent_policy.identity,
+            FROZEN_OPPONENT_POLICY_IDENTITY_V2
+        );
     }
 }
