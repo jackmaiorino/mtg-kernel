@@ -102,6 +102,10 @@ pub(crate) mod native_policy_train_step_v1;
 pub(crate) mod native_train_state_payload_v1;
 #[allow(dead_code)]
 pub(crate) mod native_trainer_schedule_v1;
+// Ladder opponent seed schedule additions layered on the V1 schedule above
+// (Self-Play Ladder Design Contract S2, Section 2): two new namespaces only.
+#[allow(dead_code)]
+pub(crate) mod native_trainer_schedule_v2;
 // Opt-in in-memory wall-clock diagnostics. These types are intentionally not a
 // Store, benchmark, checkpoint, or evidence schema and implement no codec.
 pub mod native_training_phase_diagnostic_v1;
