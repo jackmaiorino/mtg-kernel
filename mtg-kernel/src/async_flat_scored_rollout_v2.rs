@@ -34,6 +34,7 @@ use crate::flat_policy_v2::{
     FLAT_SCORER_PACKET_VERSION_V2, FLAT_SCORER_VISIBLE_MANIFEST_V2,
     FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V2,
 };
+use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::rl::{TerminalClassificationV1, TerminalSafeCodeV2};
 use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1,
@@ -41,6 +42,7 @@ use crate::rl_session::{
     FLAT_ACTION_DECISION_SLICE_VERSION_V2, FLAT_ACTION_REF_ROLE_MAPPING_VERSION_V2,
 };
 use std::fmt;
+use std::sync::Arc;
 
 #[cfg(test)]
 use crate::rl_session::FlatActionDecisionBindingV2;
@@ -890,6 +892,16 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV2 {
             .map(|binding| binding.candidate_order_commitment)
             .map_err(|_| ())
     }
+
+    /// `FlatScoredFamilyV2::DecisionView<'a>` is exactly
+    /// `FlatScoringDecisionViewV2<'a>` (see `type DecisionView` above), so
+    /// this override is the identity function: V2 is the only family whose
+    /// decision view the ladder opponent engine can score today.
+    fn ladder_scoring_view<'a>(
+        view: Self::DecisionView<'a>,
+    ) -> Option<FlatScoringDecisionViewV2<'a>> {
+        Some(view)
+    }
 }
 
 fn player_seat_code(seat: crate::rl::PlayerSeatV1) -> u8 {
@@ -1043,6 +1055,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v2<O: FlatScoredTrajectoryO
     run_async_flat_scored_rollout_observed_with_schedule_v2(
         config,
         FlatScoredExecutionScheduleV1::Legacy,
+        None,
         scorer,
         observer,
     )
@@ -1051,12 +1064,16 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v2<O: FlatScoredTrajectoryO
 /// Internal native-trainer execution path. It deliberately accepts no public
 /// seed/config schema: the caller supplies the one frozen trainer base seed,
 /// while public V2 continues to use its legacy fixed-seat three-seed schedule.
+/// `ladder_opponent` is the Self-Play Ladder Design Contract S2 opponent
+/// engine; `None` reproduces today's uniform-opponent native trainer
+/// behavior exactly (Section 5).
 #[allow(dead_code)]
 pub(crate) fn run_async_flat_scored_rollout_native_observed_v2<
     O: FlatScoredTrajectoryObserverV2,
 >(
     config: AsyncRolloutConfigV2,
     base_seed: u64,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     scorer: &mut impl FlatBatchScorerV2,
     observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
@@ -1064,6 +1081,7 @@ pub(crate) fn run_async_flat_scored_rollout_native_observed_v2<
     run_async_flat_scored_rollout_observed_with_schedule_v2(
         config,
         FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed },
+        ladder_opponent,
         scorer,
         observer,
     )
@@ -1072,6 +1090,7 @@ pub(crate) fn run_async_flat_scored_rollout_native_observed_v2<
 fn run_async_flat_scored_rollout_observed_with_schedule_v2<O: FlatScoredTrajectoryObserverV2>(
     config: AsyncRolloutConfigV2,
     execution_schedule: FlatScoredExecutionScheduleV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     scorer: &mut impl FlatBatchScorerV2,
     observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
@@ -1081,6 +1100,7 @@ fn run_async_flat_scored_rollout_observed_with_schedule_v2<O: FlatScoredTrajecto
     match run_async_flat_scored_rollout_core::<FlatScoredFamilyV2, _, _>(
         config,
         execution_schedule,
+        ladder_opponent,
         &mut scorer,
         observer,
     ) {
@@ -1565,6 +1585,7 @@ mod tests {
             let (result, batch) = run_async_flat_scored_rollout_native_observed_v2(
                 shaped,
                 BASE_SEED,
+                None,
                 &mut scorer,
                 observer,
             )
@@ -1633,9 +1654,14 @@ mod tests {
         )
         .unwrap();
         let mut scorer = ContractCheckingScorerV2::default();
-        let error =
-            run_async_flat_scored_rollout_native_observed_v2(shaped, 71_501, &mut scorer, observer)
-                .unwrap_err();
+        let error = run_async_flat_scored_rollout_native_observed_v2(
+            shaped,
+            71_501,
+            None,
+            &mut scorer,
+            observer,
+        )
+        .unwrap_err();
         assert!(matches!(
             error,
             AsyncFlatScoredObservedRunErrorV2::Rollout(

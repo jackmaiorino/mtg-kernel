@@ -464,6 +464,7 @@ pub fn run_native_checkpoint_v1(
     let observed = run_async_flat_scored_rollout_native_observed_v2(
         rollout_config,
         config.evaluation_base_seed,
+        None,
         &mut scorer,
         observer,
     );

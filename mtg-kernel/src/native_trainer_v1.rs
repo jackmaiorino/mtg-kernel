@@ -1546,6 +1546,7 @@ impl NativeTrainerStateV2 {
         let rollout_result = run_async_flat_scored_rollout_native_observed_v2(
             rollout_config,
             self.base_seed,
+            None,
             &mut scorer,
             observer,
         );

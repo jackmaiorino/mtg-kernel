@@ -37,14 +37,19 @@ use crate::flat_policy_v1::{
     FLAT_SCORER_PACKET_VERSION_V1, FLAT_SCORER_VISIBLE_MANIFEST_V1,
     FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V1,
 };
+use crate::flat_policy_v2::FlatScoringDecisionViewV2;
 use crate::native_full_episode_trajectory_v1::{
     NativeFullEpisodeTrajectoryAccumulatorV1, NativeFullEpisodeTrajectoryDecisionRowV1,
     NativeFullEpisodeTrajectoryReceiptV1, NativeTrajectoryActorRoleV1,
 };
+use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_opponent_sampler_v1::select_native_trainer_opponent_action_v1;
 use crate::native_trainer_schedule_v1::{
     derive_native_trainer_learner_action_seed_v1, derive_native_trainer_opponent_group_seed_v1,
     native_trainer_episode_schedule_v1,
+};
+use crate::native_trainer_schedule_v2::{
+    derive_native_trainer_opponent_policy_substep_seed_v2, OpponentLadderPoolMemberV2,
 };
 use crate::rl::{
     derive_env_seed, derive_policy_seed, PlayerSeatV1, TerminalClassificationV1, TerminalOutcomeV1,
@@ -113,10 +118,24 @@ struct NativeLaneScheduleStateV1 {
     learner_policy_step_count: u64,
     opponent_policy_step_count: u64,
     open_group: Option<NativeOpenPhysicalGroupV1>,
+    /// The episode's resolved ladder pool member (Self-Play Ladder Design
+    /// Contract S2, Section 3), or `None` when no ladder engine is
+    /// configured for this lane. `None` reproduces today's opponent branch
+    /// exactly (bit-identical uniform sampling); `Some(UniformFloor)` also
+    /// reproduces it exactly (Section 3's floor slot reuses the frozen
+    /// uniform sampler verbatim); `Some(policy_member)` defers opponent
+    /// action selection to the caller, which must encode the decision and
+    /// consult the ladder engine.
+    ladder_member: Option<OpponentLadderPoolMemberV2>,
 }
 
 impl NativeLaneScheduleStateV1 {
-    fn new(base_seed: u64, episode_index: u64, learner_seat: PlayerSeatV1) -> Self {
+    fn new(
+        base_seed: u64,
+        episode_index: u64,
+        learner_seat: PlayerSeatV1,
+        ladder_member: Option<OpponentLadderPoolMemberV2>,
+    ) -> Self {
         Self {
             base_seed,
             episode_index,
@@ -126,6 +145,7 @@ impl NativeLaneScheduleStateV1 {
             learner_policy_step_count: 0,
             opponent_policy_step_count: 0,
             open_group: None,
+            ladder_member,
         }
     }
 
@@ -237,18 +257,42 @@ impl NativeLaneScheduleStateV1 {
             )
         } else {
             // The group seed is derived exactly when the physical group
-            // opens. Every declared substep then enters the frozen native
-            // opponent sampler, including legal width one.
+            // opens. Every declared substep then enters either the frozen
+            // native opponent sampler (no ladder engine, or this episode's
+            // resolved member is the uniform floor: bit-identical to a
+            // uniform run either way) or is deferred to the caller for
+            // ladder-policy scoring (Self-Play Ladder Design Contract S2,
+            // Section 5): the caller has `session`/`F::encode_packet`,
+            // which this schedule-only state does not.
             open.opponent_group_seed.ok_or(())?;
-            let selected = select_native_trainer_opponent_action_v1(
-                self.base_seed,
-                self.episode_index,
-                open.actor_group_ordinal,
-                decision.substep_index,
-                decision.legal_action_count,
-            )
-            .map_err(|_| ())?;
-            (selected.action_seed, Some(selected.selected_index))
+            match self.ladder_member {
+                None | Some(OpponentLadderPoolMemberV2::UniformFloor) => {
+                    let selected = select_native_trainer_opponent_action_v1(
+                        self.base_seed,
+                        self.episode_index,
+                        open.actor_group_ordinal,
+                        decision.substep_index,
+                        decision.legal_action_count,
+                    )
+                    .map_err(|_| ())?;
+                    (selected.action_seed, Some(selected.selected_index))
+                }
+                Some(_policy_member) => {
+                    // Deferred: `action_seed` here is the
+                    // `train-opponent-policy-substep` seed the caller must
+                    // pass to the ladder engine's softmax sampling, derived
+                    // here (pure schedule math, no session needed) so the
+                    // caller does not duplicate this derivation.
+                    let seed = derive_native_trainer_opponent_policy_substep_seed_v2(
+                        self.base_seed,
+                        self.episode_index,
+                        open.actor_group_ordinal,
+                        decision.substep_index,
+                    )
+                    .map_err(|_| ())?;
+                    (seed, None)
+                }
+            }
         };
         // Opening a group is transactional with seed derivation and opponent
         // selection. A failed preflight cannot leave a partial open group.
@@ -1176,6 +1220,20 @@ pub(crate) trait FlatScoredFamilyCore: Copy + Send + Sync + 'static {
     ) -> Result<[u8; 16], ()> {
         Err(())
     }
+
+    /// Narrows this family's decision view to a `FlatScoringDecisionViewV2`
+    /// for the ladder opponent engine (Self-Play Ladder Design Contract S2,
+    /// Section 5). The default rejects: only a family whose `DecisionView`
+    /// really is `FlatScoringDecisionViewV2` (currently `FlatScoredFamilyV2`)
+    /// can support a ladder-configured opponent. Configuring a ladder engine
+    /// for an unsupported family is a caller error, fails closed at the
+    /// opponent branch's decision loop rather than silently falling back to
+    /// uniform sampling.
+    fn ladder_scoring_view<'a>(
+        _view: Self::DecisionView<'a>,
+    ) -> Option<FlatScoringDecisionViewV2<'a>> {
+        None
+    }
 }
 
 pub(crate) trait FlatBatchScorerCore<F: FlatScoredFamilyCore> {
@@ -1468,6 +1526,10 @@ struct LocalLaneCore<F: FlatScoredFamilyCore> {
     native_full_trajectory: Option<NativeFullEpisodeTrajectoryAccumulatorV1>,
     learner_action_count: u64,
     learner_trace_hash: u64,
+    /// Set once per lane at construction; absence reproduces today's
+    /// opponent branch exactly (Self-Play Ladder Design Contract S2,
+    /// Section 5). See `FlatScoredFamilyCore::ladder_scoring_view`.
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     #[cfg(test)]
     test_instrumentation: Arc<TestRunInstrumentationV1>,
 }
@@ -1481,6 +1543,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
         logical_lane_id: usize,
         first_episode_id: u64,
         end_episode_id: u64,
+        ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     ) -> Self {
         let next_episode_id = first_episode_id
             .checked_add(logical_lane_id as u64)
@@ -1502,6 +1565,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             native_full_trajectory: None,
             learner_action_count: 0,
             learner_trace_hash: FNV1A64_OFFSET,
+            ladder_opponent,
             #[cfg(test)]
             test_instrumentation: Arc::new(TestRunInstrumentationV1::default()),
         }
@@ -1685,6 +1749,15 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         self.episode_id = episode_id;
                         self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
                     })?;
+                let ladder_member = self
+                    .ladder_opponent
+                    .as_ref()
+                    .map(|engine| engine.pool_member_for_episode_v1(base_seed, episode_id))
+                    .transpose()
+                    .map_err(|_| {
+                        self.episode_id = episode_id;
+                        self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
+                    })?;
                 (
                     episode.environment_seed,
                     episode.learner_seat,
@@ -1692,6 +1765,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         base_seed,
                         episode_id,
                         episode.learner_seat,
+                        ladder_member,
                     )),
                 )
             }
@@ -1854,9 +1928,64 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         None
                     };
                     let selected_index = if let Some(preflight) = native_preflight {
-                        preflight
-                            .opponent_selected_index
-                            .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?
+                        let ladder_member = self
+                            .native_schedule
+                            .and_then(|schedule| schedule.ladder_member);
+                        match ladder_member {
+                            None | Some(OpponentLadderPoolMemberV2::UniformFloor) => {
+                                preflight.opponent_selected_index.ok_or_else(|| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?
+                            }
+                            Some(policy_member) => {
+                                // Deferred from preflight (Self-Play Ladder
+                                // Design Contract S2, Section 5): build the
+                                // decision's flat encoding the same way the
+                                // learner branch does (F::encode_packet,
+                                // self.encoder, self.packet), then narrow it
+                                // to a FlatScoringDecisionViewV2 for the
+                                // ladder engine. Safe to reuse self.packet
+                                // here: whenever this opponent arm runs,
+                                // self.packet is not borrowed by any
+                                // outstanding learner decision (the learner
+                                // branch above always returns immediately
+                                // after taking it, ending this round's loop
+                                // for this lane).
+                                let engine = self.ladder_opponent.as_ref().ok_or_else(|| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?;
+                                let owned_packet = self.packet.take().ok_or_else(|| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?;
+                                let validated_packet = F::encode_packet(
+                                    self.session.as_ref().ok_or_else(|| {
+                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                    })?,
+                                    decision,
+                                    &mut self.encoder,
+                                    owned_packet,
+                                )
+                                .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Encode))?;
+                                let view =
+                                    F::ladder_scoring_view(F::packet_view(&validated_packet))
+                                        .ok_or_else(|| {
+                                            self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                        });
+                                let index = view.and_then(|view| {
+                                    engine
+                                        .select_policy_action_v1(
+                                            policy_member,
+                                            view,
+                                            preflight.action_seed,
+                                        )
+                                        .map_err(|_| {
+                                            self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                        })
+                                });
+                                self.packet = Some(F::into_owned_packet(validated_packet));
+                                index?
+                            }
+                        }
                     } else {
                         uniform_index(&mut self.opponent_policy, decision.legal_action_count)
                     };
@@ -2399,6 +2528,9 @@ struct WorkerRuntimeV1 {
     deadline: Instant,
     cancel: Arc<AtomicBool>,
     released_epoch: Arc<AtomicU64>,
+    /// Set once per rollout run; absence reproduces today's opponent branch
+    /// exactly (Self-Play Ladder Design Contract S2, Section 5).
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     #[cfg(test)]
     test_instrumentation: Arc<TestRunInstrumentationV1>,
 }
@@ -2439,6 +2571,7 @@ fn worker_loop<F: FlatScoredFamilyCore>(
                 first_lane + slot,
                 config.first_episode_id,
                 runtime.end_episode_id,
+                runtime.ladder_opponent.clone(),
             );
             #[cfg(test)]
             let lane = LocalLaneCore {
@@ -2852,6 +2985,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
     run_async_flat_scored_rollout_core::<FlatScoredFamilyV1, _, _>(
         config,
         FlatScoredExecutionScheduleV1::Legacy,
+        None,
         &mut scorer,
         observer,
     )
@@ -2864,6 +2998,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
 >(
     config: AsyncRolloutConfigV2,
     execution_schedule: FlatScoredExecutionScheduleV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     scorer: &mut S,
     mut observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
@@ -2935,6 +3070,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
         deadline,
         cancel: Arc::clone(&cancel),
         released_epoch: Arc::clone(&released_epoch),
+        ladder_opponent,
         #[cfg(test)]
         test_instrumentation: Arc::clone(&test_instrumentation),
     };
@@ -5080,7 +5216,7 @@ mod tests {
         let _test_state = acquire_async_flat_scored_test_guard_v1();
         let shaped = config(1, 1, 1, 1);
         let end_episode_id = shaped.first_episode_id + shaped.episode_count;
-        let mut lane = LocalLaneV1::vacant(0, 0, shaped.first_episode_id, end_episode_id);
+        let mut lane = LocalLaneV1::vacant(0, 0, shaped.first_episode_id, end_episode_id, None);
         lane.test_instrumentation = _test_state.instrumentation_arc();
         lane.fill(
             &shaped,
@@ -5397,7 +5533,7 @@ mod tests {
                 legal_action_count,
             );
             let mut schedule =
-                NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1);
+                NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1, None);
             let actual = schedule
                 .preflight_action_seed(decision, 4, 8)
                 .expect("valid opponent preflight");
@@ -5439,6 +5575,69 @@ mod tests {
         }
     }
 
+    /// Self-Play Ladder Design Contract S2, Section 5: `ladder_member =
+    /// None` and `ladder_member = Some(UniformFloor)` must both preflight
+    /// bit-identically to today's frozen sampler (proving the pool's floor
+    /// slot is truly a no-op relative to a non-ladder run at this layer),
+    /// while a policy member defers `opponent_selected_index` to the
+    /// caller and reports the `train-opponent-policy-substep` seed as
+    /// `action_seed` instead of a resolved uniform action seed.
+    #[test]
+    fn native_opponent_preflight_ladder_member_selects_floor_bit_identity_or_defers_policy() {
+        let base_seed = 71_501_u64;
+        let episode_index = 1_u64;
+        let opponent = PlayerSeatV1::P0;
+        let decision = native_schedule_decision_with_width(episode_index, 0, 0, 0, 1, opponent, 5);
+
+        let baseline =
+            NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1, None)
+                .preflight_action_seed(decision, 4, 8)
+                .unwrap();
+
+        for ladder_member in [None, Some(OpponentLadderPoolMemberV2::UniformFloor)] {
+            let actual = NativeLaneScheduleStateV1::new(
+                base_seed,
+                episode_index,
+                PlayerSeatV1::P1,
+                ladder_member,
+            )
+            .preflight_action_seed(decision, 4, 8)
+            .unwrap();
+            assert_eq!(actual, baseline, "ladder_member={ladder_member:?}");
+        }
+
+        for policy_member in [
+            OpponentLadderPoolMemberV2::Primary,
+            OpponentLadderPoolMemberV2::PredecessorA,
+            OpponentLadderPoolMemberV2::PredecessorB,
+        ] {
+            let actual = NativeLaneScheduleStateV1::new(
+                base_seed,
+                episode_index,
+                PlayerSeatV1::P1,
+                Some(policy_member),
+            )
+            .preflight_action_seed(decision, 4, 8)
+            .unwrap();
+            assert_eq!(actual.opponent_selected_index, None);
+            assert_eq!(actual.actor_physical_decision_ordinal, 0);
+            assert_eq!(
+                actual.action_seed,
+                derive_native_trainer_opponent_policy_substep_seed_v2(
+                    base_seed,
+                    episode_index,
+                    0,
+                    0
+                )
+                .unwrap()
+            );
+            assert_ne!(
+                actual.action_seed, baseline.action_seed,
+                "policy substep seed must not collide with the uniform action seed"
+            );
+        }
+    }
+
     #[test]
     fn native_opponent_width_one_consumes_leaf_without_shifting_later_group() {
         fn run_prefix(
@@ -5455,7 +5654,7 @@ mod tests {
             let episode_index = 1;
             let opponent = PlayerSeatV1::P0;
             let mut schedule =
-                NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1);
+                NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1, None);
 
             let first = native_schedule_decision_with_width(
                 episode_index,
@@ -5549,7 +5748,7 @@ mod tests {
     #[test]
     fn native_opponent_zero_width_is_transactional_and_positions_are_distinct() {
         let base_seed = 71_501;
-        let mut zero = NativeLaneScheduleStateV1::new(base_seed, 1, PlayerSeatV1::P1);
+        let mut zero = NativeLaneScheduleStateV1::new(base_seed, 1, PlayerSeatV1::P1, None);
         let before = zero;
         let empty = native_schedule_decision_with_width(1, 0, 0, 0, 1, PlayerSeatV1::P0, 0);
         assert_eq!(zero.preflight_action_seed(empty, 4, 8), Err(()));
@@ -5571,7 +5770,7 @@ mod tests {
 
     #[test]
     fn native_schedule_preflights_caps_and_never_commits_partial_groups() {
-        let mut schedule = NativeLaneScheduleStateV1::new(71_501, 0, PlayerSeatV1::P0);
+        let mut schedule = NativeLaneScheduleStateV1::new(71_501, 0, PlayerSeatV1::P0, None);
         let first = native_schedule_decision(0, 0, 0, 0, 2, PlayerSeatV1::P0);
         assert_eq!(
             schedule
@@ -5620,7 +5819,7 @@ mod tests {
         };
         assert_eq!(schedule.validate_terminal(&synthetic_terminal), Err(()));
 
-        let mut capped = NativeLaneScheduleStateV1::new(71_501, 0, PlayerSeatV1::P0);
+        let mut capped = NativeLaneScheduleStateV1::new(71_501, 0, PlayerSeatV1::P0, None);
         let exceeds_policy_cap = native_schedule_decision(0, 7, 1, 0, 2, PlayerSeatV1::P0);
         assert_eq!(
             capped.preflight_action_seed(exceeds_policy_cap, 2, 8),
@@ -5637,7 +5836,7 @@ mod tests {
 
     #[test]
     fn native_actor_ordinals_advance_only_on_final_substep_and_are_role_local() {
-        let mut schedule = NativeLaneScheduleStateV1::new(71_501, 1, PlayerSeatV1::P1);
+        let mut schedule = NativeLaneScheduleStateV1::new(71_501, 1, PlayerSeatV1::P1, None);
         let opponent_first = native_schedule_decision(1, 0, 0, 0, 2, PlayerSeatV1::P0);
         let opponent_last = native_schedule_decision(1, 1, 0, 1, 2, PlayerSeatV1::P0);
         assert_eq!(
