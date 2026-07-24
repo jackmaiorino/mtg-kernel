@@ -697,6 +697,10 @@ mod windows_science_loop_tests {
             .expect("S1_BASE_SEED must give the store's base seed")
             .parse()
             .expect("base seed u64");
+        let eval_pairs: usize = std::env::var("S1_EVAL_PAIRS")
+            .unwrap_or_else(|_| "256".to_owned())
+            .parse()
+            .expect("eval pair count");
 
         let patched = test_fixture_bytes_with_schedule_and_base_seed_v2(
             NativeTrainingNumericalBackendV1::CudaBurnDense,
@@ -715,7 +719,7 @@ mod windows_science_loop_tests {
         let runner_config = NativeCheckpointRunnerConfigV1 {
             evaluation_base_seed: 7_777,
             first_episode_index: 0,
-            episode_count: 256,
+            episode_count: eval_pairs,
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
         };
@@ -786,7 +790,7 @@ mod windows_science_loop_tests {
         let runner_config = NativeCheckpointRunnerConfigV1 {
             evaluation_base_seed: 7_777,
             first_episode_index: 0,
-            episode_count: 256,
+            episode_count: eval_pairs,
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
         };
