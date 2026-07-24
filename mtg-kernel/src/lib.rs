@@ -89,6 +89,11 @@ pub(crate) mod native_flat_tensorizer_v2;
 pub(crate) mod native_full_episode_trajectory_v1;
 #[allow(dead_code)]
 pub mod native_opponent_sampler_v1;
+// Ladder-opponent identities layered on the frozen uniform sampler above
+// (Self-Play Ladder Design Contract S2, Section 2). The V1 identities stay
+// frozen forever; this module owns only the new ladder identity strings.
+#[allow(dead_code)]
+pub mod native_opponent_policy_v2;
 #[allow(dead_code)]
 pub(crate) mod native_policy_train_step_v1;
 // Headerless, deterministic full model/Adam state payload codec. Store and CLI
