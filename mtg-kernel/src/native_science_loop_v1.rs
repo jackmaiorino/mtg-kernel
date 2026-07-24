@@ -563,9 +563,23 @@ mod windows_science_loop_tests {
         let base_seed = env_knob_v1("MULTIRUN_BASE_SEED", 424_242);
         let seed_offset = env_knob_v1("MULTIRUN_SEED_OFFSET", 0);
         let durable_parent = std::env::var("MULTIRUN_STORE_PARENT").ok();
+        // MULTIRUN_RECORD_ONLY=1 arms the bridge's record-only measurement
+        // mode for the whole pilot, same guard as pathfinding_run_k64_deep_v1
+        // (process-wide flag; the guard drops on every exit path). Without
+        // it, depths past ~128 updates risk a mid-run fail-closed abort on
+        // the transported-logit hard tolerance, exactly as measured in the
+        // depth-drift characterization; the S1 mirror-validation plan
+        // predeclares record-only for this reason.
+        let record_only = env_knob_v1("MULTIRUN_RECORD_ONLY", 0) != 0;
+        let _measurement_mode = if record_only {
+            Some(MeasurementModeGuardV1::arm())
+        } else {
+            None
+        };
         println!(
             "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
-             broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset}"
+             broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset} \
+             record_only={record_only}"
         );
         let started = std::time::Instant::now();
         let handles: Vec<_> = (0..run_count)
