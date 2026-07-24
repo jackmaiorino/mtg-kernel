@@ -65,6 +65,7 @@ use crate::native_trainer_schedule_v1::{
     NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1, NATIVE_TRAINER_SCHEDULE_VERSION_V1,
     PYTHON_REFERENCE_SEED_VERSION_V1,
 };
+use crate::native_trainer_schedule_v2::NATIVE_TRAINER_SCHEDULE_CONTRACT_V2;
 use crate::native_trainer_v1::{
     NATIVE_TRAINER_CONTRACT_IDENTITY_V2, NATIVE_TRAINER_MAX_BATCH_EPISODES_V2,
     NATIVE_TRAINER_MIN_BATCH_EPISODES_V2,
@@ -243,6 +244,22 @@ const FROZEN_LADDER_POOL_WEIGHT_PRIMARY_V2: u64 = 40;
 const FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_A_V2: u64 = 20;
 const FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_B_V2: u64 = 20;
 const FROZEN_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2: u64 = 20;
+
+// V2 opponent seed-schedule namespace declarations (Self-Play Ladder Design
+// Contract S2, Section 2), owned by `native_trainer_schedule_v2`. Present in
+// a record if and only if `opponent_policy.identity` carries the ladder
+// identity above; rejected (must be absent) for the uniform identity.
+const FROZEN_LADDER_SCHEDULE_VERSION_V2: &str = "mtg-kernel-native-trainer-schedule-sha256-v2";
+const FROZEN_LADDER_SCHEDULE_SEED_VERSION_V2: &str = "kernel-native-ladder-trainer-sha256-v1";
+const FROZEN_LADDER_SCHEDULE_POOL_CHOICE_NAMESPACE_V2: &str = "train-opponent-pool-choice";
+const FROZEN_LADDER_SCHEDULE_POOL_CHOICE_FIELDS_V2: &str = "base_seed,episode_index";
+const FROZEN_LADDER_SCHEDULE_POLICY_SUBSTEP_NAMESPACE_V2: &str = "train-opponent-policy-substep";
+const FROZEN_LADDER_SCHEDULE_POLICY_SUBSTEP_FIELDS_V2: &str =
+    "base_seed,episode_index,opponent_physical_decision_index,substep_index";
+const FROZEN_LADDER_SCHEDULE_POOL_CHOICE_MODULO_V2: u64 = 100;
+const FROZEN_LADDER_SCHEDULE_POOL_CHOICE_THRESHOLD_RULE_V2: &str = "draw=pool_choice_seed%100;[0,40)->primary;[40,60)->predecessor_a;[60,80)->predecessor_b;[80,100)->uniform_floor";
+const FROZEN_LADDER_SCHEDULE_POOL_CHOICE_BIAS_RULE_V2: &str = "intentional-modulo-bias-no-rejection-sampling;when-100-does-not-divide-the-seed-domain-low-residues-have-one-extra-preimage;consistent-with-the-v1-uniform-sampler-bias-rule;changing-this-rule-requires-a-new-schedule-version";
+const FROZEN_LADDER_SCHEDULE_VERSION_CHANGE_RULE_V2: &str = "any seed, namespace, framing, domain, field-order, weight-threshold, or golden change requires a new schedule version announced on the CODEX-CLAUDE channel";
 
 const FROZEN_TRAJECTORY_IDENTITY_V2: &str = "mtg-kernel-native-full-episode-trajectory-sha256-v1";
 const FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2: &str =
@@ -518,6 +535,15 @@ pub struct TrainRunContractsV2 {
     /// unaffected by this field's addition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) opponent_ladder_pool: Option<OpponentLadderPoolContractV1>,
+    /// Present if and only if `opponent_policy.identity` carries the ladder
+    /// identity (Self-Play Ladder Design Contract S2, Section 2). Pins the
+    /// V2 opponent seed-schedule namespace declarations layered on the V1
+    /// trainer schedule (`trainer_schedule` above, unaffected). Absent for
+    /// every uniform-identity record; omitted entirely from canonical bytes
+    /// when absent, so existing uniform run records are byte-for-byte
+    /// unaffected by this field's addition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) opponent_schedule_v2: Option<OpponentScheduleV2ContractV1>,
     pub(crate) trajectory: TrajectoryContractV2,
     pub(crate) standalone_semantics: StandaloneSemanticsV2,
 }
@@ -652,6 +678,27 @@ pub struct OpponentLadderPoolContractV1 {
     pub(crate) predecessor_a: OpponentLadderCheckpointRefV1,
     pub(crate) predecessor_b: OpponentLadderCheckpointRefV1,
     pub(crate) uniform_floor: OpponentLadderUniformFloorV1,
+}
+
+/// Pins the V2 opponent seed-schedule namespace declarations layered on the
+/// V1 trainer schedule (Self-Play Ladder Design Contract S2, Section 2):
+/// `train-opponent-pool-choice` (per-episode pool member selection) and
+/// `train-opponent-policy-substep` (per-decision softmax sampling). Present
+/// if and only if `opponent_policy` carries the ladder identity; mirrors
+/// `OpponentLadderPoolContractV1`'s presence rule exactly.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpponentScheduleV2ContractV1 {
+    pub(crate) schedule_version: String,
+    pub(crate) seed_version: String,
+    pub(crate) opponent_pool_choice_namespace: String,
+    pub(crate) opponent_pool_choice_fields: String,
+    pub(crate) opponent_policy_substep_namespace: String,
+    pub(crate) opponent_policy_substep_fields: String,
+    pub(crate) pool_choice_modulo: u64,
+    pub(crate) pool_choice_threshold_rule: String,
+    pub(crate) pool_choice_bias_rule: String,
+    pub(crate) version_change_rule: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1203,6 +1250,25 @@ fn validate_frozen_rev3_authorities_v2() -> Result<()> {
             != FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_B_V2
         || OPPONENT_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2
             != FROZEN_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2
+        || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.schedule_version != FROZEN_LADDER_SCHEDULE_VERSION_V2
+        || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.seed_version
+            != FROZEN_LADDER_SCHEDULE_SEED_VERSION_V2
+        || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.opponent_pool_choice_namespace
+            != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_NAMESPACE_V2
+        || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.opponent_pool_choice_fields
+            != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_FIELDS_V2
+        || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.opponent_policy_substep_namespace
+            != FROZEN_LADDER_SCHEDULE_POLICY_SUBSTEP_NAMESPACE_V2
+        || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.opponent_policy_substep_fields
+            != FROZEN_LADDER_SCHEDULE_POLICY_SUBSTEP_FIELDS_V2
+        || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.pool_choice_modulo
+            != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_MODULO_V2
+        || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.pool_choice_threshold_rule
+            != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_THRESHOLD_RULE_V2
+        || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.pool_choice_bias_rule
+            != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_BIAS_RULE_V2
+        || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.version_change_rule
+            != FROZEN_LADDER_SCHEDULE_VERSION_CHANGE_RULE_V2
         || NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1 != FROZEN_TRAJECTORY_IDENTITY_V2
         || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1 != FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2
         || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1
@@ -1526,6 +1592,7 @@ fn validate_opponent_policy_and_ladder_pool_v2(contracts: &TrainRunContractsV2) 
         FROZEN_OPPONENT_POLICY_IDENTITY_V2 => {
             if contracts.opponent_policy.model_rule != FROZEN_OPPONENT_POLICY_MODEL_RULE_V2
                 || contracts.opponent_ladder_pool.is_some()
+                || contracts.opponent_schedule_v2.is_some()
             {
                 return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
             }
@@ -1536,7 +1603,11 @@ fn validate_opponent_policy_and_ladder_pool_v2(contracts: &TrainRunContractsV2) 
                 return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
             }
             match &contracts.opponent_ladder_pool {
-                Some(pool) => validate_opponent_ladder_pool_v2(pool),
+                Some(pool) => validate_opponent_ladder_pool_v2(pool)?,
+                None => return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
+            }
+            match &contracts.opponent_schedule_v2 {
+                Some(schedule) => validate_opponent_schedule_v2(schedule),
                 None => Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
             }
         }
@@ -1568,6 +1639,27 @@ fn validate_opponent_ladder_pool_v2(pool: &OpponentLadderPoolContractV1) -> Resu
         {
             return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidScalar));
         }
+    }
+    Ok(())
+}
+
+fn validate_opponent_schedule_v2(schedule: &OpponentScheduleV2ContractV1) -> Result<()> {
+    if schedule.schedule_version != FROZEN_LADDER_SCHEDULE_VERSION_V2
+        || schedule.seed_version != FROZEN_LADDER_SCHEDULE_SEED_VERSION_V2
+        || schedule.opponent_pool_choice_namespace
+            != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_NAMESPACE_V2
+        || schedule.opponent_pool_choice_fields != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_FIELDS_V2
+        || schedule.opponent_policy_substep_namespace
+            != FROZEN_LADDER_SCHEDULE_POLICY_SUBSTEP_NAMESPACE_V2
+        || schedule.opponent_policy_substep_fields
+            != FROZEN_LADDER_SCHEDULE_POLICY_SUBSTEP_FIELDS_V2
+        || schedule.pool_choice_modulo != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_MODULO_V2
+        || schedule.pool_choice_threshold_rule
+            != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_THRESHOLD_RULE_V2
+        || schedule.pool_choice_bias_rule != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_BIAS_RULE_V2
+        || schedule.version_change_rule != FROZEN_LADDER_SCHEDULE_VERSION_CHANGE_RULE_V2
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
     Ok(())
 }
@@ -3382,6 +3474,25 @@ mod tests {
         }
     }
 
+    fn valid_opponent_schedule_v2_fixture() -> OpponentScheduleV2ContractV1 {
+        OpponentScheduleV2ContractV1 {
+            schedule_version: FROZEN_LADDER_SCHEDULE_VERSION_V2.to_owned(),
+            seed_version: FROZEN_LADDER_SCHEDULE_SEED_VERSION_V2.to_owned(),
+            opponent_pool_choice_namespace: FROZEN_LADDER_SCHEDULE_POOL_CHOICE_NAMESPACE_V2
+                .to_owned(),
+            opponent_pool_choice_fields: FROZEN_LADDER_SCHEDULE_POOL_CHOICE_FIELDS_V2.to_owned(),
+            opponent_policy_substep_namespace: FROZEN_LADDER_SCHEDULE_POLICY_SUBSTEP_NAMESPACE_V2
+                .to_owned(),
+            opponent_policy_substep_fields: FROZEN_LADDER_SCHEDULE_POLICY_SUBSTEP_FIELDS_V2
+                .to_owned(),
+            pool_choice_modulo: FROZEN_LADDER_SCHEDULE_POOL_CHOICE_MODULO_V2,
+            pool_choice_threshold_rule: FROZEN_LADDER_SCHEDULE_POOL_CHOICE_THRESHOLD_RULE_V2
+                .to_owned(),
+            pool_choice_bias_rule: FROZEN_LADDER_SCHEDULE_POOL_CHOICE_BIAS_RULE_V2.to_owned(),
+            version_change_rule: FROZEN_LADDER_SCHEDULE_VERSION_CHANGE_RULE_V2.to_owned(),
+        }
+    }
+
     fn ladder_record() -> TrainRunV2 {
         let mut record = fixture_record();
         record.contracts.opponent_policy.identity =
@@ -3389,6 +3500,7 @@ mod tests {
         record.contracts.opponent_policy.model_rule =
             FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
         record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
         refresh_derived(&mut record);
         record
     }
@@ -3413,12 +3525,23 @@ mod tests {
             validated.record().contracts().opponent_ladder_pool,
             Some(valid_ladder_pool_fixture())
         );
-        // The pool key sorts between "model" and "opponent_policy".
+        assert_eq!(
+            validated.record().contracts().opponent_schedule_v2,
+            Some(valid_opponent_schedule_v2_fixture())
+        );
+        // The pool key sorts between "model" and "opponent_policy"; the
+        // schedule key sorts after "opponent_sampler" (alphabetical: "s" <
+        // "sa" < "sc" residues of "sampler" vs "schedule_v2").
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.contains("\"opponent_ladder_pool\":{"));
+        assert!(text.contains("\"opponent_schedule_v2\":{"));
         let pool_pos = text.find("\"opponent_ladder_pool\":{").unwrap();
         let policy_pos = text.find("\"opponent_policy\":{").unwrap();
+        let sampler_pos = text.find("\"opponent_sampler\":{").unwrap();
+        let schedule_pos = text.find("\"opponent_schedule_v2\":{").unwrap();
         assert!(pool_pos < policy_pos);
+        assert!(policy_pos < sampler_pos);
+        assert!(sampler_pos < schedule_pos);
     }
 
     #[test]
@@ -3438,6 +3561,103 @@ mod tests {
         record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
         refresh_derived(&mut record);
         assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    #[test]
+    fn ladder_identity_without_schedule_fails_closed() {
+        let mut record = ladder_record();
+        record.contracts.opponent_schedule_v2 = None;
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    #[test]
+    fn uniform_identity_with_schedule_present_fails_closed() {
+        let mut record = fixture_record();
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    #[test]
+    fn opponent_schedule_v2_corruption_matrix_fails_closed() {
+        let mut cases = Vec::new();
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_schedule_v2
+            .as_mut()
+            .unwrap()
+            .schedule_version = "wrong".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_schedule_v2
+            .as_mut()
+            .unwrap()
+            .seed_version = "wrong".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_schedule_v2
+            .as_mut()
+            .unwrap()
+            .opponent_pool_choice_namespace = "wrong".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_schedule_v2
+            .as_mut()
+            .unwrap()
+            .opponent_policy_substep_fields = "wrong".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_schedule_v2
+            .as_mut()
+            .unwrap()
+            .pool_choice_modulo = 99;
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_schedule_v2
+            .as_mut()
+            .unwrap()
+            .pool_choice_threshold_rule = "wrong".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_schedule_v2
+            .as_mut()
+            .unwrap()
+            .pool_choice_bias_rule = "wrong".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record();
+        record
+            .contracts
+            .opponent_schedule_v2
+            .as_mut()
+            .unwrap()
+            .version_change_rule = "wrong".to_owned();
+        cases.push(record);
+
+        for record in cases {
+            assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+        }
     }
 
     #[test]
