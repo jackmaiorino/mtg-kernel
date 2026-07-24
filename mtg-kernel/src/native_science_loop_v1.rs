@@ -671,6 +671,87 @@ mod windows_science_loop_tests {
     /// Saturation-curve evaluation over a surviving pathfinding store:
     /// loads the boundary at each requested generation and runs the
     /// checkpoint runner against uniform opponents, printing win/loss/draw
+    /// S1 mirror-validation checkpoint evaluation: identical body shape to
+    /// pathfinding_saturation_eval_v1 but reconstructs the run record with
+    /// the S1 training schedule (256 updates, workers=2, sessions=32,
+    /// broker target 16) and the store's own base seed, since boundary
+    /// loading validates the run identity the store was created under.
+    /// Env: S1_STORE_ROOT, S1_EVAL_GENS (comma-separated), S1_BASE_SEED.
+    /// 256 seat-swapped pairs per generation at evaluation_base_seed 7_777,
+    /// the predeclared S1 estimator.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn s1_mirror_saturation_eval_v1() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_v2;
+
+        let root_path = std::env::var("S1_STORE_ROOT")
+            .expect("S1_STORE_ROOT must name the S1 per-seed store root");
+        let generations: Vec<u64> = std::env::var("S1_EVAL_GENS")
+            .expect("S1_EVAL_GENS must list generations")
+            .split(',')
+            .map(|token| token.trim().parse().expect("generation index"))
+            .collect();
+        let base_seed: u64 = std::env::var("S1_BASE_SEED")
+            .expect("S1_BASE_SEED must give the store's base seed")
+            .parse()
+            .expect("base seed u64");
+
+        let patched = test_fixture_bytes_with_schedule_and_base_seed_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            256,
+            2,
+            32,
+            16,
+            1_024,
+            2_048,
+            base_seed,
+        );
+        let run = decode_train_run_v2(&patched).expect("s1 run record");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap();
+        let runner_config = NativeCheckpointRunnerConfigV1 {
+            evaluation_base_seed: 7_777,
+            first_episode_index: 0,
+            episode_count: 256,
+            scheduler_timeout: Duration::from_secs(3_600),
+            measure_broker_service_time: false,
+        };
+
+        let reference_boundary = load_native_training_boundary_v2(&root, &run, 0).unwrap();
+        let reference_run = run_native_checkpoint_v1(
+            &run,
+            reference_boundary.checkpoint(),
+            reference_boundary.payload(),
+            runner_config,
+        )
+        .unwrap();
+        for generation in generations {
+            let boundary = load_native_training_boundary_v2(&root, &run, generation).unwrap();
+            let candidate_run = run_native_checkpoint_v1(
+                &run,
+                boundary.checkpoint(),
+                boundary.payload(),
+                runner_config,
+            )
+            .unwrap();
+            let evaluation =
+                evaluate_native_checkpoint_uniform_delta_v1(&reference_run, &candidate_run)
+                    .unwrap();
+            let outcomes = evaluation.candidate_learner_outcomes();
+            println!(
+                "S1_SATURATION seed={base_seed} gen={generation} W/L/D {}/{}/{} of {} (delta vs gen0 {})",
+                outcomes.wins(),
+                outcomes.losses(),
+                outcomes.draws(),
+                outcomes.total(),
+                evaluation.total_candidate_minus_reference_reward_delta()
+            );
+        }
+    }
+
     /// per generation. Non-banked diagnostic; the store root arrives via
     /// PATHFINDING_STORE_ROOT and generations via PATHFINDING_EVAL_GENS
     /// (comma-separated).
