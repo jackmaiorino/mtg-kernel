@@ -14,13 +14,16 @@ use crate::canonical_json_v1::{
 };
 use crate::common_model_snapshot_v1::{
     PARAMETER_ELEMENT_COUNT_V1, PARAMETER_TENSOR_COUNT_V1, PAYLOAD_BYTE_COUNT_V1,
+    WIDE_PARAMETER_ELEMENT_COUNT_V1, WIDE_PARAMETER_TENSOR_COUNT_V1, WIDE_PAYLOAD_BYTE_COUNT_V1,
 };
 use crate::native_train_state_payload_v1::{
     decode_native_train_state_payload_v1, decode_native_train_state_payload_verified_v1,
+    decode_native_train_state_payload_verified_wide_v1, decode_native_train_state_payload_wide_v1,
     NativeDecodedTrainStatePayloadV1, NativeTrainStatePayloadDigestFieldV1,
     NativeTrainStatePayloadDigestsV1, NativeTrainStatePayloadErrorV1,
     NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1, NATIVE_TRAIN_STATE_PAYLOAD_ENCODING_V1,
     NATIVE_TRAIN_STATE_PAYLOAD_SCHEMA_V1, NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1,
+    W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1, W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1,
 };
 use crate::native_training_executor_v1::NativeTrainingCheckpointCandidateV1;
 use crate::native_training_store_digest_v1::{
@@ -55,6 +58,23 @@ const _: () = assert!(PARAMETER_TENSOR_COUNT_V1 == 33);
 const _: () = assert!(PARAMETER_ELEMENT_COUNT_V1 == 1_230_994);
 const _: () = assert!(PAYLOAD_BYTE_COUNT_V1 == 4_923_976);
 const _: () = assert!(NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 == 14_771_928);
+
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings of
+// the four constants above (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section
+// 3). Tensor COUNT is unchanged (33: same topology, only shapes differ);
+// element count and payload byte count differ. Used only by the genesis
+// (generation-0, fresh-init) authoring/decode path for a record carrying
+// `contracts.wide_model_experiment_v1`; the frozen constants and asserts
+// above are untouched, and every non-wide record's byte-for-byte behavior
+// is unaffected.
+const W_PARAMETER_TENSOR_COUNT_U64_V3: u64 = 33;
+const W_PARAMETER_ELEMENT_COUNT_U64_V3: u64 = 2_750_754;
+const W_TRAIN_STATE_PAYLOAD_BYTE_COUNT_U64_V1: u64 = 33_009_048;
+
+const _: () = assert!(WIDE_PARAMETER_TENSOR_COUNT_V1 == 33);
+const _: () = assert!(WIDE_PARAMETER_ELEMENT_COUNT_V1 == 2_750_754);
+const _: () = assert!(WIDE_PAYLOAD_BYTE_COUNT_V1 == 11_003_016);
+const _: () = assert!(W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 == 33_009_048);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -537,11 +557,26 @@ type Result<T> = std::result::Result<T, CheckpointManifestV3Error>;
 
 /// Builds and validates the exact update-zero checkpoint authority from one
 /// complete common-snapshot train-state payload.
+///
+/// Dispatches on `run.record().contracts.wide_model_experiment_v1`
+/// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3): absent reproduces this
+/// function's pre-existing body byte-for-byte (the frozen payload codec and
+/// byte counts); present decodes via the wide payload codec and stamps the
+/// wide byte counts instead. `decode_checkpoint_manifest_v3` at the end
+/// re-derives and re-checks the same dispatch independently, so a mismatch
+/// between what this function built and what the record declares is
+/// rejected either way.
 pub fn build_genesis_checkpoint_manifest_v3(
     run: &ValidatedTrainRunV2,
     payload: &[u8],
 ) -> Result<CheckpointManifestV3> {
-    if payload.len() != NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 {
+    let wide = run.record().contracts.wide_model_experiment_v1.is_some();
+    let expected_len = if wide {
+        W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+    } else {
+        NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+    };
+    if payload.len() != expected_len {
         return Err(CheckpointManifestV3Error::new(
             CheckpointManifestV3ErrorKind::PayloadExactLength,
         ));
@@ -549,8 +584,12 @@ pub fn build_genesis_checkpoint_manifest_v3(
     let record = run.record();
     let anchor = u32::try_from(record.model_snapshot.scorer_bias_anchor_f32_bits)
         .map_err(|_| CheckpointManifestV3Error::new(CheckpointManifestV3ErrorKind::CrossBinding))?;
-    let decoded =
-        decode_native_train_state_payload_v1(payload, 0, anchor).map_err(map_payload_error_v3)?;
+    let decoded = if wide {
+        decode_native_train_state_payload_wide_v1(payload, 0, anchor)
+            .map_err(map_payload_error_v3)?
+    } else {
+        decode_native_train_state_payload_v1(payload, 0, anchor).map_err(map_payload_error_v3)?
+    };
     let progress =
         zero_checkpoint_progress_v3(run.batch_episodes(), run.checkpoint_segment_updates());
     let logical_state_sha256 = logical_state_sha256_v1(
@@ -559,6 +598,17 @@ pub fn build_genesis_checkpoint_manifest_v3(
         &progress,
         decoded.digests.native_state_sha256,
     )?;
+    let (parameter_tensor_count, parameter_element_count) = if wide {
+        (
+            W_PARAMETER_TENSOR_COUNT_U64_V3,
+            W_PARAMETER_ELEMENT_COUNT_U64_V3,
+        )
+    } else {
+        (
+            PARAMETER_TENSOR_COUNT_U64_V3,
+            PARAMETER_ELEMENT_COUNT_U64_V3,
+        )
+    };
     let wire = CheckpointManifestWireV3 {
         schema: CHECKPOINT_MANIFEST_SCHEMA_V3.to_owned(),
         run_sha256: run.run_sha256().to_owned(),
@@ -573,12 +623,16 @@ pub fn build_genesis_checkpoint_manifest_v3(
             adam_step: 0,
             scorer_bias_anchor_f32_bits: u64::from(anchor),
             parameter_layout_sha256: record.model_snapshot.parameter_layout_sha256.clone(),
-            parameter_tensor_count: PARAMETER_TENSOR_COUNT_U64_V3,
-            parameter_element_count: PARAMETER_ELEMENT_COUNT_U64_V3,
+            parameter_tensor_count,
+            parameter_element_count,
             model_parameter_sha256: lower_hex_raw32_v1(decoded.digests.model_parameter_sha256),
             state_sha256: lower_hex_raw32_v1(decoded.digests.native_state_sha256),
         },
-        payload: payload_binding_v1(&decoded.digests)?,
+        payload: if wide {
+            payload_binding_wide_v1(&decoded.digests)?
+        } else {
+            payload_binding_v1(&decoded.digests)?
+        },
         logical_state_sha256: lower_hex_raw32_v1(logical_state_sha256),
     };
     let canonical_bytes = to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid)?;
@@ -980,15 +1034,15 @@ pub fn decode_genesis_checkpoint_manifest_v2_v3_self_contained(
     payload: &[u8],
     run: &ValidatedTrainRunV2,
 ) -> Result<CheckpointManifestV3> {
-    let expected_model_parameter_sha256 = match &run.record().contracts.opponent_ladder_initialization
-    {
-        Some(init) => parse_digest_v3(&init.derived_model_parameter_sha256)?,
-        None => {
-            return Err(CheckpointManifestV3Error::new(
-                CheckpointManifestV3ErrorKind::CrossBinding,
-            ))
-        }
-    };
+    let expected_model_parameter_sha256 =
+        match &run.record().contracts.opponent_ladder_initialization {
+            Some(init) => parse_digest_v3(&init.derived_model_parameter_sha256)?,
+            None => {
+                return Err(CheckpointManifestV3Error::new(
+                    CheckpointManifestV3ErrorKind::CrossBinding,
+                ))
+            }
+        };
     let (wire, reencoded) = decode_checkpoint_wire_v3(manifest_cj)?;
     if wire.generation_index != 0 {
         return Err(CheckpointManifestV3Error::new(
@@ -997,7 +1051,11 @@ pub fn decode_genesis_checkpoint_manifest_v2_v3_self_contained(
     }
     validate_checkpoint_wire_v3(&wire, run)?;
     let decoded = validate_payload_v3(&wire, payload, run)?;
-    validate_genesis_snapshot_v2_v3_self_contained(&wire, &decoded, expected_model_parameter_sha256)?;
+    validate_genesis_snapshot_v2_v3_self_contained(
+        &wire,
+        &decoded,
+        expected_model_parameter_sha256,
+    )?;
     finish_checkpoint_manifest_v3(wire, reencoded, manifest_cj, decoded)
 }
 
@@ -1039,6 +1097,24 @@ fn validate_checkpoint_wire_v3(
     run: &ValidatedTrainRunV2,
 ) -> Result<()> {
     let record = run.record();
+    let wide = record.contracts.wide_model_experiment_v1.is_some();
+    let (
+        expected_parameter_tensor_count,
+        expected_parameter_element_count,
+        expected_payload_byte_count,
+    ) = if wide {
+        (
+            W_PARAMETER_TENSOR_COUNT_U64_V3,
+            W_PARAMETER_ELEMENT_COUNT_U64_V3,
+            W_TRAIN_STATE_PAYLOAD_BYTE_COUNT_U64_V1,
+        )
+    } else {
+        (
+            PARAMETER_TENSOR_COUNT_U64_V3,
+            PARAMETER_ELEMENT_COUNT_U64_V3,
+            TRAIN_STATE_PAYLOAD_BYTE_COUNT_U64_V1,
+        )
+    };
     let progress = &wire.progress;
     let outcomes = &progress.outcomes_by_learner_seat;
     let counters = [
@@ -1089,16 +1165,16 @@ fn validate_checkpoint_wire_v3(
         || wire.train_state.parameter_layout_sha256
             != record.contracts.model.parameter_layout_sha256
         || wire.train_state.parameter_layout_sha256 != record.model_snapshot.parameter_layout_sha256
-        || wire.train_state.parameter_tensor_count != PARAMETER_TENSOR_COUNT_U64_V3
+        || wire.train_state.parameter_tensor_count != expected_parameter_tensor_count
         || wire.train_state.parameter_tensor_count != record.contracts.model.parameter_tensor_count
         || wire.train_state.parameter_tensor_count != record.model_snapshot.parameter_tensor_count
-        || wire.train_state.parameter_element_count != PARAMETER_ELEMENT_COUNT_U64_V3
+        || wire.train_state.parameter_element_count != expected_parameter_element_count
         || wire.train_state.parameter_element_count
             != record.contracts.model.parameter_element_count
         || wire.train_state.parameter_element_count != record.model_snapshot.parameter_element_count
         || wire.train_state.scorer_bias_anchor_f32_bits
             != record.model_snapshot.scorer_bias_anchor_f32_bits
-        || wire.payload.byte_count != TRAIN_STATE_PAYLOAD_BYTE_COUNT_U64_V1
+        || wire.payload.byte_count != expected_payload_byte_count
     {
         return Err(CheckpointManifestV3Error::new(
             CheckpointManifestV3ErrorKind::CrossBinding,
@@ -1151,7 +1227,7 @@ fn validate_checkpoint_wire_v3(
             CheckpointManifestV3ErrorKind::CrossBinding,
         ));
     }
-    validate_payload_layout_v1(&wire.payload)
+    validate_payload_layout_v1(&wire.payload, wide)
 }
 
 fn trained_generation_from_evidence_v3(
@@ -1249,20 +1325,30 @@ fn validate_trained_candidate_v3(
     Ok(generation_index)
 }
 
-fn validate_payload_layout_v1(payload: &CheckpointPayloadBindingV1) -> Result<()> {
+/// `wide` dispatches which frozen byte-count/section-layout literals apply
+/// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3): `false` reproduces this
+/// function's pre-existing body byte-for-byte (the frozen literals); `true`
+/// checks against the wide mirrors instead, fail-closed both directions.
+fn validate_payload_layout_v1(payload: &CheckpointPayloadBindingV1, wide: bool) -> Result<()> {
+    let expected_byte_count = if wide {
+        W_TRAIN_STATE_PAYLOAD_BYTE_COUNT_U64_V1
+    } else {
+        TRAIN_STATE_PAYLOAD_BYTE_COUNT_U64_V1
+    };
     if payload.schema != NATIVE_TRAIN_STATE_PAYLOAD_SCHEMA_V1
         || payload.encoding != NATIVE_TRAIN_STATE_PAYLOAD_ENCODING_V1
-        || payload.byte_count != TRAIN_STATE_PAYLOAD_BYTE_COUNT_U64_V1
+        || payload.byte_count != expected_byte_count
     {
         return Err(CheckpointManifestV3Error::new(
             CheckpointManifestV3ErrorKind::CrossBinding,
         ));
     }
-    for (declared, expected) in payload
-        .sections
-        .iter()
-        .zip(NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1)
-    {
+    let expected_sections: &[_] = if wide {
+        &W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1
+    } else {
+        &NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1
+    };
+    for (declared, expected) in payload.sections.iter().zip(expected_sections) {
         let expected_offset = u64::try_from(expected.offset_bytes).map_err(|_| {
             CheckpointManifestV3Error::new(CheckpointManifestV3ErrorKind::InvalidArithmetic)
         })?;
@@ -1281,12 +1367,23 @@ fn validate_payload_layout_v1(payload: &CheckpointPayloadBindingV1) -> Result<()
     Ok(())
 }
 
+/// Dispatches on `run.record().contracts.wide_model_experiment_v1`
+/// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3): absent decodes via the
+/// frozen codec exactly as before this field existed; present decodes via
+/// the wide codec. Fail-closed both directions: the frozen codec's exact-length
+/// gate rejects a wide-length payload and vice versa.
 fn validate_payload_v3(
     wire: &CheckpointManifestWireV3,
     payload: &[u8],
-    _run: &ValidatedTrainRunV2,
+    run: &ValidatedTrainRunV2,
 ) -> Result<NativeDecodedTrainStatePayloadV1> {
-    if payload.len() != NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 {
+    let wide = run.record().contracts.wide_model_experiment_v1.is_some();
+    let expected_len = if wide {
+        W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+    } else {
+        NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+    };
+    if payload.len() != expected_len {
         return Err(CheckpointManifestV3Error::new(
             CheckpointManifestV3ErrorKind::PayloadExactLength,
         ));
@@ -1302,13 +1399,23 @@ fn validate_payload_v3(
     let anchor = u32::try_from(wire.train_state.scorer_bias_anchor_f32_bits).map_err(|_| {
         CheckpointManifestV3Error::new(CheckpointManifestV3ErrorKind::InvalidScalar)
     })?;
-    decode_native_train_state_payload_verified_v1(
-        payload,
-        wire.train_state.adam_step,
-        anchor,
-        &expected,
-    )
-    .map_err(map_payload_error_v3)
+    if wide {
+        decode_native_train_state_payload_verified_wide_v1(
+            payload,
+            wire.train_state.adam_step,
+            anchor,
+            &expected,
+        )
+        .map_err(map_payload_error_v3)
+    } else {
+        decode_native_train_state_payload_verified_v1(
+            payload,
+            wire.train_state.adam_step,
+            anchor,
+            &expected,
+        )
+        .map_err(map_payload_error_v3)
+    }
 }
 
 fn validate_genesis_snapshot_v3(
@@ -1474,6 +1581,47 @@ fn payload_section_binding_v1(
     digest: [u8; 32],
 ) -> Result<CheckpointPayloadSectionBindingV1> {
     let layout = NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[index];
+    Ok(CheckpointPayloadSectionBindingV1 {
+        name: layout.name.to_owned(),
+        offset_bytes: u64::try_from(layout.offset_bytes).map_err(|_| {
+            CheckpointManifestV3Error::new(CheckpointManifestV3ErrorKind::InvalidArithmetic)
+        })?,
+        byte_count: u64::try_from(layout.byte_count).map_err(|_| {
+            CheckpointManifestV3Error::new(CheckpointManifestV3ErrorKind::InvalidArithmetic)
+        })?,
+        sha256: lower_hex_raw32_v1(digest),
+    })
+}
+
+/// Wide-net sibling of [`payload_binding_v1`].
+fn payload_binding_wide_v1(
+    digests: &NativeTrainStatePayloadDigestsV1,
+) -> Result<CheckpointPayloadBindingV1> {
+    let section_digests = [
+        digests.parameters_sha256,
+        digests.first_moments_sha256,
+        digests.second_moments_sha256,
+    ];
+    let sections = [
+        payload_section_binding_wide_v1(0, section_digests[0])?,
+        payload_section_binding_wide_v1(1, section_digests[1])?,
+        payload_section_binding_wide_v1(2, section_digests[2])?,
+    ];
+    Ok(CheckpointPayloadBindingV1 {
+        schema: NATIVE_TRAIN_STATE_PAYLOAD_SCHEMA_V1.to_owned(),
+        encoding: NATIVE_TRAIN_STATE_PAYLOAD_ENCODING_V1.to_owned(),
+        byte_count: W_TRAIN_STATE_PAYLOAD_BYTE_COUNT_U64_V1,
+        sha256: lower_hex_raw32_v1(digests.payload_sha256),
+        sections,
+    })
+}
+
+/// Wide-net sibling of [`payload_section_binding_v1`].
+fn payload_section_binding_wide_v1(
+    index: usize,
+    digest: [u8; 32],
+) -> Result<CheckpointPayloadSectionBindingV1> {
+    let layout = W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[index];
     Ok(CheckpointPayloadSectionBindingV1 {
         name: layout.name.to_owned(),
         offset_bytes: u64::try_from(layout.offset_bytes).map_err(|_| {
@@ -2002,6 +2150,118 @@ mod tests {
         assert_eq!(
             error.kind(),
             CheckpointManifestV3ErrorKind::GenesisSnapshotMismatch
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Capacity-experiment wide-net genesis authoring
+    // (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3).
+    // ------------------------------------------------------------------
+
+    fn wide_run_v3() -> ValidatedTrainRunV2 {
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_wide_v2;
+        let bytes = test_fixture_bytes_with_schedule_and_base_seed_wide_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            2,
+            4,
+            4,
+            2,
+            4,
+            8,
+            32_768,
+            65_536,
+            71501,
+        );
+        decode_train_run_v2(&bytes).unwrap()
+    }
+
+    /// A genesis-shaped (zero-moment) train-state payload built from the
+    /// REAL production wide snapshot on disk, encoded through the wide
+    /// codec: exactly what a real caller would hand
+    /// `build_genesis_checkpoint_manifest_v3` for a wide run.
+    fn wide_zero_moment_payload_v3() -> Vec<u8> {
+        use crate::native_policy_train_step_v1::NativePolicyValueTrainSnapshotV1;
+        let (manifest_path, payload_path) =
+            crate::common_model_snapshot_v1::wide_model_snapshot_paths_v1();
+        let (model, _record) = crate::common_model_snapshot_v1::build_wide_model_candidate_v1(
+            &manifest_path,
+            &payload_path,
+        )
+        .expect("real wide snapshot must load");
+        let parameters = model.parameter_snapshot_wide_v1();
+        let zero_moments: Vec<_> = parameters
+            .iter()
+            .map(
+                |parameter| crate::native_policy_value_net_v1::NativeNamedParameterV1 {
+                    name: parameter.name,
+                    shape: parameter.shape.clone(),
+                    values: vec![0.0; parameter.values.len()],
+                },
+            )
+            .collect();
+        let scorer_bias_anchor_bits = parameters
+            .iter()
+            .find(|parameter| parameter.name == "scorer.2.bias")
+            .expect("scorer.2.bias tensor present")
+            .values[0]
+            .to_bits();
+        let snapshot = NativePolicyValueTrainSnapshotV1 {
+            adam_step: 0,
+            scorer_bias_anchor_bits,
+            parameters,
+            first_moments: zero_moments.clone(),
+            second_moments: zero_moments,
+        };
+        crate::native_train_state_payload_v1::encode_native_train_state_payload_wide_v1(&snapshot)
+            .unwrap()
+            .bytes
+    }
+
+    /// Wide-net sibling of `genesis_authority_roundtrips_and_matches_frozen_goldens`:
+    /// authors and decodes a real update-zero authority for the wide net,
+    /// plus fail-closed both directions (a frozen record rejects the
+    /// wide-length payload and vice versa).
+    #[test]
+    fn wide_genesis_authority_roundtrips_and_fails_closed_both_directions() {
+        let run = wide_run_v3();
+        let payload = wide_zero_moment_payload_v3();
+        assert_eq!(payload.len(), 33_009_048);
+
+        let authority = build_genesis_checkpoint_manifest_v3(&run, &payload)
+            .expect("wide genesis authoring must succeed");
+        assert_eq!(authority.generation_index(), 0);
+        assert_eq!(
+            authority.wire.train_state.parameter_tensor_count,
+            W_PARAMETER_TENSOR_COUNT_U64_V3
+        );
+        assert_eq!(
+            authority.wire.train_state.parameter_element_count,
+            W_PARAMETER_ELEMENT_COUNT_U64_V3
+        );
+        assert_eq!(authority.wire.payload.byte_count, 33_009_048);
+
+        let decoded = decode_checkpoint_manifest_v3(authority.canonical_bytes(), &payload, &run)
+            .expect("wide genesis decode must reproduce the authored authority");
+        assert_eq!(decoded.canonical_bytes(), authority.canonical_bytes());
+
+        // Fail-closed direction 1: a frozen (Net8) run record rejects the
+        // wide-length payload outright.
+        let frozen_run = run_v3();
+        assert_eq!(
+            build_genesis_checkpoint_manifest_v3(&frozen_run, &payload)
+                .unwrap_err()
+                .kind(),
+            CheckpointManifestV3ErrorKind::PayloadExactLength
+        );
+
+        // Fail-closed direction 2: a wide run record rejects a real
+        // frozen-length payload outright.
+        let frozen_payload = fixture_v3().payload.clone();
+        assert_eq!(
+            build_genesis_checkpoint_manifest_v3(&run, &frozen_payload)
+                .unwrap_err()
+                .kind(),
+            CheckpointManifestV3ErrorKind::PayloadExactLength
         );
     }
 
@@ -2783,15 +3043,17 @@ mod tests {
 
         let v1_run = run_v3();
         let v1_payload = fixture_v3().payload.clone();
-        let v1_checkpoint =
-            build_genesis_checkpoint_manifest_v3(&v1_run, &v1_payload).unwrap();
+        let v1_checkpoint = build_genesis_checkpoint_manifest_v3(&v1_run, &v1_payload).unwrap();
         let v1_dispatched = decode_genesis_checkpoint_manifest_dispatch_v2_v3(
             v1_checkpoint.canonical_bytes(),
             &v1_payload,
             &v1_run,
         )
         .expect("the dispatcher must reproduce decode_checkpoint_manifest_v3 for a V1 record");
-        assert_eq!(v1_dispatched.canonical_bytes(), v1_checkpoint.canonical_bytes());
+        assert_eq!(
+            v1_dispatched.canonical_bytes(),
+            v1_checkpoint.canonical_bytes()
+        );
     }
 
     /// Fail-closed (design directive slice 2 mandatory test list): "wrong

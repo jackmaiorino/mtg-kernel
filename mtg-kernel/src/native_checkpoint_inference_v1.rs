@@ -15,15 +15,18 @@ use crate::native_flat_tensorizer_v2::{
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativePolicyValueErrorV1,
-    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, FEATURE_CONTRACT_DIGEST_V1,
-    FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1,
-    PARAMETER_COUNT_V1,
+    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, NativePolicyValueNetWideV1,
+    FEATURE_CONTRACT_DIGEST_V1, FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1,
+    MODEL_CONFIG_FINGERPRINT_V1, PARAMETER_COUNT_V1, W_MODEL_ARCHITECTURE_VERSION_V1,
+    W_MODEL_CONFIG_FINGERPRINT_V1, W_PARAMETER_COUNT_V1,
 };
 use crate::native_train_state_payload_v1::{
-    decode_native_train_state_payload_verified_v1, NativeTrainStatePayloadDigestFieldV1,
+    decode_native_train_state_payload_verified_v1,
+    decode_native_train_state_payload_verified_wide_v1, NativeTrainStatePayloadDigestFieldV1,
     NativeTrainStatePayloadDigestsV1, NativeTrainStatePayloadErrorV1,
     NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1, NATIVE_TRAIN_STATE_PAYLOAD_ENCODING_V1,
     NATIVE_TRAIN_STATE_PAYLOAD_SCHEMA_V1, NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1,
+    W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1, W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1,
 };
 use crate::native_training_store_checkpoint_v3::CheckpointManifestV3;
 use crate::native_training_store_digest_v1::{
@@ -721,6 +724,452 @@ fn map_scoring_error_v1(error: NativePolicyValueErrorV1) -> NativeCheckpointInfe
     NativeCheckpointInferenceErrorV1::new(kind)
 }
 
+// =============================================================================
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) inference
+// sibling (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3). EVALUATION ONLY:
+// reuses the already-landed, golden-tested wide forward
+// (`NativePolicyValueNetWideV1::forward_wide_v1`) and the wide payload codec;
+// adds no training/backward capability. Purely additive: none of the frozen
+// types or functions above this marker are edited.
+// =============================================================================
+
+/// Wide-net sibling of [`NativeCheckpointInferenceV1`].
+pub struct NativeCheckpointInferenceWideV1 {
+    model: NativePolicyValueNetWideV1,
+    run_sha256: [u8; 32],
+    checkpoint_manifest_sha256: [u8; 32],
+    checkpoint_payload_sha256: [u8; 32],
+    train_state_sha256: [u8; 32],
+    model_parameter_sha256: [u8; 32],
+    generation_index: u64,
+}
+
+impl Debug for NativeCheckpointInferenceWideV1 {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeCheckpointInferenceWideV1")
+            .field("run_sha256", &lower_hex_raw32_v1(self.run_sha256))
+            .field(
+                "checkpoint_manifest_sha256",
+                &lower_hex_raw32_v1(self.checkpoint_manifest_sha256),
+            )
+            .field(
+                "checkpoint_payload_sha256",
+                &lower_hex_raw32_v1(self.checkpoint_payload_sha256),
+            )
+            .field(
+                "train_state_sha256",
+                &lower_hex_raw32_v1(self.train_state_sha256),
+            )
+            .field(
+                "model_parameter_sha256",
+                &lower_hex_raw32_v1(self.model_parameter_sha256),
+            )
+            .field("generation_index", &self.generation_index)
+            .finish_non_exhaustive()
+    }
+}
+
+impl NativeCheckpointInferenceWideV1 {
+    pub const fn run_sha256(&self) -> [u8; 32] {
+        self.run_sha256
+    }
+
+    pub const fn checkpoint_manifest_sha256(&self) -> [u8; 32] {
+        self.checkpoint_manifest_sha256
+    }
+
+    pub const fn checkpoint_payload_sha256(&self) -> [u8; 32] {
+        self.checkpoint_payload_sha256
+    }
+
+    pub const fn train_state_sha256(&self) -> [u8; 32] {
+        self.train_state_sha256
+    }
+
+    pub const fn model_parameter_sha256(&self) -> [u8; 32] {
+        self.model_parameter_sha256
+    }
+
+    pub const fn generation_index(&self) -> u64 {
+        self.generation_index
+    }
+
+    /// Wide-net sibling of [`NativeCheckpointInferenceV1::score_decision_v1`].
+    pub fn score_decision_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+    ) -> Result<NativeCheckpointInferenceOutputV1> {
+        let mut tensorizer = NativeFlatTensorizerV2::new();
+        let mut tensor = NativeFlatDecisionTensorV2::default();
+        self.score_decision_with_scratch_wide_v1(decision, &mut tensorizer, &mut tensor)
+    }
+
+    /// Wide-net sibling of [`NativeCheckpointInferenceV1::batch_scorer_v1`].
+    pub fn batch_scorer_v1(&self) -> NativeCheckpointBatchScorerWideV1<'_> {
+        NativeCheckpointBatchScorerWideV1::new_v1(self)
+    }
+
+    fn score_decision_with_scratch_wide_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        tensorizer: &mut NativeFlatTensorizerV2,
+        tensor: &mut NativeFlatDecisionTensorV2,
+    ) -> Result<NativeCheckpointInferenceOutputV1> {
+        tensorizer
+            .fill(decision, tensor)
+            .map_err(map_tensor_error_v1)?;
+        let output = self
+            .model
+            .forward_wide_v1(encoded_decision_view_v1(tensor))
+            .map_err(map_scoring_error_v1)?;
+        if output.logits.len() != decision.actions().len()
+            || output.logits.is_empty()
+            || output.logits.iter().any(|value| !value.is_finite())
+            || !output.value.is_finite()
+        {
+            return Err(NativeCheckpointInferenceErrorV1::new(
+                NativeCheckpointInferenceErrorKindV1::ScoringInvalid,
+            ));
+        }
+        Ok(NativeCheckpointInferenceOutputV1 {
+            action_logits: output.logits,
+            value: output.value,
+        })
+    }
+}
+
+/// Wide-net sibling of [`NativeCheckpointBatchScorerV1`].
+pub struct NativeCheckpointBatchScorerWideV1<'a> {
+    inference: &'a NativeCheckpointInferenceWideV1,
+    tensorizer: NativeFlatTensorizerV2,
+    tensor: NativeFlatDecisionTensorV2,
+    candidate_logits: Vec<f32>,
+    candidate_values: Vec<f32>,
+    first_failure_code: Option<u32>,
+}
+
+impl Debug for NativeCheckpointBatchScorerWideV1<'_> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeCheckpointBatchScorerWideV1")
+            .field("generation_index", &self.inference.generation_index)
+            .field("first_failure_code", &self.first_failure_code)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> NativeCheckpointBatchScorerWideV1<'a> {
+    fn new_v1(inference: &'a NativeCheckpointInferenceWideV1) -> Self {
+        Self {
+            inference,
+            tensorizer: NativeFlatTensorizerV2::new(),
+            tensor: NativeFlatDecisionTensorV2::default(),
+            candidate_logits: Vec::new(),
+            candidate_values: Vec::new(),
+            first_failure_code: None,
+        }
+    }
+
+    pub const fn first_failure_code(&self) -> Option<u32> {
+        self.first_failure_code
+    }
+
+    fn score_batch_checked_v1(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logits: &mut [f32],
+        values: &mut [f32],
+    ) -> std::result::Result<(), u32> {
+        let contract = batch.contract();
+        if contract != expected_scorer_contract(contract.card_db_hash) {
+            return Err(NATIVE_CHECKPOINT_SCORER_CONTRACT_CODE_V1);
+        }
+
+        let decision_count = batch.decision_count();
+        let action_offsets = batch.action_offsets();
+        if decision_count == 0
+            || values.len() != decision_count
+            || action_logits.is_empty()
+            || action_logits.len() != batch.total_action_count()
+            || action_offsets.len() != decision_count + 1
+            || action_offsets.first().copied() != Some(0)
+            || action_offsets.last().copied() != Some(action_logits.len())
+        {
+            return Err(NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1);
+        }
+
+        self.candidate_logits.clear();
+        self.candidate_values.clear();
+        self.candidate_logits
+            .try_reserve_exact(action_logits.len())
+            .map_err(|_| NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1)?;
+        self.candidate_values
+            .try_reserve_exact(values.len())
+            .map_err(|_| NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1)?;
+
+        for decision_index in 0..decision_count {
+            let decision = batch
+                .decision(decision_index)
+                .ok_or(NATIVE_CHECKPOINT_SCORER_MISSING_DECISION_CODE_V1)?;
+            let begin = action_offsets[decision_index];
+            let end = action_offsets[decision_index + 1];
+            if end <= begin || end > action_logits.len() || end - begin != decision.actions().len()
+            {
+                return Err(NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1);
+            }
+            let output = self
+                .inference
+                .score_decision_with_scratch_wide_v1(
+                    decision,
+                    &mut self.tensorizer,
+                    &mut self.tensor,
+                )
+                .map_err(batch_scorer_code_v1)?;
+            if output.action_logits.len() != end - begin
+                || output.action_logits.iter().any(|value| !value.is_finite())
+                || !output.value.is_finite()
+            {
+                return Err(NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1);
+            }
+            self.candidate_logits
+                .extend_from_slice(&output.action_logits);
+            self.candidate_values.push(output.value);
+        }
+
+        if self.candidate_logits.len() != action_logits.len()
+            || self.candidate_values.len() != values.len()
+        {
+            return Err(NATIVE_CHECKPOINT_SCORER_OUTPUT_SHAPE_CODE_V1);
+        }
+        action_logits.copy_from_slice(&self.candidate_logits);
+        values.copy_from_slice(&self.candidate_values);
+        Ok(())
+    }
+}
+
+impl FlatBatchScorerV2 for NativeCheckpointBatchScorerWideV1<'_> {
+    fn score_batch_v2(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logits: &mut [f32],
+        values: &mut [f32],
+    ) -> std::result::Result<(), FlatBatchScorerErrorV2> {
+        if let Some(code) = self.first_failure_code {
+            return Err(FlatBatchScorerErrorV2::new(code));
+        }
+        match self.score_batch_checked_v1(batch, action_logits, values) {
+            Ok(()) => Ok(()),
+            Err(code) => {
+                self.first_failure_code = Some(code);
+                Err(FlatBatchScorerErrorV2::new(code))
+            }
+        }
+    }
+}
+
+/// Wide-net sibling of [`load_native_checkpoint_inference_v1`]. EVALUATION
+/// ONLY; see the module-level marker above.
+pub fn load_native_checkpoint_inference_wide_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    payload: &[u8],
+) -> Result<NativeCheckpointInferenceWideV1> {
+    if payload.len() != W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 {
+        return Err(NativeCheckpointInferenceErrorV1::new(
+            NativeCheckpointInferenceErrorKindV1::PayloadExactLength,
+        ));
+    }
+    let run_sha256 = validate_authority_bindings_wide_v1(run, checkpoint)?;
+    let expected = expected_payload_digests_v1(checkpoint)?;
+    let anchor =
+        u32::try_from(checkpoint.train_state().scorer_bias_anchor_f32_bits()).map_err(|_| {
+            NativeCheckpointInferenceErrorV1::new(
+                NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+            )
+        })?;
+    let decoded = decode_native_train_state_payload_verified_wide_v1(
+        payload,
+        checkpoint.train_state().adam_step(),
+        anchor,
+        &expected,
+    )
+    .map_err(map_payload_error_v1)?;
+    if decoded.snapshot.adam_step != checkpoint.generation_index()
+        || decoded.snapshot.scorer_bias_anchor_bits != anchor
+        || decoded.digests.payload_sha256 != checkpoint.checkpoint_payload_sha256()
+        || decoded.digests.model_parameter_sha256 != checkpoint.model_parameter_sha256()
+        || decoded.digests.native_state_sha256 != checkpoint.train_state_sha256()
+    {
+        return Err(NativeCheckpointInferenceErrorV1::new(
+            NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+        ));
+    }
+
+    let mut model = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+        NativePolicyValueModelConfigV1::contract_wide_v1(),
+    )
+    .map_err(map_model_error_v1)?;
+    model
+        .replace_parameter_snapshot_wide_v1(&decoded.snapshot.parameters)
+        .map_err(map_model_error_v1)?;
+    let model_parameter_sha256 = checkpoint.model_parameter_sha256();
+    if model.parameter_count_wide_v1() != W_PARAMETER_COUNT_V1
+        || model.parameter_manifest_sha256_wide_v1() != lower_hex_raw32_v1(model_parameter_sha256)
+    {
+        return Err(NativeCheckpointInferenceErrorV1::new(
+            NativeCheckpointInferenceErrorKindV1::ModelInvalid,
+        ));
+    }
+
+    Ok(NativeCheckpointInferenceWideV1 {
+        model,
+        run_sha256,
+        checkpoint_manifest_sha256: checkpoint.checkpoint_manifest_sha256(),
+        checkpoint_payload_sha256: checkpoint.checkpoint_payload_sha256(),
+        train_state_sha256: checkpoint.train_state_sha256(),
+        model_parameter_sha256,
+        generation_index: checkpoint.generation_index(),
+    })
+}
+
+/// Wide-net sibling of [`validate_authority_bindings_v1`]. Fails closed if
+/// `run`'s record does not carry `contracts.wide_model_experiment_v1`: this
+/// path is never a silent substitute for the frozen loader.
+fn validate_authority_bindings_wide_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+) -> Result<[u8; 32]> {
+    let record = run.record();
+    if record.contracts.wide_model_experiment_v1.is_none() {
+        return Err(NativeCheckpointInferenceErrorV1::new(
+            NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+        ));
+    }
+    let model_contract = &record.contracts.model;
+    let tensorizer_contract = &record.contracts.tensorizer;
+    let snapshot = &record.model_snapshot;
+    let state = checkpoint.train_state();
+    let progress = checkpoint.progress();
+    let segment_updates = checkpoint.checkpoint_segment_updates();
+    let generation = checkpoint.generation_index();
+    let expected_segment = generation.checked_div(segment_updates).ok_or_else(|| {
+        NativeCheckpointInferenceErrorV1::new(
+            NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+        )
+    })?;
+    let run_sha256 = parse_lower_hex_raw32_v1(run.run_sha256()).map_err(|_| {
+        NativeCheckpointInferenceErrorV1::new(
+            NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+        )
+    })?;
+
+    if sha256_v1(run.canonical_bytes()) != run_sha256
+        || sha256_v1(checkpoint.canonical_bytes()) != checkpoint.checkpoint_manifest_sha256()
+        || checkpoint.run_sha256() != run.run_sha256()
+        || checkpoint.identity_bundle_sha256() != run.identity_bundle_sha256()
+        || record.contracts.identity_bundle_sha256 != run.identity_bundle_sha256()
+        || checkpoint.batch_episodes() != run.batch_episodes()
+        || segment_updates == 0
+        || segment_updates != run.checkpoint_segment_updates()
+        || !generation.is_multiple_of(segment_updates)
+        || checkpoint.segment_ordinal() != expected_segment
+        || generation > run.requested_successful_updates()
+        || state.adam_step() != generation
+        || progress.successful_update_count() != generation
+        || progress.batch_episodes() != checkpoint.batch_episodes()
+        || progress.checkpoint_segment_updates() != segment_updates
+        || state.scorer_bias_anchor_f32_bits() != snapshot.scorer_bias_anchor_f32_bits
+        || state.parameter_layout_sha256 != model_contract.parameter_layout_sha256
+        || state.parameter_layout_sha256 != snapshot.parameter_layout_sha256
+        || state.parameter_tensor_count != model_contract.parameter_tensor_count
+        || state.parameter_tensor_count != snapshot.parameter_tensor_count
+        || state.parameter_element_count != model_contract.parameter_element_count
+        || state.parameter_element_count != snapshot.parameter_element_count
+        || model_contract.architecture_identity != W_MODEL_ARCHITECTURE_VERSION_V1
+        || model_contract.config_fingerprint != W_MODEL_CONFIG_FINGERPRINT_V1
+        || usize::try_from(model_contract.parameter_element_count).ok()
+            != Some(W_PARAMETER_COUNT_V1)
+        || tensorizer_contract.feature_contract_digest != FEATURE_CONTRACT_DIGEST_V1
+        || tensorizer_contract.feature_encoding_digest != FEATURE_ENCODING_DIGEST_V1
+        || checkpoint.checkpoint_payload_sha256()
+            != parse_lower_hex_raw32_v1(&checkpoint.payload().sha256).map_err(|_| {
+                NativeCheckpointInferenceErrorV1::new(
+                    NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+                )
+            })?
+        || checkpoint.model_parameter_sha256()
+            != parse_lower_hex_raw32_v1(state.model_parameter_sha256()).map_err(|_| {
+                NativeCheckpointInferenceErrorV1::new(
+                    NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+                )
+            })?
+        || checkpoint.train_state_sha256()
+            != parse_lower_hex_raw32_v1(state.state_sha256()).map_err(|_| {
+                NativeCheckpointInferenceErrorV1::new(
+                    NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+                )
+            })?
+    {
+        return Err(NativeCheckpointInferenceErrorV1::new(
+            NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+        ));
+    }
+    validate_payload_layout_wide_v1(checkpoint)?;
+    // The wide protocol trains fresh-init only (contract Section 4): a
+    // continual-init ladder section is not expected for this experiment, but
+    // if one were ever present the binding is identical in spirit to the
+    // frozen path's -- pin against the record's own derived digest when
+    // present, the common wide snapshot's named-parameter stream otherwise.
+    let expected_genesis_model_parameter_sha256 =
+        match &record.contracts.opponent_ladder_initialization {
+            Some(init) => &init.derived_model_parameter_sha256,
+            None => &snapshot.named_parameter_stream_sha256,
+        };
+    if generation == 0
+        && checkpoint.model_parameter_sha256()
+            != parse_lower_hex_raw32_v1(expected_genesis_model_parameter_sha256).map_err(|_| {
+                NativeCheckpointInferenceErrorV1::new(
+                    NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+                )
+            })?
+    {
+        return Err(NativeCheckpointInferenceErrorV1::new(
+            NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+        ));
+    }
+    Ok(run_sha256)
+}
+
+/// Wide-net sibling of [`validate_payload_layout_v1`].
+fn validate_payload_layout_wide_v1(checkpoint: &CheckpointManifestV3) -> Result<()> {
+    let payload = checkpoint.payload();
+    if payload.schema != NATIVE_TRAIN_STATE_PAYLOAD_SCHEMA_V1
+        || payload.encoding != NATIVE_TRAIN_STATE_PAYLOAD_ENCODING_V1
+        || usize::try_from(payload.byte_count).ok()
+            != Some(W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1)
+    {
+        return Err(NativeCheckpointInferenceErrorV1::new(
+            NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+        ));
+    }
+    for (declared, expected) in payload
+        .sections
+        .iter()
+        .zip(W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1)
+    {
+        if declared.name != expected.name
+            || usize::try_from(declared.offset_bytes).ok() != Some(expected.offset_bytes)
+            || usize::try_from(declared.byte_count).ok() != Some(expected.byte_count)
+        {
+            return Err(NativeCheckpointInferenceErrorV1::new(
+                NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1041,6 +1490,124 @@ mod tests {
         );
         validate_payload_layout_v1(&checkpoint).unwrap();
         assert_eq!(handle.train_state_sha256(), checkpoint.train_state_sha256());
+    }
+
+    // ------------------------------------------------------------------
+    // Capacity-experiment wide-net inference
+    // (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3). EVALUATION ONLY.
+    // ------------------------------------------------------------------
+
+    fn wide_zero_moment_payload_v1() -> Vec<u8> {
+        use crate::native_policy_train_step_v1::NativePolicyValueTrainSnapshotV1;
+        use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+        use crate::native_train_state_payload_v1::encode_native_train_state_payload_wide_v1;
+        let (manifest_path, payload_path) =
+            crate::common_model_snapshot_v1::wide_model_snapshot_paths_v1();
+        let (model, _record) = crate::common_model_snapshot_v1::build_wide_model_candidate_v1(
+            &manifest_path,
+            &payload_path,
+        )
+        .expect("real wide snapshot must load");
+        let parameters = model.parameter_snapshot_wide_v1();
+        let zero_moments: Vec<_> = parameters
+            .iter()
+            .map(|parameter| NativeNamedParameterV1 {
+                name: parameter.name,
+                shape: parameter.shape.clone(),
+                values: vec![0.0; parameter.values.len()],
+            })
+            .collect();
+        let scorer_bias_anchor_bits = parameters
+            .iter()
+            .find(|parameter| parameter.name == "scorer.2.bias")
+            .expect("scorer.2.bias tensor present")
+            .values[0]
+            .to_bits();
+        let snapshot = NativePolicyValueTrainSnapshotV1 {
+            adam_step: 0,
+            scorer_bias_anchor_bits,
+            parameters,
+            first_moments: zero_moments.clone(),
+            second_moments: zero_moments,
+        };
+        encode_native_train_state_payload_wide_v1(&snapshot)
+            .unwrap()
+            .bytes
+    }
+
+    fn wide_authorities_v1() -> (ValidatedTrainRunV2, CheckpointManifestV3, Vec<u8>) {
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_wide_v2;
+        let run_bytes = test_fixture_bytes_with_schedule_and_base_seed_wide_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            2,
+            4,
+            4,
+            2,
+            4,
+            8,
+            32_768,
+            65_536,
+            71501,
+        );
+        let run = decode_train_run_v2(&run_bytes).unwrap();
+        let payload = wide_zero_moment_payload_v1();
+        let manifest = build_genesis_checkpoint_manifest_v3(&run, &payload).unwrap();
+        let checkpoint =
+            decode_genesis_checkpoint_manifest_v3(manifest.canonical_bytes(), &payload, &run)
+                .unwrap();
+        (run, checkpoint, payload)
+    }
+
+    /// Wide-net sibling of
+    /// `loaded_model_scores_exactly_like_independent_checkpoint_decode_and_genesis_authority`:
+    /// loads a real wide genesis checkpoint through the inference layer and
+    /// scores one synthetic decision, plus fail-closed both directions (the
+    /// frozen loader rejects the wide-length payload and vice versa).
+    #[test]
+    fn wide_loaded_model_scores_a_synthetic_decision_and_fails_closed_both_directions() {
+        let (run, checkpoint, payload) = wide_authorities_v1();
+        let handle = load_native_checkpoint_inference_wide_v1(&run, &checkpoint, &payload)
+            .expect("wide checkpoint must load through the inference layer");
+        assert_eq!(handle.generation_index(), 0);
+        assert_eq!(
+            handle.run_sha256(),
+            parse_lower_hex_raw32_v1(run.run_sha256()).unwrap()
+        );
+
+        let (globals, actions) = decision_parts_v1();
+        let output = handle
+            .score_decision_v1(decision_view_v1(&globals, &actions))
+            .expect("wide model must score a synthetic decision");
+        assert_eq!(output.action_logits().len(), 1);
+        assert!(output.action_logits()[0].is_finite());
+        assert!(output.value().is_finite());
+
+        // Same result through the batch-scorer adapter's own private
+        // scratch path (score_decision_with_scratch_wide_v1), proving the
+        // adapter and the direct scorer agree.
+        let scorer = handle.batch_scorer_v1();
+        assert_eq!(scorer.first_failure_code(), None);
+        drop(scorer);
+
+        // Fail-closed direction 1: the frozen loader rejects the wide-length
+        // payload against a real frozen checkpoint outright.
+        let (frozen_run, frozen_checkpoint) = authorities_v1();
+        assert_eq!(
+            load_native_checkpoint_inference_v1(&frozen_run, &frozen_checkpoint, &payload)
+                .unwrap_err()
+                .kind(),
+            NativeCheckpointInferenceErrorKindV1::PayloadExactLength
+        );
+
+        // Fail-closed direction 2: the wide loader rejects a real
+        // frozen-length payload against the wide checkpoint outright.
+        let frozen_payload = fixture_v1().payload.clone();
+        assert_eq!(
+            load_native_checkpoint_inference_wide_v1(&run, &checkpoint, &frozen_payload)
+                .unwrap_err()
+                .kind(),
+            NativeCheckpointInferenceErrorKindV1::PayloadExactLength
+        );
     }
 
     #[test]
@@ -1371,12 +1938,9 @@ mod tests {
 
         let payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
             .expect("weights-only payload derivation must succeed");
-        let checkpoint = build_genesis_checkpoint_manifest_v2_v3(
-            &run,
-            &fixture.reference_manifest,
-            &payload,
-        )
-        .expect("GenesisInitializationV2 authoring must succeed for a matching reference");
+        let checkpoint =
+            build_genesis_checkpoint_manifest_v2_v3(&run, &fixture.reference_manifest, &payload)
+                .expect("GenesisInitializationV2 authoring must succeed for a matching reference");
 
         let handle = load_native_checkpoint_inference_v1(&run, &checkpoint, &payload)
             .expect("a continual-init genesis must load through the inference layer");
