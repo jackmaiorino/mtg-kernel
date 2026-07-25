@@ -896,16 +896,11 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
 /// the update back to CPU-owned state, differs. The frozen function above is
 /// untouched.
 ///
-/// Exercised today only by `training::tests::wide_cuda_training_smoke_genesis_to_snapshot_v1`
-/// (fixture-driven physical decisions standing in for self-play rollout).
-/// NOT wired into `native_trainer_v1`'s `NativeTrainerStateV2` dispatch: that
-/// struct and the self-play rollout scorer it owns
-/// (`NativePolicyBatchScorerV2`/`NativePolicyForwardPoolV1`/
-/// `NativePolicyPackedForwardBuilderV1`) are hardwired to the frozen
-/// `NativePolicyValueNetV1` with no wide dispatch of their own -- see the
-/// final report's wall finding for what wiring this into a genuine self-play
-/// pilot run needs.
-#[allow(dead_code)]
+/// Wired into `native_trainer_v1`'s `NativeTrainerStateV2` dispatch via
+/// `train_grouped_candidate_wide_v1` (the wide sibling of the self-play
+/// rollout/training pipeline that closes the wall this module's original
+/// doc comment named): a genuine self-play pilot run with `MULTIRUN_WIDE=1`
+/// now reaches this function on every update.
 pub(crate) fn train_step_cuda_burn_dense_wide_v1(
     state: &mut NativePolicyValueTrainStateWideV1,
     groups: &[NativePolicyPhysicalDecisionV1<'_>],

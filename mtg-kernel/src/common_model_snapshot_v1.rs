@@ -2254,8 +2254,12 @@ fn reexport_wide_named_parameters(
 /// candidate model from a wide snapshot's manifest/payload files. Mirrors the
 /// frozen [`load_common_model_snapshot_v1`]'s decode/construct/re-export
 /// discipline, but returns the built candidate instead of mutating a live
-/// [`NativePolicyValueTrainStateV1`] (the wide net has no live train-state
-/// wiring yet; see the Capacity Experiment Contract implementation report).
+/// state in place: the wide live train state is a distinct Rust type
+/// ([`crate::native_policy_train_step_v1::NativePolicyValueTrainStateWideV1`]),
+/// so its own constructor
+/// (`NativePolicyValueTrainStateWideV1::new_wide_v1`, wired at
+/// `NativeTrainerStateV2::from_common_model_snapshot_wide_v2`) wraps this
+/// function's output rather than this function mutating one in place.
 pub(crate) fn build_wide_model_candidate_v1(
     manifest_path: &Path,
     payload_path: &Path,

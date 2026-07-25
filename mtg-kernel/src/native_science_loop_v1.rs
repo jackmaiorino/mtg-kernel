@@ -16,7 +16,8 @@ use crate::native_checkpoint_evaluator_v1::{
     evaluate_native_checkpoint_uniform_delta_v1, NativeCheckpointUniformDeltaEvaluationV1,
 };
 use crate::native_checkpoint_runner_v1::{
-    run_native_checkpoint_v1, NativeCheckpointRunResultV1, NativeCheckpointRunnerConfigV1,
+    run_native_checkpoint_v1, run_native_checkpoint_wide_v1, NativeCheckpointRunResultV1,
+    NativeCheckpointRunnerConfigV1,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_training_executor_v1::{
@@ -266,16 +267,41 @@ pub fn run_native_science_loop_v1(
                 (checkpoint, payload)
             }
             (false, None) => {
-                let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
-                    execution_config.clone(),
-                    snapshot_manifest_path,
-                    snapshot_payload_path,
-                )
-                .map_err(|_| genesis_error)?;
-                let candidate = executor
-                    .checkpoint_candidate_v1()
+                // Capacity Experiment Contract (Stage 3), Section 3: genesis
+                // authoring dispatches on the record's own
+                // `contracts.wide_model_experiment_v1` claim, the same
+                // record-driven signal `build_genesis_checkpoint_manifest_v3`
+                // and the inference-authority chokepoint already dispatch
+                // on -- this closes the wall's fail-closed-genesis finding,
+                // the last of the four construction-dispatch sites the
+                // contract's Section 3 enumerates. Absent, this reproduces
+                // the frozen genesis path byte-for-byte.
+                let wide = run.record().contracts.wide_model_experiment_v1.is_some();
+                let payload = if wide {
+                    let executor = NativeTrainingExecutorV1::from_common_model_snapshot_wide_v1(
+                        execution_config.clone(),
+                        snapshot_manifest_path,
+                        snapshot_payload_path,
+                    )
                     .map_err(|_| genesis_error)?;
-                let payload = candidate.payload().to_vec();
+                    executor
+                        .checkpoint_candidate_v1()
+                        .map_err(|_| genesis_error)?
+                        .payload()
+                        .to_vec()
+                } else {
+                    let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+                        execution_config.clone(),
+                        snapshot_manifest_path,
+                        snapshot_payload_path,
+                    )
+                    .map_err(|_| genesis_error)?;
+                    executor
+                        .checkpoint_candidate_v1()
+                        .map_err(|_| genesis_error)?
+                        .payload()
+                        .to_vec()
+                };
                 let checkpoint = build_genesis_checkpoint_manifest_v3(run, &payload)
                     .map_err(|_| genesis_error)?;
                 (checkpoint, payload)
@@ -365,20 +391,45 @@ pub fn run_native_science_loop_v1(
         .map_err(|_| load_error)?;
 
     let run_error = loop_error_v1(NativeScienceLoopV1ErrorKind::RunFailed);
-    let reference_run = run_native_checkpoint_v1(
-        run,
-        reference_boundary.checkpoint(),
-        reference_boundary.payload(),
-        runner_config,
-    )
-    .map_err(|_| run_error)?;
-    let candidate_run = run_native_checkpoint_v1(
-        run,
-        candidate_boundary.checkpoint(),
-        candidate_boundary.payload(),
-        runner_config,
-    )
-    .map_err(|_| run_error)?;
+    // Capacity Experiment Contract (Stage 3), Section 3: the third and final
+    // record-driven dispatch chokepoint this contract slice closes (genesis
+    // authoring and checkpoint resume are the other two) -- both boundaries'
+    // payloads carry the same architecture the record declares, so both eval
+    // runs dispatch together on the same signal.
+    let wide = run.record().contracts.wide_model_experiment_v1.is_some();
+    let (reference_run, candidate_run) = if wide {
+        let reference_run = run_native_checkpoint_wide_v1(
+            run,
+            reference_boundary.checkpoint(),
+            reference_boundary.payload(),
+            runner_config,
+        )
+        .map_err(|_| run_error)?;
+        let candidate_run = run_native_checkpoint_wide_v1(
+            run,
+            candidate_boundary.checkpoint(),
+            candidate_boundary.payload(),
+            runner_config,
+        )
+        .map_err(|_| run_error)?;
+        (reference_run, candidate_run)
+    } else {
+        let reference_run = run_native_checkpoint_v1(
+            run,
+            reference_boundary.checkpoint(),
+            reference_boundary.payload(),
+            runner_config,
+        )
+        .map_err(|_| run_error)?;
+        let candidate_run = run_native_checkpoint_v1(
+            run,
+            candidate_boundary.checkpoint(),
+            candidate_boundary.payload(),
+            runner_config,
+        )
+        .map_err(|_| run_error)?;
+        (reference_run, candidate_run)
+    };
 
     let evaluation = evaluate_native_checkpoint_uniform_delta_v1(&reference_run, &candidate_run)
         .map_err(|_| loop_error_v1(NativeScienceLoopV1ErrorKind::EvaluateFailed))?;

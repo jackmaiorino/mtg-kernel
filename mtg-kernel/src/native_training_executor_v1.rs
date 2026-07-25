@@ -31,14 +31,15 @@ use crate::native_policy_value_net_v1::{
     NativePolicyValueModelConfigV1, NativePolicyValueNetV1, NativePolicyValueNetWideV1,
 };
 use crate::native_train_state_payload_v1::{
-    decode_native_train_state_payload_verified_v1, encode_native_train_state_payload_v1,
+    decode_native_train_state_payload_verified_v1, decode_native_train_state_payload_verified_wide_v1,
+    encode_native_train_state_payload_v1, encode_native_train_state_payload_wide_v1,
     NativeTrainStatePayloadDigestsV1, NativeTrainStatePayloadErrorV1,
 };
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_trainer_v1::{
-    validate_resumed_parts_v2, validate_update_config_v2, NativeTrainerBootstrapErrorV1,
-    NativeTrainerErrorV1, NativeTrainerProgressV2, NativeTrainerStateV2,
-    NativeTrainerUpdateConfigV2, NATIVE_TRAINER_CONTRACT_IDENTITY_V2,
+    validate_resumed_parts_v2, validate_resumed_parts_wide_v2, validate_update_config_v2,
+    NativeTrainerBootstrapErrorV1, NativeTrainerErrorV1, NativeTrainerProgressV2,
+    NativeTrainerStateV2, NativeTrainerUpdateConfigV2, NATIVE_TRAINER_CONTRACT_IDENTITY_V2,
 };
 pub use crate::native_trainer_v1::{
     NativeTrainerEpisodeEvidenceV1 as NativeTrainingEpisodeObservationV1,
@@ -549,6 +550,48 @@ impl NativeTrainingCheckpointCandidateV1 {
             scorer_bias_anchor_bits: metadata.scorer_bias_anchor_bits,
             // Ownership is acquired only after payload, train-state, progress,
             // K, Adam, and next-schedule validation all succeed.
+            payload: payload.to_vec(),
+            digests: internal_digests,
+        })
+    }
+
+    /// Capacity-experiment wide-net sibling of [`Self::import_verified_v1`]
+    /// (task item 3): decodes/validates against the wide payload codec and
+    /// the wide train-state reconstruction path instead of the frozen ones.
+    /// The frozen constructor above is untouched.
+    pub fn import_verified_wide_v1(
+        metadata: NativeTrainingCheckpointMetadataV1,
+        payload: &[u8],
+        digests: NativeTrainingCheckpointDigestsV1,
+    ) -> Result<Self, NativeTrainingExecutorErrorV1> {
+        validate_checkpoint_backend_metadata_v1(
+            metadata.numerical_backend,
+            metadata.backward_worker_limit,
+        )?;
+        let internal_digests = digests.into();
+        let decoded = decode_native_train_state_payload_verified_wide_v1(
+            payload,
+            metadata.adam_step,
+            metadata.scorer_bias_anchor_bits,
+            &internal_digests,
+        )
+        .map_err(payload_executor_error_v1)?;
+        let train_state = train_state_from_snapshot_wide_v1(&decoded.snapshot)?;
+        validate_resumed_parts_wide_v2(
+            metadata.base_seed,
+            metadata.batch_episodes,
+            &train_state,
+            metadata.progress.into(),
+        )
+        .map_err(trainer_executor_error_v1)?;
+        Ok(Self {
+            base_seed: metadata.base_seed,
+            batch_episodes: metadata.batch_episodes,
+            numerical_backend: metadata.numerical_backend,
+            backward_worker_limit: metadata.backward_worker_limit,
+            progress: metadata.progress,
+            adam_step: metadata.adam_step,
+            scorer_bias_anchor_bits: metadata.scorer_bias_anchor_bits,
             payload: payload.to_vec(),
             digests: internal_digests,
         })
@@ -1070,9 +1113,11 @@ impl<'executor> NativeTrainingSegmentCandidateV2<'executor> {
         let observation = self
             .candidate_trainer
             .run_even_batch_update_v2(&self.update_config)
-            .map_err(trainer_executor_error_v1)?;
-        let successor =
-            intrinsic_checkpoint_facts_from_parts_v2(&self.config, &self.candidate_trainer)?;
+            .map_err(|error| {
+                trainer_executor_error_v1(error)
+            })?;
+        let successor = intrinsic_checkpoint_facts_from_parts_v2(&self.config, &self.candidate_trainer)
+            ?;
         validate_current_observation_from_parts_v2(
             &self.config,
             &self.candidate_trainer,
@@ -1169,6 +1214,33 @@ impl NativeTrainingExecutorV1 {
         })
     }
 
+    /// Capacity-experiment wide-net sibling of [`Self::from_common_model_snapshot_v1`]
+    /// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3, task item 3): the
+    /// executor-level genesis-authoring twin the wall's fail-closed genesis
+    /// finding named. Identical shape to the frozen constructor, dispatching
+    /// to [`NativeTrainerStateV2::from_common_model_snapshot_wide_v2`]
+    /// instead. The frozen constructor above is untouched.
+    pub fn from_common_model_snapshot_wide_v1(
+        config: NativeTrainingExecutionConfigV1,
+        manifest_path: &Path,
+        payload_path: &Path,
+    ) -> Result<Self, NativeTrainingExecutorErrorV1> {
+        let update_config = validated_update_config_v1(&config)?;
+        let (trainer, snapshot_receipt) = NativeTrainerStateV2::from_common_model_snapshot_wide_v2(
+            config.run_base_seed,
+            config.batch_episodes,
+            manifest_path,
+            payload_path,
+        )
+        .map_err(bootstrap_executor_error_v1)?;
+        Ok(Self {
+            config,
+            update_config,
+            trainer,
+            snapshot_receipt: Some(snapshot_receipt.into()),
+        })
+    }
+
     /// Reconstructs an executor from an immutable verified candidate.
     ///
     /// Resumed executors return `None` from [`Self::snapshot_receipt`]; the
@@ -1219,6 +1291,66 @@ impl NativeTrainingExecutorV1 {
         .map_err(payload_executor_error_v1)?;
         let train_state = train_state_from_snapshot_v1(&decoded.snapshot)?;
         let trainer = NativeTrainerStateV2::from_resumed_parts_v2(
+            config.run_base_seed,
+            config.batch_episodes,
+            &train_state,
+            checkpoint.progress.into(),
+        )
+        .map_err(trainer_executor_error_v1)?;
+        Ok(Self {
+            config,
+            update_config,
+            trainer,
+            snapshot_receipt: None,
+        })
+    }
+
+    /// Capacity-experiment wide-net sibling of [`Self::from_checkpoint_candidate_v1`]
+    /// (task item 3): every resumed training window (`native_science_loop_v1`'s
+    /// train-to-target loop reconstructs one executor per window) reaches this
+    /// for a wide run. Decodes/reconstructs against the wide payload codec and
+    /// wide train state instead of the frozen ones. `checkpoint` must have been
+    /// built by [`NativeTrainingCheckpointCandidateV1::import_verified_wide_v1`];
+    /// the frozen constructor above is untouched.
+    pub fn from_checkpoint_candidate_wide_v1(
+        config: NativeTrainingExecutionConfigV1,
+        checkpoint: &NativeTrainingCheckpointCandidateV1,
+    ) -> Result<Self, NativeTrainingExecutorErrorV1> {
+        let update_config = validated_update_config_v1(&config)?;
+        if checkpoint.base_seed != config.run_base_seed {
+            return Err(NativeTrainingExecutorErrorV1::redacted(
+                NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+                "checkpoint_base_seed_mismatch",
+            ));
+        }
+        if checkpoint.batch_episodes != config.batch_episodes {
+            return Err(NativeTrainingExecutorErrorV1::redacted(
+                NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+                "checkpoint_batch_episodes_mismatch",
+            ));
+        }
+        if checkpoint.numerical_backend != config.numerical_backend {
+            return Err(NativeTrainingExecutorErrorV1::redacted(
+                NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+                "checkpoint_numerical_backend_mismatch",
+            ));
+        }
+        if checkpoint.backward_worker_limit != config.backward_worker_limit {
+            return Err(NativeTrainingExecutorErrorV1::redacted(
+                NativeTrainingExecutorErrorKindV1::CheckpointBinding,
+                "checkpoint_backward_worker_limit_mismatch",
+            ));
+        }
+
+        let decoded = decode_native_train_state_payload_verified_wide_v1(
+            &checkpoint.payload,
+            checkpoint.adam_step,
+            checkpoint.scorer_bias_anchor_bits,
+            &checkpoint.digests,
+        )
+        .map_err(payload_executor_error_v1)?;
+        let train_state = train_state_from_snapshot_wide_v1(&decoded.snapshot)?;
+        let trainer = NativeTrainerStateV2::from_resumed_parts_wide_v2(
             config.run_base_seed,
             config.batch_episodes,
             &train_state,
@@ -1454,22 +1586,49 @@ fn checkpoint_candidate_from_parts_with_facts_v2(
             "checkpoint_intrinsic_facts_mismatch",
         ));
     }
-    let snapshot = trainer.train_state_v1().snapshot_v1().map_err(|error| {
-        NativeTrainingExecutorErrorV1::with_diagnostic(
-            NativeTrainingExecutorErrorKindV1::TrainState,
-            "live_train_state_invalid",
-            error,
+    // Capacity-experiment wide-net dispatch chokepoint (task item 3): the
+    // encoded/decoded payload wrapper types (`NativeEncodedTrainStatePayloadV1`/
+    // `NativeDecodedTrainStatePayloadV1`, and the snapshot they both wrap) are
+    // already shared between the frozen and wide codecs, so both branches
+    // below unify into the same locals; only which snapshot accessor and
+    // which codec pair is called differs.
+    let (snapshot, encoded, decoded) = if trainer.is_wide_v1() {
+        let snapshot = trainer.train_state_wide_v1().snapshot_v1().map_err(|error| {
+            NativeTrainingExecutorErrorV1::with_diagnostic(
+                NativeTrainingExecutorErrorKindV1::TrainState,
+                "live_train_state_invalid",
+                error,
+            )
+        })?;
+        let encoded = encode_native_train_state_payload_wide_v1(&snapshot)
+            .map_err(payload_executor_error_v1)?;
+        let decoded = decode_native_train_state_payload_verified_wide_v1(
+            &encoded.bytes,
+            snapshot.adam_step,
+            snapshot.scorer_bias_anchor_bits,
+            &encoded.digests,
         )
-    })?;
-    let encoded =
-        encode_native_train_state_payload_v1(&snapshot).map_err(payload_executor_error_v1)?;
-    let decoded = decode_native_train_state_payload_verified_v1(
-        &encoded.bytes,
-        snapshot.adam_step,
-        snapshot.scorer_bias_anchor_bits,
-        &encoded.digests,
-    )
-    .map_err(payload_executor_error_v1)?;
+        .map_err(payload_executor_error_v1)?;
+        (snapshot, encoded, decoded)
+    } else {
+        let snapshot = trainer.train_state_v1().snapshot_v1().map_err(|error| {
+            NativeTrainingExecutorErrorV1::with_diagnostic(
+                NativeTrainingExecutorErrorKindV1::TrainState,
+                "live_train_state_invalid",
+                error,
+            )
+        })?;
+        let encoded =
+            encode_native_train_state_payload_v1(&snapshot).map_err(payload_executor_error_v1)?;
+        let decoded = decode_native_train_state_payload_verified_v1(
+            &encoded.bytes,
+            snapshot.adam_step,
+            snapshot.scorer_bias_anchor_bits,
+            &encoded.digests,
+        )
+        .map_err(payload_executor_error_v1)?;
+        (snapshot, encoded, decoded)
+    };
     if snapshot.adam_step != facts.adam_step
         || snapshot.scorer_bias_anchor_bits != facts.scorer_bias_anchor_bits
         || encoded.digests.model_parameter_sha256 != facts.model_parameter_sha256
@@ -1515,6 +1674,16 @@ fn validate_current_observation_from_parts_v2(
         .ok_or_else(checkpoint_observation_mismatch_v1)?;
     let expected_episode_len =
         usize::try_from(config.batch_episodes).map_err(|_| checkpoint_observation_mismatch_v1())?;
+    // Capacity-experiment wide-net dispatch (task item 3): both model types
+    // expose the same-shaped digest accessor under a different name.
+    let model_digest_after = if trainer.is_wide_v1() {
+        trainer
+            .train_state_wide_v1()
+            .model_v1()
+            .parameter_manifest_sha256_wide_v1()
+    } else {
+        trainer.train_state_v1().model_v1().parameter_manifest_sha256_v1()
+    };
 
     if observation.trainer_contract_identity != NATIVE_TRAINER_CONTRACT_IDENTITY_V2
         || observation.episode_count != config.batch_episodes
@@ -1534,11 +1703,7 @@ fn validate_current_observation_from_parts_v2(
         || observation.physical_terms.len()
             != usize::try_from(observation.learner_group_count)
                 .map_err(|_| checkpoint_observation_mismatch_v1())?
-        || trainer
-            .train_state_v1()
-            .model_v1()
-            .parameter_manifest_sha256_v1()
-            != observation.model_digest_after
+        || model_digest_after != observation.model_digest_after
     {
         return Err(checkpoint_observation_mismatch_v1());
     }
@@ -1588,30 +1753,65 @@ fn intrinsic_checkpoint_facts_from_parts_v2(
     config: &NativeTrainingExecutionConfigV1,
     trainer: &NativeTrainerStateV2,
 ) -> Result<NativeTrainingIntrinsicCheckpointFactsV2, NativeTrainingExecutorErrorV1> {
-    validate_resumed_parts_v2(
-        config.run_base_seed,
-        config.batch_episodes,
-        trainer.train_state_v1(),
-        trainer.progress_v2(),
-    )
-    .map_err(trainer_executor_error_v1)?;
-    let train_state = trainer.train_state_v1();
-    let train_state_sha256 = train_state.state_sha256_v1().map_err(|error| {
-        NativeTrainingExecutorErrorV1::with_diagnostic(
-            NativeTrainingExecutorErrorKindV1::TrainState,
-            "live_train_state_invalid",
-            error,
-        )
-    })?;
+    // Capacity-experiment wide-net dispatch (task item 3): both train-state
+    // types expose the same-shaped adam-step/anchor/digest/hash accessors
+    // under different names; only `validate_resumed_parts_v2`'s wide sibling
+    // needs a distinct call (the concrete argument type differs).
+    let (adam_step, scorer_bias_anchor_bits, model_parameter_sha256, train_state_sha256) =
+        if trainer.is_wide_v1() {
+            let train_state = trainer.train_state_wide_v1();
+            validate_resumed_parts_wide_v2(
+                config.run_base_seed,
+                config.batch_episodes,
+                train_state,
+                trainer.progress_v2(),
+            )
+            .map_err(trainer_executor_error_v1)?;
+            let train_state_sha256 = train_state.state_sha256_v1().map_err(|error| {
+                NativeTrainingExecutorErrorV1::with_diagnostic(
+                    NativeTrainingExecutorErrorKindV1::TrainState,
+                    "live_train_state_invalid",
+                    error,
+                )
+            })?;
+            (
+                train_state.adam_step_v1(),
+                train_state.scorer_bias_anchor_f32_bits_v1(),
+                train_state.model_v1().parameter_manifest_sha256_raw_wide_v1(),
+                train_state_sha256,
+            )
+        } else {
+            let train_state = trainer.train_state_v1();
+            validate_resumed_parts_v2(
+                config.run_base_seed,
+                config.batch_episodes,
+                train_state,
+                trainer.progress_v2(),
+            )
+            .map_err(trainer_executor_error_v1)?;
+            let train_state_sha256 = train_state.state_sha256_v1().map_err(|error| {
+                NativeTrainingExecutorErrorV1::with_diagnostic(
+                    NativeTrainingExecutorErrorKindV1::TrainState,
+                    "live_train_state_invalid",
+                    error,
+                )
+            })?;
+            (
+                train_state.adam_step_v1(),
+                train_state.scorer_bias_anchor_f32_bits_v1(),
+                train_state.model_v1().parameter_manifest_sha256_raw_v1(),
+                train_state_sha256,
+            )
+        };
     Ok(NativeTrainingIntrinsicCheckpointFactsV2 {
         base_seed: config.run_base_seed,
         batch_episodes: config.batch_episodes,
         numerical_backend: config.numerical_backend,
         backward_worker_limit: config.backward_worker_limit,
         progress: trainer.progress_v2().into(),
-        adam_step: train_state.adam_step_v1(),
-        scorer_bias_anchor_bits: train_state.scorer_bias_anchor_f32_bits_v1(),
-        model_parameter_sha256: train_state.model_v1().parameter_manifest_sha256_raw_v1(),
+        adam_step,
+        scorer_bias_anchor_bits,
+        model_parameter_sha256,
         train_state_sha256,
     })
 }
@@ -1728,9 +1928,9 @@ fn train_state_from_snapshot_v1(
 /// `NativeTrainingExecutorV1::from_checkpoint_candidate_v1`) or into
 /// `NativeTrainerStateV2`/the self-play rollout scorer, both of which are
 /// hardwired to the frozen `NativePolicyValueNetV1`/`NativePolicyValueTrainStateV1`
-/// types with no wide dispatch of their own -- see the final report's wall
-/// finding for exactly what closing that the rest of the way needs.
-#[allow(dead_code)]
+/// types with no wide dispatch of their own; this contract slice closes that
+/// remaining wiring at the three chokepoints named above (now this function's
+/// only callers).
 fn train_state_from_snapshot_wide_v1(
     snapshot: &NativePolicyValueTrainSnapshotV1,
 ) -> Result<NativePolicyValueTrainStateWideV1, NativeTrainingExecutorErrorV1> {

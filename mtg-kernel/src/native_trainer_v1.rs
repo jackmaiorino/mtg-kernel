@@ -42,10 +42,14 @@ use crate::native_policy_train_step_v1::{
     NativePolicyPackedForwardTapeV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
     NativePolicyTrainErrorV1, NativePolicyTrainStepResultV1, NativePolicyValueTrainStateV1,
     NativeScorerBiasGaugeRecordV1, NativeTrainingNumericalBackendV1,
+    // Capacity-experiment wide-net (kernel-policy-value-net-8w128) sibling
+    // (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3, task item 3).
+    NativePolicyValueTrainStateWideV1,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativeNamedParameterV1,
     NativePolicyValueErrorV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
+    NativePolicyValueNetWideV1, NativePolicyValueOutputV1,
 };
 use crate::native_trainer_schedule_v1::{
     native_trainer_episode_schedule_v1, NativeTrainerScheduleErrorV1,
@@ -316,6 +320,315 @@ impl NativePolicyAssociationConsumerV1 {
             return Err(NativePolicyAssociationErrorV1::ResidualScoredDecisions);
         }
         Ok(())
+    }
+}
+
+// =============================================================================
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) rollout-scoring
+// sibling (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3). CudaBurnDense (the
+// only backend the wide protocol trains under, see `train_grouped_candidate_wide_v1`)
+// recomputes forward entirely device-side from the retained encoded tensor, so
+// unlike the frozen path this scorer retains no backward-capable packed tape --
+// only the forward OUTPUT bits (as the "transported" ground truth the CUDA
+// bridge tolerance-checks against) alongside the canonical tensor. Sequential
+// only (no forward-worker pool): mirrors the established
+// `NativeCheckpointBatchScorerWideV1` (native_checkpoint_inference_v1.rs)
+// evaluation-side precedent rather than the frozen pooled path, since wide
+// training runs (K=64, single-digit updates) do not need the pooled path's
+// throughput and the simpler shape is lower risk. `NativePolicyAssociationErrorV1`
+// and `NativePolicyScorerFailureV1` are reused unchanged: both are already
+// scoring-input-shape-agnostic. Purely additive; every frozen type/method above
+// this marker is untouched.
+// =============================================================================
+
+#[derive(Debug)]
+struct NativePolicyScoredTrainingInputWideV1 {
+    tensor: NativeFlatDecisionTensorV2,
+    output: NativePolicyValueOutputV1,
+    model_generation_sha256: Arc<str>,
+}
+
+#[derive(Debug)]
+struct NativeScoredDecisionAssociationWideV1 {
+    binding: FlatDecisionBindingV2,
+    training_input: NativePolicyScoredTrainingInputWideV1,
+}
+
+#[derive(Debug, Default)]
+struct NativePolicyAssociationStateWideV1 {
+    queue: VecDeque<NativeScoredDecisionAssociationWideV1>,
+    poisoned: Option<NativePolicyAssociationErrorV1>,
+}
+
+#[derive(Clone, Debug)]
+struct NativePolicyAssociationProducerWideV1 {
+    shared: Rc<RefCell<NativePolicyAssociationStateWideV1>>,
+}
+
+#[derive(Clone, Debug)]
+struct NativePolicyAssociationConsumerWideV1 {
+    shared: Rc<RefCell<NativePolicyAssociationStateWideV1>>,
+}
+
+fn native_policy_association_channel_wide_v1() -> (
+    NativePolicyAssociationProducerWideV1,
+    NativePolicyAssociationConsumerWideV1,
+) {
+    let shared = Rc::new(RefCell::new(NativePolicyAssociationStateWideV1::default()));
+    (
+        NativePolicyAssociationProducerWideV1 {
+            shared: Rc::clone(&shared),
+        },
+        NativePolicyAssociationConsumerWideV1 { shared },
+    )
+}
+
+impl NativePolicyAssociationProducerWideV1 {
+    fn stage_chunk_v1(
+        &self,
+        chunk: Vec<NativeScoredDecisionAssociationWideV1>,
+    ) -> Result<(), NativePolicyAssociationErrorV1> {
+        let mut shared = self
+            .shared
+            .try_borrow_mut()
+            .map_err(|_| NativePolicyAssociationErrorV1::BorrowConflict)?;
+        if shared.poisoned.is_some() {
+            return Err(NativePolicyAssociationErrorV1::ProducerPoisoned);
+        }
+        shared
+            .queue
+            .try_reserve(chunk.len())
+            .map_err(|_| NativePolicyAssociationErrorV1::AllocationFailed)?;
+        shared.queue.extend(chunk);
+        Ok(())
+    }
+}
+
+impl NativePolicyAssociationConsumerWideV1 {
+    fn pop_verified_v1(
+        &self,
+        event: &FlatScoredSelectedEventV2<'_>,
+    ) -> Result<NativePolicyScoredTrainingInputWideV1, NativePolicyAssociationErrorV1> {
+        let mut shared = self
+            .shared
+            .try_borrow_mut()
+            .map_err(|_| NativePolicyAssociationErrorV1::BorrowConflict)?;
+        if let Some(error) = shared.poisoned {
+            return Err(error);
+        }
+        let staged = match shared.queue.pop_front() {
+            Some(staged) => staged,
+            None => {
+                shared.poisoned = Some(NativePolicyAssociationErrorV1::MissingScoredDecision);
+                return Err(NativePolicyAssociationErrorV1::MissingScoredDecision);
+            }
+        };
+        let selected_index = match usize::try_from(event.selected_index) {
+            Ok(index) if index < event.raw_action_logits.len() => index,
+            _ => {
+                shared.poisoned = Some(NativePolicyAssociationErrorV1::SelectedIndexOutOfRange);
+                return Err(NativePolicyAssociationErrorV1::SelectedIndexOutOfRange);
+            }
+        };
+        let tape_logits = &staged.training_input.output.logits;
+        let error = if staged.binding != event.binding {
+            Some(NativePolicyAssociationErrorV1::BindingMismatch)
+        } else if tape_logits.len() != event.raw_action_logits.len() {
+            Some(NativePolicyAssociationErrorV1::LogitCountMismatch)
+        } else if tape_logits[selected_index].to_bits()
+            != event.raw_action_logits[selected_index].to_bits()
+            || tape_logits
+                .iter()
+                .zip(event.raw_action_logits)
+                .any(|(expected, actual)| expected.to_bits() != actual.to_bits())
+        {
+            Some(NativePolicyAssociationErrorV1::LogitBitsMismatch)
+        } else if staged.training_input.output.value.to_bits() != event.predicted_value_bits {
+            Some(NativePolicyAssociationErrorV1::ValueBitsMismatch)
+        } else {
+            None
+        };
+        if let Some(error) = error {
+            shared.poisoned = Some(error);
+            return Err(error);
+        }
+        Ok(staged.training_input)
+    }
+
+    fn finish_v1(&self) -> Result<(), NativePolicyAssociationErrorV1> {
+        let mut shared = self
+            .shared
+            .try_borrow_mut()
+            .map_err(|_| NativePolicyAssociationErrorV1::BorrowConflict)?;
+        if let Some(error) = shared.poisoned {
+            return Err(error);
+        }
+        if !shared.queue.is_empty() {
+            shared.poisoned = Some(NativePolicyAssociationErrorV1::ResidualScoredDecisions);
+            return Err(NativePolicyAssociationErrorV1::ResidualScoredDecisions);
+        }
+        Ok(())
+    }
+}
+
+struct NativePolicyBatchScorerWideV2 {
+    model: NativePolicyValueNetWideV1,
+    model_generation_sha256: Arc<str>,
+    tensorizer: NativeFlatTensorizerV2,
+    associations: NativePolicyAssociationProducerWideV1,
+    last_failure: Option<NativePolicyScorerFailureV1>,
+    accepted_batch_count: u64,
+    accepted_decision_count: u64,
+}
+
+impl NativePolicyBatchScorerWideV2 {
+    fn new_v1(
+        model: &NativePolicyValueNetWideV1,
+        associations: NativePolicyAssociationProducerWideV1,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
+        model
+            .validate_parameters_wide_v1()
+            .map_err(NativePolicyTrainErrorV1::Model)?;
+        Ok(Self {
+            model: model.clone(),
+            model_generation_sha256: Arc::from(model.parameter_manifest_sha256_wide_v1()),
+            tensorizer: NativeFlatTensorizerV2::new(),
+            associations,
+            last_failure: None,
+            accepted_batch_count: 0,
+            accepted_decision_count: 0,
+        })
+    }
+
+    fn score_decisions_scalar_v1(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logit_count: usize,
+        candidate_logits: &mut Vec<f32>,
+        candidate_values: &mut Vec<f32>,
+        candidate_associations: &mut Vec<NativeScoredDecisionAssociationWideV1>,
+    ) -> Result<(), NativePolicyScorerFailureV1> {
+        for decision_index in 0..batch.decision_count() {
+            let decision = batch
+                .decision(decision_index)
+                .ok_or(NativePolicyScorerFailureV1::MissingDecision)?;
+            let binding = batch
+                .binding(decision_index)
+                .ok_or(NativePolicyScorerFailureV1::MissingDecision)?;
+            let begin = batch.action_offsets()[decision_index];
+            let end = batch.action_offsets()[decision_index + 1];
+            if end < begin || end > action_logit_count || end - begin != decision.actions().len() {
+                return Err(NativePolicyScorerFailureV1::OutputShape);
+            }
+
+            let mut tensor = NativeFlatDecisionTensorV2::default();
+            self.tensorizer
+                .fill(decision, &mut tensor)
+                .map_err(NativePolicyScorerFailureV1::Tensor)?;
+            let output = self
+                .model
+                .forward_wide_v1(native_encoded_decision_view_v1(&tensor))
+                .map_err(NativePolicyTrainErrorV1::Model)
+                .map_err(NativePolicyScorerFailureV1::PackedForward)?;
+            if output.logits.len() != end - begin || !output.value.is_finite() {
+                return Err(NativePolicyScorerFailureV1::OutputShape);
+            }
+            candidate_logits.extend_from_slice(&output.logits);
+            candidate_values.push(output.value);
+            candidate_associations.push(NativeScoredDecisionAssociationWideV1 {
+                binding,
+                training_input: NativePolicyScoredTrainingInputWideV1 {
+                    tensor,
+                    output,
+                    model_generation_sha256: self.model_generation_sha256.clone(),
+                },
+            });
+        }
+        Ok(())
+    }
+
+    fn score_chunk_v1(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logits: &mut [f32],
+        values: &mut [f32],
+    ) -> Result<(), NativePolicyScorerFailureV1> {
+        let contract = batch.contract();
+        if contract != expected_scorer_contract(contract.card_db_hash) {
+            return Err(NativePolicyScorerFailureV1::Contract);
+        }
+        if batch.decision_count() == 0
+            || values.len() != batch.decision_count()
+            || action_logits.len() != batch.total_action_count()
+            || action_logits.is_empty()
+            || batch.action_offsets().len() != batch.decision_count() + 1
+        {
+            return Err(NativePolicyScorerFailureV1::OutputShape);
+        }
+        let next_batch_count = self
+            .accepted_batch_count
+            .checked_add(1)
+            .ok_or(NativePolicyScorerFailureV1::CounterOverflow)?;
+        let next_decision_count = self
+            .accepted_decision_count
+            .checked_add(
+                u64::try_from(batch.decision_count())
+                    .map_err(|_| NativePolicyScorerFailureV1::CounterOverflow)?,
+            )
+            .ok_or(NativePolicyScorerFailureV1::CounterOverflow)?;
+
+        let mut candidate_logits = Vec::new();
+        candidate_logits
+            .try_reserve_exact(action_logits.len())
+            .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
+        let mut candidate_values = Vec::new();
+        candidate_values
+            .try_reserve_exact(values.len())
+            .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
+        let mut candidate_associations = Vec::new();
+        candidate_associations
+            .try_reserve_exact(batch.decision_count())
+            .map_err(|_| NativePolicyScorerFailureV1::OutputShape)?;
+
+        self.score_decisions_scalar_v1(
+            batch,
+            action_logits.len(),
+            &mut candidate_logits,
+            &mut candidate_values,
+            &mut candidate_associations,
+        )?;
+        if candidate_logits.len() != action_logits.len() || candidate_values.len() != values.len() {
+            return Err(NativePolicyScorerFailureV1::OutputShape);
+        }
+
+        self.associations
+            .stage_chunk_v1(candidate_associations)
+            .map_err(NativePolicyScorerFailureV1::Association)?;
+        action_logits.copy_from_slice(&candidate_logits);
+        values.copy_from_slice(&candidate_values);
+        self.accepted_batch_count = next_batch_count;
+        self.accepted_decision_count = next_decision_count;
+        Ok(())
+    }
+}
+
+impl FlatBatchScorerV2 for NativePolicyBatchScorerWideV2 {
+    fn score_batch_v2(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logits: &mut [f32],
+        values: &mut [f32],
+    ) -> Result<(), FlatBatchScorerErrorV2> {
+        match self.score_chunk_v1(batch, action_logits, values) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let code = error.code_v1();
+                if self.last_failure.is_none() {
+                    self.last_failure = Some(error);
+                }
+                Err(FlatBatchScorerErrorV2::new(code))
+            }
+        }
     }
 }
 
@@ -1088,8 +1401,15 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
     }
 }
 
-fn validate_full_trajectory_receipts_v1(
-    grouped: &NativePolicyGroupedTrajectoryV1,
+// Generic over the scoring-input type: every field this function touches
+// comes from the shape-neutral `FlatGroupedTrajectoryBatchCore`/
+// `FlatGroupedEpisodeCore` core (episode/terminal bookkeeping), never from
+// the scoring-input payload itself, so this one definition serves both the
+// frozen and the capacity-experiment wide-net trajectory (task item 3's
+// wide observer, below). Monomorphizes to byte-identical code at the
+// existing frozen call site; behavior there is unchanged.
+fn validate_full_trajectory_receipts_v1<Input>(
+    grouped: &FlatGroupedTrajectoryBatchCore<FlatDecisionBindingV2, Input>,
     receipts: &[NativeFullEpisodeTrajectoryReceiptV1],
 ) -> Result<(), NativePolicyTrajectoryErrorV1> {
     if receipts.len() != grouped.episodes.len() {
@@ -1125,6 +1445,169 @@ fn validate_full_trajectory_receipts_v1(
         }
     }
     Ok(())
+}
+
+// =============================================================================
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) observer/grouping
+// sibling (task item 3). `FlatGroupedTrajectoryBatchCore`/
+// `FlatPhysicalTrajectoryObserverCore` are already generic over the scoring-input
+// type, so this mirrors `NativePolicyTrajectoryObserverV1`/
+// `NativePolicyObservedTrajectoryV1` exactly, substituting
+// `NativePolicyScoredTrainingInputWideV1` and the wide association consumer.
+// `NativePolicyTrajectoryErrorV1` is reused unchanged (already scoring-input
+// shape-agnostic). Purely additive.
+// =============================================================================
+
+type NativePolicyGroupedTrajectoryWideV1 =
+    FlatGroupedTrajectoryBatchCore<FlatDecisionBindingV2, NativePolicyScoredTrainingInputWideV1>;
+
+#[derive(Debug)]
+struct NativePolicyObservedTrajectoryWideV1 {
+    grouped: NativePolicyGroupedTrajectoryWideV1,
+    full_trajectory_receipts: Vec<NativeFullEpisodeTrajectoryReceiptV1>,
+}
+
+#[derive(Debug)]
+struct NativePolicyTrajectoryObserverWideV1 {
+    core: FlatPhysicalTrajectoryObserverCore<
+        FlatDecisionBindingV2,
+        NativePolicyScoredTrainingInputWideV1,
+    >,
+    associations: NativePolicyAssociationConsumerWideV1,
+    base_seed: u64,
+    expected_deck_hashes: SessionDeckHashesV1,
+    full_trajectory_receipts: Vec<NativeFullEpisodeTrajectoryReceiptV1>,
+}
+
+impl NativePolicyTrajectoryObserverWideV1 {
+    fn new_v1(
+        first_episode_id: u64,
+        episode_count: u64,
+        base_seed: u64,
+        expected_deck_hashes: SessionDeckHashesV1,
+        associations: NativePolicyAssociationConsumerWideV1,
+    ) -> Result<Self, NativePolicyTrajectoryErrorV1> {
+        let core =
+            FlatPhysicalTrajectoryObserverCore::new_episode_parity(first_episode_id, episode_count)
+                .map_err(|error| {
+                    NativePolicyTrajectoryErrorV1::Grouping(FlatPhysicalTrajectoryErrorV2::from(
+                        error,
+                    ))
+                })?;
+        let receipt_capacity = usize::try_from(episode_count).map_err(|_| {
+            NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                "episode count does not fit receipt storage",
+            )
+        })?;
+        Ok(Self {
+            core,
+            associations,
+            base_seed,
+            expected_deck_hashes,
+            full_trajectory_receipts: Vec::with_capacity(receipt_capacity),
+        })
+    }
+}
+
+impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverWideV1 {
+    type Error = NativePolicyTrajectoryErrorV1;
+    type Output = NativePolicyObservedTrajectoryWideV1;
+
+    fn observe_selected_v2(
+        &mut self,
+        event: FlatScoredSelectedEventV2<'_>,
+    ) -> Result<(), Self::Error> {
+        let binding_matches = selected_binding_matches(&event);
+        let training_input = self
+            .associations
+            .pop_verified_v1(&event)
+            .map_err(NativePolicyTrajectoryErrorV1::Association)?;
+        let scorer_action_count = training_input.output.logits.len();
+        self.core
+            .observe_selected(
+                FlatSelectedSampleCore {
+                    expected: event.expected,
+                    binding: event.binding,
+                    binding_matches,
+                    learner_ordinal: event.learner_ordinal,
+                    action_seed: event.action_seed,
+                    selected_index: event.selected_index,
+                    raw_action_logits: event.raw_action_logits,
+                    scorer_action_count,
+                    predicted_value_bits: event.predicted_value_bits,
+                },
+                || training_input,
+            )
+            .map_err(|error| {
+                NativePolicyTrajectoryErrorV1::Grouping(FlatPhysicalTrajectoryErrorV2::from(error))
+            })
+    }
+
+    fn observe_terminal_v2(&mut self, event: FlatScoredTerminalEventV2) -> Result<(), Self::Error> {
+        let receipt = event.native_full_trajectory_receipt.ok_or(
+            NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                "native terminal is missing its full trajectory receipt",
+            ),
+        )?;
+        let expected_schedule =
+            native_trainer_episode_schedule_v1(self.base_seed, event.terminal.episode_id).map_err(
+                |_| {
+                    NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                        "native terminal schedule provenance cannot be reconstructed",
+                    )
+                },
+            )?;
+        if receipt.episode_index != event.terminal.episode_id
+            || receipt.environment_seed != expected_schedule.environment_seed
+            || receipt.learner_seat != expected_schedule.learner_seat
+            || receipt.deck_hashes != self.expected_deck_hashes
+            || receipt.policy_step_count != event.terminal.policy_step_count
+            || receipt.physical_decision_count != event.terminal.physical_decision_count
+            || receipt.learner_policy_step_count != event.learner_action_count
+            || self
+                .full_trajectory_receipts
+                .iter()
+                .any(|prior| prior.episode_index == receipt.episode_index)
+        {
+            return Err(
+                NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                    "native terminal trajectory receipt does not match its terminal",
+                ),
+            );
+        }
+        self.core
+            .observe_terminal(FlatTerminalSampleCore {
+                terminal: event.terminal,
+                learner_action_count: event.learner_action_count,
+                learner_trace_hash: event.learner_trace_hash,
+            })
+            .map_err(|error| {
+                NativePolicyTrajectoryErrorV1::Grouping(FlatPhysicalTrajectoryErrorV2::from(error))
+            })?;
+        self.full_trajectory_receipts.push(receipt);
+        Ok(())
+    }
+
+    fn finish_v2(self) -> Result<Self::Output, Self::Error> {
+        let Self {
+            core,
+            associations,
+            base_seed: _,
+            expected_deck_hashes: _,
+            full_trajectory_receipts,
+        } = self;
+        associations
+            .finish_v1()
+            .map_err(NativePolicyTrajectoryErrorV1::Association)?;
+        let grouped = core.finish().map_err(|error| {
+            NativePolicyTrajectoryErrorV1::Grouping(FlatPhysicalTrajectoryErrorV2::from(error))
+        })?;
+        validate_full_trajectory_receipts_v1(&grouped, &full_trajectory_receipts)?;
+        Ok(NativePolicyObservedTrajectoryWideV1 {
+            grouped,
+            full_trajectory_receipts,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1272,11 +1755,24 @@ pub(crate) enum NativeTrainerBootstrapErrorV1 {
     },
 }
 
+/// Capacity-experiment wide-net (kernel-policy-value-net-8w128) sibling slot
+/// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3, task item 3):
+/// [`NativeTrainerStateV2`]'s model/train-state slot for either architecture.
+/// The frozen `NativePolicyValueTrainStateV1` field this replaces was never a
+/// public type, so every frozen call site below either already matched
+/// through the `train_state_v1`/`train_state_wide_v1` accessors (unchanged
+/// behavior for `Frozen`, added below) or is new wide-only code.
+#[derive(Clone, Debug)]
+pub(crate) enum NativeTrainerModelStateV2 {
+    Frozen(NativePolicyValueTrainStateV1),
+    Wide(NativePolicyValueTrainStateWideV1),
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct NativeTrainerStateV2 {
     base_seed: u64,
     batch_episodes: u64,
-    train_state: NativePolicyValueTrainStateV1,
+    train_state: NativeTrainerModelStateV2,
     progress: NativeTrainerProgressV2,
     /// Self-Play Ladder Design Contract S2, Section 5. `None` reproduces
     /// today's uniform-opponent native trainer behavior exactly; wired
@@ -1316,9 +1812,49 @@ impl NativeTrainerStateV2 {
             .map_err(NativeTrainerBootstrapErrorV1::OptimizerBootstrap)?;
         let mut candidate = Self::new_v2(run_base_seed, batch_episodes, placeholder_train_state)
             .map_err(NativeTrainerBootstrapErrorV1::Trainer)?;
+        let NativeTrainerModelStateV2::Frozen(ref mut placeholder_train_state) =
+            candidate.train_state
+        else {
+            unreachable!("Self::new_v2 always constructs a Frozen trainer")
+        };
         let record =
-            load_common_model_snapshot_v1(manifest_path, payload_path, &mut candidate.train_state)
+            load_common_model_snapshot_v1(manifest_path, payload_path, placeholder_train_state)
                 .map_err(NativeTrainerBootstrapErrorV1::Snapshot)?;
+        if run_base_seed == record.base_seed {
+            return Err(
+                NativeTrainerBootstrapErrorV1::RunSeedMatchesSnapshotAuthority {
+                    run_base_seed,
+                    snapshot_base_seed: record.base_seed,
+                },
+            );
+        }
+        Ok((candidate, record))
+    }
+
+    /// Capacity-experiment wide-net sibling of
+    /// [`Self::from_common_model_snapshot_v2`] (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md
+    /// Section 3, task item 3): builds the wide candidate directly from the
+    /// wide production snapshot via [`crate::common_model_snapshot_v1::build_wide_model_candidate_v1`]
+    /// (the wide sibling of `load_common_model_snapshot_v1`'s decode/construct/
+    /// re-export discipline) instead of mutating a placeholder in place, since
+    /// the wide net has no live-state mutation entry point of its own. The
+    /// frozen constructor above is untouched.
+    pub(crate) fn from_common_model_snapshot_wide_v2(
+        run_base_seed: u64,
+        batch_episodes: u64,
+        manifest_path: &Path,
+        payload_path: &Path,
+    ) -> Result<(Self, CommonModelSnapshotRecordV1), NativeTrainerBootstrapErrorV1> {
+        let (candidate_model, record) =
+            crate::common_model_snapshot_v1::build_wide_model_candidate_v1(
+                manifest_path,
+                payload_path,
+            )
+            .map_err(NativeTrainerBootstrapErrorV1::Snapshot)?;
+        let candidate_train_state = NativePolicyValueTrainStateWideV1::new_wide_v1(candidate_model)
+            .map_err(NativeTrainerBootstrapErrorV1::OptimizerBootstrap)?;
+        let candidate = Self::new_wide_v2(run_base_seed, batch_episodes, candidate_train_state)
+            .map_err(NativeTrainerBootstrapErrorV1::Trainer)?;
         if run_base_seed == record.base_seed {
             return Err(
                 NativeTrainerBootstrapErrorV1::RunSeedMatchesSnapshotAuthority {
@@ -1346,7 +1882,40 @@ impl NativeTrainerStateV2 {
         Ok(Self {
             base_seed,
             batch_episodes,
-            train_state,
+            train_state: NativeTrainerModelStateV2::Frozen(train_state),
+            progress,
+            ladder_opponent: None,
+            #[cfg(test)]
+            pending_test_association_mutation: None,
+            #[cfg(test)]
+            pending_test_train_non_selected_logit_mutation: false,
+            #[cfg(test)]
+            pending_test_train_revalidation_mutation: None,
+            #[cfg(test)]
+            pending_test_forward_worker_panic: false,
+            #[cfg(test)]
+            pending_test_physical_substep_count_mutation: false,
+        })
+    }
+
+    /// Capacity-experiment wide-net sibling of [`Self::new_v2`].
+    pub(crate) fn new_wide_v2(
+        base_seed: u64,
+        batch_episodes: u64,
+        train_state: NativePolicyValueTrainStateWideV1,
+    ) -> Result<Self, NativeTrainerErrorV1> {
+        let progress = NativeTrainerProgressV2 {
+            next_episode_index: 0,
+            successful_update_count: 0,
+            completed_episode_count: 0,
+            learner_physical_decision_count: 0,
+            learner_policy_step_count: 0,
+        };
+        validate_resumed_parts_wide_v2(base_seed, batch_episodes, &train_state, progress)?;
+        Ok(Self {
+            base_seed,
+            batch_episodes,
+            train_state: NativeTrainerModelStateV2::Wide(train_state),
             progress,
             ladder_opponent: None,
             #[cfg(test)]
@@ -1377,7 +1946,34 @@ impl NativeTrainerStateV2 {
             batch_episodes,
             // The only ownership acquisition in the resume path. Every
             // fallible validation above has already completed.
-            train_state: train_state.clone(),
+            train_state: NativeTrainerModelStateV2::Frozen(train_state.clone()),
+            progress,
+            ladder_opponent: None,
+            #[cfg(test)]
+            pending_test_association_mutation: None,
+            #[cfg(test)]
+            pending_test_train_non_selected_logit_mutation: false,
+            #[cfg(test)]
+            pending_test_train_revalidation_mutation: None,
+            #[cfg(test)]
+            pending_test_forward_worker_panic: false,
+            #[cfg(test)]
+            pending_test_physical_substep_count_mutation: false,
+        })
+    }
+
+    /// Capacity-experiment wide-net sibling of [`Self::from_resumed_parts_v2`].
+    pub(crate) fn from_resumed_parts_wide_v2(
+        base_seed: u64,
+        batch_episodes: u64,
+        train_state: &NativePolicyValueTrainStateWideV1,
+        progress: NativeTrainerProgressV2,
+    ) -> Result<Self, NativeTrainerErrorV1> {
+        validate_resumed_parts_wide_v2(base_seed, batch_episodes, train_state, progress)?;
+        Ok(Self {
+            base_seed,
+            batch_episodes,
+            train_state: NativeTrainerModelStateV2::Wide(train_state.clone()),
             progress,
             ladder_opponent: None,
             #[cfg(test)]
@@ -1401,8 +1997,27 @@ impl NativeTrainerStateV2 {
         self.progress
     }
 
+    pub(crate) fn is_wide_v1(&self) -> bool {
+        matches!(self.train_state, NativeTrainerModelStateV2::Wide(_))
+    }
+
     pub(crate) fn train_state_v1(&self) -> &NativePolicyValueTrainStateV1 {
-        &self.train_state
+        match &self.train_state {
+            NativeTrainerModelStateV2::Frozen(state) => state,
+            NativeTrainerModelStateV2::Wide(_) => {
+                panic!("train_state_v1 called on a wide-architecture trainer")
+            }
+        }
+    }
+
+    /// Capacity-experiment wide-net sibling of [`Self::train_state_v1`].
+    pub(crate) fn train_state_wide_v1(&self) -> &NativePolicyValueTrainStateWideV1 {
+        match &self.train_state {
+            NativeTrainerModelStateV2::Wide(state) => state,
+            NativeTrainerModelStateV2::Frozen(_) => {
+                panic!("train_state_wide_v1 called on a frozen-architecture trainer")
+            }
+        }
     }
 
     /// Self-Play Ladder Design Contract S2, Section 5. Sets (or clears) the
@@ -1419,14 +2034,24 @@ impl NativeTrainerStateV2 {
     }
 
     #[cfg(test)]
+    fn frozen_train_state_mut_for_test_v2(&mut self) -> &mut NativePolicyValueTrainStateV1 {
+        match &mut self.train_state {
+            NativeTrainerModelStateV2::Frozen(state) => state,
+            NativeTrainerModelStateV2::Wide(_) => {
+                panic!("frozen-only preclone test hook called on a wide-architecture trainer")
+            }
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn mutate_optimizer_moment_for_preclone_test_v2(&mut self) {
-        self.train_state
+        self.frozen_train_state_mut_for_test_v2()
             .mutate_optimizer_moment_for_preclone_test_v2();
     }
 
     #[cfg(test)]
     pub(crate) fn mutate_model_parameter_for_preclone_test_v2(&mut self) {
-        self.train_state
+        self.frozen_train_state_mut_for_test_v2()
             .mutate_model_parameter_for_preclone_test_v2();
     }
 
@@ -1440,7 +2065,7 @@ impl NativeTrainerStateV2 {
         assert!(validate_resumed_parts_v2(
             self.base_seed,
             self.batch_episodes,
-            &self.train_state,
+            self.train_state_v1(),
             self.progress,
         )
         .is_ok());
@@ -1448,7 +2073,8 @@ impl NativeTrainerStateV2 {
 
     #[cfg(test)]
     pub(crate) fn mutate_scorer_anchor_for_preclone_test_v2(&mut self) {
-        self.train_state.mutate_scorer_anchor_for_preclone_test_v2();
+        self.frozen_train_state_mut_for_test_v2()
+            .mutate_scorer_anchor_for_preclone_test_v2();
     }
 
     pub(crate) fn run_even_batch_update_v2(
@@ -1456,7 +2082,7 @@ impl NativeTrainerStateV2 {
         config: &NativeTrainerUpdateConfigV2,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
-        self.run_even_batch_update_inner_v2(config, &mut phase_recorder)
+        self.run_even_batch_update_dispatch_v2(config, &mut phase_recorder)
     }
 
     pub(crate) fn run_even_batch_update_profiled_v2(
@@ -1467,9 +2093,30 @@ impl NativeTrainerStateV2 {
         let mut profile = NativeTrainingPhaseProfileV1::default();
         let evidence = {
             let mut phase_recorder = NativeTrainingPhaseRecorderV1::enabled_v1(&mut profile);
-            self.run_even_batch_update_inner_v2(config, &mut phase_recorder)?
+            self.run_even_batch_update_dispatch_v2(config, &mut phase_recorder)?
         };
         Ok((evidence, profile))
+    }
+
+    /// Capacity-experiment wide-net dispatch chokepoint (task item 3): every
+    /// external update entry point routes through here, and the enum
+    /// discriminant (set once at construction, either genesis or resume;
+    /// see `NativeTrainerModelStateV2`) is the single dispatch signal. The
+    /// frozen inner update below is reached exactly as before when `Frozen`;
+    /// its behavior is unchanged.
+    fn run_even_batch_update_dispatch_v2(
+        &mut self,
+        config: &NativeTrainerUpdateConfigV2,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+        match &self.train_state {
+            NativeTrainerModelStateV2::Frozen(_) => {
+                self.run_even_batch_update_inner_v2(config, phase_recorder)
+            }
+            NativeTrainerModelStateV2::Wide(_) => {
+                self.run_even_batch_update_wide_inner_v2(config, phase_recorder)
+            }
+        }
     }
 
     fn run_even_batch_update_inner_v2(
@@ -1555,7 +2202,7 @@ impl NativeTrainerStateV2 {
         )
         .map_err(NativeTrainerErrorV1::ObserverConstruction)?;
         let mut scorer = NativePolicyBatchScorerV2::new_v1(
-            self.train_state.model_v1(),
+            self.train_state_v1().model_v1(),
             producer,
             config.broker_batch_target.min(logical_actor_count),
         )
@@ -1641,10 +2288,10 @@ impl NativeTrainerStateV2 {
             mutate_grouped_train_revalidation_for_test_v1(&mut grouped, mutation)?;
         }
 
-        let model_digest_before = self.train_state.model_v1().parameter_manifest_sha256_v1();
-        let parameters_before = self.train_state.model_v1().parameter_snapshot_v1();
-        let adam_step_before = self.train_state.adam_step_v1();
-        let mut candidate_train_state = self.train_state.clone();
+        let model_digest_before = self.train_state_v1().model_v1().parameter_manifest_sha256_v1();
+        let parameters_before = self.train_state_v1().model_v1().parameter_snapshot_v1();
+        let adam_step_before = self.train_state_v1().adam_step_v1();
+        let mut candidate_train_state = self.train_state_v1().clone();
         phase_recorder.finish_v1(grouping_timer);
         let (train_result, episode_evidence, learner_group_count) = train_grouped_candidate_v1(
             &mut candidate_train_state,
@@ -1770,7 +2417,278 @@ impl NativeTrainerStateV2 {
         // association, grouping, recomputation, train, parameter, optimizer,
         // evidence, and counter check above completed on owned candidates.
         let commit_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
-        self.train_state = candidate_train_state;
+        self.train_state = NativeTrainerModelStateV2::Frozen(candidate_train_state);
+        self.progress = next_progress;
+        phase_recorder.finish_v1(commit_timer);
+        evidence.update_elapsed_ns =
+            u64::try_from(update_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        phase_recorder.finish_update_v1(evidence.update_elapsed_ns);
+        Ok(evidence)
+    }
+
+    /// Capacity-experiment wide-net sibling of [`Self::run_even_batch_update_inner_v2`]
+    /// (task item 3: this is what makes `MULTIRUN_WIDE=1` actually train --
+    /// the fail-closed genesis this contract slice closes was the last thing
+    /// standing between this method existing and a real end-to-end wide
+    /// update). Identical shape to the frozen inner update; every test-only
+    /// mutation hook is dropped (the wide protocol is diagnostic/record-only
+    /// and does not need the frozen path's regression-mutation surface), and
+    /// the rollout scorer/observer/grouped-trajectory/train-candidate types
+    /// are each the wide sibling introduced above. The frozen inner update
+    /// above is untouched.
+    fn run_even_batch_update_wide_inner_v2(
+        &mut self,
+        config: &NativeTrainerUpdateConfigV2,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+        let update_started = Instant::now();
+        let setup_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::SetupValidation);
+        validate_update_config_v2(config)?;
+        if config.batch_episodes != self.batch_episodes {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig("batch_episodes"));
+        }
+        let expected_deck_hashes = [
+            runtime_deck_by_id(&config.deck_ids[0])
+                .ok_or(NativeTrainerErrorV1::InvalidUpdateConfig("deck_ids"))?
+                .runtime_deck_hash,
+            runtime_deck_by_id(&config.deck_ids[1])
+                .ok_or(NativeTrainerErrorV1::InvalidUpdateConfig("deck_ids"))?
+                .runtime_deck_hash,
+        ];
+        let logical_actor_count = config
+            .worker_count
+            .checked_mul(config.sessions_per_worker)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+        if self.progress.next_episode_index & 1 != 0 {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "next episode must begin an even/odd parity pair",
+            ));
+        }
+        let first_episode_index = self.progress.next_episode_index;
+        let end_episode_index = first_episode_index
+            .checked_add(config.batch_episodes)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+        native_trainer_episode_schedule_v1(self.base_seed, first_episode_index)
+            .map_err(NativeTrainerErrorV1::Schedule)?;
+        native_trainer_episode_schedule_v1(self.base_seed, end_episode_index - 1)
+            .map_err(NativeTrainerErrorV1::Schedule)?;
+
+        let rollout_config = AsyncRolloutConfigV2 {
+            deck_ids: config.deck_ids.clone(),
+            learner_seat: PlayerSeatV1::P0,
+            environment_seed: self.base_seed,
+            opponent_policy_seed: self.base_seed,
+            learner_policy_seed: self.base_seed,
+            max_physical_decisions: config.max_physical_decisions,
+            max_policy_steps: config.max_policy_steps,
+            worker_count: config.worker_count,
+            sessions_per_worker: config.sessions_per_worker,
+            broker_batch_target: config.broker_batch_target,
+            first_episode_id: first_episode_index,
+            episode_count: config.batch_episodes,
+            scheduler_timeout: config.scheduler_timeout,
+            measure_broker_service_time: config.measure_broker_service_time,
+        };
+        let (producer, consumer) = native_policy_association_channel_wide_v1();
+        let observer = NativePolicyTrajectoryObserverWideV1::new_v1(
+            first_episode_index,
+            config.batch_episodes,
+            self.base_seed,
+            expected_deck_hashes,
+            consumer,
+        )
+        .map_err(NativeTrainerErrorV1::ObserverConstruction)?;
+        let mut scorer =
+            NativePolicyBatchScorerWideV2::new_v1(self.train_state_wide_v1().model_v1(), producer)
+                .map_err(NativeTrainerErrorV1::Train)?;
+        phase_recorder.finish_v1(setup_timer);
+        let rollout_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::Rollout);
+        let rollout_result = run_async_flat_scored_rollout_native_observed_v2(
+            rollout_config,
+            self.base_seed,
+            self.ladder_opponent.clone(),
+            &mut scorer,
+            observer,
+        );
+        phase_recorder.finish_v1(rollout_timer);
+        let scorer_accepted_batch_count = scorer.accepted_batch_count;
+        let scorer_accepted_decision_count = scorer.accepted_decision_count;
+        let scorer_failure = scorer.last_failure.clone();
+        if phase_recorder.is_enabled_v1() {
+            let cleanup_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::CleanupDrop);
+            drop(scorer);
+            phase_recorder.finish_v1(cleanup_timer);
+        } else {
+            drop(scorer);
+        }
+        let grouping_timer =
+            phase_recorder.start_v1(NativeTrainingPhaseV1::GroupingMaterialization);
+        let (rollout, observed_trajectory) = match rollout_result {
+            Ok(output) => output,
+            Err(AsyncFlatScoredObservedRunErrorV2::Rollout(
+                error @ AsyncFlatScoredRolloutErrorV2::ScorerFailed { .. },
+            )) => {
+                return Err(match scorer_failure {
+                    Some(failure) => NativeTrainerErrorV1::Scorer(failure),
+                    None => NativeTrainerErrorV1::Rollout(error),
+                });
+            }
+            Err(AsyncFlatScoredObservedRunErrorV2::Rollout(error)) => {
+                return Err(NativeTrainerErrorV1::Rollout(error));
+            }
+            Err(AsyncFlatScoredObservedRunErrorV2::ObserverFailed { phase, error }) => {
+                return Err(NativeTrainerErrorV1::ObserverFailed { phase, error });
+            }
+            Err(AsyncFlatScoredObservedRunErrorV2::ObserverPanicked { phase }) => {
+                return Err(NativeTrainerErrorV1::ObserverPanicked { phase });
+            }
+        };
+        validate_scorer_rollout_counters_v2(
+            scorer_accepted_batch_count,
+            scorer_accepted_decision_count,
+            &rollout.metrics,
+        )?;
+        let NativePolicyObservedTrajectoryWideV1 {
+            grouped,
+            full_trajectory_receipts,
+        } = observed_trajectory;
+        validate_grouped_batch_v2(&grouped, first_episode_index, config.batch_episodes)?;
+        let expected_episode_count = usize::try_from(config.batch_episodes)
+            .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
+        if !rollout.all_natural() || rollout.episodes.len() != expected_episode_count {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "rollout must contain exactly the configured natural episodes",
+            ));
+        }
+
+        let model_digest_before = self
+            .train_state_wide_v1()
+            .model_v1()
+            .parameter_manifest_sha256_wide_v1();
+        let parameters_before = self.train_state_wide_v1().model_v1().parameter_snapshot_wide_v1();
+        let adam_step_before = self.train_state_wide_v1().adam_step_v1();
+        let mut candidate_train_state = self.train_state_wide_v1().clone();
+        phase_recorder.finish_v1(grouping_timer);
+        let (train_result, episode_evidence, learner_group_count) = train_grouped_candidate_wide_v1(
+            &mut candidate_train_state,
+            &grouped,
+            &full_trajectory_receipts,
+            NativeTrainerGroupedTrainConfigV1 {
+                value_coefficient: f32::from_bits(config.value_coefficient_bits),
+                learning_rate: f32::from_bits(config.learning_rate_bits),
+                recompute_worker_limit: config.worker_count,
+                numerical_backend: config.numerical_backend,
+                backward_worker_limit: config.backward_worker_limit,
+            },
+            phase_recorder,
+        )?;
+        let finalization_timer =
+            phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
+        let parameters_after = candidate_train_state.model_v1().parameter_snapshot_wide_v1();
+        let model_digest_after = candidate_train_state
+            .model_v1()
+            .parameter_manifest_sha256_wide_v1();
+        let changed_non_gauge_parameter_count =
+            changed_non_gauge_parameters_v1(&parameters_before, &parameters_after)?;
+
+        let next_progress = progress_after_successful_update_v2(
+            self.progress,
+            self.batch_episodes,
+            learner_group_count,
+            grouped.learner_policy_step_count,
+        )?;
+        if next_progress.next_episode_index != end_episode_index {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "progress helper must advance the configured batch exactly once",
+            ));
+        }
+        let expected_adam_step = adam_step_before
+            .checked_add(1)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+        if train_result.adam_step != expected_adam_step {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "one grouped batch must advance Adam exactly once",
+            ));
+        }
+        phase_recorder.finish_v1(finalization_timer);
+
+        let NativePolicyTrainStepResultV1 {
+            policy_sum,
+            value_sum,
+            loss,
+            adam_step,
+            selected_outputs: source_selected_outputs,
+            physical_terms: source_physical_terms,
+            gradients,
+            scorer_bias_gauge,
+        } = train_result;
+        let evidence_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::EvidenceConstruction);
+        let selected_outputs = source_selected_outputs
+            .iter()
+            .map(|output| NativeTrainerSelectedOutputEvidenceV1 {
+                group_index: output.group_index,
+                substep_index: output.substep_index,
+                selected_action_index: output.selected_action_index,
+                selected_logit_bits: output.selected_logit.to_bits(),
+                value_bits: output.value.to_bits(),
+                selected_log_probability_bits: output.selected_log_probability.to_bits(),
+            })
+            .collect();
+        let physical_terms = source_physical_terms
+            .iter()
+            .map(|term| NativeTrainerPhysicalTermEvidenceV1 {
+                joint_log_probability_bits: term.joint_log_probability.to_bits(),
+                value_bits: term.value.to_bits(),
+                terminal_return: term.terminal_return,
+                substep_count: term.substep_count,
+            })
+            .collect();
+        let mut evidence = NativeTrainerUpdateEvidenceV2 {
+            trainer_contract_identity: NATIVE_TRAINER_CONTRACT_IDENTITY_V2,
+            update_elapsed_ns: 0,
+            first_episode_index,
+            episode_count: config.batch_episodes,
+            physical_decision_count: rollout.physical_decision_count,
+            policy_step_count: rollout.policy_step_count,
+            worker_count: config.worker_count,
+            sessions_per_worker: config.sessions_per_worker,
+            logical_actor_count,
+            broker_batch_target: config.broker_batch_target,
+            episodes: episode_evidence,
+            learner_group_count,
+            learner_policy_step_count: grouped.learner_policy_step_count,
+            scorer_accepted_batch_count,
+            scorer_accepted_decision_count,
+            rollout_metrics: rollout.metrics,
+            model_digest_before,
+            model_digest_after,
+            changed_non_gauge_parameter_count,
+            policy_sum_bits: policy_sum.to_bits(),
+            value_sum_bits: value_sum.to_bits(),
+            loss_bits: loss.to_bits(),
+            adam_step_before,
+            adam_step_after: adam_step,
+            selected_outputs,
+            physical_terms,
+            scorer_bias_gauge,
+        };
+        phase_recorder.finish_v1(evidence_timer);
+
+        if phase_recorder.is_enabled_v1() {
+            let cleanup_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::CleanupDrop);
+            drop(source_selected_outputs);
+            drop(source_physical_terms);
+            drop(gradients);
+            drop(parameters_before);
+            drop(parameters_after);
+            drop(grouped);
+            drop(full_trajectory_receipts);
+            drop(rollout);
+            phase_recorder.finish_v1(cleanup_timer);
+        }
+
+        let commit_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
+        self.train_state = NativeTrainerModelStateV2::Wide(candidate_train_state);
         self.progress = next_progress;
         phase_recorder.finish_v1(commit_timer);
         evidence.update_elapsed_ns =
@@ -1889,6 +2807,55 @@ pub(crate) fn validate_resumed_parts_v2(
     base_seed: u64,
     batch_episodes: u64,
     train_state: &NativePolicyValueTrainStateV1,
+    progress: NativeTrainerProgressV2,
+) -> Result<(), NativeTrainerErrorV1> {
+    validate_batch_episodes_v2(batch_episodes)?;
+    train_state
+        .validate_state_v1()
+        .map_err(NativeTrainerErrorV1::Train)?;
+    validate_progress_u63_v2(progress)?;
+
+    if progress.next_episode_index & 1 != 0 {
+        return Err(NativeTrainerErrorV1::ResumeInvariant(
+            "next episode must begin an even/odd parity pair",
+        ));
+    }
+    if progress.next_episode_index != progress.completed_episode_count {
+        return Err(NativeTrainerErrorV1::ResumeInvariant(
+            "next episode must equal completed episode count",
+        ));
+    }
+    let expected_completed_episode_count = progress
+        .successful_update_count
+        .checked_mul(batch_episodes)
+        .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+    if progress.completed_episode_count != expected_completed_episode_count {
+        return Err(NativeTrainerErrorV1::ResumeInvariant(
+            "completed episode count must equal successful updates times persisted batch episodes",
+        ));
+    }
+    if train_state.adam_step_v1() != progress.successful_update_count {
+        return Err(NativeTrainerErrorV1::ResumeInvariant(
+            "Adam step must equal successful update count",
+        ));
+    }
+
+    let final_episode_index = progress
+        .next_episode_index
+        .checked_add(batch_episodes - 1)
+        .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+    native_trainer_episode_schedule_v1(base_seed, progress.next_episode_index)
+        .map_err(NativeTrainerErrorV1::Schedule)?;
+    native_trainer_episode_schedule_v1(base_seed, final_episode_index)
+        .map_err(NativeTrainerErrorV1::Schedule)?;
+    Ok(())
+}
+
+/// Capacity-experiment wide-net sibling of [`validate_resumed_parts_v2`].
+pub(crate) fn validate_resumed_parts_wide_v2(
+    base_seed: u64,
+    batch_episodes: u64,
+    train_state: &NativePolicyValueTrainStateWideV1,
     progress: NativeTrainerProgressV2,
 ) -> Result<(), NativeTrainerErrorV1> {
     validate_batch_episodes_v2(batch_episodes)?;
@@ -2116,8 +3083,13 @@ fn validate_scorer_rollout_counters_v2(
     Ok(())
 }
 
-fn validate_grouped_batch_v2(
-    grouped: &NativePolicyGroupedTrajectoryV1,
+// Generic over the scoring-input type for the same reason
+// `validate_full_trajectory_receipts_v1` is: every field touched here comes
+// from the shape-neutral grouping core. Serves both the frozen and the
+// capacity-experiment wide-net path (task item 3); monomorphizes to
+// byte-identical code at the existing frozen call site.
+fn validate_grouped_batch_v2<Input>(
+    grouped: &FlatGroupedTrajectoryBatchCore<FlatDecisionBindingV2, Input>,
     first_episode_index: u64,
     batch_episodes: u64,
 ) -> Result<(), NativeTrainerErrorV1> {
@@ -2350,10 +3322,187 @@ fn train_grouped_candidate_v1(
     Ok((result, episode_evidence, learner_group_count))
 }
 
-fn verify_recomputed_outputs_v1(
+/// Capacity-experiment wide-net sibling of [`train_grouped_candidate_v1`]
+/// (task item 3). Identical grouping/evidence shape; two differences:
+/// (1) each substep's forward input is the `Encoded` variant (no packed
+/// backward tape -- the wide rollout scorer retains none, and the only
+/// backend below reads solely the encoded tensor, discarding any tape); (2)
+/// the only admitted numerical backend is `CudaBurnDense`
+/// (`train_step_cuda_burn_dense_wide_v1`), matching the capacity contract's
+/// CUDA-only, record-only wide protocol -- every other backend fails closed
+/// rather than silently picking a CPU backward path that has no wide
+/// implementation. The frozen function above is untouched.
+#[cfg_attr(
+    not(feature = "experimental-burn-net8-packed-cuda-v1"),
+    allow(unused_variables)
+)]
+fn train_grouped_candidate_wide_v1(
+    candidate: &mut NativePolicyValueTrainStateWideV1,
+    grouped: &NativePolicyGroupedTrajectoryWideV1,
+    full_trajectory_receipts: &[NativeFullEpisodeTrajectoryReceiptV1],
+    execution: NativeTrainerGroupedTrainConfigV1,
+    phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+) -> Result<
+    (
+        NativePolicyTrainStepResultV1,
+        Vec<NativeTrainerEpisodeEvidenceV1>,
+        u64,
+    ),
+    NativeTrainerErrorV1,
+> {
+    let grouping_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::GroupingMaterialization);
+    let mut source_groups = Vec::new();
+    let mut terminal_returns = Vec::new();
+    let episode_capacity = usize::try_from(grouped.episode_count)
+        .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
+    if full_trajectory_receipts.len() != episode_capacity {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "full trajectory receipt count",
+        ));
+    }
+    let mut episode_evidence = Vec::with_capacity(episode_capacity);
+    for episode in &grouped.episodes {
+        let mut matching_receipts = full_trajectory_receipts
+            .iter()
+            .filter(|receipt| receipt.episode_index == episode.episode_id);
+        let full_trajectory_receipt =
+            matching_receipts
+                .next()
+                .copied()
+                .ok_or(NativeTrainerErrorV1::GroupingInvariant(
+                    "episode evidence is missing its full trajectory receipt",
+                ))?;
+        if matching_receipts.next().is_some() {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "episode evidence has duplicate full trajectory receipts",
+            ));
+        }
+        let terminal_return = i8::try_from(episode.learner_return).map_err(|_| {
+            NativeTrainerErrorV1::TerminalReturnRange {
+                episode_index: episode.episode_id,
+                value: episode.learner_return,
+            }
+        })?;
+        if !matches!(terminal_return, -1..=1) {
+            return Err(NativeTrainerErrorV1::TerminalReturnRange {
+                episode_index: episode.episode_id,
+                value: episode.learner_return,
+            });
+        }
+        episode_evidence.push(NativeTrainerEpisodeEvidenceV1 {
+            episode_index: episode.episode_id,
+            learner_seat: episode.learner_seat,
+            learner_return: terminal_return,
+            learner_group_count: u64::try_from(episode.groups.len())
+                .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?,
+            learner_policy_step_count: episode.learner_policy_step_count,
+            learner_trace_hash: episode.learner_trace_hash,
+            terminal_outcome: episode.terminal.terminal_outcome,
+            full_trajectory_receipt,
+        });
+        for group in &episode.groups {
+            source_groups.push(group);
+            terminal_returns.push(terminal_return);
+        }
+    }
+    let learner_group_count =
+        u64::try_from(source_groups.len()).map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
+    if learner_group_count == 0 || learner_group_count != grouped.learner_physical_decision_count {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "group count does not match grouped staging",
+        ));
+    }
+
+    let borrowed_substeps = source_groups
+        .iter()
+        .enumerate()
+        .map(|(group_index, group)| {
+            group
+                .substeps
+                .iter()
+                .enumerate()
+                .map(|(substep_index, substep)| {
+                    Ok(NativePolicySubstepV1 {
+                        forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                            native_encoded_decision_view_v1(&substep.scoring_inputs.tensor),
+                        )),
+                        selected_action_index: usize::try_from(substep.selected_index).map_err(
+                            |_| NativeTrainerErrorV1::RecomputedOutputMismatch {
+                                field: "selected_action_index",
+                                group_index,
+                                substep_index,
+                            },
+                        )?,
+                        expected_raw_action_logit_bits: &substep.raw_action_logit_bits,
+                        expected_value_bits: substep.predicted_value_bits,
+                    })
+                })
+                .collect::<Result<Vec<_>, NativeTrainerErrorV1>>()
+        })
+        .collect::<Result<Vec<_>, NativeTrainerErrorV1>>()?;
+    let borrowed_groups = borrowed_substeps
+        .iter()
+        .zip(&terminal_returns)
+        .map(
+            |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
+                substeps,
+                terminal_return: *terminal_return,
+            },
+        )
+        .collect::<Vec<_>>();
+    phase_recorder.finish_v1(grouping_timer);
+    let result = match execution.numerical_backend {
+        #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+        NativeTrainingNumericalBackendV1::CudaBurnDense => {
+            crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_wide_v1(
+                candidate,
+                &borrowed_groups,
+                execution.value_coefficient,
+                execution.learning_rate,
+            )
+            .map_err(NativeTrainerErrorV1::Train)
+        }
+        #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+        NativeTrainingNumericalBackendV1::CudaBurnDense => Err(
+            NativeTrainerErrorV1::InvalidUpdateConfig("cuda-burn-dense-backend-not-compiled"),
+        ),
+        NativeTrainingNumericalBackendV1::Sequential
+        | NativeTrainingNumericalBackendV1::FixedFourPartitions => {
+            Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "wide-architecture protocol requires the CudaBurnDense numerical backend",
+            ))
+        }
+    }?;
+    let finalization_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
+    verify_recomputed_outputs_v1(&source_groups, &terminal_returns, &result)?;
+    if episode_evidence.len() != episode_capacity {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "episode evidence count",
+        ));
+    }
+    phase_recorder.finish_v1(finalization_timer);
+    if phase_recorder.is_enabled_v1() {
+        let cleanup_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::CleanupDrop);
+        drop(borrowed_groups);
+        drop(borrowed_substeps);
+        drop(source_groups);
+        drop(terminal_returns);
+        phase_recorder.finish_v1(cleanup_timer);
+    }
+    Ok((result, episode_evidence, learner_group_count))
+}
+
+// Generic over the scoring-input type for the same reason
+// `validate_full_trajectory_receipts_v1` is: every field touched here is
+// either a plain group/substep-level scalar (`raw_action_logit_bits`,
+// `selected_index`, `predicted_value_bits`, ...) or an already-recomputed
+// `result` field, never `scoring_inputs` itself. Serves both the frozen and
+// the capacity-experiment wide-net path (task item 3); monomorphizes to
+// byte-identical code at the existing frozen call site.
+fn verify_recomputed_outputs_v1<Input>(
     source_groups: &[&crate::private_physical_trajectory_core::FlatPhysicalDecisionSampleCore<
         FlatDecisionBindingV2,
-        NativePolicyScoredTrainingInputV1,
+        Input,
     >],
     terminal_returns: &[i8],
     result: &crate::native_policy_train_step_v1::NativePolicyTrainStepResultV1,

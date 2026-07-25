@@ -14,7 +14,9 @@
 //! product CLI remain separate layers.
 
 use crate::durable_publication_v1::DurableFileExpectationV1;
-use crate::native_train_state_payload_v1::NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1;
+use crate::native_train_state_payload_v1::{
+    NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1, W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1,
+};
 use crate::native_training_executor_v1::{
     NativeTrainingCheckpointCandidateV1, NativeTrainingCheckpointDigestsV1,
     NativeTrainingCheckpointMetadataV1, NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1,
@@ -445,10 +447,18 @@ fn load_generation_v2(
 ) -> Result<WalkedGenerationV2> {
     let kind = NativeTrainingStoreResumeV2ErrorKind::GenerationInvalid;
     let error = resume_error_v2(kind);
+    // Capacity-experiment wide records carry a larger train-state payload;
+    // the read bound dispatches on contracts.wide_model_experiment_v1 exactly
+    // like the codec and wire validations (frozen path byte-for-byte).
+    let payload_bound = if run.record().contracts.wide_model_experiment_v1.is_some() {
+        W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+    } else {
+        NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+    } as u64;
     let payload = read_bounded_final_v2(
         root,
         NativeTrainingStoreFinalNameV2::StatePayload { generation_index },
-        NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 as u64,
+        payload_bound,
         kind,
     )?;
     let manifest = read_bounded_final_v2(
@@ -860,13 +870,37 @@ fn reconstruct_executor_v2(
         native_state_sha256: parse_lower_hex_raw32_v1(train_state.state_sha256())
             .map_err(|_| failed)?,
     };
-    let candidate = NativeTrainingCheckpointCandidateV1::import_verified_v1(
-        metadata,
-        &state.latest_payload,
-        digests,
-    )
-    .map_err(|_| failed)?;
-    NativeTrainingExecutorV1::from_checkpoint_candidate_v1(config, &candidate).map_err(|_| failed)
+    // Capacity Experiment Contract (Stage 3), Section 3: every resumed
+    // training window reconstructs its executor here, so this record-driven
+    // dispatch on `contracts.wide_model_experiment_v1` (the same signal
+    // genesis authoring and the inference-authority chokepoint already
+    // dispatch on) is what makes `MULTIRUN_WIDE=1` actually train past
+    // generation zero. Absent, this reproduces the frozen resume path
+    // byte-for-byte.
+    if run.record().contracts.wide_model_experiment_v1.is_some() {
+        let candidate = NativeTrainingCheckpointCandidateV1::import_verified_wide_v1(
+            metadata,
+            &state.latest_payload,
+            digests,
+        )
+        .map_err(|error| {
+            failed
+        })?;
+        NativeTrainingExecutorV1::from_checkpoint_candidate_wide_v1(config, &candidate).map_err(
+            |error| {
+                failed
+            },
+        )
+    } else {
+        let candidate = NativeTrainingCheckpointCandidateV1::import_verified_v1(
+            metadata,
+            &state.latest_payload,
+            digests,
+        )
+        .map_err(|_| failed)?;
+        NativeTrainingExecutorV1::from_checkpoint_candidate_v1(config, &candidate)
+            .map_err(|_| failed)
+    }
 }
 
 /// Frozen production execution configuration for tests: every value is
