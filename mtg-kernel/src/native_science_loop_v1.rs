@@ -1024,20 +1024,28 @@ mod windows_science_loop_tests {
     /// validated checkpoint (the type is deliberately not `Clone`) for the
     /// engine's three policy-driven slots.
     ///
-    /// `H2H_PAIRS` (default 1_024) is the CRN PAIR count, matching the
-    /// promotion gate's own literal (`PROMOTION_GATE_PAIR_COUNT_V1 = 1_024`,
-    /// "1,024 seat-swapped CRN pairs" in contract Section 4): unlike
-    /// `S1_EVAL_PAIRS`/`LADDER_EVAL_PAIRS` (which pass their value straight
-    /// through as `episode_count`, an established but confusingly-named
-    /// convention in this file's existing probes), this probe doubles
-    /// `H2H_PAIRS` into `episode_count` so the printed win count is really
-    /// out of `H2H_PAIRS` pairs, feeding `native_ladder_promotion_v1`'s gate
-    /// function the literal denominator its own doc/tests expect. This
-    /// doubling also reproduces the contract's own predeclared "~8 minutes"
-    /// head-to-head economics estimate (Section 4) far more closely than a
-    /// non-doubled 1,024-game run would, which independently corroborates
-    /// the doubling as the correct reading; the discrepancy with the
-    /// panel-probe convention is disclosed rather than silently resolved.
+    /// `H2H_PAIRS` (default 1_024) is the CRN PAIR count. This probe doubles
+    /// `H2H_PAIRS` into `episode_count` so the run plays `2 * H2H_PAIRS`
+    /// GAMES, matching the promotion gate's own literal (Amendment 1 /
+    /// Section 8A point 1: `PROMOTION_GATE_GAME_COUNT_V1 = 2_048`, "the
+    /// candidate plays 1,024 seat-swapped CRN pairs = 2,048 games... gate
+    /// quantity = wins / 2,048"). This doubling also reproduces the
+    /// contract's own predeclared "~8 minutes" head-to-head economics
+    /// estimate (Section 4) far more closely than a non-doubled 1,024-game
+    /// run would, which independently corroborates the doubling as the
+    /// correct reading; the discrepancy with the panel-probe convention is
+    /// disclosed rather than silently resolved.
+    ///
+    /// GATE FEED (Amendment 1 / Section 8A point 1): the gate's win-rate
+    /// sub-check is fed the RAW GAME win count (`wins`, tabulated at leg
+    /// granularity) over the raw game total, never the pair-level
+    /// `pair_wins` this probe also tabulates below -- feeding pair wins into
+    /// a game-denominated gate (or vice versa) silently misstates the win
+    /// rate. `pair_wins` is retained ONLY as a labeled diagnostic (the
+    /// contract's own "net-positive-per-pair" reading, REJECTED as the gate
+    /// quantity: "at true parity under CRN seat symmetry, winning both legs
+    /// of a pair is structurally rare, and that metric misrepresents parity
+    /// as collapse").
     ///
     /// Env: H2H_CANDIDATE_STORE_ROOT, H2H_CANDIDATE_GEN,
     /// H2H_CANDIDATE_BASE_SEED, H2H_CANDIDATE_POOL_JSON,
@@ -1045,8 +1053,8 @@ mod windows_science_loop_tests {
     /// (default 7_777). Prints `H2H candidate_gen=<g> W/L/D x/y/z of N` plus
     /// the promotion gate's win-rate sub-check verdict computed by actually
     /// calling `native_ladder_promotion_v1::promotion_gate_win_rate_passes_v1`
-    /// on the tabulated wins/pairs (Deliverable 4's "feed the results
-    /// through the gate function").
+    /// on the tabulated raw game wins/games (Deliverable 4's "feed the
+    /// results through the gate function").
     #[test]
     #[ignore = "measurement probe, run explicitly"]
     fn ladder_head_to_head_eval_v1() {
@@ -1170,15 +1178,18 @@ mod windows_science_loop_tests {
         let mut wins = 0_u64;
         let mut losses = 0_u64;
         let mut draws = 0_u64;
-        // PAIR-level win count (Deliverable 4): the promotion gate's own
-        // "wins/1024" denominator is the CRN PAIR count, not the leg count
-        // (`native_ladder_promotion_v1`'s boundary fixtures assume
-        // `wins <= pairs`). A pair is a strict win iff the learner's summed
-        // reward across its two seat-swapped legs (sharing one environment
-        // seed) is net positive; net-zero (a true draw on both legs, or a
-        // win cancelled by a loss across the seat swap) and net-negative
-        // pairs both fall into "not a win", matching the contract's
-        // "draws as losses" convention at pair granularity.
+        // PAIR-level win count: Amendment 1 / Section 8A point 1 REJECTS
+        // this net-positive-per-pair metric as the gate quantity ("at true
+        // parity under CRN seat symmetry, winning both legs of a pair is
+        // structurally rare, and that metric misrepresents parity as
+        // collapse"); the gate's real denominator is the raw GAME count
+        // (`wins` above, tabulated at leg granularity), fed to the gate
+        // function below. `pair_wins` is kept ONLY as a labeled diagnostic.
+        // A pair is a "diagnostic win" iff the learner's summed reward
+        // across its two seat-swapped legs (sharing one environment seed)
+        // is net positive; net-zero (a true draw on both legs, or a win
+        // cancelled by a loss across the seat swap) and net-negative pairs
+        // both fall into "not a diagnostic win".
         let mut pair_wins = 0_u64;
         for pair_offset in 0..pairs {
             let mut pair_reward = 0_i32;
@@ -1206,16 +1217,22 @@ mod windows_science_loop_tests {
         let total = wins + losses + draws;
         assert_eq!(total, episode_count);
         println!("H2H candidate_gen={candidate_gen} W/L/D {wins}/{losses}/{draws} of {total}");
-
-        // Deliverable 4: feed the tabulated PAIR-level result through the
-        // actual gate function (win-rate sub-check only; the regression
-        // sub-check needs the previous rung's panel mean, computed by the
-        // caller from multiple invocations of the panel probe, not from one
-        // head-to-head run alone).
-        let win_rate_passes = promotion_gate_win_rate_passes_v1(pair_wins, pairs);
+        // Labeled diagnostic only (Amendment 1 / Section 8A point 1 rejects
+        // this as the gate quantity); NOT fed to the gate function below.
         println!(
-            "H2H candidate_gen={candidate_gen} win_rate_sub_check pair_wins={pair_wins}/{pairs}={:.4} passes={win_rate_passes}",
+            "H2H candidate_gen={candidate_gen} pair_diagnostic_net_positive pair_wins={pair_wins}/{pairs}={:.4}",
             pair_wins as f64 / pairs as f64
+        );
+
+        // Amendment 1 / Section 8A point 1: feed the tabulated RAW GAME
+        // win count through the actual gate function (win-rate sub-check
+        // only; the regression sub-check needs the previous rung's panel
+        // mean, computed by the caller from multiple invocations of the
+        // panel probe, not from one head-to-head run alone).
+        let win_rate_passes = promotion_gate_win_rate_passes_v1(wins, total);
+        println!(
+            "H2H candidate_gen={candidate_gen} win_rate_sub_check game_wins={wins}/{total}={:.4} passes={win_rate_passes}",
+            wins as f64 / total as f64
         );
     }
 
