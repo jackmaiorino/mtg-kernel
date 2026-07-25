@@ -8,10 +8,25 @@ use crate::native_policy_train_step_v1::{
     NativePolicyValueTrainStateV1, CANONICAL_GAUGE_PARAMETERS_V1, NATIVE_OPTIMIZER_IDENTITY_V1,
 };
 use crate::native_policy_value_net_v1::{
-    NativeNamedParameterV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
-    CARD_EMBEDDING_DIM_V1, FEATURE_CONTRACT_DIGEST_V1, FEATURE_ENCODING_DIGEST_V1,
-    FEATURE_REGISTRY_VERSION_V1, FEATURE_SCHEMA_VERSION_V1, MODEL_ARCHITECTURE_VERSION_V1,
-    MODEL_CONFIG_FINGERPRINT_V1, MODEL_CONFIG_SCHEMA_VERSION_V1, PARAMETER_COUNT_V1,
+    NativeNamedParameterV1,
+    NativePolicyValueModelConfigV1,
+    NativePolicyValueNetV1,
+    // Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings.
+    NativePolicyValueNetWideV1,
+    CARD_EMBEDDING_DIM_V1,
+    FEATURE_CONTRACT_DIGEST_V1,
+    FEATURE_ENCODING_DIGEST_V1,
+    FEATURE_REGISTRY_VERSION_V1,
+    FEATURE_SCHEMA_VERSION_V1,
+    MODEL_ARCHITECTURE_VERSION_V1,
+    MODEL_CONFIG_FINGERPRINT_V1,
+    MODEL_CONFIG_SCHEMA_VERSION_V1,
+    PARAMETER_COUNT_V1,
+    W_ARCHITECTURE_LABEL_V1,
+    W_CARD_EMBEDDING_DIM_V1,
+    W_MODEL_ARCHITECTURE_VERSION_V1,
+    W_MODEL_CONFIG_FINGERPRINT_V1,
+    W_PARAMETER_COUNT_V1,
 };
 use crate::native_trainer_schedule_v1::{
     derive_native_trainer_model_init_seed_v1, NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1,
@@ -1481,6 +1496,910 @@ pub(crate) fn common_model_snapshot_paths_v1() -> (PathBuf, PathBuf) {
         directory.join("manifest.json"),
         directory.join("parameters.f32le"),
     )
+}
+
+// =============================================================================
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) snapshot loader.
+//
+// Purely additive mirror of the frozen loader above: a second, independent
+// manifest/payload contract for the wide architecture. Does not edit a single
+// byte of the frozen constants, structs, or functions above this marker.
+// Diagnostic, non-evidence (see CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md).
+// =============================================================================
+
+pub(crate) const WIDE_SNAPSHOT_IDENTITY_V1: &str =
+    "mtg-kernel-python-authoritative-wide-model-experiment-snapshot-v1";
+pub(crate) const WIDE_SNAPSHOT_PURPOSE_V1: &str =
+    "capacity-experiment-wide-net-w128-diagnostic-non-evidence";
+pub(crate) const WIDE_RUST_LOADER_IDENTITY_V1: &str =
+    "mtg-kernel-rust-wide-model-snapshot-loader-v1";
+pub(crate) const WIDE_PARAMETER_TENSOR_COUNT_V1: usize = 33;
+pub(crate) const WIDE_PARAMETER_ELEMENT_COUNT_V1: usize = 2_750_754;
+pub(crate) const WIDE_PAYLOAD_BYTE_COUNT_V1: usize = 11_003_016;
+pub(crate) const WIDE_PAYLOAD_MAX_BYTES_V1: usize = 16 * 1024 * 1024;
+const WIDE_NONCLAIM_V1: &str = "Rust does not reproduce the Python trainer-seeded-v1 initializer in this snapshot configuration; the snapshot proves bit-exact initial parameters only and does not establish seeded-initializer parity, cross-runtime numerical bit parity, learning parity, or speedup. This is the Stage-3 capacity experiment's wide-net (kernel-policy-value-net-8w128) fork: diagnostic and non-evidence, not a qualified numerical identity or a production model. Label: WIDE-DIAGNOSTIC-NON-EVIDENCE";
+
+const WIDE_AUTHORITY_SOURCE_PATHS_V1: [&str; 4] = [
+    "python/mtg_kernel_rl/model.py",
+    "python/mtg_kernel_rl/features.py",
+    "python/mtg_kernel_rl/determinism.py",
+    "python/mtg_kernel_rl/wide_model_snapshot_v1.py",
+];
+
+const WIDE_AUTHORITY_SOURCE_BYTES_V1: [&[u8]; 4] = [
+    include_bytes!("../../python/mtg_kernel_rl/model.py"),
+    include_bytes!("../../python/mtg_kernel_rl/features.py"),
+    include_bytes!("../../python/mtg_kernel_rl/determinism.py"),
+    include_bytes!("../../python/mtg_kernel_rl/wide_model_snapshot_v1.py"),
+];
+
+const WIDE_EXPECTED_PARAMETER_LAYOUT_V1: [ExpectedParameterV1; WIDE_PARAMETER_TENSOR_COUNT_V1] = [
+    ExpectedParameterV1 {
+        name: "card_embedding.weight",
+        shape: &[65537, 32],
+        element_offset: 0,
+        element_count: 2097184,
+    },
+    ExpectedParameterV1 {
+        name: "object_encoder.0.weight",
+        shape: &[128, 130],
+        element_offset: 2097184,
+        element_count: 16640,
+    },
+    ExpectedParameterV1 {
+        name: "object_encoder.0.bias",
+        shape: &[128],
+        element_offset: 2113824,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "object_encoder.2.weight",
+        shape: &[128, 128],
+        element_offset: 2113952,
+        element_count: 16384,
+    },
+    ExpectedParameterV1 {
+        name: "object_encoder.2.bias",
+        shape: &[128],
+        element_offset: 2130336,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "edge_encoder.0.weight",
+        shape: &[128, 297],
+        element_offset: 2130464,
+        element_count: 38016,
+    },
+    ExpectedParameterV1 {
+        name: "edge_encoder.0.bias",
+        shape: &[128],
+        element_offset: 2168480,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "edge_encoder.2.weight",
+        shape: &[128, 128],
+        element_offset: 2168608,
+        element_count: 16384,
+    },
+    ExpectedParameterV1 {
+        name: "edge_encoder.2.bias",
+        shape: &[128],
+        element_offset: 2184992,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "node_update.0.weight",
+        shape: &[128, 256],
+        element_offset: 2185120,
+        element_count: 32768,
+    },
+    ExpectedParameterV1 {
+        name: "node_update.0.bias",
+        shape: &[128],
+        element_offset: 2217888,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "node_update.2.weight",
+        shape: &[128, 128],
+        element_offset: 2218016,
+        element_count: 16384,
+    },
+    ExpectedParameterV1 {
+        name: "node_update.2.bias",
+        shape: &[128],
+        element_offset: 2234400,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "state_encoder.0.weight",
+        shape: &[128, 2779],
+        element_offset: 2234528,
+        element_count: 355712,
+    },
+    ExpectedParameterV1 {
+        name: "state_encoder.0.bias",
+        shape: &[128],
+        element_offset: 2590240,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "state_encoder.2.weight",
+        shape: &[128, 128],
+        element_offset: 2590368,
+        element_count: 16384,
+    },
+    ExpectedParameterV1 {
+        name: "state_encoder.2.bias",
+        shape: &[128],
+        element_offset: 2606752,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "action_ref_encoder.0.weight",
+        shape: &[128, 153],
+        element_offset: 2606880,
+        element_count: 19584,
+    },
+    ExpectedParameterV1 {
+        name: "action_ref_encoder.0.bias",
+        shape: &[128],
+        element_offset: 2626464,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "action_ref_encoder.2.weight",
+        shape: &[128, 128],
+        element_offset: 2626592,
+        element_count: 16384,
+    },
+    ExpectedParameterV1 {
+        name: "action_ref_encoder.2.bias",
+        shape: &[128],
+        element_offset: 2642976,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "action_encoder.0.weight",
+        shape: &[128, 323],
+        element_offset: 2643104,
+        element_count: 41344,
+    },
+    ExpectedParameterV1 {
+        name: "action_encoder.0.bias",
+        shape: &[128],
+        element_offset: 2684448,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "action_encoder.2.weight",
+        shape: &[128, 128],
+        element_offset: 2684576,
+        element_count: 16384,
+    },
+    ExpectedParameterV1 {
+        name: "action_encoder.2.bias",
+        shape: &[128],
+        element_offset: 2700960,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "scorer.0.weight",
+        shape: &[128, 256],
+        element_offset: 2701088,
+        element_count: 32768,
+    },
+    ExpectedParameterV1 {
+        name: "scorer.0.bias",
+        shape: &[128],
+        element_offset: 2733856,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "scorer.2.weight",
+        shape: &[1, 128],
+        element_offset: 2733984,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "scorer.2.bias",
+        shape: &[1],
+        element_offset: 2734112,
+        element_count: 1,
+    },
+    ExpectedParameterV1 {
+        name: "value_head.0.weight",
+        shape: &[128, 128],
+        element_offset: 2734113,
+        element_count: 16384,
+    },
+    ExpectedParameterV1 {
+        name: "value_head.0.bias",
+        shape: &[128],
+        element_offset: 2750497,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "value_head.2.weight",
+        shape: &[1, 128],
+        element_offset: 2750625,
+        element_count: 128,
+    },
+    ExpectedParameterV1 {
+        name: "value_head.2.bias",
+        shape: &[1],
+        element_offset: 2750753,
+        element_count: 1,
+    },
+];
+
+#[derive(Clone, Debug)]
+struct ValidatedWideSnapshotV1 {
+    manifest: ManifestV1,
+    manifest_file_sha256: String,
+    named_parameters: Vec<NativeNamedParameterV1>,
+}
+
+fn expected_wide_authority_sources() -> (Vec<AuthoritySourceV1>, String) {
+    let mut framed = Vec::new();
+    let mut sources = Vec::new();
+    for (path, bytes) in WIDE_AUTHORITY_SOURCE_PATHS_V1
+        .iter()
+        .zip(WIDE_AUTHORITY_SOURCE_BYTES_V1)
+    {
+        let digest = Sha256::digest(bytes);
+        sources.push(AuthoritySourceV1 {
+            path: (*path).to_owned(),
+            sha256: format!("{digest:x}"),
+        });
+        framed.extend_from_slice(&frame(path, &digest).expect("wide source path is valid"));
+    }
+    (sources, sha256_hex(&framed))
+}
+
+fn require_exact_wide_model_config(
+    config: &ModelConfigBindingV1,
+) -> Result<(), CommonModelSnapshotErrorV1> {
+    let expected = NativePolicyValueModelConfigV1::contract_wide_v1();
+    macro_rules! require {
+        ($actual:expr, $expected:expr, $name:literal) => {
+            if $actual != $expected {
+                return Err(CommonModelSnapshotErrorV1::contract(concat!(
+                    "wide model config mismatch: ",
+                    $name
+                )));
+            }
+        };
+    }
+    require!(
+        config.schema_version,
+        MODEL_CONFIG_SCHEMA_VERSION_V1 as u64,
+        "schema_version"
+    );
+    require!(
+        config.model_architecture_version,
+        W_MODEL_ARCHITECTURE_VERSION_V1,
+        "model_architecture_version"
+    );
+    require!(
+        config.feature_schema_version,
+        FEATURE_SCHEMA_VERSION_V1,
+        "feature_schema_version"
+    );
+    require!(
+        config.feature_registry_version,
+        FEATURE_REGISTRY_VERSION_V1,
+        "feature_registry_version"
+    );
+    require!(
+        config.feature_contract_digest,
+        FEATURE_CONTRACT_DIGEST_V1,
+        "feature_contract_digest"
+    );
+    require!(
+        config.feature_encoding_digest,
+        FEATURE_ENCODING_DIGEST_V1,
+        "feature_encoding_digest"
+    );
+    require!(
+        config.card_vocab_size,
+        expected.card_vocab_size as u64,
+        "card_vocab_size"
+    );
+    require!(
+        config.card_embedding_dim,
+        expected.card_embedding_dim as u64,
+        "card_embedding_dim"
+    );
+    require!(config.hidden_dim, expected.hidden_dim as u64, "hidden_dim");
+    require!(config.state_dim, expected.state_dim as u64, "state_dim");
+    require!(
+        config.object_feature_dim,
+        expected.object_feature_dim as u64,
+        "object_feature_dim"
+    );
+    require!(
+        config.edge_feature_dim,
+        expected.edge_feature_dim as u64,
+        "edge_feature_dim"
+    );
+    require!(
+        config.action_feature_dim,
+        expected.action_feature_dim as u64,
+        "action_feature_dim"
+    );
+    require!(
+        config.object_group_count,
+        expected.object_group_count as u64,
+        "object_group_count"
+    );
+    require!(
+        config.action_ref_feature_dim,
+        expected.action_ref_feature_dim as u64,
+        "action_ref_feature_dim"
+    );
+    let value = serde_json::to_value(config).map_err(|error| {
+        CommonModelSnapshotErrorV1::contract(format!("wide model config serialization: {error}"))
+    })?;
+    if sha256_hex(&canonical_json_bytes(&value)?) != W_MODEL_CONFIG_FINGERPRINT_V1 {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide model config fingerprint is internally inconsistent",
+        ));
+    }
+    Ok(())
+}
+
+fn wide_layout_projection(manifest: &ManifestV1) -> Value {
+    let parameters = manifest
+        .parameters
+        .iter()
+        .map(|entry| {
+            json!({
+                "byte_count": entry.byte_count,
+                "byte_offset": entry.byte_offset,
+                "element_count": entry.element_count,
+                "element_offset": entry.element_offset,
+                "name": entry.name,
+                "ordinal": entry.ordinal,
+                "shape": entry.shape,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "buffers": [],
+        "encoding": PAYLOAD_ENCODING_V1,
+        "layout": PAYLOAD_LAYOUT_V1,
+        "parameter_element_count": WIDE_PARAMETER_ELEMENT_COUNT_V1,
+        "parameter_tensor_count": WIDE_PARAMETER_TENSOR_COUNT_V1,
+        "parameters": parameters,
+        "payload_byte_count": WIDE_PAYLOAD_BYTE_COUNT_V1,
+    })
+}
+
+fn wide_manifest_core_sha256(manifest: &ManifestV1) -> Result<String, CommonModelSnapshotErrorV1> {
+    let mut core = serde_json::to_value(manifest).map_err(|error| {
+        CommonModelSnapshotErrorV1::contract(format!("wide manifest core serialization: {error}"))
+    })?;
+    let integrity = core
+        .get_mut("integrity")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| CommonModelSnapshotErrorV1::contract("integrity object missing"))?;
+    integrity.remove("manifest_core_sha256");
+    integrity.remove("snapshot_sha256");
+    let canonical = canonical_json_bytes(&core)?;
+    Ok(sha256_hex(&frame(
+        "mtg-kernel-wide-model-experiment-v1/manifest-core",
+        &canonical,
+    )?))
+}
+
+fn wide_snapshot_sha256(core: &str, payload: &str) -> Result<String, CommonModelSnapshotErrorV1> {
+    let mut framed = frame(
+        "mtg-kernel-wide-model-experiment-v1/manifest-core-sha256",
+        &decode_lower_hex_32(core)?,
+    )?;
+    framed.extend_from_slice(&frame(
+        "mtg-kernel-wide-model-experiment-v1/payload-sha256",
+        &decode_lower_hex_32(payload)?,
+    )?);
+    Ok(sha256_hex(&framed))
+}
+
+fn validate_wide_snapshot_bytes(
+    manifest_file: &[u8],
+    payload: &[u8],
+) -> Result<ValidatedWideSnapshotV1, CommonModelSnapshotErrorV1> {
+    if manifest_file.is_empty() || manifest_file.len() > MANIFEST_MAX_BYTES_V1 {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "manifest size is outside the bounded contract",
+        ));
+    }
+    if payload.len() != WIDE_PAYLOAD_BYTE_COUNT_V1 || payload.len() > WIDE_PAYLOAD_MAX_BYTES_V1 {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "payload has the wrong exact size",
+        ));
+    }
+    let manifest: ManifestV1 = serde_json::from_slice(manifest_file).map_err(|error| {
+        CommonModelSnapshotErrorV1::contract(format!("strict manifest JSON: {error}"))
+    })?;
+    let value = serde_json::to_value(&manifest).map_err(|error| {
+        CommonModelSnapshotErrorV1::contract(format!("manifest serialization: {error}"))
+    })?;
+    require_ascii_strings(&value)?;
+    let mut expected_file = canonical_json_bytes(&value)?;
+    expected_file.push(b'\n');
+    if expected_file != manifest_file {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "manifest is not canonical JSON followed by one LF",
+        ));
+    }
+    // Same SNAPSHOT_SCHEMA_V1 (structural schema, reused); a distinct
+    // identity/purpose so a frozen manifest fails here at the first gate.
+    if manifest.schema != SNAPSHOT_SCHEMA_V1
+        || manifest.identity != WIDE_SNAPSHOT_IDENTITY_V1
+        || manifest.purpose != WIDE_SNAPSHOT_PURPOSE_V1
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide snapshot identity or purpose mismatch",
+        ));
+    }
+    if manifest.model.model_architecture_version != W_MODEL_ARCHITECTURE_VERSION_V1
+        || manifest.model.model_config_fingerprint != W_MODEL_CONFIG_FINGERPRINT_V1
+        || manifest.model.feature_contract_digest != FEATURE_CONTRACT_DIGEST_V1
+        || manifest.model.feature_encoding_digest != FEATURE_ENCODING_DIGEST_V1
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide model binding mismatch",
+        ));
+    }
+    require_exact_wide_model_config(&manifest.model.model_config)?;
+    if manifest.initializer.authority != INITIALIZER_AUTHORITY_V1
+        || manifest.initializer.identity != INITIALIZER_IDENTITY_V1
+        || manifest.initializer.base_seed != BASE_SEED_V1
+        || manifest.initializer.model_init_seed != MODEL_INIT_SEED_V1
+        || manifest.initializer.trainer_schedule_version != NATIVE_TRAINER_SCHEDULE_VERSION_V1
+        || manifest.initializer.python_reference_seed_version != PYTHON_REFERENCE_SEED_VERSION_V1
+        || manifest.initializer.schedule_goldens_sha256 != NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide initializer or schedule binding mismatch",
+        ));
+    }
+    if derive_native_trainer_model_init_seed_v1(BASE_SEED_V1).map_err(|error| {
+        CommonModelSnapshotErrorV1::contract(format!("seed derivation: {error:?}"))
+    })? != MODEL_INIT_SEED_V1
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "native schedule no longer derives the frozen model seed",
+        ));
+    }
+    let expected_runtime = expected_runtime_configuration();
+    let expected_runtime_value = serde_json::to_value(&expected_runtime).map_err(|error| {
+        CommonModelSnapshotErrorV1::contract(format!("runtime serialization: {error}"))
+    })?;
+    if manifest.authority.runtime_identity != AUTHORITY_RUNTIME_IDENTITY_V1
+        || manifest.authority.runtime_configuration.byte_order != expected_runtime.byte_order
+        || manifest.authority.runtime_configuration.device != expected_runtime.device
+        || manifest.authority.runtime_configuration.platform_machine
+            != expected_runtime.platform_machine
+        || manifest.authority.runtime_configuration.platform_system
+            != expected_runtime.platform_system
+        || manifest.authority.runtime_configuration.python_version
+            != expected_runtime.python_version
+        || manifest.authority.runtime_configuration.torch_default_dtype
+            != expected_runtime.torch_default_dtype
+        || manifest
+            .authority
+            .runtime_configuration
+            .torch_deterministic_algorithms
+            != expected_runtime.torch_deterministic_algorithms
+        || manifest
+            .authority
+            .runtime_configuration
+            .torch_num_interop_threads
+            != expected_runtime.torch_num_interop_threads
+        || manifest.authority.runtime_configuration.torch_num_threads
+            != expected_runtime.torch_num_threads
+        || manifest.authority.runtime_configuration.torch_version != expected_runtime.torch_version
+        || manifest.authority.runtime_configuration_sha256
+            != sha256_hex(&canonical_json_bytes(&expected_runtime_value)?)
+        || manifest.authority.source_bundle_contract != SOURCE_BUNDLE_CONTRACT_V1
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide authority runtime binding mismatch",
+        ));
+    }
+    let (expected_sources, expected_bundle) = expected_wide_authority_sources();
+    if manifest.authority.sources != expected_sources
+        || manifest.authority.source_bundle_sha256 != expected_bundle
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide authority source binding mismatch",
+        ));
+    }
+    if !manifest.payload.buffers.is_empty()
+        || manifest.payload.encoding != PAYLOAD_ENCODING_V1
+        || manifest.payload.layout != PAYLOAD_LAYOUT_V1
+        || manifest.payload.parameter_tensor_count != WIDE_PARAMETER_TENSOR_COUNT_V1 as u64
+        || manifest.payload.parameter_element_count != WIDE_PARAMETER_ELEMENT_COUNT_V1 as u64
+        || manifest.payload.payload_byte_count != WIDE_PAYLOAD_BYTE_COUNT_V1 as u64
+        || manifest.payload.sha256 != sha256_hex(payload)
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide payload declaration or digest mismatch",
+        ));
+    }
+    if manifest.parameters.len() != WIDE_PARAMETER_TENSOR_COUNT_V1 {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide parameter tensor count mismatch",
+        ));
+    }
+    let mut expected_element_offset = 0u64;
+    let mut expected_byte_offset = 0u64;
+    let mut named_parameters = Vec::with_capacity(WIDE_PARAMETER_TENSOR_COUNT_V1);
+    for (ordinal, (entry, expected)) in manifest
+        .parameters
+        .iter()
+        .zip(WIDE_EXPECTED_PARAMETER_LAYOUT_V1)
+        .enumerate()
+    {
+        let shape_product = entry.shape.iter().try_fold(1u64, |product, dimension| {
+            if *dimension == 0 {
+                None
+            } else {
+                product.checked_mul(*dimension)
+            }
+        });
+        let expected_byte_count = expected
+            .element_count
+            .checked_mul(4)
+            .ok_or_else(|| CommonModelSnapshotErrorV1::contract("parameter byte count overflow"))?;
+        let frozen_byte_offset = expected.element_offset.checked_mul(4).ok_or_else(|| {
+            CommonModelSnapshotErrorV1::contract("parameter byte offset overflow")
+        })?;
+        if entry.ordinal != ordinal as u64
+            || entry.name != expected.name
+            || entry.shape != expected.shape
+            || entry.element_offset != expected.element_offset
+            || entry.element_offset != expected_element_offset
+            || entry.element_count != expected.element_count
+            || shape_product != Some(expected.element_count)
+            || entry.byte_offset != frozen_byte_offset
+            || entry.byte_offset != expected_byte_offset
+            || entry.byte_count != expected_byte_count
+        {
+            return Err(CommonModelSnapshotErrorV1::contract(format!(
+                "wide parameter layout mismatch at ordinal {ordinal}"
+            )));
+        }
+        let begin = usize::try_from(entry.byte_offset)
+            .map_err(|_| CommonModelSnapshotErrorV1::contract("parameter offset overflow"))?;
+        let count = usize::try_from(entry.byte_count)
+            .map_err(|_| CommonModelSnapshotErrorV1::contract("parameter count overflow"))?;
+        let end = begin
+            .checked_add(count)
+            .ok_or_else(|| CommonModelSnapshotErrorV1::contract("parameter end overflow"))?;
+        let bytes = payload
+            .get(begin..end)
+            .ok_or_else(|| CommonModelSnapshotErrorV1::contract("parameter exceeds payload"))?;
+        if entry.tensor_sha256 != sha256_hex(bytes) {
+            return Err(CommonModelSnapshotErrorV1::contract(format!(
+                "wide parameter digest mismatch at ordinal {ordinal}"
+            )));
+        }
+        let mut values = Vec::with_capacity(expected.element_count as usize);
+        for (position, bytes) in bytes.chunks_exact(4).enumerate() {
+            let bits = u32::from_le_bytes(bytes.try_into().expect("exact chunk"));
+            let value = f32::from_bits(bits);
+            if !value.is_finite() {
+                return Err(CommonModelSnapshotErrorV1::contract(format!(
+                    "non-finite parameter at ordinal {ordinal} position {position}"
+                )));
+            }
+            values.push(value);
+        }
+        named_parameters.push(NativeNamedParameterV1 {
+            name: expected.name,
+            shape: expected
+                .shape
+                .iter()
+                .map(|dimension| usize::try_from(*dimension))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| {
+                    CommonModelSnapshotErrorV1::contract("parameter dimension overflow")
+                })?,
+            values,
+        });
+        expected_element_offset = expected_element_offset
+            .checked_add(entry.element_count)
+            .ok_or_else(|| CommonModelSnapshotErrorV1::contract("element end overflow"))?;
+        expected_byte_offset = expected_byte_offset
+            .checked_add(entry.byte_count)
+            .ok_or_else(|| CommonModelSnapshotErrorV1::contract("byte end overflow"))?;
+    }
+    if expected_element_offset != WIDE_PARAMETER_ELEMENT_COUNT_V1 as u64
+        || expected_byte_offset != WIDE_PAYLOAD_BYTE_COUNT_V1 as u64
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide parameter final offset mismatch",
+        ));
+    }
+    if named_parameters[0].values[..W_CARD_EMBEDDING_DIM_V1]
+        .iter()
+        .any(|value| value.to_bits() != 0)
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide padding embedding row is not exact positive zero",
+        ));
+    }
+    let layout_digest = sha256_hex(&canonical_json_bytes(&wide_layout_projection(&manifest))?);
+    if manifest.integrity.parameter_layout_sha256 != layout_digest {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide parameter layout digest mismatch",
+        ));
+    }
+    let named_digest = named_parameter_stream_sha256(&manifest.parameters, payload)?;
+    if manifest.integrity.named_parameter_stream_sha256 != named_digest {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide named parameter stream digest mismatch",
+        ));
+    }
+    if manifest.optimizer_bootstrap.optimizer_identity != NATIVE_OPTIMIZER_IDENTITY_V1
+        || manifest.optimizer_bootstrap.adam_step != 0
+        || manifest.optimizer_bootstrap.moment_initialization != MOMENT_INITIALIZATION_V1
+        || manifest.optimizer_bootstrap.canonical_gauge_parameters != CANONICAL_GAUGE_PARAMETERS_V1
+        || manifest.optimizer_bootstrap.value_head_gauge != VALUE_HEAD_GAUGE_V1
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide optimizer bootstrap mismatch",
+        ));
+    }
+    let scorer_bits = u64::from(named_parameters[28].values[0].to_bits());
+    if manifest.optimizer_bootstrap.scorer_bias_anchor_f32_bits != scorer_bits {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide scorer-bias anchor differs from decoded ordinal 28",
+        ));
+    }
+    if manifest.nonclaims.scope != WIDE_NONCLAIM_V1
+        || manifest.nonclaims.legacy_optimizer != LEGACY_OPTIMIZER_NONCLAIM_V1
+        || manifest.nonclaims.independent_gates
+            != [
+                "exact Torch initializer reproduction",
+                "native checkpoint/resume",
+                "learning noninferiority",
+                "speed ratio",
+            ]
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide snapshot nonclaims mismatch",
+        ));
+    }
+    let core_digest = wide_manifest_core_sha256(&manifest)?;
+    if manifest.integrity.manifest_core_sha256 != core_digest
+        || manifest.integrity.snapshot_sha256
+            != wide_snapshot_sha256(&core_digest, &manifest.payload.sha256)?
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide manifest core or snapshot digest mismatch",
+        ));
+    }
+    if named_parameters
+        .iter()
+        .map(|parameter| parameter.values.len())
+        .sum::<usize>()
+        != W_PARAMETER_COUNT_V1
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide decoded parameter count mismatch",
+        ));
+    }
+    Ok(ValidatedWideSnapshotV1 {
+        manifest,
+        manifest_file_sha256: sha256_hex(manifest_file),
+        named_parameters,
+    })
+}
+
+fn reexport_wide_named_parameters(
+    parameters: &[NativeNamedParameterV1],
+) -> Result<(Vec<u8>, String), CommonModelSnapshotErrorV1> {
+    if parameters.len() != WIDE_PARAMETER_TENSOR_COUNT_V1 {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide candidate parameter tensor count mismatch",
+        ));
+    }
+    let mut payload = Vec::with_capacity(WIDE_PAYLOAD_BYTE_COUNT_V1);
+    let mut digest = Sha256::new();
+    for (parameter, expected) in parameters.iter().zip(WIDE_EXPECTED_PARAMETER_LAYOUT_V1) {
+        if parameter.name != expected.name
+            || parameter
+                .shape
+                .iter()
+                .map(|value| *value as u64)
+                .collect::<Vec<_>>()
+                != expected.shape
+            || parameter.values.len() != expected.element_count as usize
+        {
+            return Err(CommonModelSnapshotErrorV1::contract(
+                "wide candidate parameter layout mismatch",
+            ));
+        }
+        let name_length = u32::try_from(parameter.name.len())
+            .map_err(|_| CommonModelSnapshotErrorV1::contract("candidate name overflow"))?;
+        let rank = u32::try_from(parameter.shape.len())
+            .map_err(|_| CommonModelSnapshotErrorV1::contract("candidate rank overflow"))?;
+        digest.update(name_length.to_be_bytes());
+        digest.update(parameter.name.as_bytes());
+        digest.update(rank.to_be_bytes());
+        for dimension in &parameter.shape {
+            digest.update((*dimension as u64).to_be_bytes());
+        }
+        digest.update((parameter.values.len() as u64).to_be_bytes());
+        for value in &parameter.values {
+            if !value.is_finite() {
+                return Err(CommonModelSnapshotErrorV1::contract(
+                    "wide candidate parameter is non-finite",
+                ));
+            }
+            let bytes = value.to_le_bytes();
+            payload.extend_from_slice(&bytes);
+            digest.update(bytes);
+        }
+    }
+    Ok((payload, format!("{:x}", digest.finalize())))
+}
+
+/// Decodes, validates fail-closed, and constructs a private wide-net
+/// candidate model from a wide snapshot's manifest/payload files. Mirrors the
+/// frozen [`load_common_model_snapshot_v1`]'s decode/construct/re-export
+/// discipline, but returns the built candidate instead of mutating a live
+/// [`NativePolicyValueTrainStateV1`] (the wide net has no live train-state
+/// wiring yet; see the Capacity Experiment Contract implementation report).
+pub(crate) fn build_wide_model_candidate_v1(
+    manifest_path: &Path,
+    payload_path: &Path,
+) -> Result<(NativePolicyValueNetWideV1, CommonModelSnapshotRecordV1), CommonModelSnapshotErrorV1> {
+    let manifest_file = capture_regular_file(manifest_path, MANIFEST_MAX_BYTES_V1)?;
+    let payload = capture_regular_file(payload_path, WIDE_PAYLOAD_MAX_BYTES_V1)?;
+    let validated = validate_wide_snapshot_bytes(&manifest_file, &payload)?;
+
+    let mut candidate_model = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+        NativePolicyValueModelConfigV1::contract_wide_v1(),
+    )
+    .map_err(|error| {
+        CommonModelSnapshotErrorV1::contract(format!("wide candidate model construction: {error}"))
+    })?;
+    candidate_model
+        .replace_parameter_snapshot_wide_v1(&validated.named_parameters)
+        .map_err(|error| {
+            CommonModelSnapshotErrorV1::contract(format!(
+                "wide candidate parameter install: {error}"
+            ))
+        })?;
+    let candidate_parameters = candidate_model.parameter_snapshot_wide_v1();
+    let (loaded_payload, loaded_named_digest) =
+        reexport_wide_named_parameters(&candidate_parameters)?;
+    if loaded_payload != payload
+        || loaded_named_digest != validated.manifest.integrity.named_parameter_stream_sha256
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide private candidate re-export or named-stream digest mismatch",
+        ));
+    }
+    let record = wide_record_from_validated(&validated, loaded_named_digest);
+    if record.rust_seeded_initializer_reproduced
+        || record.scorer_bias_anchor_f32_bits
+            != u64::from(candidate_parameters[28].values[0].to_bits())
+    {
+        return Err(CommonModelSnapshotErrorV1::contract(
+            "wide candidate record invariant mismatch",
+        ));
+    }
+    Ok((candidate_model, record))
+}
+
+fn wide_record_from_validated(
+    validated: &ValidatedWideSnapshotV1,
+    loaded_named_parameter_stream_sha256: String,
+) -> CommonModelSnapshotRecordV1 {
+    let manifest = &validated.manifest;
+    CommonModelSnapshotRecordV1 {
+        schema: manifest.schema.clone(),
+        identity: manifest.identity.clone(),
+        snapshot_sha256: manifest.integrity.snapshot_sha256.clone(),
+        manifest_file_sha256: validated.manifest_file_sha256.clone(),
+        manifest_core_sha256: manifest.integrity.manifest_core_sha256.clone(),
+        payload_sha256: manifest.payload.sha256.clone(),
+        payload_byte_count: manifest.payload.payload_byte_count,
+        parameter_layout_sha256: manifest.integrity.parameter_layout_sha256.clone(),
+        named_parameter_stream_sha256: manifest.integrity.named_parameter_stream_sha256.clone(),
+        loaded_named_parameter_stream_sha256,
+        parameter_tensor_count: manifest.payload.parameter_tensor_count,
+        parameter_element_count: manifest.payload.parameter_element_count,
+        model_config_fingerprint: manifest.model.model_config_fingerprint.clone(),
+        model_architecture_version: manifest.model.model_architecture_version.clone(),
+        feature_contract_digest: manifest.model.feature_contract_digest.clone(),
+        feature_encoding_digest: manifest.model.feature_encoding_digest.clone(),
+        initializer_identity: manifest.initializer.identity.clone(),
+        base_seed: manifest.initializer.base_seed,
+        model_init_seed: manifest.initializer.model_init_seed,
+        trainer_schedule_version: manifest.initializer.trainer_schedule_version.clone(),
+        python_reference_seed_version: manifest.initializer.python_reference_seed_version.clone(),
+        schedule_goldens_sha256: manifest.initializer.schedule_goldens_sha256.clone(),
+        authority_source_bundle_sha256: manifest.authority.source_bundle_sha256.clone(),
+        authority_runtime_identity: manifest.authority.runtime_identity.clone(),
+        loader_identity: WIDE_RUST_LOADER_IDENTITY_V1.to_owned(),
+        optimizer_identity: manifest.optimizer_bootstrap.optimizer_identity.clone(),
+        adam_step_initial: manifest.optimizer_bootstrap.adam_step,
+        moment_initialization: manifest.optimizer_bootstrap.moment_initialization.clone(),
+        canonical_gauge_parameters: manifest
+            .optimizer_bootstrap
+            .canonical_gauge_parameters
+            .clone(),
+        scorer_bias_anchor_f32_bits: manifest.optimizer_bootstrap.scorer_bias_anchor_f32_bits,
+        snapshot_load_completed_before_trial_start: true,
+        snapshot_load_timed: false,
+        rust_seeded_initializer_reproduced: false,
+        nonclaim: format!("{} Label: {}", NONCLAIM_V1, W_ARCHITECTURE_LABEL_V1),
+    }
+}
+
+pub(crate) fn wide_model_snapshot_paths_v1() -> (PathBuf, PathBuf) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crate has repository parent");
+    let directory = root.join("data").join("wide_model_snapshot_w128");
+    (
+        directory.join("manifest.json"),
+        directory.join("parameters.f32le"),
+    )
+}
+
+#[cfg(test)]
+mod wide_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn wide_snapshot_loads_fail_closed_and_builds_candidate() {
+        let (manifest_path, payload_path) = wide_model_snapshot_paths_v1();
+        let (model, record) =
+            build_wide_model_candidate_v1(&manifest_path, &payload_path).expect("wide loads");
+        assert_eq!(
+            record.model_architecture_version,
+            W_MODEL_ARCHITECTURE_VERSION_V1
+        );
+        assert_eq!(
+            record.model_config_fingerprint,
+            W_MODEL_CONFIG_FINGERPRINT_V1
+        );
+        assert_eq!(model.parameter_count_wide_v1(), W_PARAMETER_COUNT_V1);
+        assert_eq!(model.parameter_count_wide_v1(), 2_750_754);
+        assert!(record.nonclaim.contains(W_ARCHITECTURE_LABEL_V1));
+    }
+
+    #[test]
+    fn frozen_snapshot_is_rejected_by_the_wide_loader() {
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        let error = build_wide_model_candidate_v1(&manifest_path, &payload_path).unwrap_err();
+        // The frozen manifest's identity/purpose differ from the wide ones,
+        // so this must fail at (or before) the identity gate -- never build
+        // a candidate from cross-loaded bytes.
+        let _ = error;
+    }
+
+    #[test]
+    fn wide_snapshot_is_rejected_by_the_frozen_loader() {
+        let (manifest_path, payload_path) = wide_model_snapshot_paths_v1();
+        let manifest_file = fs::read(&manifest_path).expect("read wide manifest");
+        let payload = fs::read(&payload_path).expect("read wide payload");
+        // The frozen validator's payload-length gate alone rejects the wide
+        // (11,003,016-byte) payload before any content is inspected.
+        assert_ne!(payload.len(), PAYLOAD_BYTE_COUNT_V1);
+        let error = validate_snapshot_bytes(&manifest_file, &payload).unwrap_err();
+        let _ = error;
+    }
 }
 
 #[cfg(test)]

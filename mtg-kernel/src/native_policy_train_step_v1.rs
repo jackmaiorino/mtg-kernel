@@ -30,6 +30,8 @@
 //! `gamma(m-1)*2*sum_j(|c_j|)`. Their sum is recorded beside the raw residual;
 //! exceeding it aborts before model or optimizer mutation.
 
+#[cfg(test)]
+use crate::native_policy_value_net_v1::W_PARAMETER_COUNT_V1;
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionViewV1,
     NativeNamedParameterV1,
@@ -51,7 +53,6 @@ use crate::native_policy_value_net_v1::{
     // see the W_EXPECTED_PARAMETER_SHAPES table below.
     W_CARD_EMBEDDING_DIM_V1,
     W_HIDDEN_DIM_V1,
-    W_PARAMETER_COUNT_V1,
 };
 use crate::native_training_phase_diagnostic_v1::{
     NativeTrainingPhaseRecorderV1, NativeTrainingPhaseV1,
