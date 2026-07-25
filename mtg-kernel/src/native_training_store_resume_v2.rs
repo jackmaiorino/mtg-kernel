@@ -230,6 +230,15 @@ impl LoadedNativeTrainingBoundaryV2 {
     pub fn payload(&self) -> &[u8] {
         &self.payload
     }
+
+    /// Consumes the boundary, returning its owned checkpoint manifest and
+    /// raw payload bytes. For callers (Self-Play Ladder Design Contract S2,
+    /// Amendment 1 / Section 8A point 2's continual-initialization genesis
+    /// authoring) that need to hold the resolved reference beyond this
+    /// value's own lifetime, rather than only borrowing from it.
+    pub fn into_checkpoint_and_payload(self) -> (CheckpointManifestV3, Vec<u8>) {
+        (self.checkpoint, self.payload)
+    }
 }
 
 /// Load one named boundary generation under the shared reader lock.
