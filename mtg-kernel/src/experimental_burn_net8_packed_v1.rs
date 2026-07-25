@@ -85,6 +85,25 @@ impl<B: Backend> ScalarHead<B> {
     }
 }
 
+/// Dims a `ProductionNet8` forward needs to thread through its scatter/reshape
+/// index arithmetic (see `ProductionNet8::forward_core`). A zero-sized marker
+/// type per width so `forward_core::<D>` monomorphizes each width's literal
+/// dim at compile time, exactly like the pre-split frozen-only `forward` did.
+trait ProductionNet8DimsV1 {
+    const HIDDEN_DIM: usize;
+}
+
+struct FrozenNet8DimsV1;
+impl ProductionNet8DimsV1 for FrozenNet8DimsV1 {
+    const HIDDEN_DIM: usize = HIDDEN_DIM_V1;
+}
+
+/// Capacity-experiment wide-net (kernel-policy-value-net-8w128) dims.
+struct WideNet8DimsV1;
+impl ProductionNet8DimsV1 for WideNet8DimsV1 {
+    const HIDDEN_DIM: usize = W_HIDDEN_DIM_V1;
+}
+
 #[derive(Module, Debug)]
 struct ProductionNet8<B: Backend> {
     card_embedding: Embedding<B>,
@@ -180,7 +199,20 @@ impl<B: Backend> ProductionNet8<B> {
         })
     }
 
-    fn forward(&self, batch: &DevicePackedBatch<B>) -> (Tensor<B, 1>, Tensor<B, 1>) {
+    /// Dims-generic core: every Burn op above is shape-generic (shapes live in
+    /// the runtime tensors), so the only dimension-sensitive code is the
+    /// scatter/reshape INDEX arithmetic below, threaded through `D::HIDDEN_DIM`.
+    /// `D` is a zero-sized marker type with a `const HIDDEN_DIM`, so
+    /// `forward::<FrozenNet8DimsV1>` monomorphizes with the exact same literal
+    /// `HIDDEN_DIM_V1` this function used before the split: byte-for-byte
+    /// identical generated code and numerics. `OBJECT_GROUP_COUNT_V1` is not
+    /// threaded: per the capacity contract it is one of the dims this
+    /// experiment deliberately does not touch, shared unchanged between the
+    /// frozen and wide nets.
+    fn forward_core<D: ProductionNet8DimsV1>(
+        &self,
+        batch: &DevicePackedBatch<B>,
+    ) -> (Tensor<B, 1>, Tensor<B, 1>) {
         let object_card = self
             .card_embedding
             .forward(batch.object_card_ids.clone().unsqueeze_dim::<2>(1))
@@ -206,15 +238,15 @@ impl<B: Backend> ProductionNet8<B> {
             .edge_source_indices
             .clone()
             .unsqueeze_dim::<2>(1)
-            .expand([batch.edge_count, HIDDEN_DIM_V1]);
+            .expand([batch.edge_count, D::HIDDEN_DIM]);
         let target_scatter = batch
             .edge_target_indices
             .clone()
             .unsqueeze_dim::<2>(1)
-            .expand([batch.edge_count, HIDDEN_DIM_V1]);
+            .expand([batch.edge_count, D::HIDDEN_DIM]);
         // Preserve the native/Python ordering: all source contributions in
         // edge order, then all target contributions in edge order.
-        let edge_pooled = Tensor::zeros([batch.object_count, HIDDEN_DIM_V1], &batch.device)
+        let edge_pooled = Tensor::zeros([batch.object_count, D::HIDDEN_DIM], &batch.device)
             .scatter(
                 0,
                 source_scatter,
@@ -230,9 +262,9 @@ impl<B: Backend> ProductionNet8<B> {
             .object_group_indices
             .clone()
             .unsqueeze_dim::<2>(1)
-            .expand([batch.object_count, HIDDEN_DIM_V1]);
+            .expand([batch.object_count, D::HIDDEN_DIM]);
         let pooled_objects = Tensor::zeros(
-            [batch.decision_count * OBJECT_GROUP_COUNT_V1, HIDDEN_DIM_V1],
+            [batch.decision_count * OBJECT_GROUP_COUNT_V1, D::HIDDEN_DIM],
             &batch.device,
         )
         .scatter(
@@ -241,7 +273,7 @@ impl<B: Backend> ProductionNet8<B> {
             object_hidden.clone(),
             IndexingUpdateOp::Add,
         )
-        .reshape([batch.decision_count, OBJECT_GROUP_COUNT_V1 * HIDDEN_DIM_V1]);
+        .reshape([batch.decision_count, OBJECT_GROUP_COUNT_V1 * D::HIDDEN_DIM]);
         let state_hidden = self
             .state_encoder
             .forward(Tensor::cat(vec![batch.state.clone(), pooled_objects], 1));
@@ -257,8 +289,8 @@ impl<B: Backend> ProductionNet8<B> {
             .action_ref_action_indices
             .clone()
             .unsqueeze_dim::<2>(1)
-            .expand([batch.action_ref_count, HIDDEN_DIM_V1]);
-        let action_ref_pooled = Tensor::zeros([batch.action_count, HIDDEN_DIM_V1], &batch.device)
+            .expand([batch.action_ref_count, D::HIDDEN_DIM]);
+        let action_ref_pooled = Tensor::zeros([batch.action_count, D::HIDDEN_DIM], &batch.device)
             .scatter(
                 0,
                 action_ref_scatter,
@@ -278,6 +310,19 @@ impl<B: Backend> ProductionNet8<B> {
             .squeeze_dim::<1>(1);
         let values = self.value_head.forward(state_hidden).squeeze_dim::<1>(1);
         (logits, values)
+    }
+
+    fn forward(&self, batch: &DevicePackedBatch<B>) -> (Tensor<B, 1>, Tensor<B, 1>) {
+        self.forward_core::<FrozenNet8DimsV1>(batch)
+    }
+
+    /// Capacity-experiment wide-net (kernel-policy-value-net-8w128) forward.
+    /// Same graph, `W_HIDDEN_DIM_V1` in place of `HIDDEN_DIM_V1` in the index
+    /// arithmetic; the underlying `self` must have been built via
+    /// `import_native_wide_v1` (wide-shaped `Linear`/`Embedding` weights) or
+    /// this will panic on a Burn shape mismatch inside the ops above.
+    fn forward_wide_v1(&self, batch: &DevicePackedBatch<B>) -> (Tensor<B, 1>, Tensor<B, 1>) {
+        self.forward_core::<WideNet8DimsV1>(batch)
     }
 
     fn export_native_v1(
@@ -395,7 +440,6 @@ impl<B: Backend> ProductionNet8<B> {
 // =============================================================================
 
 impl<B: Backend> ProductionNet8<B> {
-    #[allow(dead_code)]
     fn import_native_wide_v1(
         parameters: &[NativeNamedParameterV1],
         device: &B::Device,
@@ -494,7 +538,6 @@ impl<B: Backend> ProductionNet8<B> {
         })
     }
 
-    #[allow(dead_code)]
     fn export_native_wide_v1(
         &self,
         device: &B::Device,
@@ -1793,5 +1836,74 @@ mod tests {
             workspace.pack(&cases, 512, rotation).unwrap();
             assert_eq!(workspace.capacities(), capacities);
         }
+    }
+
+    /// Capacity-experiment live GPU verification (contract Section 5, gate 2's
+    /// forward-goldens requirement extended to the CUDA numerics; task item
+    /// 5a): one real decision batch (the committed real replay fixture) scored
+    /// by the wide CPU forward (`NativePolicyValueNetWideV1::forward_wide_v1`,
+    /// the goldens-pinned reference) against the wide CUDA forward
+    /// (`ProductionNet8::forward_wide_v1` on real CUDA ordinal 0), reusing the
+    /// exact same `compare_to_native` tolerance envelope the frozen Net8
+    /// diagnostic uses. DIAGNOSTIC-ONLY: no qualification claim, per
+    /// CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3 ("wide runs are
+    /// record-only ... WIDE-DIAGNOSTIC-NON-EVIDENCE").
+    #[test]
+    #[ignore = "live CUDA verification, run explicitly"]
+    fn wide_forward_cross_check_cpu_vs_cuda_v1() {
+        use crate::common_model_snapshot_v1::{build_wide_model_candidate_v1, wide_model_snapshot_paths_v1};
+
+        let (manifest_path, payload_path) = wide_model_snapshot_paths_v1();
+        let (wide_model, _record) =
+            build_wide_model_candidate_v1(&manifest_path, &payload_path).unwrap();
+        let wide_parameters = wide_model.parameter_snapshot_wide_v1();
+        assert_eq!(wide_parameters.len(), PARAMETER_TENSOR_COUNT_V1);
+        assert_eq!(
+            wide_parameters
+                .iter()
+                .map(|parameter| parameter.values.len())
+                .sum::<usize>(),
+            crate::native_policy_value_net_v1::W_PARAMETER_COUNT_V1
+        );
+
+        let cases = load_real_fixture_cases().unwrap();
+        let expected = cases
+            .iter()
+            .map(|case| wide_model.forward_wide_v1(case.view()).unwrap())
+            .collect::<Vec<_>>();
+
+        let device = burn_cuda::CudaDevice::new(0);
+        let burn_model =
+            ProductionNet8::<CudaBackendV1>::import_native_wide_v1(&wide_parameters, &device)
+                .unwrap();
+        let exported = burn_model.export_native_wide_v1(&device).unwrap();
+        assert!(
+            parameter_snapshots_are_bit_exact(&exported, &wide_parameters),
+            "wide Burn parameter import/export round trip is not bit exact"
+        );
+
+        let mut workspace = HostPackingWorkspace::default();
+        workspace.reserve_for(&cases, cases.len());
+        workspace.pack(&cases, cases.len(), 0).unwrap();
+        let batch = DevicePackedBatch::<CudaBackendV1>::upload(&device, &workspace);
+        let output = burn_model.forward_wide_v1(&batch);
+        CudaBackendV1::sync(&device).unwrap();
+        let output = read_output(output).unwrap();
+        let parity = compare_to_native(&workspace, &output, &expected).unwrap();
+
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "mtg-kernel-experimental-burn-net8w128-wide-forward-cross-check/v1",
+                "not_a_claim_about": ["qualification", "numerical_identity"],
+                "label": "WIDE-DIAGNOSTIC-NON-EVIDENCE",
+                "cases": cases.len(),
+                "maximum_absolute_error": parity.maximum_absolute_error,
+                "maximum_relative_error": parity.maximum_relative_error,
+                "maximum_tolerance_ratio": parity.maximum_tolerance_ratio,
+                "bit_equal_outputs": parity.bit_equal_outputs,
+                "output_count": parity.output_count,
+            })
+        );
     }
 }
