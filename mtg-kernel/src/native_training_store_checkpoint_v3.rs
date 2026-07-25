@@ -585,6 +585,114 @@ pub fn build_genesis_checkpoint_manifest_v3(
     decode_checkpoint_manifest_v3(&canonical_bytes, payload, run)
 }
 
+/// GenesisInitializationV2: an already-resolved, chain-proven
+/// continual-initialization reference checkpoint, ready for
+/// `run_native_science_loop_v1`'s genesis branch to build generation 0 from.
+/// Resolve through
+/// `native_ladder_pool_resolution_v1::resolve_ladder_checkpoint_authority_v1`
+/// (against `run.record().contracts.opponent_ladder_initialization`,
+/// converted with `native_ladder_pool_resolution_v1::ladder_init_as_checkpoint_ref_v1`)
+/// before constructing this; it carries no filesystem path, and nothing in
+/// this module performs I/O on its behalf.
+pub struct GenesisInitializationReferenceV2 {
+    pub checkpoint: CheckpointManifestV3,
+    pub payload: Vec<u8>,
+}
+
+/// GenesisInitializationV2: derives the weights-only genesis payload from a
+/// resolved reference checkpoint's raw payload bytes -- the parameters
+/// section copied bit-exact, both moment sections reset to exact positive
+/// zero (an all-zero-byte f32le section decodes to `+0.0` in every element,
+/// so this alone gives the "every Adam moment bit-exact zero" invariant).
+/// Pure byte surgery only: does not decode, hash, or validate anything
+/// (that happens in [`build_genesis_checkpoint_manifest_v2_v3`], which is
+/// also where `adam_step` gets pinned to 0).
+pub fn derive_genesis_weights_only_payload_v2_v3(reference_payload: &[u8]) -> Result<Vec<u8>> {
+    if reference_payload.len() != NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::PayloadExactLength,
+        ));
+    }
+    let mut payload = vec![0_u8; NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1];
+    payload[..PAYLOAD_BYTE_COUNT_V1].copy_from_slice(&reference_payload[..PAYLOAD_BYTE_COUNT_V1]);
+    Ok(payload)
+}
+
+/// GenesisInitializationV2 (Self-Play Ladder Design Contract S2, Amendment 1
+/// / Section 8A point 2, Section 8B): builds and validates the exact
+/// update-zero checkpoint authority for a continual-initialization ladder
+/// run. `payload` must already be the weights-only payload derived by
+/// [`derive_genesis_weights_only_payload_v2_v3`] from `reference`'s own raw
+/// payload (weights inherited bit-exact from `reference`; every Adam moment
+/// reset to exact positive zero; `adam_step` stays 0 -- the moment
+/// invariant [`build_genesis_checkpoint_manifest_v3`] enforces is completely
+/// untouched, only the weight-digest pinning branches). `reference` must
+/// already be a fully validated `CheckpointManifestV3` resolved through the
+/// chain-proven ladder checkpoint loader; this function performs no
+/// filesystem I/O and trusts its caller for that resolution exactly as
+/// [`build_genesis_checkpoint_manifest_v3`] trusts its caller for the common
+/// snapshot. Fails closed if `run`'s record does not carry
+/// `contracts.opponent_ladder_initialization` (see
+/// [`decode_genesis_checkpoint_manifest_v2_v3`]).
+pub fn build_genesis_checkpoint_manifest_v2_v3(
+    run: &ValidatedTrainRunV2,
+    reference: &CheckpointManifestV3,
+    payload: &[u8],
+) -> Result<CheckpointManifestV3> {
+    if run
+        .record()
+        .contracts
+        .opponent_ladder_initialization
+        .is_none()
+    {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::CrossBinding,
+        ));
+    }
+    if payload.len() != NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::PayloadExactLength,
+        ));
+    }
+    let record = run.record();
+    let anchor = u32::try_from(record.model_snapshot.scorer_bias_anchor_f32_bits)
+        .map_err(|_| CheckpointManifestV3Error::new(CheckpointManifestV3ErrorKind::CrossBinding))?;
+    let decoded =
+        decode_native_train_state_payload_v1(payload, 0, anchor).map_err(map_payload_error_v3)?;
+    let progress =
+        zero_checkpoint_progress_v3(run.batch_episodes(), run.checkpoint_segment_updates());
+    let logical_state_sha256 = logical_state_sha256_v1(
+        run.run_sha256(),
+        0,
+        &progress,
+        decoded.digests.native_state_sha256,
+    )?;
+    let wire = CheckpointManifestWireV3 {
+        schema: CHECKPOINT_MANIFEST_SCHEMA_V3.to_owned(),
+        run_sha256: run.run_sha256().to_owned(),
+        identity_bundle_sha256: run.identity_bundle_sha256().to_owned(),
+        segment_ordinal: 0,
+        generation_index: 0,
+        batch_episodes: run.batch_episodes(),
+        checkpoint_segment_updates: run.checkpoint_segment_updates(),
+        progress,
+        train_state: CheckpointTrainStateBindingV3 {
+            schema: NATIVE_POLICY_VALUE_TRAIN_STATE_SCHEMA_V1.to_owned(),
+            adam_step: 0,
+            scorer_bias_anchor_f32_bits: u64::from(anchor),
+            parameter_layout_sha256: record.model_snapshot.parameter_layout_sha256.clone(),
+            parameter_tensor_count: PARAMETER_TENSOR_COUNT_U64_V3,
+            parameter_element_count: PARAMETER_ELEMENT_COUNT_U64_V3,
+            model_parameter_sha256: lower_hex_raw32_v1(decoded.digests.model_parameter_sha256),
+            state_sha256: lower_hex_raw32_v1(decoded.digests.native_state_sha256),
+        },
+        payload: payload_binding_v1(&decoded.digests)?,
+        logical_state_sha256: lower_hex_raw32_v1(logical_state_sha256),
+    };
+    let canonical_bytes = to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid)?;
+    decode_genesis_checkpoint_manifest_v2_v3(&canonical_bytes, payload, run, reference)
+}
+
 /// Builds the exact trained checkpoint authority from one sealed cumulative
 /// evidence chain and its final verified in-memory checkpoint candidate.
 ///
@@ -749,6 +857,58 @@ pub fn decode_genesis_checkpoint_manifest_v3(
     run: &ValidatedTrainRunV2,
 ) -> Result<CheckpointManifestV3> {
     decode_checkpoint_manifest_v3(manifest_cj, payload, run)
+}
+
+/// GenesisInitializationV2 (Self-Play Ladder Design Contract S2, Amendment 1
+/// / Section 8A point 2, Section 8B): the continual-initialization sibling of
+/// [`decode_checkpoint_manifest_v3`]. Deliberately a SEPARATE entry point
+/// (not a branch inside `decode_checkpoint_manifest_v3` itself) so every
+/// existing genesis call site's behavior stays byte-for-byte untouched by
+/// construction, not by careful branching -- see
+/// `genesis_authoring_rejects_a_real_trained_payload_structurally`, which
+/// proves this for a record with no `opponent_ladder_initialization` section.
+///
+/// `reference` must already be a fully validated `CheckpointManifestV3`,
+/// resolved and digest-gated by the caller through the chain-proven ladder
+/// checkpoint loader
+/// (`native_ladder_pool_resolution_v1::resolve_ladder_checkpoint_authority_v1`)
+/// -- this function performs no filesystem I/O and never reads a raw file
+/// itself. Fails closed with
+/// [`CheckpointManifestV3ErrorKind::CrossBinding`] if `run`'s record does
+/// not carry `contracts.opponent_ladder_initialization`: this path is never
+/// a silent substitute for ordinary genesis decode, only the ladder's own.
+///
+/// Every invariant [`validate_genesis_snapshot_v3`] enforces other than the
+/// weight-digest source is IDENTICAL and unweakened here (see
+/// [`validate_genesis_snapshot_v2_v3`]): `generation_index` must be 0,
+/// `adam_step` must be 0, and every Adam moment (first and second) must be
+/// bit-exact positive zero.
+pub fn decode_genesis_checkpoint_manifest_v2_v3(
+    manifest_cj: &[u8],
+    payload: &[u8],
+    run: &ValidatedTrainRunV2,
+    reference: &CheckpointManifestV3,
+) -> Result<CheckpointManifestV3> {
+    if run
+        .record()
+        .contracts
+        .opponent_ladder_initialization
+        .is_none()
+    {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::CrossBinding,
+        ));
+    }
+    let (wire, reencoded) = decode_checkpoint_wire_v3(manifest_cj)?;
+    if wire.generation_index != 0 {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::TrainedEvidenceContextRequired,
+        ));
+    }
+    validate_checkpoint_wire_v3(&wire, run)?;
+    let decoded = validate_payload_v3(&wire, payload, run)?;
+    validate_genesis_snapshot_v2_v3(&wire, &decoded, reference)?;
+    finish_checkpoint_manifest_v3(wire, reencoded, manifest_cj, decoded)
 }
 
 fn validate_checkpoint_wire_v3(
@@ -1050,6 +1210,51 @@ fn validate_genesis_snapshot_v3(
         || decoded.digests.parameters_sha256 != expected_parameter_payload
         || decoded.digests.model_parameter_sha256 != expected_named_parameters
         || decoded.digests.model_parameter_sha256 != expected_loaded_parameters
+        || !all_moments_positive_zero
+    {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::GenesisSnapshotMismatch,
+        ));
+    }
+    Ok(())
+}
+
+/// GenesisInitializationV2: the continual-initialization sibling of
+/// [`validate_genesis_snapshot_v3`], deliberately a separate function body
+/// (not a refactor of the original) so the original's byte-for-byte
+/// behavior for every non-ladder-init run is provably untouched rather than
+/// merely believed untouched.
+///
+/// The MODEL-PARAMETER digests are pinned to `reference`'s own weights --
+/// `reference.payload().sections[0].sha256` for the raw parameter section
+/// (the exact analogue of `model_snapshot.payload_sha256` in the V1 check)
+/// and `reference.model_parameter_sha256()` for the canonicalized
+/// named-parameter stream (the analogue of `named_parameter_stream_sha256`
+/// / `loaded_named_parameter_stream_sha256`, which coincide for a genuine
+/// checkpoint authority so one comparison suffices) -- instead of the run's
+/// frozen common snapshot. Every other invariant is IDENTICAL to
+/// [`validate_genesis_snapshot_v3`]: `generation_index` must be 0,
+/// `adam_step` must be 0, and every Adam moment (first and second) must be
+/// bit-exact positive zero. The moment invariant is completely untouched by
+/// this branch: only the weight-digest source changes.
+fn validate_genesis_snapshot_v2_v3(
+    wire: &CheckpointManifestWireV3,
+    decoded: &NativeDecodedTrainStatePayloadV1,
+    reference: &CheckpointManifestV3,
+) -> Result<()> {
+    let expected_parameter_payload = parse_digest_v3(&reference.payload().sections[0].sha256)?;
+    let expected_named_parameters = reference.model_parameter_sha256();
+    let all_moments_positive_zero = decoded
+        .snapshot
+        .first_moments
+        .iter()
+        .chain(&decoded.snapshot.second_moments)
+        .flat_map(|parameter| &parameter.values)
+        .all(|value| value.to_bits() == 0);
+    if wire.generation_index != 0
+        || decoded.snapshot.adam_step != 0
+        || decoded.digests.parameters_sha256 != expected_parameter_payload
+        || decoded.digests.model_parameter_sha256 != expected_named_parameters
         || !all_moments_positive_zero
     {
         return Err(CheckpointManifestV3Error::new(
@@ -1373,6 +1578,108 @@ mod tests {
 
     fn run_v3() -> ValidatedTrainRunV2 {
         decode_train_run_v2(&fixture_v3().run_bytes).unwrap()
+    }
+
+    /// GenesisInitializationV2 fixture (Self-Play Ladder Design Contract S2,
+    /// Amendment 1 / Section 8A point 2, Section 8B): a real ladder-init run
+    /// record (`opponent_ladder_initialization` referencing a REAL trained
+    /// S1 checkpoint, D:\mtg-kernel-s1-mirror-20260724\dev1\run-0\store
+    /// generation 32, read-only source) plus that checkpoint's own resolved
+    /// authority -- exactly what a real caller would hand
+    /// `build_genesis_checkpoint_manifest_v2_v3`. The pool section reuses
+    /// the real, already-published ladder pilot pool.json (read-only); this
+    /// module's own tests are about genesis, not pool resolution, so the
+    /// pool's specific members are incidental as long as it is structurally
+    /// valid. Resolved through the record's own init section via
+    /// `ladder_init_as_checkpoint_ref_v1`, not the staging step used to
+    /// author it, so this fixture also proves that round-trip.
+    struct LadderInitFixtureV3 {
+        run_bytes: Vec<u8>,
+        reference_manifest: CheckpointManifestV3,
+        reference_payload: Vec<u8>,
+    }
+
+    static LADDER_INIT_FIXTURE_V3: OnceLock<LadderInitFixtureV3> = OnceLock::new();
+
+    const REAL_LADDER_INIT_REFERENCE_STORE_V3: &str =
+        r"D:\mtg-kernel-s1-mirror-20260724\dev1\run-0\store";
+    const REAL_LADDER_INIT_REFERENCE_GENERATION_V3: u64 = 32;
+    const REAL_LADDER_PILOT_POOL_JSON_V3: &str =
+        r"D:\mtg-kernel-ladder-pilot-20260725\pool\pool.json";
+
+    fn ladder_init_fixture_v3() -> &'static LadderInitFixtureV3 {
+        LADDER_INIT_FIXTURE_V3.get_or_init(|| {
+            use crate::native_ladder_pool_resolution_v1::{
+                ladder_init_as_checkpoint_ref_v1, resolve_ladder_checkpoint_authority_v1,
+                stage_ladder_checkpoint_ref_v1,
+            };
+            use crate::native_training_store_run_v2::{
+                test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2,
+                OpponentLadderInitializationContractV1, OpponentLadderPoolContractV1,
+            };
+
+            let pool_bytes = std::fs::read(REAL_LADDER_PILOT_POOL_JSON_V3)
+                .expect("real ladder pilot pool.json must be readable");
+            let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
+                .expect("pool.json must decode as OpponentLadderPoolContractV1");
+
+            let staged = stage_ladder_checkpoint_ref_v1(
+                std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V3),
+                REAL_LADDER_INIT_REFERENCE_GENERATION_V3,
+            )
+            .expect("real S1 mirror gen-32 checkpoint must stage to a valid ref");
+            let init = OpponentLadderInitializationContractV1 {
+                source_run_sha256: staged.source_run_sha256.clone(),
+                generation: staged.generation,
+                checkpoint_sha256: staged.checkpoint_sha256.clone(),
+                sidecar_sha256: staged.sidecar_sha256.clone(),
+                state_sha256: staged.state_sha256.clone(),
+            };
+
+            let run_bytes = test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+                NativeTrainingNumericalBackendV1::Sequential,
+                2,
+                4,
+                4,
+                2,
+                4,
+                8,
+                32_768,
+                65_536,
+                555_020,
+                pool,
+                init,
+            );
+            let run = decode_train_run_v2(&run_bytes).unwrap();
+
+            // Resolved from the RECORD's own init section (not `staged`
+            // above) through the same conversion + chain-proven loader a
+            // real caller uses -- proving the round-trip, not just the
+            // staging helper.
+            let checkpoint_ref = ladder_init_as_checkpoint_ref_v1(
+                run.record()
+                    .contracts
+                    .opponent_ladder_initialization
+                    .as_ref()
+                    .expect("fixture record must carry the init section"),
+            );
+            let authority = resolve_ladder_checkpoint_authority_v1(
+                std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V3),
+                &checkpoint_ref,
+            )
+            .expect("real S1 mirror checkpoint must resolve through the chain-proven loader");
+            let (reference_manifest, reference_payload) = authority.into_checkpoint_and_payload();
+
+            LadderInitFixtureV3 {
+                run_bytes,
+                reference_manifest,
+                reference_payload,
+            }
+        })
+    }
+
+    fn ladder_init_run_v3() -> ValidatedTrainRunV2 {
+        decode_train_run_v2(&ladder_init_fixture_v3().run_bytes).unwrap()
     }
 
     fn trained_context_v3(update_count: usize) -> UpdateEvidenceChainContextV1 {
@@ -2128,6 +2435,153 @@ mod tests {
                 .unwrap_err()
                 .kind(),
             CheckpointManifestV3ErrorKind::PayloadDigestMismatch
+        );
+    }
+
+    /// GenesisInitializationV2 fails closed in BOTH directions when the
+    /// record's own claim and the entry point used disagree: a non-ladder-init
+    /// run may never author or decode through the V2 path, regardless of
+    /// how well-formed the supplied reference/payload otherwise are.
+    #[test]
+    fn genesis_initialization_v2_requires_the_init_section_present() {
+        let ladder_fixture = ladder_init_fixture_v3();
+        let payload =
+            derive_genesis_weights_only_payload_v2_v3(&ladder_fixture.reference_payload).unwrap();
+        let run = run_v3();
+        assert_eq!(
+            build_genesis_checkpoint_manifest_v2_v3(
+                &run,
+                &ladder_fixture.reference_manifest,
+                &payload
+            )
+            .unwrap_err()
+            .kind(),
+            CheckpointManifestV3ErrorKind::CrossBinding
+        );
+
+        // A well-formed V2 manifest, minted for the REAL ladder-init run,
+        // must still be refused on decode when handed the non-ladder-init
+        // run instead.
+        let ladder_init_run = ladder_init_run_v3();
+        let manifest = build_genesis_checkpoint_manifest_v2_v3(
+            &ladder_init_run,
+            &ladder_fixture.reference_manifest,
+            &payload,
+        )
+        .unwrap();
+        assert_eq!(
+            decode_genesis_checkpoint_manifest_v2_v3(
+                manifest.canonical_bytes(),
+                &payload,
+                &run,
+                &ladder_fixture.reference_manifest,
+            )
+            .unwrap_err()
+            .kind(),
+            CheckpointManifestV3ErrorKind::CrossBinding
+        );
+    }
+
+    /// GenesisInitializationV2 core correctness (Self-Play Ladder Design
+    /// Contract S2, Amendment 1 / Section 8A point 2, Section 8B): weights
+    /// inherited bit-exact from the referenced real S1 checkpoint, moments
+    /// still bit-exact zero, `adam_step` still 0, and the full manifest
+    /// round-trips through decode.
+    #[test]
+    fn genesis_initialization_v2_inherits_weights_bit_exact_and_zeros_moments() {
+        let fixture = ladder_init_fixture_v3();
+        let run = ladder_init_run_v3();
+        let payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
+            .expect("weights-only payload derivation must succeed");
+
+        let section_len = payload.len() / 3;
+        assert_eq!(
+            payload[..section_len],
+            fixture.reference_payload[..section_len]
+        );
+        assert!(payload[section_len..].iter().all(|byte| *byte == 0));
+
+        let checkpoint =
+            build_genesis_checkpoint_manifest_v2_v3(&run, &fixture.reference_manifest, &payload)
+                .expect("GenesisInitializationV2 authoring must succeed for a matching reference");
+        assert_eq!(checkpoint.generation_index(), 0);
+        assert_eq!(checkpoint.train_state().adam_step(), 0);
+        assert_eq!(
+            checkpoint.model_parameter_sha256(),
+            fixture.reference_manifest.model_parameter_sha256()
+        );
+        // The FULL payload digest still differs: moments differ from the
+        // reference's own (real, trained, nonzero) moments even though
+        // weights match exactly.
+        assert_ne!(
+            checkpoint.checkpoint_payload_sha256(),
+            fixture.reference_manifest.checkpoint_payload_sha256()
+        );
+
+        let redecoded = decode_genesis_checkpoint_manifest_v2_v3(
+            checkpoint.canonical_bytes(),
+            &payload,
+            &run,
+            &fixture.reference_manifest,
+        )
+        .expect("a self-authored V2 manifest must redecode against the same reference");
+        assert_eq!(redecoded.canonical_bytes(), checkpoint.canonical_bytes());
+    }
+
+    #[test]
+    fn genesis_initialization_v2_rejects_parameter_drift_from_reference() {
+        let fixture = ladder_init_fixture_v3();
+        let run = ladder_init_run_v3();
+        let mut payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
+            .expect("weights-only payload derivation must succeed");
+        // Same offset `genesis_rejects_self_consistent_parameter_and_moment_drift`
+        // uses for its own parameter-drift case: a plain (non-gauge-fixed)
+        // tensor, so this exercises the digest comparison in
+        // `validate_genesis_snapshot_v2_v3`, not an earlier semantic check.
+        let parameter_offset = tensor_offset_v1("object_encoder.0.weight");
+        payload[parameter_offset] ^= 1;
+        assert_eq!(
+            build_genesis_checkpoint_manifest_v2_v3(&run, &fixture.reference_manifest, &payload)
+                .unwrap_err()
+                .kind(),
+            CheckpointManifestV3ErrorKind::GenesisSnapshotMismatch
+        );
+    }
+
+    /// "A genesis payload with nonzero moments still rejects in BOTH
+    /// branches" (Self-Play Ladder Design Contract S2, Amendment 1 / Section
+    /// 8A point 2, Section 8B mandatory test list): the SAME corruption
+    /// (`first_moments["object_encoder.0.weight"] = 0.25`, mirroring
+    /// `genesis_rejects_self_consistent_parameter_and_moment_drift`'s own
+    /// V1 case exactly) rejected by both the default path and
+    /// GenesisInitializationV2 -- proving the moment invariant is untouched
+    /// by the branch, not merely re-implemented compatibly.
+    #[test]
+    fn genesis_initialization_v2_rejects_nonzero_moments_in_both_branches() {
+        let moment_offset = NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[1].offset_bytes
+            + tensor_offset_v1("object_encoder.0.weight");
+
+        let fixture = ladder_init_fixture_v3();
+        let run = ladder_init_run_v3();
+        let mut v2_payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
+            .expect("weights-only payload derivation must succeed");
+        v2_payload[moment_offset..moment_offset + 4]
+            .copy_from_slice(&0.25_f32.to_bits().to_le_bytes());
+        assert_eq!(
+            build_genesis_checkpoint_manifest_v2_v3(&run, &fixture.reference_manifest, &v2_payload)
+                .unwrap_err()
+                .kind(),
+            CheckpointManifestV3ErrorKind::GenesisSnapshotMismatch
+        );
+
+        let mut v1_payload = fixture_v3().payload.clone();
+        v1_payload[moment_offset..moment_offset + 4]
+            .copy_from_slice(&0.25_f32.to_bits().to_le_bytes());
+        assert_eq!(
+            build_genesis_checkpoint_manifest_v3(&run_v3(), &v1_payload)
+                .unwrap_err()
+                .kind(),
+            CheckpointManifestV3ErrorKind::GenesisSnapshotMismatch
         );
     }
 }
