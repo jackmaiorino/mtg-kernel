@@ -926,6 +926,12 @@ mod windows_science_loop_tests {
             .unwrap_or_else(|_| "256".to_owned())
             .parse()
             .expect("eval pair count");
+        // The reconstructed run identity must match the store's actual
+        // schedule; the retry rungs train 512 updates (contract v4.1 8B).
+        let ladder_updates: u64 = std::env::var("LADDER_UPDATES")
+            .unwrap_or_else(|_| "256".to_owned())
+            .parse()
+            .expect("ladder updates");
 
         let pool_bytes =
             fs::read(&pool_json_path).expect("LADDER_POOL_JSON must be a readable file");
@@ -936,7 +942,7 @@ mod windows_science_loop_tests {
             NativeTrainingNumericalBackendV1::CudaBurnDense,
             64,
             4,
-            256,
+            ladder_updates,
             2,
             32,
             16,
