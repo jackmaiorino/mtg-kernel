@@ -581,16 +581,58 @@ fn run_native_checkpoint_core_v1(
 /// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3). EVALUATION ONLY: loads
 /// through [`load_native_checkpoint_inference_wide_v1`] instead, which
 /// itself fails closed unless `run`'s record carries
-/// `contracts.wide_model_experiment_v1`. Uniform opponent only (the wide
-/// protocol's panel/v0 curves and head-to-head reads are all uniform-anchor,
-/// exactly like the frozen probe this mirrors); no ladder-opponent-threaded
-/// variant exists for wide because none of this experiment's evaluation
-/// reads need one.
+/// `contracts.wide_model_experiment_v1`.
+///
+/// Thin wrapper over [`run_native_checkpoint_wide_core_v1`] with the
+/// opponent seat's ladder engine hardcoded to `None` (the uniform opponent),
+/// mirroring exactly the frozen-path factoring of
+/// [`run_native_checkpoint_v1`] over [`run_native_checkpoint_core_v1`]. An
+/// earlier revision of this doc claimed no ladder-opponent-threaded wide
+/// variant was needed; that claim was WRONG and was caught in hostile
+/// review: the capacity contract's DECISIVE read (Section 5) is a true
+/// head-to-head of the wide candidate against promoted frozen checkpoints,
+/// which requires the ladder engine in the opponent seat. The correction is
+/// [`run_native_checkpoint_wide_with_ladder_opponent_eval_v1`] below.
 pub fn run_native_checkpoint_wide_v1(
     run: &ValidatedTrainRunV2,
     checkpoint: &CheckpointManifestV3,
     checkpoint_payload: &[u8],
     config: NativeCheckpointRunnerConfigV1,
+) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    run_native_checkpoint_wide_core_v1(run, checkpoint, checkpoint_payload, config, None)
+}
+
+/// EVAL-ONLY wide-net twin of
+/// [`run_native_checkpoint_with_ladder_opponent_eval_v1`] (capacity contract
+/// Section 5 decisive read: wide candidate vs a frozen promoted checkpoint's
+/// actual weights). The CANDIDATE seat loads through the wide loader; the
+/// opponent seat's [`LadderOpponentEngineV1`] holds frozen-identity
+/// inference handles built by the caller, which is correct BY PROTOCOL: every
+/// opponent in the capacity experiment (promoted(1), promoted(2), pool
+/// members) is a frozen Net8 checkpoint, and the frozen loader those handles
+/// come from fails closed on any wide-length payload, so a wide opponent can
+/// never be substituted silently.
+///
+/// `cfg(test)`-gated for the same production-safety argument as the frozen
+/// twin: it does not exist in a non-test build and can never be reached from
+/// a training run record.
+#[cfg(test)]
+pub(crate) fn run_native_checkpoint_wide_with_ladder_opponent_eval_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    checkpoint_payload: &[u8],
+    config: NativeCheckpointRunnerConfigV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    run_native_checkpoint_wide_core_v1(run, checkpoint, checkpoint_payload, config, ladder_opponent)
+}
+
+fn run_native_checkpoint_wide_core_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    checkpoint_payload: &[u8],
+    config: NativeCheckpointRunnerConfigV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
     let topology = validate_runner_config_v1(run, config)?;
     let expected_episode_count = usize::try_from(config.episode_count)
@@ -639,7 +681,7 @@ pub fn run_native_checkpoint_wide_v1(
     let observed = run_async_flat_scored_rollout_native_observed_v2(
         rollout_config,
         config.evaluation_base_seed,
-        None,
+        ladder_opponent,
         &mut scorer,
         observer,
     );
@@ -1137,6 +1179,93 @@ mod tests {
             &checkpoint,
             &frozen_fixture.payload,
             runner_config_v1(),
+        )
+        .unwrap_err()
+        {
+            NativeCheckpointRunnerErrorV1::Inference(error) => assert_eq!(
+                error.kind(),
+                NativeCheckpointInferenceErrorKindV1::PayloadExactLength
+            ),
+            other => panic!("expected Inference(PayloadExactLength), got {other:?}"),
+        }
+    }
+
+    /// The head-to-head e2e proof the hostile review demanded (capacity
+    /// contract Section 5 decisive read): a real wide genesis checkpoint
+    /// plays a genuine seat-swapped pair with the LADDER ENGINE standing in
+    /// the opponent seat, where the engine's three policy-driven slots are
+    /// independently loaded FROZEN-identity handles onto one real frozen
+    /// checkpoint. This is the exact runner + engine combination
+    /// `ladder_head_to_head_eval_v1` (WIDE=1) invokes, exercised end to end
+    /// through the real rollout engine, not compile-checked.
+    #[test]
+    fn wide_checkpoint_plays_head_to_head_against_frozen_ladder_opponent_end_to_end() {
+        use crate::native_checkpoint_inference_v1::load_native_checkpoint_inference_v1;
+
+        let fixture = wide_fixture_v1();
+        let (run, checkpoint) = wide_authorities_v1();
+        let frozen_fixture = fixture_v1();
+        let (frozen_run, frozen_checkpoint) = authorities_v1();
+        let engine = Arc::new(LadderOpponentEngineV1::head_to_head_eval_v1(
+            load_native_checkpoint_inference_v1(
+                &frozen_run,
+                &frozen_checkpoint,
+                &frozen_fixture.payload,
+            )
+            .unwrap(),
+            load_native_checkpoint_inference_v1(
+                &frozen_run,
+                &frozen_checkpoint,
+                &frozen_fixture.payload,
+            )
+            .unwrap(),
+            load_native_checkpoint_inference_v1(
+                &frozen_run,
+                &frozen_checkpoint,
+                &frozen_fixture.payload,
+            )
+            .unwrap(),
+        ));
+
+        let result = run_native_checkpoint_wide_with_ladder_opponent_eval_v1(
+            &run,
+            &checkpoint,
+            &fixture.payload,
+            runner_config_v1(),
+            Some(engine.clone()),
+        )
+        .expect("a real wide candidate must complete a head-to-head against a frozen opponent");
+
+        assert_eq!(result.generation_index(), 0);
+        assert_eq!(result.rollout().episodes.len(), 2);
+        assert_eq!(result.episode_bindings().len(), 2);
+        assert_eq!(
+            result.episode_bindings()[0].learner_seat(),
+            PlayerSeatV1::P0
+        );
+        assert_eq!(
+            result.episode_bindings()[1].learner_seat(),
+            PlayerSeatV1::P1
+        );
+        assert!(result.rollout().all_natural());
+        assert!(result.rollout().metrics.scorer_batch_count > 1);
+        assert!(result.rollout().metrics.scored_decision_count > 1);
+        // The opponent seat's decisions must actually route through the
+        // ladder engine, not the uniform fallback: with the engine present,
+        // opponent policy steps are engine-scored and counted per binding.
+        for binding in result.episode_bindings() {
+            assert_ne!(binding.trajectory_sha256(), [0; 32]);
+            assert!(binding.opponent_policy_step_count() > 0);
+        }
+
+        // Fail-closed: the wide eval twin rejects a frozen-length candidate
+        // payload outright, engine present or not.
+        match run_native_checkpoint_wide_with_ladder_opponent_eval_v1(
+            &run,
+            &checkpoint,
+            &frozen_fixture.payload,
+            runner_config_v1(),
+            Some(engine),
         )
         .unwrap_err()
         {

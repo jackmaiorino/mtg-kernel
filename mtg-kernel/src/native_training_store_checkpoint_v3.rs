@@ -661,6 +661,17 @@ pub struct GenesisInitializationReferenceV2 {
 /// Pure byte surgery only: does not decode, hash, or validate anything
 /// (that happens in [`build_genesis_checkpoint_manifest_v2_v3`], which is
 /// also where `adam_step` gets pinned to 0).
+///
+/// WIDE CHOKEPOINT ENUMERATION (capacity contract, completing the list the
+/// hostile review found incomplete): this function, and the whole
+/// GenesisInitializationV2 continual-init chain below it
+/// ([`derive_genesis_model_parameter_sha256_v2_v3`],
+/// [`build_genesis_checkpoint_manifest_v2_v3`] and its decode twin), is
+/// DELIBERATELY frozen-only with no wide branch. The wide protocol is
+/// fresh-init only (contract Section 4); both eval probes assert WIDE=1 is
+/// never combined with an init store. A wide-length payload reaching this
+/// path fails closed right here on `PayloadExactLength` before any byte
+/// surgery, which is the intended behavior, not an oversight.
 pub fn derive_genesis_weights_only_payload_v2_v3(reference_payload: &[u8]) -> Result<Vec<u8>> {
     if reference_payload.len() != NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 {
         return Err(CheckpointManifestV3Error::new(

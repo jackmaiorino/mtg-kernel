@@ -1410,15 +1410,34 @@ mod windows_science_loop_tests {
     /// calling `native_ladder_promotion_v1::promotion_gate_win_rate_passes_v1`
     /// on the tabulated raw game wins/games (Deliverable 4's "feed the
     /// results through the gate function").
+    ///
+    /// WIDE=1 (capacity contract Section 5 decisive read, added after
+    /// hostile review caught this probe as the one unwired wide chokepoint):
+    /// reconstructs the CANDIDATE record via the combined wide+ladder
+    /// fixture builder and runs through
+    /// `run_native_checkpoint_wide_with_ladder_opponent_eval_v1`. The
+    /// OPPONENT side is deliberately untouched: every opponent in the
+    /// capacity protocol (promoted(1), promoted(2), pool members) is a
+    /// frozen Net8 checkpoint, and the frozen loader used for the engine's
+    /// three handles fails closed on any wide-length payload, so a wide
+    /// opponent can never be substituted silently. Same knob name and
+    /// semantics as `ladder_saturation_eval_v1`; unset/0 reproduces the
+    /// frozen probe byte-for-byte, and WIDE=1 with H2H_INIT_STORE is
+    /// rejected (the wide protocol trains fresh-init only).
     #[test]
     #[ignore = "measurement probe, run explicitly"]
     fn ladder_head_to_head_eval_v1() {
         use crate::native_checkpoint_inference_v1::load_native_checkpoint_inference_v1;
-        use crate::native_checkpoint_runner_v1::run_native_checkpoint_with_ladder_opponent_eval_v1;
+        use crate::native_checkpoint_runner_v1::{
+            run_native_checkpoint_with_ladder_opponent_eval_v1,
+            run_native_checkpoint_wide_with_ladder_opponent_eval_v1,
+        };
         use crate::native_ladder_promotion_v1::promotion_gate_win_rate_passes_v1;
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
         use crate::native_training_store_run_v2::{
-            test_fixture_bytes_with_schedule_and_base_seed_ladder_v2, OpponentLadderPoolContractV1,
+            test_fixture_bytes_with_schedule_and_base_seed_ladder_v2,
+            test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2,
+            OpponentLadderPoolContractV1,
         };
         use crate::rl::PlayerSeatV1;
 
@@ -1453,6 +1472,13 @@ mod windows_science_loop_tests {
             .parse()
             .expect("init generation");
         let episode_count = pairs.checked_mul(2).expect("H2H_PAIRS overflow");
+        // Capacity-experiment wide-net knob; see the doc comment. Candidate
+        // side only; the opponent stays frozen-identity by protocol.
+        let wide = std::env::var("WIDE").is_ok_and(|value| value != "0");
+        assert!(
+            !(wide && init_store.is_some()),
+            "WIDE=1 is not supported with H2H_INIT_STORE: the wide protocol trains fresh-init only"
+        );
 
         // Candidate: the SAME ladder run-record reconstruction as
         // ladder_saturation_eval_v1.
@@ -1460,8 +1486,8 @@ mod windows_science_loop_tests {
             .expect("H2H_CANDIDATE_POOL_JSON must be a readable file");
         let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
             .expect("pool.json must decode as OpponentLadderPoolContractV1");
-        let candidate_run_bytes = match &init_store {
-            Some(dir) => {
+        let candidate_run_bytes = match (&init_store, wide) {
+            (Some(dir), false) => {
                 let initialization =
                     crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1(
                         std::path::Path::new(dir),
@@ -1483,7 +1509,7 @@ mod windows_science_loop_tests {
                     initialization,
                 )
             }
-            None => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+            (None, false) => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
                 NativeTrainingNumericalBackendV1::CudaBurnDense,
                 64,
                 4,
@@ -1496,6 +1522,20 @@ mod windows_science_loop_tests {
                 candidate_base_seed,
                 pool,
             ),
+            (None, true) => test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
+                NativeTrainingNumericalBackendV1::CudaBurnDense,
+                64,
+                4,
+                ladder_updates,
+                2,
+                32,
+                16,
+                1_024,
+                2_048,
+                candidate_base_seed,
+                pool,
+            ),
+            (Some(_), true) => unreachable!("guarded above"),
         };
         let candidate_run =
             decode_train_run_v2(&candidate_run_bytes).expect("candidate ladder run record");
@@ -1548,14 +1588,25 @@ mod windows_science_loop_tests {
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
         };
-        let result = run_native_checkpoint_with_ladder_opponent_eval_v1(
-            &candidate_run,
-            candidate_boundary.checkpoint(),
-            candidate_boundary.payload(),
-            runner_config,
-            Some(engine),
-        )
-        .unwrap();
+        let result = if wide {
+            run_native_checkpoint_wide_with_ladder_opponent_eval_v1(
+                &candidate_run,
+                candidate_boundary.checkpoint(),
+                candidate_boundary.payload(),
+                runner_config,
+                Some(engine),
+            )
+            .unwrap()
+        } else {
+            run_native_checkpoint_with_ladder_opponent_eval_v1(
+                &candidate_run,
+                candidate_boundary.checkpoint(),
+                candidate_boundary.payload(),
+                runner_config,
+                Some(engine),
+            )
+            .unwrap()
+        };
 
         // Leg-level W/L/D (2 * pairs games total), matching this file's
         // established print convention for every other saturation probe.
@@ -1604,11 +1655,13 @@ mod windows_science_loop_tests {
         }
         let total = wins + losses + draws;
         assert_eq!(total, episode_count);
-        println!("H2H candidate_gen={candidate_gen} W/L/D {wins}/{losses}/{draws} of {total}");
+        println!(
+            "H2H candidate_gen={candidate_gen} wide={wide} W/L/D {wins}/{losses}/{draws} of {total}"
+        );
         // Labeled diagnostic only (Amendment 1 / Section 8A point 1 rejects
         // this as the gate quantity); NOT fed to the gate function below.
         println!(
-            "H2H candidate_gen={candidate_gen} pair_diagnostic_net_positive pair_wins={pair_wins}/{pairs}={:.4}",
+            "H2H candidate_gen={candidate_gen} wide={wide} pair_diagnostic_net_positive pair_wins={pair_wins}/{pairs}={:.4}",
             pair_wins as f64 / pairs as f64
         );
 
@@ -1619,7 +1672,7 @@ mod windows_science_loop_tests {
         // panel probe, not from one head-to-head run alone).
         let win_rate_passes = promotion_gate_win_rate_passes_v1(wins, total);
         println!(
-            "H2H candidate_gen={candidate_gen} win_rate_sub_check game_wins={wins}/{total}={:.4} passes={win_rate_passes}",
+            "H2H candidate_gen={candidate_gen} wide={wide} win_rate_sub_check game_wins={wins}/{total}={:.4} passes={win_rate_passes}",
             wins as f64 / total as f64
         );
     }
