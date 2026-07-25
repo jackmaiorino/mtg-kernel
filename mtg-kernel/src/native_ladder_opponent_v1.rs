@@ -217,6 +217,57 @@ pub(crate) fn softmax_sample_temperature_one_v1(
     Ok((scores.len() - 1) as u32)
 }
 
+/// Marks a placeholder pool contract as eval-only in any printed/`Debug`
+/// output, so it can never be mistaken for a real, hash-pinned production
+/// pool (see [`LadderOpponentEngineV1::head_to_head_eval_v1`]).
+#[cfg(test)]
+const HEAD_TO_HEAD_EVAL_POOL_IDENTITY_V1: &str =
+    "mtg-kernel-opponent-ladder-pool-head-to-head-eval-only-v1-not-a-production-pool";
+
+/// Builds the placeholder [`OpponentLadderPoolContractV1`] stored on a
+/// [`LadderOpponentEngineV1`] built via
+/// [`LadderOpponentEngineV1::head_to_head_eval_v1`]. Never validated against
+/// the frozen literals (that constructor bypasses `new_v1`'s check
+/// entirely) and never cross-checked against any real checkpoint digest;
+/// see that constructor's docs.
+#[cfg(test)]
+fn head_to_head_eval_pool_placeholder_v1() -> OpponentLadderPoolContractV1 {
+    let zero_ref = crate::native_training_store_run_v2::OpponentLadderCheckpointRefV1 {
+        source_run_sha256: "0".repeat(64),
+        generation: 0,
+        checkpoint_sha256: "0".repeat(64),
+        sidecar_sha256: "0".repeat(64),
+        state_sha256: "0".repeat(64),
+    };
+    OpponentLadderPoolContractV1 {
+        identity: HEAD_TO_HEAD_EVAL_POOL_IDENTITY_V1.to_owned(),
+        size: OPPONENT_LADDER_POOL_SIZE_V2,
+        policy_member_sampling_rule: FROZEN_CHECKPOINT_OPPONENT_POLICY_SAMPLING_RULE_V2.to_owned(),
+        // Eval-only documentation of the forced-policy override: all mass
+        // nominally on PRIMARY, none on the uniform floor. Never validated
+        // (see above), so these values are descriptive only.
+        weight_primary: crate::native_opponent_policy_v2::OPPONENT_LADDER_POOL_WEIGHT_TOTAL_V2,
+        weight_predecessor_a: 0,
+        weight_predecessor_b: 0,
+        weight_uniform_floor: 0,
+        primary: zero_ref.clone(),
+        predecessor_a: zero_ref.clone(),
+        predecessor_b: zero_ref,
+        uniform_floor: crate::native_training_store_run_v2::OpponentLadderUniformFloorV1 {
+            identity:
+                crate::native_opponent_sampler_v1::NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_IDENTITY_V1
+                    .to_owned(),
+            model_rule:
+                crate::native_opponent_sampler_v1::NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_MODEL_RULE_V1
+                    .to_owned(),
+            sampler_identity: crate::native_opponent_sampler_v1::UNIFORM_INDEX_MODULO_U64_IDENTITY_V1
+                .to_owned(),
+            sampler_algorithm:
+                crate::native_opponent_sampler_v1::UNIFORM_INDEX_MODULO_U64_ALGORITHM_V1.to_owned(),
+        },
+    }
+}
+
 /// Pure literal check: does `pool` match the frozen ladder
 /// identity/size/weights/sampling-rule constants? Factored out of
 /// `LadderOpponentEngineV1::new_v1` so it is directly testable without
@@ -239,6 +290,17 @@ pub(crate) struct LadderOpponentEngineV1 {
     primary: NativeCheckpointInferenceV1,
     predecessor_a: NativeCheckpointInferenceV1,
     predecessor_b: NativeCheckpointInferenceV1,
+    /// EVAL-ONLY override (head-to-head evaluator, Deliverable 2 of the
+    /// ladder pilot eval tooling): when `true`,
+    /// [`Self::pool_member_for_episode_v1`] always returns `Primary`
+    /// regardless of the seed-derived draw, bypassing the production
+    /// 40/20/20/20 threshold rule entirely. `false` for every engine built
+    /// via [`Self::new_v1`] (the ONLY constructor a training run record can
+    /// ever reach); `true` only for engines built via the `cfg(test)`-gated
+    /// [`Self::head_to_head_eval_v1`]. This field's default and `new_v1`'s
+    /// construction of it are the entire production-safety argument: no
+    /// training run can ever observe `true` here.
+    force_policy_member_v1: bool,
 }
 
 impl fmt::Debug for LadderOpponentEngineV1 {
@@ -249,6 +311,7 @@ impl fmt::Debug for LadderOpponentEngineV1 {
             .field("primary", &self.primary)
             .field("predecessor_a", &self.predecessor_a)
             .field("predecessor_b", &self.predecessor_b)
+            .field("force_policy_member_v1", &self.force_policy_member_v1)
             .finish()
     }
 }
@@ -281,7 +344,52 @@ impl LadderOpponentEngineV1 {
             primary,
             predecessor_a,
             predecessor_b,
+            force_policy_member_v1: false,
         })
+    }
+
+    /// EVAL-ONLY constructor (head-to-head evaluator, Deliverable 2 of the
+    /// ladder pilot eval tooling; see the contract's Section 6 pilot and the
+    /// stopping policy's Section 3 panel/v0 interim clause). Builds an
+    /// engine whose three policy-driven pool slots (PRIMARY, PREDECESSOR-A,
+    /// PREDECESSOR-B) are ALL independently loaded handles onto the SAME one
+    /// opponent checkpoint (the caller loads three separate
+    /// `NativeCheckpointInferenceV1` handles from that one checkpoint's
+    /// bytes -- this type is deliberately not `Clone`, matching the module
+    /// docs' stated posture), and whose per-episode pool-choice ALWAYS
+    /// resolves to a policy-driven member
+    /// (`force_policy_member_v1 = true`; see
+    /// [`Self::pool_member_for_episode_v1`]). Which of the three slot labels
+    /// is "selected" is immaterial here: all three point at the identical
+    /// opponent, so every episode's opponent seat is scored by that one
+    /// checkpoint's softmax(temperature=1.0) policy, with no uniform-floor
+    /// episodes diluting the head-to-head estimate.
+    ///
+    /// `pool` is a locally documented placeholder (identity string marked
+    /// eval-only, zeroed checkpoint digests): this constructor bypasses
+    /// `new_v1`'s frozen-literal fail-closed check entirely by constructing
+    /// `Self` directly, so the placeholder is never validated against
+    /// anything and is not load-bearing beyond `Debug` output.
+    ///
+    /// `cfg(test)`-gated: this function does not exist in a non-test build.
+    /// The only way to build a `LadderOpponentEngineV1` outside tests is
+    /// still `new_v1`, so this constructor can never be reached from a
+    /// training run record, and the training path's 40/20/20/20 semantics
+    /// (`new_v1`, `ladder_pool_member_for_episode_v1`) are completely
+    /// untouched by its existence.
+    #[cfg(test)]
+    pub(crate) fn head_to_head_eval_v1(
+        primary: NativeCheckpointInferenceV1,
+        predecessor_a: NativeCheckpointInferenceV1,
+        predecessor_b: NativeCheckpointInferenceV1,
+    ) -> Self {
+        Self {
+            pool: head_to_head_eval_pool_placeholder_v1(),
+            primary,
+            predecessor_a,
+            predecessor_b,
+            force_policy_member_v1: true,
+        }
     }
 
     pub(crate) fn pool(&self) -> &OpponentLadderPoolContractV1 {
@@ -289,12 +397,20 @@ impl LadderOpponentEngineV1 {
     }
 
     /// See [`ladder_pool_member_for_episode_v1`]; exposed as a method for a
-    /// single cohesive engine API surface.
+    /// single cohesive engine API surface. EVAL-ONLY override: when this
+    /// engine was built via [`Self::head_to_head_eval_v1`]
+    /// (`force_policy_member_v1 = true`), always returns `Primary` without
+    /// touching the seed-derived threshold rule at all -- see that
+    /// constructor's docs for why this is safe and why it never affects a
+    /// `new_v1`-built engine.
     pub(crate) fn pool_member_for_episode_v1(
         &self,
         base_seed: u64,
         episode_index: u64,
     ) -> Result<OpponentLadderPoolMemberV2, LadderOpponentErrorV1> {
+        if self.force_policy_member_v1 {
+            return Ok(OpponentLadderPoolMemberV2::Primary);
+        }
         ladder_pool_member_for_episode_v1(base_seed, episode_index)
     }
 
@@ -621,6 +737,69 @@ mod tests {
     // in-memory genesis checkpoint instead (no real Store, no D:\
     // dependency), since determinism of the seed/sampling MATH is what is
     // under test here, not any particular checkpoint's content.
+
+    // ------------------------------------------------------------------
+    // EVAL-ONLY constructor (head-to-head evaluator, Deliverable 2): the
+    // forced-policy-member override never falls through to the seed-derived
+    // threshold rule, across a spread of seeds/episodes wide enough to hit
+    // every one of the 40/20/20/20 bands under the normal rule (so this
+    // test would fail if the override were accidentally a no-op).
+    // ------------------------------------------------------------------
+
+    fn one_genesis_checkpoint_handle_v1() -> NativeCheckpointInferenceV1 {
+        use crate::native_checkpoint_inference_v1::load_native_checkpoint_inference_v1;
+        use crate::native_training_executor_v1::NativeTrainingExecutorV1;
+        use crate::native_training_store_checkpoint_v3::build_genesis_checkpoint_manifest_v3;
+        use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
+
+        let run_bytes = test_fixture_bytes_v2();
+        let run = decode_train_run_v2(&run_bytes).unwrap();
+        let (snapshot_manifest, snapshot_payload) =
+            crate::common_model_snapshot_v1::common_model_snapshot_paths_v1();
+        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            determinism_execution_config_v1(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let payload = executor.checkpoint_candidate_v1().unwrap().payload().to_vec();
+        let checkpoint = build_genesis_checkpoint_manifest_v3(&run, &payload).unwrap();
+        load_native_checkpoint_inference_v1(&run, &checkpoint, &payload).unwrap()
+    }
+
+    #[test]
+    fn head_to_head_eval_engine_always_selects_a_policy_member() {
+        let engine = LadderOpponentEngineV1::head_to_head_eval_v1(
+            one_genesis_checkpoint_handle_v1(),
+            one_genesis_checkpoint_handle_v1(),
+            one_genesis_checkpoint_handle_v1(),
+        );
+        // Same base_seed/episode spread `ladder_pool_member_for_episode_matches_derived_seed_threshold`
+        // uses; under the NORMAL (non-eval) rule these seeds/episodes span
+        // all four pool members (proven by
+        // `pool_member_thresholds_hold_at_39_40_59_60_79_80_99_boundaries`
+        // and the wiring-proof test), so this exercise is not vacuous.
+        let base_seed = 71_501_u64;
+        for episode_index in [0_u64, 1, 2, 63, 64, 65, 4_095] {
+            assert_eq!(
+                engine
+                    .pool_member_for_episode_v1(base_seed, episode_index)
+                    .unwrap(),
+                OpponentLadderPoolMemberV2::Primary
+            );
+        }
+        // The three slots are independently loaded handles onto the SAME
+        // checkpoint bytes, so a policy decision must still succeed
+        // end-to-end through the eval-only engine.
+        let (globals, actions) = determinism_decision_view_parts_v1();
+        let view = FlatScoringDecisionViewV2::new(
+            &globals, &[], &[], &[], &[], &[], &[], &[], &[], &actions, &[],
+        );
+        let action = engine
+            .select_policy_action_v1(OpponentLadderPoolMemberV2::Primary, view, 12_345)
+            .unwrap();
+        assert_eq!(action, 0);
+    }
 
     // ------------------------------------------------------------------
     // Fixture (b): cross-process determinism (contract Section 7). Same
