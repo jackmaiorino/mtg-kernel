@@ -659,11 +659,29 @@ pub struct OpponentLadderCheckpointRefV1 {
 /// The continual-initialization checkpoint reference (Self-Play Ladder
 /// Design Contract S2, Amendment 1 / Section 8A point 2): rung N's learner
 /// initializes generation 0 from THIS checkpoint instead of the common
-/// model snapshot. Fields are exactly [`OpponentLadderCheckpointRefV1`]'s
-/// (same five-field hash-pin: source run, generation within that run, and
-/// the three artifact digests re-validated at load) -- a deliberately
-/// separate type, not a reuse of that one, so the two sections stay
-/// independently versioned even though their shapes currently coincide.
+/// model snapshot. The first five fields are exactly
+/// [`OpponentLadderCheckpointRefV1`]'s (same five-field hash-pin: source
+/// run, generation within that run, and the three artifact digests
+/// re-validated at load) -- a deliberately separate type, not a reuse of
+/// that one, so the two sections stay independently versioned even though
+/// their shapes largely coincide.
+///
+/// `derived_model_parameter_sha256` (design directive slice 2, making
+/// ladder-init records SELF-CONTAINED for genesis validation): the
+/// weights-only genesis payload's model-parameter digest, computed at
+/// authoring time from the resolved reference via
+/// `derive_genesis_weights_only_payload_v2_v3` +
+/// `derive_genesis_model_parameter_sha256_v2_v3`
+/// (`native_training_store_checkpoint_v3`). A REQUIRED field of this
+/// section (not an `Option`): every record carrying the section carries a
+/// complete, self-verifiable pin, so genesis validation
+/// (`decode_genesis_checkpoint_manifest_v2_v3_self_contained`) never needs
+/// to resolve the reference checkpoint from the filesystem. Shape-validated
+/// as sha256-hex like the other five fields; see
+/// `stage_ladder_checkpoint_initialization_v1`
+/// (`native_ladder_pool_resolution_v1`) for the staging helper that keeps
+/// record authoring and genesis authoring from ever independently
+/// disagreeing about it.
 ///
 /// Presence rule (validated in [`validate_opponent_policy_and_ladder_pool_v2`]):
 /// MUST be absent for the uniform identity; MAY be present or absent for the
@@ -679,6 +697,7 @@ pub struct OpponentLadderInitializationContractV1 {
     pub(crate) checkpoint_sha256: String,
     pub(crate) sidecar_sha256: String,
     pub(crate) state_sha256: String,
+    pub(crate) derived_model_parameter_sha256: String,
 }
 
 /// The fourth pool slot: the uniform sampler, reused verbatim via the
@@ -1700,6 +1719,7 @@ fn validate_opponent_ladder_initialization_v1(
         || !is_sha256(&init.checkpoint_sha256)
         || !is_sha256(&init.sidecar_sha256)
         || !is_sha256(&init.state_sha256)
+        || !is_sha256(&init.derived_model_parameter_sha256)
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidScalar));
     }
@@ -3808,6 +3828,7 @@ mod tests {
             checkpoint_sha256: hex64('d'),
             sidecar_sha256: hex64('d'),
             state_sha256: hex64('d'),
+            derived_model_parameter_sha256: hex64('e'),
         }
     }
 
@@ -3927,6 +3948,15 @@ mod tests {
             .as_mut()
             .unwrap()
             .state_sha256 = "not-a-sha256".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record_with_init();
+        record
+            .contracts
+            .opponent_ladder_initialization
+            .as_mut()
+            .unwrap()
+            .derived_model_parameter_sha256 = "not-a-sha256".to_owned();
         cases.push(record);
 
         for record in cases {
