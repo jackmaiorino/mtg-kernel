@@ -2088,4 +2088,95 @@ mod windows_science_loop_tests {
             );
         }
     }
+
+    /// GEN-0 AS SELECTION CANDIDATE (Self-Play Ladder Design Contract S2,
+    /// Amendment 1 / Section 8A point 2, Deliverable 4): under continual
+    /// initialization, generation 0 -- the inherited checkpoint itself --
+    /// joins the evaluated selection schedule as a genuine candidate, not
+    /// merely the delta reference, so best-panel selection structurally
+    /// cannot return worse than the initialization. This proves the
+    /// mechanism `ladder_saturation_eval_v1`'s LADDER_EVAL_GENS loop relies
+    /// on when `0` is one of the requested generations: loading generation 0
+    /// as BOTH the reference and the candidate runs it through the exact
+    /// same `run_native_checkpoint_v1` / `evaluate_native_checkpoint_uniform_delta_v1`
+    /// path with no special-casing, trips no assert, and produces an exact
+    /// zero delta by construction. Exercised against a real (trained)
+    /// LADDER-identity store -- the ladder fixture builder, not the uniform
+    /// one -- since the probe itself takes its stores from env vars this
+    /// test cannot depend on. Uses the real ladder pilot pool.json
+    /// (read-only) for a structurally valid pool section; the opponent
+    /// engine passed to the trainer is `None` (uniform fallback), since
+    /// this test's subject is checkpoint SELECTION machinery, not the
+    /// opponent engine.
+    #[test]
+    fn ladder_gen_zero_as_both_reference_and_candidate_runs_cleanly() {
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_with_schedule_and_base_seed_ladder_v2, OpponentLadderPoolContractV1,
+        };
+
+        let pool_bytes = fs::read(r"D:\mtg-kernel-ladder-pilot-20260725\pool\pool.json")
+            .expect("real ladder pilot pool.json must be readable");
+        let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
+            .expect("pool.json must decode as OpponentLadderPoolContractV1");
+
+        let patched = test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            2,
+            4,
+            4,
+            2,
+            4,
+            8,
+            32_768,
+            65_536,
+            555_002,
+            pool,
+        );
+        let run = decode_train_run_v2(&patched).expect("ladder run record");
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let parent = TestParentV1::new("ladder-gen-zero-candidate");
+
+        run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+            None,
+        )
+        .expect("ladder science loop");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&parent.parent.join("store"))
+            .expect("validated store root");
+
+        // LADDER_EVAL_GENS's own loop body: gen 0 as the reference AND, here,
+        // gen 0 again in place of a later `generation` drawn from the
+        // requested list.
+        let reference_boundary = load_native_training_boundary_v2(&root, &run, 0).unwrap();
+        let reference_run = run_native_checkpoint_v1(
+            &run,
+            reference_boundary.checkpoint(),
+            reference_boundary.payload(),
+            runner_config_v1(),
+        )
+        .unwrap();
+        let candidate_boundary = load_native_training_boundary_v2(&root, &run, 0).unwrap();
+        let candidate_run = run_native_checkpoint_v1(
+            &run,
+            candidate_boundary.checkpoint(),
+            candidate_boundary.payload(),
+            runner_config_v1(),
+        )
+        .unwrap();
+        let evaluation =
+            evaluate_native_checkpoint_uniform_delta_v1(&reference_run, &candidate_run).unwrap();
+        assert_eq!(evaluation.reference_generation_index(), 0);
+        assert_eq!(evaluation.candidate_generation_index(), 0);
+        assert_eq!(evaluation.total_candidate_minus_reference_reward_delta(), 0);
+        assert_eq!(
+            evaluation.reference_learner_outcomes(),
+            evaluation.candidate_learner_outcomes()
+        );
+    }
 }
