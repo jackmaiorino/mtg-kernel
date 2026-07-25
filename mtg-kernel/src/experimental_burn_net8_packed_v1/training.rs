@@ -9,8 +9,9 @@
 
 use super::*;
 use crate::native_policy_train_step_v1::{
-    NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
-    NativePolicyValueTrainSnapshotV1, ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1,
+    wide_owned_train_snapshot_state_sha256_v1, NativePolicyForwardInputV1,
+    NativePolicyPhysicalDecisionV1, NativePolicySubstepV1, NativePolicyValueTrainSnapshotV1,
+    ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1,
 };
 // Capacity-experiment wide-net (kernel-policy-value-net-8w128) sibling of
 // PARAMETER_COUNT_V1, used only by ExperimentalDeviceTrainStateV1's wide
@@ -362,7 +363,7 @@ impl ExperimentalDeviceTrainStateV1 {
         snapshot: &NativePolicyValueTrainSnapshotV1,
         device: &burn_cuda::CudaDevice,
     ) -> Result<Self, Box<dyn Error>> {
-        snapshot.state_sha256_v1()?;
+        wide_owned_train_snapshot_state_sha256_v1(snapshot)?;
         let model = ProductionNet8::<CudaAutodiffBackendV1>::import_native_wide_v1(
             &snapshot.parameters,
             device,
@@ -3873,7 +3874,8 @@ mod tests {
         let (wide_model, _record) =
             build_wide_model_candidate_v1(&manifest_path, &payload_path).unwrap();
         let mut state = NativePolicyValueTrainStateWideV1::new_wide_v1(wide_model).unwrap();
-        let genesis_sha256 = state.snapshot_v1().unwrap().state_sha256_v1().unwrap();
+        let genesis_sha256 =
+            wide_owned_train_snapshot_state_sha256_v1(&state.snapshot_v1().unwrap()).unwrap();
 
         let cases = load_real_fixture_cases().unwrap();
         const UPDATES: u64 = 4;
@@ -3947,7 +3949,10 @@ mod tests {
         // numerics layer): encode the trained snapshot, decode it back
         // through the verified decoder, and require an exact match.
         let trained_snapshot = state.snapshot_v1().unwrap();
-        assert_ne!(trained_snapshot.state_sha256_v1().unwrap(), genesis_sha256);
+        assert_ne!(
+            wide_owned_train_snapshot_state_sha256_v1(&trained_snapshot).unwrap(),
+            genesis_sha256
+        );
         let encoded = encode_native_train_state_payload_wide_v1(&trained_snapshot).unwrap();
         let decoded = decode_native_train_state_payload_verified_wide_v1(
             &encoded.bytes,
@@ -3967,7 +3972,7 @@ mod tests {
                 "updates": UPDATES,
                 "decisions_per_update": DECISIONS,
                 "genesis_state_sha256": genesis_sha256.iter().map(|b| format!("{b:02x}")).collect::<String>(),
-                "final_state_sha256": trained_snapshot.state_sha256_v1().unwrap().iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                "final_state_sha256": wide_owned_train_snapshot_state_sha256_v1(&trained_snapshot).unwrap().iter().map(|b| format!("{b:02x}")).collect::<String>(),
                 "final_adam_step": state.adam_step_v1(),
                 "checkpoint_payload_byte_count": encoded.bytes.len(),
             })

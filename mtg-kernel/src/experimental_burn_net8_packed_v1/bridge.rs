@@ -24,6 +24,10 @@ use crate::native_policy_train_step_v1::{
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
     NativePolicyValueTrainStateWideV1, NativeSelectedOutputV1, ScorerBiasGaugeAccumulatorV1,
 };
+// Only the #[cfg(test)] measurement-mode diagnostic below needs the wide
+// snapshot hash; gated the same way to stay warning-free in normal builds.
+#[cfg(test)]
+use crate::native_policy_train_step_v1::wide_owned_train_snapshot_state_sha256_v1;
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use std::error::Error;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -754,12 +758,15 @@ fn train_step_cuda_burn_dense_inner_v1(
         // sentinel.
         let (scorer_weight_norm, value_weight_norm) =
             measurement_scale_proxies.expect("measurement mode set");
-        let snapshot_digest = snapshot
-            .state_sha256_v1()
-            .expect("measurement snapshot hash")
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
+        let snapshot_digest = if wide {
+            wide_owned_train_snapshot_state_sha256_v1(&snapshot)
+        } else {
+            snapshot.state_sha256_v1()
+        }
+        .expect("measurement snapshot hash")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
         let record = QualificationUpdateRecordV1 {
             adam_step_before: snapshot.adam_step,
             snapshot_state_sha256: snapshot_digest,
