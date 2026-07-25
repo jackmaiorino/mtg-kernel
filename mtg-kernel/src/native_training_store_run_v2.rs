@@ -2400,8 +2400,17 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
 /// function (not a flag on the existing ladder builder) for the same reason
 /// the ladder builder is separate from the uniform one: the fresh-init
 /// ladder fixture's bytes stay byte-identical by construction.
+///
+/// Currently unused outside this module's own round-trip/corruption tests
+/// (`native_training_store_run_v2::tests`), which exercise the schema
+/// directly against `TrainRunV2` rather than through this wire-bytes
+/// builder: `run_native_science_loop_v1`'s genesis path cannot yet consume
+/// an init-bearing record (Deliverable 3's STOP finding -- generation 0 is
+/// structurally bound to the frozen common model snapshot, see
+/// `native_training_store_checkpoint_v3::tests::genesis_authoring_rejects_a_real_trained_payload_structurally`).
+/// Retained ready for whenever that store-contract question is resolved.
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)]
 pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
     backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
     batch_episodes: u64,

@@ -1491,6 +1491,49 @@ mod tests {
         );
     }
 
+    /// STRUCTURAL OBSTACLE, documented as a permanent regression (Self-Play
+    /// Ladder Design Contract S2, Amendment 1 / Section 8A point 2,
+    /// Deliverable 3 STOP finding). `validate_genesis_snapshot_v3` (this
+    /// module) is invoked unconditionally by `decode_checkpoint_manifest_v3`
+    /// -- the ONLY entry point `build_genesis_checkpoint_manifest_v3` uses,
+    /// and the ONLY way to author a generation-0 checkpoint -- for EVERY run
+    /// record, with no branch for the ladder identity and no override
+    /// mechanism. It requires the candidate payload's model-parameter
+    /// digests to equal `run.record().model_snapshot`'s digests, which are
+    /// themselves independently pinned equal to the ONE frozen
+    /// Python-authoritative common snapshot for every run record without
+    /// exception (`validate_snapshot_v1` in `native_training_store_run_v2.rs`),
+    /// and requires every Adam moment to be exact positive-zero.
+    /// `decode_trained_checkpoint_manifest_v3` independently rejects
+    /// `generation_index == 0` outright (`CrossBinding`), so there is no
+    /// alternate path to a generation-0 authority either. A REAL trained
+    /// checkpoint's payload (nonzero Adam moments after real gradient
+    /// updates, and a different parameter digest than the frozen snapshot
+    /// regardless) fails this gate. CONCLUSION: generation 0 is
+    /// structurally, permanently bound to the frozen common model snapshot;
+    /// "seed generation 0's state from the referenced checkpoint" (Section
+    /// 8A point 2) is not representable without editing
+    /// `validate_genesis_snapshot_v3` itself (and
+    /// `decode_trained_checkpoint_manifest_v3`'s parallel
+    /// `generation_index == 0` rejection) -- store-contract surgery, out of
+    /// scope for this task per its own STOP instruction. Read-only real
+    /// evidence (a genuinely trained S1 checkpoint), not a fixture.
+    #[test]
+    fn genesis_authoring_rejects_a_real_trained_payload_structurally() {
+        const REAL_TRAINED_STATE_PATH: &str = r"D:\mtg-kernel-s1-mirror-20260724\dev1\run-0\store\checkpoints\update-00000032.state.f32le";
+        let real_payload = std::fs::read(REAL_TRAINED_STATE_PATH).unwrap_or_else(|error| {
+            panic!(
+                "could not read the real trained state fixture at {REAL_TRAINED_STATE_PATH}: {error}"
+            )
+        });
+        let run = run_v3();
+        let error = build_genesis_checkpoint_manifest_v3(&run, &real_payload).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            CheckpointManifestV3ErrorKind::GenesisSnapshotMismatch
+        );
+    }
+
     #[test]
     fn real_k2_s4_trained_authority_roundtrips_only_with_the_exact_chain() {
         let fixture = trained_fixture_v3();

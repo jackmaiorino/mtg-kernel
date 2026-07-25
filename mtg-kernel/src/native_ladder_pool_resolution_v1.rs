@@ -253,6 +253,23 @@ fn store_directory_basename_v1(final_name: NativeTrainingStoreFinalNameV2) -> &'
         .expect("checkpoint/sidecar/state-payload final names always live under a subdirectory")
 }
 
+/// Reads one named artifact under `base_dir`, with no digest check -- the
+/// shared file-location logic behind both [`read_and_gate_v1`] (verify) and
+/// [`stage_ladder_checkpoint_ref_v1`] (compute, the opposite direction).
+fn read_named_artifact_bytes_v1(
+    base_dir: &Path,
+    final_name: NativeTrainingStoreFinalNameV2,
+    kind: LadderPoolResolutionFileKindV1,
+) -> Result<Vec<u8>, LadderPoolResolutionErrorV1> {
+    let basename = final_name
+        .final_basename()
+        .map_err(|_| LadderPoolResolutionErrorV1::FileIo { file: kind })?;
+    let path = base_dir
+        .join(store_directory_basename_v1(final_name))
+        .join(basename);
+    std::fs::read(&path).map_err(|_| LadderPoolResolutionErrorV1::FileIo { file: kind })
+}
+
 /// Reads one named artifact under `base_dir`, hashes it, and fails closed if
 /// the hash does not match `expected_hex` -- BEFORE any parsing of the bytes.
 fn read_and_gate_v1(
@@ -261,14 +278,7 @@ fn read_and_gate_v1(
     kind: LadderPoolResolutionFileKindV1,
     expected_hex: &str,
 ) -> Result<Vec<u8>, LadderPoolResolutionErrorV1> {
-    let basename = final_name
-        .final_basename()
-        .map_err(|_| LadderPoolResolutionErrorV1::FileIo { file: kind })?;
-    let path = base_dir
-        .join(store_directory_basename_v1(final_name))
-        .join(basename);
-    let bytes =
-        std::fs::read(&path).map_err(|_| LadderPoolResolutionErrorV1::FileIo { file: kind })?;
+    let bytes = read_named_artifact_bytes_v1(base_dir, final_name, kind)?;
     let actual = lower_hex_raw32_v1(sha256_v1(&bytes));
     if actual != expected_hex {
         return Err(LadderPoolResolutionErrorV1::DigestMismatch {
@@ -278,6 +288,56 @@ fn read_and_gate_v1(
         });
     }
     Ok(bytes)
+}
+
+/// Computes an [`OpponentLadderCheckpointRefV1`]-shaped digest set for a
+/// checkpoint at `generation` under `base_dir`, entirely from the files on
+/// disk (the source run identity from `run.json`'s own `run_sha256`, plus
+/// the three pinned artifact digests) -- the same digest computation
+/// [`resolve_ladder_checkpoint_authority_v1`] re-validates at load time, run
+/// here in the OPPOSITE direction (compute, not check). This is a STAGING
+/// helper for harnesses that need to mint a ref (a pool member, or Amendment
+/// 1 / Section 8A point 2's continual-initialization section) from a
+/// checkpoint that already exists on disk, without hand-maintaining a JSON
+/// file of pre-computed digests. The returned struct's fields map 1:1 onto
+/// [`crate::native_training_store_run_v2::OpponentLadderInitializationContractV1`]
+/// (identical shape); callers pick whichever wrapper their record section
+/// needs.
+pub(crate) fn stage_ladder_checkpoint_ref_v1(
+    base_dir: &Path,
+    generation: u64,
+) -> Result<OpponentLadderCheckpointRefV1, LadderPoolResolutionErrorV1> {
+    let run_bytes = std::fs::read(base_dir.join("run.json"))
+        .map_err(|_| LadderPoolResolutionErrorV1::RunFileIo)?;
+    let run = decode_train_run_v2(&run_bytes)?;
+    let checkpoint_bytes = read_named_artifact_bytes_v1(
+        base_dir,
+        NativeTrainingStoreFinalNameV2::CheckpointManifest {
+            generation_index: generation,
+        },
+        LadderPoolResolutionFileKindV1::Checkpoint,
+    )?;
+    let sidecar_bytes = read_named_artifact_bytes_v1(
+        base_dir,
+        NativeTrainingStoreFinalNameV2::CheckpointSidecar {
+            generation_index: generation,
+        },
+        LadderPoolResolutionFileKindV1::Sidecar,
+    )?;
+    let state_bytes = read_named_artifact_bytes_v1(
+        base_dir,
+        NativeTrainingStoreFinalNameV2::StatePayload {
+            generation_index: generation,
+        },
+        LadderPoolResolutionFileKindV1::StatePayload,
+    )?;
+    Ok(OpponentLadderCheckpointRefV1 {
+        source_run_sha256: run.run_sha256().to_owned(),
+        generation,
+        checkpoint_sha256: lower_hex_raw32_v1(sha256_v1(&checkpoint_bytes)),
+        sidecar_sha256: lower_hex_raw32_v1(sha256_v1(&sidecar_bytes)),
+        state_sha256: lower_hex_raw32_v1(sha256_v1(&state_bytes)),
+    })
 }
 
 /// Resolves one checkpoint ref to a validated, chain-proven authority. See
@@ -605,55 +665,50 @@ mod tests {
     const REAL_STORE_ROOT: &str = r"D:\mtg-kernel-s1-mirror-20260724\dev1\run-1\store";
     const REAL_GENERATION: u64 = 256;
 
+    /// Also exercises [`stage_ladder_checkpoint_ref_v1`] end-to-end against a
+    /// real store (Amendment 1 / Section 8A point 2 pilot harness wiring):
+    /// this used to hand-roll the same read-three-files-and-hash logic
+    /// inline; now it calls the shared staging helper, so this fixture's own
+    /// downstream tests (the digest gate matching positively, the loader
+    /// resolving to a real engine decision) double as that helper's
+    /// correctness proof against real Store bytes. Pinned digests are
+    /// computed by hashing the real files at test start (contract Section 7
+    /// fixture (a): "compute the pinned digests for the test by hashing the
+    /// real files"), so this also exercises the digest gate POSITIVELY: the
+    /// ref's pins are exactly this run's real bytes, so resolution only
+    /// succeeds because the gate matches.
     fn real_checkpoint_ref_v1() -> OpponentLadderCheckpointRefV1 {
-        let base_dir = std::path::Path::new(REAL_STORE_ROOT);
-        let run_bytes = fs::read(base_dir.join("run.json")).unwrap_or_else(|error| {
-            panic!("could not read the real S1 mirror run.json at {REAL_STORE_ROOT}: {error}")
-        });
-        let run = decode_train_run_v2(&run_bytes).expect("real S1 run.json must validate");
-        let checkpoint_bytes = fs::read(
-            base_dir.join("checkpoints").join(
-                NativeTrainingStoreFinalNameV2::CheckpointManifest {
-                    generation_index: REAL_GENERATION,
-                }
-                .final_basename()
-                .unwrap(),
-            ),
-        )
-        .unwrap();
-        let sidecar_bytes = fs::read(
-            base_dir.join("checkpoints").join(
-                NativeTrainingStoreFinalNameV2::CheckpointSidecar {
-                    generation_index: REAL_GENERATION,
-                }
-                .final_basename()
-                .unwrap(),
-            ),
-        )
-        .unwrap();
-        let state_bytes = fs::read(
-            base_dir.join("checkpoints").join(
-                NativeTrainingStoreFinalNameV2::StatePayload {
-                    generation_index: REAL_GENERATION,
-                }
-                .final_basename()
-                .unwrap(),
-            ),
-        )
-        .unwrap();
-        // Pinned digests for the test computed by hashing the real files at
-        // test start (contract Section 7 fixture (a): "compute the pinned
-        // digests for the test by hashing the real files"), constructing
-        // the ref from them. This also exercises the digest gate
-        // POSITIVELY: the ref's pins are exactly this run's real bytes, so
-        // resolution only succeeds because the gate matches.
-        OpponentLadderCheckpointRefV1 {
-            source_run_sha256: run.run_sha256().to_owned(),
-            generation: REAL_GENERATION,
-            checkpoint_sha256: lower_hex_raw32_v1(sha256_v1(&checkpoint_bytes)),
-            sidecar_sha256: lower_hex_raw32_v1(sha256_v1(&sidecar_bytes)),
-            state_sha256: lower_hex_raw32_v1(sha256_v1(&state_bytes)),
-        }
+        stage_ladder_checkpoint_ref_v1(std::path::Path::new(REAL_STORE_ROOT), REAL_GENERATION)
+            .expect("real S1 mirror checkpoint must resolve to a validated staged ref")
+    }
+
+    /// Independent cross-check for [`stage_ladder_checkpoint_ref_v1`]
+    /// (Amendment 1 / Section 8A point 2 pilot harness wiring): the
+    /// computed digests must match the ladder pilot's real, already-published
+    /// `pool.json` PRIMARY entry exactly -- values independently produced by
+    /// a different mechanism (the pool-staging process that authored that
+    /// file) rather than by this function itself, so agreement is real
+    /// evidence, not tautology. Read-only real evidence, not a fixture.
+    #[test]
+    fn stage_ladder_checkpoint_ref_v1_matches_the_real_pilot_pool_json_primary_entry() {
+        const POOL_PRIMARY_STORE_ROOT: &str = r"D:\mtg-kernel-ladder-pilot-20260725\pool\primary";
+        let staged =
+            stage_ladder_checkpoint_ref_v1(std::path::Path::new(POOL_PRIMARY_STORE_ROOT), 256)
+                .expect("real pilot pool primary checkpoint must resolve to a staged ref");
+        assert_eq!(
+            staged,
+            OpponentLadderCheckpointRefV1 {
+                source_run_sha256:
+                    "520d3b849ac3ff37ea50a0498acf335885625feaed5437539bec5c42c5896b06".to_owned(),
+                generation: 256,
+                checkpoint_sha256:
+                    "b051f364fa69185ae9bd2bd7bcfa3a23a974742bd002efbf04c7453885ab688f".to_owned(),
+                sidecar_sha256: "702bcb64164453011572e95db1a6ae1fe2b392ee83531c0d68ed07180cdf1874"
+                    .to_owned(),
+                state_sha256: "ddbacacc6f9108fef9c1dd9e704e4d35fbbbc37f44a74526d27b0b3fb607f6db"
+                    .to_owned(),
+            }
+        );
     }
 
     fn real_ladder_pool_fixture_v1(
