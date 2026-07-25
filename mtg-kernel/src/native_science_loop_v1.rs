@@ -18,6 +18,7 @@ use crate::native_checkpoint_evaluator_v1::{
 use crate::native_checkpoint_runner_v1::{
     run_native_checkpoint_v1, NativeCheckpointRunResultV1, NativeCheckpointRunnerConfigV1,
 };
+use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_training_executor_v1::{
     NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1,
 };
@@ -44,6 +45,7 @@ use crate::native_training_store_v2::{
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeScienceLoopV1ErrorKind {
@@ -173,6 +175,18 @@ impl NativeScienceLoopReportV1 {
 /// genesis generation whenever no `latest.json` final exists, train to the
 /// run's target entirely through resume-reconstructed executors, validate the
 /// complete Store, then run and evaluate the update-zero and latest boundaries.
+///
+/// `ladder_opponent` is the Self-Play Ladder Design Contract S2 opponent
+/// engine (Section 5): `None` reproduces today's uniform-opponent behavior
+/// exactly and is what every caller outside the ladder pilot integration
+/// passes; `Some(engine)` is threaded onto every window's reconstructed
+/// executor before that window trains.
+///
+/// `LadderOpponentEngineV1` is deliberately `pub(crate)` (see its module
+/// docs): only this crate can ever construct `Some(engine)`, so this stays a
+/// sealed capability parameter for external callers, who can still call this
+/// function with `None`.
+#[allow(private_interfaces)]
 pub fn run_native_science_loop_v1(
     parent: impl AsRef<Path>,
     root_basename: &str,
@@ -181,6 +195,7 @@ pub fn run_native_science_loop_v1(
     snapshot_manifest_path: &Path,
     snapshot_payload_path: &Path,
     runner_config: NativeCheckpointRunnerConfigV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
 ) -> Result<NativeScienceLoopReportV1> {
     use crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2ErrorKind;
 
@@ -259,6 +274,14 @@ pub fn run_native_science_loop_v1(
             } => break latest_generation_index,
             NativeTrainingStoreResumeV2::Continue(mut continuation) => {
                 let train_error = loop_error_v1(NativeScienceLoopV1ErrorKind::TrainFailed);
+                // Self-Play Ladder Design Contract S2, Section 5. Every
+                // window trains on a freshly reconstructed executor
+                // (`resume_native_training_store_v2`'s own design); the
+                // ladder engine (when configured) is threaded onto each one
+                // here, before that window's update runs.
+                continuation
+                    .executor
+                    .set_ladder_opponent_v1(ladder_opponent.clone());
                 let prepared = prepare_segment_v2(
                     &mut continuation.executor,
                     run,
@@ -458,6 +481,7 @@ mod windows_science_loop_tests {
             &snapshot_manifest,
             &snapshot_payload,
             runner_config,
+            None,
         )
         .expect("learning smoke loop");
         let wall = started.elapsed().as_secs_f64();
@@ -576,29 +600,100 @@ mod windows_science_loop_tests {
         } else {
             None
         };
+        // Self-Play Ladder Design Contract S2, Section 6 (pilot). MULTIRUN_LADDER=1
+        // builds a ladder opponent engine from MULTIRUN_LADDER_POOL_DIR (a
+        // directory with three subdirectories -- primary/, pred-a/, pred-b/,
+        // each a complete Store root for that pool member's source run; see
+        // `native_ladder_pool_resolution_v1`'s module docs for why a full
+        // Store root is required for a nonzero-generation checkpoint -- plus
+        // pool.json carrying the `OpponentLadderPoolContractV1` JSON) and
+        // threads the same engine into every spawned run. Each run's record
+        // then carries the ladder identity + pool + schedule V2 sections
+        // (`test_fixture_bytes_with_schedule_and_base_seed_ladder_v2`)
+        // instead of the uniform identity; the uniform path (MULTIRUN_LADDER
+        // unset) is completely untouched.
+        let ladder_enabled = env_knob_v1("MULTIRUN_LADDER", 0) != 0;
+        let ladder_pool: Option<crate::native_training_store_run_v2::OpponentLadderPoolContractV1> =
+            if ladder_enabled {
+                let pool_dir = std::env::var("MULTIRUN_LADDER_POOL_DIR")
+                    .expect("MULTIRUN_LADDER=1 requires MULTIRUN_LADDER_POOL_DIR");
+                let pool_dir = std::path::PathBuf::from(pool_dir);
+                let pool_bytes = fs::read(pool_dir.join("pool.json"))
+                    .expect("MULTIRUN_LADDER_POOL_DIR/pool.json");
+                let pool = serde_json::from_slice(&pool_bytes)
+                    .expect("pool.json must decode as OpponentLadderPoolContractV1");
+                Some(pool)
+            } else {
+                None
+            };
+        let ladder_engine: Option<Arc<LadderOpponentEngineV1>> = match &ladder_pool {
+            Some(pool) => {
+                let pool_dir = std::path::PathBuf::from(
+                    std::env::var("MULTIRUN_LADDER_POOL_DIR")
+                        .expect("MULTIRUN_LADDER=1 requires MULTIRUN_LADDER_POOL_DIR"),
+                );
+                let (primary, predecessor_a, predecessor_b) =
+                    crate::native_ladder_pool_resolution_v1::resolve_ladder_pool_v1(
+                        pool,
+                        &pool_dir.join("primary"),
+                        &pool_dir.join("pred-a"),
+                        &pool_dir.join("pred-b"),
+                    )
+                    .expect("ladder pool members must resolve to validated checkpoint handles");
+                let engine = LadderOpponentEngineV1::new_v1(
+                    pool.clone(),
+                    primary,
+                    predecessor_a,
+                    predecessor_b,
+                )
+                .expect("MULTIRUN_LADDER_POOL_DIR/pool.json must match the frozen pool literals");
+                Some(Arc::new(engine))
+            }
+            None => None,
+        };
         println!(
             "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
              broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset} \
-             record_only={record_only}"
+             record_only={record_only} ladder={ladder_enabled}"
         );
         let started = std::time::Instant::now();
         let handles: Vec<_> = (0..run_count)
             .map(|ordinal| {
                 let durable_parent = durable_parent.clone();
+                let ladder_pool = ladder_pool.clone();
+                let ladder_engine = ladder_engine.clone();
                 std::thread::spawn(move || {
                     let run_seed = base_seed + seed_offset + ordinal as u64;
-                    let patched = test_fixture_bytes_with_schedule_and_base_seed_v2(
-                        NativeTrainingNumericalBackendV1::CudaBurnDense,
-                        64,
-                        4,
-                        updates,
-                        workers,
-                        sessions,
-                        broker_target,
-                        1_024,
-                        2_048,
-                        run_seed,
-                    );
+                    let patched = match &ladder_pool {
+                        Some(pool) => {
+                            use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_v2;
+                            test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+                                NativeTrainingNumericalBackendV1::CudaBurnDense,
+                                64,
+                                4,
+                                updates,
+                                workers,
+                                sessions,
+                                broker_target,
+                                1_024,
+                                2_048,
+                                run_seed,
+                                pool.clone(),
+                            )
+                        }
+                        None => test_fixture_bytes_with_schedule_and_base_seed_v2(
+                            NativeTrainingNumericalBackendV1::CudaBurnDense,
+                            64,
+                            4,
+                            updates,
+                            workers,
+                            sessions,
+                            broker_target,
+                            1_024,
+                            2_048,
+                            run_seed,
+                        ),
+                    };
                     let run = decode_train_run_v2(&patched).expect("pilot run record");
                     let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
                     let mut execution_config = test_execution_config_v2(&run);
@@ -637,6 +732,7 @@ mod windows_science_loop_tests {
                         &snapshot_manifest,
                         &snapshot_payload,
                         runner_config,
+                        ladder_engine.clone(),
                     )
                     .expect("pilot loop");
                     let wall = run_started.elapsed().as_secs_f64();
@@ -1379,6 +1475,7 @@ mod windows_science_loop_tests {
             &snapshot_manifest,
             &snapshot_payload,
             runner_config_v1(),
+            None,
         )
         .unwrap();
         assert_eq!(report.latest_generation_index(), target);
@@ -1451,6 +1548,7 @@ mod windows_science_loop_tests {
             &snapshot_manifest,
             &snapshot_payload,
             runner_config_v1(),
+            None,
         )
         .unwrap();
         assert_eq!(report.latest_generation_index(), 4);
@@ -1489,6 +1587,7 @@ mod windows_science_loop_tests {
             &snapshot_manifest,
             &snapshot_payload,
             runner_config_v1(),
+            None,
         )
         .unwrap_err();
         assert_eq!(error.kind(), NativeScienceLoopV1ErrorKind::GenesisFailed);
@@ -1514,6 +1613,7 @@ mod windows_science_loop_tests {
             &snapshot_manifest,
             &snapshot_payload,
             runner_config_v1(),
+            None,
         )
         .unwrap_err();
         assert_eq!(error.kind(), NativeScienceLoopV1ErrorKind::TrainFailed);
@@ -1536,6 +1636,7 @@ mod windows_science_loop_tests {
             &snapshot_manifest,
             &snapshot_payload,
             runner_config_v1(),
+            None,
         )
         .unwrap();
         assert_eq!(first.latest_generation_index(), target);
@@ -1568,6 +1669,7 @@ mod windows_science_loop_tests {
             &snapshot_manifest,
             &snapshot_payload,
             runner_config_v1(),
+            None,
         )
         .unwrap();
         assert_eq!(second.latest_generation_index(), target);
