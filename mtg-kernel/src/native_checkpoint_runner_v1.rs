@@ -15,7 +15,8 @@ use crate::async_flat_scored_rollout_v2::{
 };
 use crate::async_rollout_v2::AsyncRolloutConfigV2;
 use crate::native_checkpoint_inference_v1::{
-    load_native_checkpoint_inference_v1, NativeCheckpointInferenceErrorV1,
+    load_native_checkpoint_inference_v1, load_native_checkpoint_inference_wide_v1,
+    NativeCheckpointInferenceErrorV1,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
@@ -576,6 +577,125 @@ fn run_native_checkpoint_core_v1(
     })
 }
 
+/// Capacity-experiment wide-net sibling of [`run_native_checkpoint_v1`]
+/// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3). EVALUATION ONLY: loads
+/// through [`load_native_checkpoint_inference_wide_v1`] instead, which
+/// itself fails closed unless `run`'s record carries
+/// `contracts.wide_model_experiment_v1`. Uniform opponent only (the wide
+/// protocol's panel/v0 curves and head-to-head reads are all uniform-anchor,
+/// exactly like the frozen probe this mirrors); no ladder-opponent-threaded
+/// variant exists for wide because none of this experiment's evaluation
+/// reads need one.
+pub fn run_native_checkpoint_wide_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    checkpoint_payload: &[u8],
+    config: NativeCheckpointRunnerConfigV1,
+) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    let topology = validate_runner_config_v1(run, config)?;
+    let expected_episode_count = usize::try_from(config.episode_count)
+        .map_err(|_| NativeCheckpointRunnerErrorV1::InvalidConfig)?;
+    let end_episode_index_exclusive = config
+        .first_episode_index
+        .checked_add(config.episode_count)
+        .ok_or(NativeCheckpointRunnerErrorV1::InvalidConfig)?;
+    let deck_hashes_hex = run.record().environment().deck_hashes_u64_hex();
+    let expected_deck_hashes = [
+        u64::from_str_radix(&deck_hashes_hex[0], 16)
+            .map_err(|_| NativeCheckpointRunnerErrorV1::Protocol)?,
+        u64::from_str_radix(&deck_hashes_hex[1], 16)
+            .map_err(|_| NativeCheckpointRunnerErrorV1::Protocol)?,
+    ];
+    let observer = NativeCheckpointRunnerObserverV1::new_v1(
+        config.evaluation_base_seed,
+        config.first_episode_index,
+        end_episode_index_exclusive,
+        expected_deck_hashes,
+        expected_episode_count,
+    )?;
+    let inference = load_native_checkpoint_inference_wide_v1(run, checkpoint, checkpoint_payload)?;
+    let identity_bundle_sha256 = parse_lower_hex_raw32_v1(run.identity_bundle_sha256())
+        .map_err(|_| NativeCheckpointRunnerErrorV1::Protocol)?;
+    let rollout_config = AsyncRolloutConfigV2 {
+        deck_ids: [
+            run.record().environment().deck_ids()[0].clone(),
+            run.record().environment().deck_ids()[1].clone(),
+        ],
+        learner_seat: PlayerSeatV1::P0,
+        environment_seed: config.evaluation_base_seed,
+        opponent_policy_seed: config.evaluation_base_seed,
+        learner_policy_seed: config.evaluation_base_seed,
+        max_physical_decisions: run.record().limits().max_physical_decisions(),
+        max_policy_steps: run.record().limits().max_policy_steps(),
+        worker_count: topology.0,
+        sessions_per_worker: topology.1,
+        broker_batch_target: topology.2,
+        first_episode_id: config.first_episode_index,
+        episode_count: config.episode_count,
+        scheduler_timeout: config.scheduler_timeout,
+        measure_broker_service_time: config.measure_broker_service_time,
+    };
+    let mut scorer = inference.batch_scorer_v1();
+    let observed = run_async_flat_scored_rollout_native_observed_v2(
+        rollout_config,
+        config.evaluation_base_seed,
+        None,
+        &mut scorer,
+        observer,
+    );
+    drop(scorer);
+    let (rollout, episode_bindings) = match observed {
+        Ok((rollout, episode_bindings)) => (rollout, episode_bindings),
+        Err(AsyncFlatScoredObservedRunErrorV2::Rollout(error)) => {
+            return Err(NativeCheckpointRunnerErrorV1::Rollout(error));
+        }
+        Err(AsyncFlatScoredObservedRunErrorV2::ObserverFailed { .. }) => {
+            return Err(NativeCheckpointRunnerErrorV1::Protocol);
+        }
+        Err(AsyncFlatScoredObservedRunErrorV2::ObserverPanicked { .. }) => {
+            return Err(NativeCheckpointRunnerErrorV1::Protocol);
+        }
+    };
+    if rollout.episodes.len() != expected_episode_count
+        || episode_bindings.len() != expected_episode_count
+        || !rollout.all_natural()
+        || rollout
+            .episodes
+            .iter()
+            .zip(&episode_bindings)
+            .any(|(episode, binding)| episode.terminal.episode_id != binding.episode_index)
+        || episode_bindings
+            .iter()
+            .enumerate()
+            .any(|(offset, binding)| {
+                u64::try_from(offset)
+                    .ok()
+                    .and_then(|offset| config.first_episode_index.checked_add(offset))
+                    != Some(binding.episode_index)
+            })
+    {
+        return Err(NativeCheckpointRunnerErrorV1::Protocol);
+    }
+    Ok(NativeCheckpointRunResultV1 {
+        run_sha256: inference.run_sha256(),
+        identity_bundle_sha256,
+        checkpoint_manifest_sha256: inference.checkpoint_manifest_sha256(),
+        checkpoint_payload_sha256: inference.checkpoint_payload_sha256(),
+        logical_state_sha256: checkpoint.logical_state_sha256(),
+        model_parameter_sha256: inference.model_parameter_sha256(),
+        train_state_sha256: inference.train_state_sha256(),
+        generation_index: inference.generation_index(),
+        batch_episodes: checkpoint.batch_episodes(),
+        checkpoint_segment_updates: checkpoint.checkpoint_segment_updates(),
+        config,
+        worker_count: topology.0,
+        sessions_per_worker: topology.1,
+        broker_batch_target: topology.2,
+        episode_bindings,
+        rollout,
+    })
+}
+
 fn validate_runner_config_v1(
     run: &ValidatedTrainRunV2,
     config: NativeCheckpointRunnerConfigV1,
@@ -864,6 +984,168 @@ mod tests {
             second.rollout().metrics.batch_membership_digest
         );
         assert!(!format!("{first:?}").contains("payload"));
+    }
+
+    // ------------------------------------------------------------------
+    // Capacity-experiment wide-net runner
+    // (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3). EVALUATION ONLY.
+    // ------------------------------------------------------------------
+
+    struct WideRunnerFixtureV1 {
+        run_bytes: Vec<u8>,
+        checkpoint_bytes: Vec<u8>,
+        payload: Vec<u8>,
+    }
+
+    static WIDE_RUNNER_FIXTURE_V1: OnceLock<WideRunnerFixtureV1> = OnceLock::new();
+
+    fn wide_zero_moment_payload_v1() -> Vec<u8> {
+        use crate::native_policy_train_step_v1::NativePolicyValueTrainSnapshotV1;
+        use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+        use crate::native_train_state_payload_v1::encode_native_train_state_payload_wide_v1;
+        let (manifest_path, payload_path) =
+            crate::common_model_snapshot_v1::wide_model_snapshot_paths_v1();
+        let (model, _record) = crate::common_model_snapshot_v1::build_wide_model_candidate_v1(
+            &manifest_path,
+            &payload_path,
+        )
+        .expect("real wide snapshot must load");
+        let parameters = model.parameter_snapshot_wide_v1();
+        let zero_moments: Vec<_> = parameters
+            .iter()
+            .map(|parameter| NativeNamedParameterV1 {
+                name: parameter.name,
+                shape: parameter.shape.clone(),
+                values: vec![0.0; parameter.values.len()],
+            })
+            .collect();
+        let scorer_bias_anchor_bits = parameters
+            .iter()
+            .find(|parameter| parameter.name == "scorer.2.bias")
+            .expect("scorer.2.bias tensor present")
+            .values[0]
+            .to_bits();
+        let snapshot = NativePolicyValueTrainSnapshotV1 {
+            adam_step: 0,
+            scorer_bias_anchor_bits,
+            parameters,
+            first_moments: zero_moments.clone(),
+            second_moments: zero_moments,
+        };
+        encode_native_train_state_payload_wide_v1(&snapshot)
+            .unwrap()
+            .bytes
+    }
+
+    fn wide_fixture_v1() -> &'static WideRunnerFixtureV1 {
+        WIDE_RUNNER_FIXTURE_V1.get_or_init(|| {
+            use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_wide_v2;
+            let run_bytes = test_fixture_bytes_with_schedule_and_base_seed_wide_v2(
+                NativeTrainingNumericalBackendV1::Sequential,
+                2,
+                4,
+                4,
+                2,
+                4,
+                8,
+                32_768,
+                65_536,
+                71501,
+            );
+            let run = decode_train_run_v2(&run_bytes).unwrap();
+            let payload = wide_zero_moment_payload_v1();
+            let checkpoint = build_genesis_checkpoint_manifest_v3(&run, &payload).unwrap();
+            WideRunnerFixtureV1 {
+                run_bytes,
+                checkpoint_bytes: checkpoint.canonical_bytes().to_vec(),
+                payload,
+            }
+        })
+    }
+
+    fn wide_authorities_v1() -> (ValidatedTrainRunV2, CheckpointManifestV3) {
+        let fixture = wide_fixture_v1();
+        let run = decode_train_run_v2(&fixture.run_bytes).unwrap();
+        let checkpoint = decode_genesis_checkpoint_manifest_v3(
+            &fixture.checkpoint_bytes,
+            &fixture.payload,
+            &run,
+        )
+        .unwrap();
+        (run, checkpoint)
+    }
+
+    /// The end-to-end proof (contract Section 5 freeze gate): a real wide
+    /// genesis checkpoint decodes, authority-binds, and plays one ACTUAL
+    /// evaluation game (a genuine seat-swapped pair via the real rollout
+    /// engine, not a synthetic decision), exactly like
+    /// `genuine_checkpoint_runs_complete_paired_native_schedule_repeatably`
+    /// proves for the frozen net.
+    #[test]
+    fn wide_checkpoint_runs_a_genuine_evaluation_game_end_to_end() {
+        let fixture = wide_fixture_v1();
+        let (run, checkpoint) = wide_authorities_v1();
+        let result =
+            run_native_checkpoint_wide_v1(&run, &checkpoint, &fixture.payload, runner_config_v1())
+                .expect("a real wide checkpoint must play a genuine evaluation game");
+
+        assert_eq!(result.generation_index(), 0);
+        assert_eq!(
+            result.run_sha256(),
+            parse_lower_hex_raw32_v1(run.run_sha256()).unwrap()
+        );
+        assert_eq!(result.rollout().episodes.len(), 2);
+        assert_eq!(result.episode_bindings().len(), 2);
+        assert_eq!(
+            result.episode_bindings()[0].learner_seat(),
+            PlayerSeatV1::P0
+        );
+        assert_eq!(
+            result.episode_bindings()[1].learner_seat(),
+            PlayerSeatV1::P1
+        );
+        assert!(result.rollout().all_natural());
+        assert!(result.rollout().metrics.scorer_batch_count > 1);
+        assert!(result.rollout().metrics.scored_decision_count > 1);
+        for binding in result.episode_bindings() {
+            assert_ne!(binding.trajectory_sha256(), [0; 32]);
+        }
+
+        // Fail-closed direction 1: the frozen runner rejects the wide-length
+        // payload against a real frozen checkpoint outright.
+        let (frozen_run, frozen_checkpoint) = authorities_v1();
+        match run_native_checkpoint_v1(
+            &frozen_run,
+            &frozen_checkpoint,
+            &fixture.payload,
+            runner_config_v1(),
+        )
+        .unwrap_err()
+        {
+            NativeCheckpointRunnerErrorV1::Inference(error) => assert_eq!(
+                error.kind(),
+                NativeCheckpointInferenceErrorKindV1::PayloadExactLength
+            ),
+            other => panic!("expected Inference(PayloadExactLength), got {other:?}"),
+        }
+
+        // Fail-closed direction 2: the wide runner rejects a real
+        // frozen-length payload against the wide checkpoint outright.
+        let frozen_fixture = fixture_v1();
+        match run_native_checkpoint_wide_v1(
+            &run,
+            &checkpoint,
+            &frozen_fixture.payload,
+            runner_config_v1(),
+        )
+        .unwrap_err()
+        {
+            NativeCheckpointRunnerErrorV1::Inference(error) => assert_eq!(
+                error.kind(),
+                NativeCheckpointInferenceErrorKindV1::PayloadExactLength
+            ),
+            other => panic!("expected Inference(PayloadExactLength), got {other:?}"),
+        }
     }
 
     #[test]
