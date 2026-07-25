@@ -7,6 +7,7 @@
 
 use crate::common_model_snapshot_v1::{
     PARAMETER_ELEMENT_COUNT_V1, PARAMETER_TENSOR_COUNT_V1, PAYLOAD_BYTE_COUNT_V1,
+    WIDE_PAYLOAD_BYTE_COUNT_V1,
 };
 use crate::native_policy_train_step_v1::{
     native_train_state_parameter_layout_v1, NativePolicyTrainErrorV1,
@@ -66,6 +67,58 @@ pub(crate) const NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1: [NativeTrainStatePayloa
 
 const _: [(); 4_923_976] = [(); NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1];
 const _: [(); 14_771_928] = [(); NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1];
+
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings.
+// Same ordered three-section (parameters/first_moments/second_moments)
+// layout, sized to the wide payload instead of the frozen one. The frozen
+// constants and asserts above are untouched.
+pub(crate) const W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1: usize = WIDE_PAYLOAD_BYTE_COUNT_V1;
+pub(crate) const W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1: usize =
+    W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1 * 3;
+
+pub(crate) const W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1:
+    [NativeTrainStatePayloadSectionLayoutV1; 3] = [
+    NativeTrainStatePayloadSectionLayoutV1 {
+        name: "parameters",
+        offset_bytes: 0,
+        byte_count: W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1,
+    },
+    NativeTrainStatePayloadSectionLayoutV1 {
+        name: "first_moments",
+        offset_bytes: W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1,
+        byte_count: W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1,
+    },
+    NativeTrainStatePayloadSectionLayoutV1 {
+        name: "second_moments",
+        offset_bytes: W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1 * 2,
+        byte_count: W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1,
+    },
+];
+
+const _: [(); 11_003_016] = [(); W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1];
+const _: [(); 33_009_048] = [(); W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1];
+
+#[cfg(test)]
+mod wide_payload_byte_count_tests {
+    use super::*;
+
+    #[test]
+    fn wide_section_and_payload_byte_counts_are_exactly_pinned() {
+        assert_eq!(W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1, 11_003_016);
+        assert_eq!(W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1, 33_009_048);
+        assert_eq!(
+            W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[0].byte_count
+                + W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[1].byte_count
+                + W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[2].byte_count,
+            W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+        );
+        assert_eq!(
+            W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[2].offset_bytes
+                + W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[2].byte_count,
+            W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+        );
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeTrainStatePayloadSectionLayoutV1 {
