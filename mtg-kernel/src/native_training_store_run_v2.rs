@@ -535,6 +535,17 @@ pub struct TrainRunContractsV2 {
     /// unaffected by this field's addition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) opponent_ladder_pool: Option<OpponentLadderPoolContractV1>,
+    /// Continual-initialization checkpoint reference (Self-Play Ladder
+    /// Design Contract S2, Amendment 1 / Section 8A point 2). MUST be absent
+    /// for the uniform identity. MAY be present or absent for the ladder
+    /// identity: absent means fresh init from the common model snapshot
+    /// (the pilot's historical shape); present means generation 0 seeds
+    /// from this referenced checkpoint instead. Omitted entirely from
+    /// canonical bytes when absent, so every existing run record (uniform
+    /// AND the pilot's real fresh-init ladder record) is byte-for-byte
+    /// unaffected by this field's addition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) opponent_ladder_initialization: Option<OpponentLadderInitializationContractV1>,
     /// Present if and only if `opponent_policy.identity` carries the ladder
     /// identity (Self-Play Ladder Design Contract S2, Section 2). Pins the
     /// V2 opponent seed-schedule namespace declarations layered on the V1
@@ -638,6 +649,31 @@ pub struct OpponentSamplerContractV2 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpponentLadderCheckpointRefV1 {
+    pub(crate) source_run_sha256: String,
+    pub(crate) generation: u64,
+    pub(crate) checkpoint_sha256: String,
+    pub(crate) sidecar_sha256: String,
+    pub(crate) state_sha256: String,
+}
+
+/// The continual-initialization checkpoint reference (Self-Play Ladder
+/// Design Contract S2, Amendment 1 / Section 8A point 2): rung N's learner
+/// initializes generation 0 from THIS checkpoint instead of the common
+/// model snapshot. Fields are exactly [`OpponentLadderCheckpointRefV1`]'s
+/// (same five-field hash-pin: source run, generation within that run, and
+/// the three artifact digests re-validated at load) -- a deliberately
+/// separate type, not a reuse of that one, so the two sections stay
+/// independently versioned even though their shapes currently coincide.
+///
+/// Presence rule (validated in [`validate_opponent_policy_and_ladder_pool_v2`]):
+/// MUST be absent for the uniform identity; MAY be present or absent for the
+/// ladder identity. Absent under the ladder identity means FRESH INIT (the
+/// pilot's historical shape, from the common model snapshot, which must
+/// keep validating forever -- see
+/// `real_ladder_pilot_run_json_validates_with_unchanged_run_sha256`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpponentLadderInitializationContractV1 {
     pub(crate) source_run_sha256: String,
     pub(crate) generation: u64,
     pub(crate) checkpoint_sha256: String,
@@ -1592,6 +1628,7 @@ fn validate_opponent_policy_and_ladder_pool_v2(contracts: &TrainRunContractsV2) 
         FROZEN_OPPONENT_POLICY_IDENTITY_V2 => {
             if contracts.opponent_policy.model_rule != FROZEN_OPPONENT_POLICY_MODEL_RULE_V2
                 || contracts.opponent_ladder_pool.is_some()
+                || contracts.opponent_ladder_initialization.is_some()
                 || contracts.opponent_schedule_v2.is_some()
             {
                 return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
@@ -1605,6 +1642,13 @@ fn validate_opponent_policy_and_ladder_pool_v2(contracts: &TrainRunContractsV2) 
             match &contracts.opponent_ladder_pool {
                 Some(pool) => validate_opponent_ladder_pool_v2(pool)?,
                 None => return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
+            }
+            // Amendment 1 / Section 8A point 2: MAY be present or absent
+            // under the ladder identity (absent = fresh init, the pilot's
+            // historical shape); shape-validate like the pool refs when
+            // present, but presence itself is never required.
+            if let Some(init) = &contracts.opponent_ladder_initialization {
+                validate_opponent_ladder_initialization_v1(init)?;
             }
             match &contracts.opponent_schedule_v2 {
                 Some(schedule) => validate_opponent_schedule_v2(schedule),
@@ -1639,6 +1683,25 @@ fn validate_opponent_ladder_pool_v2(pool: &OpponentLadderPoolContractV1) -> Resu
         {
             return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidScalar));
         }
+    }
+    Ok(())
+}
+
+/// Shape validator for the continual-initialization checkpoint reference
+/// (Amendment 1 / Section 8A point 2): no frozen literal to compare against
+/// (unlike the pool's fixed weights/identities, this section names a
+/// caller-chosen source checkpoint), so this mirrors exactly the pool refs'
+/// per-entry shape gate in [`validate_opponent_ladder_pool_v2`].
+fn validate_opponent_ladder_initialization_v1(
+    init: &OpponentLadderInitializationContractV1,
+) -> Result<()> {
+    if !is_sha256(&init.source_run_sha256)
+        || !is_u63(init.generation)
+        || !is_sha256(&init.checkpoint_sha256)
+        || !is_sha256(&init.sidecar_sha256)
+        || !is_sha256(&init.state_sha256)
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidScalar));
     }
     Ok(())
 }
@@ -2328,6 +2391,47 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
     )
 }
 
+/// Continual-initialization variant of
+/// [`test_fixture_bytes_with_schedule_and_base_seed_ladder_v2`] (Self-Play
+/// Ladder Design Contract S2, Amendment 1 / Section 8A point 2 pilot harness
+/// wiring): the SAME ladder fixture, plus the caller-supplied
+/// `initialization` section wired into
+/// `contracts.opponent_ladder_initialization`. Kept as a genuinely separate
+/// function (not a flag on the existing ladder builder) for the same reason
+/// the ladder builder is separate from the uniform one: the fresh-init
+/// ladder fixture's bytes stay byte-identical by construction.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+    pool: OpponentLadderPoolContractV1,
+    initialization: OpponentLadderInitializationContractV1,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_ladder_init(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+        pool,
+        initialization,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2882,6 +2986,48 @@ mod tests {
         record.contracts.opponent_policy.model_rule =
             FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
         record.contracts.opponent_ladder_pool = Some(pool);
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_ladder_init(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+        pool: OpponentLadderPoolContractV1,
+        initialization: OpponentLadderInitializationContractV1,
+    ) -> Vec<u8> {
+        let mut record = fixture_record();
+        record.schedule.base_seed = base_seed;
+        apply_backend_pair(&mut record, backend);
+        record.limits.max_physical_decisions = max_physical_decisions;
+        record.limits.max_policy_steps = max_policy_steps;
+        record.schedule.batch_episodes = batch_episodes;
+        record.schedule.checkpoint_segment_updates = checkpoint_segment_updates;
+        record.schedule.requested_successful_updates = requested_successful_updates;
+        record.schedule.checkpoint_episode_interval = batch_episodes
+            .checked_mul(checkpoint_segment_updates)
+            .unwrap();
+        record.topology.worker_count = worker_count;
+        record.topology.sessions_per_worker = sessions_per_worker;
+        record.topology.logical_actor_count =
+            worker_count.checked_mul(sessions_per_worker).unwrap();
+        record.topology.broker_batch_target = broker_batch_target;
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        record.contracts.opponent_ladder_pool = Some(pool);
+        record.contracts.opponent_ladder_initialization = Some(initialization);
         record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
@@ -3642,6 +3788,143 @@ mod tests {
         assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
     }
 
+    // ------------------------------------------------------------------
+    // Continual-initialization section (Amendment 1 / Section 8A point 2).
+    // ------------------------------------------------------------------
+
+    fn valid_ladder_initialization_fixture() -> OpponentLadderInitializationContractV1 {
+        OpponentLadderInitializationContractV1 {
+            source_run_sha256: hex64('d'),
+            generation: 32,
+            checkpoint_sha256: hex64('d'),
+            sidecar_sha256: hex64('d'),
+            state_sha256: hex64('d'),
+        }
+    }
+
+    fn ladder_record_with_init() -> TrainRunV2 {
+        let mut record = ladder_record();
+        record.contracts.opponent_ladder_initialization =
+            Some(valid_ladder_initialization_fixture());
+        refresh_derived(&mut record);
+        record
+    }
+
+    #[test]
+    fn ladder_identity_with_init_present_validates() {
+        let record = ladder_record_with_init();
+        let validated = validate_train_run_record_v2(record).unwrap();
+        assert_eq!(
+            validated
+                .record()
+                .contracts()
+                .opponent_ladder_initialization,
+            Some(valid_ladder_initialization_fixture())
+        );
+    }
+
+    #[test]
+    fn ladder_identity_without_init_still_validates() {
+        // `ladder_record()` (used throughout this file's other ladder
+        // tests) never sets the init section: this is the fresh-init shape,
+        // which MUST keep validating (Amendment 1's explicit requirement).
+        let record = ladder_record();
+        let validated = validate_train_run_record_v2(record).unwrap();
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
+    }
+
+    #[test]
+    fn ladder_init_round_trips_through_canonical_bytes() {
+        let record = ladder_record_with_init();
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated
+                .record()
+                .contracts()
+                .opponent_ladder_initialization,
+            Some(valid_ladder_initialization_fixture())
+        );
+        // The init key sorts between "opponent_ladder_pool" (shorter,
+        // "opponent_ladder_i..." < "opponent_ladder_p...") and
+        // "opponent_policy".
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("\"opponent_ladder_initialization\":{"));
+        let init_pos = text.find("\"opponent_ladder_initialization\":{").unwrap();
+        let pool_pos = text.find("\"opponent_ladder_pool\":{").unwrap();
+        let policy_pos = text.find("\"opponent_policy\":{").unwrap();
+        assert!(init_pos < pool_pos);
+        assert!(pool_pos < policy_pos);
+    }
+
+    #[test]
+    fn uniform_identity_with_init_present_fails_closed() {
+        let mut record = fixture_record();
+        record.contracts.opponent_ladder_initialization =
+            Some(valid_ladder_initialization_fixture());
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    #[test]
+    fn ladder_init_shape_corruption_matrix_fails_closed() {
+        let mut cases = Vec::new();
+
+        let mut record = ladder_record_with_init();
+        record
+            .contracts
+            .opponent_ladder_initialization
+            .as_mut()
+            .unwrap()
+            .source_run_sha256 = "not-a-sha256".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record_with_init();
+        record
+            .contracts
+            .opponent_ladder_initialization
+            .as_mut()
+            .unwrap()
+            .generation = u64::MAX;
+        cases.push(record);
+
+        let mut record = ladder_record_with_init();
+        record
+            .contracts
+            .opponent_ladder_initialization
+            .as_mut()
+            .unwrap()
+            .checkpoint_sha256 = "not-a-sha256".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record_with_init();
+        record
+            .contracts
+            .opponent_ladder_initialization
+            .as_mut()
+            .unwrap()
+            .sidecar_sha256 = "not-a-sha256".to_owned();
+        cases.push(record);
+
+        let mut record = ladder_record_with_init();
+        record
+            .contracts
+            .opponent_ladder_initialization
+            .as_mut()
+            .unwrap()
+            .state_sha256 = "not-a-sha256".to_owned();
+        cases.push(record);
+
+        for record in cases {
+            assert_record_error(record, TrainRunV2ErrorKind::InvalidScalar);
+        }
+    }
+
     #[test]
     fn ladder_identity_without_schedule_fails_closed() {
         let mut record = ladder_record();
@@ -4083,6 +4366,59 @@ mod tests {
         assert_eq!(
             validated.record().contracts().opponent_policy.identity,
             FROZEN_OPPONENT_POLICY_IDENTITY_V2
+        );
+    }
+
+    /// HARD CONSTRAINT regression (Amendment 1 / Section 8A point 2): the
+    /// pilot's real, already-published FRESH-INIT ladder run record (no
+    /// `opponent_ladder_initialization` section -- the historical shape
+    /// this amendment's optional field must keep validating forever) reads
+    /// and recomputes the exact same `run_sha256` the store already
+    /// published for it, unaffected by adding the new optional section.
+    /// Companion to `real_s1_mirror_run_json_validates_with_unchanged_run_sha256`
+    /// above (the uniform-identity regression), which must also stay green.
+    /// This test depends on that external evidence directory remaining
+    /// present on this machine.
+    #[test]
+    fn real_ladder_pilot_run_json_validates_with_unchanged_run_sha256() {
+        const REAL_RUN_JSON_PATH: &str =
+            r"D:\mtg-kernel-ladder-pilot-20260725\runs\dev0\run-0\store\run.json";
+        // Independently confirmed via `sha256sum run.json` and cross-checked
+        // against the `run_sha256` field stored in that store's
+        // `checkpoints\update-00000000.checkpoint.json` sidecar.
+        const STORED_RUN_SHA256: &str =
+            "6a78ae91b616c8f42ccfe9907ff82bdc1b0cd8ed693fd19bcc9e0783ba71e425";
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!(
+                "could not read the real ladder pilot run.json fixture at {REAL_RUN_JSON_PATH}: {error}"
+            )
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real ladder pilot run.json failed validation: {error:?}")
+        });
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+
+        // This is a ladder-identity, FRESH-INIT run: the pool section is
+        // present, but the init section is absent (fresh init from the
+        // common model snapshot -- the shape this amendment's field must
+        // not disturb).
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_some());
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
+        assert_eq!(
+            validated.record().contracts().opponent_policy.identity,
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
         );
     }
 }
