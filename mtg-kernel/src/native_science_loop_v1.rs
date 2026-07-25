@@ -765,11 +765,29 @@ mod windows_science_loop_tests {
             }
             _ => None,
         };
+        // Capacity Experiment Contract (Stage 3), Section 4 (task item 4).
+        // MULTIRUN_WIDE=1 stamps every spawned run's record with the wide
+        // (kernel-policy-value-net-8w128) architecture identity via the wide
+        // (or wide+ladder-pool) fixture builder, and points genesis at the
+        // wide production snapshot (data/wide_model_snapshot_w128/) instead
+        // of the frozen common snapshot. Composes with MULTIRUN_LADDER=1
+        // (the contract's own protocol: wide runs train against the ladder
+        // pool2, "pinned BY CHECKPOINT REFERENCE") but NOT with
+        // MULTIRUN_LADDER_INIT_STORE: continual init is a ladder-identity
+        // concept the wide protocol deliberately never uses ("wide+ladder-init
+        // is NOT needed - fresh init per contract"), so that combination
+        // fails closed here rather than silently picking a genesis source.
+        let wide_enabled = env_knob_v1("MULTIRUN_WIDE", 0) != 0;
+        assert!(
+            !(wide_enabled && ladder_init_store.is_some()),
+            "MULTIRUN_WIDE=1 is incompatible with MULTIRUN_LADDER_INIT_STORE: \
+             the wide protocol trains fresh-init only (contract Section 4)"
+        );
         println!(
             "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
              broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset} \
              record_only={record_only} ladder={ladder_enabled} \
-             ladder_init={}",
+             ladder_init={} wide={wide_enabled}",
             ladder_init_store.is_some()
         );
         let started = std::time::Instant::now();
@@ -782,10 +800,80 @@ mod windows_science_loop_tests {
                 let ladder_init_reference = ladder_init_reference.clone();
                 std::thread::spawn(move || {
                     let run_seed = base_seed + seed_offset + ordinal as u64;
-                    let patched = match (&ladder_pool, &ladder_init_section) {
-                        (Some(pool), Some(init)) => {
-                            use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2;
-                            crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+                    let patched = if wide_enabled {
+                        // wide_enabled && ladder_init_section.is_some() is
+                        // already ruled out by the assert above this closure
+                        // is built from; only the pool (or its absence)
+                        // varies here.
+                        match &ladder_pool {
+                            Some(pool) => {
+                                use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2;
+                                test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
+                                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                                    64,
+                                    4,
+                                    updates,
+                                    workers,
+                                    sessions,
+                                    broker_target,
+                                    1_024,
+                                    2_048,
+                                    run_seed,
+                                    pool.clone(),
+                                )
+                            }
+                            None => {
+                                use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_wide_v2;
+                                test_fixture_bytes_with_schedule_and_base_seed_wide_v2(
+                                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                                    64,
+                                    4,
+                                    updates,
+                                    workers,
+                                    sessions,
+                                    broker_target,
+                                    1_024,
+                                    2_048,
+                                    run_seed,
+                                )
+                            }
+                        }
+                    } else {
+                        match (&ladder_pool, &ladder_init_section) {
+                            (Some(pool), Some(init)) => {
+                                use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2;
+                                crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+                                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                                    64,
+                                    4,
+                                    updates,
+                                    workers,
+                                    sessions,
+                                    broker_target,
+                                    1_024,
+                                    2_048,
+                                    run_seed,
+                                    pool.clone(),
+                                    init.clone(),
+                                )
+                            }
+                            (Some(pool), None) => {
+                                use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_v2;
+                                test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+                                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                                    64,
+                                    4,
+                                    updates,
+                                    workers,
+                                    sessions,
+                                    broker_target,
+                                    1_024,
+                                    2_048,
+                                    run_seed,
+                                    pool.clone(),
+                                )
+                            }
+                            (None, None) => test_fixture_bytes_with_schedule_and_base_seed_v2(
                                 NativeTrainingNumericalBackendV1::CudaBurnDense,
                                 64,
                                 4,
@@ -796,44 +884,23 @@ mod windows_science_loop_tests {
                                 1_024,
                                 2_048,
                                 run_seed,
-                                pool.clone(),
-                                init.clone(),
-                            )
+                            ),
+                            (None, Some(_)) => panic!(
+                                "MULTIRUN_LADDER_INIT_STORE requires MULTIRUN_LADDER=1 (continual init is a ladder-identity concept)"
+                            ),
                         }
-                        (Some(pool), None) => {
-                            use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_v2;
-                            test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
-                                NativeTrainingNumericalBackendV1::CudaBurnDense,
-                                64,
-                                4,
-                                updates,
-                                workers,
-                                sessions,
-                                broker_target,
-                                1_024,
-                                2_048,
-                                run_seed,
-                                pool.clone(),
-                            )
-                        }
-                        (None, None) => test_fixture_bytes_with_schedule_and_base_seed_v2(
-                            NativeTrainingNumericalBackendV1::CudaBurnDense,
-                            64,
-                            4,
-                            updates,
-                            workers,
-                            sessions,
-                            broker_target,
-                            1_024,
-                            2_048,
-                            run_seed,
-                        ),
-                        (None, Some(_)) => panic!(
-                            "MULTIRUN_LADDER_INIT_STORE requires MULTIRUN_LADDER=1 (continual init is a ladder-identity concept)"
-                        ),
                     };
                     let run = decode_train_run_v2(&patched).expect("pilot run record");
-                    let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+                    // Capacity Experiment Contract Section 3: genesis authors
+                    // from the wide production snapshot instead of the frozen
+                    // common snapshot whenever the record carries the wide
+                    // section, mirroring every other record-driven dispatch
+                    // chokepoint in this codebase.
+                    let (snapshot_manifest, snapshot_payload) = if wide_enabled {
+                        crate::common_model_snapshot_v1::wide_model_snapshot_paths_v1()
+                    } else {
+                        common_model_snapshot_paths_v1()
+                    };
                     let mut execution_config = test_execution_config_v2(&run);
                     execution_config.numerical_backend =
                         NativeTrainingNumericalBackendV1::CudaBurnDense;
@@ -850,8 +917,13 @@ mod windows_science_loop_tests {
                             (guard.parent.clone(), Some(guard))
                         }
                     };
+                    let wide_label = if wide_enabled {
+                        format!(" label={}", crate::native_policy_value_net_v1::W_ARCHITECTURE_LABEL_V1)
+                    } else {
+                        String::new()
+                    };
                     println!(
-                        "MULTIRUN run={ordinal} seed={run_seed} store_root={}",
+                        "MULTIRUN run={ordinal} seed={run_seed} store_root={}{wide_label}",
                         parent_path.join("store").display()
                     );
                     let runner_config = NativeCheckpointRunnerConfigV1 {
@@ -886,19 +958,24 @@ mod windows_science_loop_tests {
                 })
             })
             .collect();
+        let wide_label = if wide_enabled {
+            format!(" label={}", crate::native_policy_value_net_v1::W_ARCHITECTURE_LABEL_V1)
+        } else {
+            String::new()
+        };
         let mut total_episodes = 0_u64;
         for handle in handles {
             let (ordinal, generation, wall, wins, losses) = handle.join().expect("pilot thread");
             assert_eq!(generation, updates);
             total_episodes += 64 * updates;
             println!(
-                "MULTIRUN run={ordinal} gen={generation} wall={wall:.1}s eval W/L {wins}/{losses}"
+                "MULTIRUN run={ordinal} gen={generation} wall={wall:.1}s eval W/L {wins}/{losses}{wide_label}"
             );
         }
         let aggregate_wall = started.elapsed().as_secs_f64();
         println!(
             "MULTIRUN AGGREGATE runs={run_count} episodes={total_episodes} \
-             wall={aggregate_wall:.1}s eps_per_s={:.2} (non-evidence)",
+             wall={aggregate_wall:.1}s eps_per_s={:.2} (non-evidence){wide_label}",
             total_episodes as f64 / aggregate_wall
         );
     }
