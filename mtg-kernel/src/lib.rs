@@ -121,6 +121,11 @@ pub(crate) mod native_ladder_opponent_v1;
 // artifacts before any parsing.
 #[allow(dead_code)]
 pub(crate) mod native_ladder_pool_resolution_v1;
+// Pure promotion-gate arithmetic (Self-Play Ladder Design Contract S2,
+// Section 4): the strictly-greater-than-55-percent-of-1,024-pairs win-rate
+// test and the 2-sigma panel-regression check. No I/O, no run-record schema.
+#[allow(dead_code)]
+pub(crate) mod native_ladder_promotion_v1;
 // Opt-in in-memory wall-clock diagnostics. These types are intentionally not a
 // Store, benchmark, checkpoint, or evidence schema and implement no codec.
 pub mod native_training_phase_diagnostic_v1;
