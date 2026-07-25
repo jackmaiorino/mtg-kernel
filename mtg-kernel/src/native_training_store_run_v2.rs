@@ -2289,6 +2289,45 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_v2(
     )
 }
 
+/// Ladder variant of [`test_fixture_bytes_with_schedule_and_base_seed_v2`]
+/// (Self-Play Ladder Design Contract S2, pilot runner integration): the
+/// SAME schedule/topology/base-seed fields, but the run record carries the
+/// ladder opponent identity plus the caller-supplied `pool` and the frozen
+/// `opponent_schedule_v2` section, instead of the uniform identity. Kept as
+/// a genuinely separate function (not a flag on the existing one) so the
+/// uniform fixture's bytes stay byte-identical by construction: nothing
+/// about `test_fixture_bytes_with_schedule_and_base_seed_v2`'s own body
+/// changed to add this.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+    pool: OpponentLadderPoolContractV1,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_ladder(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+        pool,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2804,6 +2843,46 @@ mod tests {
         record.topology.logical_actor_count =
             worker_count.checked_mul(sessions_per_worker).unwrap();
         record.topology.broker_batch_target = broker_batch_target;
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_ladder(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+        pool: OpponentLadderPoolContractV1,
+    ) -> Vec<u8> {
+        let mut record = fixture_record();
+        record.schedule.base_seed = base_seed;
+        apply_backend_pair(&mut record, backend);
+        record.limits.max_physical_decisions = max_physical_decisions;
+        record.limits.max_policy_steps = max_policy_steps;
+        record.schedule.batch_episodes = batch_episodes;
+        record.schedule.checkpoint_segment_updates = checkpoint_segment_updates;
+        record.schedule.requested_successful_updates = requested_successful_updates;
+        record.schedule.checkpoint_episode_interval = batch_episodes
+            .checked_mul(checkpoint_segment_updates)
+            .unwrap();
+        record.topology.worker_count = worker_count;
+        record.topology.sessions_per_worker = sessions_per_worker;
+        record.topology.logical_actor_count =
+            worker_count.checked_mul(sessions_per_worker).unwrap();
+        record.topology.broker_batch_target = broker_batch_target;
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        record.contracts.opponent_ladder_pool = Some(pool);
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
@@ -3773,6 +3852,195 @@ mod tests {
         for record in cases {
             assert!(validate_train_run_record_v2(record).is_err());
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Deliverable 2(d): mid-run opponent-swap unrepresentability (contract
+    // Section 7 fixture (d), and the contract's core structural claim in
+    // Section 1: "a mid-run opponent change is structurally
+    // unrepresentable ... store segment boundary validation rejects any
+    // segment whose run_sha256 differs from the run root"). The opponent
+    // pool is part of what `run_sha256` hashes, so two ladder-shaped
+    // records differing in exactly one pool digest have DIFFERENT
+    // `run_sha256` values; a checkpoint minted while bound to the first
+    // record's identity is rejected when validated against the second
+    // record. This mirrors the pattern
+    // `native_training_store_boundary_v2`'s own tests use to prove a
+    // checkpoint/boundary rejects a mismatched run authority (decode
+    // against the WRONG `ValidatedTrainRunV2` and expect a CrossBinding-
+    // class rejection), applied here at the checkpoint-manifest layer
+    // against two ladder run records instead of one uniform record plus a
+    // hand-corrupted JSON `Value`.
+    // ------------------------------------------------------------------
+
+    fn ladder_execution_config_v1(
+        run: &ValidatedTrainRunV2,
+    ) -> crate::native_training_executor_v1::NativeTrainingExecutionConfigV1 {
+        crate::native_training_executor_v1::NativeTrainingExecutionConfigV1 {
+            run_base_seed: run.record().schedule.base_seed,
+            batch_episodes: run.batch_episodes(),
+            deck_ids: ["Rally".to_owned(), "Rally".to_owned()],
+            max_physical_decisions: run.record().limits.max_physical_decisions,
+            max_policy_steps: run.record().limits.max_policy_steps,
+            worker_count: usize::try_from(run.record().topology.worker_count).unwrap(),
+            sessions_per_worker: usize::try_from(run.record().topology.sessions_per_worker)
+                .unwrap(),
+            broker_batch_target: usize::try_from(run.record().topology.broker_batch_target)
+                .unwrap(),
+            scheduler_timeout: std::time::Duration::from_secs(30),
+            measure_broker_service_time: false,
+            value_coefficient_bits: 0.5_f32.to_bits(),
+            learning_rate_bits: 0.001_f32.to_bits(),
+            numerical_backend:
+                crate::native_training_executor_v1::NativeTrainingNumericalBackendV1::Sequential,
+            backward_worker_limit: 1,
+        }
+    }
+
+    #[test]
+    fn mid_run_opponent_pool_swap_is_structurally_unrepresentable() {
+        use crate::native_training_executor_v1::NativeTrainingExecutorV1;
+        use crate::native_training_store_checkpoint_v3::{
+            build_genesis_checkpoint_manifest_v3, decode_genesis_checkpoint_manifest_v3,
+        };
+
+        // Two valid ladder-shaped records differing in EXACTLY one pool
+        // digest (the primary member's checkpoint_sha256).
+        let mut record_a = ladder_record();
+        refresh_derived(&mut record_a);
+        let mut record_b = ladder_record();
+        record_b
+            .contracts
+            .opponent_ladder_pool
+            .as_mut()
+            .unwrap()
+            .primary
+            .checkpoint_sha256 = hex64('9');
+        refresh_derived(&mut record_b);
+
+        let run_a = validate_train_run_record_v2(record_a).unwrap();
+        let run_b = validate_train_run_record_v2(record_b).unwrap();
+        assert_ne!(
+            run_a.run_sha256(),
+            run_b.run_sha256(),
+            "a one-digest pool change must change run_sha256"
+        );
+
+        // Mint one real genesis checkpoint bound to run_a's identity.
+        let (snapshot_manifest, snapshot_payload) =
+            crate::common_model_snapshot_v1::common_model_snapshot_paths_v1();
+        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            ladder_execution_config_v1(&run_a),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let payload = executor
+            .checkpoint_candidate_v1()
+            .unwrap()
+            .payload()
+            .to_vec();
+        let checkpoint_a = build_genesis_checkpoint_manifest_v3(&run_a, &payload).unwrap();
+        let manifest_bytes = checkpoint_a.canonical_bytes().to_vec();
+
+        // Sanity: the checkpoint validates against the run it was minted
+        // under (run_a).
+        assert!(decode_genesis_checkpoint_manifest_v3(&manifest_bytes, &payload, &run_a).is_ok());
+
+        // The same checkpoint, claiming run_a's run_sha256, is REJECTED
+        // when validated against run_b: a mid-run opponent-pool swap cannot
+        // be represented by any valid checkpoint under the new identity.
+        let rejected = decode_genesis_checkpoint_manifest_v3(&manifest_bytes, &payload, &run_b);
+        assert!(
+            rejected.is_err(),
+            "a checkpoint claiming run_a's run_sha256 must be rejected against run_b"
+        );
+        assert_eq!(
+            rejected.unwrap_err().kind(),
+            crate::native_training_store_checkpoint_v3::CheckpointManifestV3ErrorKind::CrossBinding
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Deliverable 3: the ladder-variant test fixture builder (pilot runner
+    // integration). Proves the new function decodes to a ladder-shaped
+    // record carrying the caller-supplied pool, AND that the existing
+    // uniform builder it sits beside is untouched (same schedule/topology
+    // inputs, uniform identity, no ladder sections) -- the fixture stays
+    // byte-identical because nothing in its own body changed.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn ladder_fixture_builder_adds_ladder_sections_uniform_builder_stays_unaffected() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+
+        let schedule_args = (
+            2_u64, 4_u64, 4_u64, 2_u64, 4_u64, 8_u64, 32_768_u64, 65_536_u64,
+        );
+        let base_seed = 909_909_u64;
+
+        let uniform_bytes = test_fixture_bytes_with_schedule_and_base_seed_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            schedule_args.0,
+            schedule_args.1,
+            schedule_args.2,
+            schedule_args.3,
+            schedule_args.4,
+            schedule_args.5,
+            schedule_args.6,
+            schedule_args.7,
+            base_seed,
+        );
+        let uniform = decode_train_run_v2(&uniform_bytes).unwrap();
+        assert!(uniform.record().contracts().opponent_ladder_pool.is_none());
+        assert!(uniform.record().contracts().opponent_schedule_v2.is_none());
+
+        let pool = valid_ladder_pool_fixture();
+        let ladder_bytes = test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            schedule_args.0,
+            schedule_args.1,
+            schedule_args.2,
+            schedule_args.3,
+            schedule_args.4,
+            schedule_args.5,
+            schedule_args.6,
+            schedule_args.7,
+            base_seed,
+            pool.clone(),
+        );
+        let ladder = decode_train_run_v2(&ladder_bytes).unwrap();
+        assert_eq!(ladder.record().contracts().opponent_ladder_pool, Some(pool));
+        assert!(ladder.record().contracts().opponent_schedule_v2.is_some());
+        assert_ne!(uniform_bytes, ladder_bytes);
+        assert_ne!(uniform.run_sha256(), ladder.run_sha256());
+
+        // Same schedule/topology/base-seed inputs are preserved identically
+        // by both builders (only the opponent contracts section differs).
+        assert_eq!(
+            uniform.record().schedule.base_seed,
+            ladder.record().schedule.base_seed
+        );
+        assert_eq!(
+            uniform.record().topology.worker_count,
+            ladder.record().topology.worker_count
+        );
+
+        // The uniform builder's own output is exactly what it always was:
+        // re-deriving it a second time (independent call) is bit-identical.
+        let uniform_bytes_again = test_fixture_bytes_with_schedule_and_base_seed_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            schedule_args.0,
+            schedule_args.1,
+            schedule_args.2,
+            schedule_args.3,
+            schedule_args.4,
+            schedule_args.5,
+            schedule_args.6,
+            schedule_args.7,
+            base_seed,
+        );
+        assert_eq!(uniform_bytes, uniform_bytes_again);
     }
 
     /// HARD CONSTRAINT regression (S2 ladder contract Deliverable 1): every
