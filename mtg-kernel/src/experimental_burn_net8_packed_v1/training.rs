@@ -12,6 +12,10 @@ use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
     NativePolicyValueTrainSnapshotV1, ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1,
 };
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) sibling of
+// PARAMETER_COUNT_V1, used only by ExperimentalDeviceTrainStateV1's wide
+// import/export path below.
+use crate::native_policy_value_net_v1::W_PARAMETER_COUNT_V1;
 use burn::backend::Autodiff;
 use burn::module::{AutodiffModule, ModuleMapper, ModuleVisitor, ParamId};
 use burn::optim::GradientsParams;
@@ -299,6 +303,16 @@ pub(crate) struct ExperimentalDeviceTrainStateV1 {
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
     device: burn_cuda::CudaDevice,
+    /// Capacity-experiment dispatch (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md
+    /// Section 3): `ProductionNet8` is dimension-erased at the type level, so
+    /// the SAME struct above holds either width; this flag records which one
+    /// `self.model`'s resident tensors were imported as, so `chunk_backward_v1`
+    /// calls the matching forward and `export_snapshot_v1` calls the matching
+    /// export. Set once at `import_snapshot_v1`/`import_snapshot_wide_v1` and
+    /// never mutated afterward (a device state is never re-imported in place;
+    /// see `bridge::train_step_cuda_burn_dense_v1`/`_wide_v1`, which always
+    /// either reuse a bit-identical resident state or construct a fresh one).
+    wide: bool,
 }
 
 /// Host-owned outputs recovered from the same autodiff forward that supplied
@@ -336,6 +350,39 @@ impl ExperimentalDeviceTrainStateV1 {
             adam_step: snapshot.adam_step,
             scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
             device: device.clone(),
+            wide: false,
+        })
+    }
+
+    /// Capacity-experiment wide-net (kernel-policy-value-net-8w128) sibling of
+    /// [`Self::import_snapshot_v1`]. Mirrors it exactly, substituting
+    /// `import_native_wide_v1` and `W_PARAMETER_COUNT_V1`; the frozen
+    /// constructor above is untouched.
+    pub(crate) fn import_snapshot_wide_v1(
+        snapshot: &NativePolicyValueTrainSnapshotV1,
+        device: &burn_cuda::CudaDevice,
+    ) -> Result<Self, Box<dyn Error>> {
+        snapshot.state_sha256_v1()?;
+        let model = ProductionNet8::<CudaAutodiffBackendV1>::import_native_wide_v1(
+            &snapshot.parameters,
+            device,
+        )?;
+        if model.num_params() != W_PARAMETER_COUNT_V1 {
+            return Err(training_error(format!(
+                "wide autodiff model parameter count mismatch: {} != {W_PARAMETER_COUNT_V1}",
+                model.num_params()
+            )));
+        }
+        let first_moments = import_named_state_v1(&model, &snapshot.first_moments, device)?;
+        let second_moments = import_named_state_v1(&model, &snapshot.second_moments, device)?;
+        Ok(Self {
+            model,
+            first_moments,
+            second_moments,
+            adam_step: snapshot.adam_step,
+            scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
+            device: device.clone(),
+            wide: true,
         })
     }
 
@@ -343,7 +390,11 @@ impl ExperimentalDeviceTrainStateV1 {
         &self,
     ) -> Result<NativePolicyValueTrainSnapshotV1, Box<dyn Error>> {
         CudaBackendV1::sync(&self.device)?;
-        let parameters = self.model.valid().export_native_v1(&self.device)?;
+        let parameters = if self.wide {
+            self.model.valid().export_native_wide_v1(&self.device)?
+        } else {
+            self.model.valid().export_native_v1(&self.device)?
+        };
         let first_moments = export_named_state_v1(&self.model, &self.first_moments, &parameters)?;
         let second_moments = export_named_state_v1(&self.model, &self.second_moments, &parameters)?;
         let snapshot = NativePolicyValueTrainSnapshotV1 {
@@ -353,7 +404,13 @@ impl ExperimentalDeviceTrainStateV1 {
             first_moments,
             second_moments,
         };
-        snapshot.state_sha256_v1()?;
+        if self.wide {
+            crate::native_policy_train_step_v1::wide_owned_train_snapshot_state_sha256_v1(
+                &snapshot,
+            )?;
+        } else {
+            snapshot.state_sha256_v1()?;
+        }
         Ok(snapshot)
     }
 
@@ -597,7 +654,16 @@ impl ExperimentalDeviceTrainStateV1 {
         value_coefficient: f32,
         normalization_group_count: f32,
     ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
-        let (logits, values) = self.model.forward(batch);
+        // Capacity-experiment dispatch: `self.wide` records which width
+        // `self.model`'s resident tensors were imported as (see the `wide`
+        // field doc comment); the wide net needs `forward_wide_v1` (the
+        // W_HIDDEN_DIM_V1-parameterized graph), everything else in this
+        // function is dims-oblivious (action/group counts, not hidden dims).
+        let (logits, values) = if self.wide {
+            self.model.forward_wide_v1(batch)
+        } else {
+            self.model.forward(batch)
+        };
         // Clone only the two output handles, then immediately cross to the
         // validated inner backend. The clones share the forward's output
         // storage but retain neither autodiff nodes nor a second graph.
@@ -3543,6 +3609,68 @@ mod tests {
         assert!(!super::bridge::snapshots_bit_identical_v1(&reshaped, &base));
     }
 
+    /// Capacity-experiment resident-slot safety (task item 2: "the
+    /// resident-slot content-keying already compares snapshots bit-wise so
+    /// wide/frozen states never cross-contaminate (verify and state
+    /// where)"). `ExperimentalDeviceTrainStateV1::import_snapshot_v1`/
+    /// `import_snapshot_wide_v1` share the one process-wide
+    /// `RESIDENT_DEVICE_STATE_V1` slot (bridge.rs); this proves the exact
+    /// mechanism that makes that safe: `snapshots_bit_identical_v1` (in turn
+    /// `named_tensors_bit_identical_v1`, comparing tensor name, shape, and
+    /// f32 bits) can never call a wide snapshot identical to a frozen one or
+    /// vice versa, since every tensor's shape differs between the two
+    /// layouts (`native_train_state_parameter_layout_v1` versus
+    /// `native_train_state_parameter_layout_wide_v1`). So a width switch at
+    /// the resident slot is always treated as a stale/non-matching entry
+    /// (`bridge::train_step_cuda_burn_dense_{v1,wide_v1}`'s `stale =>` arm),
+    /// which drops it and imports fresh -- never a silent cross-width reuse.
+    /// No GPU needed: this exercises only the pure bit-comparison function.
+    #[test]
+    fn resident_slot_bit_identity_check_rejects_cross_width_reuse() {
+        use crate::native_policy_train_step_v1::{
+            native_train_state_parameter_layout_v1, native_train_state_parameter_layout_wide_v1,
+        };
+
+        fn zeroed_snapshot(
+            layout: impl Iterator<Item = (&'static str, &'static [usize])>,
+        ) -> NativePolicyValueTrainSnapshotV1 {
+            let parameters = layout
+                .map(|(name, shape)| NativeNamedParameterV1 {
+                    name,
+                    shape: shape.to_vec(),
+                    values: vec![0.0f32; shape.iter().product()],
+                })
+                .collect::<Vec<_>>();
+            NativePolicyValueTrainSnapshotV1 {
+                adam_step: 0,
+                scorer_bias_anchor_bits: 0,
+                first_moments: parameters.clone(),
+                second_moments: parameters.clone(),
+                parameters,
+            }
+        }
+
+        let frozen_snapshot = zeroed_snapshot(native_train_state_parameter_layout_v1());
+        let wide_snapshot = zeroed_snapshot(native_train_state_parameter_layout_wide_v1());
+
+        assert!(super::bridge::snapshots_bit_identical_v1(
+            &frozen_snapshot,
+            &frozen_snapshot
+        ));
+        assert!(super::bridge::snapshots_bit_identical_v1(
+            &wide_snapshot,
+            &wide_snapshot
+        ));
+        assert!(!super::bridge::snapshots_bit_identical_v1(
+            &frozen_snapshot,
+            &wide_snapshot
+        ));
+        assert!(!super::bridge::snapshots_bit_identical_v1(
+            &wide_snapshot,
+            &frozen_snapshot
+        ));
+    }
+
     /// Two production bridge updates with the resident device state reused on
     /// the second, against the same two updates with the resident slot
     /// cleared between them (the import-every-update behavior): every commit
@@ -3689,6 +3817,161 @@ mod tests {
             assert_eq!(resident.adam_step, fresh.adam_step);
             assert_eq!(resident.scorer_bias_gauge, fresh.scorer_bias_gauge);
         }
+    }
+
+    /// Capacity-experiment live GPU verification (task item 5b, the subset
+    /// achievable without the self-play rollout scorer -- see the final
+    /// report): a small multi-update wide CUDA training run, genesis to a
+    /// checkpoint-codec-encoded snapshot, on the real production wide
+    /// snapshot and the real committed replay fixture. Each update's
+    /// "transported" bits are recomputed from the CURRENT wide CPU model
+    /// (`NativePolicyValueNetWideV1::forward_wide_v1`) exactly as a real
+    /// self-play rollout scorer would after the preceding commit -- the same
+    /// substitution `resident_reuse_is_bit_identical_to_fresh_import` above
+    /// uses for the frozen path, just with the wide model/forward and
+    /// `train_step_cuda_burn_dense_wide_v1`. This is NOT a self-play
+    /// integration test (no async rollout engine, no `NativeTrainerStateV2`);
+    /// it proves the wide CUDA numerics path itself: genesis, four real
+    /// device Adam updates, and a checkpoint-shaped encode/decode round trip
+    /// through the wide train-state payload codec. QUALIFICATION_JSONL drift
+    /// lines are confirmed emitted via the bridge's existing measurement-mode
+    /// side channel (armed here exactly as
+    /// `native_science_loop_v1::MeasurementModeGuardV1` arms it).
+    #[test]
+    #[ignore = "requires a CUDA device, run explicitly"]
+    fn wide_cuda_training_smoke_genesis_to_snapshot_v1() {
+        use crate::common_model_snapshot_v1::{
+            build_wide_model_candidate_v1, wide_model_snapshot_paths_v1,
+        };
+        use crate::native_policy_train_step_v1::{
+            NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
+            NativePolicyValueTrainStateWideV1,
+        };
+        use crate::native_train_state_payload_v1::{
+            decode_native_train_state_payload_verified_wide_v1,
+            encode_native_train_state_payload_wide_v1,
+        };
+
+        struct MeasurementModeGuardV1;
+        impl MeasurementModeGuardV1 {
+            fn arm() -> Self {
+                super::bridge::TOLERANCE_MEASUREMENT_MODE_V1
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                Self
+            }
+        }
+        impl Drop for MeasurementModeGuardV1 {
+            fn drop(&mut self) {
+                super::bridge::TOLERANCE_MEASUREMENT_MODE_V1
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        let _measurement_mode = MeasurementModeGuardV1::arm();
+        super::bridge::clear_resident_device_state_for_test_v1();
+
+        let (manifest_path, payload_path) = wide_model_snapshot_paths_v1();
+        let (wide_model, _record) =
+            build_wide_model_candidate_v1(&manifest_path, &payload_path).unwrap();
+        let mut state = NativePolicyValueTrainStateWideV1::new_wide_v1(wide_model).unwrap();
+        let genesis_sha256 = state.snapshot_v1().unwrap().state_sha256_v1().unwrap();
+
+        let cases = load_real_fixture_cases().unwrap();
+        const UPDATES: u64 = 4;
+        const DECISIONS: usize = 8;
+        let terminal_pattern = [1_i8, -1, 0, 1, -1, 1, -1, 0];
+
+        for update in 0..UPDATES {
+            let mut host = HostPackingWorkspace::default();
+            host.reserve_for(&cases, DECISIONS);
+            host.pack(&cases, DECISIONS, update as usize).unwrap();
+            let selected_action_indices = selected_actions_v1(&host).unwrap();
+
+            struct ExpectedBitsV1 {
+                case_index: usize,
+                logit_bits: Vec<u32>,
+                value_bits: u32,
+            }
+            let expected = host
+                .case_indices
+                .iter()
+                .copied()
+                .map(|case_index| {
+                    let output = state
+                        .model_v1()
+                        .forward_wide_v1(cases[case_index].view())
+                        .unwrap();
+                    ExpectedBitsV1 {
+                        case_index,
+                        logit_bits: output.logits.iter().map(|value| value.to_bits()).collect(),
+                        value_bits: output.value.to_bits(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let substeps = expected
+                .iter()
+                .zip(selected_action_indices.iter().copied())
+                .map(|(entry, selected_action_index)| NativePolicySubstepV1 {
+                    forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                        cases[entry.case_index].view(),
+                    )),
+                    selected_action_index,
+                    expected_raw_action_logit_bits: &entry.logit_bits,
+                    expected_value_bits: entry.value_bits,
+                })
+                .collect::<Vec<_>>();
+            let groups = substeps
+                .iter()
+                .zip(terminal_pattern.iter().copied())
+                .map(
+                    |(substep, terminal_return)| NativePolicyPhysicalDecisionV1 {
+                        substeps: std::slice::from_ref(substep),
+                        terminal_return,
+                    },
+                )
+                .collect::<Vec<_>>();
+
+            let result = super::bridge::train_step_cuda_burn_dense_wide_v1(
+                &mut state,
+                &groups,
+                VALUE_COEFFICIENT_V1,
+                BENCHMARK_LEARNING_RATE_V1,
+            )
+            .unwrap();
+            assert_eq!(result.adam_step, update + 1);
+            assert!(result.loss.is_finite());
+        }
+        assert_eq!(state.adam_step_v1(), UPDATES);
+
+        // Checkpoint-shaped round trip through the wide train-state payload
+        // codec (contract gate 2's end-to-end fixture requirement, at the
+        // numerics layer): encode the trained snapshot, decode it back
+        // through the verified decoder, and require an exact match.
+        let trained_snapshot = state.snapshot_v1().unwrap();
+        assert_ne!(trained_snapshot.state_sha256_v1().unwrap(), genesis_sha256);
+        let encoded = encode_native_train_state_payload_wide_v1(&trained_snapshot).unwrap();
+        let decoded = decode_native_train_state_payload_verified_wide_v1(
+            &encoded.bytes,
+            trained_snapshot.adam_step,
+            trained_snapshot.scorer_bias_anchor_bits,
+            &encoded.digests,
+        )
+        .unwrap();
+        assert_eq!(decoded.snapshot, trained_snapshot);
+
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "mtg-kernel-experimental-burn-net8w128-wide-training-smoke/v1",
+                "label": "WIDE-DIAGNOSTIC-NON-EVIDENCE",
+                "not_a_claim_about": ["self_play_integration", "qualification"],
+                "updates": UPDATES,
+                "decisions_per_update": DECISIONS,
+                "genesis_state_sha256": genesis_sha256.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                "final_state_sha256": trained_snapshot.state_sha256_v1().unwrap().iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                "final_adam_step": state.adam_step_v1(),
+                "checkpoint_payload_byte_count": encoded.bytes.len(),
+            })
+        );
     }
 
     /// Each fused chunk must expose the exact outputs from the existing

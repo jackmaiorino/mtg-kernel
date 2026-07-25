@@ -21,8 +21,8 @@ use super::{DevicePackedBatch, HostPackingWorkspace};
 use crate::native_policy_train_step_v1::{
     selected_log_softmax, NativePhysicalLossTermV1, NativePolicyForwardInputV1,
     NativePolicyPhysicalDecisionV1, NativePolicyTrainErrorV1, NativePolicyTrainStepResultV1,
-    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, NativeSelectedOutputV1,
-    ScorerBiasGaugeAccumulatorV1,
+    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+    NativePolicyValueTrainStateWideV1, NativeSelectedOutputV1, ScorerBiasGaugeAccumulatorV1,
 };
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use std::error::Error;
@@ -184,13 +184,27 @@ pub(super) fn validate_transported_logit_row_v2(
     Ok(())
 }
 
-/// Run one production training update on the CudaBurnDense backend.
-pub(crate) fn train_step_cuda_burn_dense_v1(
-    state: &mut NativePolicyValueTrainStateV1,
+/// Shared body of [`train_step_cuda_burn_dense_v1`]/[`train_step_cuda_burn_dense_wide_v1`]:
+/// one production training update on the CudaBurnDense backend, generic over
+/// which architecture width `snapshot` and the resident device state are.
+/// `NativePolicyValueTrainSnapshotV1` and `ExperimentalDeviceTrainStateV1` are
+/// both already dimension-erased (the snapshot is plain named-parameter
+/// vectors; the device model is the same Burn struct for either width, see
+/// its `wide` field), so everything below this point is dims-oblivious except
+/// the one `wide`-branched import call. The resident-slot content-keying
+/// (`snapshots_bit_identical_v1`) compares tensor names/shapes/bits, so a
+/// wide snapshot can never spuriously match a parked frozen one (or vice
+/// versa) and the two widths safely share the single
+/// `RESIDENT_DEVICE_STATE_V1` slot: a width switch is just a cache miss that
+/// re-imports, never silent cross-contamination.
+fn train_step_cuda_burn_dense_inner_v1(
+    snapshot: NativePolicyValueTrainSnapshotV1,
+    wide: bool,
     groups: &[NativePolicyPhysicalDecisionV1<'_>],
     value_coefficient: f32,
     learning_rate: f32,
-) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+) -> Result<(NativePolicyTrainStepResultV1, NativePolicyValueTrainSnapshotV1), NativePolicyTrainErrorV1>
+{
     if groups.is_empty() {
         return Err(NativePolicyTrainErrorV1::EmptyBatch);
     }
@@ -223,13 +237,7 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         }
     }
 
-    // Snapshot, then reuse the resident device state or import fresh, pack,
-    // plan, step.
-    let snapshot = state
-        .snapshot_v1()
-        .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
-            code: "cuda-burn-dense-bridge-snapshot-failure",
-        })?;
+    // Reuse the resident device state or import fresh, pack, plan, step.
     let parameter_before_bits =
         snapshot.parameters[SCORER_SECOND_BIAS_ORDINAL_V1].values[0].to_bits();
     // Diagnostic-only device ordinal override for multi-GPU economics probes
@@ -259,8 +267,13 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
             drop(stale);
             #[cfg(test)]
             RESIDENT_IMPORT_COUNT_V1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            ExperimentalDeviceTrainStateV1::import_snapshot_v1(&snapshot, &device)
-                .map_err(bridge_error_v1)?
+            if wide {
+                ExperimentalDeviceTrainStateV1::import_snapshot_wide_v1(&snapshot, &device)
+                    .map_err(bridge_error_v1)?
+            } else {
+                ExperimentalDeviceTrainStateV1::import_snapshot_v1(&snapshot, &device)
+                    .map_err(bridge_error_v1)?
+            }
         }
     };
     // The training step runs in group-aligned chunks with device-side
@@ -809,32 +822,107 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     }
     let scorer_bias_gauge = gauge_accumulator.finish(raw_residual, parameter_before_bits)?;
 
-    // Export the device state and replace the CPU state through the
-    // validating snapshot constructor.
+    // Export the device state. The CPU-side state replacement (through the
+    // validating snapshot constructor for whichever width `state` is) happens
+    // in the caller; this shared body only owns the device-side update.
     let updated_snapshot = device_state.export_snapshot_v1().map_err(bridge_error_v1)?;
     let adam_step = updated_snapshot.adam_step;
-    *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+    // The update is committed device-side here: park the device state for the
+    // next update, keyed by the exact snapshot its tensors now hold. The
+    // caller still must commit the CPU-side state before this update is
+    // fully durable; a failure there leaves the resident slot correctly
+    // describing the device's actual (already-updated) tensors, which the
+    // next call's bit-identity check will simply not match against a
+    // not-yet-reimported CPU snapshot, falling back to a fresh (correct)
+    // import rather than silently diverging.
+    *resident_device_state_slot_v1() = Some(ResidentDeviceStateV1 {
+        exported: updated_snapshot.clone(),
+        device_state,
+    });
+
+    Ok((
+        NativePolicyTrainStepResultV1 {
+            policy_sum,
+            value_sum,
+            loss,
+            adam_step,
+            selected_outputs,
+            physical_terms,
+            gradients: Vec::new(),
+            scorer_bias_gauge,
+        },
+        updated_snapshot,
+    ))
+}
+
+/// Run one production training update on the CudaBurnDense backend.
+pub(crate) fn train_step_cuda_burn_dense_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_coefficient: f32,
+    learning_rate: f32,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    let snapshot = state
+        .snapshot_v1()
+        .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-snapshot-failure",
+        })?;
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        false,
+        groups,
+        value_coefficient,
+        learning_rate,
+    )?;
+    *state =
+        NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &updated_snapshot)
+            .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-state-reimport-failure",
+            })?;
+    Ok(result)
+}
+
+/// Capacity-experiment wide-net (kernel-policy-value-net-8w128) sibling of
+/// [`train_step_cuda_burn_dense_v1`]. Identical update body
+/// (`train_step_cuda_burn_dense_inner_v1`, `wide = true`); only the CPU-side
+/// state type, and hence the model construction/export dims used to commit
+/// the update back to CPU-owned state, differs. The frozen function above is
+/// untouched.
+///
+/// Exercised today only by `training::tests::wide_cuda_training_smoke_genesis_to_snapshot_v1`
+/// (fixture-driven physical decisions standing in for self-play rollout).
+/// NOT wired into `native_trainer_v1`'s `NativeTrainerStateV2` dispatch: that
+/// struct and the self-play rollout scorer it owns
+/// (`NativePolicyBatchScorerV2`/`NativePolicyForwardPoolV1`/
+/// `NativePolicyPackedForwardBuilderV1`) are hardwired to the frozen
+/// `NativePolicyValueNetV1` with no wide dispatch of their own -- see the
+/// final report's wall finding for what wiring this into a genuine self-play
+/// pilot run needs.
+#[allow(dead_code)]
+pub(crate) fn train_step_cuda_burn_dense_wide_v1(
+    state: &mut NativePolicyValueTrainStateWideV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_coefficient: f32,
+    learning_rate: f32,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    let snapshot = state
+        .snapshot_v1()
+        .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-snapshot-failure",
+        })?;
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        true,
+        groups,
+        value_coefficient,
+        learning_rate,
+    )?;
+    *state = NativePolicyValueTrainStateWideV1::from_snapshot_wide_v1(
         state.model_v1().clone(),
         &updated_snapshot,
     )
     .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
         code: "cuda-burn-dense-bridge-state-reimport-failure",
     })?;
-    // The update is committed host-side: park the device state for the next
-    // update, keyed by the exact snapshot its tensors now hold.
-    *resident_device_state_slot_v1() = Some(ResidentDeviceStateV1 {
-        exported: updated_snapshot,
-        device_state,
-    });
-
-    Ok(NativePolicyTrainStepResultV1 {
-        policy_sum,
-        value_sum,
-        loss,
-        adam_step,
-        selected_outputs,
-        physical_terms,
-        gradients: Vec::new(),
-        scorer_bias_gauge,
-    })
+    Ok(result)
 }
