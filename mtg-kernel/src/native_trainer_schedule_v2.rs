@@ -233,6 +233,29 @@ pub(crate) fn select_opponent_ladder_pool_member_v2(
 
 #[cfg(test)]
 mod tests {
+    /// Review-adopted discipline gap closure: pin the independent Python
+    /// verifier's exact bytes, matching V1's generator-pin practice, so a
+    /// silent edit to the cross-language check is caught here.
+    #[test]
+    fn python_verifier_source_bytes_are_pinned() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../python/probes/ladder_schedule_v2/verify_ladder_schedule_v2.py"
+        ))
+        .expect("ladder schedule python verifier must exist");
+        use sha2::{Digest, Sha256};
+        let digest = {
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        assert_eq!(digest, "c57de29e825f2d5bff24d370ad0f154489feef01547a7aed092c163a8801f2f9");
+    }
+
     use super::*;
 
     #[test]
