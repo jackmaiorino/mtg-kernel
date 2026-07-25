@@ -579,9 +579,25 @@ fn validate_authority_bindings_v1(
         ));
     }
     validate_payload_layout_v1(checkpoint)?;
+    // Design directive slice 3 (closing slice 2's STOP finding, the third
+    // independent copy of the generation-0-implies-common-snapshot
+    // invariant, this time in the checkpoint-INFERENCE layer that gates
+    // evaluation/the checkpoint runner/ladder-opponent resolution): a
+    // continual-init record (`record.contracts.opponent_ladder_initialization`
+    // present) pins generation 0 against the record's OWN self-contained
+    // `derived_model_parameter_sha256` field instead of the common
+    // snapshot's `named_parameter_stream_sha256`, mirroring
+    // `decode_genesis_checkpoint_manifest_v2_v3_self_contained`
+    // (`native_training_store_checkpoint_v3`) exactly. A record with no
+    // init section reproduces today's check byte-for-byte.
+    let expected_genesis_model_parameter_sha256 =
+        match &record.contracts.opponent_ladder_initialization {
+            Some(init) => &init.derived_model_parameter_sha256,
+            None => &snapshot.named_parameter_stream_sha256,
+        };
     if generation == 0
         && checkpoint.model_parameter_sha256()
-            != parse_lower_hex_raw32_v1(&snapshot.named_parameter_stream_sha256).map_err(|_| {
+            != parse_lower_hex_raw32_v1(expected_genesis_model_parameter_sha256).map_err(|_| {
                 NativeCheckpointInferenceErrorV1::new(
                     NativeCheckpointInferenceErrorKindV1::AuthorityBinding,
                 )
@@ -1233,5 +1249,210 @@ mod tests {
         assert_eq!(fs::read(root.join("sentinel")).unwrap(), b"unchanged");
         drop(handle);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    // Design directive slice 3: closes the STOP finding
+    // `native_science_loop_v1.rs`'s
+    // `ladder_init_science_loop_trains_the_store_end_to_end` test reported --
+    // `validate_authority_bindings_v1`'s generation-0-implies-common-snapshot
+    // check is a THIRD independent copy of the invariant slice 2 already
+    // taught the walk/publish decode dispatch
+    // (`decode_genesis_checkpoint_manifest_dispatch_v2_v3`,
+    // `native_training_store_checkpoint_v3.rs`) to branch on. This is the
+    // checkpoint-INFERENCE layer's own copy: it gates evaluation, the
+    // checkpoint runner, and ladder-opponent-engine resolution.
+
+    struct LadderInitFixtureV1 {
+        run_bytes: Vec<u8>,
+        reference_manifest: CheckpointManifestV3,
+        reference_payload: Vec<u8>,
+    }
+
+    static LADDER_INIT_FIXTURE_V1: OnceLock<LadderInitFixtureV1> = OnceLock::new();
+
+    const REAL_LADDER_INIT_REFERENCE_STORE_V1: &str =
+        r"D:\mtg-kernel-s1-mirror-20260724\dev1\run-0\store";
+    const REAL_LADDER_INIT_REFERENCE_GENERATION_V1: u64 = 32;
+    const REAL_LADDER_PILOT_POOL_JSON_V1: &str =
+        r"D:\mtg-kernel-ladder-pilot-20260725\pool\pool.json";
+
+    /// GenesisInitializationV2 fixture (mirrors the equivalent fixture in
+    /// `native_training_store_checkpoint_v3.rs` and `native_science_loop_v1.rs`
+    /// -- a real ladder-init run record referencing the real S1 gen-32
+    /// checkpoint, D:\mtg-kernel-s1-mirror-20260724\dev1\run-0\store,
+    /// read-only source). Each module keeps its own copy so its tests stay
+    /// independently runnable; the base seed here is unique to this module.
+    fn ladder_init_fixture_v1() -> &'static LadderInitFixtureV1 {
+        LADDER_INIT_FIXTURE_V1.get_or_init(|| {
+            use crate::native_ladder_pool_resolution_v1::{
+                ladder_init_as_checkpoint_ref_v1, resolve_ladder_checkpoint_authority_v1,
+                stage_ladder_checkpoint_initialization_v1,
+            };
+            use crate::native_training_store_run_v2::{
+                test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2,
+                OpponentLadderPoolContractV1,
+            };
+
+            let pool_bytes = fs::read(REAL_LADDER_PILOT_POOL_JSON_V1)
+                .expect("real ladder pilot pool.json must be readable");
+            let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
+                .expect("pool.json must decode as OpponentLadderPoolContractV1");
+
+            // Design directive slice 2: stages the complete six-field init
+            // section (five-field digest-pin plus
+            // `derived_model_parameter_sha256`) from the real reference
+            // checkpoint on disk.
+            let init = stage_ladder_checkpoint_initialization_v1(
+                std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V1),
+                REAL_LADDER_INIT_REFERENCE_GENERATION_V1,
+            )
+            .expect("real S1 mirror gen-32 checkpoint must stage to a valid init section");
+
+            let run_bytes = test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+                NativeTrainingNumericalBackendV1::Sequential,
+                2,
+                4,
+                4,
+                2,
+                4,
+                8,
+                32_768,
+                65_536,
+                555_090,
+                pool,
+                init,
+            );
+            let run = decode_train_run_v2(&run_bytes).expect("ladder-init run record");
+
+            // Resolved from the RECORD's own init section (not the staging
+            // call above) through the same conversion + chain-proven loader
+            // a real caller uses.
+            let checkpoint_ref = ladder_init_as_checkpoint_ref_v1(
+                run.record()
+                    .contracts
+                    .opponent_ladder_initialization
+                    .as_ref()
+                    .expect("fixture record must carry the init section"),
+            );
+            let authority = resolve_ladder_checkpoint_authority_v1(
+                std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V1),
+                &checkpoint_ref,
+            )
+            .expect("real S1 mirror checkpoint must resolve through the chain-proven loader");
+            let (reference_manifest, reference_payload) = authority.into_checkpoint_and_payload();
+
+            LadderInitFixtureV1 {
+                run_bytes,
+                reference_manifest,
+                reference_payload,
+            }
+        })
+    }
+
+    /// THE FIX, positive proof: a continual-init genesis (generation 0,
+    /// weights inherited from the real S1 gen-32 checkpoint) now loads
+    /// through the inference layer. Before this slice,
+    /// `validate_authority_bindings_v1` unconditionally required
+    /// `checkpoint.model_parameter_sha256() ==
+    /// snapshot.named_parameter_stream_sha256` at generation 0 -- never true
+    /// for an inherited genesis -- so this call rejected with
+    /// `AuthorityBinding` for every continual-init record, regardless of
+    /// target. It now pins against the record's own
+    /// `derived_model_parameter_sha256` instead when the init section is
+    /// present.
+    #[test]
+    fn ladder_init_genesis_loads_through_the_inference_layer_against_its_own_derived_digest() {
+        use crate::native_training_store_checkpoint_v3::{
+            build_genesis_checkpoint_manifest_v2_v3, derive_genesis_weights_only_payload_v2_v3,
+        };
+
+        let fixture = ladder_init_fixture_v1();
+        let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
+
+        let payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
+            .expect("weights-only payload derivation must succeed");
+        let checkpoint = build_genesis_checkpoint_manifest_v2_v3(
+            &run,
+            &fixture.reference_manifest,
+            &payload,
+        )
+        .expect("GenesisInitializationV2 authoring must succeed for a matching reference");
+
+        let handle = load_native_checkpoint_inference_v1(&run, &checkpoint, &payload)
+            .expect("a continual-init genesis must load through the inference layer");
+        assert_eq!(handle.generation_index(), 0);
+        assert_eq!(
+            handle.model_parameter_sha256(),
+            checkpoint.model_parameter_sha256()
+        );
+    }
+
+    /// Fail-closed (same discipline as
+    /// `decode_genesis_checkpoint_manifest_v2_v3_self_contained_rejects_wrong_derived_digest`
+    /// in `native_training_store_checkpoint_v3.rs`): a continual-init record
+    /// whose OWN claimed `derived_model_parameter_sha256` does not match the
+    /// actual gen-0 payload must reject at the inference layer too, not
+    /// just at genesis decode. Authors a genuinely valid V2 genesis for a
+    /// run whose declared digest is wrong (authoring succeeds -- the
+    /// reference-based path ignores that field entirely, it only pins the
+    /// reference's own weights), then proves the inference layer's
+    /// independent recheck, which trusts nothing but the record's own
+    /// claim, catches the mismatch.
+    #[test]
+    fn ladder_init_genesis_inference_rejects_a_run_with_a_wrong_derived_digest() {
+        use crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1;
+        use crate::native_training_store_checkpoint_v3::{
+            build_genesis_checkpoint_manifest_v2_v3, derive_genesis_weights_only_payload_v2_v3,
+        };
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2,
+            OpponentLadderPoolContractV1,
+        };
+
+        let fixture = ladder_init_fixture_v1();
+
+        let mut wrong_init = stage_ladder_checkpoint_initialization_v1(
+            std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V1),
+            REAL_LADDER_INIT_REFERENCE_GENERATION_V1,
+        )
+        .expect("real S1 mirror gen-32 checkpoint must stage to a valid init section");
+        assert_ne!(wrong_init.derived_model_parameter_sha256, "0".repeat(64));
+        wrong_init.derived_model_parameter_sha256 = "0".repeat(64);
+
+        let pool_bytes = fs::read(REAL_LADDER_PILOT_POOL_JSON_V1)
+            .expect("real ladder pilot pool.json must be readable");
+        let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
+            .expect("pool.json must decode as OpponentLadderPoolContractV1");
+        let wrong_run_bytes = test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            2,
+            4,
+            4,
+            2,
+            4,
+            8,
+            32_768,
+            65_536,
+            555_091,
+            pool,
+            wrong_init,
+        );
+        let wrong_run = decode_train_run_v2(&wrong_run_bytes).expect("ladder-init run record");
+
+        let payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
+            .expect("weights-only payload derivation must succeed");
+        let checkpoint = build_genesis_checkpoint_manifest_v2_v3(
+            &wrong_run,
+            &fixture.reference_manifest,
+            &payload,
+        )
+        .expect("reference-based authoring ignores the record's own claimed digest");
+
+        assert_eq!(
+            load_native_checkpoint_inference_v1(&wrong_run, &checkpoint, &payload)
+                .unwrap_err()
+                .kind(),
+            NativeCheckpointInferenceErrorKindV1::AuthorityBinding
+        );
     }
 }
