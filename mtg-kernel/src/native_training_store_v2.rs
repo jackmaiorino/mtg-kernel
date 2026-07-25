@@ -25,7 +25,8 @@ use crate::native_training_store_boundary_v2::{
     ValidatedNativeTrainingBoundaryV2,
 };
 use crate::native_training_store_checkpoint_v3::{
-    decode_checkpoint_manifest_v3, decode_trained_checkpoint_manifest_v3, CheckpointManifestV3,
+    decode_genesis_checkpoint_manifest_dispatch_v2_v3, decode_trained_checkpoint_manifest_v3,
+    CheckpointManifestV3,
 };
 use crate::native_training_store_digest_v1::sha256_v1;
 use crate::native_training_store_layout_v2::{
@@ -1143,7 +1144,13 @@ fn decode_generation_candidate_v2(
     let error = publisher_error_v2(kind);
     let (checkpoint, boundary) = match parent {
         PublisherParentV2::Genesis => {
-            let checkpoint = decode_checkpoint_manifest_v3(
+            // Design directive slice 2: dispatches on the record's own
+            // `contracts.opponent_ladder_initialization` claim -- a
+            // ladder-init record validates via the self-contained V2 path
+            // (no resolved reference needed here, closing the previous
+            // slice's STOP finding); every other record reproduces
+            // `decode_checkpoint_manifest_v3` byte-for-byte.
+            let checkpoint = decode_genesis_checkpoint_manifest_dispatch_v2_v3(
                 input.checkpoint_manifest,
                 input.checkpoint_payload,
                 run,

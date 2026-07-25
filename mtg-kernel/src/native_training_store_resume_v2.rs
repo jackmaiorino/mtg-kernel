@@ -25,8 +25,8 @@ use crate::native_training_store_boundary_v2::{
     ValidatedNativeTrainingBoundaryV2, CHECKPOINT_SIDECAR_MAX_BYTES_V2, HEAD_RECORD_MAX_BYTES_V2,
 };
 use crate::native_training_store_checkpoint_v3::{
-    decode_checkpoint_manifest_v3, decode_trained_checkpoint_manifest_v3, CheckpointManifestV3,
-    CHECKPOINT_MANIFEST_MAX_BYTES_V3,
+    decode_genesis_checkpoint_manifest_dispatch_v2_v3, decode_trained_checkpoint_manifest_v3,
+    CheckpointManifestV3, CHECKPOINT_MANIFEST_MAX_BYTES_V3,
 };
 use crate::native_training_store_digest_v1::parse_lower_hex_raw32_v1;
 use crate::native_training_store_layout_v2::{
@@ -485,8 +485,14 @@ fn load_generation_v2(
     let mut continuation_bytes: Vec<Vec<u8>> = Vec::new();
     let (checkpoint, boundary, continuation_count) = match parent {
         None => {
-            let checkpoint =
-                decode_checkpoint_manifest_v3(&manifest, &payload, run).map_err(|_| error)?;
+            // Design directive slice 2: the shared genesis-decode
+            // chokepoint every walk/resume/publish path reaches -- see
+            // `decode_genesis_checkpoint_manifest_dispatch_v2_v3`'s doc for
+            // the dispatch rule.
+            let checkpoint = decode_genesis_checkpoint_manifest_dispatch_v2_v3(
+                &manifest, &payload, run,
+            )
+            .map_err(|_| error)?;
             let segment = decode_genesis_segment_manifest_v2(&segment_manifest, run, &checkpoint)
                 .map_err(|_| error)?;
             let boundary = decode_genesis_native_training_boundary_v2(
