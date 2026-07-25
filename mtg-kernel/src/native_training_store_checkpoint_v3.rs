@@ -618,6 +618,43 @@ pub fn derive_genesis_weights_only_payload_v2_v3(reference_payload: &[u8]) -> Re
     Ok(payload)
 }
 
+/// GenesisInitializationV2, SELF-CONTAINED RECORDS (design directive slice
+/// 2): the model-parameter digest a ladder-init record's
+/// `contracts.opponent_ladder_initialization.derived_model_parameter_sha256`
+/// field must carry, computed from `reference_payload` (a resolved
+/// reference checkpoint's own raw payload bytes) via the exact
+/// [`derive_genesis_weights_only_payload_v2_v3`] byte surgery genesis
+/// authoring itself performs, so record authoring
+/// (`native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1`,
+/// the science-loop harness knobs) and genesis authoring/validation
+/// (`build_genesis_checkpoint_manifest_v2_v3`,
+/// `decode_genesis_checkpoint_manifest_v2_v3_self_contained`) can never
+/// independently disagree about it.
+///
+/// `reference`'s own `scorer_bias_anchor_f32_bits` is used to decode the
+/// derived payload -- not `run.record().model_snapshot`'s, deliberately,
+/// because this function has no `run` in scope yet at record-authoring
+/// time (the record it would belong to does not exist until this digest is
+/// computed). This is sound regardless: the derived payload's parameter
+/// section is byte-copied from `reference_payload` verbatim, so the actual
+/// scorer-bias value embedded in it is `reference`'s own, already proven
+/// self-consistent when `reference` itself was originally decoded; and
+/// `model_parameter_sha256_v1` depends only on parameter values, never on
+/// the anchor or `adam_step` passed to decode, so this digest is identical
+/// to what a candidate's own decode independently computes regardless of
+/// which (self-consistent) anchor either side happens to use.
+pub fn derive_genesis_model_parameter_sha256_v2_v3(
+    reference: &CheckpointManifestV3,
+    reference_payload: &[u8],
+) -> Result<String> {
+    let payload = derive_genesis_weights_only_payload_v2_v3(reference_payload)?;
+    let anchor = u32::try_from(reference.train_state().scorer_bias_anchor_f32_bits())
+        .map_err(|_| CheckpointManifestV3Error::new(CheckpointManifestV3ErrorKind::CrossBinding))?;
+    let decoded =
+        decode_native_train_state_payload_v1(&payload, 0, anchor).map_err(map_payload_error_v3)?;
+    Ok(lower_hex_raw32_v1(decoded.digests.model_parameter_sha256))
+}
+
 /// GenesisInitializationV2 (Self-Play Ladder Design Contract S2, Amendment 1
 /// / Section 8A point 2, Section 8B): builds and validates the exact
 /// update-zero checkpoint authority for a continual-initialization ladder
@@ -909,6 +946,92 @@ pub fn decode_genesis_checkpoint_manifest_v2_v3(
     let decoded = validate_payload_v3(&wire, payload, run)?;
     validate_genesis_snapshot_v2_v3(&wire, &decoded, reference)?;
     finish_checkpoint_manifest_v3(wire, reencoded, manifest_cj, decoded)
+}
+
+/// GenesisInitializationV2, SELF-CONTAINED (design directive slice 2): the
+/// walk/publish sibling of [`decode_genesis_checkpoint_manifest_v2_v3`] that
+/// needs NO resolved reference checkpoint. The previous slice's STOP
+/// finding was that the publisher's own re-derivation proof obligation
+/// (`decode_generation_candidate_v2`, `native_training_store_v2.rs`) and the
+/// shared walk primitive (`load_generation_v2`'s genesis arm,
+/// `native_training_store_resume_v2.rs`) both call
+/// [`decode_checkpoint_manifest_v3`] unconditionally, with no reference
+/// checkpoint available to validate a V2 genesis against and no filesystem
+/// access to resolve one (this module is deliberately I/O-free). This entry
+/// point closes that: it validates the candidate's own model-parameter
+/// digest against the record's OWN
+/// `contracts.opponent_ladder_initialization.derived_model_parameter_sha256`
+/// field, pinned into the record at authoring time (see
+/// [`derive_genesis_model_parameter_sha256_v2_v3`]) -- so the walk/publish
+/// chokepoint never needs to resolve or trust anything beyond the record
+/// and the candidate bytes it already holds. Every other invariant is
+/// IDENTICAL to [`validate_genesis_snapshot_v3`] /
+/// [`validate_genesis_snapshot_v2_v3`]: `generation_index` must be 0,
+/// `adam_step` must be 0, and every Adam moment (first and second) must be
+/// bit-exact positive zero. Fails closed with
+/// [`CheckpointManifestV3ErrorKind::CrossBinding`] if `run`'s record does
+/// not carry `contracts.opponent_ladder_initialization`: this path is never
+/// a silent substitute for ordinary genesis decode, only the ladder's own
+/// -- callers should reach it exclusively through
+/// [`decode_genesis_checkpoint_manifest_dispatch_v2_v3`], which branches on
+/// that same claim.
+pub fn decode_genesis_checkpoint_manifest_v2_v3_self_contained(
+    manifest_cj: &[u8],
+    payload: &[u8],
+    run: &ValidatedTrainRunV2,
+) -> Result<CheckpointManifestV3> {
+    let expected_model_parameter_sha256 = match &run.record().contracts.opponent_ladder_initialization
+    {
+        Some(init) => parse_digest_v3(&init.derived_model_parameter_sha256)?,
+        None => {
+            return Err(CheckpointManifestV3Error::new(
+                CheckpointManifestV3ErrorKind::CrossBinding,
+            ))
+        }
+    };
+    let (wire, reencoded) = decode_checkpoint_wire_v3(manifest_cj)?;
+    if wire.generation_index != 0 {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::TrainedEvidenceContextRequired,
+        ));
+    }
+    validate_checkpoint_wire_v3(&wire, run)?;
+    let decoded = validate_payload_v3(&wire, payload, run)?;
+    validate_genesis_snapshot_v2_v3_self_contained(&wire, &decoded, expected_model_parameter_sha256)?;
+    finish_checkpoint_manifest_v3(wire, reencoded, manifest_cj, decoded)
+}
+
+/// GenesisInitializationV2 dispatch (design directive slice 2): the single
+/// shared chokepoint every walk/publish genesis-decode site calls,
+/// branching strictly on the RECORD already in hand -- never on caller
+/// convenience, never on which entry point happens to be reachable.
+/// `run`'s record carrying `contracts.opponent_ladder_initialization`
+/// selects the self-contained V2 path
+/// ([`decode_genesis_checkpoint_manifest_v2_v3_self_contained`], needing no
+/// resolved reference); its absence reproduces
+/// [`decode_checkpoint_manifest_v3`] byte-for-byte, so every existing
+/// (non-ladder-init) call site's behavior is untouched by construction, not
+/// by careful branching. Replaces the unconditional
+/// `decode_checkpoint_manifest_v3` call at `decode_generation_candidate_v2`
+/// (`native_training_store_v2.rs`) and `load_generation_v2`'s genesis arm
+/// (`native_training_store_resume_v2.rs`) -- the previous slice's STOP
+/// finding's exact two locations, and the only two callers of this
+/// function.
+pub fn decode_genesis_checkpoint_manifest_dispatch_v2_v3(
+    manifest_cj: &[u8],
+    payload: &[u8],
+    run: &ValidatedTrainRunV2,
+) -> Result<CheckpointManifestV3> {
+    if run
+        .record()
+        .contracts
+        .opponent_ladder_initialization
+        .is_some()
+    {
+        decode_genesis_checkpoint_manifest_v2_v3_self_contained(manifest_cj, payload, run)
+    } else {
+        decode_checkpoint_manifest_v3(manifest_cj, payload, run)
+    }
 }
 
 fn validate_checkpoint_wire_v3(
@@ -1255,6 +1378,48 @@ fn validate_genesis_snapshot_v2_v3(
         || decoded.snapshot.adam_step != 0
         || decoded.digests.parameters_sha256 != expected_parameter_payload
         || decoded.digests.model_parameter_sha256 != expected_named_parameters
+        || !all_moments_positive_zero
+    {
+        return Err(CheckpointManifestV3Error::new(
+            CheckpointManifestV3ErrorKind::GenesisSnapshotMismatch,
+        ));
+    }
+    Ok(())
+}
+
+/// GenesisInitializationV2, SELF-CONTAINED (design directive slice 2): the
+/// no-reference sibling of [`validate_genesis_snapshot_v2_v3`], deliberately
+/// a separate function body (not a refactor of either existing one) so both
+/// originals' byte-for-byte behavior stays provably untouched. Pins the
+/// candidate's canonicalized model-parameter digest
+/// (`decoded.digests.model_parameter_sha256`) to `expected_model_parameter_sha256`
+/// -- the record's own `derived_model_parameter_sha256`, parsed by the
+/// caller -- and checks nothing else external: there is no raw-section
+/// reference digest available without resolving a file, and none is
+/// needed, because `model_parameter_sha256` is itself a collision-resistant
+/// digest over every named parameter value, computed from the SAME bytes
+/// [`validate_payload_v3`] already proved match the wire's own declared
+/// section hash. Every other invariant is IDENTICAL to
+/// [`validate_genesis_snapshot_v3`] / [`validate_genesis_snapshot_v2_v3`]:
+/// `generation_index` must be 0, `adam_step` must be 0, and every Adam
+/// moment (first and second) must be bit-exact positive zero. The moment
+/// invariant is completely untouched by this branch: only the weight-digest
+/// source and its single-field shape change.
+fn validate_genesis_snapshot_v2_v3_self_contained(
+    wire: &CheckpointManifestWireV3,
+    decoded: &NativeDecodedTrainStatePayloadV1,
+    expected_model_parameter_sha256: [u8; 32],
+) -> Result<()> {
+    let all_moments_positive_zero = decoded
+        .snapshot
+        .first_moments
+        .iter()
+        .chain(&decoded.snapshot.second_moments)
+        .flat_map(|parameter| &parameter.values)
+        .all(|value| value.to_bits() == 0);
+    if wire.generation_index != 0
+        || decoded.snapshot.adam_step != 0
+        || decoded.digests.model_parameter_sha256 != expected_model_parameter_sha256
         || !all_moments_positive_zero
     {
         return Err(CheckpointManifestV3Error::new(
@@ -1611,11 +1776,11 @@ mod tests {
         LADDER_INIT_FIXTURE_V3.get_or_init(|| {
             use crate::native_ladder_pool_resolution_v1::{
                 ladder_init_as_checkpoint_ref_v1, resolve_ladder_checkpoint_authority_v1,
-                stage_ladder_checkpoint_ref_v1,
+                stage_ladder_checkpoint_initialization_v1,
             };
             use crate::native_training_store_run_v2::{
                 test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2,
-                OpponentLadderInitializationContractV1, OpponentLadderPoolContractV1,
+                OpponentLadderPoolContractV1,
             };
 
             let pool_bytes = std::fs::read(REAL_LADDER_PILOT_POOL_JSON_V3)
@@ -1623,18 +1788,17 @@ mod tests {
             let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
                 .expect("pool.json must decode as OpponentLadderPoolContractV1");
 
-            let staged = stage_ladder_checkpoint_ref_v1(
+            // Stages the complete six-field init section (five-field
+            // digest-pin plus `derived_model_parameter_sha256`) from the
+            // real reference checkpoint on disk -- record authoring and
+            // genesis authoring/validation below both derive the digest
+            // through the identical byte surgery, so they can never
+            // disagree.
+            let init = stage_ladder_checkpoint_initialization_v1(
                 std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V3),
                 REAL_LADDER_INIT_REFERENCE_GENERATION_V3,
             )
-            .expect("real S1 mirror gen-32 checkpoint must stage to a valid ref");
-            let init = OpponentLadderInitializationContractV1 {
-                source_run_sha256: staged.source_run_sha256.clone(),
-                generation: staged.generation,
-                checkpoint_sha256: staged.checkpoint_sha256.clone(),
-                sidecar_sha256: staged.sidecar_sha256.clone(),
-                state_sha256: staged.state_sha256.clone(),
-            };
+            .expect("real S1 mirror gen-32 checkpoint must stage to a valid init section");
 
             let run_bytes = test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
                 NativeTrainingNumericalBackendV1::Sequential,
@@ -1652,9 +1816,9 @@ mod tests {
             );
             let run = decode_train_run_v2(&run_bytes).unwrap();
 
-            // Resolved from the RECORD's own init section (not `staged`
-            // above) through the same conversion + chain-proven loader a
-            // real caller uses -- proving the round-trip, not just the
+            // Resolved from the RECORD's own init section (not the staging
+            // call above) through the same conversion + chain-proven loader
+            // a real caller uses -- proving the round-trip, not just the
             // staging helper.
             let checkpoint_ref = ladder_init_as_checkpoint_ref_v1(
                 run.record()
@@ -2582,6 +2746,167 @@ mod tests {
                 .unwrap_err()
                 .kind(),
             CheckpointManifestV3ErrorKind::GenesisSnapshotMismatch
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Design directive slice 2: self-contained ladder-init genesis records.
+    // ------------------------------------------------------------------
+
+    /// GenesisInitializationV2 dispatch WIRING proof (design directive slice
+    /// 2): the actual walk/publish chokepoint
+    /// (`decode_genesis_checkpoint_manifest_dispatch_v2_v3`) accepts a
+    /// self-authored V2 genesis for a ladder-init record with NO resolved
+    /// reference checkpoint in scope -- closing the previous slice's STOP
+    /// finding at the checkpoint-authority layer (the
+    /// science-loop/publisher-layer proof is
+    /// `ladder_init_genesis_publishes_through_the_pure_walk_reconciler` in
+    /// `native_science_loop_v1.rs`). A plain (non-ladder-init) run/candidate
+    /// still dispatches through the untouched V1 path, byte for byte.
+    #[test]
+    fn decode_genesis_checkpoint_manifest_dispatch_v2_v3_accepts_a_self_contained_v2_genesis() {
+        let fixture = ladder_init_fixture_v3();
+        let run = ladder_init_run_v3();
+        let payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
+            .expect("weights-only payload derivation must succeed");
+        let checkpoint =
+            build_genesis_checkpoint_manifest_v2_v3(&run, &fixture.reference_manifest, &payload)
+                .expect("GenesisInitializationV2 authoring must succeed for a matching reference");
+
+        let dispatched = decode_genesis_checkpoint_manifest_dispatch_v2_v3(
+            checkpoint.canonical_bytes(),
+            &payload,
+            &run,
+        )
+        .expect("the dispatcher must accept a self-authored V2 genesis with NO resolved reference");
+        assert_eq!(dispatched.canonical_bytes(), checkpoint.canonical_bytes());
+
+        let v1_run = run_v3();
+        let v1_payload = fixture_v3().payload.clone();
+        let v1_checkpoint =
+            build_genesis_checkpoint_manifest_v3(&v1_run, &v1_payload).unwrap();
+        let v1_dispatched = decode_genesis_checkpoint_manifest_dispatch_v2_v3(
+            v1_checkpoint.canonical_bytes(),
+            &v1_payload,
+            &v1_run,
+        )
+        .expect("the dispatcher must reproduce decode_checkpoint_manifest_v3 for a V1 record");
+        assert_eq!(v1_dispatched.canonical_bytes(), v1_checkpoint.canonical_bytes());
+    }
+
+    /// Fail-closed (design directive slice 2 mandatory test list): "wrong
+    /// derived digest in the record rejects at genesis decode." Authors a
+    /// genuinely valid V2 genesis for a run whose OWN
+    /// `derived_model_parameter_sha256` claim does NOT match the real
+    /// reference's digest -- authoring succeeds (the reference-based path
+    /// ignores that field entirely, it only pins `reference`'s own weights),
+    /// but the self-contained decoder, which trusts nothing but the
+    /// record's own claim, must independently catch the mismatch.
+    #[test]
+    fn decode_genesis_checkpoint_manifest_v2_v3_self_contained_rejects_wrong_derived_digest() {
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2,
+            OpponentLadderPoolContractV1,
+        };
+
+        let fixture = ladder_init_fixture_v3();
+        let mut wrong_init = ladder_init_run_v3()
+            .record()
+            .contracts
+            .opponent_ladder_initialization
+            .clone()
+            .expect("fixture record must carry the init section");
+        assert_ne!(wrong_init.derived_model_parameter_sha256, "0".repeat(64));
+        wrong_init.derived_model_parameter_sha256 = "0".repeat(64);
+
+        let pool_bytes = std::fs::read(REAL_LADDER_PILOT_POOL_JSON_V3)
+            .expect("real ladder pilot pool.json must be readable");
+        let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
+            .expect("pool.json must decode as OpponentLadderPoolContractV1");
+        let wrong_run_bytes = test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            2,
+            4,
+            4,
+            2,
+            4,
+            8,
+            32_768,
+            65_536,
+            555_021,
+            pool,
+            wrong_init,
+        );
+        let wrong_run = decode_train_run_v2(&wrong_run_bytes).unwrap();
+
+        let payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
+            .expect("weights-only payload derivation must succeed");
+        let checkpoint = build_genesis_checkpoint_manifest_v2_v3(
+            &wrong_run,
+            &fixture.reference_manifest,
+            &payload,
+        )
+        .expect("reference-based authoring ignores the record's own claimed digest");
+
+        assert_eq!(
+            decode_genesis_checkpoint_manifest_v2_v3_self_contained(
+                checkpoint.canonical_bytes(),
+                &payload,
+                &wrong_run,
+            )
+            .unwrap_err()
+            .kind(),
+            CheckpointManifestV3ErrorKind::GenesisSnapshotMismatch
+        );
+        // The dispatcher -- the actual walk/publish chokepoint -- must
+        // reject the exact same way.
+        assert_eq!(
+            decode_genesis_checkpoint_manifest_dispatch_v2_v3(
+                checkpoint.canonical_bytes(),
+                &payload,
+                &wrong_run,
+            )
+            .unwrap_err()
+            .kind(),
+            CheckpointManifestV3ErrorKind::GenesisSnapshotMismatch
+        );
+    }
+
+    /// Fail-closed (design directive slice 2 mandatory test list): "a V1
+    /// (no-section) record presented with a V2 genesis payload rejects."
+    /// The dispatcher's own `contracts.opponent_ladder_initialization.is_some()`
+    /// branch condition means a V1 record can only ever reach the
+    /// unconditional `decode_checkpoint_manifest_v3` path -- proving here
+    /// that path safely rejects a genuinely V2-authored genesis (bound to a
+    /// DIFFERENT run) rather than silently accepting it.
+    #[test]
+    fn decode_genesis_checkpoint_manifest_dispatch_v2_v3_rejects_a_v2_payload_for_a_v1_record() {
+        let fixture = ladder_init_fixture_v3();
+        let ladder_run = ladder_init_run_v3();
+        let payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
+            .expect("weights-only payload derivation must succeed");
+        let checkpoint = build_genesis_checkpoint_manifest_v2_v3(
+            &ladder_run,
+            &fixture.reference_manifest,
+            &payload,
+        )
+        .expect("GenesisInitializationV2 authoring must succeed for a matching reference");
+
+        let v1_run = run_v3();
+        assert!(v1_run
+            .record()
+            .contracts
+            .opponent_ladder_initialization
+            .is_none());
+        assert_eq!(
+            decode_genesis_checkpoint_manifest_dispatch_v2_v3(
+                checkpoint.canonical_bytes(),
+                &payload,
+                &v1_run,
+            )
+            .unwrap_err()
+            .kind(),
+            CheckpointManifestV3ErrorKind::CrossBinding
         );
     }
 }
