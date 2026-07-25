@@ -798,14 +798,30 @@ pub fn build_trained_checkpoint_manifest_v3(
 ) -> Result<CheckpointManifestV3> {
     let generation_index = validate_trained_candidate_v3(run, evidence, candidate)?;
     let record = run.record();
+    // Trained-checkpoint AUTHORING dispatch (Codex return-audit finding,
+    // 2026-07-25 18:49 ledger): the downstream decoders were wide-aware but
+    // this authoring path still pinned every frozen literal, so the first
+    // wide segment commit failed closed. Same record-driven branch as every
+    // other chokepoint; absent-section behavior byte-for-byte.
+    let wide = record.contracts.wide_model_experiment_v1.is_some();
     let digests = NativeTrainStatePayloadDigestsV1::from(candidate.digests());
-    decode_native_train_state_payload_verified_v1(
-        candidate.payload(),
-        candidate.adam_step(),
-        candidate.scorer_bias_anchor_bits(),
-        &digests,
-    )
-    .map_err(map_payload_error_v3)?;
+    if wide {
+        decode_native_train_state_payload_verified_wide_v1(
+            candidate.payload(),
+            candidate.adam_step(),
+            candidate.scorer_bias_anchor_bits(),
+            &digests,
+        )
+        .map_err(map_payload_error_v3)?;
+    } else {
+        decode_native_train_state_payload_verified_v1(
+            candidate.payload(),
+            candidate.adam_step(),
+            candidate.scorer_bias_anchor_bits(),
+            &digests,
+        )
+        .map_err(map_payload_error_v3)?;
+    }
     let progress = *evidence.progress();
     let logical_state_sha256 = logical_state_sha256_v1(
         run.run_sha256(),
@@ -827,12 +843,24 @@ pub fn build_trained_checkpoint_manifest_v3(
             adam_step: generation_index,
             scorer_bias_anchor_f32_bits: u64::from(candidate.scorer_bias_anchor_bits()),
             parameter_layout_sha256: record.model_snapshot.parameter_layout_sha256.clone(),
-            parameter_tensor_count: PARAMETER_TENSOR_COUNT_U64_V3,
-            parameter_element_count: PARAMETER_ELEMENT_COUNT_U64_V3,
+            parameter_tensor_count: if wide {
+                W_PARAMETER_TENSOR_COUNT_U64_V3
+            } else {
+                PARAMETER_TENSOR_COUNT_U64_V3
+            },
+            parameter_element_count: if wide {
+                W_PARAMETER_ELEMENT_COUNT_U64_V3
+            } else {
+                PARAMETER_ELEMENT_COUNT_U64_V3
+            },
             model_parameter_sha256: lower_hex_raw32_v1(digests.model_parameter_sha256),
             state_sha256: lower_hex_raw32_v1(digests.native_state_sha256),
         },
-        payload: payload_binding_v1(&digests)?,
+        payload: if wide {
+            payload_binding_wide_v1(&digests)?
+        } else {
+            payload_binding_v1(&digests)?
+        },
         logical_state_sha256: lower_hex_raw32_v1(logical_state_sha256),
     };
     let canonical_bytes = to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid)?;
@@ -1316,7 +1344,12 @@ fn validate_trained_candidate_v3(
         || candidate_progress.learner_physical_decision_count != expected_physical_decisions
         || candidate_digests.model_parameter_sha256 != evidence.model_parameter_sha256()
         || candidate_digests.native_state_sha256 != evidence.train_state_sha256()
-        || candidate.payload_byte_count() != NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+        || candidate.payload_byte_count()
+            != if run.record().contracts.wide_model_experiment_v1.is_some() {
+                W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+            } else {
+                NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+            }
     {
         return Err(CheckpointManifestV3Error::new(
             CheckpointManifestV3ErrorKind::CrossBinding,
