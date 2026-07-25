@@ -26,7 +26,10 @@ use crate::native_training_store_bootstrap_v2::{
     bootstrap_native_training_store_v2, NativeTrainingStoreBootstrapV2ErrorKind,
 };
 use crate::native_training_store_boundary_v2::build_genesis_native_training_boundary_v2;
-use crate::native_training_store_checkpoint_v3::build_genesis_checkpoint_manifest_v3;
+use crate::native_training_store_checkpoint_v3::{
+    build_genesis_checkpoint_manifest_v2_v3, build_genesis_checkpoint_manifest_v3,
+    derive_genesis_weights_only_payload_v2_v3, GenesisInitializationReferenceV2,
+};
 use crate::native_training_store_prepared_segment_v2::prepare_segment_v2;
 use crate::native_training_store_reference_latest_v2::{
     build_checkpoint_reference_v2, build_latest_v2,
@@ -186,7 +189,17 @@ impl NativeScienceLoopReportV1 {
 /// docs): only this crate can ever construct `Some(engine)`, so this stays a
 /// sealed capability parameter for external callers, who can still call this
 /// function with `None`.
-#[allow(private_interfaces)]
+///
+/// `ladder_init_reference` is GenesisInitializationV2 (Self-Play Ladder
+/// Design Contract S2, Amendment 1 / Section 8A point 2, Section 8B): the
+/// caller's already-resolved continual-initialization reference checkpoint.
+/// It MUST be `Some` if and only if `run`'s record carries
+/// `contracts.opponent_ladder_initialization` -- any other combination fails
+/// closed with [`NativeScienceLoopV1ErrorKind::GenesisFailed`] rather than
+/// silently choosing a genesis source. `None` (the only value every caller
+/// outside the continual-init ladder passes) reproduces today's
+/// common-snapshot genesis behavior exactly, byte for byte.
+#[allow(private_interfaces, clippy::too_many_arguments)]
 pub fn run_native_science_loop_v1(
     parent: impl AsRef<Path>,
     root_basename: &str,
@@ -196,6 +209,7 @@ pub fn run_native_science_loop_v1(
     snapshot_payload_path: &Path,
     runner_config: NativeCheckpointRunnerConfigV1,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
 ) -> Result<NativeScienceLoopReportV1> {
     use crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2ErrorKind;
 
@@ -223,18 +237,44 @@ pub fn run_native_science_loop_v1(
     // snapshot. The receipt witnesses publication of exactly generation zero.
     if genesis_required {
         let genesis_error = loop_error_v1(NativeScienceLoopV1ErrorKind::GenesisFailed);
-        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
-            execution_config.clone(),
-            snapshot_manifest_path,
-            snapshot_payload_path,
-        )
-        .map_err(|_| genesis_error)?;
-        let candidate = executor
-            .checkpoint_candidate_v1()
-            .map_err(|_| genesis_error)?;
-        let payload = candidate.payload().to_vec();
-        let checkpoint =
-            build_genesis_checkpoint_manifest_v3(run, &payload).map_err(|_| genesis_error)?;
+        // GenesisInitializationV2 branches strictly on the record's own
+        // claim, never on caller convenience: a ladder-init record with no
+        // supplied reference, or a supplied reference for a non-ladder-init
+        // record, are both caller bugs and fail closed rather than silently
+        // picking a source (Self-Play Ladder Design Contract S2, Amendment 1
+        // / Section 8A point 2, Section 8B).
+        let (checkpoint, payload) = match (
+            run.record()
+                .contracts
+                .opponent_ladder_initialization
+                .is_some(),
+            ladder_init_reference,
+        ) {
+            (true, Some(reference)) => {
+                let payload = derive_genesis_weights_only_payload_v2_v3(&reference.payload)
+                    .map_err(|_| genesis_error)?;
+                let checkpoint =
+                    build_genesis_checkpoint_manifest_v2_v3(run, &reference.checkpoint, &payload)
+                        .map_err(|_| genesis_error)?;
+                (checkpoint, payload)
+            }
+            (false, None) => {
+                let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+                    execution_config.clone(),
+                    snapshot_manifest_path,
+                    snapshot_payload_path,
+                )
+                .map_err(|_| genesis_error)?;
+                let candidate = executor
+                    .checkpoint_candidate_v1()
+                    .map_err(|_| genesis_error)?;
+                let payload = candidate.payload().to_vec();
+                let checkpoint = build_genesis_checkpoint_manifest_v3(run, &payload)
+                    .map_err(|_| genesis_error)?;
+                (checkpoint, payload)
+            }
+            (true, None) | (false, Some(_)) => return Err(genesis_error),
+        };
         let segment =
             build_genesis_segment_manifest_v2(run, &checkpoint).map_err(|_| genesis_error)?;
         let boundary = build_genesis_native_training_boundary_v2(run, &segment, &checkpoint)
@@ -352,6 +392,7 @@ mod windows_science_loop_tests {
     use crate::native_training_store_bootstrap_v2::{
         bootstrap_native_training_store_v2, NativeTrainingStoreBootstrapOutcomeV2,
     };
+    use crate::native_training_store_checkpoint_v3::decode_genesis_checkpoint_manifest_v2_v3;
     use crate::native_training_store_resume_v2::test_execution_config_v2;
     use crate::native_training_store_run_v2::{
         decode_train_run_v2, test_fixture_bytes_v2, test_fixture_bytes_with_schedule_v2,
@@ -359,6 +400,7 @@ mod windows_science_loop_tests {
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
     use std::time::Duration;
 
     struct TestParentV1 {
@@ -481,6 +523,7 @@ mod windows_science_loop_tests {
             &snapshot_manifest,
             &snapshot_payload,
             runner_config,
+            None,
             None,
         )
         .expect("learning smoke loop");
@@ -651,10 +694,80 @@ mod windows_science_loop_tests {
             }
             None => None,
         };
+        // Self-Play Ladder Design Contract S2, Amendment 1 / Section 8A
+        // point 2, Section 8B (GenesisInitializationV2). The pilot-harness
+        // knobs the earlier attempt correctly withheld while the store
+        // contract couldn't represent continual init: MULTIRUN_LADDER_INIT_STORE
+        // (a complete Store root holding the reference checkpoint) and
+        // MULTIRUN_LADDER_INIT_GEN (its generation, default 0) land now that
+        // it can. Only meaningful with MULTIRUN_LADDER=1 (continual init is
+        // a ladder-identity concept). The record's own
+        // `opponent_ladder_initialization` section is populated with digests
+        // computed from the referenced files themselves
+        // (`stage_ladder_checkpoint_ref_v1`, the same staging helper the STOP
+        // finding's fixture already used), never hand-maintained; the
+        // reference checkpoint is then resolved back from that record
+        // section through the identical chain-proven loader
+        // (`ladder_init_as_checkpoint_ref_v1` +
+        // `resolve_ladder_checkpoint_authority_v1`) a real, non-harness
+        // caller would use. Resolved ONCE and shared across every spawned
+        // run via `Arc`, mirroring `ladder_engine`, since
+        // `CheckpointManifestV3` is deliberately not `Clone`.
+        let ladder_init_store: Option<std::path::PathBuf> =
+            std::env::var("MULTIRUN_LADDER_INIT_STORE")
+                .ok()
+                .map(std::path::PathBuf::from);
+        let ladder_init_gen = env_knob_v1("MULTIRUN_LADDER_INIT_GEN", 0);
+        let ladder_init_section: Option<
+            crate::native_training_store_run_v2::OpponentLadderInitializationContractV1,
+        > = ladder_init_store.as_ref().map(|store_dir| {
+            assert!(
+                ladder_enabled,
+                "MULTIRUN_LADDER_INIT_STORE requires MULTIRUN_LADDER=1 (continual init is a ladder-identity concept)"
+            );
+            let staged = crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_ref_v1(
+                store_dir,
+                ladder_init_gen,
+            )
+            .expect("MULTIRUN_LADDER_INIT_STORE/MULTIRUN_LADDER_INIT_GEN must stage to a valid ref");
+            crate::native_training_store_run_v2::OpponentLadderInitializationContractV1 {
+                source_run_sha256: staged.source_run_sha256,
+                generation: staged.generation,
+                checkpoint_sha256: staged.checkpoint_sha256,
+                sidecar_sha256: staged.sidecar_sha256,
+                state_sha256: staged.state_sha256,
+            }
+        });
+        let ladder_init_reference: Option<Arc<GenesisInitializationReferenceV2>> = match (
+            &ladder_init_store,
+            &ladder_init_section,
+        ) {
+            (Some(store_dir), Some(section)) => {
+                let checkpoint_ref =
+                    crate::native_ladder_pool_resolution_v1::ladder_init_as_checkpoint_ref_v1(
+                        section,
+                    );
+                let authority = crate::native_ladder_pool_resolution_v1::resolve_ladder_checkpoint_authority_v1(
+                        store_dir,
+                        &checkpoint_ref,
+                    )
+                    .expect(
+                        "MULTIRUN_LADDER_INIT_STORE checkpoint must resolve through the chain-proven loader",
+                    );
+                let (checkpoint, payload) = authority.into_checkpoint_and_payload();
+                Some(Arc::new(GenesisInitializationReferenceV2 {
+                    checkpoint,
+                    payload,
+                }))
+            }
+            _ => None,
+        };
         println!(
             "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
              broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset} \
-             record_only={record_only} ladder={ladder_enabled}"
+             record_only={record_only} ladder={ladder_enabled} \
+             ladder_init={}",
+            ladder_init_store.is_some()
         );
         let started = std::time::Instant::now();
         let handles: Vec<_> = (0..run_count)
@@ -662,10 +775,29 @@ mod windows_science_loop_tests {
                 let durable_parent = durable_parent.clone();
                 let ladder_pool = ladder_pool.clone();
                 let ladder_engine = ladder_engine.clone();
+                let ladder_init_section = ladder_init_section.clone();
+                let ladder_init_reference = ladder_init_reference.clone();
                 std::thread::spawn(move || {
                     let run_seed = base_seed + seed_offset + ordinal as u64;
-                    let patched = match &ladder_pool {
-                        Some(pool) => {
+                    let patched = match (&ladder_pool, &ladder_init_section) {
+                        (Some(pool), Some(init)) => {
+                            use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2;
+                            test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+                                NativeTrainingNumericalBackendV1::CudaBurnDense,
+                                64,
+                                4,
+                                updates,
+                                workers,
+                                sessions,
+                                broker_target,
+                                1_024,
+                                2_048,
+                                run_seed,
+                                pool.clone(),
+                                init.clone(),
+                            )
+                        }
+                        (Some(pool), None) => {
                             use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_v2;
                             test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
                                 NativeTrainingNumericalBackendV1::CudaBurnDense,
@@ -681,7 +813,7 @@ mod windows_science_loop_tests {
                                 pool.clone(),
                             )
                         }
-                        None => test_fixture_bytes_with_schedule_and_base_seed_v2(
+                        (None, None) => test_fixture_bytes_with_schedule_and_base_seed_v2(
                             NativeTrainingNumericalBackendV1::CudaBurnDense,
                             64,
                             4,
@@ -692,6 +824,9 @@ mod windows_science_loop_tests {
                             1_024,
                             2_048,
                             run_seed,
+                        ),
+                        (None, Some(_)) => panic!(
+                            "MULTIRUN_LADDER_INIT_STORE requires MULTIRUN_LADDER=1 (continual init is a ladder-identity concept)"
                         ),
                     };
                     let run = decode_train_run_v2(&patched).expect("pilot run record");
@@ -733,6 +868,7 @@ mod windows_science_loop_tests {
                         &snapshot_payload,
                         runner_config,
                         ladder_engine.clone(),
+                        ladder_init_reference.as_deref(),
                     )
                     .expect("pilot loop");
                     let wall = run_started.elapsed().as_secs_f64();
@@ -1870,6 +2006,7 @@ mod windows_science_loop_tests {
             &snapshot_payload,
             runner_config_v1(),
             None,
+            None,
         )
         .unwrap();
         assert_eq!(report.latest_generation_index(), target);
@@ -1943,6 +2080,7 @@ mod windows_science_loop_tests {
             &snapshot_payload,
             runner_config_v1(),
             None,
+            None,
         )
         .unwrap();
         assert_eq!(report.latest_generation_index(), 4);
@@ -1982,6 +2120,7 @@ mod windows_science_loop_tests {
             &snapshot_payload,
             runner_config_v1(),
             None,
+            None,
         )
         .unwrap_err();
         assert_eq!(error.kind(), NativeScienceLoopV1ErrorKind::GenesisFailed);
@@ -2008,6 +2147,7 @@ mod windows_science_loop_tests {
             &snapshot_payload,
             runner_config_v1(),
             None,
+            None,
         )
         .unwrap_err();
         assert_eq!(error.kind(), NativeScienceLoopV1ErrorKind::TrainFailed);
@@ -2030,6 +2170,7 @@ mod windows_science_loop_tests {
             &snapshot_manifest,
             &snapshot_payload,
             runner_config_v1(),
+            None,
             None,
         )
         .unwrap();
@@ -2063,6 +2204,7 @@ mod windows_science_loop_tests {
             &snapshot_manifest,
             &snapshot_payload,
             runner_config_v1(),
+            None,
             None,
         )
         .unwrap();
@@ -2155,6 +2297,7 @@ mod windows_science_loop_tests {
             &snapshot_payload,
             runner_config_v1(),
             None,
+            None,
         )
         .expect("ladder science loop");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(&parent.parent.join("store"))
@@ -2188,5 +2331,255 @@ mod windows_science_loop_tests {
             evaluation.reference_learner_outcomes(),
             evaluation.candidate_learner_outcomes()
         );
+    }
+
+    /// GenesisInitializationV2 fixture (Self-Play Ladder Design Contract S2,
+    /// Amendment 1 / Section 8A point 2, Section 8B): a real ladder-init run
+    /// record (`opponent_ladder_initialization` referencing a REAL trained
+    /// S1 checkpoint, D:\mtg-kernel-s1-mirror-20260724\dev1\run-0\store
+    /// generation 32, read-only source) plus that checkpoint's own resolved
+    /// `GenesisInitializationReferenceV2`, resolved through the record's own
+    /// init section via `ladder_init_as_checkpoint_ref_v1` (the same
+    /// conversion + chain-proven loader a real caller uses, not the staging
+    /// step used only to author the record). The pool section reuses the
+    /// real, already-published ladder pilot pool.json (read-only);
+    /// incidental to genesis, present only because a structurally valid
+    /// pool is required alongside the ladder identity.
+    struct LadderInitFixtureV1 {
+        run_bytes: Vec<u8>,
+        reference: GenesisInitializationReferenceV2,
+    }
+
+    static LADDER_INIT_FIXTURE_V1: OnceLock<LadderInitFixtureV1> = OnceLock::new();
+
+    const REAL_LADDER_INIT_REFERENCE_STORE_V1: &str =
+        r"D:\mtg-kernel-s1-mirror-20260724\dev1\run-0\store";
+    const REAL_LADDER_INIT_REFERENCE_GENERATION_V1: u64 = 32;
+
+    fn ladder_init_fixture_v1() -> &'static LadderInitFixtureV1 {
+        LADDER_INIT_FIXTURE_V1.get_or_init(|| {
+            use crate::native_ladder_pool_resolution_v1::{
+                ladder_init_as_checkpoint_ref_v1, resolve_ladder_checkpoint_authority_v1,
+                stage_ladder_checkpoint_ref_v1,
+            };
+            use crate::native_training_store_run_v2::{
+                test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2,
+                OpponentLadderInitializationContractV1, OpponentLadderPoolContractV1,
+            };
+
+            let pool_bytes = fs::read(r"D:\mtg-kernel-ladder-pilot-20260725\pool\pool.json")
+                .expect("real ladder pilot pool.json must be readable");
+            let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
+                .expect("pool.json must decode as OpponentLadderPoolContractV1");
+
+            let staged = stage_ladder_checkpoint_ref_v1(
+                std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V1),
+                REAL_LADDER_INIT_REFERENCE_GENERATION_V1,
+            )
+            .expect("real S1 mirror gen-32 checkpoint must stage to a valid ref");
+            let init = OpponentLadderInitializationContractV1 {
+                source_run_sha256: staged.source_run_sha256.clone(),
+                generation: staged.generation,
+                checkpoint_sha256: staged.checkpoint_sha256.clone(),
+                sidecar_sha256: staged.sidecar_sha256.clone(),
+                state_sha256: staged.state_sha256.clone(),
+            };
+
+            let run_bytes = test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+                NativeTrainingNumericalBackendV1::Sequential,
+                2,
+                4,
+                4,
+                2,
+                4,
+                8,
+                32_768,
+                65_536,
+                555_030,
+                pool,
+                init,
+            );
+            let run = decode_train_run_v2(&run_bytes).expect("ladder-init run record");
+
+            let checkpoint_ref = ladder_init_as_checkpoint_ref_v1(
+                run.record()
+                    .contracts
+                    .opponent_ladder_initialization
+                    .as_ref()
+                    .expect("fixture record must carry the init section"),
+            );
+            let authority = resolve_ladder_checkpoint_authority_v1(
+                std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V1),
+                &checkpoint_ref,
+            )
+            .expect("real S1 mirror checkpoint must resolve through the chain-proven loader");
+            let (checkpoint, payload) = authority.into_checkpoint_and_payload();
+
+            LadderInitFixtureV1 {
+                run_bytes,
+                reference: GenesisInitializationReferenceV2 {
+                    checkpoint,
+                    payload,
+                },
+            }
+        })
+    }
+
+    /// THE BIT-EQUALITY PROOF, in-memory half (Self-Play Ladder Design
+    /// Contract S2, Amendment 1 / Section 8A point 2, Section 8B, mandatory
+    /// test list): builds and decodes generation 0 through
+    /// GenesisInitializationV2 and proves the WEIGHT region bit-equals the
+    /// source checkpoint's own weights while every moment region (first and
+    /// second) is exact positive zero. Deliberately stops short of
+    /// publishing to a real Store -- see
+    /// `ladder_init_genesis_publish_is_blocked_by_the_pure_walk_reconciler`
+    /// immediately below for why, and the module-level
+    /// `native_training_store_checkpoint_v3::tests::genesis_initialization_v2_inherits_weights_bit_exact_and_zeros_moments`
+    /// for the same proof at the checkpoint-authority layer.
+    #[test]
+    fn ladder_init_genesis_bit_equals_the_real_s1_source_checkpoint_weights() {
+        let fixture = ladder_init_fixture_v1();
+        let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
+
+        let derived_payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference.payload)
+            .expect("weights-only payload derivation must succeed");
+        let checkpoint = build_genesis_checkpoint_manifest_v2_v3(
+            &run,
+            &fixture.reference.checkpoint,
+            &derived_payload,
+        )
+        .expect("GenesisInitializationV2 authoring must succeed for a matching reference");
+
+        let section_len = derived_payload.len() / 3;
+        let (weights, moments) = derived_payload.split_at(section_len);
+        let (first_moments, second_moments) = moments.split_at(section_len);
+        assert_eq!(weights, &fixture.reference.payload[..section_len]);
+        assert!(first_moments.iter().all(|byte| *byte == 0));
+        assert!(second_moments.iter().all(|byte| *byte == 0));
+        assert_eq!(
+            checkpoint.model_parameter_sha256(),
+            fixture.reference.checkpoint.model_parameter_sha256()
+        );
+
+        // Round-trips through decode against the same reference.
+        let redecoded = decode_genesis_checkpoint_manifest_v2_v3(
+            checkpoint.canonical_bytes(),
+            &derived_payload,
+            &run,
+            &fixture.reference.checkpoint,
+        )
+        .expect("a self-authored V2 manifest must redecode against the same reference");
+        assert_eq!(redecoded.canonical_bytes(), checkpoint.canonical_bytes());
+    }
+
+    /// STRUCTURAL OBSTACLE #2, documented as a permanent regression
+    /// (Self-Play Ladder Design Contract S2, Amendment 1 / Section 8A point
+    /// 2, Section 8B -- found while proving Deliverable 5(b), the
+    /// bootstrap-a-real-store bit-equality test). The genesis-authoring
+    /// surgery (`build_genesis_checkpoint_manifest_v2_v3`,
+    /// `decode_genesis_checkpoint_manifest_v2_v3`,
+    /// `validate_genesis_snapshot_v2_v3`, all in
+    /// `native_training_store_checkpoint_v3.rs`) is complete and correct in
+    /// isolation -- see the previous test and
+    /// `native_training_store_checkpoint_v3::tests::genesis_initialization_v2_inherits_weights_bit_exact_and_zeros_moments`.
+    /// But PUBLISHING that authority to a real Store is independently
+    /// blocked: the publisher re-derives the genesis checkpoint from raw
+    /// bytes as its own proof obligation, strictly BEFORE trusting any
+    /// caller-supplied `CheckpointManifestV3` value
+    /// (`decode_generation_candidate_v2`,
+    /// `native_training_store_v2.rs:1146`), and it does so through the
+    /// UNCONDITIONAL `decode_checkpoint_manifest_v3` -- never the V2
+    /// sibling, because it has no reference checkpoint to validate against
+    /// and no filesystem access to resolve one (this module is
+    /// deliberately I/O-free). The identical unconditional call exists in
+    /// the walk primitive EVERY resume/validate/publish path shares
+    /// (`load_generation_v2`, `native_training_store_resume_v2.rs:489`,
+    /// reached from `walk_complete_store_v2` at
+    /// `native_training_store_resume_v2.rs:609`, which
+    /// `validate_native_training_store_v2`,
+    /// `load_native_training_boundary_v2`,
+    /// `validate_native_training_store_for_publication_v2`, and therefore
+    /// EVERY publish call for EVERY generation of a ladder-init run, all
+    /// transitively require). Threading a resolved reference checkpoint
+    /// through this whole walk/resume/publish surface -- not just genesis
+    /// authoring -- is store-contract surgery in its own right, touching
+    /// exactly the invariants (segment validation, resume, boundary walks)
+    /// this task's own discipline names as a STOP condition rather than
+    /// something to extend unilaterally. Reported, not weakened: this
+    /// regression proves the failure fails CLOSED (`GenerationInvalid`,
+    /// never a corrupted or silently-accepted store) and documents the
+    /// precise next surgery.
+    #[test]
+    fn ladder_init_genesis_publish_is_blocked_by_the_pure_walk_reconciler() {
+        let fixture = ladder_init_fixture_v1();
+        let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
+
+        let derived_payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference.payload)
+            .expect("weights-only payload derivation must succeed");
+        let checkpoint = build_genesis_checkpoint_manifest_v2_v3(
+            &run,
+            &fixture.reference.checkpoint,
+            &derived_payload,
+        )
+        .expect("GenesisInitializationV2 authoring must succeed for a matching reference");
+
+        let parent = TestParentV1::new("ladder-init-publish-blocked");
+        let bootstrapped = bootstrap_native_training_store_v2(&parent.parent, "store").unwrap();
+        let root = bootstrapped.into_root();
+        let segment = build_genesis_segment_manifest_v2(&run, &checkpoint).unwrap();
+        let boundary =
+            build_genesis_native_training_boundary_v2(&run, &segment, &checkpoint).unwrap();
+        let reference = build_checkpoint_reference_v2(&run, &boundary).unwrap();
+        let latest = build_latest_v2(&boundary, &reference).unwrap();
+        let error = publish_genesis_generation_v2(
+            &root,
+            &run,
+            &derived_payload,
+            &checkpoint,
+            &segment,
+            &boundary,
+            &reference,
+            &latest,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            NativeTrainingStorePublisherV2ErrorKind::GenerationInvalid
+        );
+    }
+
+    /// GenesisInitializationV2 WIRING proof: `run_native_science_loop_v1`'s
+    /// genesis branch actually REACHES the V2 authoring path (does not
+    /// silently fall back to the common-snapshot path) when
+    /// `ladder_init_reference` is supplied for a record carrying the init
+    /// section, and fails CLOSED rather than corrupting anything when that
+    /// path hits the publish-layer obstacle documented immediately above --
+    /// `GenesisFailed`, never a panic, a partially-written Store, or a
+    /// silent fallback to the wrong genesis source.
+    #[test]
+    fn ladder_init_science_loop_wiring_reaches_v2_and_fails_closed_at_the_same_publish_obstacle() {
+        let fixture = ladder_init_fixture_v1();
+        let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let parent = TestParentV1::new("ladder-init-wiring");
+
+        let error = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+            None,
+            Some(&fixture.reference),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), NativeScienceLoopV1ErrorKind::GenesisFailed);
+
+        // No partial Store artifact escapes: the run.json write itself
+        // happens before genesis, so the skeleton exists, but no
+        // checkpoint/segment/boundary/latest final was ever committed.
+        assert!(!parent.parent.join("store/latest.json").exists());
     }
 }
