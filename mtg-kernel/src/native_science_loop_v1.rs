@@ -785,7 +785,7 @@ mod windows_science_loop_tests {
                     let patched = match (&ladder_pool, &ladder_init_section) {
                         (Some(pool), Some(init)) => {
                             use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2;
-                            test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+                            crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
                                 NativeTrainingNumericalBackendV1::CudaBurnDense,
                                 64,
                                 4,
@@ -1071,13 +1071,26 @@ mod windows_science_loop_tests {
             .unwrap_or_else(|_| "256".to_owned())
             .parse()
             .expect("ladder updates");
+        let init_store = std::env::var("LADDER_INIT_STORE").ok();
+        let init_gen: u64 = std::env::var("LADDER_INIT_GEN")
+            .unwrap_or_else(|_| "0".to_owned())
+            .parse()
+            .expect("init generation");
 
         let pool_bytes =
             fs::read(&pool_json_path).expect("LADDER_POOL_JSON must be a readable file");
         let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
             .expect("pool.json must decode as OpponentLadderPoolContractV1");
 
-        let patched = test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+        let patched = match &init_store {
+            Some(dir) => {
+                let initialization =
+                    crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1(
+                        std::path::Path::new(dir),
+                        init_gen,
+                    )
+                    .expect("stage eval init section");
+                crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
             NativeTrainingNumericalBackendV1::CudaBurnDense,
             64,
             4,
@@ -1089,7 +1102,23 @@ mod windows_science_loop_tests {
             2_048,
             base_seed,
             pool,
-        );
+                    initialization,
+                )
+            }
+            None => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            ladder_updates,
+            2,
+            32,
+            16,
+            1_024,
+            2_048,
+            base_seed,
+            pool,
+        ),
+        };
         let run = decode_train_run_v2(&patched).expect("ladder run record");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap();
         let runner_config = NativeCheckpointRunnerConfigV1 {
@@ -1237,6 +1266,11 @@ mod windows_science_loop_tests {
             .unwrap_or_else(|_| "256".to_owned())
             .parse()
             .expect("h2h updates");
+        let init_store = std::env::var("H2H_INIT_STORE").ok();
+        let init_gen: u64 = std::env::var("H2H_INIT_GEN")
+            .unwrap_or_else(|_| "0".to_owned())
+            .parse()
+            .expect("init generation");
         let episode_count = pairs.checked_mul(2).expect("H2H_PAIRS overflow");
 
         // Candidate: the SAME ladder run-record reconstruction as
@@ -1245,7 +1279,15 @@ mod windows_science_loop_tests {
             .expect("H2H_CANDIDATE_POOL_JSON must be a readable file");
         let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
             .expect("pool.json must decode as OpponentLadderPoolContractV1");
-        let candidate_run_bytes = test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+        let candidate_run_bytes = match &init_store {
+            Some(dir) => {
+                let initialization =
+                    crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1(
+                        std::path::Path::new(dir),
+                        init_gen,
+                    )
+                    .expect("stage eval init section");
+                crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
             NativeTrainingNumericalBackendV1::CudaBurnDense,
             64,
             4,
@@ -1257,7 +1299,23 @@ mod windows_science_loop_tests {
             2_048,
             candidate_base_seed,
             pool,
-        );
+                    initialization,
+                )
+            }
+            None => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            ladder_updates,
+            2,
+            32,
+            16,
+            1_024,
+            2_048,
+            candidate_base_seed,
+            pool,
+        ),
+        };
         let candidate_run =
             decode_train_run_v2(&candidate_run_bytes).expect("candidate ladder run record");
         let candidate_root =
