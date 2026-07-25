@@ -31,11 +31,27 @@
 //! exceeding it aborts before model or optimizer mutation.
 
 use crate::native_policy_value_net_v1::{
-    NativeEncodedDecisionViewV1, NativeNamedParameterV1, NativePolicyValueErrorV1,
-    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, ValidatedCountsV1,
-    ACTION_FEATURE_DIM_V1, ACTION_REF_FEATURE_DIM_V1, CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1,
-    EDGE_FEATURE_DIM_V1, HIDDEN_DIM_V1, OBJECT_FEATURE_DIM_V1, OBJECT_GROUP_COUNT_V1,
-    PARAMETER_COUNT_V1, STATE_DIM_V1,
+    NativeEncodedDecisionViewV1,
+    NativeNamedParameterV1,
+    NativePolicyValueErrorV1,
+    NativePolicyValueModelConfigV1,
+    NativePolicyValueNetV1,
+    ValidatedCountsV1,
+    ACTION_FEATURE_DIM_V1,
+    ACTION_REF_FEATURE_DIM_V1,
+    CARD_EMBEDDING_DIM_V1,
+    CARD_VOCAB_SIZE_V1,
+    EDGE_FEATURE_DIM_V1,
+    HIDDEN_DIM_V1,
+    OBJECT_FEATURE_DIM_V1,
+    OBJECT_GROUP_COUNT_V1,
+    PARAMETER_COUNT_V1,
+    STATE_DIM_V1,
+    // Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings;
+    // see the W_EXPECTED_PARAMETER_SHAPES table below.
+    W_CARD_EMBEDDING_DIM_V1,
+    W_HIDDEN_DIM_V1,
+    W_PARAMETER_COUNT_V1,
 };
 use crate::native_training_phase_diagnostic_v1::{
     NativeTrainingPhaseRecorderV1, NativeTrainingPhaseV1,
@@ -575,6 +591,89 @@ pub(crate) fn native_train_state_parameter_layout_v1(
     EXPECTED_PARAMETER_NAMES
         .into_iter()
         .zip(EXPECTED_PARAMETER_SHAPES)
+}
+
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) sibling of the
+// frozen layout table above. Parameter NAMES are identical (the topology is
+// unchanged, only hidden_dim/card_embedding_dim differ), so only the shapes
+// table changes. The frozen EXPECTED_PARAMETER_SHAPES and
+// native_train_state_parameter_layout_v1 are untouched.
+const W_OBJECT_ENCODER_INPUT: usize = OBJECT_FEATURE_DIM_V1 + W_CARD_EMBEDDING_DIM_V1;
+const W_EDGE_ENCODER_INPUT: usize = EDGE_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1 * 2;
+const W_NODE_UPDATE_INPUT: usize = W_HIDDEN_DIM_V1 * 2;
+const W_STATE_ENCODER_INPUT: usize = STATE_DIM_V1 + W_HIDDEN_DIM_V1 * OBJECT_GROUP_COUNT_V1;
+const W_ACTION_REF_ENCODER_INPUT: usize = ACTION_REF_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1;
+const W_ACTION_ENCODER_INPUT: usize = ACTION_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1;
+const W_SCORER_INPUT: usize = W_HIDDEN_DIM_V1 * 2;
+
+const W_EXPECTED_PARAMETER_SHAPES: [&[usize]; PARAMETER_TENSOR_COUNT] = [
+    &[CARD_VOCAB_SIZE_V1, W_CARD_EMBEDDING_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_OBJECT_ENCODER_INPUT],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_EDGE_ENCODER_INPUT],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_NODE_UPDATE_INPUT],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_STATE_ENCODER_INPUT],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_ACTION_REF_ENCODER_INPUT],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_ACTION_ENCODER_INPUT],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1, W_SCORER_INPUT],
+    &[W_HIDDEN_DIM_V1],
+    &[1, W_HIDDEN_DIM_V1],
+    &[1],
+    &[W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1],
+    &[W_HIDDEN_DIM_V1],
+    &[1, W_HIDDEN_DIM_V1],
+    &[1],
+];
+
+/// Wide-net sibling of [`native_train_state_parameter_layout_v1`]. Same
+/// EXPECTED_PARAMETER_NAMES (names are topology-derived, not dimension-derived).
+pub(crate) fn native_train_state_parameter_layout_wide_v1(
+) -> impl ExactSizeIterator<Item = (&'static str, &'static [usize])> {
+    EXPECTED_PARAMETER_NAMES
+        .into_iter()
+        .zip(W_EXPECTED_PARAMETER_SHAPES)
+}
+
+#[cfg(test)]
+mod wide_layout_tests {
+    use super::*;
+
+    #[test]
+    fn wide_layout_element_count_matches_pinned_parameter_count() {
+        let total: usize = native_train_state_parameter_layout_wide_v1()
+            .map(|(_, shape)| shape.iter().product::<usize>())
+            .sum();
+        assert_eq!(total, W_PARAMETER_COUNT_V1);
+        assert_eq!(total, 2_750_754);
+    }
+
+    #[test]
+    fn wide_layout_names_match_frozen_layout_names_exactly() {
+        let wide_names: Vec<&str> = native_train_state_parameter_layout_wide_v1()
+            .map(|(name, _)| name)
+            .collect();
+        let frozen_names: Vec<&str> = native_train_state_parameter_layout_v1()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(wide_names, frozen_names);
+    }
 }
 
 #[derive(Clone, Debug)]
