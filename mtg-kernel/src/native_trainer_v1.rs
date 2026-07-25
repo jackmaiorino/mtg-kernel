@@ -32,6 +32,7 @@ use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2, NativeFlatTensorizerV2,
 };
 use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1;
+use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 #[cfg(test)]
 use crate::native_policy_train_step_v1::{
     packed_actual_recompute_call_count_for_test_v1, FIXED_BACKWARD_PARTITION_COUNT_V1,
@@ -1277,6 +1278,13 @@ pub(crate) struct NativeTrainerStateV2 {
     batch_episodes: u64,
     train_state: NativePolicyValueTrainStateV1,
     progress: NativeTrainerProgressV2,
+    /// Self-Play Ladder Design Contract S2, Section 5. `None` reproduces
+    /// today's uniform-opponent native trainer behavior exactly; wired
+    /// through unchanged to `run_async_flat_scored_rollout_native_observed_v2`.
+    /// Every existing constructor below defaults this to `None`; only the
+    /// pilot runner integration (`native_science_loop_v1`) sets it via
+    /// [`Self::set_ladder_opponent_v1`].
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     #[cfg(test)]
     pending_test_association_mutation: Option<NativePolicyAssociationTestMutationV1>,
     #[cfg(test)]
@@ -1340,6 +1348,7 @@ impl NativeTrainerStateV2 {
             batch_episodes,
             train_state,
             progress,
+            ladder_opponent: None,
             #[cfg(test)]
             pending_test_association_mutation: None,
             #[cfg(test)]
@@ -1370,6 +1379,7 @@ impl NativeTrainerStateV2 {
             // fallible validation above has already completed.
             train_state: train_state.clone(),
             progress,
+            ladder_opponent: None,
             #[cfg(test)]
             pending_test_association_mutation: None,
             #[cfg(test)]
@@ -1393,6 +1403,19 @@ impl NativeTrainerStateV2 {
 
     pub(crate) fn train_state_v1(&self) -> &NativePolicyValueTrainStateV1 {
         &self.train_state
+    }
+
+    /// Self-Play Ladder Design Contract S2, Section 5. Sets (or clears) the
+    /// ladder opponent engine this trainer's rollout uses. `None` (the
+    /// default on every constructor) reproduces today's uniform-opponent
+    /// behavior exactly. Set once per run by the pilot runner integration
+    /// before any update; this is the only production write path for the
+    /// field.
+    pub(crate) fn set_ladder_opponent_v1(
+        &mut self,
+        ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    ) {
+        self.ladder_opponent = ladder_opponent;
     }
 
     #[cfg(test)]
@@ -1546,7 +1569,7 @@ impl NativeTrainerStateV2 {
         let rollout_result = run_async_flat_scored_rollout_native_observed_v2(
             rollout_config,
             self.base_seed,
-            None,
+            self.ladder_opponent.clone(),
             &mut scorer,
             observer,
         );

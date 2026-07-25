@@ -15,6 +15,7 @@
 
 use crate::common_model_snapshot_v1::CommonModelSnapshotRecordV1;
 pub use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1 as NativeTrainingTrajectoryReceiptV1;
+use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 pub use crate::native_policy_train_step_v1::{
     NativeGaugeSubstepBoundV1 as NativeTrainingGaugeSubstepObservationV1,
     NativeScorerBiasGaugeRecordV1 as NativeTrainingScorerBiasGaugeObservationV1,
@@ -1241,6 +1242,19 @@ impl NativeTrainingExecutorV1 {
 
     pub fn progress(&self) -> NativeTrainingProgressV1 {
         self.trainer.progress_v2().into()
+    }
+
+    /// Self-Play Ladder Design Contract S2, Section 5. Sets (or clears) the
+    /// ladder opponent engine this executor's rollouts use. `None` (the
+    /// default) reproduces today's uniform-opponent behavior exactly. The
+    /// pilot runner integration calls this once per constructed/reconstructed
+    /// executor (`native_science_loop_v1`'s training loop reconstructs one
+    /// executor per window; every window's executor gets the same engine).
+    pub(crate) fn set_ladder_opponent_v1(
+        &mut self,
+        ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    ) {
+        self.trainer.set_ladder_opponent_v1(ladder_opponent);
     }
 
     #[cfg(test)]
