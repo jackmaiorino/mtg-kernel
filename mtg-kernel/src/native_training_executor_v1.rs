@@ -25,8 +25,11 @@ pub use crate::native_policy_train_step_v1::{
 };
 use crate::native_policy_train_step_v1::{
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+    NativePolicyValueTrainStateWideV1,
 };
-use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
+use crate::native_policy_value_net_v1::{
+    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, NativePolicyValueNetWideV1,
+};
 use crate::native_train_state_payload_v1::{
     decode_native_train_state_payload_verified_v1, encode_native_train_state_payload_v1,
     NativeTrainStatePayloadDigestsV1, NativeTrainStatePayloadErrorV1,
@@ -1704,6 +1707,61 @@ fn train_state_from_snapshot_v1(
     })
 }
 
+/// Capacity-experiment wide-net (kernel-policy-value-net-8w128) sibling of
+/// [`train_state_from_snapshot_v1`] (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md
+/// Section 3 / task item 3): builds the CPU-side wide train state from a
+/// decoded wide snapshot, mirroring the frozen dispatch exactly
+/// (`NativePolicyValueNetWideV1::runner_fixed_wide_v1` +
+/// `replace_parameter_snapshot_wide_v1` +
+/// `NativePolicyValueTrainStateWideV1::from_snapshot_wide_v1`, the wide
+/// train-state payload codec's live-state counterpart landed in 5a759b6).
+/// The frozen `train_state_from_snapshot_v1` above is untouched.
+///
+/// This closes the "still-open work" `common_model_snapshot_v1::
+/// build_wide_model_candidate_v1`'s doc comment flagged: a wide
+/// `NativePolicyValueTrainStateV1` integration. Callable today wherever a
+/// caller already has a decoded wide snapshot in hand (genesis authoring,
+/// the standalone wide CUDA training smoke test); NOT YET wired into this
+/// module's own record-driven dispatch chokepoints
+/// (`NativeTrainingExecutorV1::from_common_model_snapshot_v1`,
+/// `NativeTrainingCheckpointCandidateV1::import_verified_v1`,
+/// `NativeTrainingExecutorV1::from_checkpoint_candidate_v1`) or into
+/// `NativeTrainerStateV2`/the self-play rollout scorer, both of which are
+/// hardwired to the frozen `NativePolicyValueNetV1`/`NativePolicyValueTrainStateV1`
+/// types with no wide dispatch of their own -- see the final report's wall
+/// finding for exactly what closing that the rest of the way needs.
+#[allow(dead_code)]
+fn train_state_from_snapshot_wide_v1(
+    snapshot: &NativePolicyValueTrainSnapshotV1,
+) -> Result<NativePolicyValueTrainStateWideV1, NativeTrainingExecutorErrorV1> {
+    let mut model = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+        NativePolicyValueModelConfigV1::contract_wide_v1(),
+    )
+    .map_err(|error| {
+        NativeTrainingExecutorErrorV1::with_diagnostic(
+            NativeTrainingExecutorErrorKindV1::Model,
+            "wide_model_template_rejected",
+            error,
+        )
+    })?;
+    model
+        .replace_parameter_snapshot_wide_v1(&snapshot.parameters)
+        .map_err(|error| {
+            NativeTrainingExecutorErrorV1::with_diagnostic(
+                NativeTrainingExecutorErrorKindV1::Model,
+                "wide_model_snapshot_rejected",
+                error,
+            )
+        })?;
+    NativePolicyValueTrainStateWideV1::from_snapshot_wide_v1(model, snapshot).map_err(|error| {
+        NativeTrainingExecutorErrorV1::with_diagnostic(
+            NativeTrainingExecutorErrorKindV1::TrainState,
+            "wide_train_state_snapshot_rejected",
+            error,
+        )
+    })
+}
+
 fn digest_hex_v1(digest: [u8; 32]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(64);
@@ -1751,6 +1809,56 @@ mod tests {
         observation.update_elapsed_ns = 0;
         observation.rollout_metrics.total_elapsed_ns = 0;
         observation
+    }
+
+    /// Capacity-experiment executor dispatch (task item 3): the real
+    /// production wide snapshot decodes and validates through
+    /// `train_state_from_snapshot_wide_v1` (mirroring the frozen
+    /// `train_state_from_snapshot_v1`'s own coverage), producing a train
+    /// state whose live snapshot round-trips bit-exactly and whose adam
+    /// step/gauge anchor match the source. No GPU needed: this is the
+    /// CPU-side wide train-state construction only.
+    #[test]
+    fn wide_train_state_from_snapshot_round_trips_the_real_wide_snapshot() {
+        use crate::common_model_snapshot_v1::{
+            build_wide_model_candidate_v1, wide_model_snapshot_paths_v1,
+        };
+
+        let (manifest, payload) = wide_model_snapshot_paths_v1();
+        let (wide_model, record) = build_wide_model_candidate_v1(&manifest, &payload).unwrap();
+        let genesis_state = NativePolicyValueTrainStateWideV1::new_wide_v1(wide_model).unwrap();
+        assert_eq!(genesis_state.adam_step_v1(), 0);
+        assert_eq!(
+            u64::from(genesis_state.scorer_bias_anchor_f32_bits_v1()),
+            record.scorer_bias_anchor_f32_bits
+        );
+        let genesis_snapshot = genesis_state.snapshot_v1().unwrap();
+
+        let rebuilt = train_state_from_snapshot_wide_v1(&genesis_snapshot).unwrap();
+        assert_eq!(rebuilt.adam_step_v1(), genesis_state.adam_step_v1());
+        assert_eq!(
+            rebuilt.scorer_bias_anchor_f32_bits_v1(),
+            genesis_state.scorer_bias_anchor_f32_bits_v1()
+        );
+        assert_eq!(rebuilt.snapshot_v1().unwrap(), genesis_snapshot);
+
+        // Fail-closed: a frozen snapshot must not decode through the wide
+        // dispatch (the wide-shaped model template rejects the frozen
+        // element count/shapes).
+        let (frozen_manifest, frozen_payload) = common_model_snapshot_paths_v1();
+        let mut frozen_state = NativePolicyValueTrainStateV1::new_v1(
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap(),
+        )
+        .unwrap();
+        crate::common_model_snapshot_v1::load_common_model_snapshot_v1(
+            &frozen_manifest,
+            &frozen_payload,
+            &mut frozen_state,
+        )
+        .unwrap();
+        let frozen_snapshot = frozen_state.snapshot_v1().unwrap();
+        assert!(train_state_from_snapshot_wide_v1(&frozen_snapshot).is_err());
     }
 
     #[test]

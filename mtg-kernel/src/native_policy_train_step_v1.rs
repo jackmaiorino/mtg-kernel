@@ -49,6 +49,7 @@ use crate::native_policy_value_net_v1::{
     STATE_DIM_V1,
     // Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings;
     // see the W_EXPECTED_PARAMETER_SHAPES table below.
+    NativePolicyValueNetWideV1,
     W_CARD_EMBEDDING_DIM_V1,
     W_HIDDEN_DIM_V1,
     W_PARAMETER_COUNT_V1,
@@ -3984,6 +3985,231 @@ pub(crate) fn wide_owned_train_snapshot_state_sha256_v1(
 ) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
     validate_owned_train_snapshot_wide_v1(snapshot, None)?;
     Ok(hash_owned_train_snapshot_wide_v1(snapshot))
+}
+
+/// Wide-net (`kernel-policy-value-net-8w128`) sibling of
+/// [`NativePolicyValueTrainStateV1`]. Mirrors it exactly, wrapping
+/// [`NativePolicyValueNetWideV1`] instead of the frozen model and using the
+/// wide validate/hash pair above (`validate_parameter_manifest_wide_v1`,
+/// `validate_owned_train_snapshot_wide_v1`). This is the "wide train state"
+/// CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3 / task item 3 calls for:
+/// the CPU-side owner of a wide model's live optimizer state, built from the
+/// wide train-state payload codec (`native_train_state_payload_v1`'s
+/// `encode_native_train_state_payload_wide_v1`/`decode_..._wide_v1`) the same
+/// way the frozen train state is built from the frozen codec. The frozen
+/// `NativePolicyValueTrainStateV1` and its methods are untouched.
+#[derive(Clone, Debug)]
+pub(crate) struct NativePolicyValueTrainStateWideV1 {
+    model: NativePolicyValueNetWideV1,
+    adam_step: u64,
+    first_moments: Vec<Vec<f32>>,
+    second_moments: Vec<Vec<f32>>,
+    scorer_bias_anchor_bits: u32,
+}
+
+impl NativePolicyValueTrainStateWideV1 {
+    pub(crate) fn new_wide_v1(
+        model: NativePolicyValueNetWideV1,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
+        let parameters = model.parameter_snapshot_wide_v1();
+        validate_parameter_manifest_wide_v1(&parameters)?;
+        let scorer_bias_anchor_bits = parameters[SCORER_SECOND_BIAS].values[0].to_bits();
+        let first_moments = parameters
+            .iter()
+            .map(|parameter| vec![0.0; parameter.values.len()])
+            .collect();
+        let second_moments = parameters
+            .iter()
+            .map(|parameter| vec![0.0; parameter.values.len()])
+            .collect();
+        let state = Self {
+            model,
+            adam_step: 0,
+            first_moments,
+            second_moments,
+            scorer_bias_anchor_bits,
+        };
+        state.validate_state_v1()?;
+        Ok(state)
+    }
+
+    /// Reconstructs a complete wide train state against a caller-provided
+    /// model template, mirroring [`NativePolicyValueTrainStateV1::from_snapshot_v1`].
+    pub(crate) fn from_snapshot_wide_v1(
+        model: NativePolicyValueNetWideV1,
+        snapshot: &NativePolicyValueTrainSnapshotV1,
+    ) -> Result<Self, NativePolicyTrainErrorV1> {
+        let template_parameters = model.parameter_snapshot_wide_v1();
+        validate_parameter_manifest_wide_v1(&template_parameters)?;
+        let scorer_bias_anchor_bits = template_parameters[SCORER_SECOND_BIAS].values[0].to_bits();
+        validate_owned_train_snapshot_wide_v1(snapshot, Some(scorer_bias_anchor_bits))?;
+
+        let mut candidate_model = model;
+        candidate_model.replace_parameter_snapshot_wide_v1(&snapshot.parameters)?;
+        let candidate = Self {
+            model: candidate_model,
+            adam_step: snapshot.adam_step,
+            first_moments: snapshot
+                .first_moments
+                .iter()
+                .map(|parameter| parameter.values.clone())
+                .collect(),
+            second_moments: snapshot
+                .second_moments
+                .iter()
+                .map(|parameter| parameter.values.clone())
+                .collect(),
+            scorer_bias_anchor_bits,
+        };
+        candidate.validate_state_v1()?;
+        Ok(candidate)
+    }
+
+    pub(crate) fn model_v1(&self) -> &NativePolicyValueNetWideV1 {
+        &self.model
+    }
+
+    pub(crate) fn adam_step_v1(&self) -> u64 {
+        self.adam_step
+    }
+
+    pub(crate) fn scorer_bias_anchor_f32_bits_v1(&self) -> u32 {
+        self.scorer_bias_anchor_bits
+    }
+
+    /// Returns a complete owned snapshot only after validating the live state.
+    pub(crate) fn snapshot_v1(
+        &self,
+    ) -> Result<NativePolicyValueTrainSnapshotV1, NativePolicyTrainErrorV1> {
+        self.validate_state_v1()?;
+        let parameters = self.model.parameter_snapshot_wide_v1();
+        Ok(NativePolicyValueTrainSnapshotV1 {
+            adam_step: self.adam_step,
+            scorer_bias_anchor_bits: self.scorer_bias_anchor_bits,
+            first_moments: named_state_snapshot(&parameters, &self.first_moments),
+            second_moments: named_state_snapshot(&parameters, &self.second_moments),
+            parameters,
+        })
+    }
+
+    /// Domain-separated digest of every ordered parameter and moment bit plus
+    /// the Adam step, mirroring [`NativePolicyValueTrainStateV1::state_sha256_v1`].
+    pub(crate) fn state_sha256_v1(&self) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
+        self.validate_state_v1()?;
+        Ok(hash_live_train_state_wide_v1(self))
+    }
+
+    pub(crate) fn validate_state_v1(&self) -> Result<(), NativePolicyTrainErrorV1> {
+        i32::try_from(self.adam_step)
+            .map(|_| ())
+            .map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
+        self.model
+            .validate_parameters_wide_v1()
+            .map_err(|_| NativePolicyTrainErrorV1::ParameterManifest)?;
+
+        let mut parameter_manifest_invalid = false;
+        let mut parameter_tensor_count = 0usize;
+        let mut parameter_element_count = 0usize;
+        let mut scorer_bias_anchor_bits = None;
+        let expected_layout: Vec<(&'static str, &'static [usize])> =
+            native_train_state_parameter_layout_wide_v1().collect();
+        self.model.visit_parameters_wide_v1(|name, shape, values| {
+            let ordinal = parameter_tensor_count;
+            parameter_tensor_count += 1;
+            parameter_element_count = parameter_element_count.saturating_add(values.len());
+            let Some((expected_name, expected_shape)) = expected_layout.get(ordinal).copied()
+            else {
+                parameter_manifest_invalid = true;
+                return;
+            };
+            if name != expected_name
+                || shape != expected_shape
+                || expected_shape.iter().product::<usize>() != values.len()
+                || values.iter().any(|value| !value.is_finite())
+                || (ordinal == CARD_EMBEDDING
+                    && values[..W_CARD_EMBEDDING_DIM_V1]
+                        .iter()
+                        .any(|value| value.to_bits() != 0))
+            {
+                parameter_manifest_invalid = true;
+            }
+            if ordinal == SCORER_SECOND_BIAS {
+                scorer_bias_anchor_bits = values.first().map(|value| value.to_bits());
+            }
+        });
+        if parameter_manifest_invalid
+            || parameter_tensor_count != PARAMETER_TENSOR_COUNT
+            || parameter_element_count != W_PARAMETER_COUNT_V1
+        {
+            return Err(NativePolicyTrainErrorV1::ParameterManifest);
+        }
+
+        if self.first_moments.len() != PARAMETER_TENSOR_COUNT
+            || self.second_moments.len() != PARAMETER_TENSOR_COUNT
+        {
+            return Err(NativePolicyTrainErrorV1::OptimizerState);
+        }
+        let mut optimizer_state_invalid = false;
+        let mut ordinal = 0usize;
+        self.model.visit_parameters_wide_v1(|_, _, values| {
+            let first = &self.first_moments[ordinal];
+            let second = &self.second_moments[ordinal];
+            if first.len() != values.len()
+                || second.len() != values.len()
+                || first.iter().any(|value| !value.is_finite())
+                || second
+                    .iter()
+                    .any(|value| !value.is_finite() || *value < 0.0)
+                || (ordinal == CARD_EMBEDDING
+                    && (first[..W_CARD_EMBEDDING_DIM_V1]
+                        .iter()
+                        .any(|value| value.to_bits() != 0)
+                        || second[..W_CARD_EMBEDDING_DIM_V1]
+                            .iter()
+                            .any(|value| value.to_bits() != 0)))
+                || (ordinal == SCORER_SECOND_BIAS
+                    && (first[0].to_bits() != 0 || second[0].to_bits() != 0))
+            {
+                optimizer_state_invalid = true;
+            }
+            ordinal += 1;
+        });
+        if optimizer_state_invalid {
+            return Err(NativePolicyTrainErrorV1::OptimizerState);
+        }
+        if scorer_bias_anchor_bits != Some(self.scorer_bias_anchor_bits) {
+            return Err(NativePolicyTrainErrorV1::GaugeAnchor);
+        }
+        Ok(())
+    }
+}
+
+fn hash_live_train_state_wide_v1(state: &NativePolicyValueTrainStateWideV1) -> [u8; 32] {
+    let mut hasher = begin_train_state_hash_v1(state.adam_step, state.scorer_bias_anchor_bits);
+    begin_train_state_tensor_section_v1(&mut hasher, b"parameters", PARAMETER_TENSOR_COUNT);
+    let mut ordinal = 0usize;
+    state.model.visit_parameters_wide_v1(|name, shape, values| {
+        hash_train_state_tensor_v1(&mut hasher, ordinal, name, shape, values);
+        ordinal += 1;
+    });
+    debug_assert_eq!(ordinal, PARAMETER_TENSOR_COUNT);
+
+    for (section, moments) in [
+        (b"first_moments".as_slice(), state.first_moments.as_slice()),
+        (
+            b"second_moments".as_slice(),
+            state.second_moments.as_slice(),
+        ),
+    ] {
+        begin_train_state_tensor_section_v1(&mut hasher, section, moments.len());
+        let mut ordinal = 0usize;
+        state.model.visit_parameters_wide_v1(|name, shape, _| {
+            hash_train_state_tensor_v1(&mut hasher, ordinal, name, shape, &moments[ordinal]);
+            ordinal += 1;
+        });
+        debug_assert_eq!(ordinal, PARAMETER_TENSOR_COUNT);
+    }
+    finish_train_state_hash_v1(hasher)
 }
 
 fn hash_live_train_state_v1(state: &NativePolicyValueTrainStateV1) -> [u8; 32] {
