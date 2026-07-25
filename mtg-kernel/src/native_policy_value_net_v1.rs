@@ -425,6 +425,20 @@ impl LinearV1 {
         }
     }
 
+    /// Wide-net sibling of [`Self::runner_fixed_v1`]: the frozen
+    /// `runner_fixed_rank1_v1` only supports bias lengths 1 and 64, so the
+    /// wide net (bias lengths 1 and 128) needs its own bias generator. The
+    /// weight generator (`runner_fixed_rank2_v1`) is already length-generic
+    /// and is reused unchanged.
+    fn runner_fixed_wide_v1(input_dim: usize, output_dim: usize) -> Self {
+        Self {
+            input_dim,
+            output_dim,
+            weight: runner_fixed_rank2_v1(input_dim * output_dim),
+            bias: runner_fixed_rank1_wide_v1(output_dim),
+        }
+    }
+
     fn validate(&self, name: &'static str) -> Result<(), NativePolicyValueErrorV1> {
         if self.weight.len() != self.input_dim * self.output_dim
             || self.bias.len() != self.output_dim
@@ -1178,6 +1192,725 @@ fn runner_fixed_rank1_v1(count: usize) -> Vec<f32> {
     }
 }
 
+// =============================================================================
+// Capacity-experiment wide-net fork (Stage 3 contract): kernel-policy-value-net-8w128.
+//
+// Hidden 64 -> 128, card embedding 16 -> 32; every other dimension (state,
+// object, edge, action, action-ref, group, card vocab) is shared with the
+// frozen contract above and UNCHANGED. This block is purely additive: it does
+// not edit a single byte of the frozen constants, structs, or methods above
+// this marker. Diagnostic, non-evidence (see CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md).
+// =============================================================================
+
+pub(crate) const W_MODEL_ARCHITECTURE_VERSION_V1: &str = "kernel-policy-value-net-8w128";
+pub(crate) const W_MODEL_CONFIG_FINGERPRINT_V1: &str =
+    "b34c87f46e7709d8b03ee21710d7f0345ff0fcf49ec3d09cf25b94cfe71bf1c6";
+pub(crate) const W_HIDDEN_DIM_V1: usize = 128;
+pub(crate) const W_CARD_EMBEDDING_DIM_V1: usize = 32;
+pub(crate) const W_PARAMETER_COUNT_V1: usize = 2_750_754;
+pub(crate) const W_ARCHITECTURE_LABEL_V1: &str = "WIDE-DIAGNOSTIC-NON-EVIDENCE";
+
+const W_OBJECT_ENCODER_INPUT_V1: usize = OBJECT_FEATURE_DIM_V1 + W_CARD_EMBEDDING_DIM_V1;
+const W_EDGE_ENCODER_INPUT_V1: usize = EDGE_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1 * 2;
+const W_NODE_UPDATE_INPUT_V1: usize = W_HIDDEN_DIM_V1 * 2;
+const W_POOLED_OBJECT_DIM_V1: usize = W_HIDDEN_DIM_V1 * OBJECT_GROUP_COUNT_V1;
+const W_STATE_ENCODER_INPUT_V1: usize = STATE_DIM_V1 + W_POOLED_OBJECT_DIM_V1;
+const W_ACTION_REF_ENCODER_INPUT_V1: usize = ACTION_REF_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1;
+const W_ACTION_ENCODER_INPUT_V1: usize = ACTION_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1;
+const W_SCORER_INPUT_V1: usize = W_HIDDEN_DIM_V1 * 2;
+
+impl NativePolicyValueModelConfigV1 {
+    /// Wide-net sibling of [`Self::contract_v1`]. New constructor path; the
+    /// frozen `contract_v1` is untouched.
+    pub(crate) const fn contract_wide_v1() -> Self {
+        Self {
+            schema_version: MODEL_CONFIG_SCHEMA_VERSION_V1,
+            model_architecture_version: W_MODEL_ARCHITECTURE_VERSION_V1,
+            feature_schema_version: FEATURE_SCHEMA_VERSION_V1,
+            feature_registry_version: FEATURE_REGISTRY_VERSION_V1,
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V1,
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V1,
+            card_vocab_size: CARD_VOCAB_SIZE_V1,
+            card_embedding_dim: W_CARD_EMBEDDING_DIM_V1,
+            hidden_dim: W_HIDDEN_DIM_V1,
+            state_dim: STATE_DIM_V1,
+            object_feature_dim: OBJECT_FEATURE_DIM_V1,
+            edge_feature_dim: EDGE_FEATURE_DIM_V1,
+            action_feature_dim: ACTION_FEATURE_DIM_V1,
+            object_group_count: OBJECT_GROUP_COUNT_V1,
+            action_ref_feature_dim: ACTION_REF_FEATURE_DIM_V1,
+        }
+    }
+
+    /// Wide-net sibling of [`Self::validate`]. The frozen `validate` is untouched.
+    pub(crate) fn validate_wide_v1(self) -> Result<(), NativePolicyValueErrorV1> {
+        let expected = Self::contract_wide_v1();
+        macro_rules! exact {
+            ($field:ident) => {
+                if self.$field != expected.$field {
+                    return Err(NativePolicyValueErrorV1::ModelConfigMismatch(stringify!(
+                        $field
+                    )));
+                }
+            };
+        }
+        exact!(schema_version);
+        exact!(model_architecture_version);
+        exact!(feature_schema_version);
+        exact!(feature_registry_version);
+        exact!(feature_contract_digest);
+        exact!(feature_encoding_digest);
+        exact!(card_vocab_size);
+        exact!(card_embedding_dim);
+        exact!(hidden_dim);
+        exact!(state_dim);
+        exact!(object_feature_dim);
+        exact!(edge_feature_dim);
+        exact!(action_feature_dim);
+        exact!(object_group_count);
+        exact!(action_ref_feature_dim);
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TwoLayerTanhWideV1 {
+    first: LinearV1,
+    second: LinearV1,
+}
+
+impl TwoLayerTanhWideV1 {
+    fn runner_fixed_wide_v1(input_dim: usize) -> Self {
+        Self {
+            first: LinearV1::runner_fixed_wide_v1(input_dim, W_HIDDEN_DIM_V1),
+            second: LinearV1::runner_fixed_wide_v1(W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1),
+        }
+    }
+}
+
+/// Wide-net (`kernel-policy-value-net-8w128`) sibling of
+/// [`NativePolicyValueNetV1`]. A fully independent type: it shares the
+/// dimension-erased [`LinearV1`] plumbing and the frozen
+/// [`NativeEncodedDecisionViewV1::validate`] (which is already config-generic
+/// and does not reference hidden_dim/card_embedding_dim), but does not alias
+/// or mutate any frozen struct, method, or constant.
+#[derive(Clone, Debug)]
+pub(crate) struct NativePolicyValueNetWideV1 {
+    config: NativePolicyValueModelConfigV1,
+    card_embedding: Vec<f32>,
+    object_encoder: TwoLayerTanhWideV1,
+    edge_encoder: TwoLayerTanhWideV1,
+    node_update: TwoLayerTanhWideV1,
+    state_encoder: TwoLayerTanhWideV1,
+    action_ref_encoder: TwoLayerTanhWideV1,
+    action_encoder: TwoLayerTanhWideV1,
+    scorer_first: LinearV1,
+    scorer_second: LinearV1,
+    value_first: LinearV1,
+    value_second: LinearV1,
+}
+
+impl NativePolicyValueNetWideV1 {
+    pub(crate) fn runner_fixed_wide_v1(
+        config: NativePolicyValueModelConfigV1,
+    ) -> Result<Self, NativePolicyValueErrorV1> {
+        config.validate_wide_v1()?;
+        let mut card_embedding = runner_fixed_rank2_v1(checked_product(
+            config.card_vocab_size,
+            config.card_embedding_dim,
+            "card_embedding",
+        )?);
+        card_embedding[..config.card_embedding_dim].fill(0.0);
+        let model = Self {
+            config,
+            card_embedding,
+            object_encoder: TwoLayerTanhWideV1::runner_fixed_wide_v1(W_OBJECT_ENCODER_INPUT_V1),
+            edge_encoder: TwoLayerTanhWideV1::runner_fixed_wide_v1(W_EDGE_ENCODER_INPUT_V1),
+            node_update: TwoLayerTanhWideV1::runner_fixed_wide_v1(W_NODE_UPDATE_INPUT_V1),
+            state_encoder: TwoLayerTanhWideV1::runner_fixed_wide_v1(W_STATE_ENCODER_INPUT_V1),
+            action_ref_encoder: TwoLayerTanhWideV1::runner_fixed_wide_v1(
+                W_ACTION_REF_ENCODER_INPUT_V1,
+            ),
+            action_encoder: TwoLayerTanhWideV1::runner_fixed_wide_v1(W_ACTION_ENCODER_INPUT_V1),
+            scorer_first: LinearV1::runner_fixed_wide_v1(W_SCORER_INPUT_V1, W_HIDDEN_DIM_V1),
+            scorer_second: LinearV1::runner_fixed_wide_v1(W_HIDDEN_DIM_V1, 1),
+            value_first: LinearV1::runner_fixed_wide_v1(W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1),
+            value_second: LinearV1::runner_fixed_wide_v1(W_HIDDEN_DIM_V1, 1),
+        };
+        model.validate_parameters_wide_v1()?;
+        if model.parameter_count_wide_v1() != W_PARAMETER_COUNT_V1 {
+            return Err(NativePolicyValueErrorV1::ParameterInvariant(
+                "parameter_count",
+            ));
+        }
+        Ok(model)
+    }
+
+    pub(crate) fn config_wide_v1(&self) -> NativePolicyValueModelConfigV1 {
+        self.config
+    }
+
+    pub(crate) fn forward_wide_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.config)?;
+
+        let mut object_input = Vec::with_capacity(counts.object_count * W_OBJECT_ENCODER_INPUT_V1);
+        for object in 0..counts.object_count {
+            let features_begin = object * OBJECT_FEATURE_DIM_V1;
+            object_input.extend_from_slice(
+                &encoded.object_features[features_begin..features_begin + OBJECT_FEATURE_DIM_V1],
+            );
+            let token = encoded.object_card_ids[object] as usize;
+            let embedding_begin = token * W_CARD_EMBEDDING_DIM_V1;
+            object_input.extend_from_slice(
+                &self.card_embedding[embedding_begin..embedding_begin + W_CARD_EMBEDDING_DIM_V1],
+            );
+        }
+        let object_base_hidden = apply_two_layer_tanh_rows_wide_v1(
+            &self.object_encoder,
+            &object_input,
+            counts.object_count,
+        );
+
+        let mut edge_pooled = vec![0.0; counts.object_count * W_HIDDEN_DIM_V1];
+        if counts.edge_count > 0 {
+            let mut edge_input = Vec::with_capacity(counts.edge_count * W_EDGE_ENCODER_INPUT_V1);
+            for edge in 0..counts.edge_count {
+                let feature_begin = edge * EDGE_FEATURE_DIM_V1;
+                edge_input.extend_from_slice(
+                    &encoded.edge_features[feature_begin..feature_begin + EDGE_FEATURE_DIM_V1],
+                );
+                let source = encoded.edge_source_indices[edge] as usize;
+                let source_begin = source * W_HIDDEN_DIM_V1;
+                edge_input.extend_from_slice(
+                    &object_base_hidden[source_begin..source_begin + W_HIDDEN_DIM_V1],
+                );
+                let target = encoded.edge_target_indices[edge] as usize;
+                let target_begin = target * W_HIDDEN_DIM_V1;
+                edge_input.extend_from_slice(
+                    &object_base_hidden[target_begin..target_begin + W_HIDDEN_DIM_V1],
+                );
+            }
+            let edge_hidden = apply_two_layer_tanh_rows_wide_v1(
+                &self.edge_encoder,
+                &edge_input,
+                counts.edge_count,
+            );
+            add_indexed_rows_wide_v1(&mut edge_pooled, &edge_hidden, encoded.edge_source_indices);
+            add_indexed_rows_wide_v1(&mut edge_pooled, &edge_hidden, encoded.edge_target_indices);
+        }
+
+        let mut node_update_input =
+            Vec::with_capacity(counts.object_count * W_NODE_UPDATE_INPUT_V1);
+        for object in 0..counts.object_count {
+            let begin = object * W_HIDDEN_DIM_V1;
+            node_update_input
+                .extend_from_slice(&object_base_hidden[begin..begin + W_HIDDEN_DIM_V1]);
+            node_update_input.extend_from_slice(&edge_pooled[begin..begin + W_HIDDEN_DIM_V1]);
+        }
+        let object_hidden = apply_two_layer_tanh_rows_wide_v1(
+            &self.node_update,
+            &node_update_input,
+            counts.object_count,
+        );
+
+        let mut pooled_objects = vec![0.0; W_POOLED_OBJECT_DIM_V1];
+        add_indexed_rows_wide_v1(&mut pooled_objects, &object_hidden, encoded.object_groups);
+        let mut state_input = Vec::with_capacity(W_STATE_ENCODER_INPUT_V1);
+        state_input.extend_from_slice(encoded.state);
+        state_input.extend_from_slice(&pooled_objects);
+        let state_hidden = apply_two_layer_tanh_rows_wide_v1(&self.state_encoder, &state_input, 1);
+
+        let mut action_ref_pooled = vec![0.0; counts.action_count * W_HIDDEN_DIM_V1];
+        if counts.action_ref_count > 0 {
+            let mut action_ref_input =
+                Vec::with_capacity(counts.action_ref_count * W_ACTION_REF_ENCODER_INPUT_V1);
+            for action_ref in 0..counts.action_ref_count {
+                let feature_begin = action_ref * ACTION_REF_FEATURE_DIM_V1;
+                action_ref_input.extend_from_slice(
+                    &encoded.action_ref_features
+                        [feature_begin..feature_begin + ACTION_REF_FEATURE_DIM_V1],
+                );
+                let node = encoded.action_ref_node_indices[action_ref] as usize;
+                let node_begin = node * W_HIDDEN_DIM_V1;
+                action_ref_input
+                    .extend_from_slice(&object_hidden[node_begin..node_begin + W_HIDDEN_DIM_V1]);
+            }
+            let action_ref_hidden = apply_two_layer_tanh_rows_wide_v1(
+                &self.action_ref_encoder,
+                &action_ref_input,
+                counts.action_ref_count,
+            );
+            add_indexed_rows_wide_v1(
+                &mut action_ref_pooled,
+                &action_ref_hidden,
+                encoded.action_ref_action_indices,
+            );
+        }
+
+        let mut action_input = Vec::with_capacity(counts.action_count * W_ACTION_ENCODER_INPUT_V1);
+        for action in 0..counts.action_count {
+            let feature_begin = action * ACTION_FEATURE_DIM_V1;
+            action_input.extend_from_slice(
+                &encoded.action_features[feature_begin..feature_begin + ACTION_FEATURE_DIM_V1],
+            );
+            let pooled_begin = action * W_HIDDEN_DIM_V1;
+            action_input.extend_from_slice(
+                &action_ref_pooled[pooled_begin..pooled_begin + W_HIDDEN_DIM_V1],
+            );
+        }
+        let action_hidden = apply_two_layer_tanh_rows_wide_v1(
+            &self.action_encoder,
+            &action_input,
+            counts.action_count,
+        );
+
+        let mut scorer_input = Vec::with_capacity(counts.action_count * W_SCORER_INPUT_V1);
+        for action in 0..counts.action_count {
+            scorer_input.extend_from_slice(&state_hidden);
+            let action_begin = action * W_HIDDEN_DIM_V1;
+            scorer_input
+                .extend_from_slice(&action_hidden[action_begin..action_begin + W_HIDDEN_DIM_V1]);
+        }
+        let mut scorer_hidden =
+            linear_rows_v1(&self.scorer_first, &scorer_input, counts.action_count);
+        tanh_in_place_v1(&mut scorer_hidden);
+        let logits = linear_rows_v1(&self.scorer_second, &scorer_hidden, counts.action_count);
+
+        let mut value_hidden = linear_rows_v1(&self.value_first, &state_hidden, 1);
+        tanh_in_place_v1(&mut value_hidden);
+        let value = linear_rows_v1(&self.value_second, &value_hidden, 1)[0];
+
+        for (position, output) in logits.iter().copied().enumerate() {
+            if !output.is_finite() {
+                return Err(NativePolicyValueErrorV1::NonFiniteOutput {
+                    field: "logits",
+                    position,
+                });
+            }
+        }
+        if !value.is_finite() {
+            return Err(NativePolicyValueErrorV1::NonFiniteOutput {
+                field: "value",
+                position: 0,
+            });
+        }
+        Ok(NativePolicyValueOutputV1 { logits, value })
+    }
+
+    /// Transactional caller-owned output adapter, mirroring
+    /// [`NativePolicyValueNetV1::forward_into_v1`].
+    pub(crate) fn forward_into_wide_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        logits_output: &mut Vec<f32>,
+        value_output: &mut f32,
+    ) -> Result<(), NativePolicyValueErrorV1> {
+        let output = self.forward_wide_v1(encoded)?;
+        *logits_output = output.logits;
+        *value_output = output.value;
+        Ok(())
+    }
+
+    pub(crate) fn parameter_count_wide_v1(&self) -> usize {
+        let mut count = 0usize;
+        self.visit_parameters_wide_v1(|_, _, values| count += values.len());
+        count
+    }
+
+    pub(crate) fn parameter_manifest_sha256_raw_wide_v1(&self) -> [u8; 32] {
+        let mut digest = Sha256::new();
+        self.visit_parameters_wide_v1(|name, shape, values| {
+            let name_bytes = name.as_bytes();
+            digest.update((name_bytes.len() as u32).to_be_bytes());
+            digest.update(name_bytes);
+            digest.update((shape.len() as u32).to_be_bytes());
+            for dimension in shape {
+                digest.update((*dimension as u64).to_be_bytes());
+            }
+            digest.update((values.len() as u64).to_be_bytes());
+            for value in values {
+                digest.update(value.to_le_bytes());
+            }
+        });
+        digest.finalize().into()
+    }
+
+    pub(crate) fn parameter_manifest_sha256_wide_v1(&self) -> String {
+        self.parameter_manifest_sha256_raw_wide_v1()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    pub(crate) fn parameter_snapshot_wide_v1(&self) -> Vec<NativeNamedParameterV1> {
+        let mut parameters = Vec::new();
+        self.visit_parameters_wide_v1(|name, shape, values| {
+            parameters.push(NativeNamedParameterV1 {
+                name,
+                shape: shape.to_vec(),
+                values: values.to_vec(),
+            });
+        });
+        parameters
+    }
+
+    /// Replaces all named parameters as one transaction, mirroring
+    /// [`NativePolicyValueNetV1::replace_parameter_snapshot_v1`].
+    pub(crate) fn replace_parameter_snapshot_wide_v1(
+        &mut self,
+        replacement: &[NativeNamedParameterV1],
+    ) -> Result<(), NativePolicyValueErrorV1> {
+        let expected = self.parameter_snapshot_wide_v1();
+        if replacement.len() != expected.len()
+            || replacement.iter().zip(&expected).any(|(actual, expected)| {
+                actual.name != expected.name
+                    || actual.shape != expected.shape
+                    || actual.values.len() != expected.values.len()
+                    || actual.values.iter().any(|value| !value.is_finite())
+            })
+        {
+            return Err(NativePolicyValueErrorV1::ParameterInvariant(
+                "replacement_manifest",
+            ));
+        }
+
+        let mut candidate = self.clone();
+        let mut position = 0usize;
+        candidate.visit_parameters_mut_wide_v1(|name, shape, values| {
+            let source = &replacement[position];
+            debug_assert_eq!(source.name, name);
+            debug_assert_eq!(source.shape, shape);
+            values.copy_from_slice(&source.values);
+            position += 1;
+        });
+        candidate.validate_parameters_wide_v1()?;
+        if candidate.parameter_count_wide_v1() != W_PARAMETER_COUNT_V1 {
+            return Err(NativePolicyValueErrorV1::ParameterInvariant(
+                "parameter_count",
+            ));
+        }
+        *self = candidate;
+        Ok(())
+    }
+
+    pub(crate) fn validate_parameters_wide_v1(&self) -> Result<(), NativePolicyValueErrorV1> {
+        let expected_embedding = checked_product(
+            self.config.card_vocab_size,
+            self.config.card_embedding_dim,
+            "card_embedding",
+        )?;
+        if self.card_embedding.len() != expected_embedding
+            || !self.card_embedding.iter().all(|value| value.is_finite())
+            || self.card_embedding[..self.config.card_embedding_dim]
+                .iter()
+                .any(|value| value.to_bits() != 0)
+        {
+            return Err(NativePolicyValueErrorV1::ParameterInvariant(
+                "card_embedding.weight",
+            ));
+        }
+        self.object_encoder.first.validate("object_encoder.0")?;
+        self.object_encoder.second.validate("object_encoder.2")?;
+        self.edge_encoder.first.validate("edge_encoder.0")?;
+        self.edge_encoder.second.validate("edge_encoder.2")?;
+        self.node_update.first.validate("node_update.0")?;
+        self.node_update.second.validate("node_update.2")?;
+        self.state_encoder.first.validate("state_encoder.0")?;
+        self.state_encoder.second.validate("state_encoder.2")?;
+        self.action_ref_encoder
+            .first
+            .validate("action_ref_encoder.0")?;
+        self.action_ref_encoder
+            .second
+            .validate("action_ref_encoder.2")?;
+        self.action_encoder.first.validate("action_encoder.0")?;
+        self.action_encoder.second.validate("action_encoder.2")?;
+        self.scorer_first.validate("scorer.0")?;
+        self.scorer_second.validate("scorer.2")?;
+        self.value_first.validate("value_head.0")?;
+        self.value_second.validate("value_head.2")?;
+        Ok(())
+    }
+
+    pub(crate) fn visit_parameters_wide_v1(
+        &self,
+        mut visitor: impl FnMut(&'static str, &[usize], &[f32]),
+    ) {
+        visitor(
+            "card_embedding.weight",
+            &[CARD_VOCAB_SIZE_V1, W_CARD_EMBEDDING_DIM_V1],
+            &self.card_embedding,
+        );
+        visit_linear_v1(&mut visitor, "object_encoder.0", &self.object_encoder.first);
+        visit_linear_v1(
+            &mut visitor,
+            "object_encoder.2",
+            &self.object_encoder.second,
+        );
+        visit_linear_v1(&mut visitor, "edge_encoder.0", &self.edge_encoder.first);
+        visit_linear_v1(&mut visitor, "edge_encoder.2", &self.edge_encoder.second);
+        visit_linear_v1(&mut visitor, "node_update.0", &self.node_update.first);
+        visit_linear_v1(&mut visitor, "node_update.2", &self.node_update.second);
+        visit_linear_v1(&mut visitor, "state_encoder.0", &self.state_encoder.first);
+        visit_linear_v1(&mut visitor, "state_encoder.2", &self.state_encoder.second);
+        visit_linear_v1(
+            &mut visitor,
+            "action_ref_encoder.0",
+            &self.action_ref_encoder.first,
+        );
+        visit_linear_v1(
+            &mut visitor,
+            "action_ref_encoder.2",
+            &self.action_ref_encoder.second,
+        );
+        visit_linear_v1(&mut visitor, "action_encoder.0", &self.action_encoder.first);
+        visit_linear_v1(
+            &mut visitor,
+            "action_encoder.2",
+            &self.action_encoder.second,
+        );
+        visit_linear_v1(&mut visitor, "scorer.0", &self.scorer_first);
+        visit_linear_v1(&mut visitor, "scorer.2", &self.scorer_second);
+        visit_linear_v1(&mut visitor, "value_head.0", &self.value_first);
+        visit_linear_v1(&mut visitor, "value_head.2", &self.value_second);
+    }
+
+    fn visit_parameters_mut_wide_v1(
+        &mut self,
+        mut visitor: impl FnMut(&'static str, &[usize], &mut [f32]),
+    ) {
+        visitor(
+            "card_embedding.weight",
+            &[CARD_VOCAB_SIZE_V1, W_CARD_EMBEDDING_DIM_V1],
+            &mut self.card_embedding,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "object_encoder.0",
+            &mut self.object_encoder.first,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "object_encoder.2",
+            &mut self.object_encoder.second,
+        );
+        visit_linear_mut_v1(&mut visitor, "edge_encoder.0", &mut self.edge_encoder.first);
+        visit_linear_mut_v1(
+            &mut visitor,
+            "edge_encoder.2",
+            &mut self.edge_encoder.second,
+        );
+        visit_linear_mut_v1(&mut visitor, "node_update.0", &mut self.node_update.first);
+        visit_linear_mut_v1(&mut visitor, "node_update.2", &mut self.node_update.second);
+        visit_linear_mut_v1(
+            &mut visitor,
+            "state_encoder.0",
+            &mut self.state_encoder.first,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "state_encoder.2",
+            &mut self.state_encoder.second,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "action_ref_encoder.0",
+            &mut self.action_ref_encoder.first,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "action_ref_encoder.2",
+            &mut self.action_ref_encoder.second,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "action_encoder.0",
+            &mut self.action_encoder.first,
+        );
+        visit_linear_mut_v1(
+            &mut visitor,
+            "action_encoder.2",
+            &mut self.action_encoder.second,
+        );
+        visit_linear_mut_v1(&mut visitor, "scorer.0", &mut self.scorer_first);
+        visit_linear_mut_v1(&mut visitor, "scorer.2", &mut self.scorer_second);
+        visit_linear_mut_v1(&mut visitor, "value_head.0", &mut self.value_first);
+        visit_linear_mut_v1(&mut visitor, "value_head.2", &mut self.value_second);
+    }
+}
+
+fn apply_two_layer_tanh_rows_wide_v1(
+    encoder: &TwoLayerTanhWideV1,
+    input: &[f32],
+    rows: usize,
+) -> Vec<f32> {
+    let mut hidden = linear_rows_v1(&encoder.first, input, rows);
+    tanh_in_place_v1(&mut hidden);
+    let mut output = linear_rows_v1(&encoder.second, &hidden, rows);
+    tanh_in_place_v1(&mut output);
+    output
+}
+
+fn add_indexed_rows_wide_v1(destination: &mut [f32], source: &[f32], indices: &[i64]) {
+    debug_assert_eq!(source.len(), indices.len() * W_HIDDEN_DIM_V1);
+    for (source_row, destination_index) in indices.iter().copied().enumerate() {
+        let destination_row = destination_index as usize;
+        let source_begin = source_row * W_HIDDEN_DIM_V1;
+        let destination_begin = destination_row * W_HIDDEN_DIM_V1;
+        for column in 0..W_HIDDEN_DIM_V1 {
+            destination[destination_begin + column] += source[source_begin + column];
+        }
+    }
+}
+
+const W_RUNNER_FIXED_RANK1_128_BITS_V1: [u32; 128] = [
+    0xbd4c_cccd,
+    0xbd49_9326,
+    0xbd46_5980,
+    0xbd43_1fda,
+    0xbd3f_e633,
+    0xbd3c_ac8c,
+    0xbd39_72e6,
+    0xbd36_3940,
+    0xbd32_ff99,
+    0xbd2f_c5f2,
+    0xbd2c_8c4c,
+    0xbd29_52a6,
+    0xbd26_18ff,
+    0xbd22_df58,
+    0xbd1f_a5b2,
+    0xbd1c_6c0c,
+    0xbd19_3265,
+    0xbd15_f8be,
+    0xbd12_bf18,
+    0xbd0f_8572,
+    0xbd0c_4bcb,
+    0xbd09_1224,
+    0xbd05_d87e,
+    0xbd02_9ed8,
+    0xbcfe_ca62,
+    0xbcf8_5715,
+    0xbcf1_e3c8,
+    0xbceb_707b,
+    0xbce4_fd2e,
+    0xbcde_89e1,
+    0xbcd8_1694,
+    0xbcd1_a347,
+    0xbccb_2ffa,
+    0xbcc4_bcad,
+    0xbcbe_4960,
+    0xbcb7_d613,
+    0xbcb1_62c6,
+    0xbcaa_ef79,
+    0xbca4_7c2c,
+    0xbc9e_08df,
+    0xbc97_9592,
+    0xbc91_2246,
+    0xbc8a_aef8,
+    0xbc84_3baa,
+    0xbc7b_90bc,
+    0xbc6e_aa24,
+    0xbc61_c388,
+    0xbc54_dcec,
+    0xbc47_f654,
+    0xbc3b_0fbc,
+    0xbc2e_2920,
+    0xbc21_4284,
+    0xbc14_5bec,
+    0xbc07_7554,
+    0xbbf5_1d70,
+    0xbbdb_5038,
+    0xbbc1_8308,
+    0xbba7_b5d8,
+    0xbb8d_e8a0,
+    0xbb68_36d0,
+    0xbb34_9c70,
+    0xbb01_0210,
+    0xba9a_cf40,
+    0xb9ce_6980,
+    0x39ce_6980,
+    0x3a9a_cf40,
+    0x3b01_0210,
+    0x3b34_9c70,
+    0x3b68_36d0,
+    0x3b8d_e8a0,
+    0x3ba7_b5d8,
+    0x3bc1_8308,
+    0x3bdb_5038,
+    0x3bf5_1d70,
+    0x3c07_7554,
+    0x3c14_5bec,
+    0x3c21_4284,
+    0x3c2e_2920,
+    0x3c3b_0fbc,
+    0x3c47_f654,
+    0x3c54_dcec,
+    0x3c61_c388,
+    0x3c6e_aa24,
+    0x3c7b_90bc,
+    0x3c84_3baa,
+    0x3c8a_aef8,
+    0x3c91_2246,
+    0x3c97_9592,
+    0x3c9e_08df,
+    0x3ca4_7c2c,
+    0x3caa_ef79,
+    0x3cb1_62c6,
+    0x3cb7_d613,
+    0x3cbe_4960,
+    0x3cc4_bcad,
+    0x3ccb_2ffa,
+    0x3cd1_a347,
+    0x3cd8_1694,
+    0x3cde_89e1,
+    0x3ce4_fd2e,
+    0x3ceb_707b,
+    0x3cf1_e3c8,
+    0x3cf8_5715,
+    0x3cfe_ca62,
+    0x3d02_9ed8,
+    0x3d05_d87e,
+    0x3d09_1224,
+    0x3d0c_4bcb,
+    0x3d0f_8572,
+    0x3d12_bf18,
+    0x3d15_f8be,
+    0x3d19_3265,
+    0x3d1c_6c0c,
+    0x3d1f_a5b2,
+    0x3d22_df58,
+    0x3d26_18ff,
+    0x3d29_52a6,
+    0x3d2c_8c4c,
+    0x3d2f_c5f2,
+    0x3d32_ff99,
+    0x3d36_3940,
+    0x3d39_72e6,
+    0x3d3c_ac8c,
+    0x3d3f_e633,
+    0x3d43_1fda,
+    0x3d46_5980,
+    0x3d49_9326,
+    0x3d4c_cccd,
+];
+
+/// Wide-net sibling of [`runner_fixed_rank1_v1`]. The frozen 1/64-length
+/// function is untouched; this handles the wide model's 1/128-length biases.
+fn runner_fixed_rank1_wide_v1(count: usize) -> Vec<f32> {
+    match count {
+        1 => vec![f32::from_bits(W_RUNNER_FIXED_RANK1_128_BITS_V1[0])],
+        W_HIDDEN_DIM_V1 => W_RUNNER_FIXED_RANK1_128_BITS_V1
+            .iter()
+            .copied()
+            .map(f32::from_bits)
+            .collect(),
+        _ => unreachable!("wide model has only rank-one lengths 1 and 128"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1717,5 +2450,225 @@ mod tests {
             NativePolicyValueNetV1::runner_fixed_v1(config).unwrap_err(),
             NativePolicyValueErrorV1::ModelConfigMismatch("hidden_dim")
         );
+    }
+}
+
+/// Capacity-experiment wide-net (kernel-policy-value-net-8w128) forward
+/// goldens. Mirrors `mod tests` above exactly, against the wide fixture and
+/// the wide constructor path; does not touch the frozen tests.
+#[cfg(test)]
+mod wide_tests {
+    use super::*;
+    use serde::Deserialize;
+
+    const GOLDEN_JSON: &str = include_str!(
+        "../../data/native_policy_value_net_wide_v1/runner_fixed_forward_goldens_wide_v1.json"
+    );
+
+    #[derive(Debug, Deserialize)]
+    struct GoldenAuthority {
+        absolute_tolerance: f32,
+        relative_tolerance: f32,
+        initializer: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct GoldenParameterManifest {
+        count: usize,
+        ordered: Vec<GoldenParameter>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct GoldenParameter {
+        name: String,
+        shape: Vec<usize>,
+        count: usize,
+        first_bits: String,
+        last_bits: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct GoldenCase {
+        state: Vec<f32>,
+        object_features: Vec<f32>,
+        object_card_ids: Vec<i64>,
+        object_groups: Vec<i64>,
+        object_node_ids: Vec<i64>,
+        edge_features: Vec<f32>,
+        edge_source_indices: Vec<i64>,
+        edge_target_indices: Vec<i64>,
+        action_features: Vec<f32>,
+        action_ref_features: Vec<f32>,
+        action_ref_card_ids: Vec<i64>,
+        action_ref_action_indices: Vec<i64>,
+        action_ref_node_indices: Vec<i64>,
+        torch_logits: Vec<f32>,
+        torch_value: f32,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct GoldenFixture {
+        schema: String,
+        authority: GoldenAuthority,
+        model_config_fingerprint: String,
+        parameter_manifest: GoldenParameterManifest,
+        cases: Vec<GoldenCase>,
+    }
+
+    fn fixture() -> GoldenFixture {
+        serde_json::from_str(GOLDEN_JSON).expect("checked wide golden parses")
+    }
+
+    fn view(case: &GoldenCase) -> NativeEncodedDecisionViewV1<'_> {
+        NativeEncodedDecisionViewV1::from_slices_unvalidated(
+            NativeEncodedDecisionSchemaV1::contract_v1(),
+            &case.state,
+            &case.object_features,
+            &case.object_card_ids,
+            &case.object_groups,
+            &case.object_node_ids,
+            &case.edge_features,
+            &case.edge_source_indices,
+            &case.edge_target_indices,
+            &case.action_features,
+            &case.action_ref_features,
+            &case.action_ref_card_ids,
+            &case.action_ref_action_indices,
+            &case.action_ref_node_indices,
+        )
+    }
+
+    fn assert_close(actual: f32, expected: f32, absolute: f32, relative: f32) {
+        let tolerance = absolute + relative * expected.abs();
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "actual={actual:?} expected={expected:?} delta={:?} tolerance={tolerance:?}",
+            (actual - expected).abs()
+        );
+    }
+
+    #[test]
+    fn runner_fixed_wide_parameters_match_torch_named_parameter_manifest() {
+        let fixture = fixture();
+        assert_eq!(
+            fixture.schema,
+            "native-policy-value-net-wide-v1-torch-goldens-v1"
+        );
+        assert_eq!(fixture.authority.initializer, INITIALIZER_RUNNER_FIXED_V1);
+        assert_eq!(
+            fixture.model_config_fingerprint,
+            W_MODEL_CONFIG_FINGERPRINT_V1
+        );
+
+        let model = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+            NativePolicyValueModelConfigV1::contract_wide_v1(),
+        )
+        .expect("wide model builds");
+        assert_eq!(
+            model.config_wide_v1(),
+            NativePolicyValueModelConfigV1::contract_wide_v1()
+        );
+        assert_eq!(model.parameter_count_wide_v1(), W_PARAMETER_COUNT_V1);
+        assert_eq!(model.parameter_count_wide_v1(), 2_750_754);
+        assert_eq!(
+            model.parameter_count_wide_v1(),
+            fixture.parameter_manifest.count
+        );
+
+        let mut actual = Vec::new();
+        model.visit_parameters_wide_v1(|name, shape, values| {
+            actual.push((
+                name.to_owned(),
+                shape.to_vec(),
+                values.len(),
+                format!("0x{:08x}", values[0].to_bits()),
+                format!("0x{:08x}", values[values.len() - 1].to_bits()),
+            ));
+        });
+        let expected: Vec<_> = fixture
+            .parameter_manifest
+            .ordered
+            .into_iter()
+            .map(|parameter| {
+                (
+                    parameter.name,
+                    parameter.shape,
+                    parameter.count,
+                    parameter.first_bits,
+                    parameter.last_bits,
+                )
+            })
+            .collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn cpu_forward_reproduces_torch_authority_wide_goldens_with_declared_tolerance() {
+        let fixture = fixture();
+        let model = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+            NativePolicyValueModelConfigV1::contract_wide_v1(),
+        )
+        .expect("wide model builds");
+        assert_eq!(fixture.cases.len(), 2);
+        for case in &fixture.cases {
+            let output = model
+                .forward_wide_v1(view(case))
+                .expect("wide golden forwards");
+            assert_eq!(output.logits.len(), case.torch_logits.len());
+            for (actual, expected) in output.logits.iter().zip(&case.torch_logits) {
+                assert_close(
+                    *actual,
+                    *expected,
+                    fixture.authority.absolute_tolerance,
+                    fixture.authority.relative_tolerance,
+                );
+            }
+            assert_close(
+                output.value,
+                case.torch_value,
+                fixture.authority.absolute_tolerance,
+                fixture.authority.relative_tolerance,
+            );
+        }
+    }
+
+    #[test]
+    fn wide_config_drift_is_rejected_before_parameter_allocation() {
+        let mut config = NativePolicyValueModelConfigV1::contract_wide_v1();
+        config.hidden_dim += 1;
+        assert_eq!(
+            NativePolicyValueNetWideV1::runner_fixed_wide_v1(config).unwrap_err(),
+            NativePolicyValueErrorV1::ModelConfigMismatch("hidden_dim")
+        );
+    }
+
+    #[test]
+    fn wide_config_is_rejected_by_frozen_constructor_and_vice_versa() {
+        // Fail-closed both directions: the frozen constructor rejects a wide
+        // config, and the wide constructor rejects the frozen config.
+        assert!(matches!(
+            NativePolicyValueNetV1::runner_fixed_v1(
+                NativePolicyValueModelConfigV1::contract_wide_v1()
+            ),
+            Err(NativePolicyValueErrorV1::ModelConfigMismatch(_))
+        ));
+        assert!(matches!(
+            NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+                NativePolicyValueModelConfigV1::contract_v1()
+            ),
+            Err(NativePolicyValueErrorV1::ModelConfigMismatch(_))
+        ));
+    }
+
+    #[test]
+    fn wide_parameter_count_pin() {
+        let model = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+            NativePolicyValueModelConfigV1::contract_wide_v1(),
+        )
+        .expect("wide model builds");
+        // Exact pin per the Capacity Experiment Contract (Section 2): the
+        // wide parameter count is computed at build time, not assumed.
+        assert_eq!(model.parameter_count_wide_v1(), 2_750_754);
+        assert_eq!(W_PARAMETER_COUNT_V1, 2_750_754);
     }
 }
