@@ -69,8 +69,8 @@ use crate::native_training_store_root_v2::{
     NativeTrainingStoreRootV2Error, ValidatedNativeTrainingStoreRootV2,
 };
 use crate::native_training_store_run_v2::{
-    decode_train_run_v2, OpponentLadderCheckpointRefV1, OpponentLadderPoolContractV1,
-    TrainRunV2Error, ValidatedTrainRunV2,
+    decode_train_run_v2, OpponentLadderCheckpointRefV1, OpponentLadderInitializationContractV1,
+    OpponentLadderPoolContractV1, TrainRunV2Error, ValidatedTrainRunV2,
 };
 use core::fmt;
 use std::path::Path;
@@ -243,6 +243,43 @@ impl LadderCheckpointAuthorityV1 {
             self.checkpoint(),
             self.payload(),
         )?)
+    }
+
+    /// Consumes the authority, returning its owned checkpoint manifest and
+    /// raw payload bytes -- for the continual-initialization genesis
+    /// authoring caller (Self-Play Ladder Design Contract S2, Amendment 1 /
+    /// Section 8A point 2), which needs to hold the resolved reference
+    /// checkpoint past this value's own lifetime rather than only load an
+    /// inference handle from it.
+    pub(crate) fn into_checkpoint_and_payload(self) -> (CheckpointManifestV3, Vec<u8>) {
+        match self.checkpoint {
+            LadderCheckpointManifestSourceV1::Genesis {
+                checkpoint,
+                payload,
+            } => (checkpoint, payload),
+            LadderCheckpointManifestSourceV1::Trained(boundary) => {
+                boundary.into_checkpoint_and_payload()
+            }
+        }
+    }
+}
+
+/// Amendment 1 / Section 8A point 2: converts the continual-initialization
+/// checkpoint reference into the identically-shaped pool-ref type so it
+/// resolves through the SAME chain-proven loader
+/// (`resolve_ladder_checkpoint_authority_v1`) the pool's own three refs use,
+/// with no new resolution logic. See the type-level doc comment on
+/// `OpponentLadderInitializationContractV1` for why the two types stay
+/// deliberately separate at the record layer despite the shape coincidence.
+pub(crate) fn ladder_init_as_checkpoint_ref_v1(
+    init: &OpponentLadderInitializationContractV1,
+) -> OpponentLadderCheckpointRefV1 {
+    OpponentLadderCheckpointRefV1 {
+        source_run_sha256: init.source_run_sha256.clone(),
+        generation: init.generation,
+        checkpoint_sha256: init.checkpoint_sha256.clone(),
+        sidecar_sha256: init.sidecar_sha256.clone(),
+        state_sha256: init.state_sha256.clone(),
     }
 }
 
@@ -607,6 +644,65 @@ mod tests {
                 ..
             }
         ));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ladder_init_as_checkpoint_ref_v1_preserves_all_five_fields() {
+        let init = OpponentLadderInitializationContractV1 {
+            source_run_sha256: "a".repeat(64),
+            generation: 32,
+            checkpoint_sha256: "b".repeat(64),
+            sidecar_sha256: "c".repeat(64),
+            state_sha256: "d".repeat(64),
+        };
+        assert_eq!(
+            ladder_init_as_checkpoint_ref_v1(&init),
+            OpponentLadderCheckpointRefV1 {
+                source_run_sha256: "a".repeat(64),
+                generation: 32,
+                checkpoint_sha256: "b".repeat(64),
+                sidecar_sha256: "c".repeat(64),
+                state_sha256: "d".repeat(64),
+            }
+        );
+    }
+
+    /// GenesisInitializationV2 fail-closed proof (Self-Play Ladder Design
+    /// Contract S2, Amendment 1 / Section 8A point 2, Section 8B mandatory
+    /// test list): "init section present but referenced digests mismatch
+    /// rejects before parsing." Exercises the exact same digest gate
+    /// `digest_gate_accepts_matching_files_and_fails_before_run_json_is_even_read`
+    /// proves generically, THROUGH `ladder_init_as_checkpoint_ref_v1`'s
+    /// conversion specifically -- no run.json exists in this fixture
+    /// directory, so a `RunFileIo` result would mean the gate ran too late.
+    #[test]
+    fn ladder_init_ref_digest_mismatch_fails_closed_before_parsing() {
+        let dir = temp_dir_v1("ladder-init-gate-mismatch");
+        let staged = write_gate_fixture_v1(&dir, 0);
+        let init = OpponentLadderInitializationContractV1 {
+            source_run_sha256: staged.source_run_sha256.clone(),
+            generation: staged.generation,
+            checkpoint_sha256: "0".repeat(64),
+            sidecar_sha256: staged.sidecar_sha256.clone(),
+            state_sha256: staged.state_sha256.clone(),
+        };
+
+        let checkpoint_ref = ladder_init_as_checkpoint_ref_v1(&init);
+        let error = resolve_ladder_checkpoint_authority_v1(&dir, &checkpoint_ref).unwrap_err();
+        match error {
+            LadderPoolResolutionErrorV1::DigestMismatch {
+                file: LadderPoolResolutionFileKindV1::Checkpoint,
+                expected,
+                actual,
+            } => {
+                assert_eq!(expected, "0".repeat(64));
+                assert_eq!(actual, staged.checkpoint_sha256);
+                assert_ne!(expected, actual);
+            }
+            other => panic!("expected DigestMismatch, got {other:?}"),
+        }
 
         let _ = fs::remove_dir_all(&dir);
     }
