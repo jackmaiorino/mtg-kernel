@@ -691,6 +691,17 @@ pub struct OpponentLadderCheckpointRefV1 {
 /// `real_ladder_pilot_run_json_validates_with_unchanged_run_sha256`).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+/// TRUST BOUNDARY (review-adopted disclosure): the self-contained
+/// validation paths (walk/publish decode dispatch and the inference-layer
+/// authority binding) trust this record's own derived_model_parameter_sha256
+/// claim, checked for digest shape only. The binding to a GENUINE prior
+/// checkpoint is enforced exclusively at real training-time construction,
+/// where run_native_science_loop_v1's genesis branch requires a resolved,
+/// digest-gated, run-sha256-cross-checked reference and fails closed on any
+/// mismatch with this claim. A hand-forged store directory with
+/// self-consistent digests would pass self-contained validation, the same
+/// pre-existing forged-record threat model that applies to trained
+/// checkpoints' evidence chains.
 pub struct OpponentLadderInitializationContractV1 {
     pub(crate) source_run_sha256: String,
     pub(crate) generation: u64,
