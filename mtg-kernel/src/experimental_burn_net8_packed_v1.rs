@@ -14,11 +14,26 @@ use crate::common_model_snapshot_v1::{
 };
 use crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1;
 use crate::native_policy_value_net_v1::{
-    NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativeNamedParameterV1,
-    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, NativePolicyValueOutputV1,
-    ACTION_FEATURE_DIM_V1, ACTION_REF_FEATURE_DIM_V1, CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1,
-    EDGE_FEATURE_DIM_V1, HIDDEN_DIM_V1, OBJECT_FEATURE_DIM_V1, OBJECT_GROUP_COUNT_V1,
-    PARAMETER_COUNT_V1, STATE_DIM_V1,
+    NativeEncodedDecisionSchemaV1,
+    NativeEncodedDecisionViewV1,
+    NativeNamedParameterV1,
+    NativePolicyValueModelConfigV1,
+    NativePolicyValueNetV1,
+    NativePolicyValueOutputV1,
+    ACTION_FEATURE_DIM_V1,
+    ACTION_REF_FEATURE_DIM_V1,
+    CARD_EMBEDDING_DIM_V1,
+    CARD_VOCAB_SIZE_V1,
+    EDGE_FEATURE_DIM_V1,
+    HIDDEN_DIM_V1,
+    OBJECT_FEATURE_DIM_V1,
+    OBJECT_GROUP_COUNT_V1,
+    PARAMETER_COUNT_V1,
+    STATE_DIM_V1,
+    // Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings;
+    // see `ProductionNet8::import_native_wide_v1`/`export_native_wide_v1`.
+    W_CARD_EMBEDDING_DIM_V1,
+    W_HIDDEN_DIM_V1,
 };
 use burn::module::{Module, Param};
 use burn::nn::{Embedding, Linear};
@@ -354,6 +369,257 @@ impl<B: Backend> ProductionNet8<B> {
             &mut output,
             "value_head.2",
             HIDDEN_DIM_V1,
+            1,
+            &self.value_head.output,
+        )?;
+        Ok(output)
+    }
+}
+
+// =============================================================================
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) import/export
+// twins (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3). `ProductionNet8`
+// is itself dimension-erased at the type level: Burn's `Embedding`/`Linear`
+// carry shape only in their runtime tensors, so the SAME struct holds either
+// width. `ParameterCursor::linear`/`take` and the free `export_linear` are
+// already dimension-generic (the dims are ordinary arguments); only the
+// `two_layer`/`export_two_layer` CONVENIENCE helpers hardcode the frozen
+// `HIDDEN_DIM_V1` as every layer's output dim, so these twins call
+// `cursor.linear`/`export_linear` directly per layer with the wide dims
+// instead of going through those two helpers. `import_native_v1`/
+// `export_native_v1`/`two_layer`/`export_two_layer` above are untouched.
+// Verification bar here is `cargo check --features
+// experimental-burn-net8-packed-cuda-v1`: this is import/export capability
+// only, no wide forward/training wiring (out of scope for this increment;
+// see the integration's final report).
+// =============================================================================
+
+impl<B: Backend> ProductionNet8<B> {
+    #[allow(dead_code)]
+    fn import_native_wide_v1(
+        parameters: &[NativeNamedParameterV1],
+        device: &B::Device,
+    ) -> Result<Self, Box<dyn Error>> {
+        let mut cursor = ParameterCursor::new(parameters);
+        let card_embedding = Embedding {
+            weight: Param::from_data(
+                TensorData::new(
+                    cursor.take(
+                        "card_embedding.weight",
+                        &[CARD_VOCAB_SIZE_V1, W_CARD_EMBEDDING_DIM_V1],
+                    )?,
+                    [CARD_VOCAB_SIZE_V1, W_CARD_EMBEDDING_DIM_V1],
+                ),
+                device,
+            ),
+        };
+        let object_encoder = TwoLayerTanh {
+            first: cursor.linear(
+                "object_encoder.0",
+                OBJECT_FEATURE_DIM_V1 + W_CARD_EMBEDDING_DIM_V1,
+                W_HIDDEN_DIM_V1,
+                device,
+            )?,
+            second: cursor.linear("object_encoder.2", W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1, device)?,
+        };
+        let edge_encoder = TwoLayerTanh {
+            first: cursor.linear(
+                "edge_encoder.0",
+                EDGE_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1 * 2,
+                W_HIDDEN_DIM_V1,
+                device,
+            )?,
+            second: cursor.linear("edge_encoder.2", W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1, device)?,
+        };
+        let node_update = TwoLayerTanh {
+            first: cursor.linear(
+                "node_update.0",
+                W_HIDDEN_DIM_V1 * 2,
+                W_HIDDEN_DIM_V1,
+                device,
+            )?,
+            second: cursor.linear("node_update.2", W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1, device)?,
+        };
+        let state_encoder = TwoLayerTanh {
+            first: cursor.linear(
+                "state_encoder.0",
+                STATE_DIM_V1 + OBJECT_GROUP_COUNT_V1 * W_HIDDEN_DIM_V1,
+                W_HIDDEN_DIM_V1,
+                device,
+            )?,
+            second: cursor.linear("state_encoder.2", W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1, device)?,
+        };
+        let action_ref_encoder = TwoLayerTanh {
+            first: cursor.linear(
+                "action_ref_encoder.0",
+                ACTION_REF_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1,
+                W_HIDDEN_DIM_V1,
+                device,
+            )?,
+            second: cursor.linear(
+                "action_ref_encoder.2",
+                W_HIDDEN_DIM_V1,
+                W_HIDDEN_DIM_V1,
+                device,
+            )?,
+        };
+        let action_encoder = TwoLayerTanh {
+            first: cursor.linear(
+                "action_encoder.0",
+                ACTION_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1,
+                W_HIDDEN_DIM_V1,
+                device,
+            )?,
+            second: cursor.linear("action_encoder.2", W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1, device)?,
+        };
+        let scorer = ScalarHead {
+            hidden: cursor.linear("scorer.0", W_HIDDEN_DIM_V1 * 2, W_HIDDEN_DIM_V1, device)?,
+            output: cursor.linear("scorer.2", W_HIDDEN_DIM_V1, 1, device)?,
+        };
+        let value_head = ScalarHead {
+            hidden: cursor.linear("value_head.0", W_HIDDEN_DIM_V1, W_HIDDEN_DIM_V1, device)?,
+            output: cursor.linear("value_head.2", W_HIDDEN_DIM_V1, 1, device)?,
+        };
+        cursor.finish()?;
+        Ok(Self {
+            card_embedding,
+            object_encoder,
+            edge_encoder,
+            node_update,
+            state_encoder,
+            action_ref_encoder,
+            action_encoder,
+            scorer,
+            value_head,
+        })
+    }
+
+    #[allow(dead_code)]
+    fn export_native_wide_v1(
+        &self,
+        device: &B::Device,
+    ) -> Result<Vec<NativeNamedParameterV1>, Box<dyn Error>> {
+        B::sync(device)?;
+        let mut output = Vec::with_capacity(PARAMETER_TENSOR_COUNT_V1);
+        output.push(NativeNamedParameterV1 {
+            name: "card_embedding.weight",
+            shape: vec![CARD_VOCAB_SIZE_V1, W_CARD_EMBEDDING_DIM_V1],
+            values: self
+                .card_embedding
+                .weight
+                .val()
+                .into_data()
+                .to_vec::<f32>()?,
+        });
+        export_linear(
+            &mut output,
+            "object_encoder.0",
+            OBJECT_FEATURE_DIM_V1 + W_CARD_EMBEDDING_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.object_encoder.first,
+        )?;
+        export_linear(
+            &mut output,
+            "object_encoder.2",
+            W_HIDDEN_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.object_encoder.second,
+        )?;
+        export_linear(
+            &mut output,
+            "edge_encoder.0",
+            EDGE_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1 * 2,
+            W_HIDDEN_DIM_V1,
+            &self.edge_encoder.first,
+        )?;
+        export_linear(
+            &mut output,
+            "edge_encoder.2",
+            W_HIDDEN_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.edge_encoder.second,
+        )?;
+        export_linear(
+            &mut output,
+            "node_update.0",
+            W_HIDDEN_DIM_V1 * 2,
+            W_HIDDEN_DIM_V1,
+            &self.node_update.first,
+        )?;
+        export_linear(
+            &mut output,
+            "node_update.2",
+            W_HIDDEN_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.node_update.second,
+        )?;
+        export_linear(
+            &mut output,
+            "state_encoder.0",
+            STATE_DIM_V1 + OBJECT_GROUP_COUNT_V1 * W_HIDDEN_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.state_encoder.first,
+        )?;
+        export_linear(
+            &mut output,
+            "state_encoder.2",
+            W_HIDDEN_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.state_encoder.second,
+        )?;
+        export_linear(
+            &mut output,
+            "action_ref_encoder.0",
+            ACTION_REF_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.action_ref_encoder.first,
+        )?;
+        export_linear(
+            &mut output,
+            "action_ref_encoder.2",
+            W_HIDDEN_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.action_ref_encoder.second,
+        )?;
+        export_linear(
+            &mut output,
+            "action_encoder.0",
+            ACTION_FEATURE_DIM_V1 + W_HIDDEN_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.action_encoder.first,
+        )?;
+        export_linear(
+            &mut output,
+            "action_encoder.2",
+            W_HIDDEN_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.action_encoder.second,
+        )?;
+        export_linear(
+            &mut output,
+            "scorer.0",
+            W_HIDDEN_DIM_V1 * 2,
+            W_HIDDEN_DIM_V1,
+            &self.scorer.hidden,
+        )?;
+        export_linear(
+            &mut output,
+            "scorer.2",
+            W_HIDDEN_DIM_V1,
+            1,
+            &self.scorer.output,
+        )?;
+        export_linear(
+            &mut output,
+            "value_head.0",
+            W_HIDDEN_DIM_V1,
+            W_HIDDEN_DIM_V1,
+            &self.value_head.hidden,
+        )?;
+        export_linear(
+            &mut output,
+            "value_head.2",
+            W_HIDDEN_DIM_V1,
             1,
             &self.value_head.output,
         )?;

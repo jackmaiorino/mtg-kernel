@@ -2762,6 +2762,44 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_wide_v2(
     )
 }
 
+/// Combined wide-net + ladder-opponent variant (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md
+/// Section 4: the wide run trains against the ladder pool, "pool2 pinned BY
+/// CHECKPOINT REFERENCE"): the SAME wide stamping as
+/// [`test_fixture_bytes_with_schedule_and_base_seed_wide_v2`], plus the
+/// ladder opponent identity and caller-supplied pool, mirroring
+/// [`test_fixture_bytes_with_schedule_and_base_seed_ladder_v2`]'s shape.
+/// Fresh-init only (no continual-init section): the wide protocol trains
+/// fresh from the new authority snapshot exclusively.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+    pool: OpponentLadderPoolContractV1,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_wide_ladder(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+        pool,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3459,6 +3497,47 @@ mod tests {
         record.topology.logical_actor_count =
             worker_count.checked_mul(sessions_per_worker).unwrap();
         record.topology.broker_batch_target = broker_batch_target;
+        apply_wide_model_experiment(&mut record);
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_wide_ladder(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+        pool: OpponentLadderPoolContractV1,
+    ) -> Vec<u8> {
+        let mut record = fixture_record();
+        record.schedule.base_seed = base_seed;
+        apply_backend_pair(&mut record, backend);
+        record.limits.max_physical_decisions = max_physical_decisions;
+        record.limits.max_policy_steps = max_policy_steps;
+        record.schedule.batch_episodes = batch_episodes;
+        record.schedule.checkpoint_segment_updates = checkpoint_segment_updates;
+        record.schedule.requested_successful_updates = requested_successful_updates;
+        record.schedule.checkpoint_episode_interval = batch_episodes
+            .checked_mul(checkpoint_segment_updates)
+            .unwrap();
+        record.topology.worker_count = worker_count;
+        record.topology.sessions_per_worker = sessions_per_worker;
+        record.topology.logical_actor_count =
+            worker_count.checked_mul(sessions_per_worker).unwrap();
+        record.topology.broker_batch_target = broker_batch_target;
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        record.contracts.opponent_ladder_pool = Some(pool);
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
         apply_wide_model_experiment(&mut record);
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
@@ -4992,5 +5071,47 @@ mod tests {
             .diagnostic_label = "WIDE-QUALIFIED-EVIDENCE".to_owned();
         refresh_derived(&mut record);
         assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    /// Combined wide-net + ladder-opponent fixture (contract Section 4: the
+    /// wide run trains against the ladder pool): both sections coexist on
+    /// one record and the record validates, exactly what the wide harness's
+    /// eval-probe WIDE=1 knob reconstructs for a ladder-trained wide store.
+    #[test]
+    fn wide_model_experiment_combines_with_ladder_pool_and_validates() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+
+        let bytes = test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            512,
+            2,
+            32,
+            16,
+            1_024,
+            2_048,
+            920_007,
+            valid_ladder_pool_fixture(),
+        );
+        let validated = decode_train_run_v2(&bytes).expect("wide+ladder record must validate");
+        let contracts = validated.record().contracts();
+        assert_eq!(
+            contracts
+                .wide_model_experiment_v1
+                .as_ref()
+                .unwrap()
+                .diagnostic_label,
+            "WIDE-DIAGNOSTIC-NON-EVIDENCE"
+        );
+        assert!(contracts.opponent_ladder_pool.is_some());
+        assert_eq!(
+            contracts.opponent_policy.identity,
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
+        );
+        assert_eq!(
+            validated.record().model_snapshot.parameter_element_count,
+            2_750_754
+        );
     }
 }

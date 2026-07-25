@@ -918,8 +918,11 @@ mod windows_science_loop_tests {
     #[test]
     #[ignore = "measurement probe, run explicitly"]
     fn s1_mirror_saturation_eval_v1() {
+        use crate::native_checkpoint_runner_v1::run_native_checkpoint_wide_v1;
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_checkpoint_v3::CheckpointManifestV3;
         use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_v2;
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_wide_v2;
 
         let root_path = std::env::var("S1_STORE_ROOT")
             .expect("S1_STORE_ROOT must name the S1 per-seed store root");
@@ -936,19 +939,42 @@ mod windows_science_loop_tests {
             .unwrap_or_else(|_| "256".to_owned())
             .parse()
             .expect("eval pair count");
+        // Capacity-experiment wide-net knob (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md
+        // Section 3): WIDE=1 reconstructs the run record via the wide fixture
+        // builder (so `load_native_training_boundary_v2` accepts a wide
+        // store's boundaries: boundary loading validates the run identity
+        // the store was created under) and evaluates through
+        // `run_native_checkpoint_wide_v1` instead. Unset/0 reproduces this
+        // probe's frozen behavior byte-for-byte.
+        let wide = std::env::var("WIDE").is_ok_and(|value| value != "0");
 
-        let patched = test_fixture_bytes_with_schedule_and_base_seed_v2(
-            NativeTrainingNumericalBackendV1::CudaBurnDense,
-            64,
-            4,
-            256,
-            2,
-            32,
-            16,
-            1_024,
-            2_048,
-            base_seed,
-        );
+        let patched = if wide {
+            test_fixture_bytes_with_schedule_and_base_seed_wide_v2(
+                NativeTrainingNumericalBackendV1::CudaBurnDense,
+                64,
+                4,
+                256,
+                2,
+                32,
+                16,
+                1_024,
+                2_048,
+                base_seed,
+            )
+        } else {
+            test_fixture_bytes_with_schedule_and_base_seed_v2(
+                NativeTrainingNumericalBackendV1::CudaBurnDense,
+                64,
+                4,
+                256,
+                2,
+                32,
+                16,
+                1_024,
+                2_048,
+                base_seed,
+            )
+        };
         let run = decode_train_run_v2(&patched).expect("s1 run record");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap();
         let runner_config = NativeCheckpointRunnerConfigV1 {
@@ -958,30 +984,28 @@ mod windows_science_loop_tests {
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
         };
+        let run_checkpoint = |checkpoint: &CheckpointManifestV3, payload: &[u8]| {
+            if wide {
+                run_native_checkpoint_wide_v1(&run, checkpoint, payload, runner_config).unwrap()
+            } else {
+                run_native_checkpoint_v1(&run, checkpoint, payload, runner_config).unwrap()
+            }
+        };
 
         let reference_boundary = load_native_training_boundary_v2(&root, &run, 0).unwrap();
-        let reference_run = run_native_checkpoint_v1(
-            &run,
+        let reference_run = run_checkpoint(
             reference_boundary.checkpoint(),
             reference_boundary.payload(),
-            runner_config,
-        )
-        .unwrap();
+        );
         for generation in generations {
             let boundary = load_native_training_boundary_v2(&root, &run, generation).unwrap();
-            let candidate_run = run_native_checkpoint_v1(
-                &run,
-                boundary.checkpoint(),
-                boundary.payload(),
-                runner_config,
-            )
-            .unwrap();
+            let candidate_run = run_checkpoint(boundary.checkpoint(), boundary.payload());
             let evaluation =
                 evaluate_native_checkpoint_uniform_delta_v1(&reference_run, &candidate_run)
                     .unwrap();
             let outcomes = evaluation.candidate_learner_outcomes();
             println!(
-                "S1_SATURATION seed={base_seed} gen={generation} W/L/D {}/{}/{} of {} (delta vs gen0 {})",
+                "S1_SATURATION seed={base_seed} gen={generation} wide={wide} W/L/D {}/{}/{} of {} (delta vs gen0 {})",
                 outcomes.wins(),
                 outcomes.losses(),
                 outcomes.draws(),
@@ -1043,9 +1067,12 @@ mod windows_science_loop_tests {
     #[test]
     #[ignore = "measurement probe, run explicitly"]
     fn ladder_saturation_eval_v1() {
+        use crate::native_checkpoint_runner_v1::run_native_checkpoint_wide_v1;
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
         use crate::native_training_store_run_v2::{
-            test_fixture_bytes_with_schedule_and_base_seed_ladder_v2, OpponentLadderPoolContractV1,
+            test_fixture_bytes_with_schedule_and_base_seed_ladder_v2,
+            test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2,
+            OpponentLadderPoolContractV1,
         };
 
         let root_path = std::env::var("LADDER_STORE_ROOT")
@@ -1081,9 +1108,21 @@ mod windows_science_loop_tests {
             fs::read(&pool_json_path).expect("LADDER_POOL_JSON must be a readable file");
         let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
             .expect("pool.json must decode as OpponentLadderPoolContractV1");
+        // Capacity-experiment wide-net knob (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md
+        // Section 3/4): WIDE=1 reconstructs the run record via the combined
+        // wide+ladder fixture builder (the wide protocol trains against the
+        // ladder pool, fresh-init only) and evaluates through
+        // `run_native_checkpoint_wide_v1` instead. Unset/0 reproduces this
+        // probe's frozen behavior byte-for-byte. Not combined with
+        // LADDER_INIT_STORE: the wide protocol never uses continual init.
+        let wide = std::env::var("WIDE").is_ok_and(|value| value != "0");
+        assert!(
+            !(wide && init_store.is_some()),
+            "WIDE=1 is not supported with LADDER_INIT_STORE: the wide protocol trains fresh-init only"
+        );
 
-        let patched = match &init_store {
-            Some(dir) => {
+        let patched = match (&init_store, wide) {
+            (Some(dir), false) => {
                 let initialization =
                     crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1(
                         std::path::Path::new(dir),
@@ -1105,19 +1144,33 @@ mod windows_science_loop_tests {
                     initialization,
                 )
             }
-            None => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
-            NativeTrainingNumericalBackendV1::CudaBurnDense,
-            64,
-            4,
-            ladder_updates,
-            2,
-            32,
-            16,
-            1_024,
-            2_048,
-            base_seed,
-            pool,
-        ),
+            (None, false) => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+                NativeTrainingNumericalBackendV1::CudaBurnDense,
+                64,
+                4,
+                ladder_updates,
+                2,
+                32,
+                16,
+                1_024,
+                2_048,
+                base_seed,
+                pool,
+            ),
+            (None, true) => test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
+                NativeTrainingNumericalBackendV1::CudaBurnDense,
+                64,
+                4,
+                ladder_updates,
+                2,
+                32,
+                16,
+                1_024,
+                2_048,
+                base_seed,
+                pool,
+            ),
+            (Some(_), true) => unreachable!("guarded above"),
         };
         let run = decode_train_run_v2(&patched).expect("ladder run record");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap();
@@ -1128,30 +1181,30 @@ mod windows_science_loop_tests {
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
         };
+        let run_checkpoint =
+            |checkpoint: &crate::native_training_store_checkpoint_v3::CheckpointManifestV3,
+             payload: &[u8]| {
+                if wide {
+                    run_native_checkpoint_wide_v1(&run, checkpoint, payload, runner_config).unwrap()
+                } else {
+                    run_native_checkpoint_v1(&run, checkpoint, payload, runner_config).unwrap()
+                }
+            };
 
         let reference_boundary = load_native_training_boundary_v2(&root, &run, 0).unwrap();
-        let reference_run = run_native_checkpoint_v1(
-            &run,
+        let reference_run = run_checkpoint(
             reference_boundary.checkpoint(),
             reference_boundary.payload(),
-            runner_config,
-        )
-        .unwrap();
+        );
         for generation in generations {
             let boundary = load_native_training_boundary_v2(&root, &run, generation).unwrap();
-            let candidate_run = run_native_checkpoint_v1(
-                &run,
-                boundary.checkpoint(),
-                boundary.payload(),
-                runner_config,
-            )
-            .unwrap();
+            let candidate_run = run_checkpoint(boundary.checkpoint(), boundary.payload());
             let evaluation =
                 evaluate_native_checkpoint_uniform_delta_v1(&reference_run, &candidate_run)
                     .unwrap();
             let outcomes = evaluation.candidate_learner_outcomes();
             println!(
-                "LADDER_SATURATION seed={base_seed} gen={generation} W/L/D {}/{}/{} of {} (delta vs gen0 {})",
+                "LADDER_SATURATION seed={base_seed} gen={generation} wide={wide} W/L/D {}/{}/{} of {} (delta vs gen0 {})",
                 outcomes.wins(),
                 outcomes.losses(),
                 outcomes.draws(),
@@ -1303,18 +1356,18 @@ mod windows_science_loop_tests {
                 )
             }
             None => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
-            NativeTrainingNumericalBackendV1::CudaBurnDense,
-            64,
-            4,
-            ladder_updates,
-            2,
-            32,
-            16,
-            1_024,
-            2_048,
-            candidate_base_seed,
-            pool,
-        ),
+                NativeTrainingNumericalBackendV1::CudaBurnDense,
+                64,
+                4,
+                ladder_updates,
+                2,
+                32,
+                16,
+                1_024,
+                2_048,
+                candidate_base_seed,
+                pool,
+            ),
         };
         let candidate_run =
             decode_train_run_v2(&candidate_run_bytes).expect("candidate ladder run record");
