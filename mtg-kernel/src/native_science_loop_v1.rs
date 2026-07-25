@@ -2677,25 +2677,29 @@ mod windows_science_loop_tests {
         );
     }
 
-    /// Pins the EXACT new boundary the previous test's STOP note documents:
-    /// `run_native_science_loop_v1` itself, called end to end for a
-    /// continual-init record, no longer fails at `GenesisFailed` (the
-    /// previous slice's STOP finding, closed) but now reaches training and
-    /// fails CLOSED at `RunFailed`, from the evaluation step's independent
+    /// FLIPS the previous slice's STOP-finding regression (design directive
+    /// slice 3): `run_native_science_loop_v1`, called end to end for a
+    /// continual-init record on the real S1 gen-32 checkpoint (Sequential
+    /// backend, the fixture's small four-update target), no longer fails
+    /// CLOSED at `RunFailed` -- the evaluation step's independent
     /// `native_checkpoint_inference_v1.rs::validate_authority_bindings_v1`
-    /// generation-0-implies-common-snapshot check -- never a panic, a
-    /// corrupted Store, or a silent wrong-source substitution. This is a
-    /// regression pinning the new, narrower obstacle precisely, the same
-    /// discipline the original STOP-finding regression applied to the old
-    /// one.
+    /// generation-0-implies-common-snapshot check now pins generation 0
+    /// against the record's own `derived_model_parameter_sha256` when the
+    /// init section is present, exactly mirroring the walk/publish dispatch
+    /// slice 2 already closed. The wrapper now runs genesis, training, full
+    /// Store validation, AND the final reference/candidate evaluation to
+    /// completion. Supersedes
+    /// `ladder_init_science_loop_wrapper_no_longer_fails_at_genesis_now_fails_at_run`,
+    /// which pinned the exact narrower `RunFailed` obstacle this closes.
     #[test]
-    fn ladder_init_science_loop_wrapper_no_longer_fails_at_genesis_now_fails_at_run() {
+    fn ladder_init_science_loop_wrapper_completes_genesis_training_and_evaluation_end_to_end() {
         let fixture = ladder_init_fixture_v1();
         let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
+        let target = run.requested_successful_updates();
         let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
-        let parent = TestParentV1::new("ladder-init-wrapper-boundary");
+        let parent = TestParentV1::new("ladder-init-wrapper-e2e");
 
-        let error = run_native_science_loop_v1(
+        let report = run_native_science_loop_v1(
             &parent.parent,
             "store",
             &run,
@@ -2706,20 +2710,31 @@ mod windows_science_loop_tests {
             None,
             Some(&fixture.reference),
         )
-        .unwrap_err();
-        assert_ne!(error.kind(), NativeScienceLoopV1ErrorKind::GenesisFailed);
-        assert_eq!(error.kind(), NativeScienceLoopV1ErrorKind::RunFailed);
+        .expect(
+            "the wrapper must complete genesis, training, and evaluation for a continual-init \
+             record",
+        );
 
-        // Genesis AND training are both durably published this time (unlike
-        // the previous slice, where no partial Store artifact ever
-        // escaped): the failure is downstream of a complete, valid Store.
+        assert_eq!(report.latest_generation_index(), target);
+        assert_eq!(report.evaluation().reference_generation_index(), 0);
+        assert_eq!(report.evaluation().candidate_generation_index(), target);
+
+        // Genesis and training are both durably published, and the Store the
+        // wrapper leaves behind independently re-validates end to end.
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(&parent.parent.join("store"))
-            .expect("store root must open: genesis and training both committed before the error");
+            .expect("store root must open: genesis and training both committed");
         let state = validate_native_training_store_v2(&root, &run)
             .expect("the Store the wrapper leaves behind is itself fully valid");
+        assert_eq!(state.latest_generation_index(), target);
+
+        // Generation 0 specifically still bears the reference's inherited
+        // weights, reloaded through the same validated resume machinery the
+        // wrapper's own evaluation step used internally.
+        let genesis = load_native_training_boundary_v2(&root, &run, 0)
+            .expect("generation 0 must reload through the validated resume machinery");
         assert_eq!(
-            state.latest_generation_index(),
-            run.requested_successful_updates()
+            genesis.checkpoint().model_parameter_sha256(),
+            fixture.reference.checkpoint.model_parameter_sha256()
         );
     }
 }
