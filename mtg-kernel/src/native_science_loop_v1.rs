@@ -852,6 +852,373 @@ mod windows_science_loop_tests {
         }
     }
 
+    /// Ladder-store checkpoint evaluation (Self-Play Ladder Design Contract
+    /// S2 pilot, Deliverable 1): identical body shape to
+    /// `s1_mirror_saturation_eval_v1`, but reconstructs the run record with
+    /// the LADDER fixture builder (the SAME builder the pilot used to train
+    /// the store, `test_fixture_bytes_with_schedule_and_base_seed_ladder_v2`
+    /// -- commit 3ce8f48/ca58b58's fixture, with the SAME K=64/S=4 topology
+    /// 2/32/16 the pilot's `pilot-rung1.sh` used) instead of the uniform
+    /// fixture, so `load_native_training_boundary_v2` accepts the ladder
+    /// store's boundaries (boundary loading validates the run identity the
+    /// store was created under, and a ladder run's `run_sha256` differs from
+    /// a uniform run's at the same schedule/topology/base-seed because the
+    /// opponent contracts and pool section are hashed into it). The pool
+    /// contract embedded in the reconstructed record is parsed byte-for-byte
+    /// from `LADDER_POOL_JSON` (`OpponentLadderPoolContractV1`'s `Deserialize`
+    /// impl, the SAME decode `multirun_pilot_v1`'s `MULTIRUN_LADDER_POOL_DIR`
+    /// branch already uses), not hand-reconstructed, so the identity matches
+    /// exactly.
+    ///
+    /// This is the panel/v0 (uniform-anchor) curve only (stopping policy
+    /// 126fd81a..., Section 3's interim clause: "until [the policy-driven
+    /// opponent] seat exists, an interim panel/v0 = uniform only applies");
+    /// the frozen uniform opponent is the SAME opponent every uniform
+    /// evaluation in this file already uses -- nothing about the OPPONENT
+    /// side of this probe is ladder-specific, only the candidate/reference
+    /// checkpoints' run-record identity is.
+    ///
+    /// The checkpoint runner (`run_native_checkpoint_v1`) needs no CUDA
+    /// feature: it is the CPU dense inference path
+    /// (`NativeCheckpointInferenceV1::score_decision_v1`), verified
+    /// feature-gate-free in `native_checkpoint_runner_v1.rs` and
+    /// `native_checkpoint_inference_v1.rs`; only the run record's DECLARED
+    /// backend identity is `CudaBurnDense` (matching what the pilot actually
+    /// trained under), which decodes and validates without the CUDA feature
+    /// compiled in (see `cuda_backend_records_validate_and_mismatched_pairs_reject`,
+    /// itself not feature-gated). This probe is therefore deliberately NOT
+    /// gated behind `experimental-burn-net8-packed-cuda-v1`, unlike its
+    /// sibling GPU-training probes in this file.
+    ///
+    /// Env: LADDER_STORE_ROOT, LADDER_EVAL_GENS (comma-separated),
+    /// LADDER_BASE_SEED, LADDER_POOL_JSON (path to the pool.json whose
+    /// contents the run record embeds). LADDER_EVAL_PAIRS (default 256,
+    /// S1_EVAL_PAIRS-style knob, scoped to this probe only) sets
+    /// `episode_count` directly, matching `s1_mirror_saturation_eval_v1`'s
+    /// own `S1_EVAL_PAIRS` wiring convention byte-for-byte (that probe's
+    /// knob is likewise a direct `episode_count` pass-through despite its
+    /// name; mirrored here rather than "corrected" so this probe stays
+    /// behaviorally identical to its S1 twin, as instructed). 256
+    /// seat-swapped pairs at evaluation_base_seed 7_777 by default, the
+    /// predeclared S1 estimator.
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn ladder_saturation_eval_v1() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_with_schedule_and_base_seed_ladder_v2, OpponentLadderPoolContractV1,
+        };
+
+        let root_path = std::env::var("LADDER_STORE_ROOT")
+            .expect("LADDER_STORE_ROOT must name the ladder per-seed store root");
+        let generations: Vec<u64> = std::env::var("LADDER_EVAL_GENS")
+            .expect("LADDER_EVAL_GENS must list generations")
+            .split(',')
+            .map(|token| token.trim().parse().expect("generation index"))
+            .collect();
+        let base_seed: u64 = std::env::var("LADDER_BASE_SEED")
+            .expect("LADDER_BASE_SEED must give the store's base seed")
+            .parse()
+            .expect("base seed u64");
+        let pool_json_path = std::env::var("LADDER_POOL_JSON")
+            .expect("LADDER_POOL_JSON must name the pool.json path embedded in the run record");
+        let eval_pairs: u64 = std::env::var("LADDER_EVAL_PAIRS")
+            .unwrap_or_else(|_| "256".to_owned())
+            .parse()
+            .expect("eval pair count");
+
+        let pool_bytes =
+            fs::read(&pool_json_path).expect("LADDER_POOL_JSON must be a readable file");
+        let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
+            .expect("pool.json must decode as OpponentLadderPoolContractV1");
+
+        let patched = test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            256,
+            2,
+            32,
+            16,
+            1_024,
+            2_048,
+            base_seed,
+            pool,
+        );
+        let run = decode_train_run_v2(&patched).expect("ladder run record");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap();
+        let runner_config = NativeCheckpointRunnerConfigV1 {
+            evaluation_base_seed: 7_777,
+            first_episode_index: 0,
+            episode_count: eval_pairs,
+            scheduler_timeout: Duration::from_secs(3_600),
+            measure_broker_service_time: false,
+        };
+
+        let reference_boundary = load_native_training_boundary_v2(&root, &run, 0).unwrap();
+        let reference_run = run_native_checkpoint_v1(
+            &run,
+            reference_boundary.checkpoint(),
+            reference_boundary.payload(),
+            runner_config,
+        )
+        .unwrap();
+        for generation in generations {
+            let boundary = load_native_training_boundary_v2(&root, &run, generation).unwrap();
+            let candidate_run = run_native_checkpoint_v1(
+                &run,
+                boundary.checkpoint(),
+                boundary.payload(),
+                runner_config,
+            )
+            .unwrap();
+            let evaluation =
+                evaluate_native_checkpoint_uniform_delta_v1(&reference_run, &candidate_run)
+                    .unwrap();
+            let outcomes = evaluation.candidate_learner_outcomes();
+            println!(
+                "LADDER_SATURATION seed={base_seed} gen={generation} W/L/D {}/{}/{} of {} (delta vs gen0 {})",
+                outcomes.wins(),
+                outcomes.losses(),
+                outcomes.draws(),
+                outcomes.total(),
+                evaluation.total_candidate_minus_reference_reward_delta()
+            );
+        }
+    }
+
+    /// Head-to-head evaluator (Self-Play Ladder Design Contract S2 pilot,
+    /// Deliverable 2): runs a candidate ladder checkpoint through the
+    /// checkpoint runner with the LADDER ENGINE standing in the opponent
+    /// seat, where the engine's three policy-driven pool slots are ALL
+    /// independently loaded handles onto ONE fixed opponent checkpoint and
+    /// the per-episode pool-choice is forced to always select a policy
+    /// member (`LadderOpponentEngineV1::head_to_head_eval_v1`, EVAL-ONLY,
+    /// `cfg(test)`-gated -- see its docs in `native_ladder_opponent_v1` for
+    /// the full production-safety argument). Uses the EVAL-ONLY
+    /// `run_native_checkpoint_with_ladder_opponent_eval_v1` runner twin (see
+    /// `native_checkpoint_runner_v1` docs for why `run_native_checkpoint_v1`
+    /// itself cannot take an engine without production-path surgery: its
+    /// only opponent hook is a hardcoded `None`, and the executor-side
+    /// ladder threading from da8e486 reaches only the training loop).
+    ///
+    /// Seat-swapped CRN pairing matches the S1 estimator convention
+    /// automatically: the checkpoint runner's native schedule
+    /// (`native_trainer_episode_schedule_v1`) already alternates the
+    /// LEARNER's seat every consecutive episode while pairing episodes
+    /// `2k`/`2k+1` onto the SAME environment seed, for ANY opponent
+    /// (uniform or ladder-engine) -- this probe changes only who scores the
+    /// opponent seat's decisions, not the schedule that decides seeding or
+    /// seat alternation.
+    ///
+    /// The candidate side is reconstructed exactly like
+    /// `ladder_saturation_eval_v1` (same fixture builder, same fixed
+    /// K=64/S=4/topology-2-32-16 schedule, pool parsed from
+    /// `H2H_CANDIDATE_POOL_JSON`). The opponent is loaded DIRECTLY from
+    /// `H2H_OPPONENT_STORE_ROOT` (a full Store root: its own `run.json` plus
+    /// the validated walk to that store's own latest generation) rather
+    /// than through `native_ladder_pool_resolution_v1`'s ref-digest gate --
+    /// permitted explicitly by the task ("digest optional here since this
+    /// is eval-only"), and three independent
+    /// `NativeCheckpointInferenceV1` handles are loaded from that ONE
+    /// validated checkpoint (the type is deliberately not `Clone`) for the
+    /// engine's three policy-driven slots.
+    ///
+    /// `H2H_PAIRS` (default 1_024) is the CRN PAIR count, matching the
+    /// promotion gate's own literal (`PROMOTION_GATE_PAIR_COUNT_V1 = 1_024`,
+    /// "1,024 seat-swapped CRN pairs" in contract Section 4): unlike
+    /// `S1_EVAL_PAIRS`/`LADDER_EVAL_PAIRS` (which pass their value straight
+    /// through as `episode_count`, an established but confusingly-named
+    /// convention in this file's existing probes), this probe doubles
+    /// `H2H_PAIRS` into `episode_count` so the printed win count is really
+    /// out of `H2H_PAIRS` pairs, feeding `native_ladder_promotion_v1`'s gate
+    /// function the literal denominator its own doc/tests expect. This
+    /// doubling also reproduces the contract's own predeclared "~8 minutes"
+    /// head-to-head economics estimate (Section 4) far more closely than a
+    /// non-doubled 1,024-game run would, which independently corroborates
+    /// the doubling as the correct reading; the discrepancy with the
+    /// panel-probe convention is disclosed rather than silently resolved.
+    ///
+    /// Env: H2H_CANDIDATE_STORE_ROOT, H2H_CANDIDATE_GEN,
+    /// H2H_CANDIDATE_BASE_SEED, H2H_CANDIDATE_POOL_JSON,
+    /// H2H_OPPONENT_STORE_ROOT, H2H_PAIRS (default 1_024), H2H_EVAL_SEED
+    /// (default 7_777). Prints `H2H candidate_gen=<g> W/L/D x/y/z of N` plus
+    /// the promotion gate's win-rate sub-check verdict computed by actually
+    /// calling `native_ladder_promotion_v1::promotion_gate_win_rate_passes_v1`
+    /// on the tabulated wins/pairs (Deliverable 4's "feed the results
+    /// through the gate function").
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn ladder_head_to_head_eval_v1() {
+        use crate::native_checkpoint_inference_v1::load_native_checkpoint_inference_v1;
+        use crate::native_checkpoint_runner_v1::run_native_checkpoint_with_ladder_opponent_eval_v1;
+        use crate::native_ladder_promotion_v1::promotion_gate_win_rate_passes_v1;
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_with_schedule_and_base_seed_ladder_v2, OpponentLadderPoolContractV1,
+        };
+        use crate::rl::PlayerSeatV1;
+
+        fn required_env_v1(name: &str) -> String {
+            std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
+        }
+
+        let candidate_store_root = required_env_v1("H2H_CANDIDATE_STORE_ROOT");
+        let candidate_gen: u64 = required_env_v1("H2H_CANDIDATE_GEN")
+            .parse()
+            .expect("candidate generation");
+        let candidate_base_seed: u64 = required_env_v1("H2H_CANDIDATE_BASE_SEED")
+            .parse()
+            .expect("candidate base seed");
+        let candidate_pool_json = required_env_v1("H2H_CANDIDATE_POOL_JSON");
+        let opponent_store_root = required_env_v1("H2H_OPPONENT_STORE_ROOT");
+        let pairs: u64 = std::env::var("H2H_PAIRS")
+            .unwrap_or_else(|_| "1024".to_owned())
+            .parse()
+            .expect("H2H_PAIRS");
+        let eval_seed: u64 = std::env::var("H2H_EVAL_SEED")
+            .unwrap_or_else(|_| "7777".to_owned())
+            .parse()
+            .expect("H2H_EVAL_SEED");
+        let episode_count = pairs.checked_mul(2).expect("H2H_PAIRS overflow");
+
+        // Candidate: the SAME ladder run-record reconstruction as
+        // ladder_saturation_eval_v1.
+        let pool_bytes = fs::read(&candidate_pool_json)
+            .expect("H2H_CANDIDATE_POOL_JSON must be a readable file");
+        let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
+            .expect("pool.json must decode as OpponentLadderPoolContractV1");
+        let candidate_run_bytes = test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            64,
+            4,
+            256,
+            2,
+            32,
+            16,
+            1_024,
+            2_048,
+            candidate_base_seed,
+            pool,
+        );
+        let candidate_run =
+            decode_train_run_v2(&candidate_run_bytes).expect("candidate ladder run record");
+        let candidate_root =
+            ValidatedNativeTrainingStoreRootV2::open_v2(&candidate_store_root).unwrap();
+        let candidate_boundary =
+            load_native_training_boundary_v2(&candidate_root, &candidate_run, candidate_gen)
+                .unwrap();
+
+        // Opponent: loaded DIRECTLY from a full Store root (digest
+        // re-validation optional, eval-only tooling -- see docs above).
+        let opponent_run_bytes =
+            fs::read(std::path::Path::new(&opponent_store_root).join("run.json"))
+                .expect("H2H_OPPONENT_STORE_ROOT/run.json must be readable");
+        let opponent_run = decode_train_run_v2(&opponent_run_bytes).expect("opponent run record");
+        let opponent_root =
+            ValidatedNativeTrainingStoreRootV2::open_v2(&opponent_store_root).unwrap();
+        let opponent_state =
+            validate_native_training_store_v2(&opponent_root, &opponent_run).unwrap();
+        let opponent_checkpoint = opponent_state.latest_checkpoint();
+        let opponent_payload = opponent_state.latest_payload();
+        let primary = load_native_checkpoint_inference_v1(
+            &opponent_run,
+            opponent_checkpoint,
+            opponent_payload,
+        )
+        .unwrap();
+        let predecessor_a = load_native_checkpoint_inference_v1(
+            &opponent_run,
+            opponent_checkpoint,
+            opponent_payload,
+        )
+        .unwrap();
+        let predecessor_b = load_native_checkpoint_inference_v1(
+            &opponent_run,
+            opponent_checkpoint,
+            opponent_payload,
+        )
+        .unwrap();
+        let engine = Arc::new(LadderOpponentEngineV1::head_to_head_eval_v1(
+            primary,
+            predecessor_a,
+            predecessor_b,
+        ));
+
+        let runner_config = NativeCheckpointRunnerConfigV1 {
+            evaluation_base_seed: eval_seed,
+            first_episode_index: 0,
+            episode_count,
+            scheduler_timeout: Duration::from_secs(3_600),
+            measure_broker_service_time: false,
+        };
+        let result = run_native_checkpoint_with_ladder_opponent_eval_v1(
+            &candidate_run,
+            candidate_boundary.checkpoint(),
+            candidate_boundary.payload(),
+            runner_config,
+            Some(engine),
+        )
+        .unwrap();
+
+        // Leg-level W/L/D (2 * pairs games total), matching this file's
+        // established print convention for every other saturation probe.
+        let episodes = &result.rollout().episodes;
+        let bindings = result.episode_bindings();
+        assert_eq!(episodes.len(), bindings.len());
+        assert_eq!(episodes.len() as u64, episode_count);
+        let mut wins = 0_u64;
+        let mut losses = 0_u64;
+        let mut draws = 0_u64;
+        // PAIR-level win count (Deliverable 4): the promotion gate's own
+        // "wins/1024" denominator is the CRN PAIR count, not the leg count
+        // (`native_ladder_promotion_v1`'s boundary fixtures assume
+        // `wins <= pairs`). A pair is a strict win iff the learner's summed
+        // reward across its two seat-swapped legs (sharing one environment
+        // seed) is net positive; net-zero (a true draw on both legs, or a
+        // win cancelled by a loss across the seat swap) and net-negative
+        // pairs both fall into "not a win", matching the contract's
+        // "draws as losses" convention at pair granularity.
+        let mut pair_wins = 0_u64;
+        for pair_offset in 0..pairs {
+            let mut pair_reward = 0_i32;
+            for leg in 0..2_u64 {
+                let index = usize::try_from(pair_offset * 2 + leg).unwrap();
+                let binding = &bindings[index];
+                let episode = &episodes[index];
+                let seat_index = match binding.learner_seat() {
+                    PlayerSeatV1::P0 => 0,
+                    PlayerSeatV1::P1 => 1,
+                };
+                let reward = episode.terminal.terminal_reward[seat_index];
+                match reward {
+                    1 => wins += 1,
+                    -1 => losses += 1,
+                    0 => draws += 1,
+                    other => panic!("unexpected learner reward {other} at a natural terminal"),
+                }
+                pair_reward += reward;
+            }
+            if pair_reward > 0 {
+                pair_wins += 1;
+            }
+        }
+        let total = wins + losses + draws;
+        assert_eq!(total, episode_count);
+        println!("H2H candidate_gen={candidate_gen} W/L/D {wins}/{losses}/{draws} of {total}");
+
+        // Deliverable 4: feed the tabulated PAIR-level result through the
+        // actual gate function (win-rate sub-check only; the regression
+        // sub-check needs the previous rung's panel mean, computed by the
+        // caller from multiple invocations of the panel probe, not from one
+        // head-to-head run alone).
+        let win_rate_passes = promotion_gate_win_rate_passes_v1(pair_wins, pairs);
+        println!(
+            "H2H candidate_gen={candidate_gen} win_rate_sub_check pair_wins={pair_wins}/{pairs}={:.4} passes={win_rate_passes}",
+            pair_wins as f64 / pairs as f64
+        );
+    }
+
     /// per generation. Non-banked diagnostic; the store root arrives via
     /// PATHFINDING_STORE_ROOT and generations via PATHFINDING_EVAL_GENS
     /// (comma-separated).
