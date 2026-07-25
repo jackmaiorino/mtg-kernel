@@ -613,13 +613,229 @@ mod tests {
     // `LadderOpponentEngineV1::new_v1` itself just calls
     // `ladder_pool_matches_frozen_literals_v1` before touching any
     // checkpoint handle (see its body above), so the matcher test above
-    // fully covers its fail-closed branch. Constructing real
-    // `NativeCheckpointInferenceV1` handles to exercise the success path
-    // requires the heavy training-executor fixture machinery owned
-    // privately by `native_checkpoint_inference_v1::tests`, which has no
-    // public test-only constructor to reuse here (by design: the type is
-    // deliberately move-only and un-Clone with no mutable escape hatch). A
-    // full engine-construction-succeeds test belongs to the pilot runner
-    // integration layer (see module docs), which already resolves real
-    // checkpoint bytes to validated handles.
+    // fully covers its fail-closed branch. A full engine-construction-
+    // succeeds-against-a-real-checkpoint test belongs to the pilot runner
+    // integration layer (`native_ladder_pool_resolution_v1`'s fixture (a)),
+    // which resolves real checkpoint bytes to validated handles; the
+    // cross-process determinism fixture below builds its own lightweight
+    // in-memory genesis checkpoint instead (no real Store, no D:\
+    // dependency), since determinism of the seed/sampling MATH is what is
+    // under test here, not any particular checkpoint's content.
+
+    // ------------------------------------------------------------------
+    // Fixture (b): cross-process determinism (contract Section 7). Same
+    // checkpoint bytes, same pool contract, same seeds, run the engine's
+    // per-episode member selection plus per-decision sampling for a fixed
+    // synthetic schedule TWICE via `std::process::Command` re-invoking this
+    // test binary (the pattern already used by
+    // `strict_source_tree_attestation_v1`'s
+    // `inherited_git_routing_is_stripped_without_mutating_global_environment`:
+    // the SAME `#[test]` fn serves as both parent and child, gated by an
+    // env var the parent sets only on the spawned children) and assert
+    // bit-identical action sequences.
+    const DETERMINISM_CHILD_MODE_V1: &str = "MTG_KERNEL_LADDER_DETERMINISM_CHILD_V1";
+    const DETERMINISM_DIGEST_PREFIX_V1: &str = "LADDER_DETERMINISM_DIGEST=";
+
+    fn determinism_execution_config_v1(
+        run: &crate::native_training_store_run_v2::ValidatedTrainRunV2,
+    ) -> crate::native_training_executor_v1::NativeTrainingExecutionConfigV1 {
+        crate::native_training_executor_v1::NativeTrainingExecutionConfigV1 {
+            run_base_seed: run.record().schedule.base_seed,
+            batch_episodes: run.batch_episodes(),
+            deck_ids: ["Rally".to_owned(), "Rally".to_owned()],
+            max_physical_decisions: run.record().limits.max_physical_decisions,
+            max_policy_steps: run.record().limits.max_policy_steps,
+            worker_count: usize::try_from(run.record().topology.worker_count).unwrap(),
+            sessions_per_worker: usize::try_from(run.record().topology.sessions_per_worker)
+                .unwrap(),
+            broker_batch_target: usize::try_from(run.record().topology.broker_batch_target)
+                .unwrap(),
+            scheduler_timeout: std::time::Duration::from_secs(30),
+            measure_broker_service_time: false,
+            value_coefficient_bits: 0.5_f32.to_bits(),
+            learning_rate_bits: 0.001_f32.to_bits(),
+            numerical_backend:
+                crate::native_training_executor_v1::NativeTrainingNumericalBackendV1::Sequential,
+            backward_worker_limit: 1,
+        }
+    }
+
+    /// Builds one fresh in-memory genesis checkpoint (no filesystem Store,
+    /// no D:\ dependency) and returns three independently loaded
+    /// `NativeCheckpointInferenceV1` handles built from the identical bytes,
+    /// mirroring `native_checkpoint_inference_v1::tests::fixture_v1` /
+    /// `authorities_v1`'s pattern (that machinery is private to its own
+    /// module; this reproduces the same public-constructor sequence here).
+    fn determinism_engine_v1() -> LadderOpponentEngineV1 {
+        use crate::native_checkpoint_inference_v1::load_native_checkpoint_inference_v1;
+        use crate::native_training_executor_v1::NativeTrainingExecutorV1;
+        use crate::native_training_store_checkpoint_v3::{
+            build_genesis_checkpoint_manifest_v3, decode_genesis_checkpoint_manifest_v3,
+        };
+        use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
+
+        let run_bytes = test_fixture_bytes_v2();
+        let run = decode_train_run_v2(&run_bytes).unwrap();
+        let (snapshot_manifest, snapshot_payload) =
+            crate::common_model_snapshot_v1::common_model_snapshot_paths_v1();
+        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            determinism_execution_config_v1(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let checkpoint_candidate = executor.checkpoint_candidate_v1().unwrap();
+        let payload = checkpoint_candidate.payload().to_vec();
+        let manifest = build_genesis_checkpoint_manifest_v3(&run, &payload)
+            .unwrap()
+            .canonical_bytes()
+            .to_vec();
+
+        let mut handles = Vec::with_capacity(3);
+        for _ in 0..3 {
+            let run = decode_train_run_v2(&run_bytes).unwrap();
+            let checkpoint =
+                decode_genesis_checkpoint_manifest_v3(&manifest, &payload, &run).unwrap();
+            handles.push(load_native_checkpoint_inference_v1(&run, &checkpoint, &payload).unwrap());
+        }
+        let mut handles = handles.into_iter();
+        let primary = handles.next().unwrap();
+        let predecessor_a = handles.next().unwrap();
+        let predecessor_b = handles.next().unwrap();
+        LadderOpponentEngineV1::new_v1(valid_pool_fixture(), primary, predecessor_a, predecessor_b)
+            .unwrap()
+    }
+
+    fn determinism_decision_view_parts_v1() -> (
+        crate::flat_policy_v2::FlatGlobalsV2,
+        [crate::flat_policy_v2::FlatScorerActionCoreV2; 2],
+    ) {
+        use crate::flat_policy_v2::{FlatGlobalsV2, FlatRelativePlayerV2, FlatScorerActionCoreV2};
+        (
+            FlatGlobalsV2 {
+                acting_player: FlatRelativePlayerV2::SelfPlayer,
+                ..FlatGlobalsV2::default()
+            },
+            [
+                FlatScorerActionCoreV2::default(),
+                FlatScorerActionCoreV2::default(),
+            ],
+        )
+    }
+
+    /// The fixed synthetic schedule this fixture drives: every episode in
+    /// `0..EPISODE_COUNT` (enough for the 40/20/20/20 thresholds to cover
+    /// all four pool members at `DETERMINISM_BASE_SEED`), one physical
+    /// decision per episode, one substep, over the two-action decision view
+    /// above. Returns a joined string of
+    /// `episode:member:action` triples -- the "action sequence" fixture (b)
+    /// asks for, in a stable, cross-process-comparable text form.
+    fn run_fixed_synthetic_schedule_v1(engine: &LadderOpponentEngineV1) -> String {
+        use crate::flat_policy_v2::FlatScoringDecisionViewV2;
+
+        const DETERMINISM_BASE_SEED: u64 = 555_001;
+        const EPISODE_COUNT: u64 = 40;
+
+        let (globals, actions) = determinism_decision_view_parts_v1();
+        let mut lines = Vec::with_capacity(EPISODE_COUNT as usize);
+        for episode_index in 0..EPISODE_COUNT {
+            let member = engine
+                .pool_member_for_episode_v1(DETERMINISM_BASE_SEED, episode_index)
+                .unwrap();
+            let action = match member {
+                OpponentLadderPoolMemberV2::UniformFloor => {
+                    LadderOpponentEngineV1::select_floor_action_v1(
+                        DETERMINISM_BASE_SEED,
+                        episode_index,
+                        0,
+                        0,
+                        actions.len() as u32,
+                    )
+                    .unwrap()
+                }
+                policy_member => {
+                    let seed = crate::native_trainer_schedule_v2::derive_native_trainer_opponent_policy_substep_seed_v2(
+                        DETERMINISM_BASE_SEED,
+                        episode_index,
+                        0,
+                        0,
+                    )
+                    .unwrap();
+                    let view = FlatScoringDecisionViewV2::new(
+                        &globals,
+                        &[],
+                        &[],
+                        &[],
+                        &[],
+                        &[],
+                        &[],
+                        &[],
+                        &[],
+                        &actions,
+                        &[],
+                    );
+                    engine
+                        .select_policy_action_v1(policy_member, view, seed)
+                        .unwrap()
+                }
+            };
+            lines.push(format!("{episode_index}:{member:?}:{action}"));
+        }
+        lines.join("|")
+    }
+
+    fn determinism_spawn_child_v1() -> String {
+        let self_exe = std::env::current_exe().expect("current test binary path");
+        let output = std::process::Command::new(self_exe)
+            .arg("native_ladder_opponent_v1::tests::cross_process_determinism_bit_identical_action_sequence")
+            .arg("--exact")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .env(DETERMINISM_CHILD_MODE_V1, "1")
+            .output()
+            .expect("spawn determinism child process");
+        assert!(
+            output.status.success(),
+            "determinism child process failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // The test harness's own "test <name> ... " progress prefix shares a
+        // line with `--nocapture` output under `--test-threads=1`, so the
+        // digest marker is not necessarily at the START of its line; search
+        // the whole capture for the marker instead of anchoring per-line.
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let after_marker = stdout
+            .split(DETERMINISM_DIGEST_PREFIX_V1)
+            .nth(1)
+            .expect("child must print its digest line");
+        after_marker
+            .split_whitespace()
+            .next()
+            .expect("digest line must carry a value")
+            .to_owned()
+    }
+
+    #[test]
+    fn cross_process_determinism_bit_identical_action_sequence() {
+        if std::env::var_os(DETERMINISM_CHILD_MODE_V1).is_some() {
+            let engine = determinism_engine_v1();
+            let sequence = run_fixed_synthetic_schedule_v1(&engine);
+            println!("{DETERMINISM_DIGEST_PREFIX_V1}{sequence}");
+            return;
+        }
+
+        let first = determinism_spawn_child_v1();
+        let second = determinism_spawn_child_v1();
+        assert!(!first.is_empty());
+        assert_eq!(
+            first, second,
+            "cross-process action sequences must be bit-identical"
+        );
+        // Sanity: the fixed schedule must actually exercise more than one
+        // pool member at this base seed (otherwise the fixture would prove
+        // nothing about the policy-sampling branch).
+        assert!(first.contains("Primary") || first.contains("PredecessorA"));
+        assert!(first.contains("UniformFloor") || first.contains("PredecessorB"));
+    }
 }
