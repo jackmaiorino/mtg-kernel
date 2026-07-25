@@ -30,7 +30,9 @@
 //!   pair on any mismatch.
 //!
 //! A checkpoint at generation 0 decodes directly from its own manifest bytes
-//! plus payload (`decode_genesis_checkpoint_manifest_v3`; no further
+//! plus payload (`decode_genesis_checkpoint_manifest_dispatch_v2_v3`, which
+//! branches on the ref's own source run's `opponent_ladder_initialization`
+//! claim so a chained continual-init source run resolves too; no further
 //! authority is needed). A checkpoint at any nonzero generation cannot be
 //! validated from those three files alone: `CheckpointManifestV3`'s trained
 //! variant requires an `UpdateEvidenceChainContextV1`, which is a hash chain
@@ -57,7 +59,7 @@ use crate::native_checkpoint_inference_v1::{
     NativeCheckpointInferenceV1,
 };
 use crate::native_training_store_checkpoint_v3::{
-    decode_genesis_checkpoint_manifest_v3, derive_genesis_model_parameter_sha256_v2_v3,
+    decode_genesis_checkpoint_manifest_dispatch_v2_v3, derive_genesis_model_parameter_sha256_v2_v3,
     CheckpointManifestV3, CheckpointManifestV3Error,
 };
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
@@ -466,8 +468,22 @@ pub(crate) fn resolve_ladder_checkpoint_authority_v1(
     // 3. The validated checkpoint authority: direct genesis decode, or the
     //    complete chain-proven walk for any nonzero generation.
     let checkpoint = if checkpoint_ref.generation == 0 {
-        let checkpoint =
-            decode_genesis_checkpoint_manifest_v3(&checkpoint_bytes, &state_bytes, &run)?;
+        // Design directive slice 3 (closing the narrower gap slice 2's STOP
+        // report noted here): `run` is the ref's OWN source run, resolved
+        // and identity-checked immediately above -- if that run is ITSELF a
+        // continual-init record (a ladder pool member whose own generation 0
+        // was inherited from yet another checkpoint), its genesis manifest
+        // must validate against its own record's
+        // `derived_model_parameter_sha256`, not the common snapshot. The
+        // dispatch chokepoint branches on exactly that claim and reproduces
+        // the unconditional decode byte-for-byte for every non-ladder-init
+        // source run, so this is the same minimal record-driven pattern as
+        // `validate_authority_bindings_v1`, not a new invariant.
+        let checkpoint = decode_genesis_checkpoint_manifest_dispatch_v2_v3(
+            &checkpoint_bytes,
+            &state_bytes,
+            &run,
+        )?;
         LadderCheckpointManifestSourceV1::Genesis {
             checkpoint,
             payload: state_bytes,
