@@ -174,6 +174,56 @@ const FROZEN_SCORER_BIAS_ANCHOR_F32_BITS_V2: u64 = 3_141_403_366;
 const FROZEN_SNAPSHOT_NONCLAIM_V2: &str =
     "Rust does not reproduce the Python trainer-seeded-v1 initializer in this snapshot configuration; the snapshot proves bit-exact initial parameters only and does not establish seeded-initializer parity, cross-runtime numerical bit parity, learning parity, or speedup.";
 
+// Capacity-experiment wide-net (`kernel-policy-value-net-8w128`) mirrors of
+// the frozen Net8 literals above (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md,
+// SHA-256 a50d067a5fb0f77b888e4e3c77386ca626e9b399a2a19f6959a1e7494f01380a,
+// Section 3). Present if and only if a record carries
+// `contracts.wide_model_experiment_v1`; every frozen literal above stays
+// UNTOUCHED and a record without the wide section validates byte-for-byte as
+// it always has. Fields shared verbatim between the frozen and wide
+// snapshots by contract (same Xavier/seeded initializer construction, same
+// manifest schema: initializer identity, base/init seeds, trainer-schedule
+// and python-reference-seed identities, schedule goldens, feature digests,
+// authority runtime identity, optimizer identity, Adam bootstrap, canonical
+// gauge parameters) are validated against the EXISTING `FROZEN_*_V2`
+// constants directly in the wide branch rather than duplicated here; only
+// values the wide architecture actually changes get a `FROZEN_WIDE_*`
+// mirror.
+const FROZEN_WIDE_SNAPSHOT_SCHEMA_V1: &str = "mtg-kernel-common-model-snapshot/v1";
+const FROZEN_WIDE_SNAPSHOT_IDENTITY_V1: &str =
+    "mtg-kernel-python-authoritative-wide-model-experiment-snapshot-v1";
+const FROZEN_WIDE_SNAPSHOT_SHA256_V1: &str =
+    "f42527818e0ff30c02bbd5655ef28156b26ebd19fa7d907874eae9f67419548f";
+const FROZEN_WIDE_SNAPSHOT_MANIFEST_FILE_SHA256_V1: &str =
+    "0ed09bf270f0b9bf9517892a073bd1ee5cca8a3ea695b147dd940b1719df7f3c";
+const FROZEN_WIDE_SNAPSHOT_MANIFEST_CORE_SHA256_V1: &str =
+    "46ec55300604c68044ddcccd28be249e898cb8a9da1be79a8770ddea0c1d3027";
+const FROZEN_WIDE_SNAPSHOT_PAYLOAD_SHA256_V1: &str =
+    "8d54e3072ab4607e96b1dfc56691bb5ddf053045473ecc6d8d9fca494b5e489f";
+const FROZEN_WIDE_SNAPSHOT_PAYLOAD_BYTE_COUNT_V1: u64 = 11_003_016;
+const FROZEN_WIDE_PARAMETER_LAYOUT_SHA256_V1: &str =
+    "5478606755c5c47f1deb048d254265db16298dd9c27f6a9fc4a948c66ccb7fa3";
+const FROZEN_WIDE_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1: &str =
+    "574be71cde83d6e9494b87d9b8a6a98dddedd0cc3aa7d0cfa685e2489b8a1c5b";
+const FROZEN_WIDE_PARAMETER_TENSOR_COUNT_V1: u64 = 33;
+const FROZEN_WIDE_PARAMETER_ELEMENT_COUNT_V1: u64 = 2_750_754;
+const FROZEN_WIDE_MODEL_CONFIG_FINGERPRINT_V1: &str =
+    "b34c87f46e7709d8b03ee21710d7f0345ff0fcf49ec3d09cf25b94cfe71bf1c6";
+const FROZEN_WIDE_MODEL_ARCHITECTURE_IDENTITY_V1: &str = "kernel-policy-value-net-8w128";
+const FROZEN_WIDE_SNAPSHOT_AUTHORITY_SOURCE_BUNDLE_SHA256_V1: &str =
+    "2b1f4c5709fa3f1f2b58f7ade3cfc32939c6706155ef8034fd6a8a9dd63403b0";
+const FROZEN_WIDE_SNAPSHOT_LOADER_IDENTITY_V1: &str =
+    "mtg-kernel-rust-wide-model-snapshot-loader-v1";
+const FROZEN_WIDE_SCORER_BIAS_ANCHOR_F32_BITS_V1: u64 = 975_689_200;
+// = FROZEN_SNAPSHOT_NONCLAIM_V2 (shared base text) + " Label: " +
+// FROZEN_WIDE_DIAGNOSTIC_LABEL_V1, exactly what
+// `common_model_snapshot_v1::wide_record_from_validated` computes at load
+// time. Spelled out as its own literal (not derived via `concat!`, which
+// cannot reference another `const`) so this stays a plain frozen mirror.
+const FROZEN_WIDE_SNAPSHOT_NONCLAIM_V1: &str =
+    "Rust does not reproduce the Python trainer-seeded-v1 initializer in this snapshot configuration; the snapshot proves bit-exact initial parameters only and does not establish seeded-initializer parity, cross-runtime numerical bit parity, learning parity, or speedup. Label: WIDE-DIAGNOSTIC-NON-EVIDENCE";
+const FROZEN_WIDE_DIAGNOSTIC_LABEL_V1: &str = "WIDE-DIAGNOSTIC-NON-EVIDENCE";
+
 const FROZEN_TRAINER_IDENTITY_V2: &str = "mtg-kernel-native-even-batch-trainer-v2";
 const FROZEN_TENSORIZER_IDENTITY_V2: &str = "mtg-kernel-python-encoded-decision-tensor-contract-v2";
 const FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2: &str =
@@ -557,6 +607,40 @@ pub struct TrainRunContractsV2 {
     pub(crate) opponent_schedule_v2: Option<OpponentScheduleV2ContractV1>,
     pub(crate) trajectory: TrajectoryContractV2,
     pub(crate) standalone_semantics: StandaloneSemanticsV2,
+    /// Capacity-experiment wide-net (`kernel-policy-value-net-8w128`) section
+    /// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3, SHA-256
+    /// a50d067a5fb0f77b888e4e3c77386ca626e9b399a2a19f6959a1e7494f01380a).
+    /// Present if and only if this record trains or evaluates the wide net;
+    /// absent for every frozen-Net8 record. Omitted entirely from canonical
+    /// bytes when absent, so every existing run record is byte-for-byte
+    /// unaffected by this field's addition. Present: `model_snapshot`
+    /// (`validate_snapshot_v1`) and `contracts.model`
+    /// (`validate_model_contract_v2`) validate against the frozen WIDE
+    /// constants instead of the frozen Net8 ones, fail-closed both
+    /// directions. `diagnostic_label` MUST equal the frozen
+    /// `WIDE-DIAGNOSTIC-NON-EVIDENCE` literal: the record-level, programmatic
+    /// emission of the non-evidence label the contract requires in every
+    /// wide report (as opposed to a label that is merely documented).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) wide_model_experiment_v1: Option<WideModelExperimentContractV1>,
+}
+
+/// Capacity-experiment wide-net record section. See
+/// [`TrainRunContractsV2::wide_model_experiment_v1`] for the presence/absence
+/// contract.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WideModelExperimentContractV1 {
+    pub(crate) architecture_identity: String,
+    pub(crate) config_fingerprint: String,
+    pub(crate) snapshot_sha256: String,
+    pub(crate) manifest_core_sha256: String,
+    pub(crate) payload_sha256: String,
+    pub(crate) parameter_layout_sha256: String,
+    pub(crate) named_parameter_stream_sha256: String,
+    pub(crate) parameter_tensor_count: u64,
+    pub(crate) parameter_element_count: u64,
+    pub(crate) diagnostic_label: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1184,7 +1268,10 @@ fn validate_decoded_train_run_v2(
     validate_source_v2(&record.source)?;
     validate_runtime_v2(&record.runtime, &record.toolchain)?;
     validate_environment_v2(&record.environment)?;
-    validate_snapshot_v1(&record.model_snapshot)?;
+    validate_snapshot_v1(
+        &record.model_snapshot,
+        record.contracts.wide_model_experiment_v1.as_ref(),
+    )?;
     validate_contracts_v2(&record.contracts)?;
     validate_optimization_v2(&record.optimization)?;
     let requested_episode_count = validate_schedule_v2(&record.schedule, &record.model_snapshot)?;
@@ -1501,7 +1588,22 @@ fn validate_environment_v2(environment: &TrainRunEnvironmentV2) -> Result<()> {
     Ok(())
 }
 
-fn validate_snapshot_v1(snapshot: &CommonModelSnapshotRecordV1) -> Result<()> {
+/// Dispatches on the record's wide-net section (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md
+/// Section 3): absent validates `model_snapshot` byte-for-byte as today
+/// (`validate_frozen_snapshot_v1`, untouched); present validates against the
+/// frozen WIDE mirrors instead (`validate_wide_snapshot_v1`). Fail-closed
+/// both directions: neither branch accepts the other's literals.
+fn validate_snapshot_v1(
+    snapshot: &CommonModelSnapshotRecordV1,
+    wide: Option<&WideModelExperimentContractV1>,
+) -> Result<()> {
+    match wide {
+        None => validate_frozen_snapshot_v1(snapshot),
+        Some(wide_contract) => validate_wide_snapshot_v1(snapshot, wide_contract),
+    }
+}
+
+fn validate_frozen_snapshot_v1(snapshot: &CommonModelSnapshotRecordV1) -> Result<()> {
     if snapshot.schema != FROZEN_SNAPSHOT_SCHEMA_V2
         || snapshot.identity != FROZEN_SNAPSHOT_IDENTITY_V2
         || snapshot.snapshot_sha256 != FROZEN_SNAPSHOT_SHA256_V2
@@ -1555,6 +1657,120 @@ fn validate_snapshot_v1(snapshot: &CommonModelSnapshotRecordV1) -> Result<()> {
     Ok(())
 }
 
+/// Lockstep cross-check for the capacity-experiment wide-net mirrors: each
+/// wide "owner" constant (the identities/counts the wide modules actually
+/// construct with) must equal the frozen literal pinned in this module,
+/// exactly the discipline `validate_frozen_rev3_authorities_v2` applies to
+/// the Net8 identities. Called only from the wide branch of
+/// `validate_snapshot_v1`, so a record without
+/// `contracts.wide_model_experiment_v1` never pays this cost and the frozen
+/// path above is untouched.
+fn validate_frozen_wide_rev1_authorities_v1() -> Result<()> {
+    use crate::common_model_snapshot_v1::{
+        WIDE_PARAMETER_ELEMENT_COUNT_V1, WIDE_PARAMETER_TENSOR_COUNT_V1,
+        WIDE_PAYLOAD_BYTE_COUNT_V1, WIDE_RUST_LOADER_IDENTITY_V1, WIDE_SNAPSHOT_IDENTITY_V1,
+    };
+    use crate::native_policy_value_net_v1::{
+        W_ARCHITECTURE_LABEL_V1, W_MODEL_ARCHITECTURE_VERSION_V1, W_MODEL_CONFIG_FINGERPRINT_V1,
+        W_PARAMETER_COUNT_V1,
+    };
+    if WIDE_SNAPSHOT_IDENTITY_V1 != FROZEN_WIDE_SNAPSHOT_IDENTITY_V1
+        || u64::try_from(WIDE_PAYLOAD_BYTE_COUNT_V1).ok()
+            != Some(FROZEN_WIDE_SNAPSHOT_PAYLOAD_BYTE_COUNT_V1)
+        || u64::try_from(WIDE_PARAMETER_TENSOR_COUNT_V1).ok()
+            != Some(FROZEN_WIDE_PARAMETER_TENSOR_COUNT_V1)
+        || u64::try_from(WIDE_PARAMETER_ELEMENT_COUNT_V1).ok()
+            != Some(FROZEN_WIDE_PARAMETER_ELEMENT_COUNT_V1)
+        || W_MODEL_CONFIG_FINGERPRINT_V1 != FROZEN_WIDE_MODEL_CONFIG_FINGERPRINT_V1
+        || W_MODEL_ARCHITECTURE_VERSION_V1 != FROZEN_WIDE_MODEL_ARCHITECTURE_IDENTITY_V1
+        || WIDE_RUST_LOADER_IDENTITY_V1 != FROZEN_WIDE_SNAPSHOT_LOADER_IDENTITY_V1
+        || u64::try_from(W_PARAMETER_COUNT_V1).ok() != Some(FROZEN_WIDE_PARAMETER_ELEMENT_COUNT_V1)
+        || W_ARCHITECTURE_LABEL_V1 != FROZEN_WIDE_DIAGNOSTIC_LABEL_V1
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    Ok(())
+}
+
+/// Capacity-experiment wide-net sibling of [`validate_frozen_snapshot_v1`]:
+/// validates `model_snapshot` against the frozen WIDE mirrors instead of the
+/// frozen Net8 ones, fail-closed both directions (this branch rejects every
+/// frozen-Net8 literal; the frozen branch above rejects every wide one). The
+/// wide record section's own fields are validated in lockstep with the
+/// snapshot, so a record cannot carry mismatched `model_snapshot` /
+/// `contracts.wide_model_experiment_v1` data.
+fn validate_wide_snapshot_v1(
+    snapshot: &CommonModelSnapshotRecordV1,
+    wide: &WideModelExperimentContractV1,
+) -> Result<()> {
+    validate_frozen_wide_rev1_authorities_v1()?;
+    if snapshot.schema != FROZEN_WIDE_SNAPSHOT_SCHEMA_V1
+        || snapshot.identity != FROZEN_WIDE_SNAPSHOT_IDENTITY_V1
+        || snapshot.snapshot_sha256 != FROZEN_WIDE_SNAPSHOT_SHA256_V1
+        || snapshot.manifest_file_sha256 != FROZEN_WIDE_SNAPSHOT_MANIFEST_FILE_SHA256_V1
+        || snapshot.manifest_core_sha256 != FROZEN_WIDE_SNAPSHOT_MANIFEST_CORE_SHA256_V1
+        || snapshot.payload_sha256 != FROZEN_WIDE_SNAPSHOT_PAYLOAD_SHA256_V1
+        || snapshot.payload_byte_count != FROZEN_WIDE_SNAPSHOT_PAYLOAD_BYTE_COUNT_V1
+        || snapshot.parameter_layout_sha256 != FROZEN_WIDE_PARAMETER_LAYOUT_SHA256_V1
+        || snapshot.named_parameter_stream_sha256
+            != FROZEN_WIDE_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1
+        || snapshot.loaded_named_parameter_stream_sha256
+            != FROZEN_WIDE_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1
+        || snapshot.parameter_tensor_count != FROZEN_WIDE_PARAMETER_TENSOR_COUNT_V1
+        || snapshot.parameter_element_count != FROZEN_WIDE_PARAMETER_ELEMENT_COUNT_V1
+        || snapshot.model_config_fingerprint != FROZEN_WIDE_MODEL_CONFIG_FINGERPRINT_V1
+        || snapshot.model_architecture_version != FROZEN_WIDE_MODEL_ARCHITECTURE_IDENTITY_V1
+        || snapshot.feature_contract_digest != FROZEN_FEATURE_CONTRACT_DIGEST_V2
+        || snapshot.feature_encoding_digest != FROZEN_FEATURE_ENCODING_DIGEST_V2
+        || snapshot.initializer_identity != FROZEN_INITIALIZER_IDENTITY_V2
+        || snapshot.base_seed != FROZEN_BASE_SEED_V2
+        || snapshot.model_init_seed != FROZEN_MODEL_INIT_SEED_V2
+        || snapshot.trainer_schedule_version != FROZEN_TRAINER_SCHEDULE_IDENTITY_V2
+        || snapshot.python_reference_seed_version != FROZEN_PYTHON_REFERENCE_SEED_IDENTITY_V2
+        || snapshot.schedule_goldens_sha256 != FROZEN_TRAINER_SCHEDULE_GOLDENS_SHA256_V2
+        || snapshot.authority_source_bundle_sha256
+            != FROZEN_WIDE_SNAPSHOT_AUTHORITY_SOURCE_BUNDLE_SHA256_V1
+        || snapshot.authority_runtime_identity != FROZEN_SNAPSHOT_AUTHORITY_RUNTIME_IDENTITY_V2
+        || snapshot.loader_identity != FROZEN_WIDE_SNAPSHOT_LOADER_IDENTITY_V1
+        || snapshot.optimizer_identity != FROZEN_OPTIMIZER_IDENTITY_V2
+        || snapshot.adam_step_initial != FROZEN_ADAM_STEP_INITIAL_V2
+        || snapshot.moment_initialization != FROZEN_MOMENT_INITIALIZATION_V2
+        || snapshot.canonical_gauge_parameters != FROZEN_CANONICAL_GAUGE_PARAMETERS_V2
+        || snapshot.scorer_bias_anchor_f32_bits != FROZEN_WIDE_SCORER_BIAS_ANCHOR_F32_BITS_V1
+        || !snapshot.snapshot_load_completed_before_trial_start
+        || snapshot.snapshot_load_timed
+        || snapshot.rust_seeded_initializer_reproduced
+        || snapshot.nonclaim != FROZEN_WIDE_SNAPSHOT_NONCLAIM_V1
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    if !is_u63(snapshot.payload_byte_count)
+        || !is_u63(snapshot.parameter_tensor_count)
+        || !is_u63(snapshot.parameter_element_count)
+        || !is_u63(snapshot.base_seed)
+        || !is_u63(snapshot.model_init_seed)
+        || !is_u63(snapshot.adam_step_initial)
+        || snapshot.scorer_bias_anchor_f32_bits > u64::from(u32::MAX)
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidScalar));
+    }
+    if wide.architecture_identity != FROZEN_WIDE_MODEL_ARCHITECTURE_IDENTITY_V1
+        || wide.config_fingerprint != FROZEN_WIDE_MODEL_CONFIG_FINGERPRINT_V1
+        || wide.snapshot_sha256 != FROZEN_WIDE_SNAPSHOT_SHA256_V1
+        || wide.manifest_core_sha256 != FROZEN_WIDE_SNAPSHOT_MANIFEST_CORE_SHA256_V1
+        || wide.payload_sha256 != FROZEN_WIDE_SNAPSHOT_PAYLOAD_SHA256_V1
+        || wide.parameter_layout_sha256 != FROZEN_WIDE_PARAMETER_LAYOUT_SHA256_V1
+        || wide.named_parameter_stream_sha256
+            != FROZEN_WIDE_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1
+        || wide.parameter_tensor_count != FROZEN_WIDE_PARAMETER_TENSOR_COUNT_V1
+        || wide.parameter_element_count != FROZEN_WIDE_PARAMETER_ELEMENT_COUNT_V1
+        || wide.diagnostic_label != FROZEN_WIDE_DIAGNOSTIC_LABEL_V1
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    Ok(())
+}
+
 fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
     if contracts.trainer_identity != FROZEN_TRAINER_IDENTITY_V2
         || contracts.identity_bundle_identity != IDENTITY_BUNDLE_IDENTITY_V2
@@ -1567,11 +1783,6 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
         || contracts.tensorizer.fixture_sha256 != FROZEN_TENSORIZER_FIXTURE_SHA256_V2
         || contracts.tensorizer.fixture_payload_sha256
             != FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
-        || contracts.model.architecture_identity != FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2
-        || contracts.model.config_fingerprint != FROZEN_MODEL_CONFIG_FINGERPRINT_V2
-        || contracts.model.parameter_layout_sha256 != FROZEN_PARAMETER_LAYOUT_SHA256_V2
-        || contracts.model.parameter_tensor_count != FROZEN_PARAMETER_TENSOR_COUNT_V2
-        || contracts.model.parameter_element_count != FROZEN_PARAMETER_ELEMENT_COUNT_V2
         || contracts.loss.identity != FROZEN_LOSS_IDENTITY_V2
         || contracts.train_step.identity != FROZEN_TRAIN_STEP_IDENTITY_V2
         || !matches!(
@@ -1644,7 +1855,50 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
+    validate_model_contract_v2(
+        &contracts.model,
+        contracts.wide_model_experiment_v1.as_ref(),
+    )?;
     validate_opponent_policy_and_ladder_pool_v2(contracts)?;
+    Ok(())
+}
+
+/// The second, independent coupling on `contracts.model`
+/// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3): re-checks
+/// architecture/config/layout/counts against the frozen constants exactly
+/// like [`validate_wide_snapshot_v1`]/[`validate_frozen_snapshot_v1`] do for
+/// `model_snapshot`, just on the `contracts.model` copy of the same
+/// identity. Absent wide section: frozen Net8 literals, byte-for-byte as
+/// before this function existed. Present: the frozen WIDE mirrors instead.
+/// Fail-closed both directions.
+fn validate_model_contract_v2(
+    model: &ModelContractV2,
+    wide: Option<&WideModelExperimentContractV1>,
+) -> Result<()> {
+    let (architecture, fingerprint, layout, tensor_count, element_count) = match wide {
+        None => (
+            FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2,
+            FROZEN_MODEL_CONFIG_FINGERPRINT_V2,
+            FROZEN_PARAMETER_LAYOUT_SHA256_V2,
+            FROZEN_PARAMETER_TENSOR_COUNT_V2,
+            FROZEN_PARAMETER_ELEMENT_COUNT_V2,
+        ),
+        Some(_) => (
+            FROZEN_WIDE_MODEL_ARCHITECTURE_IDENTITY_V1,
+            FROZEN_WIDE_MODEL_CONFIG_FINGERPRINT_V1,
+            FROZEN_WIDE_PARAMETER_LAYOUT_SHA256_V1,
+            FROZEN_WIDE_PARAMETER_TENSOR_COUNT_V1,
+            FROZEN_WIDE_PARAMETER_ELEMENT_COUNT_V1,
+        ),
+    };
+    if model.architecture_identity != architecture
+        || model.config_fingerprint != fingerprint
+        || model.parameter_layout_sha256 != layout
+        || model.parameter_tensor_count != tensor_count
+        || model.parameter_element_count != element_count
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
     Ok(())
 }
 
@@ -2472,6 +2726,42 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
     )
 }
 
+/// Capacity-experiment wide-net variant of
+/// [`test_fixture_bytes_with_schedule_and_base_seed_v2`]
+/// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3): the SAME
+/// schedule/topology/base-seed fields, but `model_snapshot` and
+/// `contracts.model` carry the wide (`kernel-policy-value-net-8w128`)
+/// literals and `contracts.wide_model_experiment_v1` is populated. Kept as a
+/// genuinely separate function (not a flag on the existing one) so the
+/// frozen fixture's bytes stay byte-identical by construction.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_wide_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_wide(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3069,6 +3359,107 @@ mod tests {
         record.contracts.opponent_ladder_pool = Some(pool);
         record.contracts.opponent_ladder_initialization = Some(initialization);
         record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    /// Stamps `record.model_snapshot`/`contracts.model` with the frozen WIDE
+    /// literals and populates `contracts.wide_model_experiment_v1`. Shared by
+    /// every wide fixture builder so they can never drift from each other.
+    fn apply_wide_model_experiment(record: &mut TrainRunV2) {
+        record.model_snapshot = CommonModelSnapshotRecordV1 {
+            schema: FROZEN_WIDE_SNAPSHOT_SCHEMA_V1.to_owned(),
+            identity: FROZEN_WIDE_SNAPSHOT_IDENTITY_V1.to_owned(),
+            snapshot_sha256: FROZEN_WIDE_SNAPSHOT_SHA256_V1.to_owned(),
+            manifest_file_sha256: FROZEN_WIDE_SNAPSHOT_MANIFEST_FILE_SHA256_V1.to_owned(),
+            manifest_core_sha256: FROZEN_WIDE_SNAPSHOT_MANIFEST_CORE_SHA256_V1.to_owned(),
+            payload_sha256: FROZEN_WIDE_SNAPSHOT_PAYLOAD_SHA256_V1.to_owned(),
+            payload_byte_count: FROZEN_WIDE_SNAPSHOT_PAYLOAD_BYTE_COUNT_V1,
+            parameter_layout_sha256: FROZEN_WIDE_PARAMETER_LAYOUT_SHA256_V1.to_owned(),
+            named_parameter_stream_sha256: FROZEN_WIDE_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1
+                .to_owned(),
+            loaded_named_parameter_stream_sha256:
+                FROZEN_WIDE_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1.to_owned(),
+            parameter_tensor_count: FROZEN_WIDE_PARAMETER_TENSOR_COUNT_V1,
+            parameter_element_count: FROZEN_WIDE_PARAMETER_ELEMENT_COUNT_V1,
+            model_config_fingerprint: FROZEN_WIDE_MODEL_CONFIG_FINGERPRINT_V1.to_owned(),
+            model_architecture_version: FROZEN_WIDE_MODEL_ARCHITECTURE_IDENTITY_V1.to_owned(),
+            feature_contract_digest: FROZEN_FEATURE_CONTRACT_DIGEST_V2.to_owned(),
+            feature_encoding_digest: FROZEN_FEATURE_ENCODING_DIGEST_V2.to_owned(),
+            initializer_identity: FROZEN_INITIALIZER_IDENTITY_V2.to_owned(),
+            base_seed: FROZEN_BASE_SEED_V2,
+            model_init_seed: FROZEN_MODEL_INIT_SEED_V2,
+            trainer_schedule_version: FROZEN_TRAINER_SCHEDULE_IDENTITY_V2.to_owned(),
+            python_reference_seed_version: FROZEN_PYTHON_REFERENCE_SEED_IDENTITY_V2.to_owned(),
+            schedule_goldens_sha256: FROZEN_TRAINER_SCHEDULE_GOLDENS_SHA256_V2.to_owned(),
+            authority_source_bundle_sha256: FROZEN_WIDE_SNAPSHOT_AUTHORITY_SOURCE_BUNDLE_SHA256_V1
+                .to_owned(),
+            authority_runtime_identity: FROZEN_SNAPSHOT_AUTHORITY_RUNTIME_IDENTITY_V2.to_owned(),
+            loader_identity: FROZEN_WIDE_SNAPSHOT_LOADER_IDENTITY_V1.to_owned(),
+            optimizer_identity: FROZEN_OPTIMIZER_IDENTITY_V2.to_owned(),
+            adam_step_initial: FROZEN_ADAM_STEP_INITIAL_V2,
+            moment_initialization: FROZEN_MOMENT_INITIALIZATION_V2.to_owned(),
+            canonical_gauge_parameters: FROZEN_CANONICAL_GAUGE_PARAMETERS_V2
+                .map(str::to_owned)
+                .to_vec(),
+            scorer_bias_anchor_f32_bits: FROZEN_WIDE_SCORER_BIAS_ANCHOR_F32_BITS_V1,
+            snapshot_load_completed_before_trial_start: true,
+            snapshot_load_timed: false,
+            rust_seeded_initializer_reproduced: false,
+            nonclaim: FROZEN_WIDE_SNAPSHOT_NONCLAIM_V1.to_owned(),
+        };
+        record.contracts.model = ModelContractV2 {
+            architecture_identity: FROZEN_WIDE_MODEL_ARCHITECTURE_IDENTITY_V1.to_owned(),
+            config_fingerprint: FROZEN_WIDE_MODEL_CONFIG_FINGERPRINT_V1.to_owned(),
+            parameter_layout_sha256: FROZEN_WIDE_PARAMETER_LAYOUT_SHA256_V1.to_owned(),
+            parameter_tensor_count: FROZEN_WIDE_PARAMETER_TENSOR_COUNT_V1,
+            parameter_element_count: FROZEN_WIDE_PARAMETER_ELEMENT_COUNT_V1,
+        };
+        record.contracts.wide_model_experiment_v1 = Some(WideModelExperimentContractV1 {
+            architecture_identity: FROZEN_WIDE_MODEL_ARCHITECTURE_IDENTITY_V1.to_owned(),
+            config_fingerprint: FROZEN_WIDE_MODEL_CONFIG_FINGERPRINT_V1.to_owned(),
+            snapshot_sha256: FROZEN_WIDE_SNAPSHOT_SHA256_V1.to_owned(),
+            manifest_core_sha256: FROZEN_WIDE_SNAPSHOT_MANIFEST_CORE_SHA256_V1.to_owned(),
+            payload_sha256: FROZEN_WIDE_SNAPSHOT_PAYLOAD_SHA256_V1.to_owned(),
+            parameter_layout_sha256: FROZEN_WIDE_PARAMETER_LAYOUT_SHA256_V1.to_owned(),
+            named_parameter_stream_sha256: FROZEN_WIDE_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1
+                .to_owned(),
+            parameter_tensor_count: FROZEN_WIDE_PARAMETER_TENSOR_COUNT_V1,
+            parameter_element_count: FROZEN_WIDE_PARAMETER_ELEMENT_COUNT_V1,
+            diagnostic_label: FROZEN_WIDE_DIAGNOSTIC_LABEL_V1.to_owned(),
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_wide(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+    ) -> Vec<u8> {
+        let mut record = fixture_record();
+        record.schedule.base_seed = base_seed;
+        apply_backend_pair(&mut record, backend);
+        record.limits.max_physical_decisions = max_physical_decisions;
+        record.limits.max_policy_steps = max_policy_steps;
+        record.schedule.batch_episodes = batch_episodes;
+        record.schedule.checkpoint_segment_updates = checkpoint_segment_updates;
+        record.schedule.requested_successful_updates = requested_successful_updates;
+        record.schedule.checkpoint_episode_interval = batch_episodes
+            .checked_mul(checkpoint_segment_updates)
+            .unwrap();
+        record.topology.worker_count = worker_count;
+        record.topology.sessions_per_worker = sessions_per_worker;
+        record.topology.logical_actor_count =
+            worker_count.checked_mul(sessions_per_worker).unwrap();
+        record.topology.broker_batch_target = broker_batch_target;
+        apply_wide_model_experiment(&mut record);
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
@@ -4470,5 +4861,136 @@ mod tests {
             validated.record().contracts().opponent_policy.identity,
             FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
         );
+    }
+
+    // =========================================================================
+    // Capacity-experiment wide-net record section
+    // (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3, SHA-256
+    // a50d067a5fb0f77b888e4e3c77386ca626e9b399a2a19f6959a1e7494f01380a).
+    // =========================================================================
+
+    fn wide_fixture_bytes() -> Vec<u8> {
+        test_fixture_bytes_with_schedule_and_base_seed_wide_v2(
+            crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1::Sequential,
+            2,
+            4,
+            12,
+            2,
+            4,
+            8,
+            32768,
+            65536,
+            71501,
+        )
+    }
+
+    #[test]
+    fn wide_model_experiment_record_validates_and_labels_diagnostic() {
+        let bytes = wide_fixture_bytes();
+        let validated = decode_train_run_v2(&bytes).expect("wide record must validate");
+        let wide = validated
+            .record()
+            .contracts()
+            .wide_model_experiment_v1
+            .as_ref()
+            .expect("wide section must be present");
+        assert_eq!(wide.diagnostic_label, "WIDE-DIAGNOSTIC-NON-EVIDENCE");
+        assert_eq!(
+            validated.record().contracts().model.architecture_identity,
+            "kernel-policy-value-net-8w128"
+        );
+        assert_eq!(
+            validated.record().model_snapshot.parameter_element_count,
+            2_750_754
+        );
+    }
+
+    /// The label-emission fixture (Section 5 freeze gate): the diagnostic
+    /// label is a genuine byte of the record's own canonical output, not
+    /// merely documented in prose alongside it.
+    #[test]
+    fn wide_model_experiment_record_bytes_contain_diagnostic_label() {
+        let bytes = wide_fixture_bytes();
+        let text = String::from_utf8(bytes).expect("canonical run.json is UTF-8");
+        assert!(
+            text.contains("WIDE-DIAGNOSTIC-NON-EVIDENCE"),
+            "wide record bytes must literally contain the diagnostic label"
+        );
+    }
+
+    /// Fail-closed direction 1: a record carrying the WIDE `model_snapshot`
+    /// literals but no `contracts.wide_model_experiment_v1` section must be
+    /// rejected (the frozen branch of `validate_snapshot_v1` demands the
+    /// frozen Net8 literals, which the wide snapshot never matches).
+    #[test]
+    fn wide_model_snapshot_rejected_when_wide_section_absent() {
+        let mut record = fixture_record();
+        apply_wide_model_experiment(&mut record);
+        record.contracts.wide_model_experiment_v1 = None;
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    /// Fail-closed direction 2: a record carrying
+    /// `contracts.wide_model_experiment_v1` but the FROZEN `model_snapshot`
+    /// literals must be rejected (the wide branch of `validate_snapshot_v1`
+    /// demands the wide literals, which the frozen snapshot never matches).
+    #[test]
+    fn frozen_model_snapshot_rejected_when_wide_section_present() {
+        let mut record = fixture_record();
+        record.contracts.wide_model_experiment_v1 = Some(WideModelExperimentContractV1 {
+            architecture_identity: FROZEN_WIDE_MODEL_ARCHITECTURE_IDENTITY_V1.to_owned(),
+            config_fingerprint: FROZEN_WIDE_MODEL_CONFIG_FINGERPRINT_V1.to_owned(),
+            snapshot_sha256: FROZEN_WIDE_SNAPSHOT_SHA256_V1.to_owned(),
+            manifest_core_sha256: FROZEN_WIDE_SNAPSHOT_MANIFEST_CORE_SHA256_V1.to_owned(),
+            payload_sha256: FROZEN_WIDE_SNAPSHOT_PAYLOAD_SHA256_V1.to_owned(),
+            parameter_layout_sha256: FROZEN_WIDE_PARAMETER_LAYOUT_SHA256_V1.to_owned(),
+            named_parameter_stream_sha256: FROZEN_WIDE_SNAPSHOT_NAMED_PARAMETER_STREAM_SHA256_V1
+                .to_owned(),
+            parameter_tensor_count: FROZEN_WIDE_PARAMETER_TENSOR_COUNT_V1,
+            parameter_element_count: FROZEN_WIDE_PARAMETER_ELEMENT_COUNT_V1,
+            diagnostic_label: FROZEN_WIDE_DIAGNOSTIC_LABEL_V1.to_owned(),
+        });
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    /// The second, independent coupling (`validate_contracts_v2`'s own
+    /// re-check of `contracts.model`): a fully-consistent wide record whose
+    /// `contracts.model` is mutated back to the FROZEN Net8 literals (while
+    /// `model_snapshot` and the wide section stay wide-consistent) must
+    /// still be rejected. Proves `validate_model_contract_v2` is a genuine,
+    /// independent fail-closed gate, not merely implied by the snapshot
+    /// check.
+    #[test]
+    fn wide_contracts_model_mismatch_rejected_independently_of_snapshot() {
+        let mut record = fixture_record();
+        apply_wide_model_experiment(&mut record);
+        record.contracts.model = ModelContractV2 {
+            architecture_identity: FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2.to_owned(),
+            config_fingerprint: FROZEN_MODEL_CONFIG_FINGERPRINT_V2.to_owned(),
+            parameter_layout_sha256: FROZEN_PARAMETER_LAYOUT_SHA256_V2.to_owned(),
+            parameter_tensor_count: FROZEN_PARAMETER_TENSOR_COUNT_V2,
+            parameter_element_count: FROZEN_PARAMETER_ELEMENT_COUNT_V2,
+        };
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    /// Fail-closed on the label itself: a fully wide-consistent record whose
+    /// `diagnostic_label` has drifted off the frozen
+    /// `WIDE-DIAGNOSTIC-NON-EVIDENCE` literal must be rejected.
+    #[test]
+    fn wide_model_experiment_diagnostic_label_drift_rejected() {
+        let mut record = fixture_record();
+        apply_wide_model_experiment(&mut record);
+        record
+            .contracts
+            .wide_model_experiment_v1
+            .as_mut()
+            .unwrap()
+            .diagnostic_label = "WIDE-QUALIFIED-EVIDENCE".to_owned();
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
     }
 }
