@@ -461,6 +461,22 @@ fn plan_from_inputs_v2(
         return Err(bound_error_v2());
     }
 
+    // WIDE CHOKEPOINT ENUMERATION, SEVENTH ENTRY (found by the registry-draft
+    // hostile review, 2026-07-25, a category distinct from the six
+    // validation/decode chokepoints): this is a pre-rollout
+    // allocation-representability bound and it uses the FROZEN payload byte
+    // count even when `run` carries the wide section, so for a wide run the
+    // usize-fit product below is proven against 14,771,928 bytes instead of
+    // the true 33,009,048. Currently inert in practice: `max_runtime_usize`
+    // defaults to `usize::MAX` on this 64-bit host, so the product check is
+    // a no-op either way, and the manifest-byte bounds above hold for the
+    // wide shape by digit-width equality (both payload byte counts are 8
+    // digits, both element counts 7). NOT dispatched here deliberately: the
+    // architecture identity registry design (Codex lane) replaces this whole
+    // module's hand-held constants with table-driven bounds, and a two-way
+    // branch added now would be churn against that migration. Any change
+    // that makes `max_runtime_usize` finite, or admits an architecture whose
+    // sizes break digit-width equality, MUST fix this first.
     let payload_bytes =
         u64::try_from(NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1).map_err(|_| bound_error_v2())?;
     let values_requiring_usize = [
