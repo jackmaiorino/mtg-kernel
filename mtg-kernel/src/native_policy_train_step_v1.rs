@@ -30,8 +30,6 @@
 //! `gamma(m-1)*2*sum_j(|c_j|)`. Their sum is recorded beside the raw residual;
 //! exceeding it aborts before model or optimizer mutation.
 
-#[cfg(test)]
-use crate::native_policy_value_net_v1::W_PARAMETER_COUNT_V1;
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionViewV1,
     NativeNamedParameterV1,
@@ -53,6 +51,7 @@ use crate::native_policy_value_net_v1::{
     // see the W_EXPECTED_PARAMETER_SHAPES table below.
     W_CARD_EMBEDDING_DIM_V1,
     W_HIDDEN_DIM_V1,
+    W_PARAMETER_COUNT_V1,
 };
 use crate::native_training_phase_diagnostic_v1::{
     NativeTrainingPhaseRecorderV1, NativeTrainingPhaseV1,
@@ -3856,6 +3855,135 @@ fn hash_owned_train_snapshot_v1(snapshot: &NativePolicyValueTrainSnapshotV1) -> 
         }
     }
     finish_train_state_hash_v1(hasher)
+}
+
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings of
+// the owned-snapshot validate/hash pair above. `NativePolicyValueTrainSnapshotV1`
+// is itself dimension-erased (plain named-parameter vectors), so it is
+// reused verbatim; only the shape/count/gauge-padding checks below are
+// wide-specific (`W_EXPECTED_PARAMETER_SHAPES`, `W_PARAMETER_COUNT_V1`,
+// `W_CARD_EMBEDDING_DIM_V1`). The parameter ORDER (tensor names, ordinal
+// positions, and hence `CARD_EMBEDDING`/`SCORER_SECOND_BIAS`/
+// `PARAMETER_TENSOR_COUNT`) is topology-derived and identical between the
+// frozen and wide nets (proven by `wide_layout_names_match_frozen_layout_names_exactly`),
+// so those three stay shared rather than duplicated. The frozen
+// `validate_parameter_manifest`/`validate_owned_train_snapshot_v1`/
+// `hash_owned_train_snapshot_v1` above are untouched.
+fn validate_parameter_manifest_wide_v1(
+    parameters: &[NativeNamedParameterV1],
+) -> Result<(), NativePolicyTrainErrorV1> {
+    if parameters.len() != PARAMETER_TENSOR_COUNT
+        || parameters
+            .iter()
+            .zip(native_train_state_parameter_layout_wide_v1())
+            .any(|(parameter, (expected_name, expected_shape))| {
+                parameter.name != expected_name
+                    || parameter.shape.as_slice() != expected_shape
+                    || expected_shape.iter().product::<usize>() != parameter.values.len()
+                    || parameter.values.iter().any(|value| !value.is_finite())
+            })
+        || parameters
+            .iter()
+            .map(|parameter| parameter.values.len())
+            .sum::<usize>()
+            != W_PARAMETER_COUNT_V1
+        || parameters[CARD_EMBEDDING].values[..W_CARD_EMBEDDING_DIM_V1]
+            .iter()
+            .any(|value| value.to_bits() != 0)
+    {
+        return Err(NativePolicyTrainErrorV1::ParameterManifest);
+    }
+    Ok(())
+}
+
+fn validate_owned_train_snapshot_wide_v1(
+    snapshot: &NativePolicyValueTrainSnapshotV1,
+    expected_scorer_bias_anchor_bits: Option<u32>,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    i32::try_from(snapshot.adam_step)
+        .map(|_| ())
+        .map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
+    validate_parameter_manifest_wide_v1(&snapshot.parameters)?;
+
+    if snapshot.first_moments.len() != snapshot.parameters.len()
+        || snapshot.second_moments.len() != snapshot.parameters.len()
+        || snapshot
+            .parameters
+            .iter()
+            .zip(&snapshot.first_moments)
+            .zip(&snapshot.second_moments)
+            .any(|((parameter, first), second)| {
+                first.name != parameter.name
+                    || second.name != parameter.name
+                    || first.shape != parameter.shape
+                    || second.shape != parameter.shape
+                    || first.values.len() != parameter.values.len()
+                    || second.values.len() != parameter.values.len()
+                    || first.values.iter().any(|value| !value.is_finite())
+                    || second
+                        .values
+                        .iter()
+                        .any(|value| !value.is_finite() || *value < 0.0)
+            })
+        || snapshot.first_moments[CARD_EMBEDDING].values[..W_CARD_EMBEDDING_DIM_V1]
+            .iter()
+            .any(|value| value.to_bits() != 0)
+        || snapshot.second_moments[CARD_EMBEDDING].values[..W_CARD_EMBEDDING_DIM_V1]
+            .iter()
+            .any(|value| value.to_bits() != 0)
+        || snapshot.first_moments[SCORER_SECOND_BIAS].values[0].to_bits() != 0
+        || snapshot.second_moments[SCORER_SECOND_BIAS].values[0].to_bits() != 0
+    {
+        return Err(NativePolicyTrainErrorV1::OptimizerState);
+    }
+
+    let parameter_anchor_bits = snapshot.parameters[SCORER_SECOND_BIAS].values[0].to_bits();
+    if parameter_anchor_bits != snapshot.scorer_bias_anchor_bits
+        || expected_scorer_bias_anchor_bits
+            .is_some_and(|expected| snapshot.scorer_bias_anchor_bits != expected)
+    {
+        return Err(NativePolicyTrainErrorV1::GaugeAnchor);
+    }
+    Ok(())
+}
+
+fn hash_owned_train_snapshot_wide_v1(snapshot: &NativePolicyValueTrainSnapshotV1) -> [u8; 32] {
+    let mut hasher =
+        begin_train_state_hash_v1(snapshot.adam_step, snapshot.scorer_bias_anchor_bits);
+    for (section, tensors) in [
+        (b"parameters".as_slice(), snapshot.parameters.as_slice()),
+        (
+            b"first_moments".as_slice(),
+            snapshot.first_moments.as_slice(),
+        ),
+        (
+            b"second_moments".as_slice(),
+            snapshot.second_moments.as_slice(),
+        ),
+    ] {
+        begin_train_state_tensor_section_v1(&mut hasher, section, tensors.len());
+        for (ordinal, tensor) in tensors.iter().enumerate() {
+            hash_train_state_tensor_v1(
+                &mut hasher,
+                ordinal,
+                tensor.name,
+                &tensor.shape,
+                &tensor.values,
+            );
+        }
+    }
+    finish_train_state_hash_v1(hasher)
+}
+
+/// Wide-net sibling of [`NativePolicyValueTrainSnapshotV1::state_sha256_v1`].
+/// Kept as a free function (rather than an inherent method) because the
+/// owned snapshot type is shared verbatim between the frozen and wide
+/// architectures; the caller supplies which validation/hash pair applies.
+pub(crate) fn wide_owned_train_snapshot_state_sha256_v1(
+    snapshot: &NativePolicyValueTrainSnapshotV1,
+) -> Result<[u8; 32], NativePolicyTrainErrorV1> {
+    validate_owned_train_snapshot_wide_v1(snapshot, None)?;
+    Ok(hash_owned_train_snapshot_wide_v1(snapshot))
 }
 
 fn hash_live_train_state_v1(state: &NativePolicyValueTrainStateV1) -> [u8; 32] {

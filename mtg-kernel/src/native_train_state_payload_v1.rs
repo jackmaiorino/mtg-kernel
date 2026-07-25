@@ -7,11 +7,11 @@
 
 use crate::common_model_snapshot_v1::{
     PARAMETER_ELEMENT_COUNT_V1, PARAMETER_TENSOR_COUNT_V1, PAYLOAD_BYTE_COUNT_V1,
-    WIDE_PAYLOAD_BYTE_COUNT_V1,
+    WIDE_PARAMETER_ELEMENT_COUNT_V1, WIDE_PARAMETER_TENSOR_COUNT_V1, WIDE_PAYLOAD_BYTE_COUNT_V1,
 };
 use crate::native_policy_train_step_v1::{
-    native_train_state_parameter_layout_v1, NativePolicyTrainErrorV1,
-    NativePolicyValueTrainSnapshotV1,
+    native_train_state_parameter_layout_v1, native_train_state_parameter_layout_wide_v1,
+    NativePolicyTrainErrorV1, NativePolicyValueTrainSnapshotV1,
 };
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use sha2::{Digest, Sha256};
@@ -512,6 +512,306 @@ fn finalize_sha256_v1(hasher: Sha256) -> [u8; 32] {
     output
 }
 
+// =============================================================================
+// Capacity-experiment wide-net (kernel-policy-value-net-8w128) codec siblings
+// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3). Same ordered
+// three-section (parameters/first_moments/second_moments) headerless f32le
+// layout as the frozen codec above, sized and shaped to the wide payload via
+// `W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1` /
+// `native_train_state_parameter_layout_wide_v1` /
+// `wide_owned_train_snapshot_state_sha256_v1`. Purely additive: the frozen
+// encode/decode functions above are untouched.
+// =============================================================================
+
+/// Wide-net sibling of [`encode_native_train_state_payload_v1`].
+pub(crate) fn encode_native_train_state_payload_wide_v1(
+    snapshot: &NativePolicyValueTrainSnapshotV1,
+) -> Result<NativeEncodedTrainStatePayloadV1, NativeTrainStatePayloadErrorV1> {
+    let native_state_sha256 =
+        crate::native_policy_train_step_v1::wide_owned_train_snapshot_state_sha256_v1(snapshot)?;
+
+    let mut bytes = Vec::with_capacity(W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1);
+    encode_section_v1(&mut bytes, &snapshot.parameters);
+    encode_section_v1(&mut bytes, &snapshot.first_moments);
+    encode_section_v1(&mut bytes, &snapshot.second_moments);
+    require_exact_payload_length_wide_v1(&bytes)?;
+
+    let digests = payload_digests_wide_v1(snapshot, &bytes, native_state_sha256)?;
+    Ok(NativeEncodedTrainStatePayloadV1 { bytes, digests })
+}
+
+/// Wide-net sibling of [`decode_native_train_state_payload_v1`].
+pub(crate) fn decode_native_train_state_payload_wide_v1(
+    bytes: &[u8],
+    adam_step: u64,
+    scorer_bias_anchor_bits: u32,
+) -> Result<NativeDecodedTrainStatePayloadV1, NativeTrainStatePayloadErrorV1> {
+    require_exact_payload_length_wide_v1(bytes)?;
+    decode_native_train_state_payload_inner_wide_v1(
+        bytes,
+        adam_step,
+        scorer_bias_anchor_bits,
+        raw_payload_digests_wide_v1(bytes),
+    )
+}
+
+/// Wide-net sibling of [`decode_native_train_state_payload_verified_v1`].
+pub(crate) fn decode_native_train_state_payload_verified_wide_v1(
+    bytes: &[u8],
+    adam_step: u64,
+    scorer_bias_anchor_bits: u32,
+    expected: &NativeTrainStatePayloadDigestsV1,
+) -> Result<NativeDecodedTrainStatePayloadV1, NativeTrainStatePayloadErrorV1> {
+    require_exact_payload_length_wide_v1(bytes)?;
+    let raw = raw_payload_digests_wide_v1(bytes);
+    require_digest_v1(
+        raw.payload_sha256,
+        expected.payload_sha256,
+        NativeTrainStatePayloadDigestFieldV1::Payload,
+    )?;
+    require_digest_v1(
+        raw.parameters_sha256,
+        expected.parameters_sha256,
+        NativeTrainStatePayloadDigestFieldV1::Parameters,
+    )?;
+    require_digest_v1(
+        raw.first_moments_sha256,
+        expected.first_moments_sha256,
+        NativeTrainStatePayloadDigestFieldV1::FirstMoments,
+    )?;
+    require_digest_v1(
+        raw.second_moments_sha256,
+        expected.second_moments_sha256,
+        NativeTrainStatePayloadDigestFieldV1::SecondMoments,
+    )?;
+
+    let decoded = decode_native_train_state_payload_inner_wide_v1(
+        bytes,
+        adam_step,
+        scorer_bias_anchor_bits,
+        raw,
+    )?;
+    require_digest_v1(
+        decoded.digests.model_parameter_sha256,
+        expected.model_parameter_sha256,
+        NativeTrainStatePayloadDigestFieldV1::ModelParameters,
+    )?;
+    require_digest_v1(
+        decoded.digests.native_state_sha256,
+        expected.native_state_sha256,
+        NativeTrainStatePayloadDigestFieldV1::NativeState,
+    )?;
+    Ok(decoded)
+}
+
+fn decode_native_train_state_payload_inner_wide_v1(
+    bytes: &[u8],
+    adam_step: u64,
+    scorer_bias_anchor_bits: u32,
+    raw: RawPayloadDigestsV1,
+) -> Result<NativeDecodedTrainStatePayloadV1, NativeTrainStatePayloadErrorV1> {
+    let parameters = decode_section_wide_v1(section_bytes_wide_v1(bytes, 0)?)?;
+    let first_moments = decode_section_wide_v1(section_bytes_wide_v1(bytes, 1)?)?;
+    let second_moments = decode_section_wide_v1(section_bytes_wide_v1(bytes, 2)?)?;
+    let snapshot = NativePolicyValueTrainSnapshotV1 {
+        adam_step,
+        scorer_bias_anchor_bits,
+        parameters,
+        first_moments,
+        second_moments,
+    };
+
+    let native_state_sha256 =
+        crate::native_policy_train_step_v1::wide_owned_train_snapshot_state_sha256_v1(&snapshot)?;
+    let model_parameter_sha256 =
+        model_parameter_sha256_wide_v1(&snapshot.parameters, section_bytes_wide_v1(bytes, 0)?)?;
+    let digests = NativeTrainStatePayloadDigestsV1 {
+        payload_sha256: raw.payload_sha256,
+        parameters_sha256: raw.parameters_sha256,
+        first_moments_sha256: raw.first_moments_sha256,
+        second_moments_sha256: raw.second_moments_sha256,
+        model_parameter_sha256,
+        native_state_sha256,
+    };
+    Ok(NativeDecodedTrainStatePayloadV1 { snapshot, digests })
+}
+
+fn decode_section_wide_v1(
+    section: &[u8],
+) -> Result<Vec<NativeNamedParameterV1>, NativeTrainStatePayloadErrorV1> {
+    if section.len() != W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1 {
+        return Err(NativeTrainStatePayloadErrorV1::ExactLength {
+            expected: W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1,
+            actual: section.len(),
+        });
+    }
+
+    let mut tensors = Vec::with_capacity(WIDE_PARAMETER_TENSOR_COUNT_V1);
+    let mut cursor = 0usize;
+    let mut element_count = 0usize;
+    for (name, shape) in native_train_state_parameter_layout_wide_v1() {
+        let tensor_elements = shape
+            .iter()
+            .try_fold(1usize, |product, dimension| product.checked_mul(*dimension));
+        let tensor_elements = tensor_elements.ok_or(
+            NativeTrainStatePayloadErrorV1::LayoutInvariant("tensor element-count overflow"),
+        )?;
+        let tensor_bytes = tensor_elements.checked_mul(4).ok_or(
+            NativeTrainStatePayloadErrorV1::LayoutInvariant("tensor byte-count overflow"),
+        )?;
+        let end = cursor.checked_add(tensor_bytes).ok_or(
+            NativeTrainStatePayloadErrorV1::LayoutInvariant("tensor byte-end overflow"),
+        )?;
+        let raw =
+            section
+                .get(cursor..end)
+                .ok_or(NativeTrainStatePayloadErrorV1::LayoutInvariant(
+                    "tensor outside section",
+                ))?;
+        let values = raw
+            .chunks_exact(4)
+            .map(|word| f32::from_bits(u32::from_le_bytes([word[0], word[1], word[2], word[3]])))
+            .collect();
+        tensors.push(NativeNamedParameterV1 {
+            name,
+            shape: shape.to_vec(),
+            values,
+        });
+        cursor = end;
+        element_count = element_count.checked_add(tensor_elements).ok_or(
+            NativeTrainStatePayloadErrorV1::LayoutInvariant("section element-count overflow"),
+        )?;
+    }
+    if cursor != section.len()
+        || element_count != WIDE_PARAMETER_ELEMENT_COUNT_V1
+        || tensors.len() != WIDE_PARAMETER_TENSOR_COUNT_V1
+    {
+        return Err(NativeTrainStatePayloadErrorV1::LayoutInvariant(
+            "wide section layout mismatch",
+        ));
+    }
+    Ok(tensors)
+}
+
+fn payload_digests_wide_v1(
+    snapshot: &NativePolicyValueTrainSnapshotV1,
+    bytes: &[u8],
+    native_state_sha256: [u8; 32],
+) -> Result<NativeTrainStatePayloadDigestsV1, NativeTrainStatePayloadErrorV1> {
+    let raw = raw_payload_digests_wide_v1(bytes);
+    Ok(NativeTrainStatePayloadDigestsV1 {
+        payload_sha256: raw.payload_sha256,
+        parameters_sha256: raw.parameters_sha256,
+        first_moments_sha256: raw.first_moments_sha256,
+        second_moments_sha256: raw.second_moments_sha256,
+        model_parameter_sha256: model_parameter_sha256_wide_v1(
+            &snapshot.parameters,
+            section_bytes_wide_v1(bytes, 0)?,
+        )?,
+        native_state_sha256,
+    })
+}
+
+fn raw_payload_digests_wide_v1(bytes: &[u8]) -> RawPayloadDigestsV1 {
+    RawPayloadDigestsV1 {
+        payload_sha256: sha256_v1(bytes),
+        parameters_sha256: sha256_v1(&bytes[section_range_wide_v1(0)]),
+        first_moments_sha256: sha256_v1(&bytes[section_range_wide_v1(1)]),
+        second_moments_sha256: sha256_v1(&bytes[section_range_wide_v1(2)]),
+    }
+}
+
+fn model_parameter_sha256_wide_v1(
+    parameters: &[NativeNamedParameterV1],
+    parameter_section: &[u8],
+) -> Result<[u8; 32], NativeTrainStatePayloadErrorV1> {
+    if parameters.len() != WIDE_PARAMETER_TENSOR_COUNT_V1
+        || parameter_section.len() != W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1
+    {
+        return Err(NativeTrainStatePayloadErrorV1::LayoutInvariant(
+            "wide model parameter stream input layout",
+        ));
+    }
+
+    let mut hasher = Sha256::new();
+    let mut cursor = 0usize;
+    for (parameter, (expected_name, expected_shape)) in parameters
+        .iter()
+        .zip(native_train_state_parameter_layout_wide_v1())
+    {
+        if parameter.name != expected_name || parameter.shape.as_slice() != expected_shape {
+            return Err(NativeTrainStatePayloadErrorV1::LayoutInvariant(
+                "wide model parameter stream named layout",
+            ));
+        }
+        let name_len = u32::try_from(parameter.name.len()).map_err(|_| {
+            NativeTrainStatePayloadErrorV1::LayoutInvariant("parameter name length overflow")
+        })?;
+        let rank = u32::try_from(parameter.shape.len()).map_err(|_| {
+            NativeTrainStatePayloadErrorV1::LayoutInvariant("parameter rank overflow")
+        })?;
+        let element_count = u64::try_from(parameter.values.len()).map_err(|_| {
+            NativeTrainStatePayloadErrorV1::LayoutInvariant("parameter element-count overflow")
+        })?;
+        let byte_count = parameter.values.len().checked_mul(4).ok_or(
+            NativeTrainStatePayloadErrorV1::LayoutInvariant("parameter byte-count overflow"),
+        )?;
+        let end = cursor.checked_add(byte_count).ok_or(
+            NativeTrainStatePayloadErrorV1::LayoutInvariant("parameter byte-end overflow"),
+        )?;
+        let raw = parameter_section.get(cursor..end).ok_or(
+            NativeTrainStatePayloadErrorV1::LayoutInvariant("parameter stream outside section"),
+        )?;
+
+        hasher.update(name_len.to_be_bytes());
+        hasher.update(parameter.name.as_bytes());
+        hasher.update(rank.to_be_bytes());
+        for dimension in &parameter.shape {
+            let dimension = u64::try_from(*dimension).map_err(|_| {
+                NativeTrainStatePayloadErrorV1::LayoutInvariant("parameter dimension overflow")
+            })?;
+            hasher.update(dimension.to_be_bytes());
+        }
+        hasher.update(element_count.to_be_bytes());
+        hasher.update(raw);
+        cursor = end;
+    }
+    if cursor != parameter_section.len() {
+        return Err(NativeTrainStatePayloadErrorV1::LayoutInvariant(
+            "wide model parameter stream trailing bytes",
+        ));
+    }
+    Ok(finalize_sha256_v1(hasher))
+}
+
+fn require_exact_payload_length_wide_v1(
+    bytes: &[u8],
+) -> Result<(), NativeTrainStatePayloadErrorV1> {
+    if bytes.len() != W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 {
+        return Err(NativeTrainStatePayloadErrorV1::ExactLength {
+            expected: W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1,
+            actual: bytes.len(),
+        });
+    }
+    Ok(())
+}
+
+fn section_range_wide_v1(index: usize) -> std::ops::Range<usize> {
+    let layout = W_NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[index];
+    layout.offset_bytes..layout.offset_bytes + layout.byte_count
+}
+
+fn section_bytes_wide_v1(
+    bytes: &[u8],
+    index: usize,
+) -> Result<&[u8], NativeTrainStatePayloadErrorV1> {
+    bytes
+        .get(section_range_wide_v1(index))
+        .ok_or(NativeTrainStatePayloadErrorV1::LayoutInvariant(
+            "section outside payload",
+        ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,6 +958,113 @@ mod tests {
             )
             .unwrap(),
             decoded
+        );
+    }
+
+    /// Capacity-experiment wide-net sibling of
+    /// `exact_payload_roundtrips_deterministically_with_all_hashes`
+    /// (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3), built from the
+    /// REAL production wide snapshot on disk (the same one genesis authoring
+    /// will load), zero-moment (genesis-shaped). Also proves fail-closed both
+    /// directions: the frozen decoder rejects a wide-length payload and the
+    /// wide decoder rejects a frozen-length payload.
+    #[test]
+    fn wide_payload_roundtrips_deterministically_with_all_hashes() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        assert_eq!(W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1, 33_009_048);
+        assert_eq!(W_NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1, 11_003_016);
+
+        let (manifest_path, payload_path) =
+            crate::common_model_snapshot_v1::wide_model_snapshot_paths_v1();
+        let (model, _record) = crate::common_model_snapshot_v1::build_wide_model_candidate_v1(
+            &manifest_path,
+            &payload_path,
+        )
+        .expect("real wide snapshot must load");
+        let parameters = model.parameter_snapshot_wide_v1();
+        let zero_moments: Vec<NativeNamedParameterV1> = parameters
+            .iter()
+            .map(|parameter| NativeNamedParameterV1 {
+                name: parameter.name,
+                shape: parameter.shape.clone(),
+                values: vec![0.0; parameter.values.len()],
+            })
+            .collect();
+        let scorer_bias_anchor_bits = parameters
+            .iter()
+            .find(|parameter| parameter.name == "scorer.2.bias")
+            .expect("scorer.2.bias tensor present")
+            .values[0]
+            .to_bits();
+        let snapshot = NativePolicyValueTrainSnapshotV1 {
+            adam_step: 0,
+            scorer_bias_anchor_bits,
+            parameters,
+            first_moments: zero_moments.clone(),
+            second_moments: zero_moments,
+        };
+
+        let encoded = encode_native_train_state_payload_wide_v1(&snapshot).unwrap();
+        let repeated = encode_native_train_state_payload_wide_v1(&snapshot).unwrap();
+        assert_eq!(encoded, repeated);
+        assert_eq!(encoded.bytes.len(), 33_009_048);
+        assert_eq!(encoded.digests.payload_sha256, sha256_v1(&encoded.bytes));
+        assert_eq!(
+            encoded.digests.parameters_sha256,
+            sha256_v1(&encoded.bytes[section_range_wide_v1(0)])
+        );
+
+        let decoded = decode_native_train_state_payload_wide_v1(
+            &encoded.bytes,
+            snapshot.adam_step,
+            snapshot.scorer_bias_anchor_bits,
+        )
+        .unwrap();
+        assert_eq!(decoded.snapshot, snapshot);
+        assert_eq!(decoded.digests, encoded.digests);
+        assert_eq!(
+            decode_native_train_state_payload_verified_wide_v1(
+                &encoded.bytes,
+                snapshot.adam_step,
+                snapshot.scorer_bias_anchor_bits,
+                &encoded.digests,
+            )
+            .unwrap(),
+            decoded
+        );
+
+        // Fail-closed direction 1: the frozen decoder rejects the wide
+        // (longer) payload length outright.
+        assert_eq!(
+            decode_native_train_state_payload_v1(
+                &encoded.bytes,
+                snapshot.adam_step,
+                snapshot.scorer_bias_anchor_bits,
+            )
+            .unwrap_err(),
+            NativeTrainStatePayloadErrorV1::ExactLength {
+                expected: NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1,
+                actual: encoded.bytes.len(),
+            }
+        );
+
+        // Fail-closed direction 2: the wide decoder rejects a real frozen
+        // (shorter) payload outright.
+        let (frozen_snapshot, _) = snapshot_with_distinct_moments_v1();
+        let frozen_encoded = encode_native_train_state_payload_v1(&frozen_snapshot).unwrap();
+        assert_eq!(
+            decode_native_train_state_payload_wide_v1(
+                &frozen_encoded.bytes,
+                frozen_snapshot.adam_step,
+                frozen_snapshot.scorer_bias_anchor_bits,
+            )
+            .unwrap_err(),
+            NativeTrainStatePayloadErrorV1::ExactLength {
+                expected: W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1,
+                actual: frozen_encoded.bytes.len(),
+            }
         );
     }
 
