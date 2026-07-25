@@ -1094,6 +1094,10 @@ mod windows_science_loop_tests {
             .unwrap_or_else(|_| "7777".to_owned())
             .parse()
             .expect("H2H_EVAL_SEED");
+        let ladder_updates: u64 = std::env::var("H2H_UPDATES")
+            .unwrap_or_else(|_| "256".to_owned())
+            .parse()
+            .expect("h2h updates");
         let episode_count = pairs.checked_mul(2).expect("H2H_PAIRS overflow");
 
         // Candidate: the SAME ladder run-record reconstruction as
@@ -1106,7 +1110,7 @@ mod windows_science_loop_tests {
             NativeTrainingNumericalBackendV1::CudaBurnDense,
             64,
             4,
-            256,
+            ladder_updates,
             2,
             32,
             16,
