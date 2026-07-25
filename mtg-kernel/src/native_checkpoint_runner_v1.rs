@@ -17,6 +17,7 @@ use crate::async_rollout_v2::AsyncRolloutConfigV2;
 use crate::native_checkpoint_inference_v1::{
     load_native_checkpoint_inference_v1, NativeCheckpointInferenceErrorV1,
 };
+use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_training_store_checkpoint_v3::CheckpointManifestV3;
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, parse_lower_hex_raw32_v1};
@@ -24,6 +25,7 @@ use crate::native_training_store_run_v2::ValidatedTrainRunV2;
 use crate::rl::PlayerSeatV1;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Runtime deadline ceiling for one in-process runner call. Harder or longer
@@ -407,11 +409,64 @@ impl FlatScoredTrajectoryObserverV2 for NativeCheckpointRunnerObserverV1 {
 ///
 /// Validation of the cheap runtime/range inputs precedes the 14 MiB payload
 /// decode. No model or rollout is constructed on an invalid configuration.
+///
+/// Thin wrapper over [`run_native_checkpoint_core_v1`] with the opponent
+/// seat's ladder engine hardcoded to `None`, i.e. today's frozen uniform
+/// opponent -- this function's behavior for every existing caller is
+/// unchanged by that factoring (see the core's docs).
 pub fn run_native_checkpoint_v1(
     run: &ValidatedTrainRunV2,
     checkpoint: &CheckpointManifestV3,
     checkpoint_payload: &[u8],
     config: NativeCheckpointRunnerConfigV1,
+) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, None)
+}
+
+/// EVAL-ONLY (Self-Play Ladder Design Contract S2, Deliverable 2 head-to-head
+/// evaluator). The SAME rollout invocation as [`run_native_checkpoint_v1`],
+/// with one added parameter threading an optional ladder opponent engine
+/// into the rollout's opponent seat instead of the hardcoded `None`
+/// `run_native_checkpoint_v1` passes.
+///
+/// Why this exists instead of a parameter on `run_native_checkpoint_v1`
+/// itself: that would be a production-path signature change reaching every
+/// caller of the frozen uniform-opponent eval path (the science loop, the
+/// panel/v0 saturation probes, and any future panel/v1 tooling), none of
+/// which should ever be able to pass anything but `None`. Checked first per
+/// the task's own instruction: `run_native_checkpoint_v1`'s only opponent
+/// hook is the hardcoded `None` third argument to
+/// `run_async_flat_scored_rollout_native_observed_v2` a few lines below;
+/// the executor-side ladder threading from commit da8e486
+/// (`NativeTrainingExecutorV1::set_ladder_opponent_v1`) reaches only the
+/// TRAINING loop's executor, not this runner. This function is the
+/// documented fallback: a copy of the rollout invocation with the engine
+/// threaded, factored as a shared private core (rather than a hand-copied
+/// duplicate of the ~100-line body) so the two entry points can never drift
+/// out of sync, and `run_native_checkpoint_v1`'s own behavior is provably
+/// unchanged (it is now a one-line wrapper over the identical core with
+/// `None`, covered by this module's existing test suite).
+///
+/// `cfg(test)`-gated: does not exist in a non-test build, so it can never be
+/// reached from a training run record or any non-test/non-eval-tooling
+/// caller.
+#[cfg(test)]
+pub(crate) fn run_native_checkpoint_with_ladder_opponent_eval_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    checkpoint_payload: &[u8],
+    config: NativeCheckpointRunnerConfigV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, ladder_opponent)
+}
+
+fn run_native_checkpoint_core_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    checkpoint_payload: &[u8],
+    config: NativeCheckpointRunnerConfigV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
     let topology = validate_runner_config_v1(run, config)?;
     let expected_episode_count = usize::try_from(config.episode_count)
@@ -464,7 +519,7 @@ pub fn run_native_checkpoint_v1(
     let observed = run_async_flat_scored_rollout_native_observed_v2(
         rollout_config,
         config.evaluation_base_seed,
-        None,
+        ladder_opponent,
         &mut scorer,
         observer,
     );
