@@ -57,7 +57,8 @@ use crate::native_checkpoint_inference_v1::{
     NativeCheckpointInferenceV1,
 };
 use crate::native_training_store_checkpoint_v3::{
-    decode_genesis_checkpoint_manifest_v3, CheckpointManifestV3, CheckpointManifestV3Error,
+    decode_genesis_checkpoint_manifest_v3, derive_genesis_model_parameter_sha256_v2_v3,
+    CheckpointManifestV3, CheckpointManifestV3Error,
 };
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
 use crate::native_training_store_layout_v2::NativeTrainingStoreFinalNameV2;
@@ -265,12 +266,17 @@ impl LadderCheckpointAuthorityV1 {
 }
 
 /// Amendment 1 / Section 8A point 2: converts the continual-initialization
-/// checkpoint reference into the identically-shaped pool-ref type so it
-/// resolves through the SAME chain-proven loader
+/// checkpoint reference's first five fields into the identically-shaped
+/// pool-ref type so it resolves through the SAME chain-proven loader
 /// (`resolve_ladder_checkpoint_authority_v1`) the pool's own three refs use,
-/// with no new resolution logic. See the type-level doc comment on
-/// `OpponentLadderInitializationContractV1` for why the two types stay
-/// deliberately separate at the record layer despite the shape coincidence.
+/// with no new resolution logic. `derived_model_parameter_sha256` (design
+/// directive slice 2) is deliberately NOT carried across here -- it is a
+/// self-contained genesis-validation pin consumed directly from the record
+/// by `native_training_store_checkpoint_v3`'s dispatch, not part of the
+/// file-resolution digest gate this conversion feeds. See the type-level
+/// doc comment on `OpponentLadderInitializationContractV1` for why the two
+/// types stay deliberately separate at the record layer despite the
+/// five-field shape coincidence.
 pub(crate) fn ladder_init_as_checkpoint_ref_v1(
     init: &OpponentLadderInitializationContractV1,
 ) -> OpponentLadderCheckpointRefV1 {
@@ -337,9 +343,11 @@ fn read_and_gate_v1(
 /// 1 / Section 8A point 2's continual-initialization section) from a
 /// checkpoint that already exists on disk, without hand-maintaining a JSON
 /// file of pre-computed digests. The returned struct's fields map 1:1 onto
-/// [`crate::native_training_store_run_v2::OpponentLadderInitializationContractV1`]
-/// (identical shape); callers pick whichever wrapper their record section
-/// needs.
+/// [`crate::native_training_store_run_v2::OpponentLadderInitializationContractV1`]'s
+/// first five fields; callers pick whichever wrapper their record section
+/// needs. For the continual-initialization section specifically, prefer
+/// [`stage_ladder_checkpoint_initialization_v1`], which also computes the
+/// section's sixth (required) field.
 pub(crate) fn stage_ladder_checkpoint_ref_v1(
     base_dir: &Path,
     generation: u64,
@@ -374,6 +382,39 @@ pub(crate) fn stage_ladder_checkpoint_ref_v1(
         checkpoint_sha256: lower_hex_raw32_v1(sha256_v1(&checkpoint_bytes)),
         sidecar_sha256: lower_hex_raw32_v1(sha256_v1(&sidecar_bytes)),
         state_sha256: lower_hex_raw32_v1(sha256_v1(&state_bytes)),
+    })
+}
+
+/// Design directive slice 2 (making ladder-init records SELF-CONTAINED for
+/// genesis validation): stages a COMPLETE
+/// `OpponentLadderInitializationContractV1` -- [`stage_ladder_checkpoint_ref_v1`]'s
+/// five-field digest-pin, plus `derived_model_parameter_sha256` computed
+/// from that SAME checkpoint's own resolved payload
+/// (`resolve_ladder_checkpoint_authority_v1` +
+/// `native_training_store_checkpoint_v3::derive_genesis_model_parameter_sha256_v2_v3`).
+/// Record authoring (this function) and genesis authoring/validation
+/// (`build_genesis_checkpoint_manifest_v2_v3` /
+/// `decode_genesis_checkpoint_manifest_v2_v3_self_contained`) both derive
+/// the digest through the identical
+/// `derive_genesis_weights_only_payload_v2_v3` byte surgery, so the two can
+/// never independently disagree about what the reference's weights hash to.
+pub(crate) fn stage_ladder_checkpoint_initialization_v1(
+    base_dir: &Path,
+    generation: u64,
+) -> Result<OpponentLadderInitializationContractV1, LadderPoolResolutionErrorV1> {
+    let checkpoint_ref = stage_ladder_checkpoint_ref_v1(base_dir, generation)?;
+    let authority = resolve_ladder_checkpoint_authority_v1(base_dir, &checkpoint_ref)?;
+    let derived_model_parameter_sha256 = derive_genesis_model_parameter_sha256_v2_v3(
+        authority.checkpoint(),
+        authority.payload(),
+    )?;
+    Ok(OpponentLadderInitializationContractV1 {
+        source_run_sha256: checkpoint_ref.source_run_sha256,
+        generation: checkpoint_ref.generation,
+        checkpoint_sha256: checkpoint_ref.checkpoint_sha256,
+        sidecar_sha256: checkpoint_ref.sidecar_sha256,
+        state_sha256: checkpoint_ref.state_sha256,
+        derived_model_parameter_sha256,
     })
 }
 
@@ -656,6 +697,7 @@ mod tests {
             checkpoint_sha256: "b".repeat(64),
             sidecar_sha256: "c".repeat(64),
             state_sha256: "d".repeat(64),
+            derived_model_parameter_sha256: "e".repeat(64),
         };
         assert_eq!(
             ladder_init_as_checkpoint_ref_v1(&init),
@@ -687,6 +729,7 @@ mod tests {
             checkpoint_sha256: "0".repeat(64),
             sidecar_sha256: staged.sidecar_sha256.clone(),
             state_sha256: staged.state_sha256.clone(),
+            derived_model_parameter_sha256: "e".repeat(64),
         };
 
         let checkpoint_ref = ladder_init_as_checkpoint_ref_v1(&init);
