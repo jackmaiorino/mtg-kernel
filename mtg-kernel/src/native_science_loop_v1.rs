@@ -1648,6 +1648,9 @@ mod windows_science_loop_tests {
         let mut wins = 0_u64;
         let mut losses = 0_u64;
         let mut draws = 0_u64;
+        let mut seat_wins = [0_u64; 2];
+        let mut seat_losses = [0_u64; 2];
+        let mut seat_draws = [0_u64; 2];
         // PAIR-level win count: Amendment 1 / Section 8A point 1 REJECTS
         // this net-positive-per-pair metric as the gate quantity ("at true
         // parity under CRN seat symmetry, winning both legs of a pair is
@@ -1673,9 +1676,18 @@ mod windows_science_loop_tests {
                 };
                 let reward = episode.terminal.terminal_reward[seat_index];
                 match reward {
-                    1 => wins += 1,
-                    -1 => losses += 1,
-                    0 => draws += 1,
+                    1 => {
+                        wins += 1;
+                        seat_wins[seat_index] += 1;
+                    }
+                    -1 => {
+                        losses += 1;
+                        seat_losses[seat_index] += 1;
+                    }
+                    0 => {
+                        draws += 1;
+                        seat_draws[seat_index] += 1;
+                    }
                     other => panic!("unexpected learner reward {other} at a natural terminal"),
                 }
                 pair_reward += reward;
@@ -1686,9 +1698,26 @@ mod windows_science_loop_tests {
         }
         let total = wins + losses + draws;
         assert_eq!(total, episode_count);
+        assert_eq!(
+            seat_wins[0] + seat_losses[0] + seat_draws[0],
+            pairs,
+            "learner-as-P0 total must equal H2H_PAIRS"
+        );
+        assert_eq!(
+            seat_wins[1] + seat_losses[1] + seat_draws[1],
+            pairs,
+            "learner-as-P1 total must equal H2H_PAIRS"
+        );
         println!(
             "H2H candidate_gen={candidate_gen} wide={wide} W/L/D {wins}/{losses}/{draws} of {total}"
         );
+        for (seat_label, seat) in [("P0", 0_usize), ("P1", 1_usize)] {
+            let seat_total = seat_wins[seat] + seat_losses[seat] + seat_draws[seat];
+            println!(
+                "H2H candidate_gen={candidate_gen} wide={wide} learner_seat={seat_label} W/L/D {}/{}/{} of {seat_total}",
+                seat_wins[seat], seat_losses[seat], seat_draws[seat]
+            );
+        }
         // Labeled diagnostic only (Amendment 1 / Section 8A point 1 rejects
         // this as the gate quantity); NOT fed to the gate function below.
         println!(
