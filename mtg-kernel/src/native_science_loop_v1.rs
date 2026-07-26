@@ -1547,6 +1547,18 @@ mod windows_science_loop_tests {
 
         // Opponent: loaded DIRECTLY from a full Store root (digest
         // re-validation optional, eval-only tooling -- see docs above).
+        //
+        // H2H_OPPONENT_GEN (added 2026-07-25 after the promoted(2)
+        // mismeasurement disclosure): when set, the opponent checkpoint is
+        // loaded at EXACTLY that generation through the same validated
+        // boundary walk the candidate side uses, instead of the store's
+        // latest. Unset preserves the original latest-loading behavior
+        // byte-for-byte. Rationale: a pool member whose PINNED generation
+        // differs from its store HEAD (first instance: pool3 primary,
+        // pinned g384, head g512) is silently mismeasured by latest-loading;
+        // every h2h invocation SHOULD pin this knob explicitly. The resolved
+        // opponent generation is always printed below so logs self-describe
+        // either way.
         let opponent_run_bytes =
             fs::read(std::path::Path::new(&opponent_store_root).join("run.json"))
                 .expect("H2H_OPPONENT_STORE_ROOT/run.json must be readable");
@@ -1555,8 +1567,27 @@ mod windows_science_loop_tests {
             ValidatedNativeTrainingStoreRootV2::open_v2(&opponent_store_root).unwrap();
         let opponent_state =
             validate_native_training_store_v2(&opponent_root, &opponent_run).unwrap();
-        let opponent_checkpoint = opponent_state.latest_checkpoint();
-        let opponent_payload = opponent_state.latest_payload();
+        let opponent_gen_knob: Option<u64> = std::env::var("H2H_OPPONENT_GEN")
+            .ok()
+            .map(|value| value.parse().expect("H2H_OPPONENT_GEN u64"));
+        let opponent_boundary;
+        let (opponent_checkpoint, opponent_payload) = match opponent_gen_knob {
+            Some(generation) => {
+                opponent_boundary =
+                    load_native_training_boundary_v2(&opponent_root, &opponent_run, generation)
+                        .unwrap();
+                (opponent_boundary.checkpoint(), opponent_boundary.payload())
+            }
+            None => (
+                opponent_state.latest_checkpoint(),
+                opponent_state.latest_payload(),
+            ),
+        };
+        println!(
+            "H2H opponent_resolved_gen={} pinned={}",
+            opponent_checkpoint.generation_index(),
+            opponent_gen_knob.is_some()
+        );
         let primary = load_native_checkpoint_inference_v1(
             &opponent_run,
             opponent_checkpoint,
