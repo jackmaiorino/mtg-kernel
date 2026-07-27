@@ -349,6 +349,16 @@ pub(crate) struct NativePolicyValueOutputV1 {
     pub(crate) value: f32,
 }
 
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativeActionIngressCaptureV1 {
+    pub(crate) identity: &'static str,
+    pub(crate) schema: NativeEncodedDecisionSchemaV1,
+    pub(crate) action_count: usize,
+    pub(crate) hidden_dim: usize,
+    pub(crate) action_ref_pooled: Vec<f32>,
+}
+
 /// Ordered, owned copy of one Torch-compatible named parameter.  The order
 /// and `[output, input]` linear-weight layout come from `named_parameters()`.
 #[derive(Clone, Debug, PartialEq)]
@@ -532,6 +542,14 @@ impl NativePolicyValueNetV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        self.forward_with_action_ingress_capture_v1(encoded, None)
+    }
+
+    fn forward_with_action_ingress_capture_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.config)?;
 
         let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT_V1);
@@ -624,6 +642,10 @@ impl NativePolicyValueNetV1 {
         }
         // action_ref_card_ids is validated above because Python validates it,
         // but kernel-policy-value-net-8 likewise does not consume it here.
+        if let Some(capture) = action_ref_pooled_capture.as_mut() {
+            capture.clear();
+            capture.extend_from_slice(&action_ref_pooled);
+        }
 
         let mut action_input = Vec::with_capacity(counts.action_count * ACTION_ENCODER_INPUT_V1);
         for action in 0..counts.action_count {
@@ -669,6 +691,29 @@ impl NativePolicyValueNetV1 {
             });
         }
         Ok(NativePolicyValueOutputV1 { logits, value })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn diagnostic_forward_action_ingress_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<(NativePolicyValueOutputV1, NativeActionIngressCaptureV1), NativePolicyValueErrorV1>
+    {
+        let schema = encoded.schema;
+        let action_count = encoded.action_features.len() / ACTION_FEATURE_DIM_V1;
+        let mut action_ref_pooled = Vec::new();
+        let output =
+            self.forward_with_action_ingress_capture_v1(encoded, Some(&mut action_ref_pooled))?;
+        Ok((
+            output,
+            NativeActionIngressCaptureV1 {
+                identity: "native-policy-value-net8-exact-pre-action-encoder-ingress-v1",
+                schema,
+                action_count,
+                hidden_dim: HIDDEN_DIM_V1,
+                action_ref_pooled,
+            },
+        ))
     }
 
     /// Transactional caller-owned output adapter. On every error, both

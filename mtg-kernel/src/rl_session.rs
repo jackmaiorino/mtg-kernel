@@ -3668,6 +3668,15 @@ pub struct FastActorSessionV1 {
 #[derive(Clone)]
 pub struct FastActorSessionSnapshotV1(FastActorSessionV1);
 
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FastActorSemanticBindingAuditV2 {
+    pub(crate) binding: FlatActionDecisionBindingV2,
+    pub(crate) operational_actions: Vec<FlatActionCoreV1>,
+    pub(crate) operational_refs: Vec<FlatActionRefV2>,
+    pub(crate) operational_objects: Vec<FlatActionObjectV2>,
+}
+
 impl RlEpisodeSessionV1 {
     pub fn reset(episode_id: u64, env_seed: u64, max_physical_decisions: u64) -> Self {
         let max_policy_steps = max_physical_decisions.saturating_mul(128).max(1);
@@ -4890,6 +4899,48 @@ impl FastActorSessionV1 {
                 .iter()
                 .map(|candidate| candidate.semantic.clone())
                 .collect()
+        })
+    }
+
+    /// Test-only semantic-to-flat audit bridge.
+    ///
+    /// The caller must supply the retained ordered semantic rows. Equality is
+    /// checked against the live private candidates before the production V2
+    /// cache validator regenerates every core/reference row through
+    /// `flat_action_core_and_refs_v1`. Only that validated cache is copied into
+    /// the returned typed commitment.
+    #[cfg(test)]
+    pub(crate) fn diagnostic_bind_retained_action_semantics_v2(
+        &self,
+        retained: &[ActionSemanticV1],
+    ) -> Result<FastActorSemanticBindingAuditV2, FlatActionDecisionSliceErrorV1> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V2
+            || current.candidates.len() != retained.len()
+            || current
+                .candidates
+                .iter()
+                .zip(retained)
+                .any(|(candidate, retained)| candidate.semantic != *retained)
+        {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        if let Some(error) = current.flat_action_cache_error_v2 {
+            return Err(error);
+        }
+        let cache = current
+            .flat_action_cache_v2
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        flat_validate_action_cache_v2(self, current, cache)?;
+        Ok(FastActorSemanticBindingAuditV2 {
+            binding: cache.binding,
+            operational_actions: cache.actions.clone(),
+            operational_refs: cache.refs.clone(),
+            operational_objects: cache.objects.clone(),
         })
     }
 

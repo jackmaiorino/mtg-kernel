@@ -311,6 +311,22 @@ struct EncodedActionV1 {
     ref_node_indices: Vec<i64>,
 }
 
+/// Test-only audit material from the exact frozen action encoder.
+///
+/// This intentionally exposes no alternate encoding path: the diagnostic
+/// calls the same private canonical-JSON, SHA-512, explicit-feature, and
+/// action-reference implementation used by normal V2 tensorization.
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativeFlatActionSemanticBindingV2 {
+    pub(crate) canonical_json: Vec<u8>,
+    pub(crate) sha512_blocks: [[u8; ACTION_HASH_BLOCK_BYTES_V1]; ACTION_HASH_BLOCK_COUNT_V1],
+    pub(crate) action_features: [f32; NATIVE_FLAT_ACTION_FEATURE_DIM_V1],
+    pub(crate) action_ref_features: Vec<[f32; NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1]>,
+    pub(crate) action_ref_card_ids: Vec<i64>,
+    pub(crate) action_ref_node_indices: Vec<i64>,
+}
+
 struct ActionHalfV1 {
     action_features: Vec<f32>,
     action_ref_features: Vec<f32>,
@@ -341,6 +357,58 @@ pub(crate) fn fill_native_flat_action_tensors_v2(
     output: &mut NativeFlatDecisionTensorV2,
 ) -> Result<(), NativeFlatTensorErrorV2> {
     fill_native_flat_action_tensors_v1(decision, output)
+}
+
+#[cfg(test)]
+pub(crate) fn diagnostic_native_flat_action_semantic_bindings_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+) -> Result<Vec<NativeFlatActionSemanticBindingV2>, NativeFlatTensorErrorV2> {
+    if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
+        return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
+    }
+    validate_auxiliary_tables_v2(decision)?;
+    let projection = encode_objects_v2(decision)?.projection;
+    let actions = decision.actions();
+    let refs = decision.action_refs();
+    if actions.is_empty() {
+        return Err(NativeFlatTensorErrorV2::EmptyActionTable);
+    }
+
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(actions.len())
+        .map_err(|_| NativeFlatTensorErrorV2::AllocationFailed)?;
+    let mut ref_cursor = 0usize;
+    for (action_index, action) in actions.iter().enumerate() {
+        let start = usize::try_from(action.ref_start)
+            .map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)?;
+        let end = start
+            .checked_add(usize::from(action.ref_len))
+            .ok_or(NativeFlatTensorErrorV2::CheckedIntegerRange)?;
+        if start != ref_cursor || end > refs.len() {
+            return Err(NativeFlatTensorErrorV2::ActionReferenceRange);
+        }
+        let encoded = encode_action_v1(
+            decision,
+            action_index,
+            action,
+            &refs[start..end],
+            Some(&projection),
+        )?;
+        output.push(NativeFlatActionSemanticBindingV2 {
+            canonical_json: encoded.canonical_json,
+            sha512_blocks: encoded.sha512_blocks,
+            action_features: encoded.features,
+            action_ref_features: encoded.ref_features,
+            action_ref_card_ids: encoded.ref_card_ids,
+            action_ref_node_indices: encoded.ref_node_indices,
+        });
+        ref_cursor = end;
+    }
+    if ref_cursor != refs.len() {
+        return Err(NativeFlatTensorErrorV2::ActionReferenceRange);
+    }
+    Ok(output)
 }
 
 fn validate_native_flat_action_half_v1(
