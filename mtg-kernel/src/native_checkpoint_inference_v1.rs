@@ -1171,6 +1171,9 @@ fn validate_payload_layout_wide_v1(checkpoint: &CheckpointManifestV3) -> Result<
 }
 
 #[cfg(test)]
+mod checkpoint_reliance_probe_v1;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::async_flat_scored_rollout_v2::run_async_flat_scored_rollout_v2;

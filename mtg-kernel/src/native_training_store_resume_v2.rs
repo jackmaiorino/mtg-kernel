@@ -215,6 +215,9 @@ pub fn validate_native_training_store_v2(
 #[derive(Debug)]
 pub struct LoadedNativeTrainingBoundaryV2 {
     generation_index: u64,
+    #[cfg(test)]
+    #[cfg_attr(not(windows), allow(dead_code))]
+    boundary: ValidatedNativeTrainingBoundaryV2,
     checkpoint: CheckpointManifestV3,
     payload: Vec<u8>,
 }
@@ -226,6 +229,13 @@ impl LoadedNativeTrainingBoundaryV2 {
 
     pub const fn checkpoint(&self) -> &CheckpointManifestV3 {
         &self.checkpoint
+    }
+
+    /// Exact validated sidecar/head identity for the named boundary.
+    #[cfg(test)]
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) const fn boundary(&self) -> &ValidatedNativeTrainingBoundaryV2 {
+        &self.boundary
     }
 
     /// Exact reopened state-payload bytes of the named boundary.
@@ -271,6 +281,8 @@ pub fn load_native_training_boundary_v2(
     if generation_index == state.latest_generation_index {
         return Ok(LoadedNativeTrainingBoundaryV2 {
             generation_index,
+            #[cfg(test)]
+            boundary: state.latest_boundary,
             checkpoint: state.latest_checkpoint,
             payload: state.latest_payload,
         });
@@ -283,6 +295,8 @@ pub fn load_native_training_boundary_v2(
         if current == generation_index {
             return Ok(LoadedNativeTrainingBoundaryV2 {
                 generation_index,
+                #[cfg(test)]
+                boundary: generation.boundary,
                 checkpoint: generation.checkpoint,
                 payload: generation.payload,
             });
