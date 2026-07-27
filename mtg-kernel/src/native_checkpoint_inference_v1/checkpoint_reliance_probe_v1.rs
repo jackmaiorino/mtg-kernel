@@ -2010,3 +2010,4 @@ fn trained_checkpoint_hash_vs_direct_reliance_probe_v1() {
 }
 
 mod action_ingress_admission_v1;
+mod action_ingress_admission_v2;
