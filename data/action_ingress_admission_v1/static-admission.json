@@ -1,0 +1,3898 @@
+{
+  "admission_criteria": {
+    "canonical_equivalence_allowlist_exact": true,
+    "collisions_empty": true,
+    "combat_case_preservation": true,
+    "coverage_exact_202_of_202": true,
+    "frozen_no_repair_byte_identity": true,
+    "mutation_scope_exact": true,
+    "repair_pair_invariants": true,
+    "repaired_structured_aliases_empty": true
+  },
+  "authority": {
+    "audit_dependency_path": "python/tools/audit_feature_coverage_collision_v1.py",
+    "audit_dependency_sha256": "c73c0d3ebedc3ba53753991ededeb6dc4e290284b7c714f3042cc11b36556c0c",
+    "encoding_contract_fingerprint": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+    "feature_contract_fingerprint": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+    "static_tool_path": "python/tools/audit_action_ingress_static_admission_v1.py",
+    "static_tool_sha256": "3f2d8f5a1960c417953d5365fc092aaf8ebdcea28805e2b31665cae2d8cf519a"
+  },
+  "canonical_equivalences": {
+    "expected_groups": [
+      [
+        "actor-p0-relative-self",
+        "actor-p1-relative-self",
+        "metadata-invariance-a",
+        "metadata-invariance-b"
+      ],
+      [
+        "boolean-optional-use-true",
+        "primary-choose_optional_cost_use"
+      ],
+      [
+        "optional-choice-SacrificeLand",
+        "primary-choose_optional_cost_which"
+      ]
+    ],
+    "observed_groups": [
+      [
+        "actor-p0-relative-self",
+        "actor-p1-relative-self",
+        "metadata-invariance-a",
+        "metadata-invariance-b"
+      ],
+      [
+        "boolean-optional-use-true",
+        "primary-choose_optional_cost_use"
+      ],
+      [
+        "optional-choice-SacrificeLand",
+        "primary-choose_optional_cost_which"
+      ]
+    ],
+    "unexpected_groups": []
+  },
+  "collisions": {
+    "frozen_complete_representation": [],
+    "quantized_tail": [],
+    "raw_digest": [],
+    "repaired_complete_representation": []
+  },
+  "combat_boolean_repair": {
+    "case_mutations": [
+      {
+        "changed_coordinates": [
+          69
+        ],
+        "name": "boolean-attacker-true"
+      },
+      {
+        "changed_coordinates": [
+          69
+        ],
+        "name": "boolean-blocker-true"
+      },
+      {
+        "changed_coordinates": [
+          69
+        ],
+        "name": "primary-choose_attacker_inclusion"
+      },
+      {
+        "changed_coordinates": [
+          69
+        ],
+        "name": "primary-choose_blocker_inclusion"
+      }
+    ],
+    "pairs": [
+      {
+        "cases": [
+          "boolean-attacker-false",
+          "boolean-attacker-true"
+        ],
+        "false_case_changed_coordinates": [],
+        "frozen_direct_prefix_equal": true,
+        "invariants_passed": true,
+        "preservation": {
+          "action_references": true,
+          "canonical_json": true,
+          "non69_direct_bits": true,
+          "quantized_digest_tail": true,
+          "raw_digest": true
+        },
+        "repaired_direct_differing_coordinates": [
+          69
+        ],
+        "slot69_false_f32_le_hex": "00000000",
+        "slot69_true_f32_le_hex": "0000803f",
+        "true_case_changed_coordinates": [
+          69
+        ]
+      },
+      {
+        "cases": [
+          "boolean-blocker-false",
+          "boolean-blocker-true"
+        ],
+        "false_case_changed_coordinates": [],
+        "frozen_direct_prefix_equal": true,
+        "invariants_passed": true,
+        "preservation": {
+          "action_references": true,
+          "canonical_json": true,
+          "non69_direct_bits": true,
+          "quantized_digest_tail": true,
+          "raw_digest": true
+        },
+        "repaired_direct_differing_coordinates": [
+          69
+        ],
+        "slot69_false_f32_le_hex": "00000000",
+        "slot69_true_f32_le_hex": "0000803f",
+        "true_case_changed_coordinates": [
+          69
+        ]
+      }
+    ]
+  },
+  "corpus": {
+    "case_identity_digest_contract": "sha256(canonical-json(case_identity_rows sorted lexicographically by name))",
+    "case_identity_rows": [
+      {
+        "canonical_sha256": "0c555fb1daf12d1158d56c43610628272b6e94805df2523702293bc00a462ebb",
+        "frozen_action_features_sha256": "aa63ab994e109d74ace34903b5070edeefe65c530e61fe36810045ad8e771140",
+        "frozen_complete_representation_sha256": "f703f2507400d2d53baa105781c5fb8e5c7bc6fbee778a511b1aa4d0feaed69e",
+        "name": "actor-p0-relative-self",
+        "quantized_tail_sha256": "aa12809063a9d4e07609bb6332c0c60a9ff70e43890f54d861e9dc36ee6772eb",
+        "raw_digest_sha256": "26051ebd8c17d283ac4ecd47f8348be5a23b7d80c1fe3d16b97c37d11230986e",
+        "repaired_action_features_sha256": "aa63ab994e109d74ace34903b5070edeefe65c530e61fe36810045ad8e771140",
+        "repaired_complete_representation_sha256": "f703f2507400d2d53baa105781c5fb8e5c7bc6fbee778a511b1aa4d0feaed69e",
+        "repaired_structured_signature_sha256": "98cd66b8f1baa76b484d59b523c1f20ef6f7ce65f3427b8a44c631b947f20709"
+      },
+      {
+        "canonical_sha256": "0c555fb1daf12d1158d56c43610628272b6e94805df2523702293bc00a462ebb",
+        "frozen_action_features_sha256": "aa63ab994e109d74ace34903b5070edeefe65c530e61fe36810045ad8e771140",
+        "frozen_complete_representation_sha256": "f703f2507400d2d53baa105781c5fb8e5c7bc6fbee778a511b1aa4d0feaed69e",
+        "name": "actor-p1-relative-self",
+        "quantized_tail_sha256": "aa12809063a9d4e07609bb6332c0c60a9ff70e43890f54d861e9dc36ee6772eb",
+        "raw_digest_sha256": "26051ebd8c17d283ac4ecd47f8348be5a23b7d80c1fe3d16b97c37d11230986e",
+        "repaired_action_features_sha256": "aa63ab994e109d74ace34903b5070edeefe65c530e61fe36810045ad8e771140",
+        "repaired_complete_representation_sha256": "f703f2507400d2d53baa105781c5fb8e5c7bc6fbee778a511b1aa4d0feaed69e",
+        "repaired_structured_signature_sha256": "98cd66b8f1baa76b484d59b523c1f20ef6f7ce65f3427b8a44c631b947f20709"
+      },
+      {
+        "canonical_sha256": "cc9e1469d0eda7e162b472f78d837d1b20f2dad713ffb43621f0a916c73125fc",
+        "frozen_action_features_sha256": "e8b4828939be5145af1f9b40cdf64279157cc800938126f522e9777c186f9ae4",
+        "frozen_complete_representation_sha256": "1d1512d3b5c4db3bd09fb71b5ae254584c59fa6722517c8688d6fb1556f90b9b",
+        "name": "boolean-attacker-false",
+        "quantized_tail_sha256": "fd52eac5c9435115a4076e07d55c43fda705ca100deabce1e6afab73f046dc07",
+        "raw_digest_sha256": "26732c0d3111d42f3d91ccec26059213b222c93fac9372785048f88f2bac2657",
+        "repaired_action_features_sha256": "e8b4828939be5145af1f9b40cdf64279157cc800938126f522e9777c186f9ae4",
+        "repaired_complete_representation_sha256": "1d1512d3b5c4db3bd09fb71b5ae254584c59fa6722517c8688d6fb1556f90b9b",
+        "repaired_structured_signature_sha256": "7f2acef15d4009759dc1ea8b8b6b18c8f5b4e47cde531d3f9e11737fa160da79"
+      },
+      {
+        "canonical_sha256": "995a627a13f9d17229c9f37cdf859c743c8b4cb41714f1d91473ed632a039fc9",
+        "frozen_action_features_sha256": "faff22b4db8e9f1db0d4d97554b61f32aa664a6cf5c154d0e7cc62b48d3717af",
+        "frozen_complete_representation_sha256": "5d2910e99a01baf3cdaa8450108ced73e51eddc4170e423019ff0cd053ce3606",
+        "name": "boolean-attacker-true",
+        "quantized_tail_sha256": "5295eeeb5e1a60935b6d8cb4c3783ab4cf9b68c43e3b600a63ec66e1de745700",
+        "raw_digest_sha256": "1130a8ba0d6c8978441b55d09d55d3c98abd12c98c889b945885260f41da2d42",
+        "repaired_action_features_sha256": "f5dec3d30c348c89e510876a0f417634fd7f9745964ff4448a6f7aeeaa7c8fd4",
+        "repaired_complete_representation_sha256": "f5e6541e93a99da93238d70235c5b0057a321d38e0b49805db105f693c1ae856",
+        "repaired_structured_signature_sha256": "3e1c702dbff9afe3488a233b54e747b1fc48329dac4eae6c3fa0c0b065fa8c76"
+      },
+      {
+        "canonical_sha256": "9980cc5354f09467f2921a22582b51f8729d980d982115ee314707dc2f478621",
+        "frozen_action_features_sha256": "e5379547aba98c4e96b4ba712d407897e09a0d97fb9d3162ae9b3fa6eed1440d",
+        "frozen_complete_representation_sha256": "ac71f02d66947d0b0c654be42503ebbde88c2f7ac672ff13d400bba71d665473",
+        "name": "boolean-blocker-false",
+        "quantized_tail_sha256": "a3331a41932ab4e59b4bb55de26b43804e056f816e442263473f8c41657e69e4",
+        "raw_digest_sha256": "829348f62a3db4d742319ed6810800b2afc4eb9d1ed0081e8aad6f3b9358b046",
+        "repaired_action_features_sha256": "e5379547aba98c4e96b4ba712d407897e09a0d97fb9d3162ae9b3fa6eed1440d",
+        "repaired_complete_representation_sha256": "ac71f02d66947d0b0c654be42503ebbde88c2f7ac672ff13d400bba71d665473",
+        "repaired_structured_signature_sha256": "562a23155f30884129ec064a0a2178f3d902978f1e352a2521eeb95d15d1659c"
+      },
+      {
+        "canonical_sha256": "932e81283d9f7fb10b202f2c0ff595f432db4742ee2878daee5d3a1b1cdb8ab0",
+        "frozen_action_features_sha256": "54d47ad9bbe2d817740f04db4f656410341670b124030f4977284d10994cd789",
+        "frozen_complete_representation_sha256": "ff8926a59c6d456cf9683bc4cf37a66ddbc37c6b35538ebd9748eb0bf8bb8f95",
+        "name": "boolean-blocker-true",
+        "quantized_tail_sha256": "fb09e45d9d33ac62bfce504b78e4bf52fa00c033c35a053e35df1a5884a09db2",
+        "raw_digest_sha256": "0e76e9023132adfa86af0c7166fab0ea650f66d5c953e94bf2f0f555e9f097cb",
+        "repaired_action_features_sha256": "a6597f376dce15bc5f15c1988d831521f61ab5cfbb8a949ddc55a4f6f62d8744",
+        "repaired_complete_representation_sha256": "c02c9967d2c6736d8f5b8cc0f5dcad48c22eb7a442699f18cee2d4c01fd5433e",
+        "repaired_structured_signature_sha256": "312003790628e679171637a1bc85a99655169608e1429c9f056d9b7ba8a1301c"
+      },
+      {
+        "canonical_sha256": "4f91219a3240cf99cff8a6617a0f011b308b1ca846215959e6dce98fda2c9443",
+        "frozen_action_features_sha256": "c975c01a5596b9db3a38d41b0294e659ab687a1c21ecddd4e60998a077b6f629",
+        "frozen_complete_representation_sha256": "61e6324eab66f0cb3ba9a572ff00cdc868969f98d18622b13880f04d4a9afedb",
+        "name": "boolean-copy-payment-false",
+        "quantized_tail_sha256": "f81d093ff34b1877d3d9877ac16537e52075e84b5e8f099b90ca75ba279cbcf4",
+        "raw_digest_sha256": "3e136d81c69bd0fd97627a33148291549bacf5cf467a406c5a0b689f8dcdb71a",
+        "repaired_action_features_sha256": "c975c01a5596b9db3a38d41b0294e659ab687a1c21ecddd4e60998a077b6f629",
+        "repaired_complete_representation_sha256": "61e6324eab66f0cb3ba9a572ff00cdc868969f98d18622b13880f04d4a9afedb",
+        "repaired_structured_signature_sha256": "7ea62bfed3a5b1a48586d95adecd7a8fd6450aa60a646fc8f88e7d037c6b42b7"
+      },
+      {
+        "canonical_sha256": "2b9c345690a0de6f5e7dd74314f5334e248a9d91cd391d3fa5d88b30b9e9f2a9",
+        "frozen_action_features_sha256": "88d0ce2abe886934349748ee7c5d0473162f0a11c1b4db66666d0fb10c74f90b",
+        "frozen_complete_representation_sha256": "607f299f6e288abc35d666d2e5188fd2ee7e791731476054dbca2ecb1fd3eb9f",
+        "name": "boolean-copy-payment-true",
+        "quantized_tail_sha256": "146fb610008334cf395cfb5fd941533a8ab2e829483e84a29d22b707fedbfbed",
+        "raw_digest_sha256": "c6961803f80300d2e33ccfa4f52413edb962dd01ad56959c81d973fcee27a8cb",
+        "repaired_action_features_sha256": "88d0ce2abe886934349748ee7c5d0473162f0a11c1b4db66666d0fb10c74f90b",
+        "repaired_complete_representation_sha256": "607f299f6e288abc35d666d2e5188fd2ee7e791731476054dbca2ecb1fd3eb9f",
+        "repaired_structured_signature_sha256": "f70425fcfa977128c95d0944f019cd6b3c37516e9380a123470bf215ac05985b"
+      },
+      {
+        "canonical_sha256": "3495a35d98c284dbb35e4c6a727e5713f062f852ad1639369ca030807d570012",
+        "frozen_action_features_sha256": "a5ddd6fbc882f53d7039fadadfb7250344694bb6dc6c6b8918da436b67bcfbc8",
+        "frozen_complete_representation_sha256": "9fd5816a3dc89c846c83e06bf31980d30e298823e47936f98b7cd9cf182569e9",
+        "name": "boolean-copy-retarget-false",
+        "quantized_tail_sha256": "f533853c84bcef53689f0b5d0735f526bb5a21785c29ca4abb1b0cb0439c889e",
+        "raw_digest_sha256": "903eeae2495fa3cff91435d6a5659488e8984ea2db0761a462aea7ffde1b7b13",
+        "repaired_action_features_sha256": "a5ddd6fbc882f53d7039fadadfb7250344694bb6dc6c6b8918da436b67bcfbc8",
+        "repaired_complete_representation_sha256": "9fd5816a3dc89c846c83e06bf31980d30e298823e47936f98b7cd9cf182569e9",
+        "repaired_structured_signature_sha256": "4ca4be12240a6acb5dd8d237dac4d64074ab22927fcd85c22fc0e97a9f208ef5"
+      },
+      {
+        "canonical_sha256": "34bfe24bd36f76b36ef8959495f4349891c6c671f39a9c550a91fcc65183a8d8",
+        "frozen_action_features_sha256": "ff15204a2d74bc011beb7fa9db34d3dad0c202981eddc23557b7e8abb91e6dc5",
+        "frozen_complete_representation_sha256": "74e12a01292245da4fc35e344c3984fd4c809dc08ef5eef07b703ef7adccc08a",
+        "name": "boolean-copy-retarget-true",
+        "quantized_tail_sha256": "f038168724556b5567d1635e39e8b8eca97499b5dae3296a990e8fb9fd3e789c",
+        "raw_digest_sha256": "6824ff7436b842285e025abf2eb2e15f3c29d5683969f295afeea47c14ed3d3c",
+        "repaired_action_features_sha256": "ff15204a2d74bc011beb7fa9db34d3dad0c202981eddc23557b7e8abb91e6dc5",
+        "repaired_complete_representation_sha256": "74e12a01292245da4fc35e344c3984fd4c809dc08ef5eef07b703ef7adccc08a",
+        "repaired_structured_signature_sha256": "becab6e4b2eac4d0879a146df7256310a1c11271a82b1d0c0132ec5759b190f7"
+      },
+      {
+        "canonical_sha256": "016ba6718762e9f66f440112d9563a4e9e167a14d8114cc86b4fcae3abe6d8df",
+        "frozen_action_features_sha256": "957e519696037835b20ae302ac4f3e143d2f4228072c79ef8381121a083a0fce",
+        "frozen_complete_representation_sha256": "cb62a75efb960ed0718e018f0aef516d52d01bd5e90d95283473021abbc45112",
+        "name": "boolean-effect-false",
+        "quantized_tail_sha256": "0b308b48033b1728301c6e2641beb3de8dc19fc9d82887ade7f5c687defe5b35",
+        "raw_digest_sha256": "8477e6fe2eb039ed3bc749bf135f6f9e6f7157c78e653a4c077dd83205c1b5cf",
+        "repaired_action_features_sha256": "957e519696037835b20ae302ac4f3e143d2f4228072c79ef8381121a083a0fce",
+        "repaired_complete_representation_sha256": "cb62a75efb960ed0718e018f0aef516d52d01bd5e90d95283473021abbc45112",
+        "repaired_structured_signature_sha256": "a72b7ff607539316e95a770c2126b2a75fd998dcf12f562d6fd7a298c5a19981"
+      },
+      {
+        "canonical_sha256": "eaed428dee36cc3cfb892c449df9f3582a55d4abfbb9de32476ce5809f93db02",
+        "frozen_action_features_sha256": "d26a52d010bf1007d291d38f6cdb11bb4d86b35accbc4985af608079ee87acb9",
+        "frozen_complete_representation_sha256": "31689f7dbb47227278367ab04834c855d68c64bf7b55d82960aa41ebaab42bc2",
+        "name": "boolean-effect-true",
+        "quantized_tail_sha256": "7af3837fc1b666c86424f259ee4fb64afa79871b779d15611bc751e7309429b9",
+        "raw_digest_sha256": "ebc1e68c7c5ee80a997fa46ca34105344ca6c73561456502254ba9895f2914a5",
+        "repaired_action_features_sha256": "d26a52d010bf1007d291d38f6cdb11bb4d86b35accbc4985af608079ee87acb9",
+        "repaired_complete_representation_sha256": "31689f7dbb47227278367ab04834c855d68c64bf7b55d82960aa41ebaab42bc2",
+        "repaired_structured_signature_sha256": "886e17c63ec9c0460719ac14f79973f1b77ac9e59c930e8b03d0d43fe97849fc"
+      },
+      {
+        "canonical_sha256": "8ab0919e6a65053e65af5e2600b01e00a79a957746e35543f841fa0ba3ccb076",
+        "frozen_action_features_sha256": "eca0657063890dd6f2df17d24e47003b6e29d56f776d9005bf6f4ed7fe1e05ca",
+        "frozen_complete_representation_sha256": "f57babb397f21d9e5def4fd7860785dd8a67e84d30a5b68699071be02e0803fd",
+        "name": "boolean-kicker-false",
+        "quantized_tail_sha256": "7c585b36f32e772616384aafaa79405ce0b6c4ad8dcd45861eb736ae9a40760e",
+        "raw_digest_sha256": "2223218a6dab55c8b612338dd8e093fc8d71ed67a2b47d6e584ed45b6faa0881",
+        "repaired_action_features_sha256": "eca0657063890dd6f2df17d24e47003b6e29d56f776d9005bf6f4ed7fe1e05ca",
+        "repaired_complete_representation_sha256": "f57babb397f21d9e5def4fd7860785dd8a67e84d30a5b68699071be02e0803fd",
+        "repaired_structured_signature_sha256": "8324fc8dcaca9bd56f180248d298edfcaa9a157959d9526aded2fd672914715d"
+      },
+      {
+        "canonical_sha256": "b84752bfd9a2c523a55443cf8eee0f9e3890222a91931c1b6ec344814d17efb1",
+        "frozen_action_features_sha256": "ed3c274052b766d2c43d7bf05d7906e57fd2f9f16a1d4d2db7b6c91ea97860c3",
+        "frozen_complete_representation_sha256": "3c7b76541ae71d74890b2d017a8f55fffd67f32f4739288e84cbdc602423e291",
+        "name": "boolean-kicker-true",
+        "quantized_tail_sha256": "a6ff1b1da54acdb4773fcb401aadb2b41d9c104f88e0b0d38129aee8106ed738",
+        "raw_digest_sha256": "c9fa4e432abf187b7e631cacbe5bd3a44f0ab64954197134ae72ff91bbc8c908",
+        "repaired_action_features_sha256": "ed3c274052b766d2c43d7bf05d7906e57fd2f9f16a1d4d2db7b6c91ea97860c3",
+        "repaired_complete_representation_sha256": "3c7b76541ae71d74890b2d017a8f55fffd67f32f4739288e84cbdc602423e291",
+        "repaired_structured_signature_sha256": "fbd95c315fa25249fa2ccb11ac84f024fd17e16130b34a4c942fc9404907ac85"
+      },
+      {
+        "canonical_sha256": "e48e33d7da695c6d2035a311a362c03339d605410e0f832396a0a87fec3300d9",
+        "frozen_action_features_sha256": "af203ddc206a778992905d1d886fa11c16c274d29c2fc56ca504b818b20d124b",
+        "frozen_complete_representation_sha256": "1a9a825107df970941b5b94a45e5b21c5936d9ecd8e65aafef2dcbb98487f0cb",
+        "name": "boolean-madness-false",
+        "quantized_tail_sha256": "a583332ed866653048750a542d7be36d582d37522e84ef14dd1bbe04325f1d08",
+        "raw_digest_sha256": "94e190cd103f8dba71394bebbf55d14209c0e7b89873218e76251b66dd27705d",
+        "repaired_action_features_sha256": "af203ddc206a778992905d1d886fa11c16c274d29c2fc56ca504b818b20d124b",
+        "repaired_complete_representation_sha256": "1a9a825107df970941b5b94a45e5b21c5936d9ecd8e65aafef2dcbb98487f0cb",
+        "repaired_structured_signature_sha256": "28a9a7bdb6efdf5b1f29d9e89d7f552f28145a0be91bd6d8686ee43a6d921ff4"
+      },
+      {
+        "canonical_sha256": "829d0ff370755156f0b008dbb6f5a897cda7972bc341622a180f0d7ee242abae",
+        "frozen_action_features_sha256": "13e5685b50d266e7daefe2a864c322b85534f64d02246c9a3cf99c11c61676f7",
+        "frozen_complete_representation_sha256": "0ce38147e4fb74aa885687f97c297fbbea93a26a55d24bb5b96cd8fa4df308c6",
+        "name": "boolean-madness-true",
+        "quantized_tail_sha256": "886c60dd0dbec15074e619dcaabeab64d9a09da664762e4ff721b49885146b3d",
+        "raw_digest_sha256": "c39236791d8df2fa241ad8d9386dc073a4bbfc0e21ecd40502c014f39f614686",
+        "repaired_action_features_sha256": "13e5685b50d266e7daefe2a864c322b85534f64d02246c9a3cf99c11c61676f7",
+        "repaired_complete_representation_sha256": "0ce38147e4fb74aa885687f97c297fbbea93a26a55d24bb5b96cd8fa4df308c6",
+        "repaired_structured_signature_sha256": "658dd0854ce20b3f7d19d472ac372ce471878f22f7940a401fe2d6c73ffbc3c2"
+      },
+      {
+        "canonical_sha256": "1b0db323d16189c3fc1d2c1d8cc756ede93562349764ba58aca67657399de68d",
+        "frozen_action_features_sha256": "0baf074d3bc67a39cd7f797828e8f18e3b2b7233b2666167be650bdaa30ddf61",
+        "frozen_complete_representation_sha256": "694e6367acc8d30985ea1bb2db097b1f99ae33d45cf2e33c5e83fbd81735a7c3",
+        "name": "boolean-optional-use-false",
+        "quantized_tail_sha256": "00e46eddd46a5c396f3e2049a5fcac37c8fe89fa9ef50147de60bc42b6ef0131",
+        "raw_digest_sha256": "da97559aedbece13666dbc9cb193ca09b48a7bdab2862cfec531fe58c0d76f8e",
+        "repaired_action_features_sha256": "0baf074d3bc67a39cd7f797828e8f18e3b2b7233b2666167be650bdaa30ddf61",
+        "repaired_complete_representation_sha256": "694e6367acc8d30985ea1bb2db097b1f99ae33d45cf2e33c5e83fbd81735a7c3",
+        "repaired_structured_signature_sha256": "4a177631bb07f62678c804c6602d123f80d1af698913bda45639fb3660348e3c"
+      },
+      {
+        "canonical_sha256": "5ab381d8c88e7cb60917b51a1277c5696b03926902148ea92a765e0c0a9ef67d",
+        "frozen_action_features_sha256": "444b2657a8e6ccebf3b303f4c01df9fc70791bfb1cf70d64a3dac3e37f9291df",
+        "frozen_complete_representation_sha256": "f54366906938631f0b23e096e880c65d9ef4dd669ec67294718d9b5881d95989",
+        "name": "boolean-optional-use-true",
+        "quantized_tail_sha256": "dbee2d06db50aa8a3c75723aa91cf3fc97f628f5d740be1d897ece3ad3bde93d",
+        "raw_digest_sha256": "e7267aa3709687e785b0bbbe73f8ea421f7a14eb6f6a1828aea4941463a067d7",
+        "repaired_action_features_sha256": "444b2657a8e6ccebf3b303f4c01df9fc70791bfb1cf70d64a3dac3e37f9291df",
+        "repaired_complete_representation_sha256": "f54366906938631f0b23e096e880c65d9ef4dd669ec67294718d9b5881d95989",
+        "repaired_structured_signature_sha256": "fe59b5de6e70666eb5a1f7662c740e18a7c4a0748dd02a59251383181dab8a01"
+      },
+      {
+        "canonical_sha256": "77f8dc1dde38757f0faa36a2f2cd73f6c77ca0a8125c050c218f49f796e1e517",
+        "frozen_action_features_sha256": "6eb344bcadb237572e5c15c7bc784118f7b310c0b176256e1a1c135939782c4b",
+        "frozen_complete_representation_sha256": "844f30cbd68780ded225f1ce46307608f4b564d18d5d3f6ad05544928ea8ff0c",
+        "name": "card-token-1",
+        "quantized_tail_sha256": "435de3fdbd6616337f457d3d476289f8703c45bf37484f432d34ce9b6cc6f59e",
+        "raw_digest_sha256": "b9fae2921cb33fabf01d20f01c776b7a5ad80cd8c9e6b1b0200df08cced9e5ed",
+        "repaired_action_features_sha256": "6eb344bcadb237572e5c15c7bc784118f7b310c0b176256e1a1c135939782c4b",
+        "repaired_complete_representation_sha256": "844f30cbd68780ded225f1ce46307608f4b564d18d5d3f6ad05544928ea8ff0c",
+        "repaired_structured_signature_sha256": "7f3fcf47a2ff3e07fe118a52371fff0af193194ba407ec4559e844b3cf6f1394"
+      },
+      {
+        "canonical_sha256": "489fc25bf2b8528184b30e738b13157eefcdbec830538ca2271f0f6bfe812427",
+        "frozen_action_features_sha256": "63a90a8e4ebbec9d6f7bba9d42f37ab1266d7c1371386fee97c8088c321b70c2",
+        "frozen_complete_representation_sha256": "841122a825a6a358afba70cbd69d447cb453fc44308b724807744ba282011f2e",
+        "name": "card-token-65535",
+        "quantized_tail_sha256": "1d764ed5ff7744dc1fc5b9f3058da64383381842e5138d56667eb3c2bd791716",
+        "raw_digest_sha256": "2d46dd00ae7cafa3dccfd74b42ac60c1f824f118ed12d7a772fdbc88068a44de",
+        "repaired_action_features_sha256": "63a90a8e4ebbec9d6f7bba9d42f37ab1266d7c1371386fee97c8088c321b70c2",
+        "repaired_complete_representation_sha256": "841122a825a6a358afba70cbd69d447cb453fc44308b724807744ba282011f2e",
+        "repaired_structured_signature_sha256": "bd7cbf3e929c3c94c55a99fca3bab1897f1d09fbc158d2948e07192a67e09395"
+      },
+      {
+        "canonical_sha256": "4789b255177d24db51b765c5e6c7ae61dac289679b399f140be9308ce916eccc",
+        "frozen_action_features_sha256": "09561ae92149d4aac209034abc03f035911478c386a39fb5be7f654101ba2806",
+        "frozen_complete_representation_sha256": "b350fcd38fdbe80ca8cd63eb710833542bb2f64c6127b586918538ac97c1206d",
+        "name": "card-token-65536",
+        "quantized_tail_sha256": "08318d8b97096302b4d87bb869a264f17b2c97df2feb5608b026698a67c5ce18",
+        "raw_digest_sha256": "6aef35f52291b6dbfd40883a581527289ed584067b1b0459864b3285545f32fd",
+        "repaired_action_features_sha256": "09561ae92149d4aac209034abc03f035911478c386a39fb5be7f654101ba2806",
+        "repaired_complete_representation_sha256": "b350fcd38fdbe80ca8cd63eb710833542bb2f64c6127b586918538ac97c1206d",
+        "repaired_structured_signature_sha256": "046738e441cabeb6f404dc1445c71f208a61eb49067efc39c90609d6597342f0"
+      },
+      {
+        "canonical_sha256": "373d658efb35222af81dcdc47da5eb9dd0634e8ce520f5690733cc630d655199",
+        "frozen_action_features_sha256": "813f4bfcaa4f76fea9f361225b1d6200f2ba60ecb7c51809689b9c3cd8a283cf",
+        "frozen_complete_representation_sha256": "a7e200856d367d583899997d9a3b202591f3ef19e49d62a200404597ce625ec4",
+        "name": "cast-mode-alternative",
+        "quantized_tail_sha256": "dd326f6d70191a3762184eacc9a1d1127811ce9cb4d69f7b55f1f57d83d53a23",
+        "raw_digest_sha256": "f17c9455af1b93a05d74699f96e88b4a20bfc7b9740263b5ac72dccc4b00799f",
+        "repaired_action_features_sha256": "813f4bfcaa4f76fea9f361225b1d6200f2ba60ecb7c51809689b9c3cd8a283cf",
+        "repaired_complete_representation_sha256": "a7e200856d367d583899997d9a3b202591f3ef19e49d62a200404597ce625ec4",
+        "repaired_structured_signature_sha256": "4c4834765d626f28424aa054512f067edae01bac15026d5147634848833ad8e3"
+      },
+      {
+        "canonical_sha256": "33aa88fdbaeaacb4d7dfc166381163929b40c6966703ed386cddc73f9e5b094d",
+        "frozen_action_features_sha256": "13b5dec8b8ce221e90dfca962ac7ca2a4d8471bc33347aad3bce5f21977b27dd",
+        "frozen_complete_representation_sha256": "6659181cc7e8bc6eb298bb95e994110f9b3c2390d73d63a60105c790e9b7203a",
+        "name": "cast-mode-normal",
+        "quantized_tail_sha256": "36f8c1c90e4b65f4588b9c56380026b9c0112dec24374cd3b159dddc015ebc0e",
+        "raw_digest_sha256": "5f3d234de266aa19d2175f918166709e630bb21189181224804ed1a55a83e181",
+        "repaired_action_features_sha256": "13b5dec8b8ce221e90dfca962ac7ca2a4d8471bc33347aad3bce5f21977b27dd",
+        "repaired_complete_representation_sha256": "6659181cc7e8bc6eb298bb95e994110f9b3c2390d73d63a60105c790e9b7203a",
+        "repaired_structured_signature_sha256": "5357a0253eb53295dccc5efb3f8fc1a3354c4c0414fa35b781c1f2a1002149dd"
+      },
+      {
+        "canonical_sha256": "97f19915ab5890bce30958bce80b239c9fead4206c41b07e8d37606a50d5d3b8",
+        "frozen_action_features_sha256": "481a503ce9c941364ab79417f356af4f5bf6c715a30d37db8e0706c756155955",
+        "frozen_complete_representation_sha256": "8d865b88d0da2859bdc2b526895a3d2ae80e1269aa8778a3ddd8cd49e517a84c",
+        "name": "cost-kind-DiscardCards",
+        "quantized_tail_sha256": "f86d9e44216261ca0e8693f8e63189a193809f9d7f73af1a946029e622f0a8de",
+        "raw_digest_sha256": "92b3639070e6c8b3f2fe856c99aef8f00a0d7228cb74a4e17dee0e7416a63a7c",
+        "repaired_action_features_sha256": "481a503ce9c941364ab79417f356af4f5bf6c715a30d37db8e0706c756155955",
+        "repaired_complete_representation_sha256": "8d865b88d0da2859bdc2b526895a3d2ae80e1269aa8778a3ddd8cd49e517a84c",
+        "repaired_structured_signature_sha256": "14834544b1f24758e04cd05ef1c6a016b7685814473d2c148745f8e7a2b5bbe8"
+      },
+      {
+        "canonical_sha256": "638f6637ce21e18f5e4fa45b9fc0c0f3acc9fab4753dc5f4618d274e4bdba8e8",
+        "frozen_action_features_sha256": "e773f5672aaee90577ecf8c4574c758b04e18c802585f5cf14306019ad6b4489",
+        "frozen_complete_representation_sha256": "ccad124d922493c248af8e5f06de69c80609f7eb017df922437094132ec46007",
+        "name": "cost-kind-ExileFromGraveyard",
+        "quantized_tail_sha256": "a88b7fd444eb3e89d6c0d1e40be731057a24cb19e4653e026ef8f0478c892dcf",
+        "raw_digest_sha256": "4eabd7607c3901eaf193946bac96389cfc92c160e20db8f75c27ade6dacb9c11",
+        "repaired_action_features_sha256": "e773f5672aaee90577ecf8c4574c758b04e18c802585f5cf14306019ad6b4489",
+        "repaired_complete_representation_sha256": "ccad124d922493c248af8e5f06de69c80609f7eb017df922437094132ec46007",
+        "repaired_structured_signature_sha256": "83190080dd53e7a5baf2345a4ff78895993e100a3e0736787bfeda7524d9f39b"
+      },
+      {
+        "canonical_sha256": "5025910fcefcff1b84e5180d412b275ce6a4252b29ac9832f30237160cd259ff",
+        "frozen_action_features_sha256": "c4a117d0b925515e15d949426de7c6e4e964f2b657a5f80936bdbdfe2b84d1a0",
+        "frozen_complete_representation_sha256": "b3f9b5da4b09af613a36119ba6c92d0dfaa668a76d2787fd4571744db3e8ff6e",
+        "name": "cost-kind-PayLife",
+        "quantized_tail_sha256": "680d7cac077c9b11feed2f89f4c9ba5440493d0a6b2c4b767af9935c0b3b6100",
+        "raw_digest_sha256": "3e70a82cfcb9ec55deb36e34b0fa7538983c5af22a722dec1ac1aeeec5a26a46",
+        "repaired_action_features_sha256": "c4a117d0b925515e15d949426de7c6e4e964f2b657a5f80936bdbdfe2b84d1a0",
+        "repaired_complete_representation_sha256": "b3f9b5da4b09af613a36119ba6c92d0dfaa668a76d2787fd4571744db3e8ff6e",
+        "repaired_structured_signature_sha256": "2108c787e38a2c44264a6bb230a901a26ad7a550e9d5d1979fbd62aadb902840"
+      },
+      {
+        "canonical_sha256": "721afd8b5994c6a0c80ce42721b76881101622cc0f87e97238817e88f424fb0a",
+        "frozen_action_features_sha256": "00ef3b3502da61a51b78821e4eab4f75b281a883415f51b167d0530f1922f878",
+        "frozen_complete_representation_sha256": "8458377877fe0f7fe2b2e38501ee4e4d69621e2f403249bb9f872f7f77977677",
+        "name": "cost-kind-PutCounters",
+        "quantized_tail_sha256": "e3247ea8189d21c73b5532566bc9eb917343c5fe6b35fb5422a07bf625d9667f",
+        "raw_digest_sha256": "2eca43d9710abb80acc3db4d83b52b8ee15e73854fb458dc1c0d7741159fc955",
+        "repaired_action_features_sha256": "00ef3b3502da61a51b78821e4eab4f75b281a883415f51b167d0530f1922f878",
+        "repaired_complete_representation_sha256": "8458377877fe0f7fe2b2e38501ee4e4d69621e2f403249bb9f872f7f77977677",
+        "repaired_structured_signature_sha256": "d2fb66c93dfce0c34084891fc3505be10c2f43fb4d2d5318fc7b728f39431409"
+      },
+      {
+        "canonical_sha256": "d8cbe93eb6f77ae9abe9129588d7a0c20e5ad0b747b3d683d2496ea0c693f03d",
+        "frozen_action_features_sha256": "8edf19867425e7e2ca31cc1c53a06fd3277c1b8bef5bad0068753754a06040b6",
+        "frozen_complete_representation_sha256": "c9fcec4ea7e46045aae16a30647af546116f137b3ebe6e891716ee52a73e1b9b",
+        "name": "cost-kind-RemoveCounters",
+        "quantized_tail_sha256": "0375b044a77b71c62fe06af69ddf07759ad08eb1e9d10c9fc7ca4772f972b838",
+        "raw_digest_sha256": "d0582974a71913f30d99ff250cbb3c529a2e7b678ad63dffd5ef22d4c5ef2f1a",
+        "repaired_action_features_sha256": "8edf19867425e7e2ca31cc1c53a06fd3277c1b8bef5bad0068753754a06040b6",
+        "repaired_complete_representation_sha256": "c9fcec4ea7e46045aae16a30647af546116f137b3ebe6e891716ee52a73e1b9b",
+        "repaired_structured_signature_sha256": "e6ee6efa4982a0c5628a40f5e4243766a7bcb60ed79eb9d5404a391f299461a9"
+      },
+      {
+        "canonical_sha256": "c759b27c8ce4069964e9a5b4b947b197f8c1269548b32aa488e534727f15c302",
+        "frozen_action_features_sha256": "58e1faae53266d4aa82dd50b5c420243b6bc0db2adcd49469d91b9a40ef26476",
+        "frozen_complete_representation_sha256": "788f85bfa7f258627c1f4b16018d19c50f191f214c42c8ea46fe84ce6ffd3bae",
+        "name": "cost-kind-ReturnPermanentsToHand",
+        "quantized_tail_sha256": "e139e9f4750edc23a6c8c2730e7774334b646bfd594cfe2df7406bd3ccdee1f5",
+        "raw_digest_sha256": "8277c625078fcd6e6d64d30b8b766af62a0f08861785cbfc7ead5f57e038c4f2",
+        "repaired_action_features_sha256": "58e1faae53266d4aa82dd50b5c420243b6bc0db2adcd49469d91b9a40ef26476",
+        "repaired_complete_representation_sha256": "788f85bfa7f258627c1f4b16018d19c50f191f214c42c8ea46fe84ce6ffd3bae",
+        "repaired_structured_signature_sha256": "5cf8fed037bf686e4e0ec1de943a663bbd6cb264d7939a12e5abf8d19c388d15"
+      },
+      {
+        "canonical_sha256": "c0196317ed0e9fc96c1b7310decef72862fcb996fd79d069087eca9cbcce1bc1",
+        "frozen_action_features_sha256": "d848bac857f1a1bb418965fdaea7a1be370c3a15b76cf107b41a59d07765a176",
+        "frozen_complete_representation_sha256": "5dd45ac3bcd2a04d8cb964ae6cca6f590ab09b4929f43035479fa6b15f6c919d",
+        "name": "cost-kind-SacrificeArtifacts",
+        "quantized_tail_sha256": "23b2cf17e30c4d2df21ebc7b8c72d898d0716d57c824b2b2bd5d4a284426e4c9",
+        "raw_digest_sha256": "282dc354fc8ceeb32ef0924743d3a7e8685a22f01575a96897b9b30d4e69e6aa",
+        "repaired_action_features_sha256": "d848bac857f1a1bb418965fdaea7a1be370c3a15b76cf107b41a59d07765a176",
+        "repaired_complete_representation_sha256": "5dd45ac3bcd2a04d8cb964ae6cca6f590ab09b4929f43035479fa6b15f6c919d",
+        "repaired_structured_signature_sha256": "e5d58a69dd686c5e153092b3372fae0b3f76e696c813110d3ac7a6ef7bb3cf1c"
+      },
+      {
+        "canonical_sha256": "2598170f4f5a7b962973fe76c3d87b900ae45949b842e4c7d6de0d1f6e12bed1",
+        "frozen_action_features_sha256": "bd756871a4f1ac96a6441a702fe718d55e126ef8f35380f3c16d36235d88a2c2",
+        "frozen_complete_representation_sha256": "f062214e2b8a4f1584f9cf0a94f122a43c93bb214727fb1a80e2d3f7aeb3f0c0",
+        "name": "cost-kind-SacrificeCreatures",
+        "quantized_tail_sha256": "a4a5b3ebeeb9c16895b29be66b587b4f087fd1319c268e51544f01e8ef253647",
+        "raw_digest_sha256": "42b10ebe6ef0d0589eb0dbd59f6a1ccd291cf495c028cad541ce3e5d6d01f75e",
+        "repaired_action_features_sha256": "bd756871a4f1ac96a6441a702fe718d55e126ef8f35380f3c16d36235d88a2c2",
+        "repaired_complete_representation_sha256": "f062214e2b8a4f1584f9cf0a94f122a43c93bb214727fb1a80e2d3f7aeb3f0c0",
+        "repaired_structured_signature_sha256": "16603e19739ebc4debeae7acc0e745ff987691acd0d0aff14ee58486f3b574f2"
+      },
+      {
+        "canonical_sha256": "3e8b07940cf501c35d279b865d1f38aded760fff7736875c683037cc0c940efe",
+        "frozen_action_features_sha256": "d79903b9c86c824496c394262e47319725032740a338dd50e24af17f8354456e",
+        "frozen_complete_representation_sha256": "0ef581302b94994a228168c7e7176d2311caaa2ce8816cad48f439e65ae6c418",
+        "name": "cost-kind-SacrificeLands",
+        "quantized_tail_sha256": "4fb6dc444a68ca61419e1a28e6dca59851c7ad356bce27c54899d4bb349219d4",
+        "raw_digest_sha256": "04f6f8e4d886e44a3d5cb9278ac2d52f46ee55e75ce5188b1d23593ef99050bf",
+        "repaired_action_features_sha256": "d79903b9c86c824496c394262e47319725032740a338dd50e24af17f8354456e",
+        "repaired_complete_representation_sha256": "0ef581302b94994a228168c7e7176d2311caaa2ce8816cad48f439e65ae6c418",
+        "repaired_structured_signature_sha256": "24848b237edb79c29c5937365df55fb1eb38d2cbf46c7e37dd6a31270bebe862"
+      },
+      {
+        "canonical_sha256": "9f55d9d56e46c1123a9358083bb25cbd6acde81c5684c8b5420a69cbaad2f277",
+        "frozen_action_features_sha256": "e827d9cfb342a1f6417dc74f03f8809163d13d162182fd4e2700d6e2521303df",
+        "frozen_complete_representation_sha256": "4bc04ad6fe30283c0186e97d478fa959ed66deea9341c7cc557f6d42ab8bcd73",
+        "name": "cost-kind-SacrificePermanents",
+        "quantized_tail_sha256": "1d141b4a5c22e4ce1bd3249c64565fc22ef62019b21b6e96f6ea5ff3ba47f09b",
+        "raw_digest_sha256": "88fcccdef454d1116109530d19112c6b2502a7d2f591775d3080857a1ed5f125",
+        "repaired_action_features_sha256": "e827d9cfb342a1f6417dc74f03f8809163d13d162182fd4e2700d6e2521303df",
+        "repaired_complete_representation_sha256": "4bc04ad6fe30283c0186e97d478fa959ed66deea9341c7cc557f6d42ab8bcd73",
+        "repaired_structured_signature_sha256": "e67bb0a4b8c914c50c4857fef86763809677b03e7382d65e62d3cfc607b55656"
+      },
+      {
+        "canonical_sha256": "499aa282173222f427fd51bb58f7e3a6289bb0c14e6fd2eea769eccceb16fe09",
+        "frozen_action_features_sha256": "415a06efbf195c5eee30daf8e90bd69680e24ead141f0dbd92bf0a899d4914d1",
+        "frozen_complete_representation_sha256": "bbac4947552d70809b860894d50da58030e80969ef827ec6f480751d50675ff7",
+        "name": "cost-kind-TapPermanents",
+        "quantized_tail_sha256": "9ab0eaba8f3ece955b72cd59354f4d13432b1ce3db38c196ac75b4e6a660f3f0",
+        "raw_digest_sha256": "7942b541d42f2578a12e64b25ebb2a40c16603410c5a6c1ae40f23471b68e281",
+        "repaired_action_features_sha256": "415a06efbf195c5eee30daf8e90bd69680e24ead141f0dbd92bf0a899d4914d1",
+        "repaired_complete_representation_sha256": "bbac4947552d70809b860894d50da58030e80969ef827ec6f480751d50675ff7",
+        "repaired_structured_signature_sha256": "3743cf4786eb667f5467ec7285301141c6db4d05d25ec73d0d03d5ac37698d54"
+      },
+      {
+        "canonical_sha256": "a6f9ffb59b9de1d579adad6afdd2c7a701805ac96797beb9486c7aeba46e0390",
+        "frozen_action_features_sha256": "247fdc15701cafa8d45c5b5e66ad027959194400c3d04ba052c83bef223b16dd",
+        "frozen_complete_representation_sha256": "f73b17b6dbec0cb0bed838012edb56f2751a425f91a0a2bf6cbf550cefcc2551",
+        "name": "effect-color-B",
+        "quantized_tail_sha256": "071f6807b94c77936f8b96c0408e37d583dbe9c083db50d5e21489fd73047b48",
+        "raw_digest_sha256": "0b26f76aeba45194a9389489fa44eef822322a340f6875d6c7620962f937dd74",
+        "repaired_action_features_sha256": "247fdc15701cafa8d45c5b5e66ad027959194400c3d04ba052c83bef223b16dd",
+        "repaired_complete_representation_sha256": "f73b17b6dbec0cb0bed838012edb56f2751a425f91a0a2bf6cbf550cefcc2551",
+        "repaired_structured_signature_sha256": "71d283227bfe87c978096c3307782f4254c49711840116777ff8a721b5e996e2"
+      },
+      {
+        "canonical_sha256": "8cea788696f5937138896a3ebb0ee10b84448b3cf1cdabb93499c0fbcd5e5d89",
+        "frozen_action_features_sha256": "5d9c6fe3e10dc226fa6a6e426fb395da25e41f8f975c2afa37c42bea952aa12f",
+        "frozen_complete_representation_sha256": "2976d353461f0971a7075b715645c748b6572731f88c9741f22fd7c472283fe4",
+        "name": "effect-color-C",
+        "quantized_tail_sha256": "0089fb3b7d9f75155b49ef4895a70e4b7614a99b137f07dfc55a2334e3da4262",
+        "raw_digest_sha256": "420221b698c0bb0810c1340a88335a9c161719cf6d400c18aba5264cd45e94ab",
+        "repaired_action_features_sha256": "5d9c6fe3e10dc226fa6a6e426fb395da25e41f8f975c2afa37c42bea952aa12f",
+        "repaired_complete_representation_sha256": "2976d353461f0971a7075b715645c748b6572731f88c9741f22fd7c472283fe4",
+        "repaired_structured_signature_sha256": "2dff33e68bcebd93da6faa1ae1aa7a5bbbeef6587c0fa4d164d752c903488f73"
+      },
+      {
+        "canonical_sha256": "ba2b5276a1ecbd5bfdbc26aeb2f722907795cea99b84f11c151f4e5087953e72",
+        "frozen_action_features_sha256": "8650c36b6f848c4c956c0052492b50e07d7b200d6563c6106cba418c5e64a63f",
+        "frozen_complete_representation_sha256": "42795c62f7f06f1403232c2cd1f543a871d31afd7b2fd7e7612d0b361060c7a7",
+        "name": "effect-color-G",
+        "quantized_tail_sha256": "f88d072c06a25a76db103dac92502c37a5ddd4a19cb646cb70562fb8073de73d",
+        "raw_digest_sha256": "a198e6e97cb4f4598fa3695732eb69e5babfb78c6079094ad1231062e9d979f8",
+        "repaired_action_features_sha256": "8650c36b6f848c4c956c0052492b50e07d7b200d6563c6106cba418c5e64a63f",
+        "repaired_complete_representation_sha256": "42795c62f7f06f1403232c2cd1f543a871d31afd7b2fd7e7612d0b361060c7a7",
+        "repaired_structured_signature_sha256": "89359ac9fc2351798195a30f69fa1e75ae4cd4120933e606fc8e5b6abeadc62b"
+      },
+      {
+        "canonical_sha256": "20afdf8a30ad518dd873c39dba2524f9fc9181a35932a7de0dffa40fe5bc1d81",
+        "frozen_action_features_sha256": "edcaf5d787b302b5b5995f3b0a614791812fa5d6cec0bda49d1c47e8e1ff8cc2",
+        "frozen_complete_representation_sha256": "c3dfceb59be0ceaf5ad951fb7031a36a3ae1add0bc689c5b62001366d2984290",
+        "name": "effect-color-R",
+        "quantized_tail_sha256": "ac8b838cf9e4fc61092f75a8ee22ecf5393e4bda856cb2d854b2bb13c13bbf49",
+        "raw_digest_sha256": "a54c9a2f2057dce331f726514620594364b6abde4a983fe4caacc14f6383fe50",
+        "repaired_action_features_sha256": "edcaf5d787b302b5b5995f3b0a614791812fa5d6cec0bda49d1c47e8e1ff8cc2",
+        "repaired_complete_representation_sha256": "c3dfceb59be0ceaf5ad951fb7031a36a3ae1add0bc689c5b62001366d2984290",
+        "repaired_structured_signature_sha256": "be594d8e9eaebb9d55db01c689863dde4dadd5bafb0c29a523ebb62fffcd7f19"
+      },
+      {
+        "canonical_sha256": "51bba14cae745aa488f1abe0f6defad4d28bf18e295e2a2f3e9cbb449b66026f",
+        "frozen_action_features_sha256": "1be89613e4a84083413cd34f7148d94ca9b1e357161e141fefb5ad6bc3c83214",
+        "frozen_complete_representation_sha256": "602a1e32e3e5576895c6b2fde06fd7371b1a7c2d6ade003140526b8f8972ddbe",
+        "name": "effect-color-U",
+        "quantized_tail_sha256": "db4a6aeeba778e9cc2d6412127f57bc799b9cd6cabe3d8e0058c9b2ba25eb490",
+        "raw_digest_sha256": "c443dae35ae3cebf11e4f6c9b15e23deb5a26d35412d9a63a9b151c6cec06641",
+        "repaired_action_features_sha256": "1be89613e4a84083413cd34f7148d94ca9b1e357161e141fefb5ad6bc3c83214",
+        "repaired_complete_representation_sha256": "602a1e32e3e5576895c6b2fde06fd7371b1a7c2d6ade003140526b8f8972ddbe",
+        "repaired_structured_signature_sha256": "1d3a6701875306d86c276da2c91ac057a556cf33e42476529c3217cf402813fe"
+      },
+      {
+        "canonical_sha256": "b0e1ed00fabe6fce84c3215b8b8d34dbdf697114e410a1d8765b5602d84e429c",
+        "frozen_action_features_sha256": "52189f62b62784207c287f85f912c9ac033da2f6ccfeb7ed2d9476165699a83e",
+        "frozen_complete_representation_sha256": "e16df51b374dcbbbaad48301624e884bbdfbc38d144fba35107749b9bdd7faba",
+        "name": "effect-color-W",
+        "quantized_tail_sha256": "f527e0abb5f45db060b4ebd8a15b1d251536eaec0740d9de797b130da36d12a6",
+        "raw_digest_sha256": "6ce4dc951705dd1eaf461a28a5ce0715602dc1470ded42f4975840435048a693",
+        "repaired_action_features_sha256": "52189f62b62784207c287f85f912c9ac033da2f6ccfeb7ed2d9476165699a83e",
+        "repaired_complete_representation_sha256": "e16df51b374dcbbbaad48301624e884bbdfbc38d144fba35107749b9bdd7faba",
+        "repaired_structured_signature_sha256": "1adaec07822202bdab73fc9531c2c2bc699901eb2a085e571f0298fa2a5e12c5"
+      },
+      {
+        "canonical_sha256": "2237e761fd6685e91f0139ca4addb7bd721d2f5bdacbbb29744b8b88f917f5e5",
+        "frozen_action_features_sha256": "c9db4b940a5571bf1bad50270d19fa097337b4614e70d36cd6be3c8924ccc68e",
+        "frozen_complete_representation_sha256": "40e8ce7ac41a0b29d55be9f0ddcaca17e435a9da853a033bba274a5f7c963205",
+        "name": "i32-maximum",
+        "quantized_tail_sha256": "3382afc2f67ea1ff998a7a883bfe680559c9cf845e8e8a1f090246835636c050",
+        "raw_digest_sha256": "6df3c0b4dd7d6bfb8a057704e21fc5f1f19e607004833a4e9fa7a9389fc3707d",
+        "repaired_action_features_sha256": "c9db4b940a5571bf1bad50270d19fa097337b4614e70d36cd6be3c8924ccc68e",
+        "repaired_complete_representation_sha256": "40e8ce7ac41a0b29d55be9f0ddcaca17e435a9da853a033bba274a5f7c963205",
+        "repaired_structured_signature_sha256": "d2930ca7b1c28f0ef5d15edc70cb026800972e980d0f45f962a07c72202428b9"
+      },
+      {
+        "canonical_sha256": "7650f2424a19050ca5046b1be44bb16240778570f38a691d3860a4e639192fc3",
+        "frozen_action_features_sha256": "e05288f439b9997a0ba01192810d844bdf451e02265f01ffaaa750e7f194c308",
+        "frozen_complete_representation_sha256": "84930b65aec1b1e3b7b77be3e476c6a033fd48b2a6653deaa89b810cc2d013c2",
+        "name": "i32-minimum",
+        "quantized_tail_sha256": "d51de6ead37419f776ebbb884f0de11caf07b03b9ec4ef4cef36391147ce6331",
+        "raw_digest_sha256": "784518aac585c25d0c6f6080468060e5d92a81bf7e92cfdd3dc8da77d3cc60d4",
+        "repaired_action_features_sha256": "e05288f439b9997a0ba01192810d844bdf451e02265f01ffaaa750e7f194c308",
+        "repaired_complete_representation_sha256": "84930b65aec1b1e3b7b77be3e476c6a033fd48b2a6653deaa89b810cc2d013c2",
+        "repaired_structured_signature_sha256": "a898b48a9693739a189f08624012065e06de66308d70d3f42a3de32b3ba96edd"
+      },
+      {
+        "canonical_sha256": "c2f0c6fb399f30fac3565ce9a5db7e5dfedc2b6a8a37570e07c37e9f99aa66b8",
+        "frozen_action_features_sha256": "0b81d95ae01eb5f010f9d8dca1176d448ccefc8836bbdd526f6d1252a68e32a8",
+        "frozen_complete_representation_sha256": "114cf28b940d6d40112b7e5155c75641d17175d4ece5b1c143e129b8beb351d2",
+        "name": "mana-B",
+        "quantized_tail_sha256": "f9ba28d57f2d9a3aba9580e96b1ea7e9cefdda66b326e6ab3197046a27065551",
+        "raw_digest_sha256": "720337290d2c71824746f7bf5ae0139453481efb8996d081a6018c2bc6adc7e0",
+        "repaired_action_features_sha256": "0b81d95ae01eb5f010f9d8dca1176d448ccefc8836bbdd526f6d1252a68e32a8",
+        "repaired_complete_representation_sha256": "114cf28b940d6d40112b7e5155c75641d17175d4ece5b1c143e129b8beb351d2",
+        "repaired_structured_signature_sha256": "ffc0aa70655f5b5b021783f92faec7ce534639225db9ee842b5f80691bc4d596"
+      },
+      {
+        "canonical_sha256": "455d86a208466f9b9a55083752f8c9f2873c68c8113fe538417a288575e6c9b7",
+        "frozen_action_features_sha256": "5760c2ee195d970821ddf14201f08f3c1e7ce82d741f0d3b9af69e5af8aa8c8c",
+        "frozen_complete_representation_sha256": "3002be883e647daa3430d0c36c894361c206771a3a3f964b9367b80a38734e80",
+        "name": "mana-C",
+        "quantized_tail_sha256": "5e696271c8fda860bcc6c4604e60d9dced6e55b818215acf84bd32aa2c2b8338",
+        "raw_digest_sha256": "9d8c49ca16207b42063644614ee26053f21c48e4b9e0a18244247499d0de1d31",
+        "repaired_action_features_sha256": "5760c2ee195d970821ddf14201f08f3c1e7ce82d741f0d3b9af69e5af8aa8c8c",
+        "repaired_complete_representation_sha256": "3002be883e647daa3430d0c36c894361c206771a3a3f964b9367b80a38734e80",
+        "repaired_structured_signature_sha256": "459decfaa5d5b67ba69f48b4dd4eb9214f894d54ba98d0bc0c315f46c8146207"
+      },
+      {
+        "canonical_sha256": "b716838dcd6dec4e606dc0c088f2591c86bdbf850fa505b4ccd7332c7ae28ac9",
+        "frozen_action_features_sha256": "32a18f7466f9b7b773c665d238d15389b1c5ff6a9b6ba81daffbea76cabbd9df",
+        "frozen_complete_representation_sha256": "69e1f332f3d2c5fd4237e2fd90630bea02220b69eea89b237feff9bbbf31609d",
+        "name": "mana-G",
+        "quantized_tail_sha256": "9c3c40a97009af06a47673062ee9a836f7d33a79e13da702770132a625ec2961",
+        "raw_digest_sha256": "bc9a4afd6fafe6aa4535b76fe71e424c60ed4a13fed091545a188fe92c1715e0",
+        "repaired_action_features_sha256": "32a18f7466f9b7b773c665d238d15389b1c5ff6a9b6ba81daffbea76cabbd9df",
+        "repaired_complete_representation_sha256": "69e1f332f3d2c5fd4237e2fd90630bea02220b69eea89b237feff9bbbf31609d",
+        "repaired_structured_signature_sha256": "5e409d36dc40c20fe61b72fecbc41f96f41c9b0a5d47082092630fe49cd4674c"
+      },
+      {
+        "canonical_sha256": "cc5898007a110f758581fb1e71932cd9e5befa2e5f1bf43f20fca76a63be6175",
+        "frozen_action_features_sha256": "3820395bb106c57539a33d9fd139cd4123f1ce9f96933bd910afa47adbb0b05d",
+        "frozen_complete_representation_sha256": "9abd06b47ae604ab01e91aab8e4fe086e6a455e8c17c78f049ea9d4225c76b08",
+        "name": "mana-R",
+        "quantized_tail_sha256": "0c3840381f4f20a9fd17201efd21d74a67f131e99e321e308143d80eb38ced33",
+        "raw_digest_sha256": "79e5cef4ba6c17e3847d3d6e427b248238e6953b2481d3ff4b909a4b8813cf76",
+        "repaired_action_features_sha256": "3820395bb106c57539a33d9fd139cd4123f1ce9f96933bd910afa47adbb0b05d",
+        "repaired_complete_representation_sha256": "9abd06b47ae604ab01e91aab8e4fe086e6a455e8c17c78f049ea9d4225c76b08",
+        "repaired_structured_signature_sha256": "c3a4d58d57b98616f90f2b8b31e379ee170dd98027d651d798f0c1af2eba9b73"
+      },
+      {
+        "canonical_sha256": "677c5c1f2fb2f3f621d53e0c6cf4290461347771d986f35ff6c0c34f4c5bf0f7",
+        "frozen_action_features_sha256": "93f3df5788ba353f4fbe08b8e753c0bc33feb67402db68ed766a9720169bfe1d",
+        "frozen_complete_representation_sha256": "c6e4b2e7ffd9429f20fc64ba2a93efaaf918c160e3aa597aa472141629c33871",
+        "name": "mana-U",
+        "quantized_tail_sha256": "d1a4b3d5f2b798986fbeca57a0a84ab44d9f03979c4bd8f152e41d2c4dd5cc68",
+        "raw_digest_sha256": "dbaf0602e9da99bab17302b00a82808373fcbefe209e97a37edb631f71cbf2ff",
+        "repaired_action_features_sha256": "93f3df5788ba353f4fbe08b8e753c0bc33feb67402db68ed766a9720169bfe1d",
+        "repaired_complete_representation_sha256": "c6e4b2e7ffd9429f20fc64ba2a93efaaf918c160e3aa597aa472141629c33871",
+        "repaired_structured_signature_sha256": "822152bce9d94aed3f92c02ddeadd833a69f99b1861a1b7fc13deca8395effdf"
+      },
+      {
+        "canonical_sha256": "0dd0c344252e6060d6bdace0afe327486308df40bfa50772cece66502ace24a0",
+        "frozen_action_features_sha256": "bad5ecfe97fa332e1886b3fb127881d2bb9ec70fc7a236eb019fd09aa65de5cb",
+        "frozen_complete_representation_sha256": "5a46a9445a733f21a21d1882084a895f322af69e2bcf821843ea824e9127a04e",
+        "name": "mana-W",
+        "quantized_tail_sha256": "4405c6bd42c17a12da21669c552a931d815494fd5e706fc9b18e05e791608cf7",
+        "raw_digest_sha256": "9adba5a941923c2ba80ad80bc8f1db89135d459dba6e862d62fe2d1647ba6b40",
+        "repaired_action_features_sha256": "bad5ecfe97fa332e1886b3fb127881d2bb9ec70fc7a236eb019fd09aa65de5cb",
+        "repaired_complete_representation_sha256": "5a46a9445a733f21a21d1882084a895f322af69e2bcf821843ea824e9127a04e",
+        "repaired_structured_signature_sha256": "12fa64f9cbd7e2474f346eb933c9a07c67024e2679a3b307a62ef0b1455a738f"
+      },
+      {
+        "canonical_sha256": "3a4dff27b2c20b35863fa391989d8b77372c22a219a04d96dfcc3314c82b784a",
+        "frozen_action_features_sha256": "3ada2a8c69b9d3db792594f5b2b8489e256d8c3b185e108a1433bd96f5153dfc",
+        "frozen_complete_representation_sha256": "95e8ee9e8f068e82f14110ed5250afe84ac42ed8cd84f53cbb39958d20e69a24",
+        "name": "mana-none",
+        "quantized_tail_sha256": "20a93051105731c8e74c563daf5eb9acb589d269bfa29933a55992123d9f5045",
+        "raw_digest_sha256": "a25d7c06597e3ba64ccc032d04754dbb6b20668c2e478b1c42d8e1ef21f92356",
+        "repaired_action_features_sha256": "3ada2a8c69b9d3db792594f5b2b8489e256d8c3b185e108a1433bd96f5153dfc",
+        "repaired_complete_representation_sha256": "95e8ee9e8f068e82f14110ed5250afe84ac42ed8cd84f53cbb39958d20e69a24",
+        "repaired_structured_signature_sha256": "36192b89708d04b438cac506a412131fdf334482579d7adeda3b844a6c216d68"
+      },
+      {
+        "canonical_sha256": "0c555fb1daf12d1158d56c43610628272b6e94805df2523702293bc00a462ebb",
+        "frozen_action_features_sha256": "aa63ab994e109d74ace34903b5070edeefe65c530e61fe36810045ad8e771140",
+        "frozen_complete_representation_sha256": "f703f2507400d2d53baa105781c5fb8e5c7bc6fbee778a511b1aa4d0feaed69e",
+        "name": "metadata-invariance-a",
+        "quantized_tail_sha256": "aa12809063a9d4e07609bb6332c0c60a9ff70e43890f54d861e9dc36ee6772eb",
+        "raw_digest_sha256": "26051ebd8c17d283ac4ecd47f8348be5a23b7d80c1fe3d16b97c37d11230986e",
+        "repaired_action_features_sha256": "aa63ab994e109d74ace34903b5070edeefe65c530e61fe36810045ad8e771140",
+        "repaired_complete_representation_sha256": "f703f2507400d2d53baa105781c5fb8e5c7bc6fbee778a511b1aa4d0feaed69e",
+        "repaired_structured_signature_sha256": "98cd66b8f1baa76b484d59b523c1f20ef6f7ce65f3427b8a44c631b947f20709"
+      },
+      {
+        "canonical_sha256": "0c555fb1daf12d1158d56c43610628272b6e94805df2523702293bc00a462ebb",
+        "frozen_action_features_sha256": "aa63ab994e109d74ace34903b5070edeefe65c530e61fe36810045ad8e771140",
+        "frozen_complete_representation_sha256": "f703f2507400d2d53baa105781c5fb8e5c7bc6fbee778a511b1aa4d0feaed69e",
+        "name": "metadata-invariance-b",
+        "quantized_tail_sha256": "aa12809063a9d4e07609bb6332c0c60a9ff70e43890f54d861e9dc36ee6772eb",
+        "raw_digest_sha256": "26051ebd8c17d283ac4ecd47f8348be5a23b7d80c1fe3d16b97c37d11230986e",
+        "repaired_action_features_sha256": "aa63ab994e109d74ace34903b5070edeefe65c530e61fe36810045ad8e771140",
+        "repaired_complete_representation_sha256": "f703f2507400d2d53baa105781c5fb8e5c7bc6fbee778a511b1aa4d0feaed69e",
+        "repaired_structured_signature_sha256": "98cd66b8f1baa76b484d59b523c1f20ef6f7ce65f3427b8a44c631b947f20709"
+      },
+      {
+        "canonical_sha256": "818a565965ac5c14ee87e0d4be5f0c925dd02bffa6765f9cc7895b00384cf7cd",
+        "frozen_action_features_sha256": "9656a7f3037ab91a92cb9505408c5aa7c402614f1e457386fd1db813c42e2b7c",
+        "frozen_complete_representation_sha256": "66e1965448e63550033d67d0f9b6c08f28bda1eab2e1525ecf1866c5be787c20",
+        "name": "optional-choice-Decline",
+        "quantized_tail_sha256": "e421be7479a6f6943b6ac04abddb957d9dc4c82f75a12cb88fa5fd41c16e1e32",
+        "raw_digest_sha256": "15169e5dc6c8d146f330dfc1e34eed2574d500c99ed8645ef952570b717f833a",
+        "repaired_action_features_sha256": "9656a7f3037ab91a92cb9505408c5aa7c402614f1e457386fd1db813c42e2b7c",
+        "repaired_complete_representation_sha256": "66e1965448e63550033d67d0f9b6c08f28bda1eab2e1525ecf1866c5be787c20",
+        "repaired_structured_signature_sha256": "6ff9caa00714c5a43871f3964a4576a31fd5d30f2d20ea0148818998adc68236"
+      },
+      {
+        "canonical_sha256": "6a45815caae8d1e244fb41dad357235705a4c20576702be538ff15a65a7e754d",
+        "frozen_action_features_sha256": "4ac7dc6736e5f0310451578da243e12af2a9223476349e69e5ea275b6393d451",
+        "frozen_complete_representation_sha256": "bd7634c062409542dd5365878599621fd197abd36792ecbfeb144e3850503469",
+        "name": "optional-choice-Discard",
+        "quantized_tail_sha256": "ef1076efcf000be559b2d99439c65b53a8cece6823dd654fa7064f4c04214b31",
+        "raw_digest_sha256": "bca9f0b799e053ab33975e049f6a076f9910bee9376f67440ce086c4ecd3155f",
+        "repaired_action_features_sha256": "4ac7dc6736e5f0310451578da243e12af2a9223476349e69e5ea275b6393d451",
+        "repaired_complete_representation_sha256": "bd7634c062409542dd5365878599621fd197abd36792ecbfeb144e3850503469",
+        "repaired_structured_signature_sha256": "6ed596ad9e16bdf113bf0647f19b49d6e659c55aec2c6deb2752130585f427ab"
+      },
+      {
+        "canonical_sha256": "86c7c78e95429c2a24c008ed0d26510b48006265b3ed870f71ac94456c7c79bd",
+        "frozen_action_features_sha256": "2194903bca1489d1914bf504a9038a8ead5c452ff9ced8744a12268d33888625",
+        "frozen_complete_representation_sha256": "db6892d5061198711aab62b1fa216897f5e887eb392f2bf4a45d5770761b9499",
+        "name": "optional-choice-SacrificeLand",
+        "quantized_tail_sha256": "cd85107a9eee48dda095272b31acc9721f2968b955f2d281d3a2c119252d2765",
+        "raw_digest_sha256": "3c9b64766113ab057aa2b65972a3a64d789cd1a705607fae54ae1853fee662d6",
+        "repaired_action_features_sha256": "2194903bca1489d1914bf504a9038a8ead5c452ff9ced8744a12268d33888625",
+        "repaired_complete_representation_sha256": "db6892d5061198711aab62b1fa216897f5e887eb392f2bf4a45d5770761b9499",
+        "repaired_structured_signature_sha256": "4e2be180faefe2749b539df1232e57b9ae5e95679492c52988aeb7fbe8bde5a0"
+      },
+      {
+        "canonical_sha256": "562d89e481d915e1e54163494d51f0451c53f68ff8d43373333ecf32b214d1cf",
+        "frozen_action_features_sha256": "ef2dc9b54735c2b49df1279a239be9bb422c09092678c931e53fd40852ed54df",
+        "frozen_complete_representation_sha256": "e2fa4d9b1c3713afca3514e3df9e081450f732cea7f872149bc55552b176c17b",
+        "name": "primary-activate_ability",
+        "quantized_tail_sha256": "e54101d249d524563bda99fb34b88a96ee0a26d6fe1dd6bc9cd9b966f685a1c7",
+        "raw_digest_sha256": "b982488586fe23dac02789bb48e9a4d47dd3df93ad3019972838ae81f19e358c",
+        "repaired_action_features_sha256": "ef2dc9b54735c2b49df1279a239be9bb422c09092678c931e53fd40852ed54df",
+        "repaired_complete_representation_sha256": "e2fa4d9b1c3713afca3514e3df9e081450f732cea7f872149bc55552b176c17b",
+        "repaired_structured_signature_sha256": "f20e07235df988408734f4ac49bb7f67cb167fb92cb427599640ca411e329825"
+      },
+      {
+        "canonical_sha256": "0b009a83370403f73ed8dbaf5819c36cccde59b289113e79e126954a3e7fef30",
+        "frozen_action_features_sha256": "4fbfbb99524a6057b957fe824b0d37418dc27582d6fbc8c4c7a04375f388d886",
+        "frozen_complete_representation_sha256": "fe05786e15f9f7ad1ad343316958bbb10ce76fc393a0238c7b913cd47a200f5c",
+        "name": "primary-activate_mana_ability",
+        "quantized_tail_sha256": "993f040f8b657cd2a58e1f31eafa8a299e44fca350efe94ff0e4998998b3840e",
+        "raw_digest_sha256": "0da741b6e7e2c9c99d498829836002207d805477eb5da10efb9debe90a642159",
+        "repaired_action_features_sha256": "4fbfbb99524a6057b957fe824b0d37418dc27582d6fbc8c4c7a04375f388d886",
+        "repaired_complete_representation_sha256": "fe05786e15f9f7ad1ad343316958bbb10ce76fc393a0238c7b913cd47a200f5c",
+        "repaired_structured_signature_sha256": "1d20abb76fdc9d175854f0788fd2aa1bb53a523eebfdd02a32104852521d90a4"
+      },
+      {
+        "canonical_sha256": "3332331c59f25222f9c6772ad9e8a47967beb7a7554cf0c1395120bd0e139004",
+        "frozen_action_features_sha256": "5bf0a3ecac3f02a73275a663842ecefe3a4807ebe52c1e8dcf55ebf083e0b545",
+        "frozen_complete_representation_sha256": "003a825acccf117dc6c45d1fee8cd3fa678b8ddb7f8d0bfe8818658a709dbca5",
+        "name": "primary-cast_spell",
+        "quantized_tail_sha256": "14fecb39128ddb9b65a19f81006c1a1e8c0144795f84dc0d52d195342ff96ded",
+        "raw_digest_sha256": "27f617662ccaa1067076085ad5bf9563407d653cb3125a8b927c909759fdf785",
+        "repaired_action_features_sha256": "5bf0a3ecac3f02a73275a663842ecefe3a4807ebe52c1e8dcf55ebf083e0b545",
+        "repaired_complete_representation_sha256": "003a825acccf117dc6c45d1fee8cd3fa678b8ddb7f8d0bfe8818658a709dbca5",
+        "repaired_structured_signature_sha256": "24b231a57cb484b1d2e367c92ffb722845e6a6b1bc2420ebd7a8dfe8c72eb43d"
+      },
+      {
+        "canonical_sha256": "fe31843a90ca121d5d96d9c9384185acb4ae826fa47ddffcb56d9175b65a6713",
+        "frozen_action_features_sha256": "8a90f7666e9eff8f9dd66260cb303c07cb76beca9b7f01764cbdd17754f21136",
+        "frozen_complete_representation_sha256": "2239313114f3f804342bd173d557a0638151dcc0ca629faa2dec4185a7f0ee07",
+        "name": "primary-choose_attacker_inclusion",
+        "quantized_tail_sha256": "660d64c51df712e0783b18af507981bd6856c9d653af67b6f2a87bf2992c98b4",
+        "raw_digest_sha256": "03a7b86c67fa3a575abddbb607eeea7d29b2c264434e8a829c0721f2fa1815f9",
+        "repaired_action_features_sha256": "8d92f39b5d816ee58e2e5cb3382447802624b797ef2b641a110f861ea1ff7db1",
+        "repaired_complete_representation_sha256": "076317bfc3d06fb2317c2c5c12b9f0285511d2f28f1b189be8598e6bb205e5dd",
+        "repaired_structured_signature_sha256": "137cb2a9568d5ef4841b3d115586a3bcd4edf6a23b2d6dc354f781623ee6d9dc"
+      },
+      {
+        "canonical_sha256": "63c1410cd846f8f36264d40ea07f44c1e7bea05dcb3f254c5aa415d6c78c4391",
+        "frozen_action_features_sha256": "e62a5b24a6104dc49833a82d0526562bbf294e0cb1d5972d115c7d40d739cfc8",
+        "frozen_complete_representation_sha256": "6637d039413d5c9e53c7f412b575c646f7b088e4cda07bee93206bbb52076e39",
+        "name": "primary-choose_blocker_inclusion",
+        "quantized_tail_sha256": "fc53b12b2ef20144726e1d20ed4b77fa81a5f9471c97b270b61dabe7bc5b3464",
+        "raw_digest_sha256": "d1947b0e93bbf795253bb8961aefb928f5f56db8a4d84919f61c3b53288ec65a",
+        "repaired_action_features_sha256": "8cdebf745312728913dbfbf69418da8e775131236b2102333bb183f76648e606",
+        "repaired_complete_representation_sha256": "676d48b7722688ed2b62731c497827250d0a9642fa3ee4cea02807da46c6106d",
+        "repaired_structured_signature_sha256": "4f8303b23a0326a7ff69be2865dbe1a4b116e412acc9e9eeb733e122ca684857"
+      },
+      {
+        "canonical_sha256": "323694df0d5af6f7bfa853912b7df7f0a418e0d98802f8f03641514aeb17a523",
+        "frozen_action_features_sha256": "db6fc789ac2b635fd62f5bff92e6bb221e2c79ec3824eba9b7cc4a0472502e01",
+        "frozen_complete_representation_sha256": "4c510699ec81b83a34c811100110856597d4f0525ea62b2b7d1bb3930f03a0fb",
+        "name": "primary-choose_cast_mode",
+        "quantized_tail_sha256": "49871d770ee87ab3eb506f4949a8bab9e1b9a1c2839d6986a2bdceba8d9b646a",
+        "raw_digest_sha256": "6f0c48c1faa2be8e6604da208aaa1857e60e972c227c65265914eb1523ff2907",
+        "repaired_action_features_sha256": "db6fc789ac2b635fd62f5bff92e6bb221e2c79ec3824eba9b7cc4a0472502e01",
+        "repaired_complete_representation_sha256": "4c510699ec81b83a34c811100110856597d4f0525ea62b2b7d1bb3930f03a0fb",
+        "repaired_structured_signature_sha256": "0d85a164031c6e1d3a178e2417968d074daddb1aea4484a002eccef89704a412"
+      },
+      {
+        "canonical_sha256": "392eb60afb8bebf5fde0d4d3f78f0cf935304746c81c6c747e073e53aa6549e6",
+        "frozen_action_features_sha256": "4e15bd07b68201a9bc80705ec00c8e2c02dc5bf6f4b048e763012505f61403a2",
+        "frozen_complete_representation_sha256": "f9bdd60f26061f7401eb8b3f0177a35de9c6dc670cadee64d97d14dc2c94c13f",
+        "name": "primary-choose_cost_target",
+        "quantized_tail_sha256": "380bcf7ad9c086396b5a54c003d9ebdf7db289f779afba06dcec7d48149cbde2",
+        "raw_digest_sha256": "90352fb6c8b5c89cf613cc54900e8c62adfee1c95cab3137bcd559ad9544bb1e",
+        "repaired_action_features_sha256": "4e15bd07b68201a9bc80705ec00c8e2c02dc5bf6f4b048e763012505f61403a2",
+        "repaired_complete_representation_sha256": "f9bdd60f26061f7401eb8b3f0177a35de9c6dc670cadee64d97d14dc2c94c13f",
+        "repaired_structured_signature_sha256": "5e23ba3d218e9a3c90e877d63a2c19519ca4709fe62df0e7e4e9abefcc3f8a44"
+      },
+      {
+        "canonical_sha256": "2c1617dd111027274f86294876ef3d6f983a7a75ac31a9b6b0e8e40807da3fb5",
+        "frozen_action_features_sha256": "a76cf7a101e6d07015915614976f6fce34e142ed4598646548fa2e5c240c2e0c",
+        "frozen_complete_representation_sha256": "6b6983b35ffef93629afb5899eeeb5e691e61a12515676a6e980dd32915f91e3",
+        "name": "primary-choose_effect_boolean",
+        "quantized_tail_sha256": "d32e16aef6667e7c3c752e90ee9c0e6e12a2fb17dd92c2d67720911d8f27ffa9",
+        "raw_digest_sha256": "1aa175e79c91a6825222ee400bc8162f5f9377cbf16f4af9f3f17c54bbb6eb02",
+        "repaired_action_features_sha256": "a76cf7a101e6d07015915614976f6fce34e142ed4598646548fa2e5c240c2e0c",
+        "repaired_complete_representation_sha256": "6b6983b35ffef93629afb5899eeeb5e691e61a12515676a6e980dd32915f91e3",
+        "repaired_structured_signature_sha256": "1212468443cad37081be54634ac9b7c34117230f9730d8519e093daf21a02955"
+      },
+      {
+        "canonical_sha256": "f5c31eb29a793a5ec74e71a21922497a63b67a3b00ff1b14bdc5b2684007ce98",
+        "frozen_action_features_sha256": "7b9bcf14c5a09b662c12e80605cc4b9e2dae4be8799b5dc2f0801f415ac5356a",
+        "frozen_complete_representation_sha256": "7738e6d3aafb9a5517e4ea108f6c4b7850349d18bccc3bc7facf079c385b0d82",
+        "name": "primary-choose_effect_color",
+        "quantized_tail_sha256": "b7e653a68d36e111d96b589bb7a3974246049efdfceb603dc3f2a6a72844f1c5",
+        "raw_digest_sha256": "179121a51fe69b474c31f4a5cfccfa8dfb6596f57e8a3992a683dd7cd5b5af62",
+        "repaired_action_features_sha256": "7b9bcf14c5a09b662c12e80605cc4b9e2dae4be8799b5dc2f0801f415ac5356a",
+        "repaired_complete_representation_sha256": "7738e6d3aafb9a5517e4ea108f6c4b7850349d18bccc3bc7facf079c385b0d82",
+        "repaired_structured_signature_sha256": "19e6db727a010071819aa904fe316bf8a29a01ec1700ca003a6ffdbe07d2615d"
+      },
+      {
+        "canonical_sha256": "4dcd27846edb98f9c597f0831c4b7982e0140d2d186120817fa3d957b469b14c",
+        "frozen_action_features_sha256": "643a7d57bda15afae0b4714213cd3206cc861bc22f45a9211fa182c927e2bfe7",
+        "frozen_complete_representation_sha256": "25eec4d9d12a8c1932e35122ce2bb817f988859c01481d97a89839db2dea8d7f",
+        "name": "primary-choose_effect_number",
+        "quantized_tail_sha256": "eae756f9b21911118623de2c6fdd00e335e8f1db061489b0403bec4fd671ebc1",
+        "raw_digest_sha256": "92755cf5a7ee813600fda62cde36fb6073e9b9ff7e0d1a1c828150b111d8c32f",
+        "repaired_action_features_sha256": "643a7d57bda15afae0b4714213cd3206cc861bc22f45a9211fa182c927e2bfe7",
+        "repaired_complete_representation_sha256": "25eec4d9d12a8c1932e35122ce2bb817f988859c01481d97a89839db2dea8d7f",
+        "repaired_structured_signature_sha256": "8456dd58524b439fc4c69aa19cb0523cf3fe92f0274b34f74617025ca921bdf9"
+      },
+      {
+        "canonical_sha256": "ef34f051ce7bbd551d9ece16164fa5ed5c65f0849d6fe33b7d7d71beec761c8c",
+        "frozen_action_features_sha256": "9591da987cdf145298be0ad991f19fe84fa018b7b79be3cc969aa54365236f35",
+        "frozen_complete_representation_sha256": "77eef90730d4faa6c35e93049e134682f40d664fa24ae783ad88618f556a81a4",
+        "name": "primary-choose_effect_option",
+        "quantized_tail_sha256": "49546d320aab7441839157cc491211644e0581a92f78f7cda5c1a2e1c9ab76a0",
+        "raw_digest_sha256": "e90a39293123fa97aec32fbd37f6267204b271ba6e07f50d1376c1cc068c2c56",
+        "repaired_action_features_sha256": "9591da987cdf145298be0ad991f19fe84fa018b7b79be3cc969aa54365236f35",
+        "repaired_complete_representation_sha256": "77eef90730d4faa6c35e93049e134682f40d664fa24ae783ad88618f556a81a4",
+        "repaired_structured_signature_sha256": "eaea392be7cae40962907950fe4f4aae4953e2f540b1c4425970422601f77b7a"
+      },
+      {
+        "canonical_sha256": "3cd8a7a9683df3bd8d6b6aad44adaa4424590bdb5fa3b03b2831631e476cd4fe",
+        "frozen_action_features_sha256": "5a5237c56cc0cd0ff37c14e54426dad13efb2d66d47a6d62c7aec2e7595b934b",
+        "frozen_complete_representation_sha256": "c98a9cb510f7bdbd796b6fc0587f8e9b4c8ed258490c73e351351c5616e1beaa",
+        "name": "primary-choose_effect_target",
+        "quantized_tail_sha256": "d3a1f355302e8af1dfdfdb1aae630fb0929d20301de749e13458cb0ace23f7d7",
+        "raw_digest_sha256": "a2c9c69dfec13bc66fac42c82047929acaca2562f3deb40469c1816c3d01605b",
+        "repaired_action_features_sha256": "5a5237c56cc0cd0ff37c14e54426dad13efb2d66d47a6d62c7aec2e7595b934b",
+        "repaired_complete_representation_sha256": "c98a9cb510f7bdbd796b6fc0587f8e9b4c8ed258490c73e351351c5616e1beaa",
+        "repaired_structured_signature_sha256": "9da9011e277325d86201df066e920c61b77f2f285869901654703220aa7a4e33"
+      },
+      {
+        "canonical_sha256": "c169790991a0963126997a2f9121af02461cb8b6004db1f44a313503cd25a790",
+        "frozen_action_features_sha256": "c9addb765596b71d689e4d3cf77f8dac2d4955e2c4e441c8c93243b442cfb3d9",
+        "frozen_complete_representation_sha256": "b86418a1e0c8e202145a75ec0d9ab10fba0376f84fcf3b744637824b0df6c1de",
+        "name": "primary-choose_kicker",
+        "quantized_tail_sha256": "dfcccb6e64fdd41fb5366277b2b5cce135538f0148b01410923cd8904e7be0e4",
+        "raw_digest_sha256": "58f8812a50d06150ff473a31c643d6c8d3c454e44cd1f6c7c6fbf4a1914f9f7f",
+        "repaired_action_features_sha256": "c9addb765596b71d689e4d3cf77f8dac2d4955e2c4e441c8c93243b442cfb3d9",
+        "repaired_complete_representation_sha256": "b86418a1e0c8e202145a75ec0d9ab10fba0376f84fcf3b744637824b0df6c1de",
+        "repaired_structured_signature_sha256": "a09efac76aa6462b0d04e10c7aa7fbc7a1da4f7db82edb373046224a2b2beba7"
+      },
+      {
+        "canonical_sha256": "bb3f991435347ef034e76aa1cf73eace86adf1bc4075afee4eeec0f2c6f899cd",
+        "frozen_action_features_sha256": "e5ba6de94479619624c53ac7ff28a95402a8f3549fafff70b5d56bb292ab494b",
+        "frozen_complete_representation_sha256": "2aaf5c691b069bfb164f073d2269a3df70973902e226d987fd34c3ba51389518",
+        "name": "primary-choose_madness_cast",
+        "quantized_tail_sha256": "4dd661803c3c154d072c10d431aafd76e6a10b882024c2af264997087466bfbd",
+        "raw_digest_sha256": "95b44fa5031aeb69ca8779adf37fa63a020d39d3afb9114eae2c6d657a454e31",
+        "repaired_action_features_sha256": "e5ba6de94479619624c53ac7ff28a95402a8f3549fafff70b5d56bb292ab494b",
+        "repaired_complete_representation_sha256": "2aaf5c691b069bfb164f073d2269a3df70973902e226d987fd34c3ba51389518",
+        "repaired_structured_signature_sha256": "f1dbddb152d1d6a4dbdd72665716ea70791b88c10ef84877c2c604372a0d95f6"
+      },
+      {
+        "canonical_sha256": "5ab381d8c88e7cb60917b51a1277c5696b03926902148ea92a765e0c0a9ef67d",
+        "frozen_action_features_sha256": "444b2657a8e6ccebf3b303f4c01df9fc70791bfb1cf70d64a3dac3e37f9291df",
+        "frozen_complete_representation_sha256": "f54366906938631f0b23e096e880c65d9ef4dd669ec67294718d9b5881d95989",
+        "name": "primary-choose_optional_cost_use",
+        "quantized_tail_sha256": "dbee2d06db50aa8a3c75723aa91cf3fc97f628f5d740be1d897ece3ad3bde93d",
+        "raw_digest_sha256": "e7267aa3709687e785b0bbbe73f8ea421f7a14eb6f6a1828aea4941463a067d7",
+        "repaired_action_features_sha256": "444b2657a8e6ccebf3b303f4c01df9fc70791bfb1cf70d64a3dac3e37f9291df",
+        "repaired_complete_representation_sha256": "f54366906938631f0b23e096e880c65d9ef4dd669ec67294718d9b5881d95989",
+        "repaired_structured_signature_sha256": "fe59b5de6e70666eb5a1f7662c740e18a7c4a0748dd02a59251383181dab8a01"
+      },
+      {
+        "canonical_sha256": "86c7c78e95429c2a24c008ed0d26510b48006265b3ed870f71ac94456c7c79bd",
+        "frozen_action_features_sha256": "2194903bca1489d1914bf504a9038a8ead5c452ff9ced8744a12268d33888625",
+        "frozen_complete_representation_sha256": "db6892d5061198711aab62b1fa216897f5e887eb392f2bf4a45d5770761b9499",
+        "name": "primary-choose_optional_cost_which",
+        "quantized_tail_sha256": "cd85107a9eee48dda095272b31acc9721f2968b955f2d281d3a2c119252d2765",
+        "raw_digest_sha256": "3c9b64766113ab057aa2b65972a3a64d789cd1a705607fae54ae1853fee662d6",
+        "repaired_action_features_sha256": "2194903bca1489d1914bf504a9038a8ead5c452ff9ced8744a12268d33888625",
+        "repaired_complete_representation_sha256": "db6892d5061198711aab62b1fa216897f5e887eb392f2bf4a45d5770761b9499",
+        "repaired_structured_signature_sha256": "4e2be180faefe2749b539df1232e57b9ae5e95679492c52988aeb7fbe8bde5a0"
+      },
+      {
+        "canonical_sha256": "94bd36a6b09b4dfd8bd9bb8de48f695c1d086715f02167c26ce656bb40392bbb",
+        "frozen_action_features_sha256": "b6d630bc1e9b5eed69847758a2edb36cc1a6882272338bc7abab35b760429ce8",
+        "frozen_complete_representation_sha256": "5273cfd86a08418974d39a872e5546bd2ec6a93da1d1b4670de31725aa1e5dd6",
+        "name": "primary-choose_spell_copy_payment",
+        "quantized_tail_sha256": "b43f9824367a9885a21c5b6a50f92dcd3104893af68813c4bbf9a26b4a5d9011",
+        "raw_digest_sha256": "3696d4c359669b2289c9fde6feb955afd736fd7aa9c510cc2d83688237d0d015",
+        "repaired_action_features_sha256": "b6d630bc1e9b5eed69847758a2edb36cc1a6882272338bc7abab35b760429ce8",
+        "repaired_complete_representation_sha256": "5273cfd86a08418974d39a872e5546bd2ec6a93da1d1b4670de31725aa1e5dd6",
+        "repaired_structured_signature_sha256": "561a23c7378b2801697032641061c3b8762fbf29871f1f33d02694e618f0e29d"
+      },
+      {
+        "canonical_sha256": "12318e3f09d93f36a82c8e75820febbb05eda84e078fab01b33b3dd5b66f88f2",
+        "frozen_action_features_sha256": "5313e269678f11188a53074e162c9e20fea6ed60433097067a21a610b26a4111",
+        "frozen_complete_representation_sha256": "68b584e452da7569b98d37b9ca94698978826ec73f48af1cdb7ac2412d5d6559",
+        "name": "primary-choose_spell_copy_retarget",
+        "quantized_tail_sha256": "8f534a602ae709b85e0cb465940cf29bc7330f585ffc54d1f47d80eeb835a8c3",
+        "raw_digest_sha256": "1ed527a3f69c0c603df22da99ea25bcfe8a847319f6a0551c234ecb43ca4f985",
+        "repaired_action_features_sha256": "5313e269678f11188a53074e162c9e20fea6ed60433097067a21a610b26a4111",
+        "repaired_complete_representation_sha256": "68b584e452da7569b98d37b9ca94698978826ec73f48af1cdb7ac2412d5d6559",
+        "repaired_structured_signature_sha256": "46faf95a14641bce0c7b694b62bcfc93199a426357099d6b79b09ea05f11eb30"
+      },
+      {
+        "canonical_sha256": "f557d17285ec5dad484b1faf8a174e62cb772dc2f959f126b62b0013a4f82a54",
+        "frozen_action_features_sha256": "19338485a749f3f6b0d6dc3176b27fce9f0b278be82514ec94292ab0e3ccfd7a",
+        "frozen_complete_representation_sha256": "f23c34e018afd7b167c7fdd3ecd9ae219edc34e65f5befd7e53a99d2a707c7c5",
+        "name": "primary-choose_spell_mode",
+        "quantized_tail_sha256": "dfa60f7d46b6657eb6e8a1ccc106365946dbef24079f1e1cb67077e3382d95be",
+        "raw_digest_sha256": "b8f288182137e1d0f61811da1e30ec99d8ffe56ba09c506314e1a7d9fd013375",
+        "repaired_action_features_sha256": "19338485a749f3f6b0d6dc3176b27fce9f0b278be82514ec94292ab0e3ccfd7a",
+        "repaired_complete_representation_sha256": "f23c34e018afd7b167c7fdd3ecd9ae219edc34e65f5befd7e53a99d2a707c7c5",
+        "repaired_structured_signature_sha256": "de1c77fa7754c28942c376e8de2eec7da0db03985817100946f51bd62a94fe58"
+      },
+      {
+        "canonical_sha256": "67311572d7a7de3ed694bd6799b8c288d512ffa4b53a51b40123638a791d1c8e",
+        "frozen_action_features_sha256": "38e5725e050752e24155ab3d7a50ff76d020cdcc4ff8383716f5d963487cdc42",
+        "frozen_complete_representation_sha256": "f61456a54e4f946d13436ca720cfd70f17d21203814f4b7bbc0c8b0cb3dacdde",
+        "name": "primary-choose_target",
+        "quantized_tail_sha256": "da94b6c41cde82cd389eee5c2c6b041d452e59fe6c0e15f9bab6b436f3b5420a",
+        "raw_digest_sha256": "e10d0a30fa618849858e96641dbd62345f6f2b99af313be729917ee6d958be3d",
+        "repaired_action_features_sha256": "38e5725e050752e24155ab3d7a50ff76d020cdcc4ff8383716f5d963487cdc42",
+        "repaired_complete_representation_sha256": "f61456a54e4f946d13436ca720cfd70f17d21203814f4b7bbc0c8b0cb3dacdde",
+        "repaired_structured_signature_sha256": "0da66f848e00de3cd764721057b3b301ff04af524454211de4dede4f135ce3fc"
+      },
+      {
+        "canonical_sha256": "183d86bca6d746fee183bc94fe84675fc97846c568a35a8a8b4f96fea4c680a2",
+        "frozen_action_features_sha256": "9fdf10ac2c19a94d7012c64614d5ab5d737fa9df1deec188b740ecfa90337f5f",
+        "frozen_complete_representation_sha256": "fccf441387c45bf182b84b990ece42587591e91960247040ab3fff629d025d07",
+        "name": "primary-discard",
+        "quantized_tail_sha256": "0e7d2d9553c071fa296796806e6dccca8971a12b3505e32a2dface1c8ddf9a8d",
+        "raw_digest_sha256": "684e0a4b10af3435ac2961228ed3bf26ec217bb103b6c2d63a5515bd7dd0f2c3",
+        "repaired_action_features_sha256": "9fdf10ac2c19a94d7012c64614d5ab5d737fa9df1deec188b740ecfa90337f5f",
+        "repaired_complete_representation_sha256": "fccf441387c45bf182b84b990ece42587591e91960247040ab3fff629d025d07",
+        "repaired_structured_signature_sha256": "c1c6996bd3e5a8b2ca273d79170978725ccef21ca84318a2a9bfa17e67e33ced"
+      },
+      {
+        "canonical_sha256": "e2615ed6bfd2c0b8d8a4b1fea44acaeffd1a99570e10c9b3b915e4e9477b9396",
+        "frozen_action_features_sha256": "54e8f29997b271837e832b87480f8973ea2996b488cb205fcb51b3e69125cfeb",
+        "frozen_complete_representation_sha256": "dfb36523dff01127ac31ebbc6410f62edc276ada273849cfd2aa21e20eeefdce",
+        "name": "primary-finish_effect_selection",
+        "quantized_tail_sha256": "880e056def818bb1d33ccf8fc3c315a8bb7e67ea462d7ed6f6c01ee295be184c",
+        "raw_digest_sha256": "4c723c22f1ff0fd882f58e23e1975d4bd06f6c4c640110c2a2248465f45856bb",
+        "repaired_action_features_sha256": "54e8f29997b271837e832b87480f8973ea2996b488cb205fcb51b3e69125cfeb",
+        "repaired_complete_representation_sha256": "dfb36523dff01127ac31ebbc6410f62edc276ada273849cfd2aa21e20eeefdce",
+        "repaired_structured_signature_sha256": "99a5d82813004a1350203f6af20149ab2ecbf90c41d74fe8e184cd8ed6e0b877"
+      },
+      {
+        "canonical_sha256": "19cd70a849a17ce7c5d3e5ec029ea610a946811a3137ff570b86e99210dbdff9",
+        "frozen_action_features_sha256": "f3cf9e431a1dacb03fae6e8b226dc75d5e564d6310ad0cd9ddf25640f0cfec5d",
+        "frozen_complete_representation_sha256": "3bb18b464bc590815b445b18c825cd9a9c91355b164669aac6f6e02eaeae3d24",
+        "name": "primary-finish_target_selection",
+        "quantized_tail_sha256": "21125315fcf8063c95077da646659d41e9ca81c6c11fc31935a47867caf85787",
+        "raw_digest_sha256": "61769e30268d761283f202caa778614e117b885b305cba7d533ae5e007b7f1bd",
+        "repaired_action_features_sha256": "f3cf9e431a1dacb03fae6e8b226dc75d5e564d6310ad0cd9ddf25640f0cfec5d",
+        "repaired_complete_representation_sha256": "3bb18b464bc590815b445b18c825cd9a9c91355b164669aac6f6e02eaeae3d24",
+        "repaired_structured_signature_sha256": "f2e6118d531ec0ca524e7186ba7dae67a3cc7f79293ab952dcbcb89e3cf37ebb"
+      },
+      {
+        "canonical_sha256": "057b16873ca76bdbdcfeae01f11bae717e49318cfe47b3b6fb91ccd3975d510c",
+        "frozen_action_features_sha256": "91ffa0e5852854cef7762e534e6e552d1cdf8cef5b82437e4040227e50193cbf",
+        "frozen_complete_representation_sha256": "d875f61ca9def1743efe5e38a961c17ec91fcbdd3730491636fcf1cd5dee5651",
+        "name": "primary-order_triggers",
+        "quantized_tail_sha256": "06bddf42a1d7d9483369562a0c9cf7b725d5b0bd9182cc3404803ce37275c0c5",
+        "raw_digest_sha256": "2f02e88dbdeab4e20e68011435131ca7f4bb7dad0b0b8fc52a91e32ac02ef089",
+        "repaired_action_features_sha256": "91ffa0e5852854cef7762e534e6e552d1cdf8cef5b82437e4040227e50193cbf",
+        "repaired_complete_representation_sha256": "d875f61ca9def1743efe5e38a961c17ec91fcbdd3730491636fcf1cd5dee5651",
+        "repaired_structured_signature_sha256": "d1fb7e27bce390c7e0bde4d9e5cc2ae9aee42e57c09ca08578a80d5ead1a441f"
+      },
+      {
+        "canonical_sha256": "1742fd7c891b6ca60307eaa904b80ccfb327ef5e54e43569f41bb917a199f6eb",
+        "frozen_action_features_sha256": "1bee6f596ba480d4946f5832d82d4ce448ab24543d0ac905673531ae4068b67d",
+        "frozen_complete_representation_sha256": "2c9385c95e5b41b9eb07e5c28c0875863f8845906d097f601aae3960d530334b",
+        "name": "primary-pass",
+        "quantized_tail_sha256": "5e70596804d9f4e92f26991ab7a307d1465a7e948f10a6994e6c862fd9b30f8f",
+        "raw_digest_sha256": "1a2305e8e78b01aad0e4b99e58830eda68de6803bfaede9ebd2a59c0fa95f482",
+        "repaired_action_features_sha256": "1bee6f596ba480d4946f5832d82d4ce448ab24543d0ac905673531ae4068b67d",
+        "repaired_complete_representation_sha256": "2c9385c95e5b41b9eb07e5c28c0875863f8845906d097f601aae3960d530334b",
+        "repaired_structured_signature_sha256": "9e7bd12151b1363720884c1503388a68647603d5b8218edfaa831ea43a0d8979"
+      },
+      {
+        "canonical_sha256": "cfef61ee2cd707d404a7321a965f97746677a2d935d780293e7fb5c13374870b",
+        "frozen_action_features_sha256": "e12bbca29140bb91f7f33c309ff52432f58a8ce5b3a24bc37a8389c73f940a92",
+        "frozen_complete_representation_sha256": "5980030f22ab941edf2b002c21cd0d1ae10eed57bcdb5d27f1bb507df48f2e52",
+        "name": "primary-play_land",
+        "quantized_tail_sha256": "2f31232ef6225ceb3b017bd9e2dec1cfb28102757505e8ab50b317839aef6d8b",
+        "raw_digest_sha256": "041625642d64b5dbbecbbb360177cc5730502ab75a2cdf6616ef7679b8a9669d",
+        "repaired_action_features_sha256": "e12bbca29140bb91f7f33c309ff52432f58a8ce5b3a24bc37a8389c73f940a92",
+        "repaired_complete_representation_sha256": "5980030f22ab941edf2b002c21cd0d1ae10eed57bcdb5d27f1bb507df48f2e52",
+        "repaired_structured_signature_sha256": "6c2173db5eed4ac6d0725d4604cd70b18ac840982500edcd91812689f749bce3"
+      },
+      {
+        "canonical_sha256": "cd06a606dc945a3f4af7e3a511cc0582a5d68c85f6671c6cd49684ca342eb4af",
+        "frozen_action_features_sha256": "111595c29b3dd83f953273e2d2b27fe427a8e3d9cdf11d18ce05df964b198f8a",
+        "frozen_complete_representation_sha256": "ff453412a4c4d2c51e44639d4196473b66e1c30da95e0bd5c24305b300c0553d",
+        "name": "primary-plot_spell",
+        "quantized_tail_sha256": "3371589f30ba3012fed34132a76d121adebe615ddac8f3126c3690081c1d9c97",
+        "raw_digest_sha256": "c45d472482d20c5ec8fc8a78ed7936af9367f74b274abfbfe382a74a41b4f7a4",
+        "repaired_action_features_sha256": "111595c29b3dd83f953273e2d2b27fe427a8e3d9cdf11d18ce05df964b198f8a",
+        "repaired_complete_representation_sha256": "ff453412a4c4d2c51e44639d4196473b66e1c30da95e0bd5c24305b300c0553d",
+        "repaired_structured_signature_sha256": "07e5daa396decd6e894f6b3c029790ba08c02563fdd5c7140a9d4f5fb8981e9e"
+      },
+      {
+        "canonical_sha256": "daece0f6a0ba3e0c8ca2b9d91c1bf7cc49128e4a53e7cd5ad33a312455702903",
+        "frozen_action_features_sha256": "87d3108aac8613af235a94ea149b3dc2ddcd7c239755bcde6171a6942adae452",
+        "frozen_complete_representation_sha256": "e10bb9a3eb059ce8e67a5e6e8652a3f00b68045dfda6fd07f7f7ab66c6c418dc",
+        "name": "stable-ref-0-0-battlefield",
+        "quantized_tail_sha256": "249c6b7631f2467321cf34284a7c19f21508a9448af41fc855e202d690f7d9bd",
+        "raw_digest_sha256": "61e8ddc23c8ef492c5989066641fab6af87ef713852c8cde8eab09afe24db671",
+        "repaired_action_features_sha256": "87d3108aac8613af235a94ea149b3dc2ddcd7c239755bcde6171a6942adae452",
+        "repaired_complete_representation_sha256": "e10bb9a3eb059ce8e67a5e6e8652a3f00b68045dfda6fd07f7f7ab66c6c418dc",
+        "repaired_structured_signature_sha256": "6777f5b8cf76d8845a25e8b19cfa2fd644199eed94a5b9318931f10a44f82bc0"
+      },
+      {
+        "canonical_sha256": "5cbc854a7e0fa889ba1b15c648995a0f0039c390a2a79f98a3629f4daa9c7325",
+        "frozen_action_features_sha256": "ee6d3281e4741452e29653aba23c40bc1ccc2b54632eb332e1470946ff03a323",
+        "frozen_complete_representation_sha256": "74d0007832bc6762d2fe8e34d9de6c682aea8aa3dc248d1896aeb33e9582b7f3",
+        "name": "stable-ref-0-0-command",
+        "quantized_tail_sha256": "d2b8b148f0b0ff7afd4c9efd6e05ec6d6a4124c84879805da5469646098b3124",
+        "raw_digest_sha256": "12b467485aa5c4accdd10547f7ad5cb9ced3062e2d7efbe6752e427676036ba8",
+        "repaired_action_features_sha256": "ee6d3281e4741452e29653aba23c40bc1ccc2b54632eb332e1470946ff03a323",
+        "repaired_complete_representation_sha256": "74d0007832bc6762d2fe8e34d9de6c682aea8aa3dc248d1896aeb33e9582b7f3",
+        "repaired_structured_signature_sha256": "726a03e528c7b2f9f27302c2f08f8dc0e2c6b6bb91c4f5c38d847f801b999e59"
+      },
+      {
+        "canonical_sha256": "c57cd83dc1215bb9c373474a84f530cf7a271ab7615e6c9a0db5dbae2b3bb091",
+        "frozen_action_features_sha256": "ace614a7888ea0c8d23b06649ad9a3eb573d66844e6564ca43c18a90792fcab6",
+        "frozen_complete_representation_sha256": "c2fcb30a3036bc8854a6369f7582069f6c4d29c7b5017df4ff6fce482161fb6e",
+        "name": "stable-ref-0-0-exile",
+        "quantized_tail_sha256": "1c1b507c590bb0e78440d3aa0f7d80d532a07f3506958392ff77c76411e22ff9",
+        "raw_digest_sha256": "0dd964800955cc26895bdcdeb4fe96d8896cdaededf4387b4c9de64666234ed5",
+        "repaired_action_features_sha256": "ace614a7888ea0c8d23b06649ad9a3eb573d66844e6564ca43c18a90792fcab6",
+        "repaired_complete_representation_sha256": "c2fcb30a3036bc8854a6369f7582069f6c4d29c7b5017df4ff6fce482161fb6e",
+        "repaired_structured_signature_sha256": "d7dc13611f17b8482ca1c7a02643ba795853231d8075a4ea28a4d3ceee3b5ded"
+      },
+      {
+        "canonical_sha256": "481f3ccebcce3faabe590c56302a921fe90127175db5d59b77ec01992142ee87",
+        "frozen_action_features_sha256": "8a7926610572fab3a0e69f69c394c4e8cd62357b648dc021f605e4fb469bde36",
+        "frozen_complete_representation_sha256": "4ba0400cb1020d3a09f74d4807e1e429963e3bc477e909835c723cd36b369b0b",
+        "name": "stable-ref-0-0-graveyard",
+        "quantized_tail_sha256": "56ed38efc611fbdf5b71ff80806d48e8097213cbf6395fed9ff5aa32e68c24a1",
+        "raw_digest_sha256": "5963c7c1cb3be549fc466a212d82d73fc2e0c498752b4daca6e9a53bf8db61d2",
+        "repaired_action_features_sha256": "8a7926610572fab3a0e69f69c394c4e8cd62357b648dc021f605e4fb469bde36",
+        "repaired_complete_representation_sha256": "4ba0400cb1020d3a09f74d4807e1e429963e3bc477e909835c723cd36b369b0b",
+        "repaired_structured_signature_sha256": "81bec0ef7a631ff9841c6f0c81eb1bfef5bf1a6f4c37f79aa3c06ff2b3304230"
+      },
+      {
+        "canonical_sha256": "20ba9acc9039e9e64a38496b77070fc30c449c1c40efa48063f8163fcb2db44f",
+        "frozen_action_features_sha256": "cb79c9adea9ab55eebbad9b05c37e0806354ab4f7d06a84c878021ff24bd6d92",
+        "frozen_complete_representation_sha256": "af49e74969d4e87e84a251dfbbb886d18b7fcb8fdc7ad9411196729f3ee7ac5b",
+        "name": "stable-ref-0-0-hand",
+        "quantized_tail_sha256": "fc741435ca6b66be8806a81a94468cc090fbb0eb66fab01c79eaac6f66396f74",
+        "raw_digest_sha256": "e54f3a413d9f225bceaef1b3871a8a7e5ec8d84f81543f704084082fac5b925a",
+        "repaired_action_features_sha256": "cb79c9adea9ab55eebbad9b05c37e0806354ab4f7d06a84c878021ff24bd6d92",
+        "repaired_complete_representation_sha256": "af49e74969d4e87e84a251dfbbb886d18b7fcb8fdc7ad9411196729f3ee7ac5b",
+        "repaired_structured_signature_sha256": "80d040db8b66d8bb527f73242552ceed7425cd8150ac7550ae5062ec5f4f8a5e"
+      },
+      {
+        "canonical_sha256": "cc3f1aa553dadd0bb99d32c33994145b1ec467e94704fe34d6af01af0766986f",
+        "frozen_action_features_sha256": "0c37b84b22b50c317a26fe1fdbd5a45c77777d0033195867f1549c066675d5cc",
+        "frozen_complete_representation_sha256": "1f3e615bbf62548d60d9092bbb5c7cf5b188598b0b858237a9e8492817cf79d0",
+        "name": "stable-ref-0-0-library",
+        "quantized_tail_sha256": "25032fe20f1066ed051b41b5ec3e5625ee427089e80cdf7e568e7772ef0193d6",
+        "raw_digest_sha256": "53a53f76d95ec2415f261dd235e12e336eb445071aeb4fafd3022390e2b039ed",
+        "repaired_action_features_sha256": "0c37b84b22b50c317a26fe1fdbd5a45c77777d0033195867f1549c066675d5cc",
+        "repaired_complete_representation_sha256": "1f3e615bbf62548d60d9092bbb5c7cf5b188598b0b858237a9e8492817cf79d0",
+        "repaired_structured_signature_sha256": "60b03c01b32b56efee4216f18a9864902c9ef227d837f2b4849d53db85728069"
+      },
+      {
+        "canonical_sha256": "fd7b9dcd026ace31a0012cdb2cc578816cb690424dbc9c8650a1bd01640fb474",
+        "frozen_action_features_sha256": "2a64ff400f87eb7e530a488070ba871e2a3006a41de6e778d84959f514677b7d",
+        "frozen_complete_representation_sha256": "9065a284a4dcc3193e97194e8d384f78b521bf2776b3e3da6138b3979602f403",
+        "name": "stable-ref-0-0-stack",
+        "quantized_tail_sha256": "c49ca8a1f6101d498094af0a2394482c34283cd29f37b9eb75ef88aa3633fc2f",
+        "raw_digest_sha256": "e0ce70af261c3a8465ef011e537c5fbdcaa1eadf823a5ec627079499bd79fa93",
+        "repaired_action_features_sha256": "2a64ff400f87eb7e530a488070ba871e2a3006a41de6e778d84959f514677b7d",
+        "repaired_complete_representation_sha256": "9065a284a4dcc3193e97194e8d384f78b521bf2776b3e3da6138b3979602f403",
+        "repaired_structured_signature_sha256": "a3694a5a31a0ece8228e92d5fccb5099f55446840e5cd5dfa78d8bedea7491fc"
+      },
+      {
+        "canonical_sha256": "212a6e59311d9b77f067affe0333948c9e34f7f2a7b6b5b6ed4616a554a363a5",
+        "frozen_action_features_sha256": "491e4bf898f68065516ad5b50ff1458875edba3c6344ce269013ef2d8c72c55e",
+        "frozen_complete_representation_sha256": "59022a2d9211a537ff37cc3ed24399c43d868c9c8b347e7d8f9a351a25ea1a32",
+        "name": "stable-ref-0-1-battlefield",
+        "quantized_tail_sha256": "66426feef07a810a3efe189bd1c41b006f59b3a4f1c74bbcf850da4aebc9287f",
+        "raw_digest_sha256": "b603ab61fd3d8573b6bd8c4adf70734cbe5329fc73e68dab5fb46f7761cf0ef8",
+        "repaired_action_features_sha256": "491e4bf898f68065516ad5b50ff1458875edba3c6344ce269013ef2d8c72c55e",
+        "repaired_complete_representation_sha256": "59022a2d9211a537ff37cc3ed24399c43d868c9c8b347e7d8f9a351a25ea1a32",
+        "repaired_structured_signature_sha256": "6ca882741a49b8d3df7bae5c329e6619d88608d8f0377d8a1b0c0c9bd2feec9e"
+      },
+      {
+        "canonical_sha256": "54b7b0dd000bb43a5b8c0fdc0ff75d4a7c78e7405d114216eaeb6730466802e7",
+        "frozen_action_features_sha256": "7b33bee7c0e64c63b82b55065771092d0e7eaef8ba2cd33c627d666daba967e2",
+        "frozen_complete_representation_sha256": "e95bc1d287cb3a1c39c53b0bfc2cb05c22b3bb42004f3e071f0d6f4a548e8479",
+        "name": "stable-ref-0-1-command",
+        "quantized_tail_sha256": "df3704cd5ece81849dd64595d3f54c0cc5e2c71e7081cc62f1002d0cc37a5599",
+        "raw_digest_sha256": "567651669271e5ad5e69adf72482d7708366327a1fe78ad1a2a055d54f2cc6b3",
+        "repaired_action_features_sha256": "7b33bee7c0e64c63b82b55065771092d0e7eaef8ba2cd33c627d666daba967e2",
+        "repaired_complete_representation_sha256": "e95bc1d287cb3a1c39c53b0bfc2cb05c22b3bb42004f3e071f0d6f4a548e8479",
+        "repaired_structured_signature_sha256": "6064365c40f849bd4cc8407d7218ea343d7588ccd53790fbe42970e565c9e917"
+      },
+      {
+        "canonical_sha256": "acdd7520b0b4b406b9cb994a35f287981536ae6dcadf10fbc0b7e491aa5ffd0c",
+        "frozen_action_features_sha256": "cdeafc596efcbcac22182a922440329e7a16928ddaab2bfe12acf4683430ce0c",
+        "frozen_complete_representation_sha256": "3b463c77f8aa2c2354dac0b1d0eddf7f8cc095d14106a39b1b39530cb4083a49",
+        "name": "stable-ref-0-1-exile",
+        "quantized_tail_sha256": "71b348798d5e920ce29f966057100a8424009d9e7771118efd7fb0d0a23a9515",
+        "raw_digest_sha256": "5f85cd5b901de44763b58cc501d77b2771852b085cbff0a21450e4a2ed22ca08",
+        "repaired_action_features_sha256": "cdeafc596efcbcac22182a922440329e7a16928ddaab2bfe12acf4683430ce0c",
+        "repaired_complete_representation_sha256": "3b463c77f8aa2c2354dac0b1d0eddf7f8cc095d14106a39b1b39530cb4083a49",
+        "repaired_structured_signature_sha256": "f1d79501081286c8f2bff36d589a63991dbf9726e2c479d6ef13fe363438dbd7"
+      },
+      {
+        "canonical_sha256": "0f8eb4d31e09db5b72a751cd5625b2d29d1c5f76502ed90aa6a594f1dade7322",
+        "frozen_action_features_sha256": "9e7923c710e8519335effec3d9d5a9110892ac0208c87db3755b251d2945110c",
+        "frozen_complete_representation_sha256": "38e8a65276cd71cf253000a50ddb3e362794febaad2ba642b912b6f71dbd098f",
+        "name": "stable-ref-0-1-graveyard",
+        "quantized_tail_sha256": "da1cf21a38fa6600e31249abae6f88450437928061b1eceac91b6e078399ae29",
+        "raw_digest_sha256": "35bc0d0ae9af7c404ab9d0e31fe61d456a64b9fc9ee41d8d64a18cb2cc552faf",
+        "repaired_action_features_sha256": "9e7923c710e8519335effec3d9d5a9110892ac0208c87db3755b251d2945110c",
+        "repaired_complete_representation_sha256": "38e8a65276cd71cf253000a50ddb3e362794febaad2ba642b912b6f71dbd098f",
+        "repaired_structured_signature_sha256": "1f7d508e7a2d224983d8520b700f54f412f6e547fe3f58829ed82ef69f6cbdf1"
+      },
+      {
+        "canonical_sha256": "8e2840946b9ffadb27ffa2b34e46fe98a2c825e415d9bee05d1c0e43af43fb48",
+        "frozen_action_features_sha256": "f0e67c2955e96fd4ef5281b089056b3d05e4d22873521fd49d9f5e629c342990",
+        "frozen_complete_representation_sha256": "e5deb68f9fe96711c43fd1bacdf4e68d5a36cd07d4d97816b88d5899700a7658",
+        "name": "stable-ref-0-1-hand",
+        "quantized_tail_sha256": "3283e453d6c967218a786b0754adb2f054c87a05cff78106cc5a8e6d4ebd8c09",
+        "raw_digest_sha256": "e029b8e78676af2d117e447a1819a4cbeaf9442a0c634b3cec47d480cdc70cde",
+        "repaired_action_features_sha256": "f0e67c2955e96fd4ef5281b089056b3d05e4d22873521fd49d9f5e629c342990",
+        "repaired_complete_representation_sha256": "e5deb68f9fe96711c43fd1bacdf4e68d5a36cd07d4d97816b88d5899700a7658",
+        "repaired_structured_signature_sha256": "34cae1321ed8762248baf13cbc2ee3b2e9367455ca80604852998b747958fdf2"
+      },
+      {
+        "canonical_sha256": "7fd3d2cd860f1b1dba2eb25a75ffdcb37b281a03f9a517148da185c07f89c29a",
+        "frozen_action_features_sha256": "0c10c19fe347b6e70d6af988ba33a043b4b817ae6c399ed6a05de8ea30a12129",
+        "frozen_complete_representation_sha256": "5debc086e3599f949d327b4bb3e48ae3ecaf5f53d1ae16ea614f5b3312165b97",
+        "name": "stable-ref-0-1-library",
+        "quantized_tail_sha256": "c8def2f09a67efeba6238ba6d03299ddafd53b7e1009dcfd8f914f23ff844d0b",
+        "raw_digest_sha256": "9e11d4f35464f28bfebf5274e473c7e87744a76226d087a5eef783c61602714f",
+        "repaired_action_features_sha256": "0c10c19fe347b6e70d6af988ba33a043b4b817ae6c399ed6a05de8ea30a12129",
+        "repaired_complete_representation_sha256": "5debc086e3599f949d327b4bb3e48ae3ecaf5f53d1ae16ea614f5b3312165b97",
+        "repaired_structured_signature_sha256": "e0f48ca4d814ec98dd7007823ee705d2087c116255c49c5f8ffb9247692d96c2"
+      },
+      {
+        "canonical_sha256": "e0ae893bd17aa1a5caf05bc0a49bba7fc1fe2fa5b1967c9c30ac1c892293bdfc",
+        "frozen_action_features_sha256": "900d225c38a9c58042f4450614d0bef118da487d2e5be02e78648a592b37ee63",
+        "frozen_complete_representation_sha256": "25ad1e46a61f978c05d80752fa741751726d85407af40428771c2ec5362d0d7a",
+        "name": "stable-ref-0-1-stack",
+        "quantized_tail_sha256": "baad9808c6d5cbfbe7fdf90c25135812a0053dc848fdf04f61b3c73b386530d0",
+        "raw_digest_sha256": "2323dd002b170f86831ab3c5ea1d647aa492e2e51d1849fe2816e2ad7d4a8f3f",
+        "repaired_action_features_sha256": "900d225c38a9c58042f4450614d0bef118da487d2e5be02e78648a592b37ee63",
+        "repaired_complete_representation_sha256": "25ad1e46a61f978c05d80752fa741751726d85407af40428771c2ec5362d0d7a",
+        "repaired_structured_signature_sha256": "1105b4dde50058b45e3db8082bc66eea5929518820721db5e3af9375f0c82c78"
+      },
+      {
+        "canonical_sha256": "495947a7fc7fc4ab2fca92ff2d81dd27535e8e05cb20f570679759089e18e154",
+        "frozen_action_features_sha256": "766e037c2181574834b217ae1cfdb74ec4b9931fddc677763e7526874dfcf6e3",
+        "frozen_complete_representation_sha256": "3030692b43eb816b821bbb608711d031cc6253aba07599363b4d536c2f4bf9ce",
+        "name": "stable-ref-1-0-battlefield",
+        "quantized_tail_sha256": "0a4bf008692bed7f614bcb313c7baf9a16e23172d45fc8720f3054e1ee21339a",
+        "raw_digest_sha256": "121f6746cdd5e383a2c698cdfc0ec4fe073731e4859d7a59610bf321aa21b5a0",
+        "repaired_action_features_sha256": "766e037c2181574834b217ae1cfdb74ec4b9931fddc677763e7526874dfcf6e3",
+        "repaired_complete_representation_sha256": "3030692b43eb816b821bbb608711d031cc6253aba07599363b4d536c2f4bf9ce",
+        "repaired_structured_signature_sha256": "0e2ff51eff9929174729d2d965a2645b282b5282a56b8ff08a7c988d0c5407b1"
+      },
+      {
+        "canonical_sha256": "35577312bee428c6773da3cc2303c265b4aec42494a180df111257841e95197d",
+        "frozen_action_features_sha256": "9c1cc17a907874f1c95c1b60ffffe5f3007a72df3afc9e62e45b115571960f8e",
+        "frozen_complete_representation_sha256": "28a9e717c932e859e0d1cbd47f049b5e6e5aca9a57c9958d28042354c8463c55",
+        "name": "stable-ref-1-0-command",
+        "quantized_tail_sha256": "4b4f2c3a0af0ed1fa54c262e84d01424bbf2599bd952954efea634451bf7e65a",
+        "raw_digest_sha256": "c38ce5cfc8e725534ef72906554837c5a9a32f16991498f4744a3974b47b6e58",
+        "repaired_action_features_sha256": "9c1cc17a907874f1c95c1b60ffffe5f3007a72df3afc9e62e45b115571960f8e",
+        "repaired_complete_representation_sha256": "28a9e717c932e859e0d1cbd47f049b5e6e5aca9a57c9958d28042354c8463c55",
+        "repaired_structured_signature_sha256": "57c0e13bbca2d9358a0689fefcb7033503e5c1f8fbc871bfc2e173399a8a215b"
+      },
+      {
+        "canonical_sha256": "90c1f45f893a51c67df5cceb886aed9664642e2dc7df3179fc56f37b60533835",
+        "frozen_action_features_sha256": "2b9a99c611e69600536301a37d6f440ff407984be5b87ba89af6f8f4fcc2e297",
+        "frozen_complete_representation_sha256": "16834ccb4efe8442d77b9b9921ceae12811982f7a6130c020c6bab2e192103cc",
+        "name": "stable-ref-1-0-exile",
+        "quantized_tail_sha256": "44690776fc9e50d384c465d9be5e9dedc3fd15a3dbd8f4cf5d4a7ee51e1f4334",
+        "raw_digest_sha256": "d5c72974026820ae8e0e155071909b3b9535bf722ef50914053d05e3453d9eb8",
+        "repaired_action_features_sha256": "2b9a99c611e69600536301a37d6f440ff407984be5b87ba89af6f8f4fcc2e297",
+        "repaired_complete_representation_sha256": "16834ccb4efe8442d77b9b9921ceae12811982f7a6130c020c6bab2e192103cc",
+        "repaired_structured_signature_sha256": "238e331fbd9705171e4778532146c36995818ecfe2a0a5043adfaa7df188fe48"
+      },
+      {
+        "canonical_sha256": "f258ee2c58b3af3047d7b9c9b0646cf70af20ce50e19c758b03fa2185cc7751b",
+        "frozen_action_features_sha256": "4cf2ba93cbafddfda086a98d79f8c8fc83ea1ab6ecc03c93fd23873625b22c11",
+        "frozen_complete_representation_sha256": "dad90293312f848bc0932468a11cd8e78d5711c52f9202a1fcdc9839dfa69521",
+        "name": "stable-ref-1-0-graveyard",
+        "quantized_tail_sha256": "a77c2c1c2ebbfee8988e42c9772b3d106dc67a64bfabba184c03328d936abcdb",
+        "raw_digest_sha256": "0a18e7ffbc8048d79b9dafccf4617f6c8c7e7c3253154d6777874f86ca66eb49",
+        "repaired_action_features_sha256": "4cf2ba93cbafddfda086a98d79f8c8fc83ea1ab6ecc03c93fd23873625b22c11",
+        "repaired_complete_representation_sha256": "dad90293312f848bc0932468a11cd8e78d5711c52f9202a1fcdc9839dfa69521",
+        "repaired_structured_signature_sha256": "0179799bab26947ffaa08207f47a1a8d511ae1d4736b975f935ac272fb7be06e"
+      },
+      {
+        "canonical_sha256": "2ba866f878ab568498d14d6dd1eb788f0d29f1c00376c4324797ee720fdc7f93",
+        "frozen_action_features_sha256": "53c398d7c242b32d5cae43a90cc9120b2f6cc36e727da9ddea1be0582d60b224",
+        "frozen_complete_representation_sha256": "9166a96ca71f49f37a05b22f8c3f2ee757e9c8b60327065d8025ec7f3448f308",
+        "name": "stable-ref-1-0-hand",
+        "quantized_tail_sha256": "4dff728bad142c339c72c9dec30b070bde1533f1a7e3a18e25bee233528ef535",
+        "raw_digest_sha256": "e1f4ca6869b7b83a29672b118d9f877070ecf11d589e03c9ae670aba712eff64",
+        "repaired_action_features_sha256": "53c398d7c242b32d5cae43a90cc9120b2f6cc36e727da9ddea1be0582d60b224",
+        "repaired_complete_representation_sha256": "9166a96ca71f49f37a05b22f8c3f2ee757e9c8b60327065d8025ec7f3448f308",
+        "repaired_structured_signature_sha256": "575e02602fa7b454ad9d7fd2b67fbbb70380b647e33225dbfc6f6af2384d90c5"
+      },
+      {
+        "canonical_sha256": "b9e360d8338582ab1a5e840489ab306cbdf4163bc63861a6c5dd80f4ee62e664",
+        "frozen_action_features_sha256": "03a2a9e1581a61b89041daf77e03f979e258387aa1f9fe62e3706bd77addd8f5",
+        "frozen_complete_representation_sha256": "df492194f5eda138e7244ffddfc7f62e0eefa88c7c4f584cf0680a68651f2dcf",
+        "name": "stable-ref-1-0-library",
+        "quantized_tail_sha256": "afeb6ef3681f794085c19baf28c4a38c2898ee3fbfb9acd1df8397fab12b0ce0",
+        "raw_digest_sha256": "2eb2f2a5936bc635b1e4fa01a00c68a5303e1d76f0347d0f129473d187ddc382",
+        "repaired_action_features_sha256": "03a2a9e1581a61b89041daf77e03f979e258387aa1f9fe62e3706bd77addd8f5",
+        "repaired_complete_representation_sha256": "df492194f5eda138e7244ffddfc7f62e0eefa88c7c4f584cf0680a68651f2dcf",
+        "repaired_structured_signature_sha256": "c91a5c70ba5ecdd31164eeaaeb9dbc1b4d8049c4f4681ce2c3ce625bb053dbbf"
+      },
+      {
+        "canonical_sha256": "cb380bf7f5c8963ce6d960a5687628d6af7e2b94cc9bb952034e4ad22f9408f9",
+        "frozen_action_features_sha256": "89b2b2f049136693618fefb07aa2b3432ec194caa700f2ac6996df5c6083d361",
+        "frozen_complete_representation_sha256": "d6354f39a9ee1b7268067eb3dc3457cddd3ebc5edcc8c1cc879300b66eb5e5c9",
+        "name": "stable-ref-1-0-stack",
+        "quantized_tail_sha256": "5d5d24370a528f06ef79dcd5da2b79b8ebe8d32e4a3bc41b73b64ca817dde7f3",
+        "raw_digest_sha256": "b4977c5899dd85043b3d0d916e45b41b42c6ed60b09f0ade793a2fb81ab05435",
+        "repaired_action_features_sha256": "89b2b2f049136693618fefb07aa2b3432ec194caa700f2ac6996df5c6083d361",
+        "repaired_complete_representation_sha256": "d6354f39a9ee1b7268067eb3dc3457cddd3ebc5edcc8c1cc879300b66eb5e5c9",
+        "repaired_structured_signature_sha256": "0319b576015373c9580b7aeee62cc2a3a6a529ce50eeeb05fbea3b7155ecb831"
+      },
+      {
+        "canonical_sha256": "30e7ac3ab612406bf454c96a8c60f08ef48a839317e362b3bec118cc0b2ab64a",
+        "frozen_action_features_sha256": "b5206b3a53685ef87350c7436ebbe1780bbd2927de3c70897d13e4d048ade09d",
+        "frozen_complete_representation_sha256": "8b2d9474e67e2358e4b393f2b8b887bca05171eb0424778c3d154275cfd1faec",
+        "name": "stable-ref-1-1-battlefield",
+        "quantized_tail_sha256": "49c85c99d5280db74b07d00c7d9cca9e1b51a9efd6f2519f35597ef4bc5c4544",
+        "raw_digest_sha256": "ce1d9f552576720560d09f21cf2c78c406686d340e9f30c9c5ae7f21134654b9",
+        "repaired_action_features_sha256": "b5206b3a53685ef87350c7436ebbe1780bbd2927de3c70897d13e4d048ade09d",
+        "repaired_complete_representation_sha256": "8b2d9474e67e2358e4b393f2b8b887bca05171eb0424778c3d154275cfd1faec",
+        "repaired_structured_signature_sha256": "10bd245e73d85f85433f5abd6265648512a5f6eeecc5dd53ebbf14f610499f87"
+      },
+      {
+        "canonical_sha256": "fc33dd713cb93319d4970e79f2b36167f5d33cd73ff09fe5558fb43c95550e81",
+        "frozen_action_features_sha256": "7794e74c55e6f031caa75d24561c69fe03fbe558d22cae6a3fb3580c7b202fd5",
+        "frozen_complete_representation_sha256": "73c0252864e998f8d3a52c1ad25ba579c9855cc5857708655b22379c7bf31b33",
+        "name": "stable-ref-1-1-command",
+        "quantized_tail_sha256": "6c211c751015ef42d4a74799c14ef2eee148c7ad0141217b9f685d84399acced",
+        "raw_digest_sha256": "b67499b419d0eaedcf83216bd08f21240bdb031ba37c6f0aabb72a2a1565aeb4",
+        "repaired_action_features_sha256": "7794e74c55e6f031caa75d24561c69fe03fbe558d22cae6a3fb3580c7b202fd5",
+        "repaired_complete_representation_sha256": "73c0252864e998f8d3a52c1ad25ba579c9855cc5857708655b22379c7bf31b33",
+        "repaired_structured_signature_sha256": "084650cfcc8dc87a5ea10eaa59bae82ea67cdcd0fc8290f3d06daee77103740f"
+      },
+      {
+        "canonical_sha256": "4e62ca91492d2123ea9a165ecd9692e4900908dbd59dc992fa3a8afa08633913",
+        "frozen_action_features_sha256": "dc4991ddef0443973c144a747c524be29596ad161e7c27197b41bf6614d45aaf",
+        "frozen_complete_representation_sha256": "1f4ad75650d9434371b3b4358a4ed1b295f2f0cf4a2fef40143670313a33f410",
+        "name": "stable-ref-1-1-exile",
+        "quantized_tail_sha256": "9f6b6b9111ec2950aa29a53ca202cd3b2305f7ea7943f4e0c1ec80d74e36053a",
+        "raw_digest_sha256": "2f40906d56cabd0eedc014de1dc218782241fc447c21aa135aa170aa01b943a5",
+        "repaired_action_features_sha256": "dc4991ddef0443973c144a747c524be29596ad161e7c27197b41bf6614d45aaf",
+        "repaired_complete_representation_sha256": "1f4ad75650d9434371b3b4358a4ed1b295f2f0cf4a2fef40143670313a33f410",
+        "repaired_structured_signature_sha256": "cc0e0dc0ed041c6e318caa2b3b4d03c3382b8250d0e6c77cab209aeaf8c34d4b"
+      },
+      {
+        "canonical_sha256": "1bd3f14c9c8a2a5a270a6b098cd2506fb76958190f9f5ce6a41624817e04392e",
+        "frozen_action_features_sha256": "23548763a7247bc9d23fe5faf4244d6ad68cec1b17c4e5111fc9f49a94b6f2aa",
+        "frozen_complete_representation_sha256": "4caabb96352d7cae6c086989dfdf15a2670bbcbde4d99fe77177f10346a326c5",
+        "name": "stable-ref-1-1-graveyard",
+        "quantized_tail_sha256": "97d1d2c0f4f7c6faf0cd090ed38fdcf0a5014d410642187b74daffd64ac05cb3",
+        "raw_digest_sha256": "0b7c353b3d4c80505bcbb55d0d881353b756ed0f59ae1a9485b18418c6026b86",
+        "repaired_action_features_sha256": "23548763a7247bc9d23fe5faf4244d6ad68cec1b17c4e5111fc9f49a94b6f2aa",
+        "repaired_complete_representation_sha256": "4caabb96352d7cae6c086989dfdf15a2670bbcbde4d99fe77177f10346a326c5",
+        "repaired_structured_signature_sha256": "d2a7f33ad38997e8056182330a54e02c42c349963348c791515adff006494638"
+      },
+      {
+        "canonical_sha256": "07ead67bc792e2b8bf38ea0e5823f0a0baa0079e5c9a2de0f83fc4aabeb2d989",
+        "frozen_action_features_sha256": "f848ef1ae7a24c0afdae90eea46bde79fed321480fbfc8fe0e3429d204288d40",
+        "frozen_complete_representation_sha256": "975f64c6b68059d773358cbf1ed951dd36039c9301701270706fc55f5fda0584",
+        "name": "stable-ref-1-1-hand",
+        "quantized_tail_sha256": "edfedbdf878ff363568a800377348465225c1d5f1643df0c3b72c30f86c16a42",
+        "raw_digest_sha256": "d1b8b04f6d877cb7005d5e01a3d73a332f528d6eacdcaf3c8656de6f3cbf0ca7",
+        "repaired_action_features_sha256": "f848ef1ae7a24c0afdae90eea46bde79fed321480fbfc8fe0e3429d204288d40",
+        "repaired_complete_representation_sha256": "975f64c6b68059d773358cbf1ed951dd36039c9301701270706fc55f5fda0584",
+        "repaired_structured_signature_sha256": "82502a10efebc3ea18e0a39b53cefb8854774b7bf304b295bb4a180413ddc186"
+      },
+      {
+        "canonical_sha256": "22e3660e1d29e6950cf0c622fa6a863e2d5a470b4e4094599cda4643964e8835",
+        "frozen_action_features_sha256": "326244e51819ef24a3ba9894f783f307affc7f4a3fa5a27d02db9cb42bbb5e04",
+        "frozen_complete_representation_sha256": "58dd41dcff025b0e349b455e943ea9fcaff4422b3623a3ccab52bdd1cb895d59",
+        "name": "stable-ref-1-1-library",
+        "quantized_tail_sha256": "16919d1923286399c14ac605ca525c40d5e7ef5405415f4c3bf7691bfd3870cb",
+        "raw_digest_sha256": "7351c6f55e8c801eeed8a2acbf65a39354fcfd7bec01c024112a5029382c1c63",
+        "repaired_action_features_sha256": "326244e51819ef24a3ba9894f783f307affc7f4a3fa5a27d02db9cb42bbb5e04",
+        "repaired_complete_representation_sha256": "58dd41dcff025b0e349b455e943ea9fcaff4422b3623a3ccab52bdd1cb895d59",
+        "repaired_structured_signature_sha256": "409d67c4eb238d391874fd80074c60664eca04e8f7d2fa6dea5ad949277bce5c"
+      },
+      {
+        "canonical_sha256": "09268231d96166b31bac2db044dfe1b1696b360d435629ac9d0ed9046cabb764",
+        "frozen_action_features_sha256": "6e3d9c23c5849d20e60c0764d6a5c5ba6905c3e975da24fbfa6384430cb44aeb",
+        "frozen_complete_representation_sha256": "0d27bc657e90d067bbd39c9f564b89ec05d5924efdf7f373e10bfbfa7796fbbe",
+        "name": "stable-ref-1-1-stack",
+        "quantized_tail_sha256": "847c21f8c26e3c7f8a5b6aef5b400b1ae9608181912ed35b9184f60a66a1bb07",
+        "raw_digest_sha256": "e0311dd71a2efc71779abe85e48a1eeed98a32a51b8d84a565987795c1238c15",
+        "repaired_action_features_sha256": "6e3d9c23c5849d20e60c0764d6a5c5ba6905c3e975da24fbfa6384430cb44aeb",
+        "repaired_complete_representation_sha256": "0d27bc657e90d067bbd39c9f564b89ec05d5924efdf7f373e10bfbfa7796fbbe",
+        "repaired_structured_signature_sha256": "3715603c7572bfb82613cdfa1c2da442f2f910c544ce2ae8fe6339d63c0a7f8f"
+      },
+      {
+        "canonical_sha256": "a025ada4b123396ac38e31b0ef133fa3991110e02bf2ad3a28da5da036c76dfc",
+        "frozen_action_features_sha256": "c7f1e8168aec102fc4de61384d2a624843a74ca623cefdd161369c9527b3344d",
+        "frozen_complete_representation_sha256": "e6063b280dceb10bd1fafa7677808ac71fde091112bdc65b6f1fb2503f46d9d4",
+        "name": "supplemental-primary-choose-effect-target-player-self-v1",
+        "quantized_tail_sha256": "9696dfd03f61797d362d128f9e528106c36f9df6b6a933a14795104d2b5e6604",
+        "raw_digest_sha256": "479ae5fd7dc6ae5ae42f0e9618104043c8eaa516fc4418dfea6b6f089a46bd43",
+        "repaired_action_features_sha256": "c7f1e8168aec102fc4de61384d2a624843a74ca623cefdd161369c9527b3344d",
+        "repaired_complete_representation_sha256": "e6063b280dceb10bd1fafa7677808ac71fde091112bdc65b6f1fb2503f46d9d4",
+        "repaired_structured_signature_sha256": "af580b76019f72f1b854c2f3a9a7c3edf00fe292309fa48493341ca4aa57acdd"
+      },
+      {
+        "canonical_sha256": "568471b68610eb728a8c5c82933dd9b651bbad40c2f7fc1b91bff5f8d26b5a98",
+        "frozen_action_features_sha256": "216e8bfa5c4609a6298c823f2942490bd8c9ec2a7c7627790a2869aa01795732",
+        "frozen_complete_representation_sha256": "996879dcd78ac29b903d9f5f22ea736aa76f55fc775880c578e8a3ac9dbde286",
+        "name": "target-object",
+        "quantized_tail_sha256": "b446ec79f00704bda683e668b2900bdf0ba64700134321ad5c4f913db417c3e8",
+        "raw_digest_sha256": "98989fcb4b95ed42ea4b2ad2f08daab462dae272150bcb1b7c4be239c9298e0b",
+        "repaired_action_features_sha256": "216e8bfa5c4609a6298c823f2942490bd8c9ec2a7c7627790a2869aa01795732",
+        "repaired_complete_representation_sha256": "996879dcd78ac29b903d9f5f22ea736aa76f55fc775880c578e8a3ac9dbde286",
+        "repaired_structured_signature_sha256": "174ece9aa5401550300b518959443e68690f093519137e59eedc0399fc531107"
+      },
+      {
+        "canonical_sha256": "107a12588bc1092ce1289ec6c8b864cedd8a472f428c123c4262e224bf9f088f",
+        "frozen_action_features_sha256": "b7439b4f7c8ba96b5793d798e7917b2366642d00a6e54fb997d13b09e3b0cfdf",
+        "frozen_complete_representation_sha256": "451ac85bdc20e69d1b20e387f05e5cd3f7d05aa92e1bd57b1adf7d28f76ca2d7",
+        "name": "target-opponent",
+        "quantized_tail_sha256": "0a0edf5438c4c1972f5ff60d49843636861a43030d5766973c1dc2b8e278d103",
+        "raw_digest_sha256": "1d267634649985f719da1837751aca3fa12b2e467a972e94368931bb00bd4426",
+        "repaired_action_features_sha256": "b7439b4f7c8ba96b5793d798e7917b2366642d00a6e54fb997d13b09e3b0cfdf",
+        "repaired_complete_representation_sha256": "451ac85bdc20e69d1b20e387f05e5cd3f7d05aa92e1bd57b1adf7d28f76ca2d7",
+        "repaired_structured_signature_sha256": "e5022c3995246e834e7ebddc1f84c91ec6c0d38e408e9d93601d3db2c6ba8bbb"
+      },
+      {
+        "canonical_sha256": "526cfcc95ca487c2a797bceba9d3070b635d003ac2eddb9cd62e1c174febcd3c",
+        "frozen_action_features_sha256": "19ab8c65c5abfa1e2fd342db3e1642f6e01fb87b8656ab2630c68ee7f0a7cfb5",
+        "frozen_complete_representation_sha256": "bba48033ae8254837d48b97098c4fd139aa3232cea2465063e7d96244ada8700",
+        "name": "target-self",
+        "quantized_tail_sha256": "a0862ee3ea287fe39d26087c1ca737a7d7e6eba0a20588ee741316e5accea0ed",
+        "raw_digest_sha256": "f0f5201b1fbbb22a641011f02ddca38469b2d5c3a266a3863f7de93deb6c4183",
+        "repaired_action_features_sha256": "19ab8c65c5abfa1e2fd342db3e1642f6e01fb87b8656ab2630c68ee7f0a7cfb5",
+        "repaired_complete_representation_sha256": "bba48033ae8254837d48b97098c4fd139aa3232cea2465063e7d96244ada8700",
+        "repaired_structured_signature_sha256": "dfdff395c90e4d3696928105e28748017e6d5503a8c299551f0bbdeed4e8b450"
+      },
+      {
+        "canonical_sha256": "931ed3bd8c71ab28c0aed40af7f0fc549d6858b80b2871cac5e8b307c8cf0363",
+        "frozen_action_features_sha256": "5bf4ddc6f59fc8630c60c09da582fd2913ec9126ecef869398932c75d65dfe0e",
+        "frozen_complete_representation_sha256": "c9571fab9a0ecc9073c604fda55c258df1e2aa1bd8aba5c24c6ba640d2f211d0",
+        "name": "triggers-one-identity",
+        "quantized_tail_sha256": "272d955d576193d899bc11203d1164ede848de1dcad6d8c50a88abddcc3bf3ae",
+        "raw_digest_sha256": "73a7eb0c3646a44c4f56ad88e3aecf8739a443662e41860101a3f0ec19757ad9",
+        "repaired_action_features_sha256": "5bf4ddc6f59fc8630c60c09da582fd2913ec9126ecef869398932c75d65dfe0e",
+        "repaired_complete_representation_sha256": "c9571fab9a0ecc9073c604fda55c258df1e2aa1bd8aba5c24c6ba640d2f211d0",
+        "repaired_structured_signature_sha256": "4e79338d9ebd4bcdfac8b368c61f2f3ebdafd421876c3a14b841cf5ff36142a9"
+      },
+      {
+        "canonical_sha256": "02b484e47a426cd3fb735d0751ac4dd344006dde6839e13a4e594bb649fd3d64",
+        "frozen_action_features_sha256": "efebde43b1a6f5ae2eafd32c9158edc8c12b939022159f57e0dec47a3bf44ed6",
+        "frozen_complete_representation_sha256": "f2af6ce23b7183d29c1be45e135b94925d88344a79c590a0bd15a27e5e04b1b1",
+        "name": "triggers-seven-identity",
+        "quantized_tail_sha256": "56f67a1342694507b4369228c881376471cf754bf110e0be52a8e240d6ab5548",
+        "raw_digest_sha256": "c5868ada9ae788cdec9da7bd8d3e8c68979a51d543bd532612ea082c71c1e1f2",
+        "repaired_action_features_sha256": "efebde43b1a6f5ae2eafd32c9158edc8c12b939022159f57e0dec47a3bf44ed6",
+        "repaired_complete_representation_sha256": "f2af6ce23b7183d29c1be45e135b94925d88344a79c590a0bd15a27e5e04b1b1",
+        "repaired_structured_signature_sha256": "37787632d2277b6bc7e6162362206b6725436f4916be47fe7f84a504d4b557e6"
+      },
+      {
+        "canonical_sha256": "fb7e9ed75bdb3cbd77962681d0b91f2f52dc940f1a02d8221487342d8456481c",
+        "frozen_action_features_sha256": "3ae8693445193872c0bb7cef4fb2c721fd4691db689359bf34b1251cc8dab6b7",
+        "frozen_complete_representation_sha256": "28e3d2efbbc6ea43afa5ad4ca47ac8de44ccfa5b74bfa73023932d455a374265",
+        "name": "triggers-seven-permuted",
+        "quantized_tail_sha256": "e7e5860e7bc20cc167f6bc306c29b6e9863f8d63e133b4d8169be9670edfa347",
+        "raw_digest_sha256": "23d7b0d5b084c20dcbbc1eed6fc4628f53e20aa84a810e2b66d52aeec30211e8",
+        "repaired_action_features_sha256": "3ae8693445193872c0bb7cef4fb2c721fd4691db689359bf34b1251cc8dab6b7",
+        "repaired_complete_representation_sha256": "28e3d2efbbc6ea43afa5ad4ca47ac8de44ccfa5b74bfa73023932d455a374265",
+        "repaired_structured_signature_sha256": "65846fd42d30ad12ebd8009a86a11ab3611a0d50c52e1c4f2384652a78256aa3"
+      }
+    ],
+    "combined_case_count": 116,
+    "combined_identity": "net8-action-ingress-static-checked-116-v1",
+    "combined_identity_sha256": "7a8cc702393253fdb2dfe61bcca648cbc8684cd1527e0d30a37b242baeb20a6e",
+    "expected_combined_identity_sha256": "7a8cc702393253fdb2dfe61bcca648cbc8684cd1527e0d30a37b242baeb20a6e",
+    "frozen_case_count": 115,
+    "supplemental_case_count": 1
+  },
+  "coverage": {
+    "augmented_116_case": {
+      "atom_id_grammar": "dot-separated schema path; [] denotes any list item; [n] a tuple position; <tag=value> retains selected VariantSpec context",
+      "boolean_polarity_gaps": [],
+      "classification_counts": {
+        "forbidden": 3,
+        "model_input": 202,
+        "operational_only": 58
+      },
+      "covered_model_input_atoms": 202,
+      "declared_model_input_atoms": 202,
+      "enum_domain_gaps_diagnostic_only": [
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_ability>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_mana_ability>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_attacker_inclusion>.attacker.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.attacker.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.blocker.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield",
+            "Graveyard"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cast_mode>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cost_target>.candidate.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield",
+            "Graveyard"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cost_target>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_boolean>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_color>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_number>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_option>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=object>.object.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_kicker>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_madness_cast>.card.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_payment>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_retarget>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_mode>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.target.<target_kind=object>.object.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=discard>.cards.[].zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Graveyard",
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_effect_selection>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_target_selection>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=order_triggers>.pending_sources.[].zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Library"
+          ],
+          "observed_values": [
+            "Graveyard",
+            "Hand",
+            "Stack"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=play_land>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=plot_spell>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        }
+      ],
+      "optional_presence_gaps": [],
+      "required_coverage_complete": true,
+      "seat_category_gaps_diagnostic_only": [
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_ability>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_ability>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_ability>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_mana_ability>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_mana_ability>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_mana_ability>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=cast_spell>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_attacker_inclusion>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_attacker_inclusion>.attacker.controller",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_attacker_inclusion>.attacker.owner",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.attacker.controller",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.attacker.owner",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.blocker.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.blocker.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cast_mode>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cast_mode>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cast_mode>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cost_target>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cost_target>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cost_target>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_boolean>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_boolean>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_boolean>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_color>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_color>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_color>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_number>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_number>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_number>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_option>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_option>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_option>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=object>.object.controller",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=object>.object.owner",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=player>.player",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_kicker>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_kicker>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_kicker>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_madness_cast>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_madness_cast>.card.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_madness_cast>.card.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_optional_cost_use>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_optional_cost_which>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_payment>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_payment>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_payment>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_retarget>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_retarget>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_retarget>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_mode>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_mode>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_mode>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.target.<target_kind=object>.object.controller",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.target.<target_kind=object>.object.owner",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=discard>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=discard>.cards.[].controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=discard>.cards.[].owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_effect_selection>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_effect_selection>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_effect_selection>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_target_selection>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_target_selection>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_target_selection>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=order_triggers>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=order_triggers>.pending_sources.[].controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=order_triggers>.pending_sources.[].owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=pass>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=play_land>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=play_land>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=play_land>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=plot_spell>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=plot_spell>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=plot_spell>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        }
+      ],
+      "unwitnessed_model_input_atoms": []
+    },
+    "frozen_115_case": {
+      "atom_id_grammar": "dot-separated schema path; [] denotes any list item; [n] a tuple position; <tag=value> retains selected VariantSpec context",
+      "boolean_polarity_gaps": [],
+      "classification_counts": {
+        "forbidden": 3,
+        "model_input": 202,
+        "operational_only": 58
+      },
+      "covered_model_input_atoms": 200,
+      "declared_model_input_atoms": 202,
+      "enum_domain_gaps_diagnostic_only": [
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_ability>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_mana_ability>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_attacker_inclusion>.attacker.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.attacker.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.blocker.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield",
+            "Graveyard"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cast_mode>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cost_target>.candidate.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield",
+            "Graveyard"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cost_target>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_boolean>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_color>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_number>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_option>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=object>.object.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=player>.target_kind",
+          "missing_values": [
+            "player"
+          ],
+          "observed_values": []
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_kicker>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_madness_cast>.card.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_payment>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_retarget>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_mode>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.target.<target_kind=object>.object.zone",
+          "missing_values": [
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Hand",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Battlefield"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=discard>.cards.[].zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Graveyard",
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_effect_selection>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_target_selection>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=order_triggers>.pending_sources.[].zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Library"
+          ],
+          "observed_values": [
+            "Graveyard",
+            "Hand",
+            "Stack"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=play_land>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=plot_spell>.source.zone",
+          "missing_values": [
+            "Battlefield",
+            "Command",
+            "Exile",
+            "Graveyard",
+            "Library",
+            "Stack"
+          ],
+          "observed_values": [
+            "Hand"
+          ]
+        }
+      ],
+      "optional_presence_gaps": [],
+      "required_coverage_complete": false,
+      "seat_category_gaps_diagnostic_only": [
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_ability>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_ability>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_ability>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_mana_ability>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_mana_ability>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=activate_mana_ability>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=cast_spell>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_attacker_inclusion>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_attacker_inclusion>.attacker.controller",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_attacker_inclusion>.attacker.owner",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.attacker.controller",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.attacker.owner",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.blocker.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_blocker_inclusion>.blocker.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cast_mode>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cast_mode>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cast_mode>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cost_target>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cost_target>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_cost_target>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_boolean>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_boolean>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_boolean>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_color>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_color>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_color>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_number>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_number>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_number>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_option>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_option>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_option>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=object>.object.controller",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=object>.object.owner",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=player>.player",
+          "missing_values": [
+            "opponent",
+            "self"
+          ],
+          "observed_values": []
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_kicker>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_kicker>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_kicker>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_madness_cast>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_madness_cast>.card.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_madness_cast>.card.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_optional_cost_use>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_optional_cost_which>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_payment>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_payment>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_payment>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_retarget>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_retarget>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_copy_retarget>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_mode>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_mode>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_spell_mode>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.target.<target_kind=object>.object.controller",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=choose_target>.target.<target_kind=object>.object.owner",
+          "missing_values": [
+            "self"
+          ],
+          "observed_values": [
+            "opponent"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=discard>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=discard>.cards.[].controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=discard>.cards.[].owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_effect_selection>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_effect_selection>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_effect_selection>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_target_selection>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_target_selection>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=finish_target_selection>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=order_triggers>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=order_triggers>.pending_sources.[].controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=order_triggers>.pending_sources.[].owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=pass>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=play_land>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=play_land>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=play_land>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=plot_spell>.actor",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=plot_spell>.source.controller",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        },
+        {
+          "atom_id": "legal_action.semantic.<action_kind=plot_spell>.source.owner",
+          "missing_values": [
+            "opponent"
+          ],
+          "observed_values": [
+            "self"
+          ]
+        }
+      ],
+      "unwitnessed_model_input_atoms": [
+        "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=player>.player",
+        "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=player>.target_kind"
+      ]
+    },
+    "supplemental_witness_atoms": [
+      "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=player>.player",
+      "legal_action.semantic.<action_kind=choose_effect_target>.target.<target_kind=player>.target_kind"
+    ]
+  },
+  "decision": {
+    "precedence": [
+      "INVALID",
+      "COLLISION-DETECTED",
+      "COVERAGE-INCOMPLETE",
+      "STRUCTURED-ALIAS-DETECTED",
+      "INVARIANT-FAILED",
+      "STATIC-ADMITTED"
+    ],
+    "status": "STATIC-ADMITTED"
+  },
+  "dimensions": {
+    "action": 195,
+    "action_digest": 96,
+    "action_direct": 99,
+    "action_ref": 25,
+    "boolean_slot": 69
+  },
+  "frozen_no_repair": {
+    "byte_identical_case_count": 115,
+    "case_count": 115
+  },
+  "inputs": [
+    {
+      "path": "python/mtg_kernel_rl/features.py",
+      "sha256": "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb"
+    },
+    {
+      "path": "python/mtg_kernel_rl/model.py",
+      "sha256": "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59"
+    },
+    {
+      "path": "data/common_model_snapshot_v1/manifest.json",
+      "sha256": "d5d296f5d4ee1f7e40a6005f1e1dd328b2885f6b95f0c6968c6bf1b87351c7cc"
+    },
+    {
+      "path": "data/common_model_snapshot_v1/parameters.f32le",
+      "sha256": "79f715b11ccce80ac66cc832bfdc0c963a8a20f27f7b492fdfbb433c008a90a5"
+    },
+    {
+      "path": "data/flat_policy_v2/python_action_features_v2.json",
+      "sha256": "6fab4b246b052e6b8404520d945b630e24ce60323a8fa4c6e78fdc17d3f9a3b8"
+    }
+  ],
+  "non_claims": [
+    "static diagnostic only; no training, model promotion, or production encoding change",
+    "no collision or alias claim outside the checked 116-case corpus",
+    "observation coverage is not an admission criterion",
+    "no game-strength, generalization, robustness, human-play, or pro-level-play claim"
+  ],
+  "payload_sha256": "65f171c88260f2397614d947809b1e54f196d52a6df1c0b7d0faa57bbabf47aa",
+  "schema": "mtg-kernel-action-ingress-static-admission/v1",
+  "status": "STATIC-ADMITTED",
+  "structured_aliases": {
+    "frozen_expected": [
+      {
+        "canonical_sha256": [
+          "995a627a13f9d17229c9f37cdf859c743c8b4cb41714f1d91473ed632a039fc9",
+          "cc9e1469d0eda7e162b472f78d837d1b20f2dad713ffb43621f0a916c73125fc"
+        ],
+        "cases": [
+          "boolean-attacker-false",
+          "boolean-attacker-true"
+        ],
+        "complete_representation_distinct": true,
+        "structured_signature_sha256": "7f2acef15d4009759dc1ea8b8b6b18c8f5b4e47cde531d3f9e11737fa160da79"
+      },
+      {
+        "canonical_sha256": [
+          "932e81283d9f7fb10b202f2c0ff595f432db4742ee2878daee5d3a1b1cdb8ab0",
+          "9980cc5354f09467f2921a22582b51f8729d980d982115ee314707dc2f478621"
+        ],
+        "cases": [
+          "boolean-blocker-false",
+          "boolean-blocker-true"
+        ],
+        "complete_representation_distinct": true,
+        "structured_signature_sha256": "562a23155f30884129ec064a0a2178f3d902978f1e352a2521eeb95d15d1659c"
+      }
+    ],
+    "repaired": []
+  },
+  "supplemental_case": {
+    "canonical_json": "{\"semantic\":{\"action_kind\":\"choose_effect_target\",\"actor\":\"self\",\"max_targets\":3,\"min_targets\":1,\"selected_count\":1,\"source\":{\"card_db_id\":40,\"controller\":\"self\",\"owner\":\"self\",\"zone\":\"Hand\"},\"target\":{\"player\":\"self\",\"target_kind\":\"player\"}}}",
+    "classifier_input": {
+      "display_text": "ignored metadata",
+      "schema_version": 5,
+      "selected_index": 0,
+      "semantic": {
+        "action_kind": "choose_effect_target",
+        "actor": "p0",
+        "max_targets": 3,
+        "min_targets": 1,
+        "selected_count": 1,
+        "source": {
+          "arena_id": 10,
+          "card_db_id": 40,
+          "controller": "p0",
+          "owner": "p0",
+          "zone": "Hand",
+          "zone_change_count": 0
+        },
+        "target": {
+          "player": "p0",
+          "target_kind": "player"
+        }
+      },
+      "stable_id": "legal-action-v5:native-flat-golden"
+    },
+    "derivation": {
+      "base_case": "primary-choose_effect_target",
+      "replacement": {
+        "semantic.target": {
+          "player": "self",
+          "target_kind": "player"
+        }
+      },
+      "retained_fields": [
+        "semantic.action_kind",
+        "semantic.actor",
+        "semantic.source",
+        "semantic.selected_count",
+        "semantic.min_targets",
+        "semantic.max_targets"
+      ]
+    },
+    "digests": {
+      "quantized_tail_sha256": "9696dfd03f61797d362d128f9e528106c36f9df6b6a933a14795104d2b5e6604",
+      "raw_digest_sha256": "479ae5fd7dc6ae5ae42f0e9618104043c8eaa516fc4418dfea6b6f089a46bd43",
+      "sha512_blocks_hex": [
+        "c6d34f904f0121f9b0a6d2b941bf1b73fb2127bfacf5f840b540a76ff5380785de076943a9ee2c318de8124b45a8931b50dca3bb8b1ea613e39637b8075850b8",
+        "a1d1e91b5f388580c889dbc3dbbe99dc859b799fe1536ea92131368704e817e12f1f38651f0691be75d934eea2081a61e852eb3d08533ef6b82d1ed9cf7eaa98",
+        "153cfa159d6af567bbf9f9e94301591375e28da958e1f9c7d22400ec25c786523181f4a07ac01e0de70b7efb91a81af25320075655cfc9763168859f50377997",
+        "1e3d57d5ee5960c7282e3f2cc3b19e55a6ece5b0d3a8505f12174c2d8f4c7ce38f56eb84df757be2e123ca6f5b1d661cd416f800a2f3e32cafbed52f9ca671e7",
+        "76b57b5ad13d72fddb85bb3b2999c810e8272713fb0e15a8a7acbc6fe11643cd400f4350b1f6ff38279feb88e293bed8ca65b6eec995401a1a94d7e12a548423",
+        "fc099366249f32f9857b161b3233e85575972b8635761f16c6d40d71531709d49d4574d0a0e58f60e75de317fd93d18bc5982c5fa78609dbaf8a5878c88a79b7"
+      ]
+    },
+    "flat_input": {
+      "core": {
+        "ability_index": 0,
+        "cast_mode": 0,
+        "color": 0,
+        "cost_kind": 0,
+        "flags": 0,
+        "kind": "choose_effect_target",
+        "mana_choice": 0,
+        "max_targets": 3,
+        "maximum": 0,
+        "min_targets": 1,
+        "minimum": 0,
+        "mode_count": 0,
+        "mode_index": 0,
+        "number": 0,
+        "option_count": 0,
+        "option_index": 0,
+        "optional_cost_choice": 0,
+        "ref_len": 1,
+        "ref_start": 0,
+        "remaining": 0,
+        "selected_count": 1,
+        "target_kind": 1,
+        "target_player": 1
+      },
+      "objects": [
+        {
+          "card_token": 41,
+          "controller": 0,
+          "owner": 0,
+          "zone": 1
+        }
+      ],
+      "refs": [
+        {
+          "action_index": 0,
+          "associated_order": 0,
+          "card_token": 41,
+          "model_object_index": 0,
+          "order_index": 0,
+          "projection_role_id": 0
+        }
+      ]
+    },
+    "name": "supplemental-primary-choose-effect-target-player-self-v1",
+    "tensors": {
+      "action_features": {
+        "f32_le_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000803f000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803d0000803d0000403e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f000000000000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000009e7e023e0342723f9b4ae73e0c44cebd889cfc3e291cfcbefac502be1fe7203de15bf2be23a61dbf5eb4d3beafd848bf718fee3ec3b358bf5cdee03e6041e13e5d2c48bf6038853b14b7073f7e33393fdccc7b3e50b9a53e24c6663dd02f423f073f56be1844fa3eb3695c3fbb2f77be5a2904bfa67c6c3f5b3c323ff653453e880b54bfab5440bef3f3533ffd4d59bf8a37a63ec3f30f3f4a00583fe3e4b5be05d2833e7fc265bf18fc763f5135643f7fe3a7be0b6393bd422b7c3ebbc93b3e7aae2a3fb4c00e3fa48127bf3985a9beb397c33e5dbd82bed26725bf99f8463fd26a1d3decf6443fe1ae01bec53347bfd20f7ebf193826bf835420bf4de34e3f2a1196be7ce47a3ff48808bfce6e5ebfb0b159bf3c54a03e9b1a02be2e861a3fc3f3bebe13000ebff2b98e3d287d313fcc6c5d3fd47e4bbf28af433f58f738bfb0674bbe3e65723f09d349bf335fa8beef72453d14c153bfb422efbd2f12283f8be8203fd3807bbe443950bf4019bd3d9d4d83be0d13363faaee74bd2be6dd3e",
+        "shape": [
+          195
+        ]
+      },
+      "action_ref_card_ids": {
+        "shape": [
+          1
+        ],
+        "u32_values": [
+          41
+        ]
+      },
+      "action_ref_features": {
+        "f32_le_hex": "0000803f0000000000000000000000000000000000000000000000000000000000000000000000000000803f00000000000000000000803f0000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000",
+        "shape": [
+          1,
+          25
+        ]
+      },
+      "action_ref_node_indices": {
+        "shape": [
+          1
+        ],
+        "u32_values": [
+          0
+        ]
+      }
+    }
+  },
+  "transform": {
+    "action_digest_mutation": "forbidden",
+    "action_reference_mutation": "forbidden",
+    "coordinate": 69,
+    "direct_coordinate_mutation": "slot 69 only for combat inclusion kinds",
+    "false_f32_le_hex": "00000000",
+    "identity": "net8-action-kind-conditioned-boolean-slot69-counterfactual-v1",
+    "true_f32_le_hex": "0000803f"
+  }
+}
