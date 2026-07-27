@@ -24,6 +24,9 @@ except ModuleNotFoundError:  # Direct execution from this directory.
 TIMEOUT_SECONDS = 120.0
 MARKER = b"OBS_RELIANCE_JSON="
 TIMING_PREFIX = b"OBS_RELIANCE_TIMING "
+HARNESS_MARKER_PREFIX = (
+    b"test " + contract.PROBE_TEST.encode("ascii") + b" ... " + MARKER
+)
 TIMING_RE = re.compile(
     rb"^OBS_RELIANCE_TIMING "
     rb"authority_ms=(?P<authority>[0-9]+) "
@@ -200,18 +203,29 @@ def parse_probe_output(stdout: bytes, stderr: bytes) -> ParsedProbe:
         contract.fail("probe stdout must contain exactly one OBS_RELIANCE_TIMING line")
 
     lines = stdout.splitlines()
-    marker_indices = [index for index, line in enumerate(lines) if line.startswith(MARKER)]
+    marker_indices = [
+        index
+        for index, line in enumerate(lines)
+        if line.startswith(HARNESS_MARKER_PREFIX)
+    ]
     timing_indices = [
         index for index, line in enumerate(lines) if line.startswith(TIMING_PREFIX)
     ]
     if len(marker_indices) != 1 or len(timing_indices) != 1:
-        contract.fail("probe marker/timing must each occupy exactly one stdout line")
+        contract.fail(
+            "probe marker must follow the exact Windows libtest prefix and "
+            "timing must occupy one stdout line"
+        )
     marker_index = marker_indices[0]
     timing_index = timing_indices[0]
+    if marker_index == 0 or lines[marker_index - 1] != b"running 1 test":
+        contract.fail("probe marker must follow the single-test harness header")
     if timing_index != marker_index + 1:
         contract.fail("OBS_RELIANCE_TIMING must immediately follow OBS_RELIANCE_JSON")
+    if timing_index + 1 >= len(lines) or lines[timing_index + 1] != b"ok":
+        contract.fail("probe timing must be followed by the libtest ok status")
 
-    envelope_raw = lines[marker_index][len(MARKER) :]
+    envelope_raw = lines[marker_index][len(HARNESS_MARKER_PREFIX) :]
     envelope = contract.parse_json_bytes(envelope_raw, "OBS_RELIANCE_JSON envelope")
     contract.exact_keys(
         envelope,

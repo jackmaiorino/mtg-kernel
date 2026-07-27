@@ -143,13 +143,14 @@ def rust_envelope(payload_raw: bytes) -> bytes:
 
 def probe_stdout(payload_raw: bytes) -> bytes:
     return (
-        b"running 1 test\n"
-        + run_probe.MARKER
+        b"\nrunning 1 test\n"
+        + run_probe.HARNESS_MARKER_PREFIX
         + rust_envelope(payload_raw)
         + b"\n"
         + b"OBS_RELIANCE_TIMING authority_ms=1 corpus_ms=2 "
         + b"scoring_ms=3 total_ms=7\n"
-        + b"test result: ok\n"
+        + b"ok\n\n"
+        + b"test result: ok. 1 passed; 0 failed; 0 ignored\n"
     )
 
 
@@ -470,13 +471,30 @@ class ProbeOutputParsingTests(unittest.TestCase):
         envelope = rust_envelope(payload_raw)
         tampered = envelope.replace(b'"fixture":true', b'"fixture":false')
         stdout = (
-            run_probe.MARKER
+            b"\nrunning 1 test\n"
+            + run_probe.HARNESS_MARKER_PREFIX
             + tampered
             + b"\nOBS_RELIANCE_TIMING authority_ms=1 corpus_ms=1 "
             + b"scoring_ms=1 total_ms=3\n"
+            + b"ok\n"
         )
         with self.assertRaisesRegex(
             contract.DiagnosticError, "payload SHA-256 mismatch"
+        ):
+            run_probe.parse_probe_output(stdout, b"")
+
+    def test_bare_marker_without_exact_libtest_prefix_is_rejected(self) -> None:
+        payload_raw = b'{"fixture":true}'
+        stdout = (
+            b"\nrunning 1 test\n"
+            + run_probe.MARKER
+            + rust_envelope(payload_raw)
+            + b"\nOBS_RELIANCE_TIMING authority_ms=1 corpus_ms=1 "
+            + b"scoring_ms=1 total_ms=3\nok\n"
+        )
+        with self.assertRaisesRegex(
+            contract.DiagnosticError,
+            "exact Windows libtest prefix",
         ):
             run_probe.parse_probe_output(stdout, b"")
 

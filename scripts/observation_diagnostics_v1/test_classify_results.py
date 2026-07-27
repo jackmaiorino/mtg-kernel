@@ -532,12 +532,12 @@ def write_completion_fixture(root: Path, *, valid_stdout: bool = True) -> Path:
         )
         stdout_path.write_bytes(
             (
-                b"running 1 test\n"
-                + b"OBS_RELIANCE_JSON="
+                b"\nrunning 1 test\n"
+                + run_probe.HARNESS_MARKER_PREFIX
                 + envelope_raw
                 + b"\n"
                 + timing_line.encode("ascii")
-                + b"\n"
+                + b"\nok\n"
             )
             if valid_stdout
             else b"fixture stdout\n"

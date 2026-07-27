@@ -16,9 +16,9 @@ from typing import Any, Iterable, Mapping, NoReturn
 
 
 LABEL = "OBSERVATION-HASH-RELIANCE-DIAGNOSTIC-NON-EVIDENCE"
-MANIFEST_RELATIVE_PATH = Path("OBSERVATION_DIAGNOSTICS_EXECUTION_V1.md")
-ARTIFACT_ROOT_WINDOWS = r"D:\mtg-kernel-observation-diagnostics-v1-20260726"
-TARGET_DIR_WINDOWS = r"E:\cargo-target-observation-diagnostics-v1"
+MANIFEST_RELATIVE_PATH = Path("OBSERVATION_DIAGNOSTICS_EXECUTION_V2.md")
+ARTIFACT_ROOT_WINDOWS = r"D:\mtg-kernel-observation-diagnostics-v2-20260727"
+TARGET_DIR_WINDOWS = r"E:\cargo-target-observation-diagnostics-v2"
 BUILD_RECEIPT_WINDOWS = ntpath.join(
     ARTIFACT_ROOT_WINDOWS, "build", "build-receipt.json"
 )
