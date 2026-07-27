@@ -291,7 +291,7 @@ def payload_for(
                 "generation_index": generation,
                 "run_sha256": run_sha,
                 "identity_bundle_sha256": digest(
-                    f"identity-bundle-{pair_index}-{role}"
+                    f"identity-bundle-{pair_index}"
                 ),
                 "segment_ordinal": generation // 64,
                 "segment_manifest_sha256": digest(
@@ -926,6 +926,21 @@ class EnvelopeValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(subject.ClassificationError, "run_base_seed"):
             subject.load_reports(paths)
 
+    def test_checkpoint_identity_bundle_must_match_within_run(self) -> None:
+        paths = self.six()
+
+        def mutate(payload: dict[str, object]) -> None:
+            payload["checkpoints"][1]["identity_bundle_sha256"] = digest(  # type: ignore[index]
+                "different-run-level-identity"
+            )
+
+        self.rewrite_payload(paths[0], mutate)
+        with self.assertRaisesRegex(
+            subject.ClassificationError,
+            "checkpoint run identity bundle",
+        ):
+            subject.load_reports(paths)
+
     def test_duplicate_role_is_rejected(self) -> None:
         paths = self.six()
 
@@ -1045,6 +1060,16 @@ class EnvelopeValidationTests(unittest.TestCase):
             require_fixed_artifact_root=False,
             verify_repository=False,
         )
+        with self.assertRaisesRegex(
+            subject.ClassificationError,
+            "requires repository verification",
+        ):
+            subject.load_completion_receipt(
+                completion_path,
+                require_fixed_artifact_root=False,
+                verify_repository=False,
+                classification_retry_v1=True,
+            )
         report = subject.build_report(probes, completion_binding=binding)
         self.assertFalse(binding.authoritative)
         self.assertEqual(

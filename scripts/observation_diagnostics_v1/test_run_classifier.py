@@ -6,6 +6,7 @@ import contextlib
 import io
 import tempfile
 import unittest
+from unittest import mock
 
 try:
     from scripts.observation_diagnostics_v1 import (
@@ -164,6 +165,21 @@ class FrozenClassifierRunnerTests(unittest.TestCase):
             self.assertEqual(receipt["exit_code"], 0)
             self.assertFalse(receipt["timed_out"])
             self.assertEqual(receipt["git_head"], head)
+            self.assertEqual(receipt["execution_git_head"], head)
+            self.assertEqual(
+                receipt["schema"],
+                run_classifier.CLASSIFICATION_RETRY_RECEIPT_SCHEMA,
+            )
+            self.assertIsNone(
+                receipt["prior_failed_classification_receipt"]
+            )
+            self.assertEqual(
+                receipt["classification_retry_manifest"]["sha256"],
+                contract.sha256_file(
+                    ROOT
+                    / run_classifier.CLASSIFICATION_RETRY_MANIFEST_RELATIVE_PATH
+                ),
+            )
             self.assertEqual(
                 receipt["command"],
                 run_classifier.classifier_command(
@@ -192,6 +208,137 @@ class FrozenClassifierRunnerTests(unittest.TestCase):
                     receipt[stream]["sha256"],
                     contract.sha256_file(receipt[stream]["path"]),
                 )
+
+    def test_classifier_command_uses_only_the_exact_retry_mode(self) -> None:
+        command = run_classifier.classifier_command(
+            Path("classifier.py"),
+            Path("completion-receipt.json"),
+            Path("classification.json"),
+            classification_retry_v1=True,
+        )
+        self.assertEqual(command[-1], "--classification-retry-v1")
+
+    def test_exact_file_set_rejects_an_added_prior_failure_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = {"receipt.json", "stdout.log", "stderr.log"}
+            for name in expected:
+                (root / name).write_bytes(b"fixture")
+            run_classifier._require_exact_regular_file_set(
+                root,
+                expected,
+                "fixture root",
+            )
+            (root / "unexpected.json").write_bytes(b"fixture")
+            with self.assertRaisesRegex(
+                contract.DiagnosticError,
+                "file set mismatch",
+            ):
+                run_classifier._require_exact_regular_file_set(
+                    root,
+                    expected,
+                    "fixture root",
+                )
+
+    def test_official_retry_pins_reject_authority_drift(self) -> None:
+        def authorities() -> tuple[
+            dict[str, object],
+            dict[str, object],
+            dict[str, object],
+            dict[str, object],
+            dict[str, object],
+        ]:
+            return (
+                {"sha256": run_classifier.EXECUTION_MANIFEST_SHA256},
+                {
+                    "sha256": (
+                        run_classifier.EXECUTION_COMPLETION_RECEIPT_SHA256
+                    ),
+                    "payload_sha256": (
+                        run_classifier.EXECUTION_COMPLETION_PAYLOAD_SHA256
+                    ),
+                },
+                {
+                    "sha256": run_classifier.EXECUTION_BUILD_RECEIPT_SHA256,
+                    "payload_sha256": (
+                        run_classifier.EXECUTION_BUILD_PAYLOAD_SHA256
+                    ),
+                },
+                {
+                    "aggregate_sha256": (
+                        run_classifier.EXECUTION_INVENTORY_AGGREGATE_SHA256
+                    ),
+                    "file_count": len(contract.PAIR_SPECS) * 5,
+                    "validated": True,
+                },
+                {
+                    "executable": {
+                        "path": run_classifier.EXECUTION_EXECUTABLE_WINDOWS,
+                        "sha256": (
+                            run_classifier.EXECUTION_EXECUTABLE_SHA256
+                        ),
+                    }
+                },
+            )
+
+        with mock.patch.object(
+            contract,
+            "sha256_file",
+            return_value=run_classifier.EXECUTION_EXECUTABLE_SHA256,
+        ):
+            values = authorities()
+            run_classifier._validate_official_retry_pins(
+                manifest_binding=values[0],
+                completion_binding=values[1],
+                build_binding=values[2],
+                inventory_binding=values[3],
+                completion_document=values[4],
+            )
+
+            mutations = (
+                (0, "sha256", "0" * 64),
+                (1, "sha256", "0" * 64),
+                (1, "payload_sha256", "0" * 64),
+                (2, "sha256", "0" * 64),
+                (2, "payload_sha256", "0" * 64),
+                (3, "aggregate_sha256", "0" * 64),
+                (3, "file_count", 29),
+                (3, "validated", False),
+            )
+            for record_index, key, replacement in mutations:
+                with self.subTest(record_index=record_index, key=key):
+                    values = authorities()
+                    values[record_index][key] = replacement
+                    with self.assertRaisesRegex(
+                        contract.DiagnosticError,
+                        "frozen",
+                    ):
+                        run_classifier._validate_official_retry_pins(
+                            manifest_binding=values[0],
+                            completion_binding=values[1],
+                            build_binding=values[2],
+                            inventory_binding=values[3],
+                            completion_document=values[4],
+                        )
+            for key, replacement in (
+                ("path", r"E:\wrong.exe"),
+                ("sha256", "0" * 64),
+            ):
+                with self.subTest(executable_key=key):
+                    values = authorities()
+                    values[4]["executable"][key] = replacement  # type: ignore[index]
+                    with self.assertRaises(
+                        contract.DiagnosticError,
+                    ):
+                        run_classifier._validate_official_retry_pins(
+                            manifest_binding=values[0],
+                            completion_binding=values[1],
+                            build_binding=values[2],
+                            inventory_binding=values[3],
+                            completion_document=values[4],
+                        )
 
     def test_nonzero_child_writes_a_canonical_failure_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

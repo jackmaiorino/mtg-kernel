@@ -33,6 +33,9 @@ REPORT_SCHEMA = "mtg-kernel-observation-diagnostics-classification/v1"
 POSITIVE_LABEL = "DIGEST-SIBLING-EFFECT-EXCEEDS"
 NEGATIVE_LABEL = "DIRECT-SIBLING-EFFECT-EXCEEDS"
 MIXED_LABEL = "MIXED"
+CLASSIFICATION_RETRY_V1_EXECUTION_GIT_HEAD = (
+    "c1cf5f1de05b64a4cae35c61862adc725df46837"
+)
 
 PROBE_CORPUS_IDENTITY = (
     "rally-mirror-splitmix64-modulo-fixed-256-post-tensorization-v1"
@@ -1067,13 +1070,17 @@ def validate_probe(path: Path, spec: contract.PairSpec) -> ValidatedProbe:
         checkpoints["g0"]["run_sha256"],
         f"{path}.payload checkpoint run identity",
     )
+    _expect(
+        checkpoints["candidate"]["identity_bundle_sha256"],
+        checkpoints["g0"]["identity_bundle_sha256"],
+        f"{path}.payload checkpoint run identity bundle",
+    )
     if (
         checkpoints["candidate"]["model_parameter_sha256"]
         == checkpoints["g0"]["model_parameter_sha256"]
     ):
         fail(f"{path} candidate parameters equal generation zero")
     for key in (
-        "identity_bundle_sha256",
         "boundary_head_sha256",
         "boundary_head_record_sha256",
         "logical_state_sha256",
@@ -1546,6 +1553,7 @@ def load_completion_receipt(
     *,
     require_fixed_artifact_root: bool = True,
     verify_repository: bool = True,
+    classification_retry_v1: bool = False,
 ) -> tuple[list[ValidatedProbe], CompletionBinding]:
     completion_path = path.resolve(strict=True)
     if completion_path.name != "completion-receipt.json":
@@ -1594,6 +1602,10 @@ def load_completion_receipt(
     git_head = _string(completion["git_head"], "completion receipt.git_head")
     if contract.GIT_HEAD_RE.fullmatch(git_head) is None:
         fail("completion receipt.git_head must be lower-case Git SHA-1")
+    if classification_retry_v1 and not verify_repository:
+        fail(
+            "classification retry v1 requires repository verification"
+        )
     _expect(
         completion["cpu_only"],
         {
@@ -1623,7 +1635,19 @@ def load_completion_receipt(
     )
     if verify_repository:
         current_head = contract.require_clean_worktree(repo)
-        _expect(git_head, current_head, "completion receipt.git_head/current HEAD")
+        if not classification_retry_v1:
+            _expect(
+                git_head,
+                current_head,
+                "completion receipt.git_head/current HEAD",
+            )
+        else:
+            _expect(
+                git_head,
+                CLASSIFICATION_RETRY_V1_EXECUTION_GIT_HEAD,
+                "completion receipt.git_head/classification retry v1 "
+                "execution HEAD",
+            )
 
     build_receipt_path, build_receipt_record = _verify_absolute_file_record(
         completion["build_receipt"],
@@ -2224,6 +2248,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--classification-retry-v1",
+        action="store_true",
+        help="use the one frozen classification-only retry authority",
+    )
     return parser.parse_args(argv)
 
 
@@ -2232,9 +2261,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     completion_binding: CompletionBinding | None = None
     if args.completion_receipt is not None:
         probes, completion_binding = load_completion_receipt(
-            args.completion_receipt
+            args.completion_receipt,
+            classification_retry_v1=args.classification_retry_v1,
         )
     else:
+        if args.classification_retry_v1:
+            fail("--classification-retry-v1 requires --completion-receipt")
         probes = load_reports(args.report)
     report = build_report(probes, completion_binding=completion_binding)
     write_report_exclusive(args.output.resolve(), report)

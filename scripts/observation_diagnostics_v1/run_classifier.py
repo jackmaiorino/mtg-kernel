@@ -27,6 +27,84 @@ except ModuleNotFoundError:  # Direct execution from this directory.
     import run_probe  # type: ignore[no-redef]
 
 
+CLASSIFICATION_RETRY_MANIFEST_RELATIVE_PATH = Path(
+    "OBSERVATION_DIAGNOSTICS_CLASSIFICATION_RETRY_V1.md"
+)
+EXECUTION_GIT_HEAD = "c1cf5f1de05b64a4cae35c61862adc725df46837"
+EXECUTION_MANIFEST_SHA256 = (
+    "28cdbd8e582c49d5a414c61cf8dfda974467f36093783e246ee9a26d1b79e4d1"
+)
+EXECUTION_BUILD_RECEIPT_SHA256 = (
+    "c15e70719aa52bd31d55389edc57d0ca76665b0f924e96e4e51a90ed35173f49"
+)
+EXECUTION_BUILD_PAYLOAD_SHA256 = (
+    "51a9401727a9992de28fb3aa1d731b835d4400acf6fd0abad6988d489064c2e9"
+)
+EXECUTION_COMPLETION_RECEIPT_SHA256 = (
+    "f1be312d65e28e1c803c69fafc65cbe509d4ae4ba2828c0f8b8aa38595c55eb1"
+)
+EXECUTION_COMPLETION_PAYLOAD_SHA256 = (
+    "d174a5c55a4dcac2ed397941f2f7626855cd78a9c8924fdd64db6a38553e9a25"
+)
+EXECUTION_INVENTORY_AGGREGATE_SHA256 = (
+    "5017527337cd0c29ed781a1aebffa421cc3528cc6f53f7d6f09248f35a57913e"
+)
+EXECUTION_EXECUTABLE_WINDOWS = (
+    r"E:\cargo-target-observation-diagnostics-v2\release\deps"
+    r"\mtg_kernel-1314b70a4d1c3c9a.exe"
+)
+EXECUTION_EXECUTABLE_SHA256 = (
+    "b4a6c5d0713f5ba562212aa6411b4938b9448086d2e26c6a5248ec67ab9ed533"
+)
+CLASSIFICATION_RETRY_ROOT_WINDOWS = (
+    r"D:\mtg-kernel-observation-diagnostics-v2-20260727"
+    r"\classification-retry-v1"
+)
+CLASSIFICATION_RETRY_OUTPUT_WINDOWS = (
+    CLASSIFICATION_RETRY_ROOT_WINDOWS + r"\classification.json"
+)
+CLASSIFICATION_RETRY_STDOUT_WINDOWS = (
+    CLASSIFICATION_RETRY_ROOT_WINDOWS + r"\classifier.stdout.log"
+)
+CLASSIFICATION_RETRY_STDERR_WINDOWS = (
+    CLASSIFICATION_RETRY_ROOT_WINDOWS + r"\classifier.stderr.log"
+)
+CLASSIFICATION_RETRY_RECEIPT_WINDOWS = (
+    CLASSIFICATION_RETRY_ROOT_WINDOWS + r"\classification-receipt.json"
+)
+CLASSIFICATION_RETRY_RECEIPT_SCHEMA = (
+    "mtg-kernel-observation-diagnostics-classification-receipt/v2"
+)
+PRIOR_FAILED_CLASSIFICATION_RECEIPT_WINDOWS = (
+    r"D:\mtg-kernel-observation-diagnostics-v2-20260727"
+    r"\classification\classification-receipt.json"
+)
+PRIOR_FAILED_CLASSIFICATION_RECEIPT_SHA256 = (
+    "552edc97b059374f4996e2164ab7546e05dbc91db33af3cb50f27f786d507c56"
+)
+PRIOR_FAILED_CLASSIFICATION_PAYLOAD_SHA256 = (
+    "c1238c21a3ad0a8fac196693ff036e79941b413393db8491e9cebf093dee14f8"
+)
+PRIOR_FAILED_CLASSIFICATION_STDOUT_WINDOWS = (
+    r"D:\mtg-kernel-observation-diagnostics-v2-20260727"
+    r"\classification\classifier.stdout.log"
+)
+PRIOR_FAILED_CLASSIFICATION_STDOUT_SHA256 = (
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+)
+PRIOR_FAILED_CLASSIFICATION_STDERR_WINDOWS = (
+    r"D:\mtg-kernel-observation-diagnostics-v2-20260727"
+    r"\classification\classifier.stderr.log"
+)
+PRIOR_FAILED_CLASSIFICATION_STDERR_SHA256 = (
+    "b2b1a7d72b607bd737011a545d565c19e06897e32bc2d8247ffa2659408195ea"
+)
+PRIOR_FAILED_CLASSIFICATION_OUTPUT_WINDOWS = (
+    r"D:\mtg-kernel-observation-diagnostics-v2-20260727"
+    r"\classification\classification.json"
+)
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -153,12 +231,159 @@ def _reserve_classification_root(root: Path) -> None:
         ) from error
 
 
+def _require_exact_regular_file_set(
+    root: Path,
+    expected_names: set[str],
+    where: str,
+) -> None:
+    try:
+        entries = list(root.iterdir())
+    except OSError as error:
+        raise contract.DiagnosticError(
+            f"could not enumerate {where}: {error}"
+        ) from error
+    if (
+        {entry.name for entry in entries} != expected_names
+        or any(not entry.is_file() for entry in entries)
+    ):
+        contract.fail(f"{where} file set mismatch")
+
+
+def _validate_prior_failed_classification(
+    artifact_root: Path,
+) -> dict[str, Any]:
+    classification_root = (artifact_root / "classification").resolve()
+    expected_names = {
+        "classification-receipt.json",
+        "classifier.stderr.log",
+        "classifier.stdout.log",
+    }
+    _require_exact_regular_file_set(
+        classification_root,
+        expected_names,
+        "prior failed classification root",
+    )
+    path = (classification_root / "classification-receipt.json").resolve()
+    contract.require_frozen_windows_path(
+        path,
+        PRIOR_FAILED_CLASSIFICATION_RECEIPT_WINDOWS,
+        "prior failed classification receipt",
+    )
+    actual_sha256 = contract.sha256_file(path)
+    if actual_sha256 != PRIOR_FAILED_CLASSIFICATION_RECEIPT_SHA256:
+        contract.fail("prior failed classification receipt SHA-256 mismatch")
+    receipt = _canonical_receipt(
+        path,
+        "prior failed classification receipt",
+    )
+    if receipt.get("schema") != contract.CLASSIFICATION_RECEIPT_SCHEMA:
+        contract.fail("prior failed classification receipt schema mismatch")
+    if receipt.get("label") != contract.LABEL:
+        contract.fail("prior failed classification receipt label mismatch")
+    if receipt.get("status") != "FAILED":
+        contract.fail("prior classification receipt must remain FAILED")
+    if receipt.get("exit_code") != 1 or receipt.get("timed_out") is not False:
+        contract.fail("prior classification failure process status mismatch")
+    if (
+        receipt.get("payload_sha256")
+        != PRIOR_FAILED_CLASSIFICATION_PAYLOAD_SHA256
+    ):
+        contract.fail("prior failed classification payload SHA-256 mismatch")
+    streams: dict[str, dict[str, Any]] = {}
+    for name, expected_path, expected_sha256, expected_size in (
+        (
+            "stdout",
+            PRIOR_FAILED_CLASSIFICATION_STDOUT_WINDOWS,
+            PRIOR_FAILED_CLASSIFICATION_STDOUT_SHA256,
+            0,
+        ),
+        (
+            "stderr",
+            PRIOR_FAILED_CLASSIFICATION_STDERR_WINDOWS,
+            PRIOR_FAILED_CLASSIFICATION_STDERR_SHA256,
+            239,
+        ),
+    ):
+        record = contract.exact_keys(
+            receipt.get(name),
+            {"byte_count", "path", "sha256"},
+            f"prior failed classification receipt.{name}",
+        )
+        stream_path = Path(record["path"]).resolve()
+        contract.require_frozen_windows_path(
+            stream_path,
+            expected_path,
+            f"prior failed classification {name}",
+        )
+        if (
+            record["byte_count"] != expected_size
+            or record["sha256"] != expected_sha256
+        ):
+            contract.fail(
+                f"prior failed classification {name} binding mismatch"
+            )
+        actual = _file_record(stream_path)
+        if (
+            actual["byte_count"] != expected_size
+            or actual["sha256"] != expected_sha256
+        ):
+            contract.fail(
+                f"prior failed classification {name} file mismatch"
+            )
+        streams[name] = actual
+    output = contract.exact_keys(
+        receipt.get("classification_output"),
+        {
+            "byte_count",
+            "classification_authority",
+            "path",
+            "payload_sha256",
+            "schema",
+            "sha256",
+            "validated",
+        },
+        "prior failed classification receipt.classification_output",
+    )
+    output_path = Path(output["path"]).resolve()
+    contract.require_frozen_windows_path(
+        output_path,
+        PRIOR_FAILED_CLASSIFICATION_OUTPUT_WINDOWS,
+        "prior failed classification output",
+    )
+    if any(
+        output[key] is not None
+        for key in (
+            "byte_count",
+            "classification_authority",
+            "payload_sha256",
+            "schema",
+            "sha256",
+        )
+    ) or output["validated"] is not False:
+        contract.fail("prior failed classification unexpectedly admitted output")
+    if output_path.exists():
+        contract.fail("prior failed classification output must remain absent")
+    return {
+        "classification_output_absent": True,
+        "receipt": {
+            "path": str(path),
+            "payload_sha256": receipt["payload_sha256"],
+            "sha256": actual_sha256,
+        },
+        "stderr": streams["stderr"],
+        "status": receipt["status"],
+        "stdout": streams["stdout"],
+    }
+
+
 def classifier_command(
     classifier_source: Path,
     completion_receipt: Path,
     output: Path,
+    *,
+    classification_retry_v1: bool = False,
 ) -> list[str]:
-    return [
+    command = [
         sys.executable,
         str(classifier_source.resolve()),
         "--completion-receipt",
@@ -166,6 +391,9 @@ def classifier_command(
         "--output",
         str(output.resolve()),
     ]
+    if classification_retry_v1:
+        command.append("--classification-retry-v1")
+    return command
 
 
 def _validate_input_authorities(
@@ -248,6 +476,81 @@ def _validate_input_authorities(
         completion,
         inventory_binding,
     )
+
+
+def _validate_official_retry_pins(
+    *,
+    manifest_binding: Mapping[str, Any],
+    completion_binding: Mapping[str, Any],
+    build_binding: Mapping[str, Any],
+    inventory_binding: Mapping[str, Any],
+    completion_document: Mapping[str, Any],
+) -> None:
+    if (
+        EXECUTION_GIT_HEAD
+        != classify_results.CLASSIFICATION_RETRY_V1_EXECUTION_GIT_HEAD
+    ):
+        contract.fail("classification retry execution-head constants differ")
+    expected_scalars = (
+        (
+            manifest_binding.get("sha256"),
+            EXECUTION_MANIFEST_SHA256,
+            "execution manifest SHA-256",
+        ),
+        (
+            completion_binding.get("sha256"),
+            EXECUTION_COMPLETION_RECEIPT_SHA256,
+            "completion receipt SHA-256",
+        ),
+        (
+            completion_binding.get("payload_sha256"),
+            EXECUTION_COMPLETION_PAYLOAD_SHA256,
+            "completion payload SHA-256",
+        ),
+        (
+            build_binding.get("sha256"),
+            EXECUTION_BUILD_RECEIPT_SHA256,
+            "build receipt SHA-256",
+        ),
+        (
+            build_binding.get("payload_sha256"),
+            EXECUTION_BUILD_PAYLOAD_SHA256,
+            "build payload SHA-256",
+        ),
+        (
+            inventory_binding.get("aggregate_sha256"),
+            EXECUTION_INVENTORY_AGGREGATE_SHA256,
+            "completion inventory aggregate SHA-256",
+        ),
+        (
+            inventory_binding.get("file_count"),
+            len(contract.PAIR_SPECS) * 5,
+            "completion inventory file count",
+        ),
+        (
+            inventory_binding.get("validated"),
+            True,
+            "completion inventory validation status",
+        ),
+    )
+    for actual, expected, where in expected_scalars:
+        if actual != expected:
+            contract.fail(f"frozen {where} mismatch")
+    executable = contract.exact_keys(
+        completion_document.get("executable"),
+        {"path", "sha256"},
+        "completion receipt.executable",
+    )
+    executable_path = Path(executable["path"]).resolve()
+    if not contract.same_path(
+        executable_path,
+        EXECUTION_EXECUTABLE_WINDOWS,
+    ):
+        contract.fail("frozen execution executable path mismatch")
+    if executable["sha256"] != EXECUTION_EXECUTABLE_SHA256:
+        contract.fail("frozen execution executable SHA-256 mismatch")
+    if contract.sha256_file(executable_path) != EXECUTION_EXECUTABLE_SHA256:
+        contract.fail("frozen execution executable file SHA-256 mismatch")
 
 
 def _validate_classification_output(
@@ -381,6 +684,9 @@ def execute(
     repo = repo.resolve()
     artifact_root = artifact_root.resolve()
     manifest = (repo / contract.MANIFEST_RELATIVE_PATH).resolve()
+    retry_manifest = (
+        repo / CLASSIFICATION_RETRY_MANIFEST_RELATIVE_PATH
+    ).resolve()
     expected_source = (
         repo / "scripts" / "observation_diagnostics_v1" / "classify_results.py"
     ).resolve()
@@ -394,8 +700,14 @@ def execute(
         contract.fail(f"missing classifier source: {classifier_source}")
     if not manifest.is_file():
         contract.fail(f"missing execution manifest: {manifest}")
+    if not retry_manifest.is_file():
+        contract.fail(
+            f"missing classification retry manifest: {retry_manifest}"
+        )
 
-    classification_root = artifact_root / "classification"
+    classification_root = artifact_root / (
+        "classification-retry-v1" if require_windows else "classification"
+    )
     completion_path = (artifact_root / "completion-receipt.json").resolve()
     output_path = (classification_root / "classification.json").resolve()
     stdout_path = (classification_root / "classifier.stdout.log").resolve()
@@ -410,11 +722,31 @@ def execute(
                 contract.COMPLETION_RECEIPT_WINDOWS,
                 "official completion receipt",
             ),
-            (classification_root, contract.CLASSIFICATION_ROOT_WINDOWS, "official classification root"),
-            (output_path, contract.CLASSIFICATION_OUTPUT_WINDOWS, "official classification output"),
-            (stdout_path, contract.CLASSIFICATION_STDOUT_WINDOWS, "official classifier stdout"),
-            (stderr_path, contract.CLASSIFICATION_STDERR_WINDOWS, "official classifier stderr"),
-            (receipt_path, contract.CLASSIFICATION_RECEIPT_WINDOWS, "official classification receipt"),
+            (
+                classification_root,
+                CLASSIFICATION_RETRY_ROOT_WINDOWS,
+                "official classification retry root",
+            ),
+            (
+                output_path,
+                CLASSIFICATION_RETRY_OUTPUT_WINDOWS,
+                "official classification retry output",
+            ),
+            (
+                stdout_path,
+                CLASSIFICATION_RETRY_STDOUT_WINDOWS,
+                "official classification retry stdout",
+            ),
+            (
+                stderr_path,
+                CLASSIFICATION_RETRY_STDERR_WINDOWS,
+                "official classification retry stderr",
+            ),
+            (
+                receipt_path,
+                CLASSIFICATION_RETRY_RECEIPT_WINDOWS,
+                "official classification retry receipt",
+            ),
         ):
             contract.require_frozen_windows_path(value, expected, where)
     if classification_root.exists():
@@ -422,15 +754,24 @@ def execute(
             f"refusing existing classification output root: {classification_root}"
         )
 
+    prior_failure_binding = (
+        _validate_prior_failed_classification(artifact_root)
+        if require_windows
+        else None
+    )
     if _test_head_override is not None:
         if contract.GIT_HEAD_RE.fullmatch(_test_head_override) is None:
             contract.fail("test HEAD override must be a lower-case Git commit")
-        head = _test_head_override
+        classification_head = _test_head_override
+        execution_head = _test_head_override
     else:
-        head = (
+        classification_head = (
             contract.require_clean_worktree(repo)
             if require_windows
             else contract.checked_git(repo, "rev-parse", "HEAD")
+        )
+        execution_head = (
+            EXECUTION_GIT_HEAD if require_windows else classification_head
         )
     (
         completion_binding,
@@ -442,18 +783,32 @@ def execute(
         artifact_root=artifact_root,
         completion_path=completion_path,
         manifest=manifest,
-        head=head,
+        head=execution_head,
         require_full_build_verification=(
             require_windows
             if require_full_build_verification is None
             else require_full_build_verification
         ),
     )
-    command = classifier_command(classifier_source, completion_path, output_path)
+    command = classifier_command(
+        classifier_source,
+        completion_path,
+        output_path,
+        classification_retry_v1=require_windows,
+    )
     classifier_source_binding = _source_record(classifier_source)
     manifest_binding = _source_record(manifest)
+    retry_manifest_binding = _source_record(retry_manifest)
     wrapper_binding = _source_record(Path(__file__))
     contract_binding = _source_record(Path(contract.__file__))
+    if require_windows:
+        _validate_official_retry_pins(
+            manifest_binding=manifest_binding,
+            completion_binding=completion_binding,
+            build_binding=build_binding,
+            inventory_binding=inventory_preflight,
+            completion_document=completion_document,
+        )
 
     _reserve_classification_root(classification_root)
     started_utc = _utc_now()
@@ -507,7 +862,7 @@ def execute(
                 completion_binding=completion_binding,
                 contract_source_binding=contract_binding,
                 manifest_sha256=manifest_binding["sha256"],
-                head=head,
+                head=execution_head,
             )
         except Exception as error:
             failures.append(
@@ -516,14 +871,22 @@ def execute(
             )
             output_record = _partial_output_record(output_path)
 
-    for path, binding, name in (
+    postflight_bindings: list[
+        tuple[Path, Mapping[str, Any], str]
+    ] = [
         (classifier_source, classifier_source_binding, "classifier source"),
         (Path(wrapper_binding["path"]), wrapper_binding, "classifier wrapper source"),
         (Path(contract_binding["path"]), contract_binding, "contract source"),
         (manifest, manifest_binding, "execution manifest"),
+        (
+            retry_manifest,
+            retry_manifest_binding,
+            "classification retry manifest",
+        ),
         (completion_path, completion_binding, "completion receipt"),
         (Path(build_binding["path"]), build_binding, "build receipt"),
-    ):
+    ]
+    for path, binding, name in postflight_bindings:
         try:
             actual = contract.sha256_file(path)
         except Exception as error:
@@ -531,6 +894,21 @@ def execute(
         else:
             if actual != binding["sha256"]:
                 failures.append(f"{name} changed during classification")
+    if prior_failure_binding is not None:
+        try:
+            prior_failure_postflight = (
+                _validate_prior_failed_classification(artifact_root)
+            )
+            if prior_failure_postflight != prior_failure_binding:
+                failures.append(
+                    "prior failed classification binding changed "
+                    "during classification"
+                )
+        except Exception as error:
+            failures.append(
+                "prior failed classification postflight failed: "
+                f"{type(error).__name__}: {error}"
+            )
     inventory_postflight: dict[str, Any]
     try:
         inventory_postflight = _validate_completion_output_inventory(
@@ -556,10 +934,37 @@ def execute(
             "file_count": 0,
             "validated": False,
         }
+    if require_windows:
+        try:
+            postflight_build_path = Path(build_binding["path"]).resolve()
+            postflight_build = _canonical_receipt(
+                postflight_build_path,
+                "postflight build receipt",
+            )
+            run_probe.verify_build_receipt(
+                postflight_build,
+                receipt_path=postflight_build_path,
+                repo=repo,
+                manifest=manifest,
+                head=execution_head,
+                require_frozen_target_dir=True,
+            )
+            _validate_official_retry_pins(
+                manifest_binding=manifest_binding,
+                completion_binding=completion_binding,
+                build_binding=build_binding,
+                inventory_binding=inventory_postflight,
+                completion_document=completion_document,
+            )
+        except Exception as error:
+            failures.append(
+                "official retry authority postflight failed: "
+                f"{type(error).__name__}: {error}"
+            )
     worktree_clean_before_and_after = True
     try:
         final_head = (
-            head
+            classification_head
             if _test_head_override is not None
             else (
                 contract.require_clean_worktree(repo)
@@ -567,10 +972,11 @@ def execute(
                 else contract.checked_git(repo, "rev-parse", "HEAD")
             )
         )
-        if final_head != head:
+        if final_head != classification_head:
             worktree_clean_before_and_after = False
             failures.append(
-                f"git HEAD changed during classification: {head} -> {final_head}"
+                "git HEAD changed during classification: "
+                f"{classification_head} -> {final_head}"
             )
     except Exception as error:
         worktree_clean_before_and_after = False
@@ -584,7 +990,7 @@ def execute(
                 completion_binding=completion_binding,
                 contract_source_binding=contract_binding,
                 manifest_sha256=manifest_binding["sha256"],
-                head=head,
+                head=execution_head,
             )
         except Exception as error:
             failures.append(
@@ -606,13 +1012,16 @@ def execute(
         "completion_output_inventory_preflight": inventory_preflight,
         "completion_receipt": completion_binding,
         "contract_source": contract_binding,
+        "execution_git_head": execution_head,
         "exit_code": exit_code,
         "failure": "; ".join(failures) if failures else None,
-        "git_head": head,
+        "git_head": classification_head,
         "git_status_clean_before_and_after": worktree_clean_before_and_after,
         "label": contract.LABEL,
         "manifest": manifest_binding,
-        "schema": contract.CLASSIFICATION_RECEIPT_SCHEMA,
+        "classification_retry_manifest": retry_manifest_binding,
+        "prior_failed_classification_receipt": prior_failure_binding,
+        "schema": CLASSIFICATION_RETRY_RECEIPT_SCHEMA,
         "started_utc": started_utc,
         "status": "FAILED" if failures else "COMPLETE",
         "stderr": stderr_record,
