@@ -41,6 +41,14 @@ pub const ENVIRONMENT_RANDOMIZATION_GOLDENS_SHA256_V1: &str =
 pub const ENVIRONMENT_RANDOMIZATION_GOLDENS_V1: &str =
     include_str!("../../data/environment_randomization_v2/goldens_v1.json");
 
+/// Sealed pre-change legacy bytes (environment-v2 step 2, gate 1): the exact
+/// legacy GameState JSON, diagnostic envelope bytes, and frozen hash captured
+/// before any representation work.
+pub const LEGACY_STATE_BYTES_SHA256_V1: &str =
+    "3e0f044d0cdbfa356b8ccc3ef2c7a198078be0e6a119e8e428664a3a0347a349";
+pub const LEGACY_STATE_BYTES_V1: &str =
+    include_str!("../../data/environment_randomization_v2/legacy_state_bytes_v1.json");
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PhysicalOwnerV2 {
     P0,

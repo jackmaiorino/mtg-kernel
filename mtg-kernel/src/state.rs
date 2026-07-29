@@ -1654,6 +1654,73 @@ mod tests {
         assert_eq!(a.diagnostic_state_hash(), b.diagnostic_state_hash());
     }
 
+    /// Builds the canonical legacy capture state: the exact state the frozen
+    /// diagnostic golden uses (two-card libraries, seed 99, one draw each).
+    fn legacy_capture_state() -> GameState {
+        let (lib0, lib1) = two_card_libraries();
+        let mut state = GameState::new_from_libraries(&lib0, &lib1, debug_names, 99);
+        state.draw_card(PlayerId::P0);
+        state.draw_card(PlayerId::P1);
+        state
+    }
+
+    /// Gate 1 of environment-v2 step 2: the sealed legacy bytes. The exact
+    /// pre-change GameState JSON, diagnostic envelope bytes, and frozen hash
+    /// must remain byte-identical through any representation work.
+    #[test]
+    fn legacy_randomization_bytes_are_sealed() {
+        let artifact_text = crate::environment_randomization_v2::LEGACY_STATE_BYTES_V1;
+        {
+            use sha2::Digest as _;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(artifact_text.as_bytes());
+            let observed = hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            assert_eq!(
+                observed,
+                crate::environment_randomization_v2::LEGACY_STATE_BYTES_SHA256_V1,
+                "sealed legacy-byte artifact does not match its pinned SHA-256"
+            );
+        }
+        let artifact: serde_json::Value =
+            serde_json::from_str(artifact_text).expect("decode legacy byte artifact");
+        assert_eq!(
+            artifact["schema"].as_str().expect("schema"),
+            "mtg-kernel-legacy-randomization-bytes/v1"
+        );
+        let state = legacy_capture_state();
+        let live_state_json =
+            serde_json::to_string(&state).expect("legacy capture state serializes");
+        assert_eq!(
+            live_state_json,
+            artifact["state_json"].as_str().expect("state_json"),
+            "legacy GameState JSON bytes changed"
+        );
+        let live_envelope =
+            String::from_utf8(diagnostic_state_hash_bytes(&state)).expect("envelope is ascii");
+        assert_eq!(
+            live_envelope,
+            artifact["diagnostic_envelope_json"]
+                .as_str()
+                .expect("envelope json"),
+            "legacy diagnostic envelope bytes changed"
+        );
+        assert_eq!(
+            format!("{:016x}", state.diagnostic_state_hash()),
+            artifact["diagnostic_hash_hex"].as_str().expect("hash hex"),
+            "legacy diagnostic hash changed"
+        );
+        assert_eq!(
+            format!("{:016x}", state.state_hash()),
+            artifact["state_hash_hex"].as_str().expect("state hash hex"),
+            "legacy hot-path state_hash changed (Hash derivation drift)"
+        );
+        assert_eq!(state.diagnostic_state_hash(), 0x8650_30b6_0d41_3489);
+    }
+
     #[test]
     fn diagnostic_state_hash_contract_and_golden_value_are_frozen() {
         let (lib0, lib1) = two_card_libraries();
