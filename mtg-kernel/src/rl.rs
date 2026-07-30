@@ -1358,6 +1358,76 @@ pub fn build_burn_mirror_state(seed: u64) -> GameState {
         .expect("the cataloged Burn deck is fully supported and token-free")
 }
 
+/// Typed failure vocabulary of the explicit environment-v2 deck-pair
+/// builder: deck admission failures and sealed KDF failures, both
+/// propagated verbatim and never collapsed or expected away.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeckPairBuildErrorV2 {
+    DeckPreflight(DeckPreflightError),
+    EnvironmentRandomization(crate::environment_randomization_v2::EnvironmentRandomizationErrorV2),
+}
+
+impl std::fmt::Display for DeckPairBuildErrorV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeckPairBuildErrorV2::DeckPreflight(error) => {
+                write!(formatter, "v2 deck-pair build rejected a deck: {error}")
+            }
+            DeckPairBuildErrorV2::EnvironmentRandomization(error) => write!(
+                formatter,
+                "v2 deck-pair build seed derivation failed: {error:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DeckPairBuildErrorV2 {}
+
+/// Explicit environment-v2 sibling of `build_deck_pair_state`. Both complete
+/// decks are admitted (P0 first, then P1) before any derivation or
+/// construction; the two initial libraries are permuted by the independent
+/// `(owner, initial-library-shuffle, 0)` substreams of the full-width pair
+/// root, consuming no live ordinal; the state is constructed in the v2
+/// randomness representation (exact root retained, both live ordinals zero,
+/// no legacy RNG, v6 diagnostic identity); and the same seven alternating
+/// event draws as the legacy builder, P0 then P1, fill the hands.
+pub fn build_deck_pair_state_environment_v2(
+    pair_environment_seed: u64,
+    p0_deck: &[u16],
+    p1_deck: &[u16],
+) -> std::result::Result<GameState, DeckPairBuildErrorV2> {
+    use crate::environment_randomization_v2 as env2;
+    preflight_fully_supported_deck(p0_deck).map_err(DeckPairBuildErrorV2::DeckPreflight)?;
+    preflight_fully_supported_deck(p1_deck).map_err(DeckPairBuildErrorV2::DeckPreflight)?;
+    let p0_seed = env2::derive_environment_randomization_seed_v2(
+        pair_environment_seed,
+        env2::PhysicalOwnerV2::P0,
+        env2::ShufflePurposeV2::InitialLibraryShuffle,
+        0,
+    )
+    .map_err(DeckPairBuildErrorV2::EnvironmentRandomization)?;
+    let p1_seed = env2::derive_environment_randomization_seed_v2(
+        pair_environment_seed,
+        env2::PhysicalOwnerV2::P1,
+        env2::ShufflePurposeV2::InitialLibraryShuffle,
+        0,
+    )
+    .map_err(DeckPairBuildErrorV2::EnvironmentRandomization)?;
+    let lib0 = env2::permutation_v2(p0_seed, p0_deck);
+    let lib1 = env2::permutation_v2(p1_seed, p1_deck);
+    let mut state = GameState::new_from_libraries_environment_v2(
+        &lib0,
+        &lib1,
+        card_name,
+        pair_environment_seed,
+    );
+    for _ in 0..7 {
+        event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
+        event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P1));
+    }
+    Ok(state)
+}
+
 pub fn derive_env_seed(base_seed: u64, episode_id: u64) -> u64 {
     derive_seed(base_seed, episode_id, 0x4556_5f52_4c5f_7631)
 }
