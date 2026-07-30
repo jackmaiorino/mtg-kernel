@@ -49,6 +49,36 @@ pub const LEGACY_STATE_BYTES_SHA256_V1: &str =
 pub const LEGACY_STATE_BYTES_V1: &str =
     include_str!("../../data/environment_randomization_v2/legacy_state_bytes_v1.json");
 
+/// Sealed portable reset physical-trajectory golden authority. The portable
+/// reset boundary is the state immediately after the fourteen alternating
+/// opening draws and before session policy advance; Python owns only the
+/// physical card-definition projection of that boundary. The committed V6
+/// tests already freeze the post-advance Decision, and native full-episode
+/// trajectory folding remains exactly
+/// `mtg-kernel-native-full-episode-trajectory-sha256-v1`.
+///
+/// The artifact is generated and independently verified by the stdlib-only
+/// `python/tools/generate_environment_randomization_v2_reset_physical_trajectory_goldens_v1.py`.
+/// Both the raw-file SHA-256 and the separately pinned portable
+/// vector-stream SHA-256 are minted from that generator's final canonical
+/// bytes; the test-only module reconstructs the stream from typed artifact
+/// values and reads no Python-precomputed semantic stream.
+pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_GOLDENS_SCHEMA_V1: &str =
+    "mtg-kernel-environment-randomization-v2-reset-physical-trajectory-goldens/v1";
+pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_GENERATOR_IDENTITY_V1: &str =
+    "mtg-kernel-environment-randomization-v2-reset-physical-trajectory-goldens-stdlib-python-v1";
+pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_PHYSICAL_PROJECTION_IDENTITY_V1: &str =
+    "mtg-kernel-environment-randomization-v2-physical-card-definition-projection/v1";
+pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_PORTABLE_VECTOR_STREAM_IDENTITY_V1: &str =
+    "mtg-kernel-environment-randomization-v2-reset-physical-trajectory-portable-vector-stream-sha256-v1";
+pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_GOLDENS_SHA256_V1: &str =
+    "ab002901a598d40732d39f9b0f21abaa2b7445e63b1c14d45a44b7900f6b739b";
+pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_PORTABLE_VECTOR_STREAM_SHA256_V1: &str =
+    "15d312141f8d96f079684dd64b58b5bab803086a78ac9687e3c14aab91e0a3c9";
+pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_GOLDENS_V1: &str = include_str!(
+    "../../data/environment_randomization_v2/reset_physical_trajectory_goldens_v1.json"
+);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PhysicalOwnerV2 {
     P0,
@@ -470,3 +500,8 @@ mod tests {
         }
     }
 }
+
+/// Evidence-only portable reset-trajectory golden proof. This activates no
+/// runtime consumer.
+#[cfg(test)]
+mod reset_physical_trajectory_goldens_v1;
