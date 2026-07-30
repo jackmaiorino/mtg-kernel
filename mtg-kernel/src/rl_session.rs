@@ -479,6 +479,7 @@ pub enum RlSessionErrorCode {
     SelectedActionIdUnknown,
     StaleEnvironmentBinding,
     UnsupportedDeck,
+    EnvironmentRandomization,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3767,23 +3768,56 @@ impl RlEpisodeSessionV1 {
         max_physical_decisions: u64,
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
+        profile: Option<&mut RlPhaseProfileV1>,
+        suppression_audit_mode: SuppressionAuditMode,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
+            episode_id,
+            ResetRandomization::Legacy { env_seed },
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            profile,
+            suppression_audit_mode,
+        )
+    }
+
+    /// The first in-process environment-v2 activation boundary: identical
+    /// session construction to the legacy reset, with the game randomness
+    /// built by the explicit v2 deck-pair builder from the full-width pair
+    /// root. No profile and no suppression audit; JSONL, rollout, store,
+    /// trainer, manifest, and audit consumers remain fully legacy.
+    pub fn reset_with_decks_and_limits_environment_v2(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
+            episode_id,
+            ResetRandomization::EnvironmentV2 {
+                pair_environment_seed,
+            },
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            None,
+            SuppressionAuditMode::Off,
+        )
+    }
+
+    fn reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
+        episode_id: u64,
+        randomization: ResetRandomization,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
         mut profile: Option<&mut RlPhaseProfileV1>,
         suppression_audit_mode: SuppressionAuditMode,
     ) -> Result<Self, RlSessionError> {
         let mut session = measure_optional(&mut profile, RlPhaseV1::Reset, || {
-            let resolved_decks = resolve_runtime_decks(&deck_ids)?;
-            let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
-            let state = build_deck_pair_state(
-                env_seed,
-                resolved_decks[0].card_ids,
-                resolved_decks[1].card_ids,
-            )
-            .map_err(|_| {
-                session_error(
-                    RlSessionErrorCode::UnsupportedDeck,
-                    "runtime deck catalog failed full-support preflight",
-                )
-            })?;
+            let (deck_hashes, state) = build_session_deck_pair_state(&deck_ids, randomization)?;
             Ok(RlEpisodeSessionV1 {
                 deck_ids,
                 deck_hashes,
@@ -4375,6 +4409,29 @@ impl FastActorSessionV1 {
         )
     }
 
+    /// Combined activation boundary: the explicit flat-action V2 contract on
+    /// an environment-v2 randomness state. This is the only constructor that
+    /// selects both; flat-action contract mode and randomness mode stay
+    /// orthogonal everywhere else.
+    pub fn reset_with_decks_and_limits_flat_action_v2_environment_v2(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
+            episode_id,
+            ResetRandomization::EnvironmentV2 {
+                pair_environment_seed,
+            },
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            FlatActionContractModeV1::V2,
+        )
+    }
+
     fn reset_with_decks_and_limits_in_flat_action_mode(
         episode_id: u64,
         env_seed: u64,
@@ -4383,19 +4440,25 @@ impl FastActorSessionV1 {
         deck_ids: SessionDeckIdsV1,
         flat_action_contract_mode: FlatActionContractModeV1,
     ) -> Result<Self, RlSessionError> {
-        let resolved_decks = resolve_runtime_decks(&deck_ids)?;
-        let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
-        let state = build_deck_pair_state(
-            env_seed,
-            resolved_decks[0].card_ids,
-            resolved_decks[1].card_ids,
+        Self::reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
+            episode_id,
+            ResetRandomization::Legacy { env_seed },
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            flat_action_contract_mode,
         )
-        .map_err(|_| {
-            session_error(
-                RlSessionErrorCode::UnsupportedDeck,
-                "runtime deck catalog failed full-support preflight",
-            )
-        })?;
+    }
+
+    fn reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
+        episode_id: u64,
+        randomization: ResetRandomization,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        flat_action_contract_mode: FlatActionContractModeV1,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state(&deck_ids, randomization)?;
         let mut session = FastActorSessionV1 {
             deck_ids,
             deck_hashes,
@@ -5934,6 +5997,7 @@ fn session_error_code(code: &RlSessionErrorCode) -> &'static str {
         RlSessionErrorCode::SelectedActionIdUnknown => "selected_action_id_unknown",
         RlSessionErrorCode::StaleEnvironmentBinding => "stale_environment_binding",
         RlSessionErrorCode::UnsupportedDeck => "unsupported_deck",
+        RlSessionErrorCode::EnvironmentRandomization => "environment_randomization",
     }
 }
 
@@ -5942,6 +6006,68 @@ fn canonical_burn_mirror_deck_ids() -> SessionDeckIdsV1 {
         CANONICAL_BURN_DECK_ID.to_string(),
         CANONICAL_BURN_DECK_ID.to_string(),
     ]
+}
+
+/// Private randomness selector for session reset. Deliberately no serde and
+/// no Default: the caller always chooses explicitly, and `GameState` remains
+/// the sole persisted randomness and diagnostic identity.
+#[derive(Clone, Copy)]
+enum ResetRandomization {
+    Legacy { env_seed: u64 },
+    EnvironmentV2 { pair_environment_seed: u64 },
+}
+
+/// Shared state construction for both session types: resolves both runtime
+/// decks, obtains both catalog deck hashes, and dispatches to the exact
+/// legacy or environment-v2 deck-pair builder. Returns only after all deck
+/// resolution, preflight, and KDF work has succeeded, so no surface or
+/// session is constructed for a failing reset.
+fn build_session_deck_pair_state(
+    deck_ids: &SessionDeckIdsV1,
+    randomization: ResetRandomization,
+) -> Result<(SessionDeckHashesV1, crate::state::GameState), RlSessionError> {
+    let resolved_decks = resolve_runtime_decks(deck_ids)?;
+    let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
+    let state = match randomization {
+        ResetRandomization::Legacy { env_seed } => build_deck_pair_state(
+            env_seed,
+            resolved_decks[0].card_ids,
+            resolved_decks[1].card_ids,
+        )
+        .map_err(|_| {
+            session_error(
+                RlSessionErrorCode::UnsupportedDeck,
+                "runtime deck catalog failed full-support preflight",
+            )
+        })?,
+        ResetRandomization::EnvironmentV2 {
+            pair_environment_seed,
+        } => crate::rl::build_deck_pair_state_environment_v2(
+            pair_environment_seed,
+            resolved_decks[0].card_ids,
+            resolved_decks[1].card_ids,
+        )
+        .map_err(map_deck_pair_build_error_v2)?,
+    };
+    Ok((deck_hashes, state))
+}
+
+/// Exhaustive typed mapping of the v2 deck-pair builder failure vocabulary
+/// into session errors, shared by both new constructors. Deck admission
+/// failures keep the exact legacy message; sealed KDF failures keep the
+/// builder error's complete Display text under the distinct
+/// EnvironmentRandomization code.
+fn map_deck_pair_build_error_v2(error: crate::rl::DeckPairBuildErrorV2) -> RlSessionError {
+    match &error {
+        crate::rl::DeckPairBuildErrorV2::DeckPreflight(_) => session_error(
+            RlSessionErrorCode::UnsupportedDeck,
+            "runtime deck catalog failed full-support preflight",
+        ),
+        crate::rl::DeckPairBuildErrorV2::EnvironmentRandomization(_) => session_error(
+            RlSessionErrorCode::EnvironmentRandomization,
+            &error.to_string(),
+        ),
+    }
 }
 
 fn resolve_runtime_decks(
@@ -10664,5 +10790,645 @@ mod tests {
             value["diagnostic_state_hash_algorithm"],
             crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2
         );
+    }
+
+    /// Injected flat-action-V2 environment-v2 oracle (pre-constructor): the
+    /// legacy flat-action-V2 constructor's state is replaced by the explicit
+    /// v2 deck builder, then surface, terminal, current, revision, both
+    /// counters, and both spare caches are cleared before one normal
+    /// advance. Deliberately calls neither new reset API.
+    fn fast_flat_v2_session_on_environment_v2(root: u64) -> FastActorSessionV1 {
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            1,
+            root,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("the legacy flat-action-V2 reset succeeds");
+        session.state = v2_session_state(root);
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        assert!(session.terminal.is_none());
+        session
+    }
+
+    fn canonical_v2_full_reset(root: u64) -> RlEpisodeSessionV1 {
+        RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
+            1,
+            root,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("the full environment-v2 reset succeeds")
+    }
+
+    fn canonical_v2_fast_reset(root: u64) -> FastActorSessionV1 {
+        FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+            1,
+            root,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("the combined fast environment-v2 reset succeeds")
+    }
+
+    fn definition_order(state: &crate::state::GameState, player: PlayerId) -> Vec<u16> {
+        state.players[player.index()]
+            .hand
+            .iter()
+            .chain(&state.players[player.index()].library)
+            .map(|&object| state.objects.get(object).card_def)
+            .collect()
+    }
+
+    #[test]
+    fn v2_reset_preexisting_entry_points_remain_legacy_randomness() {
+        let canonical = RlEpisodeSessionV1::reset_with_decks_and_limits(
+            1,
+            99,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .unwrap();
+        for session in [
+            RlEpisodeSessionV1::reset(1, 99, 8),
+            RlEpisodeSessionV1::reset_with_limits(1, 99, 8, 1024),
+            RlEpisodeSessionV1::reset_with_decks(1, 99, 8, canonical_burn_mirror_deck_ids())
+                .unwrap(),
+        ] {
+            assert!(session.state.legacy_rng().is_some());
+            assert!(session.state.environment_randomization_v2().is_none());
+            assert_eq!(
+                session.state.diagnostic_state_hash_algorithm(),
+                "fnv1a64-serde-json-game-state-envelope-v5"
+            );
+            assert_eq!(session.state, canonical.state);
+            assert_eq!(
+                serde_json::to_vec(&session.current_response()).unwrap(),
+                serde_json::to_vec(&canonical.current_response()).unwrap()
+            );
+        }
+        let fast_canonical = FastActorSessionV1::reset_with_decks_and_limits(
+            1,
+            99,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .unwrap();
+        for fast in [
+            FastActorSessionV1::reset(1, 99, 8),
+            FastActorSessionV1::reset_with_limits(1, 99, 8, 1024),
+            FastActorSessionV1::reset_with_decks(1, 99, 8, canonical_burn_mirror_deck_ids())
+                .unwrap(),
+        ] {
+            assert!(fast.state.legacy_rng().is_some());
+            assert!(fast.state.environment_randomization_v2().is_none());
+            assert_eq!(
+                fast.state.diagnostic_state_hash_algorithm(),
+                "fnv1a64-serde-json-game-state-envelope-v5"
+            );
+            assert_eq!(fast.state, fast_canonical.state);
+            assert_eq!(fast.current, fast_canonical.current);
+        }
+        assert_eq!(fast_canonical.state, canonical.state);
+
+        // The existing flat-action-V2 reset stays legacy randomness while
+        // constructing only its V2 action cache.
+        let flat_v2_legacy = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            1,
+            99,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .unwrap();
+        assert!(flat_v2_legacy.state.legacy_rng().is_some());
+        assert!(flat_v2_legacy
+            .state
+            .environment_randomization_v2()
+            .is_none());
+        assert_eq!(flat_v2_legacy.state, canonical.state);
+        let current = flat_v2_legacy.current.as_ref().unwrap();
+        assert!(current.flat_action_cache.is_none());
+        assert!(current.flat_action_cache_error.is_none());
+        assert!(current.flat_action_cache_v2.is_some());
+        assert!(current.flat_action_cache_error_v2.is_none());
+
+        // Captured legacy pins are preserved bit-exact.
+        assert_eq!(
+            canonical.privileged_environment_hash(),
+            0xcc4e_fc39_024e_ccd5
+        );
+        assert_eq!(
+            canonical.privileged_core_environment_hash(),
+            0x5005_8868_e7a2_bc28
+        );
+        assert_eq!(
+            fast_canonical.privileged_core_environment_hash(),
+            0x5005_8868_e7a2_bc28
+        );
+    }
+
+    #[test]
+    fn v2_reset_full_and_fast_match_their_injected_oracles_exactly() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        let full = canonical_v2_full_reset(99);
+        let oracle = full_session_on_environment_v2(99);
+        assert_eq!(full.deck_ids, oracle.deck_ids);
+        assert_eq!(full.deck_hashes, oracle.deck_hashes);
+        assert_eq!(full.episode_id, oracle.episode_id);
+        assert_eq!(full.max_physical_decisions, oracle.max_physical_decisions);
+        assert_eq!(full.max_policy_steps, oracle.max_policy_steps);
+        assert_eq!(full.state, oracle.state);
+        assert_eq!(
+            full.surface.harness_public_context(),
+            oracle.surface.harness_public_context()
+        );
+        assert_eq!(
+            full.surface.privileged_scan_context().unwrap(),
+            oracle.surface.privileged_scan_context().unwrap()
+        );
+        assert_eq!(full.environment_revision, 0);
+        assert_eq!(full.policy_step_count, 0);
+        assert_eq!(full.physical_decision_count, 0);
+        assert!(full.terminal.is_none());
+        assert_eq!(
+            serde_json::to_vec(&full.current_response()).unwrap(),
+            serde_json::to_vec(&oracle.current_response()).unwrap()
+        );
+
+        assert!(full.state.legacy_rng().is_none());
+        let v2 = full
+            .state
+            .environment_randomization_v2()
+            .expect("v2 randomness");
+        assert_eq!(v2.pair_environment_seed(), 99);
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), 0);
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+        assert_eq!(
+            full.state.diagnostic_state_hash_algorithm(),
+            "fnv1a64-serde-json-game-state-envelope-v6"
+        );
+        let serialized = serde_json::to_value(&full.state).unwrap();
+        assert!(serialized.get("environment_randomization_v2").is_some());
+        assert!(serialized.get("rng").is_none());
+
+        let current = full.current.as_ref().expect("current decision exists");
+        assert_eq!(current.physical_decision_id, 0);
+        assert_eq!(current.environment_revision, 0);
+        assert_eq!(current.bound_policy_step_count, 0);
+        assert_eq!(current.bound_physical_decision_count, 0);
+
+        let fast = canonical_v2_fast_reset(99);
+        let fast_oracle = fast_flat_v2_session_on_environment_v2(99);
+        assert_eq!(fast.deck_ids, fast_oracle.deck_ids);
+        assert_eq!(fast.deck_hashes, fast_oracle.deck_hashes);
+        assert_eq!(fast.episode_id, fast_oracle.episode_id);
+        assert_eq!(
+            fast.max_physical_decisions,
+            fast_oracle.max_physical_decisions
+        );
+        assert_eq!(fast.max_policy_steps, fast_oracle.max_policy_steps);
+        assert_eq!(fast.state, fast_oracle.state);
+        assert_eq!(
+            fast.surface.harness_public_context(),
+            fast_oracle.surface.harness_public_context()
+        );
+        assert_eq!(
+            fast.surface.privileged_scan_context().unwrap(),
+            fast_oracle.surface.privileged_scan_context().unwrap()
+        );
+        assert_eq!(fast.environment_revision, 0);
+        assert_eq!(fast.policy_step_count, 0);
+        assert_eq!(fast.physical_decision_count, 0);
+        assert!(fast.terminal.is_none());
+        assert_eq!(fast.current, fast_oracle.current);
+        assert!(fast.flat_action_cache_spare.is_none());
+        assert!(fast.flat_action_cache_spare_v2.is_none());
+
+        // Full and fast views of the same v2 decision agree.
+        assert_eq!(fast.state, full.state);
+        let fast_current = fast.current.as_ref().expect("fast current exists");
+        assert_eq!(current.actor, fast_current.actor);
+        assert_eq!(
+            current.physical_decision_id,
+            fast_current.physical_decision_id
+        );
+        assert_eq!(current.substep_index, fast_current.substep_index);
+        assert_eq!(current.substep_count, fast_current.substep_count);
+        assert_eq!(current.candidates.len(), fast_current.candidates.len());
+        for (full_candidate, fast_candidate) in
+            current.candidates.iter().zip(&fast_current.candidates)
+        {
+            assert_eq!(full_candidate.record.semantic, fast_candidate.semantic);
+            assert_eq!(full_candidate.policy_action, fast_candidate.policy_action);
+        }
+    }
+
+    #[test]
+    fn v2_reset_combined_fast_constructor_populates_only_the_v2_cache() {
+        reset_test_flat_action_commitment_constructions();
+        reset_test_flat_action_v2_commitment_constructions();
+        reset_test_flat_action_v1_materializations();
+        let fast = canonical_v2_fast_reset(99);
+        assert_eq!(
+            test_flat_action_v2_commitment_constructions(),
+            1,
+            "exactly one V2 commitment"
+        );
+        assert_eq!(
+            test_flat_action_commitment_constructions(),
+            0,
+            "zero V1 commitments"
+        );
+        assert_eq!(
+            test_flat_action_v1_materializations(),
+            0,
+            "zero V1 materializations"
+        );
+        assert_eq!(fast.flat_action_contract_mode, FlatActionContractModeV1::V2);
+        assert!(fast.flat_action_cache_spare.is_none());
+        assert!(fast.flat_action_cache_spare_v2.is_none());
+        let current = fast.current.as_ref().expect("current decision exists");
+        assert!(current.flat_action_cache.is_none());
+        assert!(current.flat_action_cache_error.is_none());
+        assert!(current.flat_action_cache_v2.is_some());
+        assert!(current.flat_action_cache_error_v2.is_none());
+
+        let oracle = fast_flat_v2_session_on_environment_v2(99);
+        assert_eq!(
+            current.flat_action_cache_v2,
+            oracle.current.as_ref().unwrap().flat_action_cache_v2,
+            "binding and rows equal the injected flat-action-V2 oracle"
+        );
+
+        // V1 encoding rejects the V2-contract session without materializing.
+        let decision = match fast.current_response() {
+            FastActorResponseV1::Decision(decision) => decision,
+            FastActorResponseV1::Terminal(_) => panic!("session is live"),
+        };
+        let mut actions = [poison_flat_action(); 4];
+        let mut refs = [poison_flat_ref(); 4];
+        let mut objects = [poison_flat_object(); 4];
+        let original_actions = actions;
+        let original_refs = refs;
+        let original_objects = objects;
+        let error = fast
+            .encode_current_flat_action_slice_v1(
+                decision,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error, FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        assert_eq!(actions, original_actions);
+        assert_eq!(refs, original_refs);
+        assert_eq!(objects, original_objects);
+        assert_eq!(
+            test_flat_action_v1_materializations(),
+            0,
+            "V1 rejection must not materialize"
+        );
+    }
+
+    #[test]
+    fn v2_reset_reuses_pre_constructor_pins_and_is_root_sensitive() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        let full = canonical_v2_full_reset(99);
+        let fast = canonical_v2_fast_reset(99);
+        assert_eq!(
+            full.privileged_environment_hash(),
+            0x7abb_750c_9f4a_4651,
+            "pre-constructor policy pin is reused, not minted"
+        );
+        assert_eq!(
+            full.privileged_core_environment_hash(),
+            0xbb18_34f0_90be_fb8c,
+            "pre-constructor core pin is reused, not minted"
+        );
+        assert_eq!(
+            fast.privileged_core_environment_hash(),
+            0xbb18_34f0_90be_fb8c,
+            "full and fast v2 core hashes are equal and equal the pin"
+        );
+
+        // Same-root construction is byte-deterministic.
+        let full_again = canonical_v2_full_reset(99);
+        assert_eq!(
+            serde_json::to_vec(&full.state).unwrap(),
+            serde_json::to_vec(&full_again.state).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_vec(&full.current_response()).unwrap(),
+            serde_json::to_vec(&full_again.current_response()).unwrap()
+        );
+
+        // Root 100 is retained exactly and moves every derived quantity.
+        let full_100 = canonical_v2_full_reset(100);
+        assert_eq!(
+            full_100
+                .state
+                .environment_randomization_v2()
+                .expect("v2 randomness")
+                .pair_environment_seed(),
+            100
+        );
+        assert!(
+            definition_order(&full.state, PlayerId::P0)
+                != definition_order(&full_100.state, PlayerId::P0)
+                || definition_order(&full.state, PlayerId::P1)
+                    != definition_order(&full_100.state, PlayerId::P1),
+            "root 100 changes at least one owner's complete definition order"
+        );
+        assert_ne!(
+            full.state.diagnostic_state_hash(),
+            full_100.state.diagnostic_state_hash()
+        );
+        assert_ne!(
+            full_100.privileged_environment_hash(),
+            0x7abb_750c_9f4a_4651
+        );
+        assert_ne!(
+            full_100.privileged_core_environment_hash(),
+            0xbb18_34f0_90be_fb8c
+        );
+
+        // Root u64::MAX succeeds and stays exact full-width in both.
+        let full_max = canonical_v2_full_reset(u64::MAX);
+        let fast_max = canonical_v2_fast_reset(u64::MAX);
+        for state in [&full_max.state, &fast_max.state] {
+            assert!(state.legacy_rng().is_none());
+            let v2 = state.environment_randomization_v2().expect("v2 randomness");
+            assert_eq!(v2.pair_environment_seed(), u64::MAX);
+            assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), 0);
+            assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+            assert_eq!(
+                state.diagnostic_state_hash_algorithm(),
+                "fnv1a64-serde-json-game-state-envelope-v6"
+            );
+        }
+        assert_eq!(
+            full_max.state, fast_max.state,
+            "full/fast state parity at max root"
+        );
+        assert_eq!(
+            full_max.privileged_core_environment_hash(),
+            fast_max.privileged_core_environment_hash(),
+            "full/fast core parity at max root"
+        );
+    }
+
+    #[test]
+    fn v2_reset_error_boundaries_are_typed_and_seat_exact() {
+        const SEAT_0_MESSAGE: &str =
+            "unsupported deck_id for seat 0; supported exact canonical ids are \"Burn\" and \"Rally\"";
+        const SEAT_1_MESSAGE: &str =
+            "unsupported deck_id for seat 1; supported exact canonical ids are \"Burn\" and \"Rally\"";
+        let both_bad: SessionDeckIdsV1 = ["NotADeck".to_string(), "AlsoNotADeck".to_string()];
+        let error = match RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
+            1,
+            99,
+            8,
+            1024,
+            both_bad.clone(),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("both-bad deck ids must fail on the full API"),
+        };
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert_eq!(
+            error.message, SEAT_0_MESSAGE,
+            "bad-P0 precedence on the full API"
+        );
+        let error =
+            match FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+                1, 99, 8, 1024, both_bad,
+            ) {
+                Err(error) => error,
+                Ok(_) => panic!("both-bad deck ids must fail on the fast API"),
+            };
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert_eq!(
+            error.message, SEAT_0_MESSAGE,
+            "bad-P0 precedence on the fast API"
+        );
+        let p1_bad: SessionDeckIdsV1 = [CANONICAL_BURN_DECK_ID.to_string(), "NotADeck".to_string()];
+        let error =
+            match FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+                1,
+                99,
+                8,
+                1024,
+                p1_bad.clone(),
+            ) {
+                Err(error) => error,
+                Ok(_) => panic!("a bad P1 deck id must fail on the fast API"),
+            };
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert_eq!(
+            error.message, SEAT_1_MESSAGE,
+            "exact seat-1 reporting on the fast API"
+        );
+        let error = match RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
+            1, 99, 8, 1024, p1_bad,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("a bad P1 deck id must fail on the full API too"),
+        };
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert_eq!(
+            error.message, SEAT_1_MESSAGE,
+            "exact seat-1 reporting on the full API"
+        );
+
+        // The shared private mapper, unit-tested directly.
+        let deck_error =
+            map_deck_pair_build_error_v2(crate::rl::DeckPairBuildErrorV2::DeckPreflight(
+                crate::card_def::DeckPreflightError::UnknownCardDefinition {
+                    index: 0,
+                    card_def: 60_000,
+                },
+            ));
+        assert_eq!(deck_error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert_eq!(
+            deck_error.message,
+            "runtime deck catalog failed full-support preflight"
+        );
+        let kdf_error = map_deck_pair_build_error_v2(
+            crate::rl::DeckPairBuildErrorV2::EnvironmentRandomization(
+                crate::environment_randomization_v2::EnvironmentRandomizationErrorV2::OrdinalOverflow,
+            ),
+        );
+        assert_eq!(kdf_error.code, RlSessionErrorCode::EnvironmentRandomization);
+        assert_eq!(
+            kdf_error.message, "v2 deck-pair build seed derivation failed: OrdinalOverflow",
+            "the complete KDF Display text is retained"
+        );
+        assert_ne!(deck_error.code, kdf_error.code, "distinct typed codes");
+        assert_eq!(
+            session_error_code(&kdf_error.code),
+            "environment_randomization"
+        );
+        assert_eq!(
+            serde_json::to_string(&kdf_error.code).unwrap(),
+            "\"environment_randomization\"",
+            "serde name matches"
+        );
+    }
+
+    #[test]
+    fn v2_reset_failure_is_stateless_and_hash_paths_stay_quiet() {
+        reset_test_flat_action_commitment_constructions();
+        reset_test_flat_action_v2_commitment_constructions();
+        reset_test_flat_action_v1_materializations();
+        let bad: SessionDeckIdsV1 = ["NotADeck".to_string(), "AlsoNotADeck".to_string()];
+        assert!(
+            FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+                1, 99, 8, 1024, bad,
+            )
+            .is_err()
+        );
+        assert_eq!(
+            test_flat_action_v2_commitment_constructions(),
+            0,
+            "a failed reset constructs no flat-action cache"
+        );
+        assert_eq!(
+            test_flat_action_commitment_constructions(),
+            0,
+            "a failed reset constructs no V1 commitments either"
+        );
+        assert_eq!(
+            test_flat_action_v1_materializations(),
+            0,
+            "a failed reset materializes no V1 rows"
+        );
+        let recovered = canonical_v2_fast_reset(99);
+        assert_eq!(
+            test_flat_action_v2_commitment_constructions(),
+            1,
+            "the subsequent valid reset constructs exactly one V2 commitment"
+        );
+        let pristine = canonical_v2_fast_reset(99);
+        assert_eq!(
+            serde_json::to_vec(&recovered.state).unwrap(),
+            serde_json::to_vec(&pristine.state).unwrap(),
+            "recovery is byte-equivalent to a pristine reset"
+        );
+        assert_eq!(recovered.current, pristine.current);
+
+        reset_test_exact_environment_hash_calls();
+        reset_test_exact_surface_hash_calls();
+        let mut full = canonical_v2_full_reset(99);
+        let mut fast = canonical_v2_fast_reset(99);
+        let _ = full.current_response();
+        let _ = fast.current_response();
+        let response = full.current_response();
+        let (step, index, id) = first_action(&response);
+        full.step(1, step, index, &id).unwrap();
+        fast.step(1, 0, 0).unwrap();
+        assert_eq!(
+            test_exact_environment_hash_calls(),
+            0,
+            "v2 resets, reads, and accepted steps compute no policy-environment hashes"
+        );
+        assert_eq!(
+            test_exact_surface_hash_calls(),
+            0,
+            "owned v2 session resets compute no exact standalone surface hashes"
+        );
+        let _ = full.privileged_environment_hash();
+        assert_eq!(test_exact_environment_hash_calls(), 1);
+        assert_eq!(test_exact_surface_hash_calls(), 0);
+        let _ = full.privileged_core_environment_hash();
+        let _ = fast.privileged_core_environment_hash();
+        assert_eq!(
+            test_exact_environment_hash_calls(),
+            1,
+            "core audit calls do not raise the policy-environment count"
+        );
+        assert_eq!(test_exact_surface_hash_calls(), 0);
+    }
+
+    #[test]
+    fn v2_reset_zero_physical_limit_reaches_the_decision_cap_terminal() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        let legacy_zero = RlEpisodeSessionV1::reset_with_decks_and_limits(
+            1,
+            99,
+            0,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .unwrap();
+        let legacy_terminal = legacy_zero.terminal.as_ref().expect("legacy cap terminal");
+
+        let full = RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
+            1,
+            99,
+            0,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("zero-limit v2 reset succeeds");
+        let fast = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+            1,
+            99,
+            0,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("zero-limit fast v2 reset succeeds");
+        for (terminal, current_none, revision, policy_count, physical_count) in [
+            (
+                full.terminal.as_ref(),
+                full.current.is_none(),
+                full.environment_revision,
+                full.policy_step_count,
+                full.physical_decision_count,
+            ),
+            (
+                fast.terminal.as_ref(),
+                fast.current.is_none(),
+                fast.environment_revision,
+                fast.policy_step_count,
+                fast.physical_decision_count,
+            ),
+        ] {
+            let terminal = terminal.expect("decision-cap terminal exists");
+            assert_eq!(
+                terminal, legacy_terminal,
+                "the complete terminal equals the legacy zero-limit terminal, \
+                 which also proves full/fast parity"
+            );
+            assert!(current_none, "no current decision at the cap");
+            assert_eq!(revision, 0);
+            assert_eq!(policy_count, 0);
+            assert_eq!(physical_count, 0);
+        }
+        assert!(fast.flat_action_cache_spare.is_none());
+        assert!(fast.flat_action_cache_spare_v2.is_none());
+        for state in [&full.state, &fast.state] {
+            assert!(state.legacy_rng().is_none());
+            let v2 = state.environment_randomization_v2().expect("v2 randomness");
+            assert_eq!(v2.pair_environment_seed(), 99);
+            assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), 0);
+            assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+        }
     }
 }
