@@ -74,6 +74,39 @@ impl RlSessionProvenanceV1 {
     }
 }
 
+/// V6 wire versions. The frozen V5 constants above stay exactly 5; V6 is a
+/// distinct sibling surface, not a replacement.
+pub const RL_SESSION_SCHEMA_VERSION_V6: u32 = 6;
+pub const RL_SESSION_PROTOCOL_VERSION_V6: u32 = 6;
+
+/// V6 provenance: the exact V1 field order and types with protocol and
+/// schema 6. Protocol name, kernel version, surface version, policy-surface
+/// version, and card database hash are the same identities V1 reports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RlSessionProvenanceV6 {
+    pub protocol: String,
+    pub protocol_version: u32,
+    pub schema_version: u32,
+    pub kernel_version: String,
+    pub surface_version: u32,
+    pub policy_surface_version: u32,
+    pub card_db_hash: u64,
+}
+
+impl RlSessionProvenanceV6 {
+    pub fn current() -> Self {
+        RlSessionProvenanceV6 {
+            protocol: RL_SESSION_PROTOCOL_NAME.to_string(),
+            protocol_version: RL_SESSION_PROTOCOL_VERSION_V6,
+            schema_version: RL_SESSION_SCHEMA_VERSION_V6,
+            kernel_version: KERNEL_VERSION.to_string(),
+            surface_version: H2_PREDICATE_VERSION,
+            policy_surface_version: POLICY_SURFACE_VERSION,
+            card_db_hash: KERNEL_CARDDB_HASH,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RlSessionDecisionV1 {
     pub schema_version: u32,
@@ -3782,17 +3815,39 @@ impl RlEpisodeSessionV1 {
         )
     }
 
-    /// The first in-process environment-v2 activation boundary: identical
-    /// session construction to the legacy reset, with the game randomness
-    /// built by the explicit v2 deck-pair builder from the full-width pair
-    /// root. No profile and no suppression audit; JSONL, rollout, store,
-    /// trainer, manifest, and audit consumers remain fully legacy.
+    /// The in-process environment-v2 activation boundary: identical session
+    /// construction to the legacy reset, with the game randomness built by
+    /// the explicit v2 deck-pair builder from the full-width pair root.
+    /// JSONL V5 remains fully legacy; JSONL V6 is the first wire activation
+    /// of this constructor (through the profiled sibling below); rollout,
+    /// store, trainer, manifest, and audit consumers remain legacy.
     pub fn reset_with_decks_and_limits_environment_v2(
         episode_id: u64,
         pair_environment_seed: u64,
         max_physical_decisions: u64,
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_environment_v2_profiled(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            None,
+        )
+    }
+
+    /// Profiled sibling used by the JSONL V6 wire path, keeping state
+    /// resolution and construction inside the Reset measurement while
+    /// advance stays outside it.
+    fn reset_with_decks_and_limits_environment_v2_profiled(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        profile: Option<&mut RlPhaseProfileV1>,
     ) -> Result<Self, RlSessionError> {
         Self::reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
             episode_id,
@@ -3802,7 +3857,7 @@ impl RlEpisodeSessionV1 {
             max_physical_decisions,
             max_policy_steps,
             deck_ids,
-            None,
+            profile,
             SuppressionAuditMode::Off,
         )
     }
@@ -5616,6 +5671,40 @@ impl KernelRlRequestV1 {
     }
 }
 
+/// The distinct V6 request surface. V6 Reset takes exactly
+/// `pair_environment_seed`; there is no `env_seed`, alias, mode field,
+/// flattening, or typed fallback.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "request_type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum KernelRlRequestV6 {
+    Reset {
+        schema_version: u32,
+        request_id: String,
+        deck_ids: SessionDeckIdsV1,
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+    },
+    Step {
+        schema_version: u32,
+        request_id: String,
+        episode_id: u64,
+        expected_step: u64,
+        selected_index: u32,
+        selected_action_id: String,
+    },
+}
+
+impl KernelRlRequestV6 {
+    fn request_id(&self) -> &str {
+        match self {
+            KernelRlRequestV6::Reset { request_id, .. }
+            | KernelRlRequestV6::Step { request_id, .. } => request_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KernelRlErrorV1 {
     pub code: String,
@@ -5664,24 +5753,159 @@ pub enum KernelRlResponseV1 {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KernelRlErrorV6 {
+    pub code: String,
+    pub message: String,
+}
+
+/// The distinct V6 response surface: the exact V5 variant field order with
+/// outer schema hardcoded to 6, `RlSessionProvenanceV6` provenance, and
+/// `KernelRlErrorV6` errors. Nested observation, legal actions, terminal
+/// types, and deck aliases are the unchanged V5/V1 types.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "response_type", rename_all = "snake_case")]
+pub enum KernelRlResponseV6 {
+    Decision {
+        schema_version: u32,
+        request_id: String,
+        provenance: RlSessionProvenanceV6,
+        deck_ids: SessionDeckIdsV1,
+        deck_hashes: SessionDeckHashesV1,
+        episode_id: u64,
+        step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        acting_player: PlayerSeatV1,
+        observation: Box<ObservationV5>,
+        legal_actions: Vec<LegalActionV5>,
+        reward: [i32; 2],
+    },
+    Terminal {
+        schema_version: u32,
+        request_id: String,
+        provenance: RlSessionProvenanceV6,
+        deck_ids: SessionDeckIdsV1,
+        deck_hashes: SessionDeckHashesV1,
+        episode_id: u64,
+        terminal_outcome: TerminalOutcomeV1,
+        terminal_classification: TerminalClassificationV1,
+        terminal_code: TerminalSafeCodeV2,
+        winner: Option<PlayerSeatV1>,
+        terminal_reward: [i32; 2],
+        terminal_reason: String,
+        policy_step_count: u64,
+        physical_decision_count: u64,
+    },
+    Error {
+        schema_version: u32,
+        request_id: Option<String>,
+        error: KernelRlErrorV6,
+    },
+}
+
+/// Private supported wire versions of the JSONL server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KernelRlWireVersionV1 {
+    V5,
+    V6,
+}
+
+/// Private typed union of the supported request surfaces. Wire version plus
+/// every typed payload field is retry identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VersionedKernelRlRequestV1 {
+    V5(KernelRlRequestV1),
+    V6(KernelRlRequestV6),
+}
+
+impl VersionedKernelRlRequestV1 {
+    fn request_id(&self) -> &str {
+        match self {
+            VersionedKernelRlRequestV1::V5(request) => request.request_id(),
+            VersionedKernelRlRequestV1::V6(request) => request.request_id(),
+        }
+    }
+
+    fn is_reset(&self) -> bool {
+        matches!(
+            self,
+            VersionedKernelRlRequestV1::V5(KernelRlRequestV1::Reset { .. })
+                | VersionedKernelRlRequestV1::V6(KernelRlRequestV6::Reset { .. })
+        )
+    }
+}
+
+/// Private decode disposition: a supported typed request, or a valid frozen
+/// V5 shape carrying an unsupported numeric schema version (kept decodable
+/// for the frozen unsupported-version error path).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DecodedKernelRlRequestV1 {
+    Supported(VersionedKernelRlRequestV1),
+    UnsupportedV5Shape(KernelRlRequestV1),
+}
+
+impl DecodedKernelRlRequestV1 {
+    fn request_id(&self) -> &str {
+        match self {
+            DecodedKernelRlRequestV1::Supported(request) => request.request_id(),
+            DecodedKernelRlRequestV1::UnsupportedV5Shape(request) => request.request_id(),
+        }
+    }
+
+    fn is_reset(&self) -> bool {
+        match self {
+            DecodedKernelRlRequestV1::Supported(request) => request.is_reset(),
+            DecodedKernelRlRequestV1::UnsupportedV5Shape(request) => {
+                matches!(request, KernelRlRequestV1::Reset { .. })
+            }
+        }
+    }
+}
+
+/// Private typed decode failure classification. Recognized numeric schemas
+/// use their versioned malformed envelope; everything else is the exact
+/// frozen V5 envelope with a null request ID.
+enum VersionedDecodeFailureV1 {
+    MalformedV5,
+    MalformedV6,
+    Unclassifiable,
+}
+
+/// Private response union. Deliberately not Serialize: every response line
+/// is produced by exactly one concrete versioned serializer.
+enum VersionedKernelRlResponseV1 {
+    V5(KernelRlResponseV1),
+    V6(KernelRlResponseV6),
+}
+
+/// The active session and the wire version that created it. GameState
+/// remains the sole randomness identity; the wire version only gates which
+/// protocol surface may speak to this session.
+struct ActiveKernelRlSessionV1 {
+    wire_version: KernelRlWireVersionV1,
+    session: RlEpisodeSessionV1,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CachedProtocolExchangeV1 {
     // Request ids are process-unique except for one immediate identical retry.
     // The cache is deliberately one entry so stale-step safety comes from the
     // episode_id/expected_step preconditions, not an unbounded replay table.
     request_id: String,
-    request: KernelRlRequestV1,
+    request: VersionedKernelRlRequestV1,
     response_line: String,
 }
 
 enum RetryDispositionV1 {
     Cached,
-    ReuseMismatch(Box<KernelRlResponseV1>),
+    ReuseMismatch(Box<VersionedKernelRlResponseV1>),
 }
 
 #[derive(Default)]
 pub struct KernelRlJsonlServerV1 {
-    session: Option<RlEpisodeSessionV1>,
+    active: Option<ActiveKernelRlSessionV1>,
     last_exchange: Option<CachedProtocolExchangeV1>,
 }
 
@@ -5728,11 +5952,11 @@ impl KernelRlJsonlServerV1 {
             }
         };
         let request_id = request_id_from_value(&value);
-        let request = match measure_optional(&mut profile, RlPhaseV1::Decode, || {
-            serde_json::from_value::<KernelRlRequestV1>(value)
+        let decoded = match measure_optional(&mut profile, RlPhaseV1::Decode, || {
+            decode_versioned_request(value)
         }) {
-            Ok(request) => request,
-            Err(_) => {
+            Ok(decoded) => decoded,
+            Err(VersionedDecodeFailureV1::MalformedV5) => {
                 return serialize_response_profiled(
                     error_response(
                         request_id,
@@ -5742,30 +5966,62 @@ impl KernelRlJsonlServerV1 {
                     &mut profile,
                 );
             }
+            Err(VersionedDecodeFailureV1::MalformedV6) => {
+                return serialize_response_v6_profiled(
+                    error_response_v6(
+                        request_id,
+                        "malformed_request",
+                        "request does not match the v6 protocol schema",
+                    ),
+                    &mut profile,
+                );
+            }
+            Err(VersionedDecodeFailureV1::Unclassifiable) => {
+                return serialize_response_profiled(
+                    error_response(
+                        None,
+                        "malformed_request",
+                        "request does not match the v5 protocol schema",
+                    ),
+                    &mut profile,
+                );
+            }
         };
         if let Some(profile) = profile.as_deref_mut() {
-            match &request {
-                KernelRlRequestV1::Reset { .. } => {
-                    profile.reset_requests = profile.reset_requests.saturating_add(1)
-                }
-                KernelRlRequestV1::Step { .. } => {
-                    profile.step_requests = profile.step_requests.saturating_add(1)
-                }
+            if decoded.is_reset() {
+                profile.reset_requests = profile.reset_requests.saturating_add(1)
+            } else {
+                profile.step_requests = profile.step_requests.saturating_add(1)
             }
         }
         let retry = measure_optional(&mut profile, RlPhaseV1::Retry, || {
             self.last_exchange.as_ref().and_then(|cached| {
-                if cached.request_id != request.request_id() {
+                if cached.request_id != decoded.request_id() {
                     return None;
                 }
-                if cached.request == request {
+                let matches_cache = match &decoded {
+                    DecodedKernelRlRequestV1::Supported(request) => cached.request == *request,
+                    DecodedKernelRlRequestV1::UnsupportedV5Shape(_) => false,
+                };
+                if matches_cache {
                     Some(RetryDispositionV1::Cached)
                 } else {
-                    Some(RetryDispositionV1::ReuseMismatch(Box::new(error_response(
-                        Some(request.request_id().to_string()),
-                        "request_id_reuse_mismatch",
-                        "request_id was reused for a different immediate request payload",
-                    ))))
+                    let reuse_id = Some(decoded.request_id().to_string());
+                    let response = match &decoded {
+                        DecodedKernelRlRequestV1::Supported(VersionedKernelRlRequestV1::V6(_)) => {
+                            VersionedKernelRlResponseV1::V6(error_response_v6(
+                                reuse_id,
+                                "request_id_reuse_mismatch",
+                                "request_id was reused for a different immediate request payload",
+                            ))
+                        }
+                        _ => VersionedKernelRlResponseV1::V5(error_response(
+                            reuse_id,
+                            "request_id_reuse_mismatch",
+                            "request_id was reused for a different immediate request payload",
+                        )),
+                    };
+                    Some(RetryDispositionV1::ReuseMismatch(Box::new(response)))
                 }
             })
         });
@@ -5789,22 +6045,36 @@ impl KernelRlJsonlServerV1 {
                 RetryDispositionV1::ReuseMismatch(response) => {
                     let response =
                         measure_optional(&mut profile, RlPhaseV1::Response, || *response);
-                    serialize_response_profiled(response, &mut profile)
+                    serialize_versioned_response_profiled(response, &mut profile)
                 }
             };
         }
-        let should_cache = request.schema_version() == RL_SESSION_SCHEMA_VERSION;
-        let request_for_cache = request.clone();
-        let response = self.handle_request_profiled(request, profile.as_deref_mut());
-        let response_line = serialize_response_profiled(response, &mut profile);
-        if should_cache {
-            self.last_exchange = Some(CachedProtocolExchangeV1 {
-                request_id: request_for_cache.request_id().to_string(),
-                request: request_for_cache,
-                response_line: response_line.clone(),
-            });
+        match decoded {
+            DecodedKernelRlRequestV1::UnsupportedV5Shape(request) => {
+                // The frozen unsupported-version path: handled and serialized
+                // as V5, never cached, never mutating.
+                let response = self.handle_request_profiled(request, profile.as_deref_mut());
+                serialize_response_profiled(response, &mut profile)
+            }
+            DecodedKernelRlRequestV1::Supported(request) => {
+                let request_for_cache = request.clone();
+                let response = match request {
+                    VersionedKernelRlRequestV1::V5(request) => VersionedKernelRlResponseV1::V5(
+                        self.handle_request_profiled(request, profile.as_deref_mut()),
+                    ),
+                    VersionedKernelRlRequestV1::V6(request) => VersionedKernelRlResponseV1::V6(
+                        self.handle_request_v6_profiled(request, profile.as_deref_mut()),
+                    ),
+                };
+                let response_line = serialize_versioned_response_profiled(response, &mut profile);
+                self.last_exchange = Some(CachedProtocolExchangeV1 {
+                    request_id: request_for_cache.request_id().to_string(),
+                    request: request_for_cache,
+                    response_line: response_line.clone(),
+                });
+                response_line
+            }
         }
-        response_line
     }
 
     fn handle_request_profiled(
@@ -5853,7 +6123,10 @@ impl KernelRlJsonlServerV1 {
                 let response = measure_optional(&mut profile, RlPhaseV1::Response, || {
                     session_response_to_protocol(request_id, session.current_response())
                 });
-                self.session = Some(session);
+                self.active = Some(ActiveKernelRlSessionV1 {
+                    wire_version: KernelRlWireVersionV1::V5,
+                    session,
+                });
                 response
             }
             KernelRlRequestV1::Step {
@@ -5873,7 +6146,7 @@ impl KernelRlJsonlServerV1 {
                         )
                     });
                 }
-                let Some(session) = self.session.as_mut() else {
+                let Some(active) = self.active.as_mut() else {
                     return measure_optional(&mut profile, RlPhaseV1::Response, || {
                         error_response(
                             Some(request_id),
@@ -5882,6 +6155,17 @@ impl KernelRlJsonlServerV1 {
                         )
                     });
                 };
+                if active.wire_version != KernelRlWireVersionV1::V5 {
+                    return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response(
+                            Some(request_id),
+                            "schema_version_mismatch",
+                            "step request schema_version does not match the active session \
+                             schema_version",
+                        )
+                    });
+                }
+                let session = &mut active.session;
                 match session.apply_step_profiled(
                     episode_id,
                     expected_step,
@@ -5902,6 +6186,133 @@ impl KernelRlJsonlServerV1 {
                 }
             }
         }
+    }
+    fn handle_request_v6_profiled(
+        &mut self,
+        request: KernelRlRequestV6,
+        mut profile: Option<&mut RlPhaseProfileV1>,
+    ) -> KernelRlResponseV6 {
+        match request {
+            KernelRlRequestV6::Reset {
+                schema_version: _,
+                request_id,
+                deck_ids,
+                episode_id,
+                pair_environment_seed,
+                max_physical_decisions,
+                max_policy_steps,
+            } => {
+                let session =
+                    match RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2_profiled(
+                        episode_id,
+                        pair_environment_seed,
+                        max_physical_decisions,
+                        max_policy_steps,
+                        deck_ids,
+                        profile.as_deref_mut(),
+                    ) {
+                        Ok(session) => session,
+                        Err(err) => {
+                            return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                                error_response_v6(
+                                    Some(request_id),
+                                    session_error_code(&err.code),
+                                    &err.message,
+                                )
+                            });
+                        }
+                    };
+                let response = measure_optional(&mut profile, RlPhaseV1::Response, || {
+                    session_response_to_protocol_v6(request_id, session.current_response())
+                });
+                self.active = Some(ActiveKernelRlSessionV1 {
+                    wire_version: KernelRlWireVersionV1::V6,
+                    session,
+                });
+                response
+            }
+            KernelRlRequestV6::Step {
+                schema_version: _,
+                request_id,
+                episode_id,
+                expected_step,
+                selected_index,
+                selected_action_id,
+            } => {
+                let Some(active) = self.active.as_mut() else {
+                    return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response_v6(
+                            Some(request_id),
+                            "step_before_reset",
+                            "step request received before reset",
+                        )
+                    });
+                };
+                if active.wire_version != KernelRlWireVersionV1::V6 {
+                    return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response_v6(
+                            Some(request_id),
+                            "schema_version_mismatch",
+                            "step request schema_version does not match the active session \
+                             schema_version",
+                        )
+                    });
+                }
+                let session = &mut active.session;
+                match session.apply_step_profiled(
+                    episode_id,
+                    expected_step,
+                    selected_index,
+                    &selected_action_id,
+                    profile.as_deref_mut(),
+                ) {
+                    Ok(()) => measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        session_response_to_protocol_v6(request_id, session.current_response())
+                    }),
+                    Err(err) => measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response_v6(
+                            Some(request_id),
+                            session_error_code(&err.code),
+                            &err.message,
+                        )
+                    }),
+                }
+            }
+        }
+    }
+}
+
+/// Typed schema dispatch after strict parsing. The raw `schema_version` is
+/// inspected with a checked u32 conversion: exact 5 decodes only the frozen
+/// V5 request, exact 6 decodes only the V6 request, any other valid u32
+/// decodes the frozen V5 shape as `UnsupportedV5Shape`, and a missing,
+/// wrong-type, fractional, or out-of-range version is unclassifiable. There
+/// is no untagged union and no cross-version typed retry.
+fn decode_versioned_request(
+    value: Value,
+) -> std::result::Result<DecodedKernelRlRequestV1, VersionedDecodeFailureV1> {
+    let raw_version = value
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .and_then(|raw| u32::try_from(raw).ok());
+    match raw_version {
+        Some(version) if version == RL_SESSION_SCHEMA_VERSION => serde_json::from_value::<
+            KernelRlRequestV1,
+        >(value)
+        .map(|request| DecodedKernelRlRequestV1::Supported(VersionedKernelRlRequestV1::V5(request)))
+        .map_err(|_| VersionedDecodeFailureV1::MalformedV5),
+        Some(version) if version == RL_SESSION_SCHEMA_VERSION_V6 => serde_json::from_value::<
+            KernelRlRequestV6,
+        >(value)
+        .map(|request| DecodedKernelRlRequestV1::Supported(VersionedKernelRlRequestV1::V6(request)))
+        .map_err(|_| VersionedDecodeFailureV1::MalformedV6),
+        Some(_) => serde_json::from_value::<KernelRlRequestV1>(value)
+            .map(|request| {
+                debug_assert_ne!(request.schema_version(), RL_SESSION_SCHEMA_VERSION);
+                DecodedKernelRlRequestV1::UnsupportedV5Shape(request)
+            })
+            .map_err(|_| VersionedDecodeFailureV1::MalformedV5),
+        None => Err(VersionedDecodeFailureV1::Unclassifiable),
     }
 }
 
@@ -5960,6 +6371,92 @@ fn serialize_response_profiled(
         profile.response_lines = profile.response_lines.saturating_add(1);
     }
     line
+}
+
+/// V6 sibling of `session_response_to_protocol`. Outer schema and provenance
+/// are 6; nested observation, legal actions, and the internal
+/// `RlSessionDecisionV1`/`RlSessionTerminalV1` schema values intentionally
+/// remain 5 and are never copied into the outer version.
+fn session_response_to_protocol_v6(
+    request_id: String,
+    response: RlSessionResponseV1,
+) -> KernelRlResponseV6 {
+    match response {
+        RlSessionResponseV1::Decision(decision) => KernelRlResponseV6::Decision {
+            schema_version: RL_SESSION_SCHEMA_VERSION_V6,
+            request_id,
+            provenance: RlSessionProvenanceV6::current(),
+            deck_ids: decision.deck_ids,
+            deck_hashes: decision.deck_hashes,
+            episode_id: decision.episode_id,
+            step: decision.step,
+            physical_decision_id: decision.physical_decision_id,
+            substep_index: decision.substep_index,
+            substep_count: decision.substep_count,
+            acting_player: decision.acting_player,
+            observation: decision.observation,
+            legal_actions: decision.legal_actions,
+            reward: decision.reward,
+        },
+        RlSessionResponseV1::Terminal(terminal) => KernelRlResponseV6::Terminal {
+            schema_version: RL_SESSION_SCHEMA_VERSION_V6,
+            request_id,
+            provenance: RlSessionProvenanceV6::current(),
+            deck_ids: terminal.deck_ids,
+            deck_hashes: terminal.deck_hashes,
+            episode_id: terminal.episode_id,
+            terminal_outcome: terminal.terminal_outcome,
+            terminal_classification: terminal.terminal_classification,
+            terminal_code: terminal.terminal_code,
+            winner: terminal.winner,
+            terminal_reward: terminal.terminal_reward,
+            terminal_reason: terminal.terminal_reason,
+            policy_step_count: terminal.policy_step_count,
+            physical_decision_count: terminal.physical_decision_count,
+        },
+    }
+}
+
+fn serialize_response_v6(response: KernelRlResponseV6) -> String {
+    serde_json::to_string(&response).expect("v6 protocol response serializes")
+}
+
+fn serialize_response_v6_profiled(
+    response: KernelRlResponseV6,
+    profile: &mut Option<&mut RlPhaseProfileV1>,
+) -> String {
+    let line = measure_optional(profile, RlPhaseV1::Serialize, || {
+        serialize_response_v6(response)
+    });
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.response_lines = profile.response_lines.saturating_add(1);
+    }
+    line
+}
+
+/// Serializes the private response union through exactly one concrete
+/// versioned serializer. The union itself is never serialized.
+fn serialize_versioned_response_profiled(
+    response: VersionedKernelRlResponseV1,
+    profile: &mut Option<&mut RlPhaseProfileV1>,
+) -> String {
+    match response {
+        VersionedKernelRlResponseV1::V5(response) => serialize_response_profiled(response, profile),
+        VersionedKernelRlResponseV1::V6(response) => {
+            serialize_response_v6_profiled(response, profile)
+        }
+    }
+}
+
+fn error_response_v6(request_id: Option<String>, code: &str, message: &str) -> KernelRlResponseV6 {
+    KernelRlResponseV6::Error {
+        schema_version: RL_SESSION_SCHEMA_VERSION_V6,
+        request_id,
+        error: KernelRlErrorV6 {
+            code: code.to_string(),
+            message: message.to_string(),
+        },
+    }
 }
 
 fn request_id_from_value(value: &Value) -> Option<String> {
@@ -11430,5 +11927,777 @@ mod tests {
             assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), 0);
             assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
         }
+    }
+
+    const V5_TRANSCRIPT_INPUTS: [&str; 5] = [
+        "{\"request_type\":\"step\",\"schema_version\":5,\"request_id\":\"v5-transcript-1\",\"episode_id\":1,\"expected_step\":0,\"selected_index\":0,\"selected_action_id\":\"none\"}",
+        "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"v5-transcript-2\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}",
+        "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"v5-transcript-2\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}",
+        "{\"request_type\":\"step\",\"schema_version\":5,\"request_id\":\"v5-transcript-4\",\"episode_id\":1,\"expected_step\":0,\"selected_index\":0,\"selected_action_id\":\"legal-action-v5:c7876642d50fe9e6\"}",
+        "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"v5-transcript-5\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":0,\"max_policy_steps\":1024}",
+    ];
+    /// Captured at clean parent 9e7d6b8 before any V6 edit. Never rederive.
+    const V5_TRANSCRIPT_SHA256: &str =
+        "286937e4d1e9e73dd4dae31ed85a3b5dc98cc67a13d1780a2ec8e133cb96edfe";
+
+    fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
+        format!(
+            "{{\"request_type\":\"reset\",\"schema_version\":6,\"request_id\":\"{request_id}\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":{root},\"max_physical_decisions\":{max_physical_decisions},\"max_policy_steps\":1024}}"
+        )
+    }
+
+    fn v5_reset_line(request_id: &str, env_seed: u64, max_physical_decisions: u64) -> String {
+        format!(
+            "{{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"{request_id}\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":{env_seed},\"max_physical_decisions\":{max_physical_decisions},\"max_policy_steps\":1024}}"
+        )
+    }
+
+    fn step_line(
+        schema_version: u32,
+        request_id: &str,
+        expected_step: u64,
+        action_id: &str,
+    ) -> String {
+        format!(
+            "{{\"request_type\":\"step\",\"schema_version\":{schema_version},\"request_id\":\"{request_id}\",\"episode_id\":1,\"expected_step\":{expected_step},\"selected_index\":0,\"selected_action_id\":\"{action_id}\"}}"
+        )
+    }
+
+    fn parse_line(line: &str) -> serde_json::Value {
+        serde_json::from_str(line).expect("response line parses")
+    }
+
+    /// Explicit expected V6 provenance, constructed from the same identity
+    /// constants V1 reports, without touching either V6 helper.
+    fn expected_v6_provenance() -> serde_json::Value {
+        serde_json::json!({
+            "protocol": RL_SESSION_PROTOCOL_NAME,
+            "protocol_version": 6,
+            "schema_version": 6,
+            "kernel_version": KERNEL_VERSION,
+            "surface_version": H2_PREDICATE_VERSION,
+            "policy_surface_version": POLICY_SURFACE_VERSION,
+            "card_db_hash": KERNEL_CARDDB_HASH,
+        })
+    }
+
+    fn first_action_of(response: &serde_json::Value) -> (u64, String) {
+        (
+            response["step"].as_u64().expect("step"),
+            response["legal_actions"][0]["stable_id"]
+                .as_str()
+                .expect("stable id")
+                .to_string(),
+        )
+    }
+
+    /// Test-only mirror of every private `CurrentDecisionV1` field with
+    /// comparable types: observation, the full ordered candidate records
+    /// plus executable policy-action bindings, revision, and bound counters.
+    #[derive(Debug, Clone, PartialEq)]
+    struct CurrentDecisionFingerprintV1 {
+        actor: PlayerId,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        observation: ObservationV5,
+        candidates: Vec<crate::rl::PolicyLegalActionCandidateV5>,
+        environment_revision: u64,
+        bound_policy_step_count: u64,
+        bound_physical_decision_count: u64,
+    }
+
+    /// Genuinely complete private-session fingerprint for nonmutation
+    /// proofs: wire version, deck identity, limits, byte-complete state,
+    /// both surface contexts, revision, counters, the complete private
+    /// current decision, the complete terminal, and the serialized current
+    /// response.
+    #[derive(Debug, Clone, PartialEq)]
+    struct ActiveSessionFingerprintV1 {
+        wire_version_is_v6: bool,
+        deck_ids: SessionDeckIdsV1,
+        deck_hashes: SessionDeckHashesV1,
+        episode_id: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        state_bytes: String,
+        harness_context: crate::surface_v2::HarnessSurfacePublicContextV2,
+        scan_context: PolicySurfaceContextIdsV5,
+        environment_revision: u64,
+        policy_step_count: u64,
+        physical_decision_count: u64,
+        current: Option<CurrentDecisionFingerprintV1>,
+        terminal: Option<RlSessionTerminalV1>,
+        current_response_bytes: Vec<u8>,
+    }
+
+    fn active_fingerprint(server: &KernelRlJsonlServerV1) -> ActiveSessionFingerprintV1 {
+        let active = server.active.as_ref().expect("an active session exists");
+        let session = &active.session;
+        ActiveSessionFingerprintV1 {
+            wire_version_is_v6: active.wire_version == KernelRlWireVersionV1::V6,
+            deck_ids: session.deck_ids.clone(),
+            deck_hashes: session.deck_hashes,
+            episode_id: session.episode_id,
+            max_physical_decisions: session.max_physical_decisions,
+            max_policy_steps: session.max_policy_steps,
+            state_bytes: serde_json::to_string(&session.state).expect("state serializes"),
+            harness_context: session.surface.harness_public_context(),
+            scan_context: session
+                .surface
+                .privileged_scan_context()
+                .expect("scan context"),
+            environment_revision: session.environment_revision,
+            policy_step_count: session.policy_step_count,
+            physical_decision_count: session.physical_decision_count,
+            current: session
+                .current
+                .as_ref()
+                .map(|current| CurrentDecisionFingerprintV1 {
+                    actor: current.actor,
+                    physical_decision_id: current.physical_decision_id,
+                    substep_index: current.substep_index,
+                    substep_count: current.substep_count,
+                    observation: current.observation.clone(),
+                    candidates: current.candidates.clone(),
+                    environment_revision: current.environment_revision,
+                    bound_policy_step_count: current.bound_policy_step_count,
+                    bound_physical_decision_count: current.bound_physical_decision_count,
+                }),
+            terminal: session.terminal.clone(),
+            current_response_bytes: serde_json::to_vec(&session.current_response())
+                .expect("response serializes"),
+        }
+    }
+
+    fn assert_no_secret_fields(value: &serde_json::Value, path: &str) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, nested) in map {
+                    let normalized = key.to_ascii_lowercase();
+                    for forbidden in [
+                        "seed",
+                        "rng",
+                        "random",
+                        "diagnostic",
+                        "state_hash",
+                        "environment_hash",
+                    ] {
+                        assert!(
+                            !normalized.contains(forbidden),
+                            "response leaks field {key} (contains {forbidden}) at {path}"
+                        );
+                    }
+                    assert_no_secret_fields(nested, &format!("{path}.{key}"));
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, nested) in items.iter().enumerate() {
+                    assert_no_secret_fields(nested, &format!("{path}[{index}]"));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn jsonl_v6_frozen_v5_bytes_and_api() {
+        use sha2::Digest as _;
+        assert_eq!(RL_SESSION_SCHEMA_VERSION, 5);
+        assert_eq!(RL_SESSION_PROTOCOL_VERSION, 5);
+        let provenance = RlSessionProvenanceV1::current();
+        assert_eq!(provenance.protocol_version, 5);
+        assert_eq!(provenance.schema_version, 5);
+        assert_eq!(provenance.protocol, RL_SESSION_PROTOCOL_NAME);
+
+        let mut server = KernelRlJsonlServerV1::new();
+        let outputs: Vec<String> = V5_TRANSCRIPT_INPUTS
+            .iter()
+            .map(|line| server.handle_line(line))
+            .collect();
+        assert_eq!(
+            outputs[1], outputs[2],
+            "the identical immediate retry is byte-identical"
+        );
+        let mut transcript = String::new();
+        for output in &outputs {
+            transcript.push_str(output);
+            transcript.push('\n');
+        }
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(transcript.as_bytes());
+        let observed = hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            observed, V5_TRANSCRIPT_SHA256,
+            "the parent-captured V5 transcript bytes are frozen"
+        );
+        // The concrete V5 response surface stays independently round-trippable.
+        for output in &outputs {
+            let response: KernelRlResponseV1 =
+                serde_json::from_str(output).expect("V5 response deserializes");
+            assert_eq!(&serialize_response(response), output);
+        }
+    }
+
+    #[test]
+    fn jsonl_v6_response_vocabulary_and_real_activation() {
+        let mut server = KernelRlJsonlServerV1::new();
+        let reset_response_line = server.handle_line(&v6_reset_line("a1", 99, 8));
+        let reset_response = parse_line(&reset_response_line);
+        assert_eq!(reset_response["response_type"], "decision");
+        assert_eq!(reset_response["schema_version"], 6);
+        assert_eq!(reset_response["provenance"]["protocol_version"], 6);
+        assert_eq!(reset_response["provenance"]["schema_version"], 6);
+        assert_eq!(reset_response["observation"]["schema_version"], 5);
+        for action in reset_response["legal_actions"].as_array().expect("actions") {
+            assert_eq!(action["schema_version"], 5);
+        }
+
+        {
+            let active = server.active.as_ref().expect("active session");
+            assert_eq!(active.wire_version, KernelRlWireVersionV1::V6);
+            assert!(active.session.state.legacy_rng().is_none());
+            let v2 = active
+                .session
+                .state
+                .environment_randomization_v2()
+                .expect("environment-v2 randomness");
+            assert_eq!(v2.pair_environment_seed(), 99);
+            assert_eq!(
+                active.session.state.diagnostic_state_hash_algorithm(),
+                "fnv1a64-serde-json-game-state-envelope-v6"
+            );
+        }
+
+        // Independent non-circular oracle: destructure the accepted direct
+        // v2 reset and explicitly construct every expected wire field. No
+        // V6 conversion or serialization helper participates.
+        let direct = canonical_v2_full_reset(99);
+        let RlSessionResponseV1::Decision(direct_decision) = direct.current_response() else {
+            panic!("the direct v2 reset yields a decision");
+        };
+        let expected_decision = serde_json::json!({
+            "response_type": "decision",
+            "schema_version": 6,
+            "request_id": "a1",
+            "provenance": expected_v6_provenance(),
+            "deck_ids": direct_decision.deck_ids,
+            "deck_hashes": direct_decision.deck_hashes,
+            "episode_id": direct_decision.episode_id,
+            "step": direct_decision.step,
+            "physical_decision_id": direct_decision.physical_decision_id,
+            "substep_index": direct_decision.substep_index,
+            "substep_count": direct_decision.substep_count,
+            "acting_player": direct_decision.acting_player,
+            "observation": direct_decision.observation,
+            "legal_actions": direct_decision.legal_actions,
+            "reward": direct_decision.reward,
+        });
+        assert_eq!(
+            reset_response, expected_decision,
+            "every wire decision field equals the direct environment-v2 reset"
+        );
+
+        // One successful Step keeps outer/provenance 6 and nested 5.
+        let (step, action_id) = first_action_of(&reset_response);
+        let step_response_line = server.handle_line(&step_line(6, "a2", step, &action_id));
+        let step_response = parse_line(&step_response_line);
+        assert_eq!(step_response["response_type"], "decision");
+        assert_eq!(step_response["schema_version"], 6);
+        assert_eq!(step_response["provenance"]["protocol_version"], 6);
+        assert_eq!(step_response["provenance"]["schema_version"], 6);
+        assert_eq!(step_response["observation"]["schema_version"], 5);
+        for action in step_response["legal_actions"].as_array().expect("actions") {
+            assert_eq!(action["schema_version"], 5);
+        }
+
+        // Zero-limit V6 Reset: complete field-by-field terminal equality
+        // with the direct v2 zero-limit session, outer/provenance 6.
+        let terminal_line = server.handle_line(&v6_reset_line("a3", 99, 0));
+        let terminal_response = parse_line(&terminal_line);
+        assert_eq!(terminal_response["response_type"], "terminal");
+        assert_eq!(terminal_response["schema_version"], 6);
+        assert_eq!(terminal_response["provenance"]["schema_version"], 6);
+        assert_eq!(terminal_response["provenance"]["protocol_version"], 6);
+        let direct_zero = RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
+            1,
+            99,
+            0,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("zero-limit direct reset");
+        let RlSessionResponseV1::Terminal(direct_terminal) = direct_zero.current_response() else {
+            panic!("the zero-limit direct reset is terminal");
+        };
+        let expected_terminal = serde_json::json!({
+            "response_type": "terminal",
+            "schema_version": 6,
+            "request_id": "a3",
+            "provenance": expected_v6_provenance(),
+            "deck_ids": direct_terminal.deck_ids,
+            "deck_hashes": direct_terminal.deck_hashes,
+            "episode_id": direct_terminal.episode_id,
+            "terminal_outcome": direct_terminal.terminal_outcome,
+            "terminal_classification": direct_terminal.terminal_classification,
+            "terminal_code": direct_terminal.terminal_code,
+            "winner": direct_terminal.winner,
+            "terminal_reward": direct_terminal.terminal_reward,
+            "terminal_reason": direct_terminal.terminal_reason,
+            "policy_step_count": direct_terminal.policy_step_count,
+            "physical_decision_count": direct_terminal.physical_decision_count,
+        });
+        assert_eq!(
+            terminal_response, expected_terminal,
+            "every wire terminal field equals the direct environment-v2 terminal"
+        );
+
+        // Concrete public V6 round trip for all three wire lines.
+        for line in [&reset_response_line, &step_response_line, &terminal_line] {
+            let response: KernelRlResponseV6 =
+                serde_json::from_str(line).expect("V6 response deserializes");
+            assert_eq!(
+                &serde_json::to_string(&response).expect("V6 response reserializes"),
+                line,
+                "public KernelRlResponseV6 round-trips exactly"
+            );
+        }
+
+        for line in [&reset_response, &step_response, &terminal_response] {
+            assert_no_secret_fields(line, "$");
+        }
+    }
+
+    #[test]
+    fn jsonl_v6_strict_dispatch_and_smuggling_resistance() {
+        let mut server = KernelRlJsonlServerV1::new();
+        let anchor_line = v6_reset_line("s1", 99, 8);
+        let anchor_response = server.handle_line(&anchor_line);
+        assert_eq!(parse_line(&anchor_response)["response_type"], "decision");
+        let fingerprint = active_fingerprint(&server);
+        let anchor_exchange = server.last_exchange.clone();
+        assert!(anchor_exchange.is_some(), "the anchor reset is cached");
+
+        let cases: [(&str, String, u32, &str, Option<&str>); 10] = [
+            (
+                "schema 6 with only env_seed",
+                "{\"request_type\":\"reset\",\"schema_version\":6,\"request_id\":\"smug1\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                6,
+                "request does not match the v6 protocol schema",
+                Some("smug1"),
+            ),
+            (
+                "schema 6 with both seed fields",
+                "{\"request_type\":\"reset\",\"schema_version\":6,\"request_id\":\"smug2\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                6,
+                "request does not match the v6 protocol schema",
+                Some("smug2"),
+            ),
+            (
+                "schema 5 with only pair_environment_seed",
+                "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"smug3\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                Some("smug3"),
+            ),
+            (
+                "duplicate root schema_version 5 then 6",
+                "{\"request_type\":\"reset\",\"schema_version\":5,\"schema_version\":6,\"request_id\":\"SECRET-DUP\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "duplicate root schema_version 6 then 5",
+                "{\"request_type\":\"reset\",\"schema_version\":6,\"schema_version\":5,\"request_id\":\"SECRET-DUP2\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "nested duplicate keys",
+                "{\"request_type\":\"step\",\"schema_version\":6,\"request_id\":\"SECRET-NEST\",\"episode_id\":1,\"expected_step\":0,\"selected_index\":0,\"selected_action_id\":\"x\",\"extra\":{\"a\":1,\"a\":2}}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "missing version with a secret ID",
+                "{\"request_type\":\"reset\",\"request_id\":\"SECRET-MISSING\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "string version with a secret ID",
+                "{\"request_type\":\"reset\",\"schema_version\":\"6\",\"request_id\":\"SECRET-STRING\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "fractional version",
+                "{\"request_type\":\"reset\",\"schema_version\":5.5,\"request_id\":\"SECRET-FRAC\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "out-of-range version",
+                "{\"request_type\":\"reset\",\"schema_version\":4294967296,\"request_id\":\"SECRET-RANGE\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+        ];
+        for (label, line, expected_schema, expected_message, expected_id) in cases {
+            let response_line = server.handle_line(&line);
+            let response = parse_line(&response_line);
+            assert_eq!(
+                response["schema_version"],
+                u64::from(expected_schema),
+                "{label}: envelope version"
+            );
+            assert_eq!(
+                response["error"]["code"], "malformed_request",
+                "{label}: code"
+            );
+            assert_eq!(
+                response["error"]["message"], expected_message,
+                "{label}: message"
+            );
+            match expected_id {
+                Some(id) => assert_eq!(response["request_id"], id, "{label}: id"),
+                None => {
+                    assert!(response["request_id"].is_null(), "{label}: null id");
+                    assert!(
+                        !response_line.contains("SECRET"),
+                        "{label}: no secret reflection"
+                    );
+                }
+            }
+            assert_eq!(
+                active_fingerprint(&server),
+                fingerprint,
+                "{label}: active session unchanged"
+            );
+            assert_eq!(
+                server.last_exchange, anchor_exchange,
+                "{label}: the private cached exchange is untouched"
+            );
+            assert_eq!(
+                server.handle_line(&anchor_line),
+                anchor_response,
+                "{label}: cached anchor bytes unchanged"
+            );
+            assert_eq!(
+                server.last_exchange, anchor_exchange,
+                "{label}: a cache hit does not replace the cached exchange"
+            );
+        }
+
+        // Unsupported V5-shaped numeric version: frozen V5 error with ID.
+        let unsupported = "{\"request_type\":\"reset\",\"schema_version\":3,\"request_id\":\"u1\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}";
+        let response = parse_line(&server.handle_line(unsupported));
+        assert_eq!(response["schema_version"], 5);
+        assert_eq!(response["request_id"], "u1");
+        assert_eq!(response["error"]["code"], "schema_version_mismatch");
+        assert_eq!(
+            response["error"]["message"],
+            "unsupported request schema_version"
+        );
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        assert_eq!(
+            server.last_exchange, anchor_exchange,
+            "an unsupported schema never replaces the cached exchange"
+        );
+        assert_eq!(
+            server.handle_line(&anchor_line),
+            anchor_response,
+            "unsupported schema is never cached"
+        );
+    }
+
+    #[test]
+    fn jsonl_v6_semantic_retry_and_profiling() {
+        let mut profile = RlPhaseProfileV1::default();
+        let mut server = KernelRlJsonlServerV1::new();
+        let request_a = v6_reset_line("r1", 99, 8);
+        // The same typed payload with different key order and whitespace.
+        let request_a_reordered = "{ \"schema_version\":6,\"request_id\":\"r1\",\"request_type\":\"reset\",\"episode_id\":1,\"deck_ids\":[\"Burn\",\"Burn\"],\"max_policy_steps\":1024,\"max_physical_decisions\":8,\"pair_environment_seed\":99 }";
+        let request_changed_root = v6_reset_line("r1", 100, 8);
+
+        let response1 = server.handle_line_profiled(&request_a, &mut profile);
+        let fingerprint = active_fingerprint(&server);
+        let response2 = server.handle_line_profiled(request_a_reordered, &mut profile);
+        assert_eq!(
+            active_fingerprint(&server),
+            fingerprint,
+            "the reordered cache hit leaves the complete session untouched"
+        );
+        let response3 = server.handle_line_profiled(&request_changed_root, &mut profile);
+        assert_eq!(
+            active_fingerprint(&server),
+            fingerprint,
+            "the changed-root reuse mismatch leaves the complete session untouched"
+        );
+        let response4 = server.handle_line_profiled(&request_a, &mut profile);
+        assert_eq!(
+            active_fingerprint(&server),
+            fingerprint,
+            "the final retry leaves the complete session untouched"
+        );
+
+        assert_eq!(response1, response2, "typed retry ignores formatting");
+        assert_eq!(response1, response4);
+        let mismatch = parse_line(&response3);
+        assert_eq!(mismatch["schema_version"], 6);
+        assert_eq!(mismatch["error"]["code"], "request_id_reuse_mismatch");
+        assert_eq!(
+            mismatch["error"]["message"],
+            "request_id was reused for a different immediate request payload"
+        );
+        let active = server.active.as_ref().expect("active session");
+        assert_eq!(
+            active
+                .session
+                .state
+                .environment_randomization_v2()
+                .expect("v2")
+                .pair_environment_seed(),
+            99,
+            "the active state remains request A"
+        );
+
+        assert_eq!(profile.request_lines, 4);
+        assert_eq!(profile.response_lines, 4);
+        assert_eq!(profile.reset_requests, 4);
+        assert_eq!(profile.step_requests, 0);
+        assert_eq!(profile.phases.parse.count, 4);
+        assert_eq!(profile.phases.decode.count, 4);
+        assert_eq!(profile.phases.retry.count, 4);
+        assert_eq!(profile.phases.response.count, 4);
+        assert_eq!(profile.phases.serialize.count, 4);
+        assert_eq!(profile.phases.reset.count, 1);
+        assert_eq!(profile.phases.advance.count, 1);
+        assert_eq!(profile.phases.observe.count, 1);
+        assert_eq!(profile.phases.actions.count, 1);
+        assert_eq!(profile.phases.postbind.count, 1);
+        assert_eq!(profile.phases.step_validation.count, 0);
+        assert_eq!(profile.phases.step_integrity.count, 0);
+        assert_eq!(profile.phases.step_selection.count, 0);
+        assert_eq!(profile.phases.step_apply.count, 0);
+
+        let mut unprofiled = KernelRlJsonlServerV1::new();
+        assert_eq!(
+            unprofiled.handle_line(&request_a),
+            response1,
+            "profiling never changes response bytes"
+        );
+    }
+
+    #[test]
+    fn jsonl_v6_wire_version_in_retry_identity() {
+        let mut server = KernelRlJsonlServerV1::new();
+        let reset_response = parse_line(&server.handle_line(&v6_reset_line("w0", 99, 8)));
+        let (step, action_id) = first_action_of(&reset_response);
+        let v6_step_line = step_line(6, "X", step, &action_id);
+        let v6_step_response = server.handle_line(&v6_step_line);
+        assert_eq!(parse_line(&v6_step_response)["response_type"], "decision");
+        let fingerprint = active_fingerprint(&server);
+
+        // The otherwise identical Step resent as schema 5 under the same ID.
+        let v5_step_line = step_line(5, "X", step, &action_id);
+        let mismatch = parse_line(&server.handle_line(&v5_step_line));
+        assert_eq!(
+            mismatch["schema_version"], 5,
+            "the reuse-mismatch envelope follows the incoming wire version"
+        );
+        assert_eq!(mismatch["error"]["code"], "request_id_reuse_mismatch");
+        assert_eq!(
+            mismatch["error"]["message"],
+            "request_id was reused for a different immediate request payload"
+        );
+        assert_eq!(active_fingerprint(&server), fingerprint, "no state change");
+        assert_eq!(
+            server.handle_line(&v6_step_line),
+            v6_step_response,
+            "the original V6 request still returns exact cached bytes"
+        );
+        let (next_step, next_action) = first_action_of(&parse_line(&v6_step_response));
+        let next_response =
+            parse_line(&server.handle_line(&step_line(6, "X2", next_step, &next_action)));
+        assert_eq!(next_response["response_type"], "decision");
+        assert_eq!(next_response["schema_version"], 6);
+    }
+
+    #[test]
+    fn jsonl_v6_cross_version_step_prevalidation_and_atomicity() {
+        // Scenario A: active V5 session, poisoned V6 Step.
+        let mut server = KernelRlJsonlServerV1::new();
+        let v5_reset_response = parse_line(&server.handle_line(&v5_reset_line("c1", 99, 8)));
+        let (v5_step, v5_action) = first_action_of(&v5_reset_response);
+        let fingerprint = active_fingerprint(&server);
+        let poisoned_v6 = "{\"request_type\":\"step\",\"schema_version\":6,\"request_id\":\"c2\",\"episode_id\":7,\"expected_step\":42,\"selected_index\":999,\"selected_action_id\":\"nope\"}";
+        let mut poison_profile = RlPhaseProfileV1::default();
+        let mismatch = parse_line(&server.handle_line_profiled(poisoned_v6, &mut poison_profile));
+        assert_eq!(mismatch["schema_version"], 6, "incoming response version");
+        assert_eq!(mismatch["error"]["code"], "schema_version_mismatch");
+        assert_eq!(
+            mismatch["error"]["message"],
+            "step request schema_version does not match the active session schema_version"
+        );
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        assert_eq!(poison_profile.phases.step_validation.count, 0);
+        assert_eq!(poison_profile.phases.step_integrity.count, 0);
+        assert_eq!(poison_profile.phases.step_selection.count, 0);
+        assert_eq!(poison_profile.phases.step_apply.count, 0);
+        assert_eq!(poison_profile.phases.advance.count, 0);
+        assert_eq!(poison_profile.phases.observe.count, 0);
+        assert_eq!(poison_profile.phases.actions.count, 0);
+        assert_eq!(poison_profile.phases.postbind.count, 0);
+        let stepped = parse_line(&server.handle_line(&step_line(5, "c3", v5_step, &v5_action)));
+        assert_eq!(stepped["response_type"], "decision");
+        assert_eq!(stepped["schema_version"], 5);
+
+        // Scenario B: active V6 session, poisoned V5 Step.
+        let mut server = KernelRlJsonlServerV1::new();
+        let v6_reset_response = parse_line(&server.handle_line(&v6_reset_line("d1", 99, 8)));
+        let (v6_step, v6_action) = first_action_of(&v6_reset_response);
+        let fingerprint = active_fingerprint(&server);
+        let poisoned_v5 = "{\"request_type\":\"step\",\"schema_version\":5,\"request_id\":\"d2\",\"episode_id\":7,\"expected_step\":42,\"selected_index\":999,\"selected_action_id\":\"nope\"}";
+        let mut poison_profile = RlPhaseProfileV1::default();
+        let mismatch = parse_line(&server.handle_line_profiled(poisoned_v5, &mut poison_profile));
+        assert_eq!(mismatch["schema_version"], 5, "incoming response version");
+        assert_eq!(mismatch["error"]["code"], "schema_version_mismatch");
+        assert_eq!(
+            mismatch["error"]["message"],
+            "step request schema_version does not match the active session schema_version"
+        );
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        assert_eq!(poison_profile.phases.step_validation.count, 0);
+        assert_eq!(poison_profile.phases.step_integrity.count, 0);
+        assert_eq!(poison_profile.phases.step_selection.count, 0);
+        assert_eq!(poison_profile.phases.step_apply.count, 0);
+        assert_eq!(poison_profile.phases.advance.count, 0);
+        assert_eq!(poison_profile.phases.observe.count, 0);
+        assert_eq!(poison_profile.phases.actions.count, 0);
+        assert_eq!(poison_profile.phases.postbind.count, 0);
+        let stepped = parse_line(&server.handle_line(&step_line(6, "d3", v6_step, &v6_action)));
+        assert_eq!(stepped["response_type"], "decision");
+        assert_eq!(stepped["schema_version"], 6);
+    }
+
+    #[test]
+    fn jsonl_v6_failed_reset_preserves_state_and_version() {
+        const SEAT_0_DECK_MESSAGE: &str =
+            "unsupported deck_id for seat 0; supported exact canonical ids are \"Burn\" and \"Rally\"";
+        let failing_v6 = "{\"request_type\":\"reset\",\"schema_version\":6,\"request_id\":\"f1\",\"deck_ids\":[\"NotADeck\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}";
+        let failing_v5 = "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"f2\",\"deck_ids\":[\"NotADeck\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}";
+
+        // Active V5, failing V6 Reset.
+        let mut server = KernelRlJsonlServerV1::new();
+        let reset_response = parse_line(&server.handle_line(&v5_reset_line("e1", 99, 8)));
+        let (step, action) = first_action_of(&reset_response);
+        let fingerprint = active_fingerprint(&server);
+        let old_exchange = server
+            .last_exchange
+            .clone()
+            .expect("the successful reset is cached");
+        let failure_line = server.handle_line(failing_v6);
+        let failure = parse_line(&failure_line);
+        assert_eq!(failure["schema_version"], 6);
+        assert_eq!(failure["error"]["code"], "unsupported_deck");
+        assert_eq!(failure["error"]["message"], SEAT_0_DECK_MESSAGE);
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        // Direct cache-replacement proof: the new cached exchange differs
+        // from the anchor, holds the failing supported V6 request and its
+        // exact error response, and is value-identical across the retry.
+        let failed_exchange = server
+            .last_exchange
+            .clone()
+            .expect("the failed supported Reset is cached");
+        assert_ne!(failed_exchange, old_exchange);
+        assert_eq!(failed_exchange.request_id, "f1");
+        assert!(matches!(
+            &failed_exchange.request,
+            VersionedKernelRlRequestV1::V6(KernelRlRequestV6::Reset { deck_ids, .. })
+                if deck_ids[0] == "NotADeck"
+        ));
+        assert_eq!(failed_exchange.response_line, failure_line);
+        assert_eq!(
+            server.handle_line(failing_v6),
+            failure_line,
+            "a failed supported Reset replaces the retry cache with its error"
+        );
+        assert_eq!(
+            server.last_exchange.as_ref(),
+            Some(&failed_exchange),
+            "the cached failure is value-identical across the immediate retry"
+        );
+        let stepped = parse_line(&server.handle_line(&step_line(5, "e2", step, &action)));
+        assert_eq!(stepped["response_type"], "decision");
+        assert_eq!(stepped["schema_version"], 5);
+
+        // Active V6, failing V5 Reset.
+        let mut server = KernelRlJsonlServerV1::new();
+        let reset_response = parse_line(&server.handle_line(&v6_reset_line("g1", 99, 8)));
+        let (step, action) = first_action_of(&reset_response);
+        let fingerprint = active_fingerprint(&server);
+        let failure = parse_line(&server.handle_line(failing_v5));
+        assert_eq!(failure["schema_version"], 5);
+        assert_eq!(failure["error"]["code"], "unsupported_deck");
+        assert_eq!(failure["error"]["message"], SEAT_0_DECK_MESSAGE);
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        let stepped = parse_line(&server.handle_line(&step_line(6, "g2", step, &action)));
+        assert_eq!(stepped["response_type"], "decision");
+        assert_eq!(stepped["schema_version"], 6);
+
+        // Active V6, failing V6 Reset.
+        let mut server = KernelRlJsonlServerV1::new();
+        let reset_response = parse_line(&server.handle_line(&v6_reset_line("h1", 99, 8)));
+        let (step, action) = first_action_of(&reset_response);
+        let fingerprint = active_fingerprint(&server);
+        let failure = parse_line(&server.handle_line(failing_v6));
+        assert_eq!(failure["schema_version"], 6);
+        assert_eq!(failure["error"]["code"], "unsupported_deck");
+        assert_eq!(failure["error"]["message"], SEAT_0_DECK_MESSAGE);
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        let stepped = parse_line(&server.handle_line(&step_line(6, "h2", step, &action)));
+        assert_eq!(stepped["response_type"], "decision");
+        assert_eq!(stepped["schema_version"], 6);
+
+        // Profiled failing V6 Reset plus its retry: Reset measured exactly
+        // once overall, so the retried failure is a genuine cache hit and
+        // not a second deterministic execution; no advance work either way.
+        let mut server = KernelRlJsonlServerV1::new();
+        let mut profile = RlPhaseProfileV1::default();
+        let first_failure_line = server.handle_line_profiled(failing_v6, &mut profile);
+        let failure = parse_line(&first_failure_line);
+        assert_eq!(failure["error"]["code"], "unsupported_deck");
+        let cached_failure = server
+            .last_exchange
+            .clone()
+            .expect("the failed supported Reset is cached");
+        let retried_failure_line = server.handle_line_profiled(failing_v6, &mut profile);
+        assert_eq!(retried_failure_line, first_failure_line);
+        assert_eq!(
+            server.last_exchange.as_ref(),
+            Some(&cached_failure),
+            "the retry leaves the cached failure value-identical"
+        );
+        assert_eq!(
+            profile.phases.reset.count, 1,
+            "the retried failure never re-executes Reset"
+        );
+        assert_eq!(profile.phases.retry.count, 2);
+        assert_eq!(profile.phases.advance.count, 0);
+        assert_eq!(profile.phases.observe.count, 0);
+        assert_eq!(profile.phases.actions.count, 0);
+        assert_eq!(profile.phases.postbind.count, 0);
     }
 }
