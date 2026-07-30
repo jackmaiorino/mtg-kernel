@@ -22,7 +22,9 @@ use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_training_store_checkpoint_v3::CheckpointManifestV3;
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, parse_lower_hex_raw32_v1};
-use crate::native_training_store_run_v2::ValidatedTrainRunV2;
+use crate::native_training_store_run_v2::{
+    NativeRunEnvironmentTrajectoryContractV1, ValidatedTrainRunV2,
+};
 use crate::rl::PlayerSeatV1;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
@@ -742,6 +744,23 @@ fn validate_runner_config_v1(
     run: &ValidatedTrainRunV2,
     config: NativeCheckpointRunnerConfigV1,
 ) -> Result<(usize, usize, usize), NativeCheckpointRunnerErrorV1> {
+    // Inactive-manifest gate (Phase C1). A run classified as the environment
+    // randomization V2 trajectory contract cannot be evaluated by this build.
+    // This is the first clause, ahead of the episode-window arithmetic below,
+    // and both runner cores call this validator before they load a checkpoint
+    // payload, construct a model, or start a rollout. A V2 run therefore
+    // returns InvalidConfig even when its payload is malformed, which is what
+    // proves payload decode was never reached.
+    //
+    // Written as an exhaustive two-arm match with no wildcard: a future third
+    // classifier variant fails compilation here instead of silently slipping
+    // through an equality test.
+    match run.environment_trajectory_contract_v1() {
+        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => {}
+        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => {
+            return Err(NativeCheckpointRunnerErrorV1::InvalidConfig);
+        }
+    }
     let end = config
         .first_episode_index
         .checked_add(config.episode_count)
@@ -1377,5 +1396,102 @@ mod tests {
             ),
             other => panic!("unexpected runner error: {other:?}"),
         }
+    }
+
+    /// Phase C1 required test 7. Checkpoint evaluation of a run classified as
+    /// the environment randomization V2 trajectory contract returns
+    /// `InvalidConfig` even when the payload is deliberately malformed.
+    ///
+    /// The malformed payload is the instrument, not the subject. Every V2 call
+    /// below uses a genuinely V2-bound checkpoint manifest, built from the V2
+    /// run's own valid candidate payload, so the rejection cannot be blamed on
+    /// a mismatched legacy authority. The legacy control proves the malformed
+    /// bytes really do reach the payload decoder when the gate does not fire:
+    /// legacy returns `Inference(PayloadExactLength)`. The V2 run returning
+    /// `InvalidConfig` against equivalent bytes therefore proves decode was
+    /// never reached, in both the frozen and the wide core.
+    #[test]
+    fn v2_checkpoint_evaluation_returns_invalid_config_before_payload_decode() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_environment_randomization_v2;
+
+        let (legacy_run, legacy_checkpoint) = authorities_v1();
+        assert_eq!(
+            legacy_run.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+        );
+        let v2_run = decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2())
+            .expect("the coherent V2 fixture decodes");
+        assert_eq!(
+            v2_run.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+
+        // A real V2-bound authority: the V2 run's own executor, its own valid
+        // candidate payload, and a genesis manifest built from both. Nothing
+        // here is borrowed from the legacy fixture.
+        let v2_executor = fresh_executor_v1(&v2_run);
+        let v2_candidate = v2_executor.checkpoint_candidate_v1().unwrap();
+        let v2_payload = v2_candidate.payload().to_vec();
+        let v2_checkpoint = build_genesis_checkpoint_manifest_v3(&v2_run, &v2_payload).unwrap();
+        assert!(
+            !v2_payload.is_empty(),
+            "the V2 candidate payload must be real"
+        );
+
+        // Deliberately malformed: truncated well short of the exact payload
+        // length the loader requires.
+        let malformed_v2 = v2_payload[..7].to_vec();
+
+        // Nonvacuity control: with the gate not firing, an equivalently
+        // malformed payload reaches the payload decoder and is rejected there,
+        // not by config preflight.
+        let malformed_legacy = fixture_v1().payload[..7].to_vec();
+        match run_native_checkpoint_v1(
+            &legacy_run,
+            &legacy_checkpoint,
+            &malformed_legacy,
+            runner_config_v1(),
+        )
+        .unwrap_err()
+        {
+            NativeCheckpointRunnerErrorV1::Inference(error) => assert_eq!(
+                error.kind(),
+                NativeCheckpointInferenceErrorKindV1::PayloadExactLength
+            ),
+            other => panic!("expected the malformed payload to reach decode, got {other:?}"),
+        }
+
+        // Frozen core: the gate fires first, so the malformed payload is never
+        // decoded and the error is the direct config rejection.
+        assert_eq!(
+            run_native_checkpoint_v1(&v2_run, &v2_checkpoint, &malformed_v2, runner_config_v1())
+                .unwrap_err(),
+            NativeCheckpointRunnerErrorV1::InvalidConfig
+        );
+
+        // Wide core: same gate, same first clause.
+        assert_eq!(
+            run_native_checkpoint_wide_v1(
+                &v2_run,
+                &v2_checkpoint,
+                &malformed_v2,
+                runner_config_v1()
+            )
+            .unwrap_err(),
+            NativeCheckpointRunnerErrorV1::InvalidConfig
+        );
+
+        // Even the V2 run's own *valid* payload against its own V2-bound
+        // checkpoint is InvalidConfig: nothing about the payload can change the
+        // outcome, which is the whole point of an inactive manifest.
+        assert_eq!(
+            run_native_checkpoint_v1(&v2_run, &v2_checkpoint, &v2_payload, runner_config_v1())
+                .unwrap_err(),
+            NativeCheckpointRunnerErrorV1::InvalidConfig
+        );
+        assert_eq!(
+            run_native_checkpoint_v1(&v2_run, &v2_checkpoint, &[], runner_config_v1()).unwrap_err(),
+            NativeCheckpointRunnerErrorV1::InvalidConfig
+        );
     }
 }

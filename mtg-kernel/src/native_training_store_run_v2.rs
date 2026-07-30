@@ -16,6 +16,14 @@ use crate::common_model_snapshot_v1::{
     NONCLAIM_V1, PARAMETER_ELEMENT_COUNT_V1, PARAMETER_TENSOR_COUNT_V1, PAYLOAD_BYTE_COUNT_V1,
     RUST_LOADER_IDENTITY_V1, SNAPSHOT_IDENTITY_V1, SNAPSHOT_SCHEMA_V1,
 };
+use crate::environment_randomization_v2::{
+    ENVIRONMENT_RANDOMIZATION_ATOM_FRAMING_V2, ENVIRONMENT_RANDOMIZATION_EXTRACTION_V2,
+    ENVIRONMENT_RANDOMIZATION_GOLDENS_SCHEMA_V1, ENVIRONMENT_RANDOMIZATION_GOLDENS_SHA256_V1,
+    ENVIRONMENT_RANDOMIZATION_IDENTITY_V2, ENVIRONMENT_RANDOMIZATION_INITIAL_ORDINAL_RULE_V2,
+    ENVIRONMENT_RANDOMIZATION_NAMESPACE_V2, ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2,
+    ENVIRONMENT_RANDOMIZATION_OVERFLOW_RULE_V2, ENVIRONMENT_RANDOMIZATION_OWNERS_V2,
+    ENVIRONMENT_RANDOMIZATION_PURPOSES_V2, ENVIRONMENT_RANDOMIZATION_SHUFFLE_ALGORITHM_V2,
+};
 use crate::fast_sampler::{
     FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256,
     FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256, FAST_CATEGORICAL_EXP_TABLE_SHA256,
@@ -33,6 +41,16 @@ use crate::native_full_episode_trajectory_v1::{
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
+};
+/// The V2 trajectory six-pin tuple is imported from its owner module rather
+/// than restated, so the classifier and the trajectory contract cannot drift.
+use crate::native_full_episode_trajectory_v2::{
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V2,
 };
 use crate::native_opponent_policy_v2::{
     FROZEN_CHECKPOINT_OPPONENT_POLICY_IDENTITY_V2, FROZEN_CHECKPOINT_OPPONENT_POLICY_MODEL_RULE_V2,
@@ -73,7 +91,7 @@ use crate::native_trainer_v1::{
 use crate::policy_surface_v5::POLICY_SURFACE_VERSION;
 use crate::rl_session::{
     CANONICAL_RALLY_DECK_ID, RL_SESSION_PROTOCOL_NAME, RL_SESSION_PROTOCOL_VERSION,
-    RL_SESSION_SCHEMA_VERSION,
+    RL_SESSION_PROTOCOL_VERSION_V6, RL_SESSION_SCHEMA_VERSION, RL_SESSION_SCHEMA_VERSION_V6,
 };
 use crate::runtime_decks::{
     runtime_deck_by_id, RUNTIME_DECK_CATALOG_FILE_SHA256, RUNTIME_DECK_CATALOG_SCHEMA,
@@ -311,16 +329,25 @@ const FROZEN_LADDER_SCHEDULE_POOL_CHOICE_THRESHOLD_RULE_V2: &str = "draw=pool_ch
 const FROZEN_LADDER_SCHEDULE_POOL_CHOICE_BIAS_RULE_V2: &str = "intentional-modulo-bias-no-rejection-sampling;when-100-does-not-divide-the-seed-domain-low-residues-have-one-extra-preimage;consistent-with-the-v1-uniform-sampler-bias-rule;changing-this-rule-requires-a-new-schedule-version";
 const FROZEN_LADDER_SCHEDULE_VERSION_CHANGE_RULE_V2: &str = "any seed, namespace, framing, domain, field-order, weight-threshold, or golden change requires a new schedule version announced on the CODEX-CLAUDE channel";
 
-const FROZEN_TRAJECTORY_IDENTITY_V2: &str = "mtg-kernel-native-full-episode-trajectory-sha256-v1";
-const FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2: &str =
+/// The legacy V1 trajectory six-pin tuple.
+///
+/// These constants carry *V1* values and always did; the historical `_V2`
+/// suffix referred to the run-record schema generation, not the trajectory
+/// contract, and became actively misleading once a real V2 trajectory contract
+/// existed. They are renamed here to say what they hold. The V2 tuple is not
+/// restated: it is imported from the trajectory V2 owner module, so the two
+/// tuples cannot drift independently.
+const FROZEN_LEGACY_TRAJECTORY_IDENTITY_V1: &str =
+    "mtg-kernel-native-full-episode-trajectory-sha256-v1";
+const FROZEN_LEGACY_TRAJECTORY_GOLDENS_SCHEMA_V1: &str =
     "mtg_kernel_native_full_episode_trajectory_goldens/v1";
-const FROZEN_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2: &str =
+const FROZEN_LEGACY_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1: &str =
     "mtg-kernel-native-full-episode-trajectory-goldens-stdlib-python-v1";
-const FROZEN_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2: &str =
+const FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1: &str =
     "mtg-kernel-native-full-episode-trajectory-golden-vector-stream-sha256-v1";
-const FROZEN_TRAJECTORY_GOLDENS_FILE_SHA256_V2: &str =
+const FROZEN_LEGACY_TRAJECTORY_GOLDENS_FILE_SHA256_V1: &str =
     "502a1b4ba296fdc4b2f4e8fd61cc5b4d64f152c9b84b4e11a85967f76c3bde8b";
-const FROZEN_TRAJECTORY_GOLDEN_STREAM_SHA256_V2: &str =
+const FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_SHA256_V1: &str =
     "f5230cbbc0b87735e7aa14c89ce31e41ce769de3f4292cafe63dad4733168d7a";
 
 /// Stable, input-independent failure categories for the run/v2 authority.
@@ -561,6 +588,43 @@ pub struct TrainRunEnvironmentV2 {
     pub(crate) kernel_version: String,
     pub(crate) surface_version: u64,
     pub(crate) policy_surface_version: u64,
+    /// Environment randomization V2 manifest section (Phase C1, inactive).
+    ///
+    /// Present if and only if this record declares the environment
+    /// randomization V2 trajectory contract. Absent for every legacy V1
+    /// record, and omitted entirely from canonical bytes when absent, so all
+    /// existing run records keep byte-identical canonical output, `run_sha256`,
+    /// standalone-semantics digest, and identity-bundle digest.
+    ///
+    /// Declaring this section does not activate anything. It is one member of
+    /// a closed tuple that the classifier reads, and every runtime entry point
+    /// rejects the resulting classification fail-closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) environment_randomization_v2: Option<EnvironmentRandomizationContractV2>,
+}
+
+/// The strict environment randomization V2 manifest section.
+///
+/// Every field is validated against a projection of the production owner
+/// constants in `environment_randomization_v2.rs`, never against a second
+/// restatement of the same strings. `deny_unknown_fields` plus the full field
+/// list makes both an unknown key and a missing key a decode failure, and the
+/// canonical parser already rejects explicit `null`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EnvironmentRandomizationContractV2 {
+    pub(crate) identity: String,
+    pub(crate) namespace: String,
+    pub(crate) atom: String,
+    pub(crate) extraction: String,
+    pub(crate) ordered_atoms: Vec<Vec<String>>,
+    pub(crate) owners: [String; 2],
+    pub(crate) purposes: [String; 2],
+    pub(crate) initial_ordinal_rule: String,
+    pub(crate) overflow_rule: String,
+    pub(crate) shuffle_algorithm: String,
+    pub(crate) cross_language_goldens_schema: String,
+    pub(crate) cross_language_goldens_file_sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1043,11 +1107,36 @@ pub struct ValidatedTrainRunV2 {
     batch_episodes: u64,
     checkpoint_segment_updates: u64,
     requested_successful_updates: u64,
+    /// The closed trajectory-contract classification decided at decode time.
+    /// Private on purpose: no caller may construct, override, or widen it, and
+    /// the only way to obtain one is to decode a complete, coherent record.
+    environment_trajectory_contract: NativeRunEnvironmentTrajectoryContractV1,
+}
+
+/// The closed trajectory-contract classification of a validated run.
+///
+/// Sealed and crate-private. A record is exactly one of these, decided by a
+/// complete-tuple match at decode time; there is no third state, no default,
+/// and no caller-selectable version flag. `EnvironmentRandomizationV2` is
+/// inactive in this phase: every runtime entry point rejects it fail-closed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeRunEnvironmentTrajectoryContractV1 {
+    LegacyV1,
+    EnvironmentRandomizationV2,
 }
 
 impl ValidatedTrainRunV2 {
     pub fn record(&self) -> &TrainRunV2 {
         &self.record
+    }
+
+    /// The trajectory contract this record was classified as at decode time.
+    /// Crate-private and by value: the classification is read-only evidence,
+    /// not a switch.
+    pub(crate) fn environment_trajectory_contract_v1(
+        &self,
+    ) -> NativeRunEnvironmentTrajectoryContractV1 {
+        self.environment_trajectory_contract
     }
 
     pub fn canonical_bytes(&self) -> &[u8] {
@@ -1289,6 +1378,10 @@ fn validate_decoded_train_run_v2(
 
     validate_cross_bindings_v2(&record)?;
 
+    // One closed classification, after all shared environment/contracts/
+    // cross-binding validation and before standalone-semantics reconstruction.
+    let environment_trajectory_contract = classify_environment_trajectory_contract_v1(&record)?;
+
     let expected_core = reconstruct_standalone_semantics_core_v2(&record, requested_episode_count)?;
     if record.contracts.standalone_semantics.core != expected_core {
         return Err(TrainRunV2Error::new(
@@ -1319,7 +1412,95 @@ fn validate_decoded_train_run_v2(
         run_sha256,
         identity_bundle_sha256,
         standalone_semantics_sha256,
+        environment_trajectory_contract,
     })
+}
+
+/// The one closed trajectory-contract classifier.
+///
+/// Exactly two complete tuples are admissible, and every other cross-product of
+/// the section state, the protocol/schema pair, and the six trajectory pins is
+/// rejected. Each arm is complete in itself: the legacy arm never consults V2
+/// authority health, and the V2 arm validates the V2 live owners plus every
+/// field of the manifest section against projections of the production owner
+/// constants.
+fn classify_environment_trajectory_contract_v1(
+    record: &TrainRunV2,
+) -> Result<NativeRunEnvironmentTrajectoryContractV1> {
+    let environment = &record.environment;
+    let trajectory = &record.contracts.trajectory;
+
+    // Each arm computes only its own tuple. Nothing about the V2 authority
+    // owners is evaluated on the legacy path, so a legacy record can never be
+    // rejected, accepted, or even influenced by unrelated V2 authority health.
+    match environment.environment_randomization_v2.as_ref() {
+        None => {
+            let legacy_versions = environment.protocol_version
+                == u64::from(FROZEN_PROTOCOL_VERSION_V2)
+                && environment.schema_version == u64::from(FROZEN_SCHEMA_VERSION_V2);
+            let legacy_pins = trajectory.identity == FROZEN_LEGACY_TRAJECTORY_IDENTITY_V1
+                && trajectory.cross_language_goldens_schema
+                    == FROZEN_LEGACY_TRAJECTORY_GOLDENS_SCHEMA_V1
+                && trajectory.cross_language_generator_identity
+                    == FROZEN_LEGACY_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1
+                && trajectory.cross_language_golden_stream_identity
+                    == FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1
+                && trajectory.cross_language_goldens_file_sha256
+                    == FROZEN_LEGACY_TRAJECTORY_GOLDENS_FILE_SHA256_V1
+                && trajectory.cross_language_golden_stream_sha256
+                    == FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_SHA256_V1;
+            if legacy_pins && legacy_versions {
+                Ok(NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            } else {
+                Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral))
+            }
+        }
+        Some(section) => {
+            let v2_versions = environment.protocol_version
+                == u64::from(RL_SESSION_PROTOCOL_VERSION_V6)
+                && environment.schema_version == u64::from(RL_SESSION_SCHEMA_VERSION_V6);
+            let v2_pins = trajectory.identity == NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V2
+                && trajectory.cross_language_goldens_schema
+                    == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V2
+                && trajectory.cross_language_generator_identity
+                    == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2
+                && trajectory.cross_language_golden_stream_identity
+                    == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2
+                && trajectory.cross_language_goldens_file_sha256
+                    == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2
+                && trajectory.cross_language_golden_stream_sha256
+                    == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2;
+            if v2_pins && v2_versions && environment_randomization_section_is_exact_v2(section) {
+                Ok(NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2)
+            } else {
+                Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral))
+            }
+        }
+    }
+}
+
+/// Every manifest section field against a projection of the production owner
+/// constants. This is the only place V2 environment authority health is
+/// consulted, and it runs only inside the V2 classifier arm.
+fn environment_randomization_section_is_exact_v2(
+    section: &EnvironmentRandomizationContractV2,
+) -> bool {
+    let expected_ordered_atoms: Vec<Vec<String>> = ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2
+        .iter()
+        .map(|row| row.iter().map(|part| (*part).to_string()).collect())
+        .collect();
+    section.identity == ENVIRONMENT_RANDOMIZATION_IDENTITY_V2
+        && section.namespace == ENVIRONMENT_RANDOMIZATION_NAMESPACE_V2
+        && section.atom == ENVIRONMENT_RANDOMIZATION_ATOM_FRAMING_V2
+        && section.extraction == ENVIRONMENT_RANDOMIZATION_EXTRACTION_V2
+        && section.ordered_atoms == expected_ordered_atoms
+        && section.owners == ENVIRONMENT_RANDOMIZATION_OWNERS_V2
+        && section.purposes == ENVIRONMENT_RANDOMIZATION_PURPOSES_V2
+        && section.initial_ordinal_rule == ENVIRONMENT_RANDOMIZATION_INITIAL_ORDINAL_RULE_V2
+        && section.overflow_rule == ENVIRONMENT_RANDOMIZATION_OVERFLOW_RULE_V2
+        && section.shuffle_algorithm == ENVIRONMENT_RANDOMIZATION_SHUFFLE_ALGORITHM_V2
+        && section.cross_language_goldens_schema == ENVIRONMENT_RANDOMIZATION_GOLDENS_SCHEMA_V1
+        && section.cross_language_goldens_file_sha256 == ENVIRONMENT_RANDOMIZATION_GOLDENS_SHA256_V1
 }
 
 fn validate_frozen_rev3_authorities_v2() -> Result<()> {
@@ -1422,16 +1603,22 @@ fn validate_frozen_rev3_authorities_v2() -> Result<()> {
             != FROZEN_LADDER_SCHEDULE_POOL_CHOICE_BIAS_RULE_V2
         || NATIVE_TRAINER_SCHEDULE_CONTRACT_V2.version_change_rule
             != FROZEN_LADDER_SCHEDULE_VERSION_CHANGE_RULE_V2
-        || NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1 != FROZEN_TRAJECTORY_IDENTITY_V2
-        || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1 != FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2
+        // The live V1 trajectory owner guard is unconditional and stays that
+        // way: the V2 envelope still wraps the inner V1 trajectory digest, so
+        // V1 authority health is a precondition of both classifier arms. The
+        // converse is not true, which is why V2 owner health is checked only
+        // inside the V2 arm of the classifier and never here.
+        || NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1 != FROZEN_LEGACY_TRAJECTORY_IDENTITY_V1
+        || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1
+            != FROZEN_LEGACY_TRAJECTORY_GOLDENS_SCHEMA_V1
         || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1
-            != FROZEN_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2
+            != FROZEN_LEGACY_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1
         || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1
-            != FROZEN_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2
+            != FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1
         || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1
-            != FROZEN_TRAJECTORY_GOLDENS_FILE_SHA256_V2
+            != FROZEN_LEGACY_TRAJECTORY_GOLDENS_FILE_SHA256_V1
         || NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1
-            != FROZEN_TRAJECTORY_GOLDEN_STREAM_SHA256_V2
+            != FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_SHA256_V1
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
@@ -1577,8 +1764,20 @@ fn validate_environment_v2(environment: &TrainRunEnvironmentV2) -> Result<()> {
                 FROZEN_RALLY_DECK_HASH_U64_HEX_V2,
             ]
         || environment.protocol != FROZEN_PROTOCOL_V2
-        || environment.protocol_version != u64::from(FROZEN_PROTOCOL_VERSION_V2)
-        || environment.schema_version != u64::from(FROZEN_SCHEMA_VERSION_V2)
+        // `environment.protocol_version` and `environment.schema_version` are
+        // deliberately not pinned here. They are version-bearing members of the
+        // closed trajectory-contract tuple (5/5 legacy, 6/6 environment
+        // randomization V2) and are validated by
+        // `classify_environment_trajectory_contract_v1`.
+        //
+        // The live-owner block above pins this *build* at protocol/schema 5,
+        // which is why this build cannot emit a 6/6 record: production capture
+        // reads the live constants. It does not stop a coherent 6/6 record from
+        // validating and classifying here, and it must not be read as an
+        // execution barrier. What prevents execution is the separate set of
+        // fail-closed gates on the classifier result:
+        // `validate_prepared_execution_config_v1`, `validate_runner_config_v1`,
+        // and `NativeStoreProductionCaptureGuardV2::require_matches_run_v2`.
         || environment.kernel_version != FROZEN_KERNEL_VERSION_V2
         || environment.surface_version != u64::from(FROZEN_SURFACE_VERSION_V2)
         || environment.policy_surface_version != u64::from(FROZEN_POLICY_SURFACE_VERSION_V2)
@@ -1839,16 +2038,12 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
             .cross_language_vector_stream_sha256
             != FROZEN_OPPONENT_VECTOR_STREAM_SHA256_V2
         || !contracts.opponent_sampler.width_one_consumes_seed
-        || contracts.trajectory.identity != FROZEN_TRAJECTORY_IDENTITY_V2
-        || contracts.trajectory.cross_language_goldens_schema != FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2
-        || contracts.trajectory.cross_language_generator_identity
-            != FROZEN_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2
-        || contracts.trajectory.cross_language_golden_stream_identity
-            != FROZEN_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2
-        || contracts.trajectory.cross_language_goldens_file_sha256
-            != FROZEN_TRAJECTORY_GOLDENS_FILE_SHA256_V2
-        || contracts.trajectory.cross_language_golden_stream_sha256
-            != FROZEN_TRAJECTORY_GOLDEN_STREAM_SHA256_V2
+        // The six record trajectory pins are deliberately NOT checked here any
+        // more. They are one half of a closed tuple whose other half is the
+        // environment randomization section and the protocol/schema pair, so
+        // checking them unconditionally would hard-reject every V2 record
+        // before the classifier could see it. They are now validated as a
+        // complete tuple by `classify_environment_trajectory_contract_v1`.
         || contracts.standalone_semantics.identity != STANDALONE_SEMANTICS_IDENTITY_V2
         || contracts.standalone_semantics.core.identity != STANDALONE_SEMANTICS_IDENTITY_V2
         || !is_sha256(&contracts.standalone_semantics.sha256)
@@ -2555,6 +2750,14 @@ pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
     tests::fixture_bytes()
 }
 
+/// A coherent, fully reminted environment randomization V2 record. Test-only:
+/// it exists so the sibling inactive-gate tests can prove that a record which
+/// decodes and classifies as V2 is still refused by every runtime entry point.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_environment_randomization_v2() -> Vec<u8> {
+    tests::coherent_v2_bytes()
+}
+
 /// Backend-parametrized fixture: the matched runtime tuple and train-step
 /// backend identity pair for the requested store-admitted backend.
 #[cfg(test)]
@@ -2910,6 +3113,7 @@ mod tests {
                 kernel_version: String::new(),
                 surface_version: 0,
                 policy_surface_version: 0,
+                environment_randomization_v2: None,
             },
             workload: StandaloneWorkloadSemanticsV2 {
                 batch_episodes: 0,
@@ -3059,12 +3263,12 @@ mod tests {
                     "width_one_consumes_seed": true
                 },
                 "trajectory": {
-                    "identity": FROZEN_TRAJECTORY_IDENTITY_V2,
-                    "cross_language_goldens_schema": FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2,
-                    "cross_language_generator_identity": FROZEN_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2,
-                    "cross_language_golden_stream_identity": FROZEN_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2,
-                    "cross_language_goldens_file_sha256": FROZEN_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
-                    "cross_language_golden_stream_sha256": FROZEN_TRAJECTORY_GOLDEN_STREAM_SHA256_V2
+                    "identity": FROZEN_LEGACY_TRAJECTORY_IDENTITY_V1,
+                    "cross_language_goldens_schema": FROZEN_LEGACY_TRAJECTORY_GOLDENS_SCHEMA_V1,
+                    "cross_language_generator_identity": FROZEN_LEGACY_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1,
+                    "cross_language_golden_stream_identity": FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
+                    "cross_language_goldens_file_sha256": FROZEN_LEGACY_TRAJECTORY_GOLDENS_FILE_SHA256_V1,
+                    "cross_language_golden_stream_sha256": FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_SHA256_V1
                 },
                 "standalone_semantics": {
                     "identity": STANDALONE_SEMANTICS_IDENTITY_V2,
@@ -3191,6 +3395,463 @@ mod tests {
 
     pub(super) fn fixture_bytes() -> Vec<u8> {
         to_canonical_json_bytes_v1(&fixture_record(), CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    // ------------------------------------------------------------------
+    // Phase C1: inactive environment randomization V2 manifest classification
+    // ------------------------------------------------------------------
+
+    /// The exact manifest section, projected from the production owner
+    /// constants so the fixture cannot drift from the validator.
+    pub(super) fn exact_environment_randomization_section_v2() -> EnvironmentRandomizationContractV2
+    {
+        EnvironmentRandomizationContractV2 {
+            identity: ENVIRONMENT_RANDOMIZATION_IDENTITY_V2.to_owned(),
+            namespace: ENVIRONMENT_RANDOMIZATION_NAMESPACE_V2.to_owned(),
+            atom: ENVIRONMENT_RANDOMIZATION_ATOM_FRAMING_V2.to_owned(),
+            extraction: ENVIRONMENT_RANDOMIZATION_EXTRACTION_V2.to_owned(),
+            ordered_atoms: ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2
+                .iter()
+                .map(|row| row.iter().map(|part| (*part).to_string()).collect())
+                .collect(),
+            owners: [
+                ENVIRONMENT_RANDOMIZATION_OWNERS_V2[0].to_owned(),
+                ENVIRONMENT_RANDOMIZATION_OWNERS_V2[1].to_owned(),
+            ],
+            purposes: [
+                ENVIRONMENT_RANDOMIZATION_PURPOSES_V2[0].to_owned(),
+                ENVIRONMENT_RANDOMIZATION_PURPOSES_V2[1].to_owned(),
+            ],
+            initial_ordinal_rule: ENVIRONMENT_RANDOMIZATION_INITIAL_ORDINAL_RULE_V2.to_owned(),
+            overflow_rule: ENVIRONMENT_RANDOMIZATION_OVERFLOW_RULE_V2.to_owned(),
+            shuffle_algorithm: ENVIRONMENT_RANDOMIZATION_SHUFFLE_ALGORITHM_V2.to_owned(),
+            cross_language_goldens_schema: ENVIRONMENT_RANDOMIZATION_GOLDENS_SCHEMA_V1.to_owned(),
+            cross_language_goldens_file_sha256: ENVIRONMENT_RANDOMIZATION_GOLDENS_SHA256_V1
+                .to_owned(),
+        }
+    }
+
+    fn legacy_trajectory_contract_v1() -> TrajectoryContractV2 {
+        TrajectoryContractV2 {
+            identity: FROZEN_LEGACY_TRAJECTORY_IDENTITY_V1.to_owned(),
+            cross_language_goldens_schema: FROZEN_LEGACY_TRAJECTORY_GOLDENS_SCHEMA_V1.to_owned(),
+            cross_language_generator_identity:
+                FROZEN_LEGACY_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1.to_owned(),
+            cross_language_golden_stream_identity:
+                FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1.to_owned(),
+            cross_language_goldens_file_sha256: FROZEN_LEGACY_TRAJECTORY_GOLDENS_FILE_SHA256_V1
+                .to_owned(),
+            cross_language_golden_stream_sha256: FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_SHA256_V1
+                .to_owned(),
+        }
+    }
+
+    fn v2_trajectory_contract_v2() -> TrajectoryContractV2 {
+        TrajectoryContractV2 {
+            identity: NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V2.to_owned(),
+            cross_language_goldens_schema: NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V2
+                .to_owned(),
+            cross_language_generator_identity:
+                NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2.to_owned(),
+            cross_language_golden_stream_identity:
+                NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2.to_owned(),
+            cross_language_goldens_file_sha256:
+                NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2.to_owned(),
+            cross_language_golden_stream_sha256:
+                NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2.to_owned(),
+        }
+    }
+
+    /// A coherent environment randomization V2 record: the complete tuple, with
+    /// every derived digest reminted by the existing `refresh_derived` order.
+    pub(super) fn coherent_v2_record() -> TrainRunV2 {
+        let mut record = fixture_record();
+        record.environment.protocol_version = u64::from(RL_SESSION_PROTOCOL_VERSION_V6);
+        record.environment.schema_version = u64::from(RL_SESSION_SCHEMA_VERSION_V6);
+        record.environment.environment_randomization_v2 =
+            Some(exact_environment_randomization_section_v2());
+        record.contracts.trajectory = v2_trajectory_contract_v2();
+        refresh_derived(&mut record);
+        record
+    }
+
+    pub(super) fn coherent_v2_bytes() -> Vec<u8> {
+        to_canonical_json_bytes_v1(&coherent_v2_record(), CanonicalJsonNullPolicyV1::Forbid)
+            .unwrap()
+    }
+
+    #[test]
+    fn coherent_v2_record_remints_decodes_and_classifies_as_v2() {
+        let bytes = coherent_v2_bytes();
+        let run = decode_train_run_v2(&bytes).expect("a coherent V2 record decodes");
+        assert_eq!(
+            run.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        // The reminted digests are the ones the decoder recomputed.
+        assert_eq!(run.canonical_bytes(), bytes.as_slice());
+        assert_eq!(run.run_sha256(), sha256_hex(&bytes));
+        assert_eq!(
+            run.record().contracts.standalone_semantics.sha256,
+            run.standalone_semantics_sha256()
+        );
+        assert_eq!(
+            run.record().contracts.identity_bundle_sha256,
+            run.identity_bundle_sha256()
+        );
+        // The section rode into standalone semantics through the existing
+        // complete-environment clone, with no duplicate semantics-core field.
+        assert_eq!(
+            run.record()
+                .contracts
+                .standalone_semantics
+                .core
+                .environment
+                .environment_randomization_v2,
+            Some(exact_environment_randomization_section_v2())
+        );
+    }
+
+    /// The synthetic legacy fixture still classifies as legacy and still omits
+    /// the optional section from canonical bytes.
+    ///
+    /// This is a round-trip and omission check on a fixture this module builds,
+    /// so it is deliberately NOT offered as the byte-identity proof: comparing
+    /// a fixture to itself cannot detect a change that moved both sides. The
+    /// noncircular proof that real historical records are unaffected lives in
+    /// the existing `real_s1_mirror` and `real_ladder_pilot` tests, which pin
+    /// literal stored `run_sha256` values captured before this change. Those
+    /// tests are untouched by this patch and must keep passing.
+    #[test]
+    fn legacy_v1_fixture_still_classifies_as_legacy_and_omits_the_section() {
+        let bytes = fixture_bytes();
+        let run = decode_train_run_v2(&bytes).expect("the legacy fixture decodes");
+        assert_eq!(
+            run.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+        );
+        assert_eq!(run.record().environment.environment_randomization_v2, None);
+        assert_eq!(run.canonical_bytes(), bytes.as_slice());
+        assert_eq!(run.run_sha256(), sha256_hex(&bytes));
+        let text = String::from_utf8(bytes).expect("canonical bytes are UTF-8");
+        assert!(
+            !text.contains("environment_randomization_v2"),
+            "an absent section must be omitted from canonical bytes entirely"
+        );
+    }
+
+    /// The exhaustive closed-tuple proof: two section states, four
+    /// protocol/schema pairs, and all sixty-four masks over the six trajectory
+    /// pins. Exactly two of the five hundred twelve combinations are accepted.
+    #[test]
+    fn classification_accepts_only_complete_v1_and_complete_v2_tuples() {
+        let legacy = legacy_trajectory_contract_v1();
+        let v2 = v2_trajectory_contract_v2();
+        let version_pairs = [
+            (
+                u64::from(FROZEN_PROTOCOL_VERSION_V2),
+                u64::from(FROZEN_SCHEMA_VERSION_V2),
+            ),
+            (
+                u64::from(FROZEN_PROTOCOL_VERSION_V2),
+                u64::from(RL_SESSION_SCHEMA_VERSION_V6),
+            ),
+            (
+                u64::from(RL_SESSION_PROTOCOL_VERSION_V6),
+                u64::from(FROZEN_SCHEMA_VERSION_V2),
+            ),
+            (
+                u64::from(RL_SESSION_PROTOCOL_VERSION_V6),
+                u64::from(RL_SESSION_SCHEMA_VERSION_V6),
+            ),
+        ];
+        let mut accepted = 0_usize;
+        let mut total = 0_usize;
+        for section_present in [false, true] {
+            for (protocol_version, schema_version) in version_pairs {
+                for mask in 0_u8..64 {
+                    total += 1;
+                    let mut record = fixture_record();
+                    record.environment.protocol_version = protocol_version;
+                    record.environment.schema_version = schema_version;
+                    record.environment.environment_randomization_v2 = if section_present {
+                        Some(exact_environment_randomization_section_v2())
+                    } else {
+                        None
+                    };
+                    // Bit i selects the V2 value for pin i, so mask 0 is the
+                    // complete V1 tuple and mask 63 the complete V2 tuple.
+                    let pick = |bit: u8, v1: &str, v2v: &str| {
+                        if mask & (1 << bit) == 0 {
+                            v1.to_owned()
+                        } else {
+                            v2v.to_owned()
+                        }
+                    };
+                    record.contracts.trajectory = TrajectoryContractV2 {
+                        identity: pick(0, &legacy.identity, &v2.identity),
+                        cross_language_goldens_schema: pick(
+                            1,
+                            &legacy.cross_language_goldens_schema,
+                            &v2.cross_language_goldens_schema,
+                        ),
+                        cross_language_generator_identity: pick(
+                            2,
+                            &legacy.cross_language_generator_identity,
+                            &v2.cross_language_generator_identity,
+                        ),
+                        cross_language_golden_stream_identity: pick(
+                            3,
+                            &legacy.cross_language_golden_stream_identity,
+                            &v2.cross_language_golden_stream_identity,
+                        ),
+                        cross_language_goldens_file_sha256: pick(
+                            4,
+                            &legacy.cross_language_goldens_file_sha256,
+                            &v2.cross_language_goldens_file_sha256,
+                        ),
+                        cross_language_golden_stream_sha256: pick(
+                            5,
+                            &legacy.cross_language_golden_stream_sha256,
+                            &v2.cross_language_golden_stream_sha256,
+                        ),
+                    };
+                    let observed = classify_environment_trajectory_contract_v1(&record);
+                    let expect_legacy = !section_present
+                        && mask == 0
+                        && protocol_version == u64::from(FROZEN_PROTOCOL_VERSION_V2)
+                        && schema_version == u64::from(FROZEN_SCHEMA_VERSION_V2);
+                    let expect_v2 = section_present
+                        && mask == 63
+                        && protocol_version == u64::from(RL_SESSION_PROTOCOL_VERSION_V6)
+                        && schema_version == u64::from(RL_SESSION_SCHEMA_VERSION_V6);
+                    match (expect_legacy, expect_v2) {
+                        (true, false) => {
+                            assert_eq!(
+                                observed.as_ref().ok(),
+                                Some(&NativeRunEnvironmentTrajectoryContractV1::LegacyV1),
+                                "complete V1 tuple must classify as legacy"
+                            );
+                            accepted += 1;
+                        }
+                        (false, true) => {
+                            assert_eq!(
+                                observed.as_ref().ok(),
+                                Some(
+                                    &NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+                                ),
+                                "complete V2 tuple must classify as V2"
+                            );
+                            accepted += 1;
+                        }
+                        _ => {
+                            assert!(
+                                observed.is_err(),
+                                "section_present={section_present} versions=({protocol_version},{schema_version}) mask={mask} must reject"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(total, 2 * 4 * 64);
+        assert_eq!(accepted, 2, "exactly two complete tuples are admissible");
+    }
+
+    /// Every descriptor field and every ordered array rejects under
+    /// one-at-a-time mutation, with the rest of the tuple left complete.
+    ///
+    /// `TrainRunV2` deliberately has no `Clone`, so each iteration builds a
+    /// fresh `coherent_v2_record()` rather than cloning a shared base. Only the
+    /// optional section is cloned, which it derives from `Clone`.
+    #[test]
+    fn every_environment_descriptor_rejects_under_single_mutation() {
+        type SectionMutatorV2 = Box<dyn Fn(&mut EnvironmentRandomizationContractV2)>;
+
+        assert!(classify_environment_trajectory_contract_v1(&coherent_v2_record()).is_ok());
+
+        let mut mutators: Vec<(String, SectionMutatorV2)> = vec![
+            (
+                "identity".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.identity.push_str("-drift")
+                }),
+            ),
+            (
+                "namespace".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.namespace.push_str("-drift")
+                }),
+            ),
+            (
+                "atom".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| s.atom.push_str("-drift")),
+            ),
+            (
+                "extraction".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.extraction.push_str("-drift")
+                }),
+            ),
+            (
+                "initial_ordinal_rule".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.initial_ordinal_rule.push_str("-drift")
+                }),
+            ),
+            (
+                "overflow_rule".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.overflow_rule.push_str("-drift")
+                }),
+            ),
+            (
+                "shuffle_algorithm".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.shuffle_algorithm.push_str("-drift")
+                }),
+            ),
+            (
+                "cross_language_goldens_schema".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.cross_language_goldens_schema.push_str("-drift")
+                }),
+            ),
+            (
+                "cross_language_goldens_file_sha256".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.cross_language_goldens_file_sha256.push('0')
+                }),
+            ),
+            (
+                "owners[0]".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.owners[0].push_str("-drift")
+                }),
+            ),
+            (
+                "owners[1]".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.owners[1].push_str("-drift")
+                }),
+            ),
+            (
+                "owners swapped".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| s.owners.swap(0, 1)),
+            ),
+            (
+                "purposes[0]".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.purposes[0].push_str("-drift")
+                }),
+            ),
+            (
+                "purposes[1]".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.purposes[1].push_str("-drift")
+                }),
+            ),
+            (
+                "purposes swapped".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| s.purposes.swap(0, 1)),
+            ),
+            (
+                "ordered_atoms truncated".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.ordered_atoms.pop();
+                }),
+            ),
+            (
+                "ordered_atoms extended".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| {
+                    s.ordered_atoms.push(vec!["field-name".to_owned()])
+                }),
+            ),
+            (
+                "ordered_atoms reordered".to_owned(),
+                Box::new(|s: &mut EnvironmentRandomizationContractV2| s.ordered_atoms.swap(0, 1)),
+            ),
+        ];
+
+        // Every one of the six frozen rows carries authority, not just row
+        // zero: mutate the last element of each row in turn.
+        assert_eq!(ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2.len(), 6);
+        for row in 0..ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2.len() {
+            mutators.push((
+                format!("ordered_atoms[{row}] last element"),
+                Box::new(move |s: &mut EnvironmentRandomizationContractV2| {
+                    let last = s.ordered_atoms[row].len() - 1;
+                    s.ordered_atoms[row][last].push_str("-drift");
+                }),
+            ));
+        }
+
+        // Row arity is authority too, for both frozen row shapes: rows 0 and 1
+        // are two-element rows, rows 2 through 5 are four-element rows. Shrink
+        // and grow one row of each shape.
+        for (row, arity) in [(0_usize, 2_usize), (1, 2), (2, 4), (3, 4), (4, 4), (5, 4)] {
+            assert_eq!(ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2[row].len(), arity);
+            mutators.push((
+                format!("ordered_atoms[{row}] arity {arity} shrunk"),
+                Box::new(move |s: &mut EnvironmentRandomizationContractV2| {
+                    s.ordered_atoms[row].pop();
+                }),
+            ));
+            mutators.push((
+                format!("ordered_atoms[{row}] arity {arity} grown"),
+                Box::new(move |s: &mut EnvironmentRandomizationContractV2| {
+                    s.ordered_atoms[row].push("extra".to_owned())
+                }),
+            ));
+        }
+
+        for (label, mutate) in &mutators {
+            let mut record = coherent_v2_record();
+            let mut section = record
+                .environment
+                .environment_randomization_v2
+                .clone()
+                .expect("the V2 base carries a section");
+            mutate(&mut section);
+            record.environment.environment_randomization_v2 = Some(section);
+            assert!(
+                classify_environment_trajectory_contract_v1(&record).is_err(),
+                "{label} must reject"
+            );
+        }
+    }
+
+    #[test]
+    fn environment_section_rejects_unknown_and_missing_fields() {
+        let mut value = serde_json::to_value(exact_environment_randomization_section_v2()).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.insert("unexpected".to_owned(), serde_json::json!("x"));
+        assert!(
+            serde_json::from_value::<EnvironmentRandomizationContractV2>(value.clone()).is_err(),
+            "an unknown section field must not decode"
+        );
+        for field in [
+            "identity",
+            "namespace",
+            "atom",
+            "extraction",
+            "ordered_atoms",
+            "owners",
+            "purposes",
+            "initial_ordinal_rule",
+            "overflow_rule",
+            "shuffle_algorithm",
+            "cross_language_goldens_schema",
+            "cross_language_goldens_file_sha256",
+        ] {
+            let mut missing =
+                serde_json::to_value(exact_environment_randomization_section_v2()).unwrap();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(
+                serde_json::from_value::<EnvironmentRandomizationContractV2>(missing).is_err(),
+                "missing {field} must not decode"
+            );
+        }
     }
 
     #[test]
@@ -3770,16 +4431,17 @@ mod tests {
         assert_eq!(
             record.contracts.trajectory,
             TrajectoryContractV2 {
-                identity: FROZEN_TRAJECTORY_IDENTITY_V2.to_owned(),
-                cross_language_goldens_schema: FROZEN_TRAJECTORY_GOLDENS_SCHEMA_V2.to_owned(),
-                cross_language_generator_identity: FROZEN_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2
+                identity: FROZEN_LEGACY_TRAJECTORY_IDENTITY_V1.to_owned(),
+                cross_language_goldens_schema: FROZEN_LEGACY_TRAJECTORY_GOLDENS_SCHEMA_V1
                     .to_owned(),
-                cross_language_golden_stream_identity: FROZEN_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2
+                cross_language_generator_identity:
+                    FROZEN_LEGACY_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1.to_owned(),
+                cross_language_golden_stream_identity:
+                    FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1.to_owned(),
+                cross_language_goldens_file_sha256: FROZEN_LEGACY_TRAJECTORY_GOLDENS_FILE_SHA256_V1
                     .to_owned(),
-                cross_language_goldens_file_sha256: FROZEN_TRAJECTORY_GOLDENS_FILE_SHA256_V2
-                    .to_owned(),
-                cross_language_golden_stream_sha256: FROZEN_TRAJECTORY_GOLDEN_STREAM_SHA256_V2
-                    .to_owned(),
+                cross_language_golden_stream_sha256:
+                    FROZEN_LEGACY_TRAJECTORY_GOLDEN_STREAM_SHA256_V1.to_owned(),
             }
         );
 

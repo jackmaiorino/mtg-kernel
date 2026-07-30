@@ -8,8 +8,8 @@
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_policy_train_step_v1::NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1;
 use crate::native_training_store_run_v2::{
-    TrainRunEnvironmentV2, TrainRunPackageV2, TrainRunRuntimeV2, TrainRunSourceV2,
-    TrainRunToolchainV2, ValidatedTrainRunV2,
+    NativeRunEnvironmentTrajectoryContractV1, TrainRunEnvironmentV2, TrainRunPackageV2,
+    TrainRunRuntimeV2, TrainRunSourceV2, TrainRunToolchainV2, ValidatedTrainRunV2,
 };
 use crate::policy_surface_v5::POLICY_SURFACE_VERSION;
 use crate::rl_session::{
@@ -282,6 +282,31 @@ pub struct NativeStoreProductionCaptureGuardV2 {
     environment: TrainRunEnvironmentV2,
 }
 
+/// Distinct code for the Phase C1 inactive-manifest rejection, so it is
+/// never confused with an ordinary captured-tuple mismatch.
+pub(crate) const NATIVE_STORE_PRODUCTION_CAPTURE_INACTIVE_ENV_RANDOMIZATION_V2_CODE: &str =
+    "validated_run_environment_randomization_v2_inactive";
+
+/// Phase C1 inactive-manifest gate for production capture.
+///
+/// Written as an exhaustive two-arm match with no wildcard: a future third
+/// classifier variant fails compilation here instead of silently slipping
+/// through an equality test. It consults only the classifier result, so it is
+/// independent of every captured tuple value the guard holds. The test suite
+/// exercises it both ways: directly, and through a real
+/// `NativeStoreProductionCaptureGuardV2::begin` guard driving
+/// `require_matches_run_v2`, where a legacy run passes this clause and goes on
+/// to the ordinary captured-tuple comparison while a V2 run stops here.
+fn reject_inactive_environment_randomization_v2(run: &ValidatedTrainRunV2) -> Result<()> {
+    match run.environment_trajectory_contract_v1() {
+        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => Ok(()),
+        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => Err(capture_error(
+            NativeStoreProductionCaptureErrorKindV2::RunMismatch,
+            NATIVE_STORE_PRODUCTION_CAPTURE_INACTIVE_ENV_RANDOMIZATION_V2_CODE,
+        )),
+    }
+}
+
 impl NativeStoreProductionCaptureGuardV2 {
     /// Captures every frozen production value before returning a guard.
     pub fn begin(source_root: impl AsRef<Path>) -> Result<Self> {
@@ -347,6 +372,12 @@ impl NativeStoreProductionCaptureGuardV2 {
 
     /// Requires an already validated run to contain this exact captured tuple.
     pub fn require_matches_run_v2(&self, run: &ValidatedTrainRunV2) -> Result<()> {
+        // Inactive-manifest gate (Phase C1). Production capture never binds a
+        // run classified as the environment randomization V2 trajectory
+        // contract. This precedes `run.record()` and every tuple comparison,
+        // and carries its own code so the rejection is distinguishable from an
+        // ordinary captured-tuple mismatch.
+        reject_inactive_environment_randomization_v2(run)?;
         let record = run.record();
         if record.package != self.package
             || record.toolchain != self.toolchain
@@ -542,6 +573,11 @@ fn build_environment_record() -> Result<TrainRunEnvironmentV2> {
         kernel_version: KERNEL_VERSION.to_string(),
         surface_version: u64::from(H2_PREDICATE_VERSION),
         policy_surface_version: u64::from(POLICY_SURFACE_VERSION),
+        // Production capture only ever describes the live legacy V1
+        // environment. The optional environment randomization V2 section is
+        // explicitly absent, and absence is omitted from canonical bytes, so
+        // captured tuples stay byte-identical to every existing record.
+        environment_randomization_v2: None,
     })
 }
 
@@ -1506,6 +1542,95 @@ mod tests {
         assert_eq!(
             capture.process_architecture,
             architecture_name(compiled_target_machine()).unwrap()
+        );
+    }
+
+    /// Phase C1 required test 8. Production capture rejects a run classified as
+    /// the environment randomization V2 trajectory contract, with the distinct
+    /// inactive code, and still accepts the legacy control.
+    ///
+    /// This exercises the real guard, not the gate helper in isolation:
+    /// `NativeStoreProductionCaptureGuardV2::begin` performs the live source,
+    /// executable, catalog, and runtime capture against the repository root,
+    /// and both runs are then put through `require_matches_run_v2`.
+    ///
+    /// The legacy fixture is the ordering control. Its captured tuple is a test
+    /// fixture, not this build's live capture, so it reaches the ordinary
+    /// captured-tuple comparison and fails there with
+    /// `validated_run_capture_tuple_mismatch`. That proves the inactive gate
+    /// did not fire for legacy and that control really does flow past the first
+    /// clause into `run.record()`. The V2 fixture stops earlier, at the gate,
+    /// with the distinct inactive code.
+    ///
+    /// `begin` pins the build source tree, so this test is meaningful only from
+    /// a clean committed worktree in a release msvc build, which is exactly the
+    /// configuration under which this module is compiled at all.
+    #[test]
+    fn inactive_manifest_gate_rejects_v2_before_the_ordinary_tuple_comparison() {
+        use crate::native_training_store_run_v2::{
+            decode_train_run_v2, test_fixture_bytes_environment_randomization_v2,
+            test_fixture_bytes_v2,
+        };
+
+        let source_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("the crate manifest directory has a repository parent");
+        let guard = NativeStoreProductionCaptureGuardV2::begin(source_root)
+            .expect("production capture begins from the repository root");
+
+        let legacy = decode_train_run_v2(&test_fixture_bytes_v2()).expect("legacy fixture decodes");
+        assert_eq!(
+            legacy.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+        );
+        let legacy_error = guard
+            .require_matches_run_v2(&legacy)
+            .expect_err("the legacy test fixture is not this build's live capture");
+        assert_eq!(
+            legacy_error.kind(),
+            NativeStoreProductionCaptureErrorKindV2::RunMismatch
+        );
+        assert_eq!(
+            legacy_error.code(),
+            "validated_run_capture_tuple_mismatch",
+            "legacy must pass the inactive gate and fail at the ordinary tuple comparison"
+        );
+
+        let v2 = decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2())
+            .expect("the coherent V2 fixture decodes");
+        assert_eq!(
+            v2.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        let v2_error = guard
+            .require_matches_run_v2(&v2)
+            .expect_err("the V2 run must be rejected by production capture");
+        assert_eq!(
+            v2_error.kind(),
+            NativeStoreProductionCaptureErrorKindV2::RunMismatch
+        );
+        assert_eq!(
+            v2_error.code(),
+            NATIVE_STORE_PRODUCTION_CAPTURE_INACTIVE_ENV_RANDOMIZATION_V2_CODE
+        );
+        assert_eq!(
+            v2_error.code(),
+            "validated_run_environment_randomization_v2_inactive"
+        );
+        assert_ne!(
+            v2_error.code(),
+            legacy_error.code(),
+            "the inactive rejection must be distinguishable from a tuple mismatch"
+        );
+
+        // The gate helper itself is closed over the classifier alone.
+        reject_inactive_environment_randomization_v2(&legacy)
+            .expect("the legacy control passes the inactive gate");
+        assert_eq!(
+            reject_inactive_environment_randomization_v2(&v2)
+                .unwrap_err()
+                .code(),
+            NATIVE_STORE_PRODUCTION_CAPTURE_INACTIVE_ENV_RANDOMIZATION_V2_CODE
         );
     }
 }

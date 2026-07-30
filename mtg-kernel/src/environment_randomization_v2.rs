@@ -79,6 +79,49 @@ pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_GOLDENS_V1: &str = include_
     "../../data/environment_randomization_v2/reset_physical_trajectory_goldens_v1.json"
 );
 
+/// Production owner constants for the frozen v2 derivation descriptor.
+///
+/// These were previously literals inside this module's golden test only. They
+/// are promoted here because the run-record manifest section
+/// (`native_training_store_run_v2::EnvironmentRandomizationContractV2`) is
+/// validated against *projections of these constants*, never against a second
+/// restatement of the same strings. The descriptor test below now also projects
+/// from them, so the golden artifact, the manifest validator, and the
+/// implementation vocabulary cannot drift apart pairwise.
+pub const ENVIRONMENT_RANDOMIZATION_ATOM_FRAMING_V2: &str =
+    "u32be(tag_byte_len) || utf8(tag) || u64be(payload_byte_len) || payload";
+pub const ENVIRONMENT_RANDOMIZATION_EXTRACTION_V2: &str =
+    "first-8-sha256-digest-bytes-big-endian-no-mask";
+/// The closed owner vocabulary, in the frozen order. `PhysicalOwnerV2`
+/// projects from this array rather than restating the strings.
+pub const ENVIRONMENT_RANDOMIZATION_OWNERS_V2: [&str; 2] = ["p0", "p1"];
+/// The closed purpose vocabulary, in the frozen order. `ShufflePurposeV2`
+/// projects from this array.
+pub const ENVIRONMENT_RANDOMIZATION_PURPOSES_V2: [&str; 2] =
+    ["initial-library-shuffle", "in-game-library-shuffle"];
+pub const ENVIRONMENT_RANDOMIZATION_INITIAL_ORDINAL_RULE_V2: &str =
+    "initial-library-shuffle-requires-ordinal-zero";
+pub const ENVIRONMENT_RANDOMIZATION_OVERFLOW_RULE_V2: &str =
+    "ordinal-u64-max-rejected-before-derivation-roots-may-equal-u64-max";
+pub const ENVIRONMENT_RANDOMIZATION_SHUFFLE_ALGORITHM_V2: &str =
+    "splitmix64-descending-fisher-yates-modulo";
+/// The six ordered atoms of the derivation preimage, in the exact frozen
+/// order. Row arities are 2, 2, 4, 4, 4, 4; the first two rows carry the
+/// identity and namespace owner constants themselves.
+pub const ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2: [&[&str]; 6] = [
+    &["version", ENVIRONMENT_RANDOMIZATION_IDENTITY_V2],
+    &["namespace", ENVIRONMENT_RANDOMIZATION_NAMESPACE_V2],
+    &[
+        "field-name",
+        "pair_environment_seed",
+        "u64",
+        "8-byte-big-endian",
+    ],
+    &["field-name", "physical_owner", "str", "utf-8"],
+    &["field-name", "purpose", "str", "utf-8"],
+    &["field-name", "ordinal", "u64", "8-byte-big-endian"],
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PhysicalOwnerV2 {
     P0,
@@ -88,16 +131,18 @@ pub enum PhysicalOwnerV2 {
 impl PhysicalOwnerV2 {
     pub const fn as_str(self) -> &'static str {
         match self {
-            PhysicalOwnerV2::P0 => "p0",
-            PhysicalOwnerV2::P1 => "p1",
+            PhysicalOwnerV2::P0 => ENVIRONMENT_RANDOMIZATION_OWNERS_V2[0],
+            PhysicalOwnerV2::P1 => ENVIRONMENT_RANDOMIZATION_OWNERS_V2[1],
         }
     }
 
     pub fn parse(value: &str) -> Result<Self, EnvironmentRandomizationErrorV2> {
-        match value {
-            "p0" => Ok(PhysicalOwnerV2::P0),
-            "p1" => Ok(PhysicalOwnerV2::P1),
-            _ => Err(EnvironmentRandomizationErrorV2::InvalidOwner),
+        if value == ENVIRONMENT_RANDOMIZATION_OWNERS_V2[0] {
+            Ok(PhysicalOwnerV2::P0)
+        } else if value == ENVIRONMENT_RANDOMIZATION_OWNERS_V2[1] {
+            Ok(PhysicalOwnerV2::P1)
+        } else {
+            Err(EnvironmentRandomizationErrorV2::InvalidOwner)
         }
     }
 }
@@ -111,16 +156,18 @@ pub enum ShufflePurposeV2 {
 impl ShufflePurposeV2 {
     pub const fn as_str(self) -> &'static str {
         match self {
-            ShufflePurposeV2::InitialLibraryShuffle => "initial-library-shuffle",
-            ShufflePurposeV2::InGameLibraryShuffle => "in-game-library-shuffle",
+            ShufflePurposeV2::InitialLibraryShuffle => ENVIRONMENT_RANDOMIZATION_PURPOSES_V2[0],
+            ShufflePurposeV2::InGameLibraryShuffle => ENVIRONMENT_RANDOMIZATION_PURPOSES_V2[1],
         }
     }
 
     pub fn parse(value: &str) -> Result<Self, EnvironmentRandomizationErrorV2> {
-        match value {
-            "initial-library-shuffle" => Ok(ShufflePurposeV2::InitialLibraryShuffle),
-            "in-game-library-shuffle" => Ok(ShufflePurposeV2::InGameLibraryShuffle),
-            _ => Err(EnvironmentRandomizationErrorV2::InvalidPurpose),
+        if value == ENVIRONMENT_RANDOMIZATION_PURPOSES_V2[0] {
+            Ok(ShufflePurposeV2::InitialLibraryShuffle)
+        } else if value == ENVIRONMENT_RANDOMIZATION_PURPOSES_V2[1] {
+            Ok(ShufflePurposeV2::InGameLibraryShuffle)
+        } else {
+            Err(EnvironmentRandomizationErrorV2::InvalidPurpose)
         }
     }
 }
@@ -336,25 +383,25 @@ mod tests {
         let contract = &doc["contract"];
         assert_eq!(
             contract["atom"].as_str().expect("atom"),
-            "u32be(tag_byte_len) || utf8(tag) || u64be(payload_byte_len) || payload"
+            ENVIRONMENT_RANDOMIZATION_ATOM_FRAMING_V2
         );
         assert_eq!(
             contract["extraction"].as_str().expect("extraction"),
-            "first-8-sha256-digest-bytes-big-endian-no-mask"
+            ENVIRONMENT_RANDOMIZATION_EXTRACTION_V2
         );
         assert_eq!(
             contract["shuffle_algorithm"].as_str().expect("shuffle"),
-            "splitmix64-descending-fisher-yates-modulo"
+            ENVIRONMENT_RANDOMIZATION_SHUFFLE_ALGORITHM_V2
         );
         assert_eq!(
             contract["initial_ordinal_rule"]
                 .as_str()
                 .expect("initial rule"),
-            "initial-library-shuffle-requires-ordinal-zero"
+            ENVIRONMENT_RANDOMIZATION_INITIAL_ORDINAL_RULE_V2
         );
         assert_eq!(
             contract["overflow_rule"].as_str().expect("overflow rule"),
-            "ordinal-u64-max-rejected-before-derivation-roots-may-equal-u64-max"
+            ENVIRONMENT_RANDOMIZATION_OVERFLOW_RULE_V2
         );
         let owners: Vec<&str> = contract["owners"]
             .as_array()
@@ -362,35 +409,89 @@ mod tests {
             .iter()
             .map(|v| v.as_str().expect("owner"))
             .collect();
-        assert_eq!(owners, ["p0", "p1"]);
+        assert_eq!(owners, ENVIRONMENT_RANDOMIZATION_OWNERS_V2);
         let purposes: Vec<&str> = contract["purposes"]
             .as_array()
             .expect("purposes")
             .iter()
             .map(|v| v.as_str().expect("purpose"))
             .collect();
-        assert_eq!(
-            purposes,
-            ["initial-library-shuffle", "in-game-library-shuffle"]
-        );
+        assert_eq!(purposes, ENVIRONMENT_RANDOMIZATION_PURPOSES_V2);
         let ordered = contract["ordered_atoms"].as_array().expect("ordered atoms");
-        let expected_atoms = serde_json::json!([
-            ["version", ENVIRONMENT_RANDOMIZATION_IDENTITY_V2],
-            ["namespace", ENVIRONMENT_RANDOMIZATION_NAMESPACE_V2],
-            [
-                "field-name",
-                "pair_environment_seed",
-                "u64",
-                "8-byte-big-endian"
-            ],
-            ["field-name", "physical_owner", "str", "utf-8"],
-            ["field-name", "purpose", "str", "utf-8"],
-            ["field-name", "ordinal", "u64", "8-byte-big-endian"],
-        ]);
+        let expected_atoms = serde_json::Value::Array(
+            ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2
+                .iter()
+                .map(|row| {
+                    serde_json::Value::Array(
+                        row.iter()
+                            .map(|part| serde_json::Value::String((*part).to_owned()))
+                            .collect(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
         assert_eq!(
             serde_json::Value::Array(ordered.clone()),
             expected_atoms,
             "ordered atom descriptor must match the implementation literally"
+        );
+    }
+
+    /// The promoted owner constants are the single source of the closed
+    /// vocabulary: the enums project from them in both directions, and the
+    /// ordered-atom rows keep their frozen arities.
+    #[test]
+    fn owner_constants_are_the_single_vocabulary_source() {
+        assert_eq!(PhysicalOwnerV2::P0.as_str(), "p0");
+        assert_eq!(PhysicalOwnerV2::P1.as_str(), "p1");
+        assert_eq!(
+            ShufflePurposeV2::InitialLibraryShuffle.as_str(),
+            "initial-library-shuffle"
+        );
+        assert_eq!(
+            ShufflePurposeV2::InGameLibraryShuffle.as_str(),
+            "in-game-library-shuffle"
+        );
+        for (index, owner) in [PhysicalOwnerV2::P0, PhysicalOwnerV2::P1]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(owner.as_str(), ENVIRONMENT_RANDOMIZATION_OWNERS_V2[index]);
+            assert_eq!(PhysicalOwnerV2::parse(owner.as_str()), Ok(owner));
+        }
+        for (index, purpose) in [
+            ShufflePurposeV2::InitialLibraryShuffle,
+            ShufflePurposeV2::InGameLibraryShuffle,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                purpose.as_str(),
+                ENVIRONMENT_RANDOMIZATION_PURPOSES_V2[index]
+            );
+            assert_eq!(ShufflePurposeV2::parse(purpose.as_str()), Ok(purpose));
+        }
+        assert_eq!(
+            PhysicalOwnerV2::parse("p2"),
+            Err(EnvironmentRandomizationErrorV2::InvalidOwner)
+        );
+        assert_eq!(
+            ShufflePurposeV2::parse("other-shuffle"),
+            Err(EnvironmentRandomizationErrorV2::InvalidPurpose)
+        );
+        let arities: Vec<usize> = ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2
+            .iter()
+            .map(|row| row.len())
+            .collect();
+        assert_eq!(arities, vec![2, 2, 4, 4, 4, 4]);
+        assert_eq!(
+            ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2[0][1],
+            ENVIRONMENT_RANDOMIZATION_IDENTITY_V2
+        );
+        assert_eq!(
+            ENVIRONMENT_RANDOMIZATION_ORDERED_ATOMS_V2[1][1],
+            ENVIRONMENT_RANDOMIZATION_NAMESPACE_V2
         );
     }
 

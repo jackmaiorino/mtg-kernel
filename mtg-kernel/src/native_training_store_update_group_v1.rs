@@ -29,7 +29,9 @@ use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, NativeTrainingStoreAtomSha256V1,
     NativeTrainingStoreDigestErrorV1,
 };
-use crate::native_training_store_run_v2::ValidatedTrainRunV2;
+use crate::native_training_store_run_v2::{
+    NativeRunEnvironmentTrajectoryContractV1, ValidatedTrainRunV2,
+};
 use crate::rl::{PlayerSeatV1, TerminalOutcomeV1};
 use serde::{Deserialize, Serialize};
 use std::alloc::Layout;
@@ -936,6 +938,29 @@ pub(crate) fn validate_prepared_execution_config_v1(
     run: &ValidatedTrainRunV2,
     config: &NativeTrainingExecutionConfigV1,
 ) -> Result<()> {
+    // Inactive-manifest gate (Phase C1). A run classified as the environment
+    // randomization V2 trajectory contract is decodable and classifiable but
+    // not runnable: nothing in this build can train it. This is the first
+    // clause on purpose.
+    //
+    // Production orchestration reaches this validator before the side effects
+    // that matter: the science loop calls it before store bootstrap and path
+    // creation, resume calls it before root recapture, exclusive locking,
+    // store walking, and recognized-stage deletion, and prepared-segment
+    // preparation calls it before candidate cloning and update. That ordering
+    // is a property of those call sites, not of this function; a direct caller
+    // may already hold prepared state when it calls in, so this clause is a
+    // fail-closed check rather than a proof about the whole system.
+    //
+    // Written as an exhaustive two-arm match with no wildcard: a future third
+    // classifier variant fails compilation here instead of silently slipping
+    // through an equality test.
+    match run.environment_trajectory_contract_v1() {
+        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => {}
+        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => {
+            return Err(error_v1(UpdateGroupV1ErrorKind::RunBinding));
+        }
+    }
     let record = run.record();
     let worker_count = u64::try_from(config.worker_count)
         .map_err(|_| error_v1(UpdateGroupV1ErrorKind::RunBinding))?;
@@ -2349,7 +2374,9 @@ mod tests {
     use crate::native_training_store_checkpoint_v3::{
         build_genesis_checkpoint_manifest_v3, decode_genesis_checkpoint_manifest_v3,
     };
-    use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
+    use crate::native_training_store_run_v2::{
+        decode_train_run_v2, test_fixture_bytes_environment_randomization_v2, test_fixture_bytes_v2,
+    };
     use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
     use serde_json::Value;
     use sha2::{Digest, Sha256};
@@ -3170,6 +3197,583 @@ mod tests {
         assert_eq!(
             decode_value_error_v1(&rows),
             UpdateGroupV1ErrorKind::ChainMismatch
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase C1 inactive environment-randomization-V2 manifest gate.
+    //
+    // These live in this module, not a sibling one, so they can reach the
+    // private `execution_config_v1` helper above without widening any
+    // visibility.
+    // ---------------------------------------------------------------------
+
+    use crate::native_checkpoint_runner_v1::NativeCheckpointRunnerConfigV1;
+    use crate::native_science_loop_v1::{run_native_science_loop_v1, NativeScienceLoopV1ErrorKind};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[cfg(windows)]
+    use crate::native_training_store_bootstrap_v2::{
+        bootstrap_native_training_store_v2, NativeTrainingStoreBootstrapOutcomeV2,
+    };
+    #[cfg(windows)]
+    use crate::native_training_store_layout_v2::NativeTrainingStoreDirectoryV2;
+    #[cfg(windows)]
+    use crate::native_training_store_reference_latest_v2::{
+        build_checkpoint_reference_v2, build_latest_v2,
+    };
+    #[cfg(windows)]
+    use crate::native_training_store_resume_v2::{
+        resume_native_training_store_v2, validate_native_training_store_v2,
+        NativeTrainingStoreResumeV2ErrorKind,
+    };
+    #[cfg(windows)]
+    use crate::native_training_store_root_v2::{
+        NativeTrainingStoreRootV2ErrorKind, ValidatedNativeTrainingStoreRootV2,
+    };
+    #[cfg(windows)]
+    use crate::native_training_store_v2::publish_genesis_generation_v2;
+
+    /// Unique temporary parent, one per test, following the pattern the
+    /// science-loop and resume suites already use. `std` only.
+    struct InactiveGateParentV1 {
+        parent: PathBuf,
+    }
+
+    impl InactiveGateParentV1 {
+        fn new(label: &str) -> Self {
+            static ORDINAL: AtomicU64 = AtomicU64::new(0);
+            let ordinal = ORDINAL.fetch_add(1, Ordering::Relaxed);
+            let parent = std::env::temp_dir().join(format!(
+                "mtg-kernel-update-group-c1-{}-{label}-{ordinal}",
+                std::process::id()
+            ));
+            fs::create_dir(&parent).expect("create test parent");
+            Self { parent }
+        }
+
+        fn path(&self) -> &Path {
+            &self.parent
+        }
+
+        fn is_empty(&self) -> bool {
+            fs::read_dir(&self.parent)
+                .expect("read test parent")
+                .next()
+                .is_none()
+        }
+    }
+
+    impl Drop for InactiveGateParentV1 {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.parent);
+        }
+    }
+
+    fn coherent_v2_run_v1() -> ValidatedTrainRunV2 {
+        decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2())
+            .expect("the coherent V2 fixture decodes")
+    }
+
+    fn legacy_run_v1() -> ValidatedTrainRunV2 {
+        decode_train_run_v2(&test_fixture_bytes_v2()).expect("the legacy fixture decodes")
+    }
+
+    /// The V2 fixture really does decode and classify as V2. Every rejection
+    /// below is therefore an inactive-gate rejection and not an artifact of an
+    /// undecodable record.
+    #[test]
+    fn v2_fixture_decodes_and_classifies_as_v2() {
+        assert_eq!(
+            coherent_v2_run_v1().environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+    }
+
+    /// The legacy fixture is unaffected by the new classification.
+    #[test]
+    fn legacy_fixture_still_classifies_as_legacy() {
+        assert_eq!(
+            legacy_run_v1().environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+        );
+    }
+
+    /// The shared prepared-execution validator rejects the V2 run directly,
+    /// with the legacy run as the nonvacuity control on the same config.
+    #[test]
+    fn prepared_execution_config_rejects_v2_and_admits_legacy() {
+        let legacy = legacy_run_v1();
+        let v2 = coherent_v2_run_v1();
+        let config = execution_config_v1(&v2);
+
+        validate_prepared_execution_config_v1(&legacy, &config)
+            .expect("the config is otherwise valid: legacy accepts it");
+        assert_eq!(
+            validate_prepared_execution_config_v1(&v2, &config)
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::RunBinding
+        );
+    }
+
+    /// Phase C1 required test 5. The science loop rejects a V2 run before the
+    /// target store path exists.
+    ///
+    /// Runs on every platform: `run_native_science_loop_v1` calls
+    /// `validate_prepared_execution_config_v1` as its first statement
+    /// (`native_science_loop_v1.rs` lines 223 through 225) and only then
+    /// bootstraps (line 227), so the rejection precedes the platform check the
+    /// bootstrap would otherwise raise.
+    ///
+    /// The config is proven nonvacuous by validating it against the legacy run
+    /// first, and the snapshot manifest and payload paths are deliberately
+    /// missing: if the gate did not fire, the loop would fail somewhere else
+    /// and with a different kind.
+    #[test]
+    fn v2_science_loop_rejects_before_the_target_path_exists() {
+        let parent = InactiveGateParentV1::new("science-gate");
+        let legacy = legacy_run_v1();
+        let v2 = coherent_v2_run_v1();
+        let config = execution_config_v1(&v2);
+        validate_prepared_execution_config_v1(&legacy, &config)
+            .expect("the config is otherwise valid: legacy accepts it");
+
+        let target = parent.path().join("store");
+        let missing_manifest = parent.path().join("missing-snapshot-manifest.json");
+        let missing_payload = parent.path().join("missing-snapshot-payload.bin");
+        assert!(parent.is_empty());
+        assert!(fs::symlink_metadata(&target).is_err());
+        assert!(fs::symlink_metadata(&missing_manifest).is_err());
+        assert!(fs::symlink_metadata(&missing_payload).is_err());
+
+        let runner_config = NativeCheckpointRunnerConfigV1 {
+            evaluation_base_seed: 7_777,
+            first_episode_index: 0,
+            episode_count: 2,
+            scheduler_timeout: Duration::from_secs(300),
+            measure_broker_service_time: false,
+        };
+
+        let error = run_native_science_loop_v1(
+            parent.path(),
+            "store",
+            &v2,
+            config,
+            &missing_manifest,
+            &missing_payload,
+            runner_config,
+            None,
+            None,
+        )
+        .expect_err("a V2 run must never reach the science loop's bootstrap");
+        assert_eq!(error.kind(), NativeScienceLoopV1ErrorKind::InputInvalid);
+        assert_eq!(error.code(), "native-science-loop-input-invalid");
+
+        // Nothing was created: no store root, no snapshot sentinels, and the
+        // parent is still exactly as empty as it was before the call.
+        assert!(fs::symlink_metadata(&target).is_err());
+        assert!(fs::symlink_metadata(&missing_manifest).is_err());
+        assert!(fs::symlink_metadata(&missing_payload).is_err());
+        assert!(parent.is_empty());
+    }
+
+    /// Phase C1 required test 9. `EpisodeWireV1`'s maximum shape and canonical
+    /// output are unchanged, and its serialized value carries no environment
+    /// randomization V2 section, no outer digest, and no receipt field.
+    ///
+    /// The first assertion is the real non-expansion proof. A maximum-width
+    /// episode serialized standalone is one token plus one final LF; the
+    /// planner's per-episode allowance is one token plus one joining comma. LF
+    /// and comma are each one byte, so the two counts must be equal. Adding any
+    /// field to `EpisodeWireV1` without also widening the planner breaks that
+    /// equality, and widening the planner breaks the frozen totals pinned by
+    /// `update_group_closed_maximum_matches_frozen_recurrence`.
+    #[test]
+    fn episode_wire_v1_maximum_shape_and_canonical_output_are_unchanged() {
+        let maximum_episode = EpisodeWireV1 {
+            schema: EPISODE_SCHEMA_V1.to_owned(),
+            episode_index: U63_MAX_V1,
+            environment_seed_u64_hex: "f".repeat(16),
+            deck_ids: ["Rally".to_owned(), "Rally".to_owned()],
+            deck_hashes_u64_hex: ["f".repeat(16), "f".repeat(16)],
+            learner_seat: SeatWireV1::P0,
+            learner_return: -1,
+            terminal_outcome: OutcomeWireV1::P0Win,
+            winner: Some(SeatWireV1::P0),
+            terminal_classification: "natural".to_owned(),
+            terminal_code: "natural-game-over".to_owned(),
+            policy_step_count: U63_MAX_V1,
+            physical_decision_count: U63_MAX_V1,
+            learner_policy_step_count: U63_MAX_V1,
+            opponent_policy_step_count: U63_MAX_V1,
+            learner_physical_decision_count: U63_MAX_V1,
+            opponent_physical_decision_count: U63_MAX_V1,
+            trajectory_sha256: "f".repeat(64),
+        };
+        let bytes = to_canonical_json_bytes_v1(&maximum_episode, GROUP_NULL_POLICY_V1)
+            .expect("the maximum episode is canonically serializable");
+
+        // The planner's per-episode allowance is the difference between a
+        // one-episode and a two-episode group: one episode token plus the one
+        // comma that joins them. A canonical *document* is one token plus one
+        // final LF. Comma and LF are both one byte, so the standalone
+        // canonical byte count equals the allowance exactly.
+        let one = maximum_update_group_json_shape_v2(1, 1, 1).unwrap();
+        let two = maximum_update_group_json_shape_v2(2, 1, 1).unwrap();
+        let per_episode_allowance = two.token_bytes() - one.token_bytes();
+        assert_eq!(
+            u64::try_from(bytes.len()).unwrap(),
+            per_episode_allowance,
+            "the maximum episode must exactly consume the closed per-episode allowance"
+        );
+
+        // Pin the token/comma decomposition against real bytes rather than
+        // assuming it: wrapping the same maximum episode once and twice must
+        // differ by exactly the allowance. The wrapper uses the production
+        // episode null policy, whose only permitted null is
+        // `episodes[*].winner`.
+        let wrapped_once = to_canonical_json_bytes_v1(
+            &serde_json::json!({ "episodes": [&maximum_episode] }),
+            episode_null_policy_v1(),
+        )
+        .unwrap();
+        let wrapped_twice = to_canonical_json_bytes_v1(
+            &serde_json::json!({ "episodes": [&maximum_episode, &maximum_episode] }),
+            episode_null_policy_v1(),
+        )
+        .unwrap();
+        assert_eq!(
+            u64::try_from(wrapped_twice.len() - wrapped_once.len()).unwrap(),
+            per_episode_allowance,
+            "one more episode must cost exactly one token plus one comma"
+        );
+
+        // These frozen totals are pinned by
+        // `update_group_closed_maximum_matches_frozen_recurrence`; restate them
+        // here so a planner widening cannot satisfy the allowance equality
+        // above by moving both sides at once.
+        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_592);
+        assert_eq!(
+            maximum_update_group_json_shape_v2(2, 65_536, 131_072)
+                .unwrap()
+                .canonical_document_bytes_v1()
+                .unwrap(),
+            36_508_557
+        );
+
+        const EPISODE_KEYS_V1: [&str; 18] = [
+            "deck_hashes_u64_hex",
+            "deck_ids",
+            "environment_seed_u64_hex",
+            "episode_index",
+            "learner_physical_decision_count",
+            "learner_policy_step_count",
+            "learner_return",
+            "learner_seat",
+            "opponent_physical_decision_count",
+            "opponent_policy_step_count",
+            "physical_decision_count",
+            "policy_step_count",
+            "schema",
+            "terminal_classification",
+            "terminal_code",
+            "terminal_outcome",
+            "trajectory_sha256",
+            "winner",
+        ];
+        const FORBIDDEN_EPISODE_SUBSTRINGS_V1: [&str; 6] = [
+            "environment_randomization_v2",
+            "trajectory_sha256_v2",
+            "outer_trajectory_sha256",
+            "outer_digest",
+            "receipt",
+            "_v2",
+        ];
+
+        /// The independent oracle: all eighteen wire fields written out by
+        /// hand, including every `rename_all = "snake_case"` enum spelling and
+        /// the `Option<SeatWireV1>` null. Built from the typed episode without
+        /// going through `Serialize`, so comparing it to
+        /// `serde_json::to_value` catches any renamed, added, or dropped field.
+        fn manual_episode_value_v1(episode: &EpisodeWireV1) -> Value {
+            let seat_name_v1 = |seat: SeatWireV1| match seat {
+                SeatWireV1::P0 => "p0",
+                SeatWireV1::P1 => "p1",
+            };
+            serde_json::json!({
+                "deck_hashes_u64_hex": [
+                    episode.deck_hashes_u64_hex[0].clone(),
+                    episode.deck_hashes_u64_hex[1].clone(),
+                ],
+                "deck_ids": [episode.deck_ids[0].clone(), episode.deck_ids[1].clone()],
+                "environment_seed_u64_hex": episode.environment_seed_u64_hex.clone(),
+                "episode_index": episode.episode_index,
+                "learner_physical_decision_count": episode.learner_physical_decision_count,
+                "learner_policy_step_count": episode.learner_policy_step_count,
+                "learner_return": episode.learner_return,
+                "learner_seat": seat_name_v1(episode.learner_seat),
+                "opponent_physical_decision_count": episode.opponent_physical_decision_count,
+                "opponent_policy_step_count": episode.opponent_policy_step_count,
+                "physical_decision_count": episode.physical_decision_count,
+                "policy_step_count": episode.policy_step_count,
+                "schema": episode.schema.clone(),
+                "terminal_classification": episode.terminal_classification.clone(),
+                "terminal_code": episode.terminal_code.clone(),
+                "terminal_outcome": match episode.terminal_outcome {
+                    OutcomeWireV1::P0Win => "p0_win",
+                    OutcomeWireV1::P1Win => "p1_win",
+                    OutcomeWireV1::Draw => "draw",
+                },
+                "trajectory_sha256": episode.trajectory_sha256.clone(),
+                "winner": match episode.winner {
+                    Some(seat) => Value::from(seat_name_v1(seat)),
+                    None => Value::Null,
+                },
+            })
+        }
+
+        fn assert_episode_oracle_v1(episode: &EpisodeWireV1, label: &str) {
+            let manual = manual_episode_value_v1(episode);
+            assert_eq!(
+                serde_json::to_value(episode).unwrap(),
+                manual,
+                "{label}: EpisodeWireV1's serialized form must equal the manual oracle"
+            );
+
+            let object = manual.as_object().expect("the oracle is a JSON object");
+            let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            assert_eq!(
+                keys, EPISODE_KEYS_V1,
+                "{label}: EpisodeWireV1 must not gain or lose a field"
+            );
+
+            assert_eq!(episode.trajectory_sha256.len(), 64, "{label}: digest width");
+            assert!(
+                episode
+                    .trajectory_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+                "{label}: digest must be lowercase hex"
+            );
+
+            let rendered = manual.to_string();
+            for forbidden in FORBIDDEN_EPISODE_SUBSTRINGS_V1 {
+                assert!(
+                    !object.keys().any(|key| key.contains(forbidden)),
+                    "{label}: EpisodeWireV1 must not carry a {forbidden} key"
+                );
+                assert!(
+                    !rendered.contains(forbidden),
+                    "{label}: EpisodeWireV1 must not carry {forbidden}"
+                );
+            }
+        }
+
+        assert_episode_oracle_v1(&maximum_episode, "maximum episode");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            manual_episode_value_v1(&maximum_episode),
+            "the canonical bytes must decode back to the oracle"
+        );
+
+        // The real emitted group, decoded through the production decoder so the
+        // episodes are typed `EpisodeWireV1` values rather than loose JSON.
+        // `UpdateGroupWireV1` nests them under `evidence`.
+        let (fixture_run, fixture_context) = run_and_context_v1();
+        let decoded =
+            decode_update_group_v1(&fixture_run, fixture_context, &fixture_v1().group_bytes)
+                .expect("the fixture group decodes");
+        let fixture_episodes = &decoded.group().wire.evidence.episodes;
+        assert!(
+            !fixture_episodes.is_empty(),
+            "the fixture group must emit real episodes"
+        );
+        for (index, episode) in fixture_episodes.iter().enumerate() {
+            assert_episode_oracle_v1(episode, &format!("fixture episode {index}"));
+        }
+
+        // Canonical wrapped-episodes equality: the typed episodes the decoder
+        // produced and the independently built manual values must serialize to
+        // byte-identical canonical documents under the production episode null
+        // policy. This covers ordering, the winner null, and every spelling at
+        // once, not just the key set.
+        let manual_values: Vec<Value> = fixture_episodes
+            .iter()
+            .map(manual_episode_value_v1)
+            .collect();
+        assert_eq!(
+            to_canonical_json_bytes_v1(
+                &serde_json::json!({ "episodes": fixture_episodes }),
+                episode_null_policy_v1()
+            )
+            .unwrap(),
+            to_canonical_json_bytes_v1(
+                &serde_json::json!({ "episodes": manual_values }),
+                episode_null_policy_v1()
+            )
+            .unwrap(),
+            "the canonical wrapped episodes must match the manual oracle byte for byte"
+        );
+
+        assert_eq!(maximum_episode.schema, "mtg_kernel_native_train_episode/v1");
+    }
+
+    /// Complete-genesis Store, recreated from the proven helper in
+    /// `native_training_store_resume_v2.rs` (its tests around lines 1009
+    /// through 1040), using only public crate APIs. A skeleton-only Store
+    /// would make the cleanup proof vacuous, because there would be no
+    /// walkable chain for resume to accept in the first place.
+    #[cfg(windows)]
+    fn bootstrap_and_publish_genesis_c1_v1(
+        parent: &Path,
+        run: &ValidatedTrainRunV2,
+    ) -> ValidatedNativeTrainingStoreRootV2 {
+        let bootstrapped = bootstrap_native_training_store_v2(parent, "store").unwrap();
+        assert_eq!(
+            bootstrapped.outcome(),
+            NativeTrainingStoreBootstrapOutcomeV2::SkeletonReady
+        );
+        let root = bootstrapped.into_root();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let candidate = executor.checkpoint_candidate_v1().unwrap();
+        let payload = candidate.payload().to_vec();
+        let checkpoint = build_genesis_checkpoint_manifest_v3(run, &payload).unwrap();
+        let segment = build_genesis_segment_manifest_v2(run, &checkpoint).unwrap();
+        let boundary =
+            build_genesis_native_training_boundary_v2(run, &segment, &checkpoint).unwrap();
+        let reference = build_checkpoint_reference_v2(run, &boundary).unwrap();
+        let latest = build_latest_v2(&boundary, &reference).unwrap();
+        let receipt = publish_genesis_generation_v2(
+            &root,
+            run,
+            &payload,
+            &checkpoint,
+            &segment,
+            &boundary,
+            &reference,
+            &latest,
+        )
+        .unwrap();
+        assert_eq!(receipt.generation_index(), 0);
+        root
+    }
+
+    /// Phase C1 required test 6. Resume rejects a V2 run before root recapture,
+    /// before exclusive locking, and before recognized-stage cleanup.
+    ///
+    /// `resume_native_training_store_v2` calls the run validator first and only
+    /// then recaptures, locks, walks, and deletes
+    /// (`native_training_store_resume_v2.rs` lines 321 through 341). Each probe
+    /// below arranges a store state in which a missed gate would produce a
+    /// *different, observable* outcome, so the shared `RunInvalid` result is
+    /// evidence of ordering and not merely of rejection.
+    #[cfg(windows)]
+    #[test]
+    fn v2_resume_rejects_before_recapture_locking_and_stage_cleanup() {
+        const STAGE_SENTINEL_V1: &[u8] = b"phase-c1-inactive-manifest-stage-sentinel";
+
+        let parent = InactiveGateParentV1::new("resume-gate");
+        let v2 = coherent_v2_run_v1();
+
+        // The complete genesis Store is published with the V2 run itself. A
+        // legacy-bound Store would make probe 3 vacuous: absent the gate, the
+        // walk would reject on the run/Store mismatch before ever reaching the
+        // stage deletion plan, so stage survival would prove nothing.
+        let root = bootstrap_and_publish_genesis_c1_v1(parent.path(), &v2);
+
+        // A recognized stage leaf: exactly the shape resume's cleanup loop
+        // deletes under the exclusive lock.
+        let stage = root
+            .directory_path_v2(NativeTrainingStoreDirectoryV2::Segments)
+            .join(".segment-00000000.json.stage-v2");
+        fs::write(&stage, STAGE_SENTINEL_V1).unwrap();
+
+        let expect_run_invalid_v1 =
+            |root: &ValidatedNativeTrainingStoreRootV2, run: &ValidatedTrainRunV2, probe: &str| {
+                let error = resume_native_training_store_v2(root, run, execution_config_v1(run))
+                    .expect_err(probe);
+                assert_eq!(
+                    error.kind(),
+                    NativeTrainingStoreResumeV2ErrorKind::RunInvalid,
+                    "{probe}"
+                );
+                assert_eq!(error.code(), "native-training-store-resume-run-invalid");
+            };
+
+        // Probe 1: pre-recapture. Replacing `heads` with an empty directory is
+        // proven to make recapture report `IdentityChanged`
+        // (`native_training_store_root_v2.rs` tests around lines 1058 through
+        // 1073), so a missed gate would surface `RootInvalid` here.
+        let heads = root
+            .directory_path_v2(NativeTrainingStoreDirectoryV2::Heads)
+            .to_path_buf();
+        let heads_moved = heads.with_file_name("heads-moved");
+        fs::rename(&heads, &heads_moved).unwrap();
+        fs::create_dir(&heads).unwrap();
+        assert_eq!(
+            root.recapture_v2().unwrap_err().kind(),
+            NativeTrainingStoreRootV2ErrorKind::IdentityChanged,
+            "the replacement must really break recapture, or probe 1 is vacuous"
+        );
+        expect_run_invalid_v1(&root, &v2, "probe 1: rejection must precede recapture");
+        assert_eq!(fs::read(&stage).unwrap(), STAGE_SENTINEL_V1);
+        fs::remove_dir(&heads).unwrap();
+        fs::rename(&heads_moved, &heads).unwrap();
+        root.recapture_v2()
+            .expect("the original members are restored in order");
+
+        // Probe 2: pre-lock. A second validated root holds the exclusive lock,
+        // so a missed gate would surface the lock conflict as `StoreBusy`.
+        let second = ValidatedNativeTrainingStoreRootV2::open_v2(
+            root.directory_path_v2(NativeTrainingStoreDirectoryV2::Root),
+        )
+        .unwrap();
+        let guard = second.lock_exclusive_v2().unwrap();
+        assert_eq!(
+            root.lock_exclusive_v2().unwrap_err().kind(),
+            NativeTrainingStoreRootV2ErrorKind::StoreBusy,
+            "the lock must really be contended, or probe 2 is vacuous"
+        );
+        expect_run_invalid_v1(
+            &root,
+            &v2,
+            "probe 2: rejection must precede exclusive locking",
+        );
+        assert_eq!(fs::read(&stage).unwrap(), STAGE_SENTINEL_V1);
+        drop(guard);
+
+        // Probe 3: pre-cleanup. The Store is healthy, recaptured, unlocked, and
+        // bound to this very run.
+        //
+        // Nonvacuity comes from the walk itself: `validate_native_training_store_v2`
+        // is the same complete-Store validation resume performs after locking,
+        // and it accepts this exact state at generation 0 with the recognized
+        // stage present. So absent the gate, resume would reach the deletion
+        // plan and remove the stage. That it survives is the ordering proof.
+        let state = validate_native_training_store_v2(&root, &v2)
+            .expect("the V2-bound complete genesis Store walks cleanly");
+        assert_eq!(state.latest_generation_index(), 0);
+        assert_eq!(fs::read(&stage).unwrap(), STAGE_SENTINEL_V1);
+
+        expect_run_invalid_v1(
+            &root,
+            &v2,
+            "probe 3: rejection must precede the stage deletion plan",
+        );
+        assert_eq!(
+            fs::read(&stage).unwrap(),
+            STAGE_SENTINEL_V1,
+            "the recognized stage must survive a gated resume byte for byte"
         );
     }
 }
