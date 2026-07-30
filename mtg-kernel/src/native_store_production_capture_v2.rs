@@ -307,6 +307,40 @@ fn reject_inactive_environment_randomization_v2(run: &ValidatedTrainRunV2) -> Re
     }
 }
 
+/// The complete run-admission decision for production capture: the Phase C1
+/// inactive-manifest gate as the literal first clause, then the exact captured
+/// tuple comparison.
+///
+/// Pure by construction. It borrows the captured values instead of reaching
+/// into a guard, which is what lets the ordering between the two stages be
+/// proven without constructing a `NativeStoreProductionCaptureGuardV2`. It
+/// changes no admission rule: the clause order, the error kind, and both
+/// codes are exactly what `require_matches_run_v2` applied before.
+fn require_captured_values_match_run_v2(
+    run: &ValidatedTrainRunV2,
+    captured: NativeStoreProductionCapturedValuesV2<'_>,
+) -> Result<()> {
+    // Inactive-manifest gate (Phase C1). Production capture never binds a run
+    // classified as the environment randomization V2 trajectory contract. This
+    // precedes `run.record()` and every tuple comparison, and carries its own
+    // code so the rejection is distinguishable from an ordinary captured-tuple
+    // mismatch.
+    reject_inactive_environment_randomization_v2(run)?;
+    let record = run.record();
+    if record.package != *captured.package
+        || record.toolchain != *captured.toolchain
+        || record.source != *captured.source
+        || record.runtime != *captured.runtime
+        || record.environment != *captured.environment
+    {
+        return Err(capture_error(
+            NativeStoreProductionCaptureErrorKindV2::RunMismatch,
+            "validated_run_capture_tuple_mismatch",
+        ));
+    }
+    Ok(())
+}
+
 impl NativeStoreProductionCaptureGuardV2 {
     /// Captures every frozen production value before returning a guard.
     pub fn begin(source_root: impl AsRef<Path>) -> Result<Self> {
@@ -371,26 +405,14 @@ impl NativeStoreProductionCaptureGuardV2 {
     }
 
     /// Requires an already validated run to contain this exact captured tuple.
+    ///
+    /// The entire decision lives in `require_captured_values_match_run_v2`,
+    /// which consumes only the validated run and borrowed captured values.
+    /// At this admission stage, the guard supplies `captured_values()`, so both
+    /// the inactive-manifest gate and the tuple comparison stay reachable by
+    /// tests that cannot construct a guard.
     pub fn require_matches_run_v2(&self, run: &ValidatedTrainRunV2) -> Result<()> {
-        // Inactive-manifest gate (Phase C1). Production capture never binds a
-        // run classified as the environment randomization V2 trajectory
-        // contract. This precedes `run.record()` and every tuple comparison,
-        // and carries its own code so the rejection is distinguishable from an
-        // ordinary captured-tuple mismatch.
-        reject_inactive_environment_randomization_v2(run)?;
-        let record = run.record();
-        if record.package != self.package
-            || record.toolchain != self.toolchain
-            || record.source != self.source
-            || record.runtime != self.runtime
-            || record.environment != self.environment
-        {
-            return Err(capture_error(
-                NativeStoreProductionCaptureErrorKindV2::RunMismatch,
-                "validated_run_capture_tuple_mismatch",
-            ));
-        }
-        Ok(())
+        require_captured_values_match_run_v2(run, self.captured_values())
     }
 
     /// Consumes the guard after exact source/catalog/runtime/executable
@@ -1549,22 +1571,39 @@ mod tests {
     /// the environment randomization V2 trajectory contract, with the distinct
     /// inactive code, and still accepts the legacy control.
     ///
-    /// This exercises the real guard, not the gate helper in isolation:
-    /// `NativeStoreProductionCaptureGuardV2::begin` performs the live source,
-    /// executable, catalog, and runtime capture against the repository root,
-    /// and both runs are then put through `require_matches_run_v2`.
+    /// This drives `require_captured_values_match_run_v2`, the pure helper that
+    /// carries the whole admission decision and that
+    /// `require_matches_run_v2` delegates to verbatim via
+    /// `self.captured_values()`. It deliberately does NOT call
+    /// `NativeStoreProductionCaptureGuardV2::begin`.
     ///
-    /// The legacy fixture is the ordering control. Its captured tuple is a test
-    /// fixture, not this build's live capture, so it reaches the ordinary
-    /// captured-tuple comparison and fails there with
-    /// `validated_run_capture_tuple_mismatch`. That proves the inactive gate
-    /// did not fire for legacy and that control really does flow past the first
-    /// clause into `run.record()`. The V2 fixture stops earlier, at the gate,
-    /// with the distinct inactive code.
+    /// `begin` cannot honestly run inside libtest, and no amount of tree
+    /// hygiene changes that. It validates the *currently running* executable
+    /// with `validate_executable_path(&path, "mtg-kernel-native.exe")`. Under
+    /// `cargo test` the running process is the libtest harness binary,
+    /// `mtg_kernel-<hash>.exe`, so the leaf can never match and `begin` fails
+    /// with `Path`/`executable_leaf_mismatch` before returning a guard or
+    /// reaching either classifier arm. An earlier revision of this test called
+    /// `begin` and failed exactly there. Making it pass would have meant
+    /// weakening the production executable check, which must not happen: that
+    /// check is the reason a production tuple cannot be minted by an arbitrary
+    /// process. So the test targets the pure helper instead, and the guard's
+    /// one-line delegation is what carries the result back to `begin`'s caller.
     ///
-    /// `begin` pins the build source tree, so this test is meaningful only from
-    /// a clean committed worktree in a release msvc build, which is exactly the
-    /// configuration under which this module is compiled at all.
+    /// Ordering is proven by running each fixture against the *opposite*
+    /// fixture's captured values:
+    ///
+    /// - legacy run vs V2 captured values must pass the inactive gate and then
+    ///   fail the tuple comparison with `validated_run_capture_tuple_mismatch`,
+    ///   which shows control really does flow past the first clause into
+    ///   `run.record()`;
+    /// - V2 run vs legacy captured values must stop at the gate with the
+    ///   distinct inactive code, even though the tuple stage would also have
+    ///   rejected it. Only ordering can explain which code comes back.
+    ///
+    /// The asserted inequality of the two environments is what makes this
+    /// non-vacuous: both directions genuinely mismatch at the tuple stage, so
+    /// the differing codes isolate the gate rather than the data.
     #[test]
     fn inactive_manifest_gate_rejects_v2_before_the_ordinary_tuple_comparison() {
         use crate::native_training_store_run_v2::{
@@ -1572,20 +1611,45 @@ mod tests {
             test_fixture_bytes_v2,
         };
 
-        let source_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("the crate manifest directory has a repository parent");
-        let guard = NativeStoreProductionCaptureGuardV2::begin(source_root)
-            .expect("production capture begins from the repository root");
-
         let legacy = decode_train_run_v2(&test_fixture_bytes_v2()).expect("legacy fixture decodes");
         assert_eq!(
             legacy.environment_trajectory_contract_v1(),
             NativeRunEnvironmentTrajectoryContractV1::LegacyV1
         );
-        let legacy_error = guard
-            .require_matches_run_v2(&legacy)
-            .expect_err("the legacy test fixture is not this build's live capture");
+        let v2 = decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2())
+            .expect("the coherent V2 fixture decodes");
+        assert_eq!(
+            v2.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+
+        // Non-vacuity: the two fixtures really do carry different environments,
+        // so each cross-wise pairing below is a genuine tuple mismatch.
+        assert_ne!(
+            legacy.record().environment,
+            v2.record().environment,
+            "the ordering oracle needs two genuinely different captured tuples"
+        );
+
+        let legacy_values = NativeStoreProductionCapturedValuesV2 {
+            package: &legacy.record().package,
+            toolchain: &legacy.record().toolchain,
+            source: &legacy.record().source,
+            runtime: &legacy.record().runtime,
+            environment: &legacy.record().environment,
+        };
+        let v2_values = NativeStoreProductionCapturedValuesV2 {
+            package: &v2.record().package,
+            toolchain: &v2.record().toolchain,
+            source: &v2.record().source,
+            runtime: &v2.record().runtime,
+            environment: &v2.record().environment,
+        };
+
+        // Legacy run against V2 captured values: past the gate, stopped by the
+        // ordinary tuple comparison.
+        let legacy_error = require_captured_values_match_run_v2(&legacy, v2_values)
+            .expect_err("mismatched captured values must be rejected");
         assert_eq!(
             legacy_error.kind(),
             NativeStoreProductionCaptureErrorKindV2::RunMismatch
@@ -1593,17 +1657,12 @@ mod tests {
         assert_eq!(
             legacy_error.code(),
             "validated_run_capture_tuple_mismatch",
-            "legacy must pass the inactive gate and fail at the ordinary tuple comparison"
+            "legacy must pass the inactive gate and fail at the tuple comparison"
         );
 
-        let v2 = decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2())
-            .expect("the coherent V2 fixture decodes");
-        assert_eq!(
-            v2.environment_trajectory_contract_v1(),
-            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
-        );
-        let v2_error = guard
-            .require_matches_run_v2(&v2)
+        // V2 run against legacy captured values: stopped at the gate first,
+        // even though the tuple stage would have rejected it too.
+        let v2_error = require_captured_values_match_run_v2(&v2, legacy_values)
             .expect_err("the V2 run must be rejected by production capture");
         assert_eq!(
             v2_error.kind(),
@@ -1622,6 +1681,20 @@ mod tests {
             legacy_error.code(),
             "the inactive rejection must be distinguishable from a tuple mismatch"
         );
+
+        // A V2 run is refused even when the captured values match it exactly,
+        // so the gate is not standing in for a tuple mismatch.
+        assert_eq!(
+            require_captured_values_match_run_v2(&v2, v2_values)
+                .expect_err("an exactly matching V2 tuple is still inactive")
+                .code(),
+            NATIVE_STORE_PRODUCTION_CAPTURE_INACTIVE_ENV_RANDOMIZATION_V2_CODE
+        );
+
+        // And a legacy run against its own captured values is admitted, which
+        // proves the helper is not rejecting unconditionally.
+        require_captured_values_match_run_v2(&legacy, legacy_values)
+            .expect("a legacy run matching its own captured tuple is admitted");
 
         // The gate helper itself is closed over the classifier alone.
         reject_inactive_environment_randomization_v2(&legacy)
