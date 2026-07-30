@@ -15,7 +15,8 @@ use crate::mana::ManaColor;
 use crate::phase_profile::{measure_optional, RlPhaseProfileV1, RlPhaseV1};
 use crate::policy_surface_v5::{
     FastActorInPlaceApplyErrorV1, PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5,
-    PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM, POLICY_SURFACE_VERSION,
+    PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM,
+    POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2, POLICY_SURFACE_VERSION,
 };
 use crate::rl::{
     build_deck_pair_state, core_policy_action_candidates_v5, legal_action_candidates_v5,
@@ -38,6 +39,10 @@ pub const RL_SESSION_PROTOCOL_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_NAME: &str = "kernel_rl_jsonl";
 pub const FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM: &str =
     "fnv1a64-serde-json-fast-actor-core-environment-v1";
+/// Sibling identity for sessions on environment-v2 randomness states. The
+/// legacy constant above is frozen and unchanged.
+pub const FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2: &str =
+    "fnv1a64-serde-json-fast-actor-core-environment-v2";
 pub const CANONICAL_BURN_DECK_ID: &str = "Burn";
 pub const CANONICAL_RALLY_DECK_ID: &str = "Rally";
 
@@ -4179,6 +4184,19 @@ impl RlEpisodeSessionV1 {
         #[cfg(test)]
         TEST_EXACT_ENVIRONMENT_HASH_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
+        Ok(fnv1a64(&self.environment_envelope_bytes(current)?))
+    }
+
+    /// Serialized policy-environment outer-envelope bytes, dispatched on the
+    /// state's diagnostic algorithm identity. Exactly one typed envelope is
+    /// serialized per state; the matching hash and diagnostic identities are
+    /// hardcoded in each branch; any unknown future identity is a typed
+    /// error. Private so the production API surface is unchanged while
+    /// same-module tests can inspect the serialized schema and identities.
+    fn environment_envelope_bytes(
+        &self,
+        current: Option<&CurrentDecisionV1>,
+    ) -> Result<Vec<u8>, String> {
         #[derive(Serialize)]
         struct PolicyEnvironmentEnvelopeV1 {
             schema_version: u32,
@@ -4197,33 +4215,83 @@ impl RlEpisodeSessionV1 {
             legal_action_ids: Vec<String>,
         }
 
-        let envelope = PolicyEnvironmentEnvelopeV1 {
-            schema_version: 1,
-            hash_algorithm: POLICY_ENVIRONMENT_HASH_ALGORITHM,
-            diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
-            diagnostic_state_hash: self.state.diagnostic_state_hash(),
-            harness_surface_context: self.surface.harness_public_context(),
-            policy_surface_context: self.surface.privileged_scan_context()?,
-            policy_step_count: self.policy_step_count,
-            physical_decision_count: self.physical_decision_count,
-            current_actor: current.map(|decision| decision.actor),
-            physical_decision_id: current.map(|decision| decision.physical_decision_id),
-            substep_index: current.map(|decision| decision.substep_index),
-            substep_count: current.map(|decision| decision.substep_count),
-            observation_projection_hash: current
-                .map(|decision| decision.observation.visible_projection_hash),
-            legal_action_ids: current
-                .map(|decision| {
-                    decision
-                        .candidates
-                        .iter()
-                        .map(|candidate| candidate.record.stable_id.clone())
-                        .collect()
+        #[derive(Serialize)]
+        struct PolicyEnvironmentEnvelopeV2 {
+            schema_version: u32,
+            hash_algorithm: &'static str,
+            diagnostic_state_hash_algorithm: &'static str,
+            diagnostic_state_hash: u64,
+            harness_surface_context: crate::surface_v2::HarnessSurfacePublicContextV2,
+            policy_surface_context: crate::policy_surface_v5::PolicySurfaceContextIdsV5,
+            policy_step_count: u64,
+            physical_decision_count: u64,
+            current_actor: Option<PlayerId>,
+            physical_decision_id: Option<u64>,
+            substep_index: Option<u32>,
+            substep_count: Option<u32>,
+            observation_projection_hash: Option<u64>,
+            legal_action_ids: Vec<String>,
+        }
+
+        let current_actor = current.map(|decision| decision.actor);
+        let physical_decision_id = current.map(|decision| decision.physical_decision_id);
+        let substep_index = current.map(|decision| decision.substep_index);
+        let substep_count = current.map(|decision| decision.substep_count);
+        let observation_projection_hash =
+            current.map(|decision| decision.observation.visible_projection_hash);
+        let legal_action_ids: Vec<String> = current
+            .map(|decision| {
+                decision
+                    .candidates
+                    .iter()
+                    .map(|candidate| candidate.record.stable_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        match self.state.diagnostic_state_hash_algorithm() {
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM => {
+                serde_json::to_vec(&PolicyEnvironmentEnvelopeV1 {
+                    schema_version: 1,
+                    hash_algorithm: POLICY_ENVIRONMENT_HASH_ALGORITHM,
+                    diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+                    diagnostic_state_hash: self.state.diagnostic_state_hash(),
+                    harness_surface_context: self.surface.harness_public_context(),
+                    policy_surface_context: self.surface.privileged_scan_context()?,
+                    policy_step_count: self.policy_step_count,
+                    physical_decision_count: self.physical_decision_count,
+                    current_actor,
+                    physical_decision_id,
+                    substep_index,
+                    substep_count,
+                    observation_projection_hash,
+                    legal_action_ids,
                 })
-                .unwrap_or_default(),
-        };
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        Ok(fnv1a64(&bytes))
+                .map_err(|err| err.to_string())
+            }
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2 => {
+                serde_json::to_vec(&PolicyEnvironmentEnvelopeV2 {
+                    schema_version: 2,
+                    hash_algorithm: POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2,
+                    diagnostic_state_hash_algorithm:
+                        crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2,
+                    diagnostic_state_hash: self.state.diagnostic_state_hash(),
+                    harness_surface_context: self.surface.harness_public_context(),
+                    policy_surface_context: self.surface.privileged_scan_context()?,
+                    policy_step_count: self.policy_step_count,
+                    physical_decision_count: self.physical_decision_count,
+                    current_actor,
+                    physical_decision_id,
+                    substep_index,
+                    substep_count,
+                    observation_projection_hash,
+                    legal_action_ids,
+                })
+                .map_err(|err| err.to_string())
+            }
+            unknown => Err(format!(
+                "unrecognized diagnostic state hash algorithm identity: {unknown}"
+            )),
+        }
     }
 }
 
@@ -5300,6 +5368,30 @@ fn compute_core_environment_hash(
     physical_decision_count: u64,
     current: Option<CoreEnvironmentDecisionRefV1<'_>>,
 ) -> Result<u64, String> {
+    Ok(fnv1a64(&core_environment_envelope_bytes(
+        state,
+        surface,
+        environment_revision,
+        policy_step_count,
+        physical_decision_count,
+        current,
+    )?))
+}
+
+/// Serialized core-environment outer-envelope bytes, dispatched on the
+/// state's diagnostic algorithm identity. Exactly one typed envelope is
+/// serialized per state; the matching hash and diagnostic identities are
+/// hardcoded in each branch; any unknown future identity is a typed error.
+/// Private so the production API surface is unchanged while same-module
+/// tests can inspect the serialized schema and identities.
+fn core_environment_envelope_bytes(
+    state: &crate::state::GameState,
+    surface: &PolicySurfaceV5,
+    environment_revision: u64,
+    policy_step_count: u64,
+    physical_decision_count: u64,
+    current: Option<CoreEnvironmentDecisionRefV1<'_>>,
+) -> Result<Vec<u8>, String> {
     #[derive(Serialize)]
     struct CoreEnvironmentEnvelopeV1<'a> {
         schema_version: u32,
@@ -5314,20 +5406,56 @@ fn compute_core_environment_hash(
         current: Option<CoreEnvironmentDecisionRefV1<'a>>,
     }
 
-    let envelope = CoreEnvironmentEnvelopeV1 {
-        schema_version: 1,
-        hash_algorithm: FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM,
-        diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
-        diagnostic_state_hash: state.diagnostic_state_hash(),
-        harness_surface_context: surface.harness_public_context(),
-        policy_surface_context: surface.privileged_scan_context()?,
-        environment_revision,
-        policy_step_count,
-        physical_decision_count,
-        current,
-    };
-    let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-    Ok(fnv1a64(&bytes))
+    #[derive(Serialize)]
+    struct CoreEnvironmentEnvelopeV2<'a> {
+        schema_version: u32,
+        hash_algorithm: &'static str,
+        diagnostic_state_hash_algorithm: &'static str,
+        diagnostic_state_hash: u64,
+        harness_surface_context: crate::surface_v2::HarnessSurfacePublicContextV2,
+        policy_surface_context: PolicySurfaceContextIdsV5,
+        environment_revision: u64,
+        policy_step_count: u64,
+        physical_decision_count: u64,
+        current: Option<CoreEnvironmentDecisionRefV1<'a>>,
+    }
+
+    match state.diagnostic_state_hash_algorithm() {
+        crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM => {
+            serde_json::to_vec(&CoreEnvironmentEnvelopeV1 {
+                schema_version: 1,
+                hash_algorithm: FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM,
+                diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+                diagnostic_state_hash: state.diagnostic_state_hash(),
+                harness_surface_context: surface.harness_public_context(),
+                policy_surface_context: surface.privileged_scan_context()?,
+                environment_revision,
+                policy_step_count,
+                physical_decision_count,
+                current,
+            })
+            .map_err(|err| err.to_string())
+        }
+        crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2 => {
+            serde_json::to_vec(&CoreEnvironmentEnvelopeV2 {
+                schema_version: 2,
+                hash_algorithm: FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2,
+                diagnostic_state_hash_algorithm:
+                    crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2,
+                diagnostic_state_hash: state.diagnostic_state_hash(),
+                harness_surface_context: surface.harness_public_context(),
+                policy_surface_context: surface.privileged_scan_context()?,
+                environment_revision,
+                policy_step_count,
+                physical_decision_count,
+                current,
+            })
+            .map_err(|err| err.to_string())
+        }
+        unknown => Err(format!(
+            "unrecognized diagnostic state hash algorithm identity: {unknown}"
+        )),
+    }
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -10363,5 +10491,178 @@ mod tests {
             Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
         );
         assert_eq!((v2_actions, v2_refs, v2_objects), before);
+    }
+
+    fn v2_session_state(env_seed: u64) -> crate::state::GameState {
+        let burn = crate::rl::burn_deck_ids();
+        crate::rl::build_deck_pair_state_environment_v2(env_seed, &burn, &burn)
+            .expect("the v2 Burn/Burn deck pair builds")
+    }
+
+    /// Test-only environment-v2 session: the state is replaced directly,
+    /// then surface, current decision, and every counter are reset and the
+    /// session advances normally, so no legacy-derived decision remains.
+    fn full_session_on_environment_v2(env_seed: u64) -> RlEpisodeSessionV1 {
+        let mut session = RlEpisodeSessionV1::reset(1, env_seed, 8);
+        session.state = v2_session_state(env_seed);
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        assert!(
+            session.terminal.is_none(),
+            "the v2 session reaches a live decision"
+        );
+        session
+    }
+
+    fn fast_session_on_environment_v2(env_seed: u64) -> FastActorSessionV1 {
+        let mut session = FastActorSessionV1::reset(1, env_seed, 8);
+        session.state = v2_session_state(env_seed);
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        assert!(
+            session.terminal.is_none(),
+            "the v2 fast session reaches a live decision"
+        );
+        session
+    }
+
+    #[test]
+    fn environment_hashes_are_diagnostic_dispatched_with_exact_goldens() {
+        // Pre-edit captured legacy goldens (episode 1, env seed 99, max 8),
+        // recorded from the untouched parent before any production edit.
+        let legacy_full = RlEpisodeSessionV1::reset(1, 99, 8);
+        let legacy_fast = FastActorSessionV1::reset(1, 99, 8);
+        assert_eq!(
+            legacy_full.privileged_environment_hash(),
+            0xcc4e_fc39_024e_ccd5,
+            "captured legacy policy environment golden"
+        );
+        assert_eq!(
+            legacy_full.privileged_core_environment_hash(),
+            0x5005_8868_e7a2_bc28,
+            "captured legacy full-session core golden"
+        );
+        assert_eq!(
+            legacy_fast.privileged_core_environment_hash(),
+            0x5005_8868_e7a2_bc28,
+            "captured legacy fast-session core golden equals the full one"
+        );
+
+        let v2_full = full_session_on_environment_v2(99);
+        let v2_fast = fast_session_on_environment_v2(99);
+        let v2_policy = v2_full.privileged_environment_hash();
+        let v2_full_core = v2_full.privileged_core_environment_hash();
+        let v2_fast_core = v2_fast.privileged_core_environment_hash();
+        assert_eq!(
+            v2_policy, 0x7abb_750c_9f4a_4651,
+            "environment-v2 policy environment golden"
+        );
+        assert_eq!(
+            v2_full_core, 0xbb18_34f0_90be_fb8c,
+            "environment-v2 core environment golden"
+        );
+        assert_eq!(
+            v2_fast_core, v2_full_core,
+            "full and fast environment-v2 core hashes are equal"
+        );
+        assert_ne!(v2_policy, 0xcc4e_fc39_024e_ccd5);
+        assert_ne!(v2_full_core, 0x5005_8868_e7a2_bc28);
+    }
+
+    #[test]
+    fn environment_envelopes_map_schema_and_identities_exactly() {
+        assert_eq!(
+            POLICY_ENVIRONMENT_HASH_ALGORITHM,
+            "fnv1a64-serde-json-policy-environment-envelope-v1"
+        );
+        assert_eq!(
+            POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2,
+            "fnv1a64-serde-json-policy-environment-envelope-v2"
+        );
+        assert_eq!(
+            FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM,
+            "fnv1a64-serde-json-fast-actor-core-environment-v1"
+        );
+        assert_eq!(
+            FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2,
+            "fnv1a64-serde-json-fast-actor-core-environment-v2"
+        );
+
+        let legacy = RlEpisodeSessionV1::reset(1, 99, 8);
+        let bytes = legacy
+            .environment_envelope_bytes(legacy.current.as_ref())
+            .expect("legacy policy envelope bytes");
+        assert!(bytes.starts_with(br#"{"schema_version":1,"hash_algorithm":"#));
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parses");
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["hash_algorithm"], POLICY_ENVIRONMENT_HASH_ALGORITHM);
+        assert_eq!(
+            value["diagnostic_state_hash_algorithm"],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM
+        );
+
+        let v2 = full_session_on_environment_v2(99);
+        let bytes = v2
+            .environment_envelope_bytes(v2.current.as_ref())
+            .expect("v2 policy envelope bytes");
+        assert!(bytes.starts_with(br#"{"schema_version":2,"hash_algorithm":"#));
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parses");
+        assert_eq!(value["schema_version"], 2);
+        assert_eq!(
+            value["hash_algorithm"],
+            POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2
+        );
+        assert_eq!(
+            value["diagnostic_state_hash_algorithm"],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2
+        );
+
+        let fast_legacy = FastActorSessionV1::reset(1, 99, 8);
+        let bytes = core_environment_envelope_bytes(
+            &fast_legacy.state,
+            &fast_legacy.surface,
+            0,
+            0,
+            0,
+            None,
+        )
+        .expect("legacy core envelope bytes");
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parses");
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(
+            value["hash_algorithm"],
+            FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM
+        );
+        assert_eq!(
+            value["diagnostic_state_hash_algorithm"],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM
+        );
+
+        let fast_v2 = fast_session_on_environment_v2(99);
+        let bytes =
+            core_environment_envelope_bytes(&fast_v2.state, &fast_v2.surface, 0, 0, 0, None)
+                .expect("v2 core envelope bytes");
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parses");
+        assert_eq!(value["schema_version"], 2);
+        assert_eq!(
+            value["hash_algorithm"],
+            FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2
+        );
+        assert_eq!(
+            value["diagnostic_state_hash_algorithm"],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2
+        );
     }
 }
