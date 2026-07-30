@@ -382,7 +382,8 @@ fn generated_typecycling_resolves_select_and_finish_end_to_end() {
     .unwrap();
     let mut remaining = original_library.clone();
     remaining.retain(|&object| object != selected);
-    let expected_selected_library = reference_shuffle(remaining, state.rng);
+    let expected_selected_library =
+        reference_shuffle(remaining, *state.legacy_rng().expect("legacy state"));
     assert!(matches!(
         engine::advance_until_decision(&mut state),
         Decision::CastSpellOrPass { .. }
@@ -404,7 +405,10 @@ fn generated_typecycling_resolves_select_and_finish_end_to_end() {
     assert!(state.engine.pending_effect.is_none());
 
     engine::step(&mut finish, Action::FinishEffectSelection).unwrap();
-    let expected_finished_library = reference_shuffle(original_library, finish.rng);
+    let expected_finished_library = reference_shuffle(
+        original_library,
+        *finish.legacy_rng().expect("legacy state"),
+    );
     assert!(matches!(
         engine::advance_until_decision(&mut finish),
         Decision::CastSpellOrPass { .. }
@@ -581,7 +585,7 @@ fn search_uses_effective_subtypes_and_fails_closed_when_effective_types_are_unav
     );
     unavailable.objects.get_mut(library[0]).v4.face_index = 1;
     let original_library = unavailable.players[0].library.clone();
-    let rng = unavailable.rng;
+    let rng = *unavailable.legacy_rng().expect("legacy state");
     assert!(matches!(
         engine::advance_until_decision(&mut unavailable),
         Decision::Halted {
@@ -590,7 +594,7 @@ fn search_uses_effective_subtypes_and_fails_closed_when_effective_types_are_unav
         } if actual == source
     ));
     assert_eq!(unavailable.players[0].library, original_library);
-    assert_eq!(unavailable.rng, rng);
+    assert_eq!(*unavailable.legacy_rng().expect("legacy state"), rng);
 }
 
 #[test]
@@ -621,7 +625,7 @@ fn choose_moves_then_reveals_then_deterministically_shuffles_remaining_library()
     let post_answer = state.clone();
     let mut unshuffled = library.clone();
     unshuffled.retain(|&object| object != selected);
-    let expected = reference_shuffle(unshuffled, post_answer.rng);
+    let expected = reference_shuffle(unshuffled, *post_answer.legacy_rng().expect("legacy state"));
     let resolved_decision = engine::advance_until_decision(&mut state);
     assert!(matches!(
         resolved_decision,
@@ -663,7 +667,7 @@ fn finish_with_matches_and_zero_match_or_empty_library_all_still_shuffle() {
         0x4c4f_5249_454e_0004,
     );
     engine::advance_until_decision(&mut finish);
-    let expected = reference_shuffle(library.clone(), finish.rng);
+    let expected = reference_shuffle(library.clone(), *finish.legacy_rng().expect("legacy state"));
     engine::step(&mut finish, Action::FinishEffectSelection).unwrap();
     assert!(matches!(
         engine::advance_until_decision(&mut finish),
@@ -676,7 +680,7 @@ fn finish_with_matches_and_zero_match_or_empty_library_all_still_shuffle() {
         &["Mountain", "Fiery Temper", "Snow-Covered Forest"],
         0x4c4f_5249_454e_0005,
     );
-    let expected = reference_shuffle(library, no_match.rng);
+    let expected = reference_shuffle(library, *no_match.legacy_rng().expect("legacy state"));
     let no_match_decision = engine::advance_until_decision(&mut no_match);
     assert!(matches!(
         &no_match_decision,
@@ -779,7 +783,7 @@ fn assert_invalid_continuation_without_gameplay_mutation(mut state: GameState, s
     let library = state.players[0].library.clone();
     let hand = state.players[0].hand.clone();
     let history = state.engine.event_history.clone();
-    let rng = state.rng;
+    let rng = *state.legacy_rng().expect("legacy state");
     assert!(matches!(
         engine::advance_until_decision(&mut state),
         Decision::Halted {
@@ -790,7 +794,7 @@ fn assert_invalid_continuation_without_gameplay_mutation(mut state: GameState, s
     assert_eq!(state.players[0].library, library);
     assert_eq!(state.players[0].hand, hand);
     assert_eq!(state.engine.event_history, history);
-    assert_eq!(state.rng, rng);
+    assert_eq!(*state.legacy_rng().expect("legacy state"), rng);
 }
 
 #[test]
@@ -1028,7 +1032,7 @@ fn countered_cycling_item_keeps_paid_costs_and_registered_spell_draws_three() {
     let lorien = put_object(&mut cycling, PlayerId::P0, "Lorien Revealed", Zone::Hand);
     engine::step(&mut cycling, Action::ActivateAbility(lorien, 0)).unwrap();
     engine::advance_until_decision(&mut cycling);
-    let rng = cycling.rng;
+    let rng = *cycling.legacy_rng().expect("legacy state");
     let removed = cycling
         .stack
         .pop()
@@ -1038,7 +1042,8 @@ fn countered_cycling_item_keeps_paid_costs_and_registered_spell_draws_three() {
     assert_eq!(cycling.objects.get(lorien).zone, Zone::Graveyard);
     assert_eq!(cycling.players[0].library, library);
     assert_eq!(
-        cycling.rng, rng,
+        *cycling.legacy_rng().expect("legacy state"),
+        rng,
         "a countered ability never searches or shuffles"
     );
 
@@ -1166,4 +1171,455 @@ fn a_normally_countered_lorien_spell_draws_nothing() {
             ..
         }
     )));
+}
+
+/// Swaps a staged state's legacy randomness for the given environment-v2
+/// fragment through the public serde surface, exactly as a restore would.
+fn into_environment_v2(state: &GameState, seed: u64, fragment: &str) -> GameState {
+    let json = serde_json::to_string(state).expect("staged state serializes");
+    let legacy_fragment = format!("\"rng\":{{\"state\":{seed}}}");
+    assert!(
+        json.contains(&legacy_fragment),
+        "staged state must carry the untouched legacy seed fragment"
+    );
+    serde_json::from_str(&json.replacen(&legacy_fragment, fragment, 1))
+        .expect("converted v2 state deserializes")
+}
+
+#[test]
+fn v2_search_commits_the_derived_substream_shuffle_at_the_frame() {
+    use mtg_kernel::environment_randomization_v2::{
+        derive_environment_randomization_seed_v2, PhysicalOwnerV2, ShufflePurposeV2,
+    };
+    let seed = 0x4c4f_5249_454e_1001;
+    let (staged, _source, library) = ready_inline_search(
+        &["Island", "Mountain", "Idyllic Beachfront", "Fiery Temper"],
+        seed,
+    );
+    let mut state = into_environment_v2(
+        &staged,
+        seed,
+        "\"environment_randomization_v2\":{\"pair_environment_seed\":424242,\"next_live_shuffle_ordinal\":[0,0]}",
+    );
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseEffectTargets { .. }
+    ));
+    let selected = library[2];
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(selected)),
+    )
+    .unwrap();
+    assert_eq!(
+        state
+            .environment_randomization_v2()
+            .expect("v2 state")
+            .next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+        0,
+        "the action-time preflight token is discarded without consuming an ordinal"
+    );
+    let mut remaining = library.clone();
+    remaining.retain(|&object| object != selected);
+    let derived = derive_environment_randomization_seed_v2(
+        424242,
+        PhysicalOwnerV2::P0,
+        ShufflePurposeV2::InGameLibraryShuffle,
+        0,
+    )
+    .expect("module derivation");
+    let expected = reference_shuffle(remaining, mtg_kernel::state::SplitMix64::seed(derived));
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert!(state.players[0].hand.contains(&selected));
+    assert_eq!(
+        state.players[0].library, expected,
+        "the v2 frame must shuffle with exactly the derived substream permutation"
+    );
+    let v2 = state.environment_randomization_v2().expect("v2 state");
+    assert_eq!(
+        v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+        1,
+        "the frame commit consumes exactly one P0 ordinal"
+    );
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+    assert!(state
+        .known_library_cards(PlayerId::P0, PlayerId::P0)
+        .is_empty());
+    assert!(state
+        .known_library_cards(PlayerId::P1, PlayerId::P0)
+        .is_empty());
+}
+
+#[test]
+fn v2_search_actions_reject_exhausted_ordinals_byte_exact() {
+    let seed = 0x4c4f_5249_454e_1002;
+    let (staged, _source, library) = ready_inline_search(
+        &["Island", "Mountain", "Idyllic Beachfront", "Fiery Temper"],
+        seed,
+    );
+    let mut state = into_environment_v2(
+        &staged,
+        seed,
+        "\"environment_randomization_v2\":{\"pair_environment_seed\":424242,\"next_live_shuffle_ordinal\":[18446744073709551615,0]}",
+    );
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseEffectTargets { .. }
+    ));
+    let before_json = serde_json::to_string(&state).expect("serializes");
+    let before_hot = state.state_hash();
+    let before_diag = state.diagnostic_state_hash();
+    let selected = library[2];
+    assert!(
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(selected)),
+        )
+        .is_err(),
+        "a target choice at an exhausted ordinal must fail"
+    );
+    assert_eq!(
+        serde_json::to_string(&state).expect("serializes"),
+        before_json,
+        "the failed target choice must be byte-exact nonmutating"
+    );
+    assert_eq!(state.state_hash(), before_hot);
+    assert_eq!(state.diagnostic_state_hash(), before_diag);
+    assert!(
+        engine::step(&mut state, Action::FinishEffectSelection).is_err(),
+        "a zero-selection finish at an exhausted ordinal must fail"
+    );
+    assert_eq!(
+        serde_json::to_string(&state).expect("serializes"),
+        before_json,
+        "the failed finish must be byte-exact nonmutating"
+    );
+    assert_eq!(state.state_hash(), before_hot);
+    assert_eq!(state.diagnostic_state_hash(), before_diag);
+}
+
+#[test]
+fn v2_finish_with_zero_matches_still_consumes_one_ordinal() {
+    use mtg_kernel::environment_randomization_v2::{
+        derive_environment_randomization_seed_v2, PhysicalOwnerV2, ShufflePurposeV2,
+    };
+    let seed = 0x4c4f_5249_454e_1003;
+    let (staged, _source, library) =
+        ready_inline_search(&["Mountain", "Fiery Temper", "Snow-Covered Forest"], seed);
+    let mut state = into_environment_v2(
+        &staged,
+        seed,
+        "\"environment_randomization_v2\":{\"pair_environment_seed\":515151,\"next_live_shuffle_ordinal\":[0,0]}",
+    );
+    let decision = engine::advance_until_decision(&mut state);
+    assert!(matches!(
+        &decision,
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            can_finish: true,
+            ..
+        } if legal_targets.is_empty()
+    ));
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    assert_eq!(
+        state
+            .environment_randomization_v2()
+            .expect("v2 state")
+            .next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+        0,
+        "the finish-time preflight token is discarded without consuming an ordinal"
+    );
+    let derived = derive_environment_randomization_seed_v2(
+        515151,
+        PhysicalOwnerV2::P0,
+        ShufflePurposeV2::InGameLibraryShuffle,
+        0,
+    )
+    .expect("module derivation");
+    let expected = reference_shuffle(library, mtg_kernel::state::SplitMix64::seed(derived));
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert!(
+        state.players[0].hand.is_empty(),
+        "a zero-match search moves nothing"
+    );
+    assert_eq!(
+        state.players[0].library, expected,
+        "the fail-to-find shuffle still commits the derived substream"
+    );
+    let v2 = state.environment_randomization_v2().expect("v2 state");
+    assert_eq!(
+        v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+        1,
+        "fail-to-find still consumes exactly one ordinal"
+    );
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+}
+
+#[test]
+fn v2_answered_search_frame_survives_serde_round_trip_and_replays_identically() {
+    let seed = 0x4c4f_5249_454e_1004;
+    let (staged, _source, library) = ready_inline_search(
+        &["Island", "Mountain", "Idyllic Beachfront", "Fiery Temper"],
+        seed,
+    );
+    let mut state = into_environment_v2(
+        &staged,
+        seed,
+        "\"environment_randomization_v2\":{\"pair_environment_seed\":616161,\"next_live_shuffle_ordinal\":[0,0]}",
+    );
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseEffectTargets { .. }
+    ));
+    let selected = library[2];
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(selected)),
+    )
+    .unwrap();
+    let mut round_tripped: GameState =
+        serde_json::from_str(&serde_json::to_string(&state).expect("answered frame serializes"))
+            .expect("answered frame deserializes");
+    assert_eq!(state, round_tripped);
+    let original_decision = engine::advance_until_decision(&mut state);
+    let replayed_decision = engine::advance_until_decision(&mut round_tripped);
+    assert!(matches!(
+        &original_decision,
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert_eq!(original_decision, replayed_decision);
+    assert_eq!(
+        state, round_tripped,
+        "the round-tripped answered Search frame must replay identically"
+    );
+    assert!(state.players[0].hand.contains(&selected));
+}
+
+#[test]
+fn v2_answered_search_with_live_noncandidate_selected_halts_without_any_mutation() {
+    use mtg_kernel::environment_randomization_v2::PhysicalOwnerV2;
+    let seed = 0x4c4f_5249_454e_1005;
+    let (staged, source, library) = ready_inline_search(
+        &["Island", "Mountain", "Idyllic Beachfront", "Fiery Temper"],
+        seed,
+    );
+    let mut state = into_environment_v2(
+        &staged,
+        seed,
+        "\"environment_randomization_v2\":{\"pair_environment_seed\":717171,\"next_live_shuffle_ordinal\":[0,0]}",
+    );
+    state.reveal_library_top(PlayerId::P0, PlayerId::P0, 2);
+    state.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+    let mountain = library[1];
+    // The engine's own canonical candidate computation excludes the
+    // Mountain: it is a true filter nonmatch for LandWithSubtype(Island).
+    let decision = engine::advance_until_decision(&mut state);
+    assert!(matches!(
+        &decision,
+        Decision::ChooseEffectTargets { legal_targets, .. }
+            if !legal_targets.is_empty()
+                && !legal_targets.contains(&Target::Object(mountain))
+    ));
+    let selected = library[2];
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(selected)),
+    )
+    .unwrap();
+    // Tamper the answered frame only: replace its `selected` with the live
+    // Mountain binding copied from that same frame's original_library. All
+    // ObjectState bytes stay untouched, so the replacement is a live,
+    // correctly bound library object that is simply not a candidate.
+    let mountain_binding = {
+        let continuation = state
+            .engine
+            .pending_effect
+            .as_mut()
+            .expect("answered continuation is pending");
+        let (frame_original_library, frame_selected) = continuation
+            .frames
+            .iter_mut()
+            .find_map(|frame| match frame {
+                EffectFrame::SearchLibraryToHand {
+                    original_library,
+                    selected,
+                    ..
+                } => Some((original_library, selected)),
+                _ => None,
+            })
+            .expect("answered SearchLibraryToHand frame is staged");
+        let binding = *frame_original_library
+            .iter()
+            .find(|binding| binding.object == mountain)
+            .expect("Mountain binding is in the frame's original_library");
+        *frame_selected = Some(binding);
+        binding
+    };
+    // Complete-object sentinels: every byte of both live GameObjects (the
+    // Mountain replacement and the originally selected card), including
+    // zone, face, counters, controller, damage, and generation fields, must
+    // survive the halted continuation unchanged.
+    let mountain_object_before = state.objects.get(mountain).clone();
+    let selected_object_before = state.objects.get(selected).clone();
+    // The replacement object remains in P0's library at its exact bound
+    // incarnation, front face up.
+    assert!(state.players[0].library.contains(&mountain));
+    assert_eq!(state.objects.get(mountain).zone, Zone::Library);
+    assert_eq!(
+        state.objects.get(mountain).zone_change_count,
+        mountain_binding.expected_zone_change_count,
+        "the replacement binding matches the live incarnation"
+    );
+    assert_eq!(
+        state.objects.get(mountain).v4.face_index,
+        0,
+        "the replacement object's front face is untouched"
+    );
+    let library_before = state.players[0].library.clone();
+    let hand_before = state.players[0].hand.clone();
+    let stack_before = state.stack.clone();
+    let library_knowledge_before = state.library_knowledge.clone();
+    let hand_knowledge_before = state.hand_knowledge.clone();
+    let history_before = state.engine.event_history.clone();
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        assert!(
+            !library_knowledge_before[observer.index()][PlayerId::P0.index()].is_empty(),
+            "observer {observer:?} knowledge sentinel must be nonempty"
+        );
+    }
+    assert!(!stack_before.is_empty(), "stack sentinel must be nonempty");
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: halted,
+        } if halted == source
+    ));
+    assert_eq!(state.players[0].library, library_before, "no shuffle");
+    assert!(
+        state.players[0].library.contains(&mountain),
+        "no move: the noncandidate replacement stays in the library"
+    );
+    assert!(
+        state.players[0].library.contains(&selected),
+        "no move: the originally answered card stays in the library too"
+    );
+    assert_eq!(state.players[0].hand, hand_before, "no move to hand");
+    assert_eq!(
+        *state.objects.get(mountain),
+        mountain_object_before,
+        "the halted continuation must leave every byte of the replacement \
+         GameObject unchanged"
+    );
+    assert_eq!(
+        *state.objects.get(selected),
+        selected_object_before,
+        "the halted continuation must leave every byte of the originally \
+         selected GameObject unchanged"
+    );
+    assert_eq!(
+        state.stack, stack_before,
+        "the halt restores the public stack exactly"
+    );
+    assert_eq!(
+        state.library_knowledge, library_knowledge_before,
+        "no library knowledge change"
+    );
+    assert_eq!(state.hand_knowledge, hand_knowledge_before, "no reveal");
+    assert_eq!(
+        state.engine.event_history, history_before,
+        "no committed event"
+    );
+    let v2 = state.environment_randomization_v2().expect("v2 state");
+    assert_eq!(
+        v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+        0,
+        "no counter consumption"
+    );
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+}
+
+#[test]
+fn v2_answered_search_frame_restored_at_max_preflights_before_move_or_reveal() {
+    use mtg_kernel::environment_randomization_v2::PhysicalOwnerV2;
+    let seed = 0x4c4f_5249_454e_1006;
+    let (staged, source, library) = ready_inline_search(
+        &["Island", "Mountain", "Idyllic Beachfront", "Fiery Temper"],
+        seed,
+    );
+    const HEALTHY: &str = "\"environment_randomization_v2\":{\"pair_environment_seed\":818181,\"next_live_shuffle_ordinal\":[0,0]}";
+    const EXHAUSTED: &str = "\"environment_randomization_v2\":{\"pair_environment_seed\":818181,\"next_live_shuffle_ordinal\":[18446744073709551615,0]}";
+    let mut state = into_environment_v2(&staged, seed, HEALTHY);
+    state.reveal_library_top(PlayerId::P0, PlayerId::P0, 2);
+    state.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseEffectTargets { .. }
+    ));
+    let selected = library[2];
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(selected)),
+    )
+    .unwrap();
+    // Restore the accepted answered frame into an exhausted P0 counter, as a
+    // snapshot restore would.
+    let mut restored: GameState = serde_json::from_str(
+        &serde_json::to_string(&state)
+            .expect("answered frame serializes")
+            .replacen(HEALTHY, EXHAUSTED, 1),
+    )
+    .expect("restored state deserializes");
+    let library_before = restored.players[0].library.clone();
+    let hand_before = restored.players[0].hand.clone();
+    let stack_before = restored.stack.clone();
+    let library_knowledge_before = restored.library_knowledge.clone();
+    let hand_knowledge_before = restored.hand_knowledge.clone();
+    let history_before = restored.engine.event_history.clone();
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        assert!(
+            !library_knowledge_before[observer.index()][PlayerId::P0.index()].is_empty(),
+            "observer {observer:?} knowledge sentinel must be nonempty"
+        );
+    }
+    assert!(!stack_before.is_empty(), "stack sentinel must be nonempty");
+    assert!(matches!(
+        engine::advance_until_decision(&mut restored),
+        Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: halted,
+        } if halted == source
+    ));
+    assert!(
+        restored.players[0].library.contains(&selected),
+        "the exhausted preflight must fire before the move: the selected \
+         card never left the library"
+    );
+    assert_eq!(restored.players[0].library, library_before, "no shuffle");
+    assert_eq!(restored.players[0].hand, hand_before, "no move to hand");
+    assert_eq!(
+        restored.stack, stack_before,
+        "the halt restores the public stack exactly"
+    );
+    assert_eq!(
+        restored.library_knowledge, library_knowledge_before,
+        "no library knowledge change"
+    );
+    assert_eq!(
+        restored.hand_knowledge, hand_knowledge_before,
+        "the exhausted preflight must fire before any reveal"
+    );
+    assert_eq!(
+        restored.engine.event_history, history_before,
+        "no committed event"
+    );
+    let v2 = restored.environment_randomization_v2().expect("v2 state");
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), u64::MAX);
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
 }

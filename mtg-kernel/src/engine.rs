@@ -11721,4 +11721,206 @@ mod tests {
         assert!(step(&mut state, Action::PlayLand(landscape)).is_err());
         assert_eq!(state.objects.get(landscape).zone, Zone::Exile);
     }
+
+    /// Stages a pending MayShuffleLibrary Boolean choice for P0 on the given
+    /// state through the real resolution path, returning the state and the
+    /// source object id.
+    fn stage_may_shuffle_choice(mut state: GameState) -> (GameState, ObjectId) {
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        state.stack.push(StackItem {
+            kind: StackItemKind::TriggeredAbility,
+            source,
+            controller: PlayerId::P0,
+            targets: vec![],
+            is_copy: false,
+            inline_effect: Some(EffectOp::MayShuffleLibrary {
+                player: PlayerRef::Controller,
+            }),
+            discarded: vec![],
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            v4: StackStateV4::default(),
+        });
+        state.engine.priority_passes = [true, true];
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::ChooseEffectBoolean {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        (state, source)
+    }
+
+    /// Swaps the staged legacy seed-1 randomness for the given v2 fragment
+    /// through the public serde surface, exactly as a restore would.
+    fn into_environment_v2(state: &GameState, fragment: &str) -> GameState {
+        let json = serde_json::to_string(state).expect("staged state serializes");
+        let legacy_fragment = "\"rng\":{\"state\":1}";
+        assert!(
+            json.contains(legacy_fragment),
+            "staged state must carry the untouched seed-1 legacy fragment"
+        );
+        serde_json::from_str(&json.replacen(legacy_fragment, fragment, 1))
+            .expect("converted v2 state deserializes")
+    }
+
+    const HEALTHY_V2_FRAGMENT: &str = "\"environment_randomization_v2\":{\"pair_environment_seed\":9,\"next_live_shuffle_ordinal\":[0,0]}";
+    const EXHAUSTED_V2_FRAGMENT: &str = "\"environment_randomization_v2\":{\"pair_environment_seed\":9,\"next_live_shuffle_ordinal\":[18446744073709551615,0]}";
+
+    #[test]
+    fn may_shuffle_true_preflights_v2_ordinal_before_any_choice_mutation() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        let (staged, _source) = stage_may_shuffle_choice(empty_game());
+        let mut exhausted = into_environment_v2(&staged, EXHAUSTED_V2_FRAGMENT);
+        let before_json = serde_json::to_string(&exhausted).expect("serializes");
+        let before_hot = exhausted.state_hash();
+        let before_diag = exhausted.diagnostic_state_hash();
+        assert!(
+            step(&mut exhausted, Action::ChooseEffectBoolean(true)).is_err(),
+            "accepting a shuffle at an exhausted ordinal must fail"
+        );
+        assert_eq!(
+            serde_json::to_string(&exhausted).expect("serializes"),
+            before_json,
+            "the failed acceptance must be byte-exact nonmutating"
+        );
+        assert_eq!(exhausted.state_hash(), before_hot);
+        assert_eq!(exhausted.diagnostic_state_hash(), before_diag);
+
+        // The same pending choice remains answerable: declining stays legal
+        // at the exhausted ordinal and consumes nothing.
+        step(&mut exhausted, Action::ChooseEffectBoolean(false))
+            .expect("declining stays legal at an exhausted ordinal");
+        assert!(matches!(
+            advance_until_decision(&mut exhausted),
+            Decision::CastSpellOrPass { .. }
+        ));
+        let v2 = exhausted
+            .environment_randomization_v2()
+            .expect("v2 state after decline");
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), u64::MAX);
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+        assert!(exhausted.engine.pending_effect.is_none());
+    }
+
+    #[test]
+    fn may_shuffle_true_commits_exactly_one_ordinal_at_the_frame() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        let (staged, _source) = stage_may_shuffle_choice(empty_game());
+        let mut healthy = into_environment_v2(&staged, HEALTHY_V2_FRAGMENT);
+        step(&mut healthy, Action::ChooseEffectBoolean(true)).expect("accepting is legal");
+        assert_eq!(
+            healthy
+                .environment_randomization_v2()
+                .expect("v2 state")
+                .next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+            0,
+            "the action-time preflight token is discarded without consuming an ordinal"
+        );
+        assert!(matches!(
+            advance_until_decision(&mut healthy),
+            Decision::CastSpellOrPass { .. }
+        ));
+        let v2 = healthy.environment_randomization_v2().expect("v2 state");
+        assert_eq!(
+            v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+            1,
+            "the ShuffleLibrary frame commits exactly one ordinal"
+        );
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+    }
+
+    #[test]
+    fn may_shuffle_frame_restored_into_exhausted_counter_halts_without_gameplay_mutation() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        // Nonempty sentinels: a real P0 library and both-observer knowledge
+        // rows, so the post-halt equality assertions prove preservation
+        // rather than comparing empty structures.
+        let mut base =
+            GameState::new_from_libraries(&[21, 22, 23], &[], |c| format!("card-{c}"), 1);
+        base.reveal_library_top(PlayerId::P0, PlayerId::P0, 2);
+        base.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+        let (staged, source) = stage_may_shuffle_choice(base);
+        let mut accepted = into_environment_v2(&staged, HEALTHY_V2_FRAGMENT);
+        step(&mut accepted, Action::ChooseEffectBoolean(true)).expect("accept");
+        // Simulate a restore into an exhausted counter after the accepted
+        // frame was staged but before it ran.
+        let sabotaged_json = serde_json::to_string(&accepted)
+            .expect("serializes")
+            .replacen(HEALTHY_V2_FRAGMENT, EXHAUSTED_V2_FRAGMENT, 1);
+        let mut sabotaged: GameState =
+            serde_json::from_str(&sabotaged_json).expect("sabotaged state deserializes");
+        let library_before = sabotaged.players[PlayerId::P0.index()].library.clone();
+        let stack_before = sabotaged.stack.clone();
+        let library_knowledge_before = sabotaged.library_knowledge.clone();
+        assert_eq!(library_before.len(), 3, "library sentinel must be nonempty");
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            assert!(
+                !library_knowledge_before[observer.index()][PlayerId::P0.index()].is_empty(),
+                "observer {observer:?} knowledge sentinel must be nonempty"
+            );
+        }
+        assert!(!stack_before.is_empty(), "stack sentinel must be nonempty");
+        assert!(matches!(
+            advance_until_decision(&mut sabotaged),
+            Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source: halted_source,
+            } if halted_source == source
+        ));
+        assert_eq!(
+            sabotaged.players[PlayerId::P0.index()].library,
+            library_before
+        );
+        assert_eq!(
+            sabotaged.stack, stack_before,
+            "the halt transition must restore the public stack exactly"
+        );
+        assert_eq!(
+            sabotaged.library_knowledge, library_knowledge_before,
+            "the halted frame must not touch any observer's library knowledge"
+        );
+        let v2 = sabotaged.environment_randomization_v2().expect("v2 state");
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), u64::MAX);
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+    }
+
+    #[test]
+    fn may_shuffle_legacy_path_is_byte_exact() {
+        let base =
+            GameState::new_from_libraries(&[11, 12, 13, 14], &[], |c| format!("card-{c}"), 5);
+        let (mut legacy, _source) = stage_may_shuffle_choice(base);
+        let rng_at_answer = *legacy.legacy_rng().expect("legacy state");
+        let (expected_library, expected_rng) = {
+            let mut rng = rng_at_answer;
+            let mut library = legacy.players[PlayerId::P0.index()].library.clone();
+            for i in (1..library.len()).rev() {
+                let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+                library.swap(i, j);
+            }
+            (library, rng)
+        };
+        step(&mut legacy, Action::ChooseEffectBoolean(true)).expect("accept");
+        assert_eq!(
+            *legacy.legacy_rng().expect("legacy state"),
+            rng_at_answer,
+            "the action-time preflight must not advance the legacy RNG"
+        );
+        assert!(matches!(
+            advance_until_decision(&mut legacy),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(
+            legacy.players[PlayerId::P0.index()].library,
+            expected_library
+        );
+        assert_eq!(
+            *legacy.legacy_rng().expect("legacy state"),
+            expected_rng,
+            "the frame commit must advance the RNG exactly as the historical shuffle"
+        );
+    }
 }

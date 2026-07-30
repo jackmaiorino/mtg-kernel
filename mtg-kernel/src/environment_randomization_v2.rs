@@ -95,6 +95,9 @@ impl ShufflePurposeV2 {
     }
 }
 
+/// The sealed KDF error vocabulary. Game-state library-shuffle transaction
+/// failures live in `state::LibraryShuffleError`, which wraps (never
+/// extends) this enum.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EnvironmentRandomizationErrorV2 {
     InvalidOwner,
@@ -151,16 +154,73 @@ pub fn derive_environment_randomization_seed_v2(
     Ok(u64::from_be_bytes(prefix))
 }
 
-/// The v2 permutation: fresh local SplitMix64 over the derived seed, existing
-/// descending Fisher-Yates modulo algorithm (identical to `rl::shuffled`).
-pub fn permutation_v2(derived_seed: u64, ids: &[u16]) -> Vec<u16> {
+/// Internal generic slice shuffle: fresh local SplitMix64 over the derived
+/// seed, existing descending Fisher-Yates modulo algorithm (identical to
+/// `rl::shuffled`). Shared by the golden wrapper and the game-state live
+/// shuffle transaction so `ObjectId` libraries never narrow through u16.
+pub(crate) fn shuffle_slice_in_place_v2<T>(derived_seed: u64, items: &mut [T]) {
     let mut rng = SplitMix64::seed(derived_seed);
-    let mut v = ids.to_vec();
-    for i in (1..v.len()).rev() {
+    for i in (1..items.len()).rev() {
         let j = (rng.next_u64() % (i as u64 + 1)) as usize;
-        v.swap(i, j);
+        items.swap(i, j);
     }
+}
+
+/// The v2 permutation golden wrapper over the generic slice shuffle.
+pub fn permutation_v2(derived_seed: u64, ids: &[u16]) -> Vec<u16> {
+    let mut v = ids.to_vec();
+    shuffle_slice_in_place_v2(derived_seed, &mut v);
     v
+}
+
+/// The v2 game-randomness state: the exact u64 pair root plus per-owner
+/// live-shuffle ordinals. No generic RNG exists on the v2 path. Fields are
+/// private; mutation happens only through the game-state live-shuffle
+/// transaction.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GameEnvironmentRandomizationV2 {
+    pair_environment_seed: u64,
+    /// Frozen compact wire shape: `[p0, p1]`.
+    next_live_shuffle_ordinal: [u64; 2],
+}
+
+impl GameEnvironmentRandomizationV2 {
+    pub fn new(pair_environment_seed: u64) -> Self {
+        GameEnvironmentRandomizationV2 {
+            pair_environment_seed,
+            next_live_shuffle_ordinal: [0, 0],
+        }
+    }
+
+    pub fn pair_environment_seed(&self) -> u64 {
+        self.pair_environment_seed
+    }
+
+    pub fn next_live_shuffle_ordinal(&self, owner: PhysicalOwnerV2) -> u64 {
+        match owner {
+            PhysicalOwnerV2::P0 => self.next_live_shuffle_ordinal[0],
+            PhysicalOwnerV2::P1 => self.next_live_shuffle_ordinal[1],
+        }
+    }
+
+    /// Advances one owner's committed live-shuffle ordinal exactly once.
+    /// Callers must have preflighted: the pre-advance value is never
+    /// `u64::MAX` because derivation rejects it first.
+    /// Writes one owner's committed ordinal to the preflight-checked
+    /// successor value. No arithmetic happens here; the successor was
+    /// computed and overflow-checked at preflight before derivation.
+    pub(crate) fn set_live_shuffle_ordinal(
+        &mut self,
+        owner: PhysicalOwnerV2,
+        checked_successor: u64,
+    ) {
+        let slot = match owner {
+            PhysicalOwnerV2::P0 => &mut self.next_live_shuffle_ordinal[0],
+            PhysicalOwnerV2::P1 => &mut self.next_live_shuffle_ordinal[1],
+        };
+        *slot = checked_successor;
+    }
 }
 
 #[cfg(test)]

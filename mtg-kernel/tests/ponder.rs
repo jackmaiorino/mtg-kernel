@@ -876,3 +876,134 @@ fn a_countered_ponder_does_not_look_reorder_shuffle_or_draw() {
     assert_eq!(state.objects.get(ponder).zone, Zone::Graveyard);
     assert_eq!(state.objects.get(counterspell).zone, Zone::Graveyard);
 }
+
+/// Swaps the staged legacy randomness for the given environment-v2 fragment
+/// through the public serde surface, exactly as a restore would. The Ponder
+/// harness seed is untouched at the Boolean choice because nothing before
+/// the optional shuffle draws from the legacy stream.
+fn into_environment_v2(state: &GameState, fragment: &str) -> GameState {
+    let json = serde_json::to_string(state).expect("staged state serializes");
+    let legacy_fragment = format!("\"rng\":{{\"state\":{}}}", 0x504F_4E44_4552_u64);
+    assert!(
+        json.contains(&legacy_fragment),
+        "staged state must carry the untouched Ponder legacy seed"
+    );
+    serde_json::from_str(&json.replacen(&legacy_fragment, fragment, 1))
+        .expect("converted v2 state deserializes")
+}
+
+const HEALTHY_V2_FRAGMENT: &str = "\"environment_randomization_v2\":{\"pair_environment_seed\":606060,\"next_live_shuffle_ordinal\":[0,0]}";
+const EXHAUSTED_V2_FRAGMENT: &str = "\"environment_randomization_v2\":{\"pair_environment_seed\":606060,\"next_live_shuffle_ordinal\":[18446744073709551615,0]}";
+
+#[test]
+fn ponder_v2_boolean_boundary_is_exact_at_max_and_healthy_ordinals() {
+    use mtg_kernel::environment_randomization_v2::{
+        derive_environment_randomization_seed_v2, PhysicalOwnerV2, ShufflePurposeV2,
+    };
+    let (mut staged, ponder, library) = ready_ponder(&LONG_LIBRARY);
+    cast_ponder(&mut staged, ponder);
+    let boolean = choose_explicit_order(&mut staged, ponder, &[library[0], library[2]]);
+    assert_boolean_decision(&boolean, ponder);
+    let pre_boolean_library = staged.players[0].library.clone();
+
+    // Accepting at an exhausted ordinal fails with complete byte, hot-hash,
+    // and diagnostic-hash identity.
+    let mut exhausted = into_environment_v2(&staged, EXHAUSTED_V2_FRAGMENT);
+    let before_json = serde_json::to_string(&exhausted).expect("serializes");
+    let before_hot = exhausted.state_hash();
+    let before_diag = exhausted.diagnostic_state_hash();
+    assert!(
+        engine::step(&mut exhausted, Action::ChooseEffectBoolean(true)).is_err(),
+        "accepting the shuffle at an exhausted ordinal must fail"
+    );
+    assert_eq!(
+        serde_json::to_string(&exhausted).expect("serializes"),
+        before_json,
+        "the failed acceptance must be byte-exact nonmutating"
+    );
+    assert_eq!(exhausted.state_hash(), before_hot);
+    assert_eq!(exhausted.diagnostic_state_hash(), before_diag);
+
+    // Declining remains legal at the exhausted ordinal and consumes nothing;
+    // Ponder still draws its card.
+    assert!(matches!(
+        finish_boolean(&mut exhausted, ponder, false),
+        Decision::CastSpellOrPass { .. }
+    ));
+    let v2 = exhausted
+        .environment_randomization_v2()
+        .expect("v2 state after decline");
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), u64::MAX);
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+    assert_eq!(
+        exhausted.players[0].hand.len(),
+        1,
+        "Ponder still draws after declining at an exhausted ordinal"
+    );
+
+    // Accepting on a healthy v2 state consumes nothing at the answer; the
+    // answered Boolean frame survives a serde round-trip and replays
+    // identically; the later frame consumes exactly one ordinal.
+    let mut healthy = into_environment_v2(&staged, HEALTHY_V2_FRAGMENT);
+    engine::step(&mut healthy, Action::ChooseEffectBoolean(true)).expect("accepting is legal");
+    assert_eq!(
+        healthy
+            .environment_randomization_v2()
+            .expect("v2 state")
+            .next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+        0,
+        "the action-time preflight token is discarded without consuming an ordinal"
+    );
+    let mut round_tripped: GameState =
+        serde_json::from_str(&serde_json::to_string(&healthy).expect("answered frame serializes"))
+            .expect("answered frame deserializes");
+    assert_eq!(healthy, round_tripped);
+    assert!(matches!(
+        engine::advance_until_decision(&mut healthy),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert!(matches!(
+        engine::advance_until_decision(&mut round_tripped),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert_eq!(
+        healthy, round_tripped,
+        "the round-tripped answered Boolean frame must replay identically"
+    );
+
+    let v2 = healthy.environment_randomization_v2().expect("v2 state");
+    assert_eq!(
+        v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+        1,
+        "the ShuffleLibrary frame commits exactly one ordinal"
+    );
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+
+    // The committed shuffle is exactly the derived-substream permutation of
+    // the post-reorder library, followed by Ponder's draw of the new top.
+    let derived = derive_environment_randomization_seed_v2(
+        606060,
+        PhysicalOwnerV2::P0,
+        ShufflePurposeV2::InGameLibraryShuffle,
+        0,
+    )
+    .expect("module derivation");
+    let mut expected = pre_boolean_library.clone();
+    let mut rng = mtg_kernel::state::SplitMix64::seed(derived);
+    for i in (1..expected.len()).rev() {
+        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+        expected.swap(i, j);
+    }
+    let drawn = expected.remove(0);
+    assert_eq!(
+        healthy.players[0].library, expected,
+        "the v2 shuffle must be the derived-substream permutation"
+    );
+    assert!(healthy.players[0].hand.contains(&drawn));
+    assert!(healthy
+        .known_library_cards(PlayerId::P0, PlayerId::P0)
+        .is_empty());
+    assert!(healthy
+        .known_library_cards(PlayerId::P1, PlayerId::P0)
+        .is_empty());
+}
