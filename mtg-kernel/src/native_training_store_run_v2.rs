@@ -588,7 +588,7 @@ pub struct TrainRunEnvironmentV2 {
     pub(crate) kernel_version: String,
     pub(crate) surface_version: u64,
     pub(crate) policy_surface_version: u64,
-    /// Environment randomization V2 manifest section (Phase C1, inactive).
+    /// Environment randomization V2 manifest section.
     ///
     /// Present if and only if this record declares the environment
     /// randomization V2 trajectory contract. Absent for every legacy V1
@@ -596,9 +596,8 @@ pub struct TrainRunEnvironmentV2 {
     /// existing run records keep byte-identical canonical output, `run_sha256`,
     /// standalone-semantics digest, and identity-bundle digest.
     ///
-    /// Declaring this section does not activate anything. It is one member of
-    /// a closed tuple that the classifier reads, and every runtime entry point
-    /// rejects the resulting classification fail-closed.
+    /// Since C2 the declared classification is live: runtime entry points
+    /// admit it exactly on the sealed mode diagonal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) environment_randomization_v2: Option<EnvironmentRandomizationContractV2>,
 }
@@ -1117,8 +1116,10 @@ pub struct ValidatedTrainRunV2 {
 ///
 /// Sealed and crate-private. A record is exactly one of these, decided by a
 /// complete-tuple match at decode time; there is no third state, no default,
-/// and no caller-selectable version flag. `EnvironmentRandomizationV2` is
-/// inactive in this phase: every runtime entry point rejects it fail-closed.
+/// and no caller-selectable version flag. Since C2 both classifications are
+/// live: every runtime entry point admits exactly the diagonal of this
+/// classification against the sealed executor mode, transition mode, and
+/// receipt variant, and rejects every off-diagonal pairing fail-closed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeRunEnvironmentTrajectoryContractV1 {
     LegacyV1,
@@ -1771,13 +1772,13 @@ fn validate_environment_v2(environment: &TrainRunEnvironmentV2) -> Result<()> {
         // `classify_environment_trajectory_contract_v1`.
         //
         // The live-owner block above pins this *build* at protocol/schema 5,
-        // which is why this build cannot emit a 6/6 record: production capture
-        // reads the live constants. It does not stop a coherent 6/6 record from
-        // validating and classifying here, and it must not be read as an
-        // execution barrier. What prevents execution is the separate set of
-        // fail-closed gates on the classifier result:
-        // `validate_prepared_execution_config_v1`, `validate_runner_config_v1`,
-        // and `NativeStoreProductionCaptureGuardV2::require_matches_run_v2`.
+        // which is why this build's production capture cannot mint a 6/6
+        // declaration: capture reads the live constants. A coherent 6/6
+        // record still validates and classifies here, and since C2 it
+        // executes: runtime entry points admit exactly the diagonal of the
+        // sealed classification against executor mode, transition mode, and
+        // receipt variant, with production capture comparing a V2 run's ten
+        // common live environment facts against the live Legacy capture.
         || environment.kernel_version != FROZEN_KERNEL_VERSION_V2
         || environment.surface_version != u64::from(FROZEN_SURFACE_VERSION_V2)
         || environment.policy_surface_version != u64::from(FROZEN_POLICY_SURFACE_VERSION_V2)
@@ -2751,8 +2752,8 @@ pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
 }
 
 /// A coherent, fully reminted environment randomization V2 record. Test-only:
-/// it exists so the sibling inactive-gate tests can prove that a record which
-/// decodes and classifies as V2 is still refused by every runtime entry point.
+/// the diagonal and genuine-execution suites use it as the validated V2 run
+/// authority.
 #[cfg(test)]
 pub(crate) fn test_fixture_bytes_environment_randomization_v2() -> Vec<u8> {
     tests::coherent_v2_bytes()
@@ -2937,6 +2938,34 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
 /// literals and `contracts.wide_model_experiment_v1` is populated. Kept as a
 /// genuinely separate function (not a flag on the existing one) so the
 /// frozen fixture's bytes stay byte-identical by construction.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_wide_environment_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_wide_environment_v2(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+    )
+}
+
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_wide_v2(
@@ -3398,7 +3427,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Phase C1: inactive environment randomization V2 manifest classification
+    // Live C2: environment randomization V2 manifest classification
     // ------------------------------------------------------------------
 
     /// The exact manifest section, projected from the production owner
@@ -4159,6 +4188,48 @@ mod tests {
             worker_count.checked_mul(sessions_per_worker).unwrap();
         record.topology.broker_batch_target = broker_batch_target;
         apply_wide_model_experiment(&mut record);
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    /// Wide plus environment randomization V2: the wide schedule builder's
+    /// exact record with the complete V2 declaration tuple installed, then
+    /// reminted. Used by the runner's genuinely wide V2 acceptance oracle.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_wide_environment_v2(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+    ) -> Vec<u8> {
+        let mut record = fixture_record();
+        record.schedule.base_seed = base_seed;
+        apply_backend_pair(&mut record, backend);
+        record.limits.max_physical_decisions = max_physical_decisions;
+        record.limits.max_policy_steps = max_policy_steps;
+        record.schedule.batch_episodes = batch_episodes;
+        record.schedule.checkpoint_segment_updates = checkpoint_segment_updates;
+        record.schedule.requested_successful_updates = requested_successful_updates;
+        record.schedule.checkpoint_episode_interval = batch_episodes
+            .checked_mul(checkpoint_segment_updates)
+            .unwrap();
+        record.topology.worker_count = worker_count;
+        record.topology.sessions_per_worker = sessions_per_worker;
+        record.topology.logical_actor_count =
+            worker_count.checked_mul(sessions_per_worker).unwrap();
+        record.topology.broker_batch_target = broker_batch_target;
+        apply_wide_model_experiment(&mut record);
+        record.environment.protocol_version = u64::from(RL_SESSION_PROTOCOL_VERSION_V6);
+        record.environment.schema_version = u64::from(RL_SESSION_SCHEMA_VERSION_V6);
+        record.environment.environment_randomization_v2 =
+            Some(exact_environment_randomization_section_v2());
+        record.contracts.trajectory = v2_trajectory_contract_v2();
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }

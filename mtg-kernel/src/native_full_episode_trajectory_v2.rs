@@ -34,8 +34,12 @@
 //! rejection stays fail-closed through the owned inner contract and is mapped
 //! into the closed V2 vocabulary.
 //!
-//! V1 bytes, APIs, goldens, and consumers are unchanged by this module, and
-//! nothing here is activated at runtime yet.
+//! V1 bytes, APIs, goldens, and V1 consumers are unchanged by this module.
+//! Since C2, this contract is live: a validated run classified as
+//! environment randomization V2 executes through the V2 accumulator, the
+//! run-bound receipt, and the consumed window-preflight authority defined
+//! here, while every legacy V1 run keeps the frozen V1 inner behavior
+//! exactly.
 
 use crate::async_rollout::AsyncRolloutTerminalV1;
 use crate::environment_randomization_v2::{
@@ -50,7 +54,8 @@ use crate::environment_randomization_v2::{
 };
 use crate::native_full_episode_trajectory_v1::{
     NativeFullEpisodeTrajectoryAccumulatorV1, NativeFullEpisodeTrajectoryDecisionRowV1,
-    NativeFullEpisodeTrajectoryErrorV1, NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1,
+    NativeFullEpisodeTrajectoryErrorV1, NativeFullEpisodeTrajectoryReceiptV1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
@@ -379,13 +384,59 @@ const LIVE_AUTHORITY_CHECKS_V2: [(&str, &str); 24] = [
 /// which values are hashed.  Every constructing entry point calls this before
 /// it looks at any start value.
 fn guard_live_source_authorities_v2() -> Result<(), NativeFullEpisodeTrajectoryErrorV2> {
-    if LIVE_AUTHORITY_CHECKS_V2
-        .iter()
-        .any(|&(live, expected)| live != expected)
-    {
-        return Err(NativeFullEpisodeTrajectoryErrorV2::AuthorityMismatch);
+    for (_index, &(live, expected)) in LIVE_AUTHORITY_CHECKS_V2.iter().enumerate() {
+        // Test-only synthetic mismatch: the armed slot's expectation is
+        // swapped for a value no owner constant can equal, so the production
+        // comparison below is what rejects, proving the guard live rather
+        // than always-Ok.
+        #[cfg(test)]
+        let expected = if armed_live_authority_mismatch_slot_for_test_v2() == Some(_index) {
+            "\u{0}armed-live-authority-mismatch"
+        } else {
+            expected
+        };
+        if live != expected {
+            return Err(NativeFullEpisodeTrajectoryErrorV2::AuthorityMismatch);
+        }
     }
     Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    static ARMED_LIVE_AUTHORITY_MISMATCH_SLOT_V2: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn armed_live_authority_mismatch_slot_for_test_v2() -> Option<usize> {
+    ARMED_LIVE_AUTHORITY_MISMATCH_SLOT_V2.with(std::cell::Cell::get)
+}
+
+/// RAII arming guard for the live-authority mismatch seam: drop restores the
+/// exact prior thread-local value on every exit path, including panics.
+#[cfg(test)]
+pub(crate) struct NativeLiveAuthorityMismatchGuardV2 {
+    saved: Option<usize>,
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl Drop for NativeLiveAuthorityMismatchGuardV2 {
+    fn drop(&mut self) {
+        ARMED_LIVE_AUTHORITY_MISMATCH_SLOT_V2.with(|cell| cell.set(self.saved));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn arm_live_authority_mismatch_for_test_v2(
+    slot: usize,
+) -> NativeLiveAuthorityMismatchGuardV2 {
+    let saved = ARMED_LIVE_AUTHORITY_MISMATCH_SLOT_V2.with(|cell| cell.replace(Some(slot)));
+    NativeLiveAuthorityMismatchGuardV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
 }
 
 // ------------------------------------------------------------ start binding
@@ -957,6 +1008,1503 @@ pub(crate) fn validate_native_full_episode_trajectory_pair_v2(
         deck_ids: even.deck_ids,
         deck_hashes: even.deck_hashes,
     })
+}
+
+// ------------------------------------------------ run-bound receipt wrapper
+
+/// The closed crate-private run-bound receipt. Exactly two variants, one per
+/// arm of the sealed run trajectory contract; there is no third state and no
+/// wildcard consumer. External code can never name this enum: the module is
+/// crate-private and the only public projection is the opaque
+/// [`NativeTrainingTrajectoryReceiptV2`] wrapper below.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeRunBoundFullEpisodeReceiptV2 {
+    LegacyV1(NativeFullEpisodeTrajectoryReceiptV1),
+    EnvironmentRandomizationV2(NativeFullEpisodeTrajectoryReceiptV2),
+}
+
+/// One public opaque trajectory receipt for both run modes.
+///
+/// The inner run-bound variant is private: there is no public constructor, no
+/// `Deref`, no `AsMut`, no serde, and no blanket `From`, so a caller can
+/// neither forge a receipt from raw digests nor launder one variant into the
+/// other. Common facts are exposed through immutable accessors only.
+/// `trajectory_sha256` stays the compatibility accessor consumed by
+/// `EpisodeWireV1`: the V1 trajectory digest for a legacy receipt and the
+/// inner V1 digest for an environment randomization V2 receipt. The V2 outer
+/// envelope digest is exposed only through the explicit optional accessor and
+/// never enters any persisted byte stream.
+///
+/// External construction is impossible, both literally and by forging from a
+/// raw V1 receipt's digest fields:
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::NativeTrainingTrajectoryReceiptV2;
+/// fn forge() -> NativeTrainingTrajectoryReceiptV2 {
+///     NativeTrainingTrajectoryReceiptV2 {}
+/// }
+/// ```
+///
+/// The private inner field can be neither read nor mutated:
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::NativeTrainingTrajectoryReceiptV2;
+/// fn read_inner(receipt: &NativeTrainingTrajectoryReceiptV2) {
+///     let _ = &receipt.inner;
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::NativeTrainingTrajectoryReceiptV2;
+/// fn mutate_inner(receipt: &mut NativeTrainingTrajectoryReceiptV2) {
+///     let _ = &mut receipt.inner;
+/// }
+/// ```
+///
+/// Digest facts are methods, not mutable fields:
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::NativeTrainingTrajectoryReceiptV2;
+/// fn mutate_digest(receipt: &mut NativeTrainingTrajectoryReceiptV2) {
+///     receipt.trajectory_sha256 = [0_u8; 32];
+/// }
+/// ```
+///
+/// There is no serde in either direction:
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::NativeTrainingTrajectoryReceiptV2;
+/// fn require_serialize<T: serde::Serialize>() {}
+/// fn probe() {
+///     require_serialize::<NativeTrainingTrajectoryReceiptV2>();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::NativeTrainingTrajectoryReceiptV2;
+/// fn require_deserialize<'de, T: serde::Deserialize<'de>>() {}
+/// fn probe<'de>() {
+///     require_deserialize::<'de, NativeTrainingTrajectoryReceiptV2>();
+/// }
+/// ```
+///
+/// No `Deref` or `AsMut` widens the opaque surface:
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::NativeTrainingTrajectoryReceiptV2;
+/// fn require_deref<T: std::ops::Deref>() {}
+/// fn probe() {
+///     require_deref::<NativeTrainingTrajectoryReceiptV2>();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::{
+///     NativeTrainingTrajectoryReceiptV1, NativeTrainingTrajectoryReceiptV2,
+/// };
+/// fn require_as_mut<T: AsMut<NativeTrainingTrajectoryReceiptV1>>() {}
+/// fn probe() {
+///     require_as_mut::<NativeTrainingTrajectoryReceiptV2>();
+/// }
+/// ```
+///
+/// Neither raw receipt converts in via `From`:
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::{
+///     NativeTrainingTrajectoryReceiptV1, NativeTrainingTrajectoryReceiptV2,
+/// };
+/// fn require_from<T: From<NativeTrainingTrajectoryReceiptV1>>() {}
+/// fn probe() {
+///     require_from::<NativeTrainingTrajectoryReceiptV2>();
+/// }
+/// ```
+///
+/// The crate-private run-bound inner enum cannot even be named:
+///
+/// ```compile_fail
+/// use mtg_kernel::native_full_episode_trajectory_v2::NativeRunBoundFullEpisodeReceiptV2;
+/// ```
+///
+/// The private sealed mode and the run-bound constructors are likewise
+/// unreachable from outside the crate:
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_store_run_v2::NativeRunEnvironmentTrajectoryContractV1;
+/// ```
+///
+/// ```compile_fail
+/// use mtg_kernel::native_training_executor_v1::NativeTrainingExecutorV1;
+/// use mtg_kernel::native_training_store_run_v2::ValidatedTrainRunV2;
+/// fn probe(
+///     config: mtg_kernel::native_training_executor_v1::NativeTrainingExecutionConfigV1,
+///     run: &ValidatedTrainRunV2,
+/// ) {
+///     let _ = NativeTrainingExecutorV1::from_common_model_snapshot_run_bound_v2(
+///         config,
+///         std::path::Path::new("m"),
+///         std::path::Path::new("p"),
+///         run,
+///     );
+/// }
+/// ```
+///
+/// The wrapper deliberately stays `Copy + Debug + Eq + Send + Sync`:
+///
+/// ```
+/// use mtg_kernel::native_training_executor_v1::NativeTrainingTrajectoryReceiptV2;
+/// fn positive<T: Copy + std::fmt::Debug + Eq + Send + Sync>() {}
+/// positive::<NativeTrainingTrajectoryReceiptV2>();
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct NativeTrainingTrajectoryReceiptV2 {
+    inner: NativeRunBoundFullEpisodeReceiptV2,
+}
+
+/// Custom, not derived: a derived `Debug` would recursively print the private
+/// run-bound variant plus V2-only pair and deck-binding facts. Only the
+/// authorized common projections and the optional outer digest are formatted,
+/// and the private inner enum deliberately implements no `Debug` at all.
+impl std::fmt::Debug for NativeTrainingTrajectoryReceiptV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeTrainingTrajectoryReceiptV2")
+            .field("episode_index", &self.episode_index())
+            .field("environment_seed", &self.environment_seed())
+            .field("deck_hashes", &self.deck_hashes())
+            .field("learner_seat", &self.learner_seat())
+            .field("trajectory_sha256", &self.trajectory_sha256())
+            .field(
+                "outer_trajectory_sha256_v2",
+                &self.outer_trajectory_sha256_v2(),
+            )
+            .field("policy_step_count", &self.policy_step_count())
+            .field("physical_decision_count", &self.physical_decision_count())
+            .field(
+                "learner_policy_step_count",
+                &self.learner_policy_step_count(),
+            )
+            .field(
+                "opponent_policy_step_count",
+                &self.opponent_policy_step_count(),
+            )
+            .field(
+                "learner_physical_decision_count",
+                &self.learner_physical_decision_count(),
+            )
+            .field(
+                "opponent_physical_decision_count",
+                &self.opponent_physical_decision_count(),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl NativeTrainingTrajectoryReceiptV2 {
+    pub(crate) const fn from_legacy_v1(receipt: NativeFullEpisodeTrajectoryReceiptV1) -> Self {
+        Self {
+            inner: NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt),
+        }
+    }
+
+    pub(crate) const fn from_environment_randomization_v2(
+        receipt: NativeFullEpisodeTrajectoryReceiptV2,
+    ) -> Self {
+        Self {
+            inner: NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt),
+        }
+    }
+
+    /// Crate-private variant inspection for exhaustive diagonal validation.
+    pub(crate) const fn is_environment_randomization_v2(&self) -> bool {
+        match self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(_) => false,
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(_) => true,
+        }
+    }
+
+    pub const fn episode_index(&self) -> u64 {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => receipt.episode_index,
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.episode_index
+            }
+        }
+    }
+
+    /// The environment seed the episode was reset with: the legacy per-episode
+    /// derived seed for a V1 receipt, the full-width shared pair root for an
+    /// environment randomization V2 receipt.
+    pub const fn environment_seed(&self) -> u64 {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => receipt.environment_seed,
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.pair_environment_seed
+            }
+        }
+    }
+
+    pub const fn deck_hashes(&self) -> SessionDeckHashesV1 {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => receipt.deck_hashes,
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.deck_hashes
+            }
+        }
+    }
+
+    pub const fn learner_seat(&self) -> PlayerSeatV1 {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => receipt.learner_seat,
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.learner_seat
+            }
+        }
+    }
+
+    /// The compatibility trajectory digest consumed by `EpisodeWireV1`: the V1
+    /// digest for a legacy receipt, the inner V1 digest for an environment
+    /// randomization V2 receipt.
+    pub const fn trajectory_sha256(&self) -> [u8; 32] {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => receipt.trajectory_sha256,
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.inner_trajectory_sha256
+            }
+        }
+    }
+
+    /// The frozen 34-atom V2 outer envelope digest. `None` for a legacy
+    /// receipt. Ephemeral evidence only: it never appears in EpisodeWire,
+    /// canonical continuation bytes, checkpoint bytes, or any sidecar.
+    pub const fn outer_trajectory_sha256_v2(&self) -> Option<[u8; 32]> {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(_) => None,
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                Some(receipt.trajectory_sha256_v2)
+            }
+        }
+    }
+
+    pub const fn policy_step_count(&self) -> u64 {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => receipt.policy_step_count,
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.policy_step_count
+            }
+        }
+    }
+
+    pub const fn physical_decision_count(&self) -> u64 {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => {
+                receipt.physical_decision_count
+            }
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.physical_decision_count
+            }
+        }
+    }
+
+    pub const fn learner_policy_step_count(&self) -> u64 {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => {
+                receipt.learner_policy_step_count
+            }
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.learner_policy_step_count
+            }
+        }
+    }
+
+    pub const fn opponent_policy_step_count(&self) -> u64 {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => {
+                receipt.opponent_policy_step_count
+            }
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.opponent_policy_step_count
+            }
+        }
+    }
+
+    pub const fn learner_physical_decision_count(&self) -> u64 {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => {
+                receipt.learner_physical_decision_count
+            }
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.learner_physical_decision_count
+            }
+        }
+    }
+
+    pub const fn opponent_physical_decision_count(&self) -> u64 {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => {
+                receipt.opponent_physical_decision_count
+            }
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                receipt.opponent_physical_decision_count
+            }
+        }
+    }
+
+    /// Optional read-only Legacy V1 view. `None` for an environment
+    /// randomization V2 receipt; V2-only facts stay crate-private.
+    pub const fn legacy_v1_view(&self) -> Option<&NativeFullEpisodeTrajectoryReceiptV1> {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => Some(receipt),
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(_) => None,
+        }
+    }
+
+    /// Crate-private V2-only pair index. `None` for a legacy receipt.
+    pub(crate) const fn pair_index_v2(&self) -> Option<u64> {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(_) => None,
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                Some(receipt.pair_index)
+            }
+        }
+    }
+
+    /// Crate-private V2-only catalog-resolved ordered physical deck bindings.
+    /// `None` for a legacy receipt.
+    pub(crate) const fn deck_ids_v2(&self) -> Option<[&'static str; 2]> {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(_) => None,
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                Some(receipt.deck_ids)
+            }
+        }
+    }
+}
+
+/// Test-only coherent synthetic V2 receipt over a validated start: real
+/// envelope, fixed inner digest, and internally consistent learner/opponent
+/// count splits, so observer batteries can drive receipt-fact checks without
+/// a full rollout.
+#[cfg(test)]
+pub(crate) fn envelope_probe_receipt_for_test_v2(
+    episode_index: u64,
+    pair_environment_seed: u64,
+    deck_ids: &SessionDeckIdsV1,
+    deck_hashes: SessionDeckHashesV1,
+) -> NativeTrainingTrajectoryReceiptV2 {
+    let start = validate_start_v2(&NativeFullEpisodeTrajectoryStartV2 {
+        episode_index,
+        pair_environment_seed,
+        deck_ids: deck_ids.clone(),
+        deck_hashes,
+        learner_seat: if episode_index.is_multiple_of(2) {
+            PlayerSeatV1::P0
+        } else {
+            PlayerSeatV1::P1
+        },
+    })
+    .expect("the probe start must validate");
+    let inner = [0x3c_u8; 32];
+    let outer = envelope_sha256_v2(&start, inner);
+    NativeTrainingTrajectoryReceiptV2::from_environment_randomization_v2(
+        NativeFullEpisodeTrajectoryReceiptV2 {
+            episode_index: start.episode_index,
+            pair_index: start.pair_index,
+            pair_environment_seed: start.pair_environment_seed,
+            deck_ids: start.deck_ids,
+            deck_hashes: start.deck_hashes,
+            learner_seat: start.learner_seat,
+            inner_trajectory_sha256: inner,
+            trajectory_sha256_v2: outer,
+            policy_step_count: 3,
+            physical_decision_count: 2,
+            learner_policy_step_count: 2,
+            opponent_policy_step_count: 1,
+            learner_physical_decision_count: 1,
+            opponent_physical_decision_count: 1,
+        },
+    )
+}
+
+/// Zero-learner sibling of [`envelope_probe_receipt_for_test_v2`]: the same
+/// coherent probe with a zero learner split (policy 3 = 0 + 3, physical
+/// 2 = 0 + 2), so a fresh private trainer observer that has seen zero
+/// selected events admits its terminal through core grouping. Deleting a
+/// thin receipt-validation callsite then deterministically changes each
+/// receipt negative's outcome instead of hiding behind a later grouping
+/// rejection.
+#[cfg(test)]
+pub(crate) fn zero_learner_envelope_probe_receipt_for_test_v2(
+    episode_index: u64,
+    pair_environment_seed: u64,
+    deck_ids: &SessionDeckIdsV1,
+    deck_hashes: SessionDeckHashesV1,
+) -> NativeTrainingTrajectoryReceiptV2 {
+    let start = validate_start_v2(&NativeFullEpisodeTrajectoryStartV2 {
+        episode_index,
+        pair_environment_seed,
+        deck_ids: deck_ids.clone(),
+        deck_hashes,
+        learner_seat: if episode_index.is_multiple_of(2) {
+            PlayerSeatV1::P0
+        } else {
+            PlayerSeatV1::P1
+        },
+    })
+    .expect("the probe start must validate");
+    let inner = [0x3c_u8; 32];
+    let outer = envelope_sha256_v2(&start, inner);
+    NativeTrainingTrajectoryReceiptV2::from_environment_randomization_v2(
+        NativeFullEpisodeTrajectoryReceiptV2 {
+            episode_index: start.episode_index,
+            pair_index: start.pair_index,
+            pair_environment_seed: start.pair_environment_seed,
+            deck_ids: start.deck_ids,
+            deck_hashes: start.deck_hashes,
+            learner_seat: start.learner_seat,
+            inner_trajectory_sha256: inner,
+            trajectory_sha256_v2: outer,
+            policy_step_count: 3,
+            physical_decision_count: 2,
+            learner_policy_step_count: 0,
+            opponent_policy_step_count: 3,
+            learner_physical_decision_count: 0,
+            opponent_physical_decision_count: 2,
+        },
+    )
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeV2ReceiptFactMutationForTestV2 {
+    PairIndex,
+    DeckId0,
+    DeckId1,
+    EpisodeIndex,
+    PairRoot,
+    DeckHash0,
+    DeckHash1,
+    LearnerSeat,
+    PolicyStepCount,
+    PhysicalDecisionCount,
+    LearnerPolicyStepCount,
+    LearnerPhysicalDecisionCount,
+    OpponentPolicyStepCount,
+    OpponentPhysicalDecisionCount,
+}
+
+#[cfg(test)]
+impl NativeTrainingTrajectoryReceiptV2 {
+    /// Test-only common-preserving variant flip: every common accessor of
+    /// the returned receipt equals the original exactly (episode, seed,
+    /// hashes, seat, compatibility digest, all six counts) while only the
+    /// run-bound variant toggles. The V2 direction takes the catalog-static
+    /// ordered deck IDs its variant requires; its outer digest is synthetic,
+    /// which no common accessor exposes.
+    pub(crate) fn variant_flipped_preserving_commons_for_test_v2(
+        &self,
+        deck_ids: [&'static str; 2],
+    ) -> Self {
+        match &self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(receipt) => {
+                Self::from_environment_randomization_v2(NativeFullEpisodeTrajectoryReceiptV2 {
+                    episode_index: receipt.episode_index,
+                    pair_index: receipt.episode_index / 2,
+                    pair_environment_seed: receipt.environment_seed,
+                    deck_ids,
+                    deck_hashes: receipt.deck_hashes,
+                    learner_seat: receipt.learner_seat,
+                    inner_trajectory_sha256: receipt.trajectory_sha256,
+                    trajectory_sha256_v2: [0xEE; 32],
+                    policy_step_count: receipt.policy_step_count,
+                    physical_decision_count: receipt.physical_decision_count,
+                    learner_policy_step_count: receipt.learner_policy_step_count,
+                    opponent_policy_step_count: receipt.opponent_policy_step_count,
+                    learner_physical_decision_count: receipt.learner_physical_decision_count,
+                    opponent_physical_decision_count: receipt.opponent_physical_decision_count,
+                })
+            }
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                Self::from_legacy_v1(NativeFullEpisodeTrajectoryReceiptV1 {
+                    episode_index: receipt.episode_index,
+                    environment_seed: receipt.pair_environment_seed,
+                    deck_hashes: receipt.deck_hashes,
+                    learner_seat: receipt.learner_seat,
+                    trajectory_sha256: receipt.inner_trajectory_sha256,
+                    policy_step_count: receipt.policy_step_count,
+                    physical_decision_count: receipt.physical_decision_count,
+                    learner_policy_step_count: receipt.learner_policy_step_count,
+                    opponent_policy_step_count: receipt.opponent_policy_step_count,
+                    learner_physical_decision_count: receipt.learner_physical_decision_count,
+                    opponent_physical_decision_count: receipt.opponent_physical_decision_count,
+                })
+            }
+        }
+    }
+
+    /// The full common-accessor projection, for exact equality proofs around
+    /// variant flips.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn common_accessor_tuple_for_test_v2(
+        &self,
+    ) -> (
+        u64,
+        u64,
+        SessionDeckHashesV1,
+        PlayerSeatV1,
+        [u8; 32],
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+    ) {
+        (
+            self.episode_index(),
+            self.environment_seed(),
+            self.deck_hashes(),
+            self.learner_seat(),
+            self.trajectory_sha256(),
+            self.policy_step_count(),
+            self.physical_decision_count(),
+            self.learner_policy_step_count(),
+            self.opponent_policy_step_count(),
+            self.learner_physical_decision_count(),
+            self.opponent_physical_decision_count(),
+        )
+    }
+}
+
+#[cfg(test)]
+impl NativeTrainingTrajectoryReceiptV2 {
+    /// Test-only V2-fact corruption seam so Store and observer batteries can
+    /// prove each bound V2 fact is validated, without widening the public
+    /// wrapper surface. Panics on a legacy receipt.
+    pub(crate) fn mutate_environment_fact_for_test_v2(
+        &mut self,
+        mutation: NativeV2ReceiptFactMutationForTestV2,
+    ) {
+        match &mut self.inner {
+            NativeRunBoundFullEpisodeReceiptV2::LegacyV1(_) => {
+                panic!("V2 fact mutation requires a V2 receipt")
+            }
+            NativeRunBoundFullEpisodeReceiptV2::EnvironmentRandomizationV2(receipt) => {
+                match mutation {
+                    NativeV2ReceiptFactMutationForTestV2::PairIndex => receipt.pair_index ^= 1,
+                    NativeV2ReceiptFactMutationForTestV2::DeckId0 => {
+                        receipt.deck_ids[0] = if receipt.deck_ids[0] == "Rally" {
+                            "Burn"
+                        } else {
+                            "Rally"
+                        };
+                    }
+                    NativeV2ReceiptFactMutationForTestV2::DeckId1 => {
+                        receipt.deck_ids[1] = if receipt.deck_ids[1] == "Rally" {
+                            "Burn"
+                        } else {
+                            "Rally"
+                        };
+                    }
+                    NativeV2ReceiptFactMutationForTestV2::EpisodeIndex => {
+                        receipt.episode_index ^= 1
+                    }
+                    NativeV2ReceiptFactMutationForTestV2::PairRoot => {
+                        receipt.pair_environment_seed ^= 1
+                    }
+                    NativeV2ReceiptFactMutationForTestV2::DeckHash0 => receipt.deck_hashes[0] ^= 1,
+                    NativeV2ReceiptFactMutationForTestV2::DeckHash1 => receipt.deck_hashes[1] ^= 1,
+                    NativeV2ReceiptFactMutationForTestV2::LearnerSeat => {
+                        receipt.learner_seat = match receipt.learner_seat {
+                            PlayerSeatV1::P0 => PlayerSeatV1::P1,
+                            PlayerSeatV1::P1 => PlayerSeatV1::P0,
+                        }
+                    }
+                    NativeV2ReceiptFactMutationForTestV2::PolicyStepCount => {
+                        receipt.policy_step_count += 1
+                    }
+                    NativeV2ReceiptFactMutationForTestV2::PhysicalDecisionCount => {
+                        receipt.physical_decision_count += 1
+                    }
+                    NativeV2ReceiptFactMutationForTestV2::LearnerPolicyStepCount => {
+                        receipt.learner_policy_step_count += 1
+                    }
+                    NativeV2ReceiptFactMutationForTestV2::LearnerPhysicalDecisionCount => {
+                        receipt.learner_physical_decision_count += 1
+                    }
+                    NativeV2ReceiptFactMutationForTestV2::OpponentPolicyStepCount => {
+                        receipt.opponent_policy_step_count += 1
+                    }
+                    NativeV2ReceiptFactMutationForTestV2::OpponentPhysicalDecisionCount => {
+                        receipt.opponent_physical_decision_count += 1
+                    }
+                }
+            }
+        }
+    }
+}
+
+// --------------------------------------------- run-bound accumulator dispatch
+
+/// The closed crate-private run-bound accumulator. Exactly one variant per
+/// run trajectory contract; preflight, accepted-row recording, and natural
+/// finish dispatch exhaustively with no wildcard, and the finish of each
+/// variant seals its receipt into the matching opaque wrapper variant. Legacy
+/// native execution reaches the frozen V1 accumulator exactly as before.
+pub(crate) enum NativeRunBoundFullEpisodeAccumulatorV2 {
+    LegacyV1(NativeFullEpisodeTrajectoryAccumulatorV1),
+    EnvironmentRandomizationV2(NativeFullEpisodeTrajectoryAccumulatorV2),
+}
+
+impl NativeRunBoundFullEpisodeAccumulatorV2 {
+    pub(crate) fn new_legacy_v1(
+        episode_index: u64,
+        environment_seed: u64,
+        deck_ids: &SessionDeckIdsV1,
+        deck_hashes: SessionDeckHashesV1,
+        learner_seat: PlayerSeatV1,
+    ) -> Result<Self, NativeFullEpisodeTrajectoryErrorV2> {
+        NativeFullEpisodeTrajectoryAccumulatorV1::new_v1(
+            episode_index,
+            environment_seed,
+            deck_ids,
+            deck_hashes,
+            learner_seat,
+        )
+        .map(Self::LegacyV1)
+        .map_err(map_inner_error_v2)
+    }
+
+    pub(crate) fn new_environment_randomization_v2(
+        start: &NativeFullEpisodeTrajectoryStartV2,
+    ) -> Result<Self, NativeFullEpisodeTrajectoryErrorV2> {
+        NativeFullEpisodeTrajectoryAccumulatorV2::new_v2(start)
+            .map(Self::EnvironmentRandomizationV2)
+    }
+
+    pub(crate) fn preflight_candidate(
+        &self,
+        row: NativeFullEpisodeTrajectoryDecisionRowV1,
+    ) -> Result<(), NativeFullEpisodeTrajectoryErrorV2> {
+        match self {
+            Self::LegacyV1(inner) => inner
+                .preflight_candidate_v1(row)
+                .map_err(map_inner_error_v2),
+            Self::EnvironmentRandomizationV2(inner) => inner.preflight_candidate_v2(row),
+        }
+    }
+
+    pub(crate) fn record_accepted(
+        &mut self,
+        row: NativeFullEpisodeTrajectoryDecisionRowV1,
+    ) -> Result<(), NativeFullEpisodeTrajectoryErrorV2> {
+        match self {
+            Self::LegacyV1(inner) => inner.record_accepted_v1(row).map_err(map_inner_error_v2),
+            Self::EnvironmentRandomizationV2(inner) => inner.record_accepted_v2(row),
+        }
+    }
+
+    pub(crate) fn finish_natural(
+        self,
+        terminal: AsyncRolloutTerminalV1,
+        terminal_deck_hashes: SessionDeckHashesV1,
+    ) -> Result<NativeTrainingTrajectoryReceiptV2, NativeFullEpisodeTrajectoryErrorV2> {
+        match self {
+            Self::LegacyV1(inner) => inner
+                .finish_natural_v1(terminal, terminal_deck_hashes)
+                .map(NativeTrainingTrajectoryReceiptV2::from_legacy_v1)
+                .map_err(map_inner_error_v2),
+            Self::EnvironmentRandomizationV2(inner) => inner
+                .finish_natural_v2(terminal, terminal_deck_hashes)
+                .map(NativeTrainingTrajectoryReceiptV2::from_environment_randomization_v2),
+        }
+    }
+}
+
+// ----------------------------------------- window preflight authority (V2)
+
+/// Move-only consumed preflight authority for one complete even/odd episode
+/// window under the environment randomization V2 contract.
+///
+/// Deliberately neither `Clone` nor `Copy`, with no public surface: the only
+/// way to obtain one is [`preflight_native_environment_window_v2`], which
+/// validates every pair of the window through the frozen pair validator, and
+/// the only consumer moves it into the rollout entry, where a missing,
+/// foreign, or window-mismatched authority rejects before result reservation,
+/// channel creation, worker spawn, or reset. Its existence is itself the mode
+/// binding: no legacy path constructs one and no V2 worker or reset is
+/// reachable without consuming one.
+pub(crate) struct NativeEnvironmentWindowPreflightAuthorityV2 {
+    base_seed: u64,
+    first_episode_index: u64,
+    episode_count: u64,
+    deck_ids: [&'static str; 2],
+    deck_hashes: SessionDeckHashesV1,
+}
+
+impl NativeEnvironmentWindowPreflightAuthorityV2 {
+    /// Exact window/config binding check, run by the consumer immediately
+    /// before the authority is consumed. The supplied deck IDs must resolve in
+    /// the runtime catalog to exactly the bindings this authority proved.
+    pub(crate) fn matches_window_v2(
+        &self,
+        base_seed: u64,
+        first_episode_index: u64,
+        episode_count: u64,
+        deck_ids: &SessionDeckIdsV1,
+    ) -> bool {
+        self.base_seed == base_seed
+            && self.first_episode_index == first_episode_index
+            && self.episode_count == episode_count
+            && self.deck_ids[0] == deck_ids[0]
+            && self.deck_ids[1] == deck_ids[1]
+            && resolve_physical_deck_v2(&deck_ids[0], self.deck_hashes[0]).is_ok()
+            && resolve_physical_deck_v2(&deck_ids[1], self.deck_hashes[1]).is_ok()
+    }
+}
+
+/// Test-only pair corruption applied inside the window preflight, so ordering
+/// tests can prove that one corrupted interior pair rejects the whole window
+/// before any downstream construction. Keyed by the pair offset within the
+/// window, not the absolute pair index.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeWindowPairCorruptionForTestV2 {
+    EpisodeIndexDrift,
+    PairRootDrift,
+    LearnerSeatSwap,
+    DeckHashDrift,
+    DeckIdInvalid,
+}
+
+#[cfg(test)]
+thread_local! {
+    static WINDOW_PAIR_CORRUPTION_FOR_TEST_V2: std::cell::Cell<
+        Option<(u64, NativeWindowPairCorruptionForTestV2)>,
+    > = const { std::cell::Cell::new(None) };
+}
+
+/// RAII arming guard: drop restores the exact prior thread-local value on
+/// every exit path, including panics and rejects that never reached the
+/// target pair, so nested or caught-panic scopes cannot clobber each other
+/// and an armed mutation can never poison a later test on the same thread.
+#[cfg(test)]
+pub(crate) struct NativeWindowPairCorruptionGuardV2 {
+    saved: Option<(u64, NativeWindowPairCorruptionForTestV2)>,
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl Drop for NativeWindowPairCorruptionGuardV2 {
+    fn drop(&mut self) {
+        WINDOW_PAIR_CORRUPTION_FOR_TEST_V2.with(|cell| cell.set(self.saved));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn arm_window_pair_corruption_for_test_v2(
+    window_pair_offset: u64,
+    corruption: NativeWindowPairCorruptionForTestV2,
+) -> NativeWindowPairCorruptionGuardV2 {
+    let saved = WINDOW_PAIR_CORRUPTION_FOR_TEST_V2
+        .with(|cell| cell.replace(Some((window_pair_offset, corruption))));
+    NativeWindowPairCorruptionGuardV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
+}
+
+#[cfg(test)]
+fn apply_window_pair_corruption_for_test_v2(
+    window_pair_offset: u64,
+    even_start: &mut NativeFullEpisodeTrajectoryStartV2,
+    odd_start: &mut NativeFullEpisodeTrajectoryStartV2,
+) {
+    WINDOW_PAIR_CORRUPTION_FOR_TEST_V2.with(|cell| {
+        if let Some((target, corruption)) = cell.get() {
+            if target == window_pair_offset {
+                cell.set(None);
+                match corruption {
+                    NativeWindowPairCorruptionForTestV2::EpisodeIndexDrift => {
+                        odd_start.episode_index ^= 0b10;
+                    }
+                    NativeWindowPairCorruptionForTestV2::PairRootDrift => {
+                        even_start.pair_environment_seed ^= 1;
+                        odd_start.pair_environment_seed ^= 1;
+                    }
+                    NativeWindowPairCorruptionForTestV2::LearnerSeatSwap => {
+                        even_start.learner_seat = PlayerSeatV1::P1;
+                        odd_start.learner_seat = PlayerSeatV1::P0;
+                    }
+                    NativeWindowPairCorruptionForTestV2::DeckHashDrift => {
+                        odd_start.deck_hashes[0] ^= 1;
+                        odd_start.deck_hashes[1] ^= 1;
+                    }
+                    NativeWindowPairCorruptionForTestV2::DeckIdInvalid => {
+                        odd_start.deck_ids[0] = String::new();
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Validates one complete even/odd episode window for the environment
+/// randomization V2 contract and returns the consumed preflight authority.
+///
+/// Every pair of the window, interiors included, is validated through
+/// [`validate_native_full_episode_trajectory_pair_v2`]: individual start
+/// validity, exact `2k`/`2k+1` pairing, P0/P1 learner parity, the shared
+/// full-width pair root derived through the frozen trainer schedule, and
+/// seat-swap-stable ordered physical deck bindings. The window itself must be
+/// pair-aligned: an odd first episode, an odd count, or an empty count is
+/// outside the pair domain.
+pub(crate) fn preflight_native_environment_window_v2(
+    base_seed: u64,
+    first_episode_index: u64,
+    episode_count: u64,
+    deck_ids: &SessionDeckIdsV1,
+    deck_hashes: SessionDeckHashesV1,
+) -> Result<NativeEnvironmentWindowPreflightAuthorityV2, NativeFullEpisodeTrajectoryErrorV2> {
+    if episode_count == 0
+        || !first_episode_index.is_multiple_of(2)
+        || !episode_count.is_multiple_of(2)
+    {
+        return Err(NativeFullEpisodeTrajectoryErrorV2::PairIndexOutsideEpisodeDomain);
+    }
+    let end_episode_exclusive = first_episode_index
+        .checked_add(episode_count)
+        .ok_or(NativeFullEpisodeTrajectoryErrorV2::ScheduleIntegerOutsideU63)?;
+    if end_episode_exclusive - 1 > U63_MAX_V2 {
+        return Err(NativeFullEpisodeTrajectoryErrorV2::ScheduleIntegerOutsideU63);
+    }
+    let first_pair_index = first_episode_index / 2;
+    let pair_count = episode_count / 2;
+    let mut proven_deck_ids: Option<[&'static str; 2]> = None;
+    for pair_offset in 0..pair_count {
+        let pair_index = first_pair_index
+            .checked_add(pair_offset)
+            .ok_or(NativeFullEpisodeTrajectoryErrorV2::PairIndexOutsideEpisodeDomain)?;
+        let even_episode_index = pair_index
+            .checked_mul(2)
+            .ok_or(NativeFullEpisodeTrajectoryErrorV2::PairIndexOutsideEpisodeDomain)?;
+        let odd_episode_index = even_episode_index
+            .checked_add(1)
+            .ok_or(NativeFullEpisodeTrajectoryErrorV2::PairIndexOutsideEpisodeDomain)?;
+        // The shared root comes from the frozen trainer schedule; the pair
+        // validator independently rederives and compares it.
+        let schedule = native_trainer_episode_schedule_v1(base_seed, even_episode_index)
+            .map_err(|_| NativeFullEpisodeTrajectoryErrorV2::ScheduleIntegerOutsideU63)?;
+        let even_start = NativeFullEpisodeTrajectoryStartV2 {
+            episode_index: even_episode_index,
+            pair_environment_seed: schedule.environment_seed,
+            deck_ids: deck_ids.clone(),
+            deck_hashes,
+            learner_seat: PlayerSeatV1::P0,
+        };
+        let odd_start = NativeFullEpisodeTrajectoryStartV2 {
+            episode_index: odd_episode_index,
+            pair_environment_seed: schedule.environment_seed,
+            deck_ids: deck_ids.clone(),
+            deck_hashes,
+            learner_seat: PlayerSeatV1::P1,
+        };
+        #[cfg(test)]
+        let (even_start, odd_start) = {
+            let mut even_start = even_start;
+            let mut odd_start = odd_start;
+            apply_window_pair_corruption_for_test_v2(pair_offset, &mut even_start, &mut odd_start);
+            (even_start, odd_start)
+        };
+        let binding = validate_native_full_episode_trajectory_pair_v2(
+            base_seed,
+            pair_index,
+            &even_start,
+            &odd_start,
+        )?;
+        proven_deck_ids = Some(binding.deck_ids);
+    }
+    let proven_deck_ids =
+        proven_deck_ids.ok_or(NativeFullEpisodeTrajectoryErrorV2::PairIndexOutsideEpisodeDomain)?;
+    Ok(NativeEnvironmentWindowPreflightAuthorityV2 {
+        base_seed,
+        first_episode_index,
+        episode_count,
+        deck_ids: proven_deck_ids,
+        deck_hashes,
+    })
+}
+
+/// Test-only INDEPENDENT 34-atom framing: a from-scratch reimplementation of
+/// the frozen envelope (its own atom writer, tag order, and payload
+/// encoding over the module's frozen authority expectations), deliberately
+/// not delegating to `envelope_sha256_v2`. Higher-layer genuine-execution
+/// oracles compare live receipt outer digests against this helper, and the
+/// unit oracle proves this helper equals the production envelope, so the two
+/// implementations check each other rather than one checking itself.
+#[cfg(test)]
+pub(crate) fn independent_envelope_sha256_for_test_v2(
+    start: &NativeFullEpisodeTrajectoryValidatedStartV2,
+    inner_trajectory_sha256: [u8; 32],
+) -> [u8; 32] {
+    fn atom(bytes: &mut Vec<u8>, tag: &str, payload: &[u8]) {
+        bytes.extend_from_slice(&u32::try_from(tag.len()).unwrap().to_be_bytes());
+        bytes.extend_from_slice(tag.as_bytes());
+        bytes.extend_from_slice(&u64::try_from(payload.len()).unwrap().to_be_bytes());
+        bytes.extend_from_slice(payload);
+    }
+    let seat_byte = match start.learner_seat {
+        PlayerSeatV1::P0 => 0_u8,
+        PlayerSeatV1::P1 => 1,
+    };
+    let mut framed = Vec::new();
+    atom(
+        &mut framed,
+        "domain",
+        NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "inner_trajectory_identity_utf8",
+        EXPECTED_INNER_TRAJECTORY_IDENTITY_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "inner_trajectory_goldens_schema_utf8",
+        EXPECTED_INNER_TRAJECTORY_GOLDENS_SCHEMA_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "inner_trajectory_goldens_generator_identity_utf8",
+        EXPECTED_INNER_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "inner_trajectory_golden_stream_identity_utf8",
+        EXPECTED_INNER_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "inner_trajectory_goldens_file_sha256_raw32",
+        &INNER_GOLDENS_FILE_SHA256_RAW32_V2,
+    );
+    atom(
+        &mut framed,
+        "inner_trajectory_golden_stream_sha256_raw32",
+        &INNER_GOLDEN_STREAM_SHA256_RAW32_V2,
+    );
+    atom(
+        &mut framed,
+        "environment_randomization_identity_utf8",
+        EXPECTED_ENVIRONMENT_RANDOMIZATION_IDENTITY_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "environment_randomization_namespace_utf8",
+        EXPECTED_ENVIRONMENT_RANDOMIZATION_NAMESPACE_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "environment_randomization_kdf_goldens_schema_utf8",
+        EXPECTED_ENVIRONMENT_RANDOMIZATION_KDF_GOLDENS_SCHEMA_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "environment_randomization_kdf_goldens_file_sha256_raw32",
+        &ENVIRONMENT_RANDOMIZATION_KDF_GOLDENS_FILE_SHA256_RAW32_V2,
+    );
+    atom(
+        &mut framed,
+        "reset_trajectory_goldens_schema_utf8",
+        EXPECTED_RESET_TRAJECTORY_GOLDENS_SCHEMA_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "reset_trajectory_generator_identity_utf8",
+        EXPECTED_RESET_TRAJECTORY_GENERATOR_IDENTITY_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "reset_trajectory_physical_projection_identity_utf8",
+        EXPECTED_RESET_TRAJECTORY_PHYSICAL_PROJECTION_IDENTITY_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "reset_trajectory_vector_stream_identity_utf8",
+        EXPECTED_RESET_TRAJECTORY_VECTOR_STREAM_IDENTITY_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "reset_trajectory_goldens_file_sha256_raw32",
+        &RESET_TRAJECTORY_GOLDENS_FILE_SHA256_RAW32_V2,
+    );
+    atom(
+        &mut framed,
+        "reset_trajectory_vector_stream_sha256_raw32",
+        &RESET_TRAJECTORY_VECTOR_STREAM_SHA256_RAW32_V2,
+    );
+    atom(
+        &mut framed,
+        "trainer_schedule_identity_utf8",
+        EXPECTED_TRAINER_SCHEDULE_IDENTITY_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "trainer_seed_version_utf8",
+        EXPECTED_TRAINER_SEED_VERSION_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "trainer_schedule_goldens_file_sha256_raw32",
+        &TRAINER_SCHEDULE_GOLDENS_FILE_SHA256_RAW32_V2,
+    );
+    atom(
+        &mut framed,
+        "runtime_deck_catalog_schema_utf8",
+        EXPECTED_RUNTIME_DECK_CATALOG_SCHEMA_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "runtime_deck_protocol_utf8",
+        EXPECTED_RUNTIME_DECK_PROTOCOL_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "runtime_deck_materialization_protocol_utf8",
+        EXPECTED_RUNTIME_DECK_MATERIALIZATION_PROTOCOL_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "runtime_deck_hash_algorithm_utf8",
+        EXPECTED_RUNTIME_DECK_HASH_ALGORITHM_V2.as_bytes(),
+    );
+    atom(
+        &mut framed,
+        "runtime_deck_catalog_file_sha256_raw32",
+        &RUNTIME_DECK_CATALOG_FILE_SHA256_RAW32_V2,
+    );
+    atom(
+        &mut framed,
+        "episode_index_u64be",
+        &start.episode_index.to_be_bytes(),
+    );
+    atom(
+        &mut framed,
+        "pair_index_u64be",
+        &start.pair_index.to_be_bytes(),
+    );
+    atom(
+        &mut framed,
+        "pair_environment_seed_u64be",
+        &start.pair_environment_seed.to_be_bytes(),
+    );
+    atom(&mut framed, "deck_p0_id_utf8", start.deck_ids[0].as_bytes());
+    atom(
+        &mut framed,
+        "deck_p0_hash_u64be",
+        &start.deck_hashes[0].to_be_bytes(),
+    );
+    atom(&mut framed, "deck_p1_id_utf8", start.deck_ids[1].as_bytes());
+    atom(
+        &mut framed,
+        "deck_p1_hash_u64be",
+        &start.deck_hashes[1].to_be_bytes(),
+    );
+    atom(&mut framed, "learner_seat_u8", &[seat_byte]);
+    atom(
+        &mut framed,
+        "inner_trajectory_sha256_raw32",
+        &inner_trajectory_sha256,
+    );
+    Sha256::digest(&framed).into()
+}
+
+#[cfg(test)]
+mod live_c2_tests {
+    use super::*;
+
+    fn rally_start_v2(
+        episode_index: u64,
+        pair_environment_seed: u64,
+    ) -> NativeFullEpisodeTrajectoryStartV2 {
+        let rally = runtime_deck_by_id("Rally").unwrap();
+        NativeFullEpisodeTrajectoryStartV2 {
+            episode_index,
+            pair_environment_seed,
+            deck_ids: ["Rally".to_owned(), "Rally".to_owned()],
+            deck_hashes: [rally.runtime_deck_hash; 2],
+            learner_seat: if episode_index.is_multiple_of(2) {
+                PlayerSeatV1::P0
+            } else {
+                PlayerSeatV1::P1
+            },
+        }
+    }
+
+    /// Independent 34-atom framing oracle: the production envelope must
+    /// equal the from-scratch test framing helper for genuinely distinct
+    /// Rally/Burn bindings under both learner seats, so the deck order atoms
+    /// and the learner-seat byte are non-vacuous, and neither implementation
+    /// is checked against itself.
+    #[test]
+    fn envelope_matches_an_independent_thirty_four_atom_framing_oracle() {
+        let rally = runtime_deck_by_id("Rally").unwrap();
+        let burn = runtime_deck_by_id("Burn").unwrap();
+        for episode_index in [6_u64, 7] {
+            let start = validate_start_v2(&NativeFullEpisodeTrajectoryStartV2 {
+                episode_index,
+                pair_environment_seed: 0x0123_4567_89ab_cdef,
+                deck_ids: ["Rally".to_owned(), "Burn".to_owned()],
+                deck_hashes: [rally.runtime_deck_hash, burn.runtime_deck_hash],
+                learner_seat: if episode_index.is_multiple_of(2) {
+                    PlayerSeatV1::P0
+                } else {
+                    PlayerSeatV1::P1
+                },
+            })
+            .unwrap();
+            let inner = [0x5a_u8; 32];
+            let oracle = independent_envelope_sha256_for_test_v2(&start, inner);
+            assert_eq!(envelope_sha256_v2(&start, inner), oracle);
+            assert_ne!(
+                oracle, inner,
+                "the outer envelope must not equal its inner digest"
+            );
+        }
+    }
+
+    /// Window preflight: a valid pair-aligned window over the frozen schedule
+    /// admits and binds; every corruption kind rejects at its exact interior
+    /// pair; unaligned windows never enter the pair domain.
+    #[test]
+    fn window_preflight_validates_every_pair_and_each_corruption_kind_rejects() {
+        let rally = runtime_deck_by_id("Rally").unwrap();
+        let deck_ids = ["Rally".to_owned(), "Rally".to_owned()];
+        let deck_hashes = [rally.runtime_deck_hash; 2];
+        let base_seed = 71_501_u64;
+
+        let authority =
+            preflight_native_environment_window_v2(base_seed, 0, 8, &deck_ids, deck_hashes)
+                .expect("a valid K=2, S=4 window validates every pair");
+        assert!(authority.matches_window_v2(base_seed, 0, 8, &deck_ids));
+        assert!(!authority.matches_window_v2(base_seed ^ 1, 0, 8, &deck_ids));
+        assert!(!authority.matches_window_v2(base_seed, 2, 8, &deck_ids));
+        assert!(!authority.matches_window_v2(base_seed, 0, 6, &deck_ids));
+        let foreign_decks = ["Burn".to_owned(), "Rally".to_owned()];
+        assert!(!authority.matches_window_v2(base_seed, 0, 8, &foreign_decks));
+
+        for (corruption, expected) in [
+            (
+                NativeWindowPairCorruptionForTestV2::EpisodeIndexDrift,
+                NativeFullEpisodeTrajectoryErrorV2::PairEpisodeIndexMismatch,
+            ),
+            (
+                NativeWindowPairCorruptionForTestV2::PairRootDrift,
+                NativeFullEpisodeTrajectoryErrorV2::PairEnvironmentSeedMismatch,
+            ),
+            (
+                NativeWindowPairCorruptionForTestV2::LearnerSeatSwap,
+                NativeFullEpisodeTrajectoryErrorV2::LearnerSeatRuleMismatch,
+            ),
+            (
+                NativeWindowPairCorruptionForTestV2::DeckHashDrift,
+                NativeFullEpisodeTrajectoryErrorV2::RuntimeDeckHashMismatch,
+            ),
+            (
+                NativeWindowPairCorruptionForTestV2::DeckIdInvalid,
+                NativeFullEpisodeTrajectoryErrorV2::InvalidDeckId,
+            ),
+        ] {
+            for pair_offset in 0..4_u64 {
+                let _guard = arm_window_pair_corruption_for_test_v2(pair_offset, corruption);
+                assert_eq!(
+                    preflight_native_environment_window_v2(base_seed, 0, 8, &deck_ids, deck_hashes)
+                        .map(|_| ())
+                        .unwrap_err(),
+                    expected,
+                    "corruption {corruption:?} at pair offset {pair_offset} must reject"
+                );
+            }
+        }
+        // The RAII guards above disarmed on every exit; the same window
+        // validates again.
+        preflight_native_environment_window_v2(base_seed, 0, 8, &deck_ids, deck_hashes)
+            .expect("disarmed corruption must leave no residue");
+
+        for (first, count) in [(1_u64, 2_u64), (0, 3), (0, 0)] {
+            assert_eq!(
+                preflight_native_environment_window_v2(
+                    base_seed,
+                    first,
+                    count,
+                    &deck_ids,
+                    deck_hashes
+                )
+                .map(|_| ())
+                .unwrap_err(),
+                NativeFullEpisodeTrajectoryErrorV2::PairIndexOutsideEpisodeDomain,
+                "window ({first}, {count}) is outside the pair domain"
+            );
+        }
+    }
+
+    /// Live-authority guard sweep: every one of the twenty-four owner slots,
+    /// armed as a synthetic live/expected mismatch inside the production
+    /// comparison, rejects `AuthorityMismatch`, and the disarmed guard
+    /// succeeds, so an always-Ok guard body or a deleted comparison cannot
+    /// survive.
+    #[test]
+    fn live_authority_guard_rejects_every_armed_slot_and_passes_disarmed() {
+        assert_eq!(LIVE_AUTHORITY_CHECKS_V2.len(), 24);
+        for slot in 0..LIVE_AUTHORITY_CHECKS_V2.len() {
+            let _guard = arm_live_authority_mismatch_for_test_v2(slot);
+            assert_eq!(
+                guard_live_source_authorities_v2().unwrap_err(),
+                NativeFullEpisodeTrajectoryErrorV2::AuthorityMismatch,
+                "armed slot {slot} must reject"
+            );
+        }
+        guard_live_source_authorities_v2().expect("the disarmed guard must pass");
+
+        // The production check sequence equals an independently enumerated
+        // (live, expected) sequence in the frozen atom order, so a
+        // duplicated, dropped, or miswired slot cannot hide behind the
+        // sweep.
+        let independent: [(&str, &str); 24] = [
+            (
+                NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
+                EXPECTED_INNER_TRAJECTORY_IDENTITY_V2,
+            ),
+            (
+                NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1,
+                EXPECTED_INNER_TRAJECTORY_GOLDENS_SCHEMA_V2,
+            ),
+            (
+                NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1,
+                EXPECTED_INNER_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2,
+            ),
+            (
+                NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
+                EXPECTED_INNER_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2,
+            ),
+            (
+                NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1,
+                EXPECTED_INNER_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
+            ),
+            (
+                NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1,
+                EXPECTED_INNER_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
+            ),
+            (
+                ENVIRONMENT_RANDOMIZATION_IDENTITY_V2,
+                EXPECTED_ENVIRONMENT_RANDOMIZATION_IDENTITY_V2,
+            ),
+            (
+                ENVIRONMENT_RANDOMIZATION_NAMESPACE_V2,
+                EXPECTED_ENVIRONMENT_RANDOMIZATION_NAMESPACE_V2,
+            ),
+            (
+                ENVIRONMENT_RANDOMIZATION_GOLDENS_SCHEMA_V1,
+                EXPECTED_ENVIRONMENT_RANDOMIZATION_KDF_GOLDENS_SCHEMA_V2,
+            ),
+            (
+                ENVIRONMENT_RANDOMIZATION_GOLDENS_SHA256_V1,
+                EXPECTED_ENVIRONMENT_RANDOMIZATION_KDF_GOLDENS_FILE_SHA256_V2,
+            ),
+            (
+                ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_GOLDENS_SCHEMA_V1,
+                EXPECTED_RESET_TRAJECTORY_GOLDENS_SCHEMA_V2,
+            ),
+            (
+                ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_GENERATOR_IDENTITY_V1,
+                EXPECTED_RESET_TRAJECTORY_GENERATOR_IDENTITY_V2,
+            ),
+            (
+                ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_PHYSICAL_PROJECTION_IDENTITY_V1,
+                EXPECTED_RESET_TRAJECTORY_PHYSICAL_PROJECTION_IDENTITY_V2,
+            ),
+            (
+                ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_PORTABLE_VECTOR_STREAM_IDENTITY_V1,
+                EXPECTED_RESET_TRAJECTORY_VECTOR_STREAM_IDENTITY_V2,
+            ),
+            (
+                ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_GOLDENS_SHA256_V1,
+                EXPECTED_RESET_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
+            ),
+            (
+                ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_PORTABLE_VECTOR_STREAM_SHA256_V1,
+                EXPECTED_RESET_TRAJECTORY_VECTOR_STREAM_SHA256_V2,
+            ),
+            (
+                NATIVE_TRAINER_SCHEDULE_VERSION_V1,
+                EXPECTED_TRAINER_SCHEDULE_IDENTITY_V2,
+            ),
+            (
+                PYTHON_REFERENCE_SEED_VERSION_V1,
+                EXPECTED_TRAINER_SEED_VERSION_V2,
+            ),
+            (
+                NATIVE_TRAINER_SCHEDULE_GOLDENS_SHA256_V1,
+                EXPECTED_TRAINER_SCHEDULE_GOLDENS_FILE_SHA256_V2,
+            ),
+            (
+                RUNTIME_DECK_CATALOG_SCHEMA,
+                EXPECTED_RUNTIME_DECK_CATALOG_SCHEMA_V2,
+            ),
+            (RUNTIME_DECK_PROTOCOL, EXPECTED_RUNTIME_DECK_PROTOCOL_V2),
+            (
+                RUNTIME_DECK_MATERIALIZATION_PROTOCOL,
+                EXPECTED_RUNTIME_DECK_MATERIALIZATION_PROTOCOL_V2,
+            ),
+            (
+                RUNTIME_DECK_HASH_ALGORITHM,
+                EXPECTED_RUNTIME_DECK_HASH_ALGORITHM_V2,
+            ),
+            (
+                RUNTIME_DECK_CATALOG_FILE_SHA256,
+                EXPECTED_RUNTIME_DECK_CATALOG_FILE_SHA256_V2,
+            ),
+        ];
+        assert_eq!(
+            LIVE_AUTHORITY_CHECKS_V2, independent,
+            "the production check sequence must equal the independent enumeration exactly"
+        );
+    }
+
+    /// Guard-precedence sentinels at both production callsites: an armed
+    /// authority mismatch outranks an otherwise-first start rejection, and
+    /// the disarmed control returns exactly that start rejection, so a
+    /// deleted `?` at either callsite cannot survive.
+    #[test]
+    fn armed_authority_mismatch_propagates_through_both_production_callsites() {
+        // new_v2: episode 1<<63 is outside u63, so the disarmed error is the
+        // start rejection while the armed error is the guard's.
+        let mut invalid_episode_start = rally_start_v2(0, 7);
+        invalid_episode_start.episode_index = 1_u64 << 63;
+        invalid_episode_start.learner_seat = PlayerSeatV1::P0;
+        {
+            let _guard = arm_live_authority_mismatch_for_test_v2(0);
+            assert_eq!(
+                NativeFullEpisodeTrajectoryAccumulatorV2::new_v2(&invalid_episode_start)
+                    .map(|_| ())
+                    .unwrap_err(),
+                NativeFullEpisodeTrajectoryErrorV2::AuthorityMismatch
+            );
+        }
+        assert_eq!(
+            NativeFullEpisodeTrajectoryAccumulatorV2::new_v2(&invalid_episode_start)
+                .map(|_| ())
+                .unwrap_err(),
+            NativeFullEpisodeTrajectoryErrorV2::EpisodeIndexOutsideU63
+        );
+
+        // Pair validation: base and pair bounds stay valid (bound failures
+        // deliberately precede the guard), while the even component start is
+        // invalid, so disarmed returns the component-start error.
+        let mut invalid_even = rally_start_v2(0, 7);
+        invalid_even.deck_ids[0] = String::new();
+        let odd = rally_start_v2(1, 7);
+        {
+            let _guard = arm_live_authority_mismatch_for_test_v2(23);
+            assert_eq!(
+                validate_native_full_episode_trajectory_pair_v2(71_501, 0, &invalid_even, &odd)
+                    .map(|_| ())
+                    .unwrap_err(),
+                NativeFullEpisodeTrajectoryErrorV2::AuthorityMismatch
+            );
+        }
+        assert_eq!(
+            validate_native_full_episode_trajectory_pair_v2(71_501, 0, &invalid_even, &odd)
+                .map(|_| ())
+                .unwrap_err(),
+            NativeFullEpisodeTrajectoryErrorV2::InvalidDeckId
+        );
+    }
+
+    /// Wrapper semantics over both variants, built from crate-private
+    /// constructors: common accessors agree with the underlying receipts, the
+    /// compatibility digest is the V1 digest or the inner V1 digest, V2-only
+    /// projections exist exactly for the V2 variant, and the custom Debug
+    /// never leaks pair or deck-binding facts.
+    #[test]
+    fn wrapper_projects_common_facts_and_seals_v2_only_facts() {
+        let legacy_receipt = NativeFullEpisodeTrajectoryReceiptV1 {
+            episode_index: 4,
+            environment_seed: 9_001,
+            deck_hashes: [11, 22],
+            learner_seat: PlayerSeatV1::P0,
+            trajectory_sha256: [0xaa; 32],
+            policy_step_count: 10,
+            physical_decision_count: 6,
+            learner_policy_step_count: 7,
+            opponent_policy_step_count: 3,
+            learner_physical_decision_count: 4,
+            opponent_physical_decision_count: 2,
+        };
+        let wrapped_legacy = NativeTrainingTrajectoryReceiptV2::from_legacy_v1(legacy_receipt);
+        assert!(!wrapped_legacy.is_environment_randomization_v2());
+        assert_eq!(wrapped_legacy.episode_index(), 4);
+        assert_eq!(wrapped_legacy.environment_seed(), 9_001);
+        assert_eq!(wrapped_legacy.deck_hashes(), [11, 22]);
+        assert_eq!(wrapped_legacy.trajectory_sha256(), [0xaa; 32]);
+        assert_eq!(wrapped_legacy.outer_trajectory_sha256_v2(), None);
+        assert_eq!(wrapped_legacy.pair_index_v2(), None);
+        assert_eq!(wrapped_legacy.deck_ids_v2(), None);
+        assert_eq!(
+            wrapped_legacy.legacy_v1_view(),
+            Some(&legacy_receipt),
+            "the optional legacy view is the exact V1 receipt"
+        );
+
+        let start = validate_start_v2(&rally_start_v2(6, 12_345)).unwrap();
+        let inner = [0x17; 32];
+        let outer = envelope_sha256_v2(&start, inner);
+        let v2_receipt = NativeFullEpisodeTrajectoryReceiptV2 {
+            episode_index: start.episode_index,
+            pair_index: start.pair_index,
+            pair_environment_seed: start.pair_environment_seed,
+            deck_ids: start.deck_ids,
+            deck_hashes: start.deck_hashes,
+            learner_seat: start.learner_seat,
+            inner_trajectory_sha256: inner,
+            trajectory_sha256_v2: outer,
+            policy_step_count: 9,
+            physical_decision_count: 5,
+            learner_policy_step_count: 6,
+            opponent_policy_step_count: 3,
+            learner_physical_decision_count: 3,
+            opponent_physical_decision_count: 2,
+        };
+        let wrapped_v2 =
+            NativeTrainingTrajectoryReceiptV2::from_environment_randomization_v2(v2_receipt);
+        assert!(wrapped_v2.is_environment_randomization_v2());
+        assert_eq!(wrapped_v2.episode_index(), 6);
+        assert_eq!(wrapped_v2.environment_seed(), 12_345);
+        assert_eq!(
+            wrapped_v2.trajectory_sha256(),
+            inner,
+            "the compatibility digest is the inner V1 digest"
+        );
+        assert_eq!(wrapped_v2.outer_trajectory_sha256_v2(), Some(outer));
+        assert_ne!(inner, outer);
+        assert_eq!(wrapped_v2.pair_index_v2(), Some(3));
+        assert_eq!(wrapped_v2.deck_ids_v2(), Some(start.deck_ids));
+        assert_eq!(wrapped_v2.legacy_v1_view(), None);
+
+        let debug = format!("{wrapped_v2:?}");
+        assert!(
+            !debug.contains("pair_index"),
+            "Debug must not leak pair facts"
+        );
+        assert!(
+            !debug.contains("deck_ids"),
+            "Debug must not leak deck bindings"
+        );
+        assert!(
+            !debug.contains("EnvironmentRandomizationV2") && !debug.contains("LegacyV1"),
+            "Debug must not leak the private variant"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@
 //! derivation.
 
 use crate::async_flat_scored_rollout_v2::{
+    run_async_flat_scored_rollout_native_environment_randomization_v2,
     run_async_flat_scored_rollout_native_observed_v2, AsyncFlatScoredObservedRunErrorV2,
     AsyncFlatScoredRolloutErrorV2, AsyncFlatScoredRolloutResultV2, FlatScoredSelectedEventV2,
     FlatScoredTerminalEventV2, FlatScoredTrajectoryObserverV2,
@@ -17,6 +18,9 @@ use crate::async_rollout_v2::AsyncRolloutConfigV2;
 use crate::native_checkpoint_inference_v1::{
     load_native_checkpoint_inference_v1, load_native_checkpoint_inference_wide_v1,
     NativeCheckpointInferenceErrorV1,
+};
+use crate::native_full_episode_trajectory_v2::{
+    preflight_native_environment_window_v2, NativeEnvironmentWindowPreflightAuthorityV2,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
@@ -60,6 +64,7 @@ pub struct NativeCheckpointRunnerEpisodeV1 {
     deck_hashes: [u64; 2],
     learner_seat: PlayerSeatV1,
     trajectory_sha256: [u8; 32],
+    outer_trajectory_sha256_v2: Option<[u8; 32]>,
     policy_step_count: u64,
     physical_decision_count: u64,
     learner_policy_step_count: u64,
@@ -87,6 +92,13 @@ impl NativeCheckpointRunnerEpisodeV1 {
 
     pub const fn trajectory_sha256(&self) -> [u8; 32] {
         self.trajectory_sha256
+    }
+
+    /// The frozen 34-atom V2 outer envelope digest observed for an
+    /// environment randomization V2 run; `None` for a legacy run. Ephemeral
+    /// runtime evidence only, never persisted by any store byte stream.
+    pub const fn outer_trajectory_sha256_v2(&self) -> Option<[u8; 32]> {
+        self.outer_trajectory_sha256_v2
     }
 
     pub const fn policy_step_count(&self) -> u64 {
@@ -303,9 +315,51 @@ struct NativeCheckpointRunnerObserverV1 {
     evaluation_base_seed: u64,
     first_episode_index: u64,
     end_episode_index_exclusive: u64,
+    expected_deck_ids: [String; 2],
     expected_deck_hashes: [u64; 2],
+    expected_environment: NativeRunEnvironmentTrajectoryContractV1,
     expected_episode_count: usize,
     episode_bindings: Vec<NativeCheckpointRunnerEpisodeV1>,
+}
+
+// Zero-side-effect ordering instrumentation: proves whether the runner
+// observer was constructed before a rejection. Test-only.
+#[cfg(test)]
+thread_local! {
+    static RUNNER_OBSERVER_CONSTRUCTION_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Run-local RAII counting scope; drop restores the saved value on every
+/// exit path, including panics.
+#[cfg(test)]
+pub(crate) struct RunnerObserverConstructionCountScopeV2 {
+    saved: u64,
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl RunnerObserverConstructionCountScopeV2 {
+    pub(crate) fn count(&self) -> u64 {
+        RUNNER_OBSERVER_CONSTRUCTION_COUNT_V2.with(std::cell::Cell::get)
+    }
+}
+
+#[cfg(test)]
+impl Drop for RunnerObserverConstructionCountScopeV2 {
+    fn drop(&mut self) {
+        RUNNER_OBSERVER_CONSTRUCTION_COUNT_V2.with(|count| count.set(self.saved));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn runner_observer_construction_count_scope_v2() -> RunnerObserverConstructionCountScopeV2
+{
+    let saved = RUNNER_OBSERVER_CONSTRUCTION_COUNT_V2.with(|count| count.replace(0));
+    RunnerObserverConstructionCountScopeV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
 }
 
 impl NativeCheckpointRunnerObserverV1 {
@@ -313,9 +367,13 @@ impl NativeCheckpointRunnerObserverV1 {
         evaluation_base_seed: u64,
         first_episode_index: u64,
         end_episode_index_exclusive: u64,
+        expected_deck_ids: [String; 2],
         expected_deck_hashes: [u64; 2],
+        expected_environment: NativeRunEnvironmentTrajectoryContractV1,
         expected_episode_count: usize,
     ) -> Result<Self, NativeCheckpointRunnerErrorV1> {
+        #[cfg(test)]
+        RUNNER_OBSERVER_CONSTRUCTION_COUNT_V2.with(|count| count.set(count.get() + 1));
         let mut episode_bindings = Vec::new();
         episode_bindings
             .try_reserve_exact(expected_episode_count)
@@ -324,7 +382,9 @@ impl NativeCheckpointRunnerObserverV1 {
             evaluation_base_seed,
             first_episode_index,
             end_episode_index_exclusive,
+            expected_deck_ids,
             expected_deck_hashes,
+            expected_environment,
             expected_episode_count,
             episode_bindings,
         })
@@ -348,48 +408,81 @@ impl FlatScoredTrajectoryObserverV2 for NativeCheckpointRunnerObserverV1 {
         let receipt = event
             .native_full_trajectory_receipt
             .ok_or(NativeCheckpointRunnerObserverErrorV1::MissingNativeReceipt)?;
+        // The receipt variant must match the validated run's sealed contract
+        // before any common accessor is trusted. Exhaustive on purpose: a
+        // future third mode variant must fail compilation here rather than
+        // silently map to Legacy.
+        let expected_v2 = match self.expected_environment {
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => false,
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => true,
+        };
+        if receipt.is_environment_randomization_v2() != expected_v2 {
+            return Err(NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant);
+        }
+        // V2-only facts are validated, not merely present: the pair index
+        // must be the episode's own pair and the catalog-resolved physical
+        // bindings must equal the ordered run deck IDs, while a legacy
+        // receipt must project no V2-only fact at all.
+        if expected_v2 {
+            if receipt.pair_index_v2() != Some(receipt.episode_index() / 2) {
+                return Err(NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant);
+            }
+            match receipt.deck_ids_v2() {
+                Some(receipt_deck_ids) => {
+                    if receipt_deck_ids[0] != self.expected_deck_ids[0]
+                        || receipt_deck_ids[1] != self.expected_deck_ids[1]
+                    {
+                        return Err(NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant);
+                    }
+                }
+                None => return Err(NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant),
+            }
+        } else if receipt.pair_index_v2().is_some() || receipt.deck_ids_v2().is_some() {
+            return Err(NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant);
+        }
         let schedule =
-            native_trainer_episode_schedule_v1(self.evaluation_base_seed, receipt.episode_index)
+            native_trainer_episode_schedule_v1(self.evaluation_base_seed, receipt.episode_index())
                 .map_err(|_| NativeCheckpointRunnerObserverErrorV1::ScheduleMismatch)?;
-        if schedule.environment_seed != receipt.environment_seed
-            || schedule.learner_seat != receipt.learner_seat
+        if schedule.environment_seed != receipt.environment_seed()
+            || schedule.learner_seat != receipt.learner_seat()
             || !(self.first_episode_index..self.end_episode_index_exclusive)
-                .contains(&receipt.episode_index)
-            || receipt.deck_hashes != self.expected_deck_hashes
+                .contains(&receipt.episode_index())
+            || receipt.deck_hashes() != self.expected_deck_hashes
         {
             return Err(NativeCheckpointRunnerObserverErrorV1::ScheduleMismatch);
         }
-        if event.terminal.episode_id != receipt.episode_index
-            || event.terminal.policy_step_count != receipt.policy_step_count
-            || event.terminal.physical_decision_count != receipt.physical_decision_count
-            || event.learner_action_count != receipt.learner_policy_step_count
+        if event.terminal.episode_id != receipt.episode_index()
+            || event.terminal.policy_step_count != receipt.policy_step_count()
+            || event.terminal.physical_decision_count != receipt.physical_decision_count()
+            || event.learner_action_count != receipt.learner_policy_step_count()
         {
             return Err(NativeCheckpointRunnerObserverErrorV1::TerminalMismatch);
         }
         if receipt
-            .learner_policy_step_count
-            .checked_add(receipt.opponent_policy_step_count)
-            != Some(receipt.policy_step_count)
+            .learner_policy_step_count()
+            .checked_add(receipt.opponent_policy_step_count())
+            != Some(receipt.policy_step_count())
             || receipt
-                .learner_physical_decision_count
-                .checked_add(receipt.opponent_physical_decision_count)
-                != Some(receipt.physical_decision_count)
+                .learner_physical_decision_count()
+                .checked_add(receipt.opponent_physical_decision_count())
+                != Some(receipt.physical_decision_count())
             || self.episode_bindings.len() >= self.expected_episode_count
         {
             return Err(NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant);
         }
         self.episode_bindings.push(NativeCheckpointRunnerEpisodeV1 {
-            episode_index: receipt.episode_index,
-            environment_seed: receipt.environment_seed,
-            deck_hashes: receipt.deck_hashes,
-            learner_seat: receipt.learner_seat,
-            trajectory_sha256: receipt.trajectory_sha256,
-            policy_step_count: receipt.policy_step_count,
-            physical_decision_count: receipt.physical_decision_count,
-            learner_policy_step_count: receipt.learner_policy_step_count,
-            opponent_policy_step_count: receipt.opponent_policy_step_count,
-            learner_physical_decision_count: receipt.learner_physical_decision_count,
-            opponent_physical_decision_count: receipt.opponent_physical_decision_count,
+            episode_index: receipt.episode_index(),
+            environment_seed: receipt.environment_seed(),
+            deck_hashes: receipt.deck_hashes(),
+            learner_seat: receipt.learner_seat(),
+            trajectory_sha256: receipt.trajectory_sha256(),
+            outer_trajectory_sha256_v2: receipt.outer_trajectory_sha256_v2(),
+            policy_step_count: receipt.policy_step_count(),
+            physical_decision_count: receipt.physical_decision_count(),
+            learner_policy_step_count: receipt.learner_policy_step_count(),
+            opponent_policy_step_count: receipt.opponent_policy_step_count(),
+            learner_physical_decision_count: receipt.learner_physical_decision_count(),
+            opponent_physical_decision_count: receipt.opponent_physical_decision_count(),
         });
         Ok(())
     }
@@ -471,7 +564,7 @@ fn run_native_checkpoint_core_v1(
     config: NativeCheckpointRunnerConfigV1,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
-    let topology = validate_runner_config_v1(run, config)?;
+    let validated = validate_runner_config_v1(run, config)?;
     let expected_episode_count = usize::try_from(config.episode_count)
         .map_err(|_| NativeCheckpointRunnerErrorV1::InvalidConfig)?;
     let end_episode_index_exclusive = config
@@ -489,7 +582,12 @@ fn run_native_checkpoint_core_v1(
         config.evaluation_base_seed,
         config.first_episode_index,
         end_episode_index_exclusive,
+        [
+            run.record().environment().deck_ids()[0].clone(),
+            run.record().environment().deck_ids()[1].clone(),
+        ],
         expected_deck_hashes,
+        validated.environment,
         expected_episode_count,
     )?;
     let inference = load_native_checkpoint_inference_v1(run, checkpoint, checkpoint_payload)?;
@@ -510,22 +608,44 @@ fn run_native_checkpoint_core_v1(
         learner_policy_seed: config.evaluation_base_seed,
         max_physical_decisions: run.record().limits().max_physical_decisions(),
         max_policy_steps: run.record().limits().max_policy_steps(),
-        worker_count: topology.0,
-        sessions_per_worker: topology.1,
-        broker_batch_target: topology.2,
+        worker_count: validated.worker_count,
+        sessions_per_worker: validated.sessions_per_worker,
+        broker_batch_target: validated.broker_batch_target,
         first_episode_id: config.first_episode_index,
         episode_count: config.episode_count,
         scheduler_timeout: config.scheduler_timeout,
         measure_broker_service_time: config.measure_broker_service_time,
     };
     let mut scorer = inference.batch_scorer_v1();
-    let observed = run_async_flat_scored_rollout_native_observed_v2(
-        rollout_config,
-        config.evaluation_base_seed,
-        ladder_opponent,
-        &mut scorer,
-        observer,
-    );
+    // Exhaustive rollout dispatch by the sealed contract: neither core can
+    // default to Legacy, and the V2 arm surrenders the consumed authority
+    // minted by the first validator from the evaluation seed.
+    let observed = match (validated.environment, validated.environment_authority) {
+        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, None) => {
+            run_async_flat_scored_rollout_native_observed_v2(
+                rollout_config,
+                config.evaluation_base_seed,
+                ladder_opponent,
+                &mut scorer,
+                observer,
+            )
+        }
+        (
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            Some(environment_authority),
+        ) => run_async_flat_scored_rollout_native_environment_randomization_v2(
+            rollout_config,
+            config.evaluation_base_seed,
+            environment_authority,
+            ladder_opponent,
+            &mut scorer,
+            observer,
+        ),
+        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, Some(_))
+        | (NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2, None) => {
+            return Err(NativeCheckpointRunnerErrorV1::Protocol);
+        }
+    };
     drop(scorer);
     let (rollout, episode_bindings) = match observed {
         Ok((rollout, episode_bindings)) => (rollout, episode_bindings),
@@ -571,9 +691,9 @@ fn run_native_checkpoint_core_v1(
         batch_episodes: checkpoint.batch_episodes(),
         checkpoint_segment_updates: checkpoint.checkpoint_segment_updates(),
         config,
-        worker_count: topology.0,
-        sessions_per_worker: topology.1,
-        broker_batch_target: topology.2,
+        worker_count: validated.worker_count,
+        sessions_per_worker: validated.sessions_per_worker,
+        broker_batch_target: validated.broker_batch_target,
         episode_bindings,
         rollout,
     })
@@ -636,7 +756,7 @@ fn run_native_checkpoint_wide_core_v1(
     config: NativeCheckpointRunnerConfigV1,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
-    let topology = validate_runner_config_v1(run, config)?;
+    let validated = validate_runner_config_v1(run, config)?;
     let expected_episode_count = usize::try_from(config.episode_count)
         .map_err(|_| NativeCheckpointRunnerErrorV1::InvalidConfig)?;
     let end_episode_index_exclusive = config
@@ -654,7 +774,12 @@ fn run_native_checkpoint_wide_core_v1(
         config.evaluation_base_seed,
         config.first_episode_index,
         end_episode_index_exclusive,
+        [
+            run.record().environment().deck_ids()[0].clone(),
+            run.record().environment().deck_ids()[1].clone(),
+        ],
         expected_deck_hashes,
+        validated.environment,
         expected_episode_count,
     )?;
     let inference = load_native_checkpoint_inference_wide_v1(run, checkpoint, checkpoint_payload)?;
@@ -671,22 +796,44 @@ fn run_native_checkpoint_wide_core_v1(
         learner_policy_seed: config.evaluation_base_seed,
         max_physical_decisions: run.record().limits().max_physical_decisions(),
         max_policy_steps: run.record().limits().max_policy_steps(),
-        worker_count: topology.0,
-        sessions_per_worker: topology.1,
-        broker_batch_target: topology.2,
+        worker_count: validated.worker_count,
+        sessions_per_worker: validated.sessions_per_worker,
+        broker_batch_target: validated.broker_batch_target,
         first_episode_id: config.first_episode_index,
         episode_count: config.episode_count,
         scheduler_timeout: config.scheduler_timeout,
         measure_broker_service_time: config.measure_broker_service_time,
     };
     let mut scorer = inference.batch_scorer_v1();
-    let observed = run_async_flat_scored_rollout_native_observed_v2(
-        rollout_config,
-        config.evaluation_base_seed,
-        ladder_opponent,
-        &mut scorer,
-        observer,
-    );
+    // Exhaustive rollout dispatch by the sealed contract: neither core can
+    // default to Legacy, and the V2 arm surrenders the consumed authority
+    // minted by the first validator from the evaluation seed.
+    let observed = match (validated.environment, validated.environment_authority) {
+        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, None) => {
+            run_async_flat_scored_rollout_native_observed_v2(
+                rollout_config,
+                config.evaluation_base_seed,
+                ladder_opponent,
+                &mut scorer,
+                observer,
+            )
+        }
+        (
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            Some(environment_authority),
+        ) => run_async_flat_scored_rollout_native_environment_randomization_v2(
+            rollout_config,
+            config.evaluation_base_seed,
+            environment_authority,
+            ladder_opponent,
+            &mut scorer,
+            observer,
+        ),
+        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, Some(_))
+        | (NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2, None) => {
+            return Err(NativeCheckpointRunnerErrorV1::Protocol);
+        }
+    };
     drop(scorer);
     let (rollout, episode_bindings) = match observed {
         Ok((rollout, episode_bindings)) => (rollout, episode_bindings),
@@ -732,35 +879,31 @@ fn run_native_checkpoint_wide_core_v1(
         batch_episodes: checkpoint.batch_episodes(),
         checkpoint_segment_updates: checkpoint.checkpoint_segment_updates(),
         config,
-        worker_count: topology.0,
-        sessions_per_worker: topology.1,
-        broker_batch_target: topology.2,
+        worker_count: validated.worker_count,
+        sessions_per_worker: validated.sessions_per_worker,
+        broker_batch_target: validated.broker_batch_target,
         episode_bindings,
         rollout,
     })
 }
 
+/// Private validated runner bundle: the run topology plus the sealed run
+/// trajectory contract and, for an environment randomization V2 run, the
+/// consumed whole-window preflight authority derived from the caller's
+/// `evaluation_base_seed`. Both cores consume exactly this bundle, so neither
+/// wide nor narrow evaluation can ever default to Legacy.
+struct NativeCheckpointRunnerValidatedConfigV1 {
+    worker_count: usize,
+    sessions_per_worker: usize,
+    broker_batch_target: usize,
+    environment: NativeRunEnvironmentTrajectoryContractV1,
+    environment_authority: Option<NativeEnvironmentWindowPreflightAuthorityV2>,
+}
+
 fn validate_runner_config_v1(
     run: &ValidatedTrainRunV2,
     config: NativeCheckpointRunnerConfigV1,
-) -> Result<(usize, usize, usize), NativeCheckpointRunnerErrorV1> {
-    // Inactive-manifest gate (Phase C1). A run classified as the environment
-    // randomization V2 trajectory contract cannot be evaluated by this build.
-    // This is the first clause, ahead of the episode-window arithmetic below,
-    // and both runner cores call this validator before they load a checkpoint
-    // payload, construct a model, or start a rollout. A V2 run therefore
-    // returns InvalidConfig even when its payload is malformed, which is what
-    // proves payload decode was never reached.
-    //
-    // Written as an exhaustive two-arm match with no wildcard: a future third
-    // classifier variant fails compilation here instead of silently slipping
-    // through an equality test.
-    match run.environment_trajectory_contract_v1() {
-        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => {}
-        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => {
-            return Err(NativeCheckpointRunnerErrorV1::InvalidConfig);
-        }
-    }
+) -> Result<NativeCheckpointRunnerValidatedConfigV1, NativeCheckpointRunnerErrorV1> {
     let end = config
         .first_episode_index
         .checked_add(config.episode_count)
@@ -799,7 +942,43 @@ fn validate_runner_config_v1(
     {
         return Err(NativeCheckpointRunnerErrorV1::InvalidConfig);
     }
-    Ok((worker_count, sessions_per_worker, broker_batch_target))
+    // Sealed-mode classification plus, for a V2 run, the whole-window pair
+    // preflight, still inside this first validator and therefore before
+    // observer construction and before any checkpoint payload decode in both
+    // cores. The window root is the caller's evaluation seed, never the run
+    // schedule seed: evaluation derives its own pair roots exactly as it
+    // derives its own episode schedule. Exhaustive, no wildcard.
+    let environment = run.environment_trajectory_contract_v1();
+    let environment_authority = match environment {
+        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => None,
+        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => {
+            let record_environment = &run.record().environment;
+            let deck_hashes_hex = record_environment.deck_hashes_u64_hex();
+            let deck_hashes = [
+                u64::from_str_radix(&deck_hashes_hex[0], 16)
+                    .map_err(|_| NativeCheckpointRunnerErrorV1::InvalidConfig)?,
+                u64::from_str_radix(&deck_hashes_hex[1], 16)
+                    .map_err(|_| NativeCheckpointRunnerErrorV1::InvalidConfig)?,
+            ];
+            Some(
+                preflight_native_environment_window_v2(
+                    config.evaluation_base_seed,
+                    config.first_episode_index,
+                    config.episode_count,
+                    record_environment.deck_ids(),
+                    deck_hashes,
+                )
+                .map_err(|_| NativeCheckpointRunnerErrorV1::InvalidConfig)?,
+            )
+        }
+    };
+    Ok(NativeCheckpointRunnerValidatedConfigV1 {
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        environment,
+        environment_authority,
+    })
 }
 
 #[cfg(test)]
@@ -1398,22 +1577,26 @@ mod tests {
         }
     }
 
-    /// Phase C1 required test 7. Checkpoint evaluation of a run classified as
-    /// the environment randomization V2 trajectory contract returns
-    /// `InvalidConfig` even when the payload is deliberately malformed.
+    /// Live C2 acceptance and ordering for both runner cores under the
+    /// environment randomization V2 contract.
     ///
-    /// The malformed payload is the instrument, not the subject. Every V2 call
-    /// below uses a genuinely V2-bound checkpoint manifest, built from the V2
-    /// run's own valid candidate payload, so the rejection cannot be blamed on
-    /// a mismatched legacy authority. The legacy control proves the malformed
-    /// bytes really do reach the payload decoder when the gate does not fire:
-    /// legacy returns `Inference(PayloadExactLength)`. The V2 run returning
-    /// `InvalidConfig` against equivalent bytes therefore proves decode was
-    /// never reached, in both the frozen and the wide core.
+    /// Ordering: the first validator performs the V2 whole-window pair
+    /// preflight, so an armed interior pair corruption returns
+    /// `InvalidConfig` with zero runner-observer constructions even though
+    /// the payload is deliberately malformed; the legacy control proves the
+    /// same malformed bytes otherwise reach the payload decoder. Acceptance:
+    /// the V2 run's own valid payload evaluates end to end in the frozen and
+    /// wide cores, every binding carries the V2 outer digest beside the
+    /// inner compatibility digest, and the pair roots follow
+    /// `config.evaluation_base_seed`, never the run schedule seed.
     #[test]
-    fn v2_checkpoint_evaluation_returns_invalid_config_before_payload_decode() {
+    fn v2_checkpoint_evaluation_preflights_the_window_then_evaluates_live() {
+        use crate::native_full_episode_trajectory_v2::{
+            arm_window_pair_corruption_for_test_v2, NativeWindowPairCorruptionForTestV2,
+        };
         use crate::native_training_store_run_v2::test_fixture_bytes_environment_randomization_v2;
 
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
         let (legacy_run, legacy_checkpoint) = authorities_v1();
         assert_eq!(
             legacy_run.environment_trajectory_contract_v1(),
@@ -1426,25 +1609,14 @@ mod tests {
             NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
         );
 
-        // A real V2-bound authority: the V2 run's own executor, its own valid
-        // candidate payload, and a genesis manifest built from both. Nothing
-        // here is borrowed from the legacy fixture.
         let v2_executor = fresh_executor_v1(&v2_run);
         let v2_candidate = v2_executor.checkpoint_candidate_v1().unwrap();
         let v2_payload = v2_candidate.payload().to_vec();
         let v2_checkpoint = build_genesis_checkpoint_manifest_v3(&v2_run, &v2_payload).unwrap();
-        assert!(
-            !v2_payload.is_empty(),
-            "the V2 candidate payload must be real"
-        );
-
-        // Deliberately malformed: truncated well short of the exact payload
-        // length the loader requires.
         let malformed_v2 = v2_payload[..7].to_vec();
 
-        // Nonvacuity control: with the gate not firing, an equivalently
-        // malformed payload reaches the payload decoder and is rejected there,
-        // not by config preflight.
+        // Nonvacuity control: with a legacy run the malformed payload reaches
+        // the payload decoder and is rejected there, not by config preflight.
         let malformed_legacy = fixture_v1().payload[..7].to_vec();
         match run_native_checkpoint_v1(
             &legacy_run,
@@ -1461,37 +1633,410 @@ mod tests {
             other => panic!("expected the malformed payload to reach decode, got {other:?}"),
         }
 
-        // Frozen core: the gate fires first, so the malformed payload is never
-        // decoded and the error is the direct config rejection.
-        assert_eq!(
-            run_native_checkpoint_v1(&v2_run, &v2_checkpoint, &malformed_v2, runner_config_v1())
-                .unwrap_err(),
-            NativeCheckpointRunnerErrorV1::InvalidConfig
-        );
+        // Armed interior pair corruption: the V2 window preflight inside the
+        // first validator rejects before observer construction and before
+        // payload decode, in the frozen and wide cores alike. The runner
+        // window is one pair per config below, so offset zero is the whole
+        // table here; the pure window-preflight suite and the
+        // prepared-segment interior-pair oracle cover the deeper K=2, S=4
+        // offsets.
+        for wide in [false, true] {
+            let scope = runner_observer_construction_count_scope_v2();
+            let _corruption = arm_window_pair_corruption_for_test_v2(
+                0,
+                NativeWindowPairCorruptionForTestV2::PairRootDrift,
+            );
+            let error = if wide {
+                run_native_checkpoint_wide_v1(
+                    &v2_run,
+                    &v2_checkpoint,
+                    &malformed_v2,
+                    runner_config_v1(),
+                )
+                .unwrap_err()
+            } else {
+                run_native_checkpoint_v1(&v2_run, &v2_checkpoint, &malformed_v2, runner_config_v1())
+                    .unwrap_err()
+            };
+            assert_eq!(error, NativeCheckpointRunnerErrorV1::InvalidConfig);
+            assert_eq!(
+                scope.count(),
+                0,
+                "a failed window preflight must construct zero runner observers"
+            );
+        }
 
-        // Wide core: same gate, same first clause.
+        // Live V2 acceptance, genuinely in both cores: the narrow core runs
+        // the narrow V2 fixture's own payload, and the wide core runs a
+        // genuinely wide V2 run with a real wide payload. In each, pair
+        // roots follow the evaluation seed, outer digests ride beside the
+        // inner compatibility digest, and the seat pair shares one exact
+        // root that is not the run schedule root.
+        let wide_v2_run = decode_train_run_v2(
+            &crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_wide_environment_v2(
+                NativeTrainingNumericalBackendV1::Sequential,
+                2,
+                4,
+                4,
+                2,
+                4,
+                8,
+                32_768,
+                65_536,
+                71_501,
+            ),
+        )
+        .expect("the wide V2 fixture decodes");
         assert_eq!(
-            run_native_checkpoint_wide_v1(
-                &v2_run,
-                &v2_checkpoint,
-                &malformed_v2,
-                runner_config_v1()
+            wide_v2_run.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        let wide_payload = wide_zero_moment_payload_v1();
+        let wide_v2_checkpoint =
+            build_genesis_checkpoint_manifest_v3(&wide_v2_run, &wide_payload).unwrap();
+        let acceptance_arms: [(u64, bool); 3] = [(7_777, false), (9_291, false), (7_777, true)];
+        for (evaluation_base_seed, wide) in acceptance_arms {
+            let config = NativeCheckpointRunnerConfigV1 {
+                evaluation_base_seed,
+                ..runner_config_v1()
+            };
+            let observer_scope = runner_observer_construction_count_scope_v2();
+            let (result, run_schedule_seed) = if wide {
+                (
+                    run_native_checkpoint_wide_v1(
+                        &wide_v2_run,
+                        &wide_v2_checkpoint,
+                        &wide_payload,
+                        config,
+                    )
+                    .expect("the genuinely wide V2 evaluation must run live"),
+                    wide_v2_run.record().schedule.base_seed,
+                )
+            } else {
+                (
+                    run_native_checkpoint_v1(&v2_run, &v2_checkpoint, &v2_payload, config).unwrap(),
+                    v2_run.record().schedule.base_seed,
+                )
+            };
+            assert_eq!(
+                observer_scope.count(),
+                1,
+                "a live evaluation constructs exactly one runner observer"
+            );
+            let bindings = result.episode_bindings();
+            assert_eq!(bindings.len(), 2);
+            for binding in bindings {
+                let schedule =
+                    crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1(
+                        evaluation_base_seed,
+                        binding.episode_index(),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    binding.environment_seed(),
+                    schedule.environment_seed,
+                    "V2 pair roots must follow the evaluation seed"
+                );
+                let outer = binding
+                    .outer_trajectory_sha256_v2()
+                    .expect("a V2 evaluation binding carries the outer digest");
+                assert_ne!(outer, binding.trajectory_sha256());
+            }
+            assert_eq!(
+                bindings[0].environment_seed(),
+                bindings[1].environment_seed(),
+                "the even/odd pair shares one exact schedule root"
+            );
+            assert_ne!(
+                bindings[0].environment_seed(),
+                crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1(
+                    run_schedule_seed,
+                    0,
+                )
+                .unwrap()
+                .environment_seed,
+                "the evaluation root must not be the run schedule root"
+            );
+        }
+
+        // Legacy bindings carry no outer digest.
+        let legacy_result = run_native_checkpoint_v1(
+            &legacy_run,
+            &legacy_checkpoint,
+            fixture_v1().payload.as_slice(),
+            runner_config_v1(),
+        )
+        .unwrap();
+        for binding in legacy_result.episode_bindings() {
+            assert_eq!(binding.outer_trajectory_sha256_v2(), None);
+        }
+    }
+
+    /// Live C2 runner-observer receipt battery with genuinely distinct
+    /// ordered decks: a coherent crafted V2 terminal is admitted, and then
+    /// wrong-variant, pair-index, and each ordered deck-ID mutation rejects,
+    /// so deleting any one of the observer's V2 receipt checks fails here.
+    /// CPU-only and allocation-light: the observer is driven directly.
+    #[test]
+    fn runner_observer_rejects_each_v2_receipt_fact_mutation() {
+        use crate::async_flat_scored_rollout_v2::FlatScoredTerminalEventV2;
+        use crate::async_rollout::AsyncRolloutTerminalV1;
+        use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1;
+        use crate::native_full_episode_trajectory_v2::{
+            envelope_probe_receipt_for_test_v2, NativeTrainingTrajectoryReceiptV2,
+            NativeV2ReceiptFactMutationForTestV2,
+        };
+        use crate::rl::{TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2};
+        use crate::runtime_decks::runtime_deck_by_id;
+
+        let evaluation_base_seed = 7_777_u64;
+        let rally = runtime_deck_by_id("Rally").unwrap();
+        let burn = runtime_deck_by_id("Burn").unwrap();
+        let schedule = native_trainer_episode_schedule_v1(evaluation_base_seed, 0).unwrap();
+        let deck_ids = ["Rally".to_owned(), "Burn".to_owned()];
+        let deck_hashes = [rally.runtime_deck_hash, burn.runtime_deck_hash];
+        let genuine = envelope_probe_receipt_for_test_v2(
+            0,
+            schedule.environment_seed,
+            &deck_ids,
+            deck_hashes,
+        );
+        let event_with = |receipt: NativeTrainingTrajectoryReceiptV2| FlatScoredTerminalEventV2 {
+            terminal: AsyncRolloutTerminalV1 {
+                episode_id: receipt.episode_index(),
+                terminal_outcome: TerminalOutcomeV1::P0Win,
+                terminal_classification: TerminalClassificationV1::Natural,
+                terminal_code: TerminalSafeCodeV2::NaturalGameOver,
+                winner: Some(PlayerSeatV1::P0),
+                terminal_reward: [1, -1],
+                policy_step_count: receipt.policy_step_count(),
+                physical_decision_count: receipt.physical_decision_count(),
+            },
+            learner_action_count: receipt.learner_policy_step_count(),
+            learner_trace_hash: 0,
+            native_full_trajectory_receipt: Some(receipt),
+        };
+        let fresh_observer = || {
+            NativeCheckpointRunnerObserverV1::new_v1(
+                evaluation_base_seed,
+                0,
+                2,
+                deck_ids.clone(),
+                deck_hashes,
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                2,
             )
-            .unwrap_err(),
-            NativeCheckpointRunnerErrorV1::InvalidConfig
+            .unwrap()
+        };
+
+        // Positive control: the coherent crafted event is admitted and
+        // retained as exactly one binding carrying the outer evidence.
+        use crate::async_flat_scored_rollout_v2::FlatScoredTrajectoryObserverV2;
+        let mut observer = fresh_observer();
+        observer
+            .observe_terminal_v2(event_with(genuine))
+            .expect("the coherent crafted V2 terminal must be admitted");
+        let retained = observer.finish_v2().unwrap();
+        assert_eq!(retained.len(), 1);
+        assert_eq!(
+            retained[0].outer_trajectory_sha256_v2(),
+            genuine.outer_trajectory_sha256_v2()
         );
 
-        // Even the V2 run's own *valid* payload against its own V2-bound
-        // checkpoint is InvalidConfig: nothing about the payload can change the
-        // outcome, which is the whole point of an inactive manifest.
-        assert_eq!(
-            run_native_checkpoint_v1(&v2_run, &v2_checkpoint, &v2_payload, runner_config_v1())
-                .unwrap_err(),
-            NativeCheckpointRunnerErrorV1::InvalidConfig
+        // Wrong variant: a legacy receipt with the same common facts.
+        let legacy = NativeTrainingTrajectoryReceiptV2::from_legacy_v1(
+            NativeFullEpisodeTrajectoryReceiptV1 {
+                episode_index: genuine.episode_index(),
+                environment_seed: genuine.environment_seed(),
+                deck_hashes: genuine.deck_hashes(),
+                learner_seat: genuine.learner_seat(),
+                trajectory_sha256: genuine.trajectory_sha256(),
+                policy_step_count: genuine.policy_step_count(),
+                physical_decision_count: genuine.physical_decision_count(),
+                learner_policy_step_count: genuine.learner_policy_step_count(),
+                opponent_policy_step_count: genuine.opponent_policy_step_count(),
+                learner_physical_decision_count: genuine.learner_physical_decision_count(),
+                opponent_physical_decision_count: genuine.opponent_physical_decision_count(),
+            },
         );
+        let mut variant_observer = fresh_observer();
         assert_eq!(
-            run_native_checkpoint_v1(&v2_run, &v2_checkpoint, &[], runner_config_v1()).unwrap_err(),
-            NativeCheckpointRunnerErrorV1::InvalidConfig
+            variant_observer
+                .observe_terminal_v2(event_with(legacy))
+                .unwrap_err(),
+            NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant,
+            "the wrong receipt variant must reject"
+        );
+        assert!(variant_observer.finish_v2().unwrap().is_empty());
+
+        for mutation in [
+            NativeV2ReceiptFactMutationForTestV2::PairIndex,
+            NativeV2ReceiptFactMutationForTestV2::DeckId0,
+            NativeV2ReceiptFactMutationForTestV2::DeckId1,
+        ] {
+            let mut corrupted = genuine;
+            corrupted.mutate_environment_fact_for_test_v2(mutation);
+            let mut mutation_observer = fresh_observer();
+            assert_eq!(
+                mutation_observer
+                    .observe_terminal_v2(event_with(corrupted))
+                    .unwrap_err(),
+                NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant,
+                "mutation {mutation:?} must reject at the runner observer"
+            );
+            assert!(
+                mutation_observer.finish_v2().unwrap().is_empty(),
+                "a rejected terminal must retain no binding"
+            );
+        }
+
+        // Fixed-baseline extension over the schedule, terminal, and split
+        // blocks: the event stays the genuine baseline and only the receipt
+        // is replaced, so each drifted field isolates exactly one reachable
+        // check and its error class.
+        let baseline_event = event_with(genuine);
+        let fixed_event_case = |receipt: NativeTrainingTrajectoryReceiptV2| {
+            let mut event = baseline_event;
+            event.native_full_trajectory_receipt = Some(receipt);
+            let mut observer = fresh_observer();
+            let error = observer.observe_terminal_v2(event).unwrap_err();
+            assert!(
+                observer.finish_v2().unwrap().is_empty(),
+                "a rejected terminal must retain no binding"
+            );
+            error
+        };
+        for (mutation, expected) in [
+            (
+                NativeV2ReceiptFactMutationForTestV2::EpisodeIndex,
+                NativeCheckpointRunnerObserverErrorV1::ScheduleMismatch,
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::PairRoot,
+                NativeCheckpointRunnerObserverErrorV1::ScheduleMismatch,
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::DeckHash0,
+                NativeCheckpointRunnerObserverErrorV1::ScheduleMismatch,
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::DeckHash1,
+                NativeCheckpointRunnerObserverErrorV1::ScheduleMismatch,
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::LearnerSeat,
+                NativeCheckpointRunnerObserverErrorV1::ScheduleMismatch,
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::PolicyStepCount,
+                NativeCheckpointRunnerObserverErrorV1::TerminalMismatch,
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::PhysicalDecisionCount,
+                NativeCheckpointRunnerObserverErrorV1::TerminalMismatch,
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::LearnerPolicyStepCount,
+                NativeCheckpointRunnerObserverErrorV1::TerminalMismatch,
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::LearnerPhysicalDecisionCount,
+                NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant,
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::OpponentPolicyStepCount,
+                NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant,
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::OpponentPhysicalDecisionCount,
+                NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant,
+            ),
+        ] {
+            let mut corrupted = genuine;
+            corrupted.mutate_environment_fact_for_test_v2(mutation);
+            assert_eq!(
+                fixed_event_case(corrupted),
+                expected,
+                "fixed-baseline mutation {mutation:?}"
+            );
+        }
+
+        // Range predicate isolation: a fully coherent episode-2 receipt and
+        // event, on the correct schedule root for the evaluation seed, is
+        // outside the observer's admitted [0, 2) window, so only the range
+        // clause can reject it.
+        let episode_two = envelope_probe_receipt_for_test_v2(
+            2,
+            native_trainer_episode_schedule_v1(evaluation_base_seed, 2)
+                .unwrap()
+                .environment_seed,
+            &deck_ids,
+            deck_hashes,
+        );
+        let mut range_observer = fresh_observer();
+        assert_eq!(
+            range_observer
+                .observe_terminal_v2(event_with(episode_two))
+                .unwrap_err(),
+            NativeCheckpointRunnerObserverErrorV1::ScheduleMismatch,
+            "a coherent out-of-window episode must reject on the range clause"
+        );
+        assert!(range_observer.finish_v2().unwrap().is_empty());
+
+        // Terminal episode equality isolation: only the event's terminal
+        // episode id drifts while the receipt stays the genuine baseline.
+        let mut terminal_id_event = event_with(genuine);
+        terminal_id_event.terminal.episode_id = 1;
+        let mut terminal_observer = fresh_observer();
+        assert_eq!(
+            terminal_observer
+                .observe_terminal_v2(terminal_id_event)
+                .unwrap_err(),
+            NativeCheckpointRunnerObserverErrorV1::TerminalMismatch,
+            "a drifted terminal episode id must reject on the terminal clause"
+        );
+        assert!(terminal_observer.finish_v2().unwrap().is_empty());
+
+        // Capacity isolation: the admitted range is [0, 4) but the expected
+        // count is two, so a third fully coherent episode can only be
+        // rejected by the capacity clause, and exactly the first two
+        // bindings survive.
+        let mut capacity_observer = NativeCheckpointRunnerObserverV1::new_v1(
+            evaluation_base_seed,
+            0,
+            4,
+            deck_ids.clone(),
+            deck_hashes,
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            2,
+        )
+        .unwrap();
+        let episode_one = envelope_probe_receipt_for_test_v2(
+            1,
+            native_trainer_episode_schedule_v1(evaluation_base_seed, 1)
+                .unwrap()
+                .environment_seed,
+            &deck_ids,
+            deck_hashes,
+        );
+        capacity_observer
+            .observe_terminal_v2(event_with(genuine))
+            .expect("episode zero must be admitted");
+        capacity_observer
+            .observe_terminal_v2(event_with(episode_one))
+            .expect("episode one must be admitted");
+        assert_eq!(
+            capacity_observer
+                .observe_terminal_v2(event_with(episode_two))
+                .unwrap_err(),
+            NativeCheckpointRunnerObserverErrorV1::ReceiptInvariant,
+            "the third coherent episode must reject on the capacity clause"
+        );
+        let retained = capacity_observer.finish_v2().unwrap();
+        assert_eq!(retained.len(), 2, "exactly the first two bindings remain");
+        assert_eq!(
+            (retained[0].episode_index(), retained[1].episode_index()),
+            (0, 1)
         );
     }
 }

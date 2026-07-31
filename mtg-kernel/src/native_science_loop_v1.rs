@@ -173,6 +173,44 @@ impl NativeScienceLoopReportV1 {
     }
 }
 
+/// The ordinary science-loop genesis payload, dispatching on the record's
+/// own wide claim and constructing through the crate-private run-bound
+/// snapshot constructors in both branches, so the genesis executor's sealed
+/// trajectory contract is the validated run's own decode-time
+/// classification. Factored out of the loop so a callsite witness can drive
+/// each branch directly: genesis bytes are mode-free, so only the run-bound
+/// construction counters can prove which constructor ran.
+fn ordinary_genesis_payload_run_bound_v2(
+    run: &ValidatedTrainRunV2,
+    execution_config: NativeTrainingExecutionConfigV1,
+    snapshot_manifest_path: &Path,
+    snapshot_payload_path: &Path,
+) -> std::result::Result<Vec<u8>, ()> {
+    let wide = run.record().contracts.wide_model_experiment_v1.is_some();
+    let executor = if wide {
+        NativeTrainingExecutorV1::from_common_model_snapshot_run_bound_wide_v2(
+            execution_config,
+            snapshot_manifest_path,
+            snapshot_payload_path,
+            run,
+        )
+        .map_err(|_| ())?
+    } else {
+        NativeTrainingExecutorV1::from_common_model_snapshot_run_bound_v2(
+            execution_config,
+            snapshot_manifest_path,
+            snapshot_payload_path,
+            run,
+        )
+        .map_err(|_| ())?
+    };
+    Ok(executor
+        .checkpoint_candidate_v1()
+        .map_err(|_| ())?
+        .payload()
+        .to_vec())
+}
+
 /// Run the complete one-command science loop.
 ///
 /// Bootstrap or reopen the Store under `parent/root_basename`, publish the
@@ -276,32 +314,13 @@ pub fn run_native_science_loop_v1(
                 // the last of the four construction-dispatch sites the
                 // contract's Section 3 enumerates. Absent, this reproduces
                 // the frozen genesis path byte-for-byte.
-                let wide = run.record().contracts.wide_model_experiment_v1.is_some();
-                let payload = if wide {
-                    let executor = NativeTrainingExecutorV1::from_common_model_snapshot_wide_v1(
-                        execution_config.clone(),
-                        snapshot_manifest_path,
-                        snapshot_payload_path,
-                    )
-                    .map_err(|_| genesis_error)?;
-                    executor
-                        .checkpoint_candidate_v1()
-                        .map_err(|_| genesis_error)?
-                        .payload()
-                        .to_vec()
-                } else {
-                    let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
-                        execution_config.clone(),
-                        snapshot_manifest_path,
-                        snapshot_payload_path,
-                    )
-                    .map_err(|_| genesis_error)?;
-                    executor
-                        .checkpoint_candidate_v1()
-                        .map_err(|_| genesis_error)?
-                        .payload()
-                        .to_vec()
-                };
+                let payload = ordinary_genesis_payload_run_bound_v2(
+                    run,
+                    execution_config.clone(),
+                    snapshot_manifest_path,
+                    snapshot_payload_path,
+                )
+                .map_err(|_| genesis_error)?;
                 let checkpoint = build_genesis_checkpoint_manifest_v3(run, &payload)
                     .map_err(|_| genesis_error)?;
                 (checkpoint, payload)
@@ -1010,7 +1029,10 @@ mod windows_science_loop_tests {
             })
             .collect();
         let wide_label = if wide_enabled {
-            format!(" label={}", crate::native_policy_value_net_v1::W_ARCHITECTURE_LABEL_V1)
+            format!(
+                " label={}",
+                crate::native_policy_value_net_v1::W_ARCHITECTURE_LABEL_V1
+            )
         } else {
             String::new()
         };
@@ -1429,8 +1451,8 @@ mod windows_science_loop_tests {
     fn ladder_head_to_head_eval_v1() {
         use crate::native_checkpoint_inference_v1::load_native_checkpoint_inference_v1;
         use crate::native_checkpoint_runner_v1::{
-            run_native_checkpoint_with_ladder_opponent_eval_v1,
             run_native_checkpoint_wide_with_ladder_opponent_eval_v1,
+            run_native_checkpoint_with_ladder_opponent_eval_v1,
         };
         use crate::native_ladder_promotion_v1::promotion_gate_win_rate_passes_v1;
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
@@ -3087,6 +3109,134 @@ mod windows_science_loop_tests {
         assert_eq!(
             genesis.checkpoint().model_parameter_sha256(),
             fixture.reference.checkpoint.model_parameter_sha256()
+        );
+    }
+}
+
+#[cfg(test)]
+mod live_c2_genesis_tests {
+    use super::*;
+    use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+    use crate::native_training_executor_v1::run_bound_snapshot_construction_count_scope_v2;
+    use crate::native_training_store_run_v2::{
+        decode_train_run_v2, test_fixture_bytes_environment_randomization_v2,
+        test_fixture_bytes_with_schedule_and_base_seed_wide_environment_v2,
+    };
+    use std::time::Duration;
+
+    fn run_matched_config_v1(run: &ValidatedTrainRunV2) -> NativeTrainingExecutionConfigV1 {
+        let record = run.record();
+        let parse_bits = |hex: &str| u32::from_str_radix(hex, 16).unwrap();
+        NativeTrainingExecutionConfigV1 {
+            run_base_seed: record.schedule.base_seed,
+            batch_episodes: run.batch_episodes(),
+            deck_ids: record.environment.deck_ids.clone(),
+            max_physical_decisions: record.limits.max_physical_decisions,
+            max_policy_steps: record.limits.max_policy_steps,
+            worker_count: usize::try_from(record.topology.worker_count).unwrap(),
+            sessions_per_worker: usize::try_from(record.topology.sessions_per_worker).unwrap(),
+            broker_batch_target: usize::try_from(record.topology.broker_batch_target).unwrap(),
+            scheduler_timeout: Duration::from_millis(record.topology.scheduler_timeout_ms),
+            measure_broker_service_time: record.topology.measure_broker_service_time,
+            value_coefficient_bits: parse_bits(&record.optimization.value_coefficient_f32_bits),
+            learning_rate_bits: parse_bits(&record.optimization.learning_rate_f32_bits),
+            numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
+            backward_worker_limit: 1,
+        }
+    }
+
+    /// Live C2 callsite witness for both ordinary genesis branches: genesis
+    /// bytes are mode-free, so only the run-bound construction counters can
+    /// prove which constructor ran. A narrow V2 run must construct run-bound
+    /// narrow exactly once, a genuinely wide V2 run must construct run-bound
+    /// wide exactly once, and each payload equals its raw sibling's payload,
+    /// which is exactly the mode-free-bytes fact that makes the counter the
+    /// only honest witness. Reverting either branch to a raw constructor
+    /// fails the counts.
+    #[test]
+    fn ordinary_genesis_dispatch_constructs_run_bound_in_both_branches() {
+        use crate::common_model_snapshot_v1::{
+            common_model_snapshot_paths_v1, wide_model_snapshot_paths_v1,
+        };
+        use crate::native_training_store_run_v2::NativeRunEnvironmentTrajectoryContractV1;
+
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let narrow_run =
+            decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2()).unwrap();
+        let (narrow_manifest, narrow_payload) = common_model_snapshot_paths_v1();
+        let scope = run_bound_snapshot_construction_count_scope_v2();
+        let payload = ordinary_genesis_payload_run_bound_v2(
+            &narrow_run,
+            run_matched_config_v1(&narrow_run),
+            &narrow_manifest,
+            &narrow_payload,
+        )
+        .expect("the narrow V2 ordinary genesis payload must build");
+        assert_eq!(
+            scope.counts(),
+            (1, 0),
+            "narrow genesis constructs run-bound narrow"
+        );
+        let raw = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            run_matched_config_v1(&narrow_run),
+            &narrow_manifest,
+            &narrow_payload,
+        )
+        .unwrap();
+        assert_eq!(
+            payload,
+            raw.checkpoint_candidate_v1().unwrap().payload().to_vec(),
+            "genesis bytes are mode-free"
+        );
+        drop(scope);
+
+        let wide_run = decode_train_run_v2(
+            &test_fixture_bytes_with_schedule_and_base_seed_wide_environment_v2(
+                NativeTrainingNumericalBackendV1::Sequential,
+                2,
+                4,
+                4,
+                2,
+                4,
+                8,
+                32_768,
+                65_536,
+                71_501,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            wide_run.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        let (wide_manifest, wide_payload) = wide_model_snapshot_paths_v1();
+        let scope = run_bound_snapshot_construction_count_scope_v2();
+        let payload = ordinary_genesis_payload_run_bound_v2(
+            &wide_run,
+            run_matched_config_v1(&wide_run),
+            &wide_manifest,
+            &wide_payload,
+        )
+        .expect("the wide V2 ordinary genesis payload must build");
+        assert_eq!(
+            scope.counts(),
+            (0, 1),
+            "wide genesis constructs run-bound wide"
+        );
+        let raw_wide = NativeTrainingExecutorV1::from_common_model_snapshot_wide_v1(
+            run_matched_config_v1(&wide_run),
+            &wide_manifest,
+            &wide_payload,
+        )
+        .unwrap();
+        assert_eq!(
+            payload,
+            raw_wide
+                .checkpoint_candidate_v1()
+                .unwrap()
+                .payload()
+                .to_vec(),
+            "wide genesis bytes are mode-free"
         );
     }
 }

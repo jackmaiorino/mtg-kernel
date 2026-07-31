@@ -7,6 +7,7 @@
 //! unchanged until an independently constructed persistence receipt is
 //! consumed by `commit_v2`.
 
+use crate::native_full_episode_trajectory_v2::preflight_native_environment_window_v2;
 #[cfg(test)]
 use crate::native_training_executor_v1::NativeTrainingIntrinsicFactMutationForTestV2;
 use crate::native_training_executor_v1::{
@@ -25,7 +26,9 @@ use crate::native_training_store_reference_latest_v2::{
     build_checkpoint_reference_v2, build_latest_v2, ValidatedCheckpointReferenceV2,
     ValidatedLatestRecordV2, CHECKPOINT_REFERENCE_MAX_BYTES_V2, LATEST_RECORD_MAX_BYTES_V2,
 };
-use crate::native_training_store_run_v2::ValidatedTrainRunV2;
+use crate::native_training_store_run_v2::{
+    NativeRunEnvironmentTrajectoryContractV1, ValidatedTrainRunV2,
+};
 use crate::native_training_store_segment_continuation_v2::{
     build_segment_continuations_v2, ValidatedSegmentContinuationChainAdvanceV2,
     SEGMENT_CONTINUATION_MAX_BYTES_V2,
@@ -568,6 +571,32 @@ pub fn prepare_segment_v2<'executor>(
     parent_checkpoint: &CheckpointManifestV3,
 ) -> Result<NativeTrainingPreparedSegmentV2<'executor>> {
     validate_prepared_execution_config_v1(run, executor.config()).map_err(|_| input_error_v2())?;
+    // Exhaustive run/executor mode diagonal before live checkpoint facts,
+    // planning, evidence contexts, reservation, candidate clone, rollout, or
+    // artifact allocation. A raw publicly constructed executor is always
+    // Legacy, so a V2 run rejects it here; a V2-resumed executor likewise
+    // never pairs with a legacy run.
+    match (
+        run.environment_trajectory_contract_v1(),
+        executor.environment_trajectory_contract_v1(),
+    ) {
+        (
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+        )
+        | (
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+        ) => {}
+        (
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+        )
+        | (
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+        ) => return Err(input_error_v2()),
+    }
     let live = executor
         .intrinsic_checkpoint_facts_v2()
         .map_err(|_| input_error_v2())?;
@@ -583,6 +612,34 @@ pub fn prepare_segment_v2<'executor>(
                 }
             }
         })?;
+    // Segment-wide V2 pair preflight, contractually after plan completion and
+    // before evidence-context construction, result reservation, or candidate
+    // clone: a later invalid pair must prove zero candidate clones and zero
+    // update activity. Exhaustive by run mode.
+    match run.environment_trajectory_contract_v1() {
+        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => {}
+        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => {
+            let environment = &run.record().environment;
+            let deck_hashes = [
+                u64::from_str_radix(&environment.deck_hashes_u64_hex[0], 16)
+                    .map_err(|_| input_error_v2())?,
+                u64::from_str_radix(&environment.deck_hashes_u64_hex[1], 16)
+                    .map_err(|_| input_error_v2())?,
+            ];
+            // The proven authority is deliberately dropped: prepare-time
+            // preflight is whole-segment validation, while each update's
+            // consumed rollout authority is minted inside the trainer from
+            // the same frozen validator.
+            preflight_native_environment_window_v2(
+                run.record().schedule.base_seed,
+                plan.episode_start_v2(),
+                plan.episode_count_v2(),
+                &environment.deck_ids,
+                deck_hashes,
+            )
+            .map_err(|_| input_error_v2())?;
+        }
+    }
     let building_context = resume_update_evidence_chain_v1(run, parent, parent_checkpoint)
         .map_err(|_| input_error_v2())?;
     let continuation_context = resume_update_evidence_chain_v1(run, parent, parent_checkpoint)
@@ -887,6 +944,8 @@ fn checked_seat_sum_v2(left: u64, right: u64) -> Option<u64> {
 
 fn reserve_update_groups_v2(capacity: usize) -> Result<Vec<ValidatedUpdateGroupV1>> {
     #[cfg(test)]
+    SEGMENT_GROUP_RESERVATION_COUNT_V2.with(|count| count.set(count.get() + 1));
+    #[cfg(test)]
     if RESERVATION_FAILURE_FOR_TEST_V2.with(std::cell::Cell::get) {
         return Err(resource_error_v2());
     }
@@ -900,6 +959,63 @@ fn reserve_update_groups_v2(capacity: usize) -> Result<Vec<ValidatedUpdateGroupV
 #[cfg(test)]
 thread_local! {
     static RESERVATION_FAILURE_FOR_TEST_V2: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SEGMENT_GROUP_RESERVATION_COUNT_V2: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Run-local RAII counting scope for segment group-reservation attempts;
+/// drop restores the saved value on every exit path, including panics.
+#[cfg(test)]
+pub(crate) struct SegmentReservationCountScopeV2 {
+    saved: u64,
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl SegmentReservationCountScopeV2 {
+    pub(crate) fn count(&self) -> u64 {
+        SEGMENT_GROUP_RESERVATION_COUNT_V2.with(std::cell::Cell::get)
+    }
+}
+
+#[cfg(test)]
+impl Drop for SegmentReservationCountScopeV2 {
+    fn drop(&mut self) {
+        SEGMENT_GROUP_RESERVATION_COUNT_V2.with(|count| count.set(self.saved));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn segment_reservation_count_scope_v2() -> SegmentReservationCountScopeV2 {
+    let saved = SEGMENT_GROUP_RESERVATION_COUNT_V2.with(|count| count.replace(0));
+    SegmentReservationCountScopeV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
+}
+
+/// RAII arming guard for the injected reservation failure: drop restores the
+/// exact prior armed state on every exit path, including panics, so nested
+/// scopes cannot clobber each other.
+#[cfg(test)]
+pub(crate) struct ReservationFailureGuardV2 {
+    saved: bool,
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl Drop for ReservationFailureGuardV2 {
+    fn drop(&mut self) {
+        RESERVATION_FAILURE_FOR_TEST_V2.with(|cell| cell.set(self.saved));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn arm_reservation_failure_for_test_v2() -> ReservationFailureGuardV2 {
+    let saved = RESERVATION_FAILURE_FOR_TEST_V2.with(|cell| cell.replace(true));
+    ReservationFailureGuardV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
 }
 
 #[cfg(test)]
@@ -1832,5 +1948,262 @@ mod tests {
         assert_eq!(train_state_snapshot_call_count_for_test_v1(), 0);
         assert_eq!(payload_encode_counts_for_test_v1(), (0, 0));
         assert_eq!(executor.progress().successful_update_count, 0);
+    }
+
+    /// Live C2 exhaustive run/executor 2x2: only the diagonal admits, the
+    /// off-diagonals reject as input binding with zero evidence contexts,
+    /// zero evidence projections, zero group reservations, zero candidate
+    /// clones, zero update attempts, and zero train-state snapshot or
+    /// payload-encode exports, and a raw publicly constructed executor can
+    /// never pair with a V2 run. Live intrinsic checkpoint facts and
+    /// representability planning are pure and payload-free, so the witnessed
+    /// counters are the observable ordering surface.
+    #[test]
+    fn run_executor_mode_matrix_admits_only_the_diagonal() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_environment_randomization_v2;
+        use crate::native_training_store_update_group_v1::store_evidence_count_scope_v2;
+
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let legacy = genesis_fixture_v2();
+        let v2_run =
+            decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2()).unwrap();
+        let v2_genesis = {
+            let executor = fresh_executor_v2(&v2_run);
+            let candidate = executor.checkpoint_candidate_v1().unwrap();
+            let checkpoint =
+                build_genesis_checkpoint_manifest_v3(&v2_run, candidate.payload()).unwrap();
+            let segment = build_genesis_segment_manifest_v2(&v2_run, &checkpoint).unwrap();
+            let boundary =
+                build_genesis_native_training_boundary_v2(&v2_run, &segment, &checkpoint).unwrap();
+            (checkpoint, boundary)
+        };
+
+        // Off-diagonal 1: a V2 run against a raw (Legacy-sealed) executor.
+        {
+            let mut raw_executor = fresh_executor_v2(&v2_run);
+            let evidence_scope = store_evidence_count_scope_v2();
+            let reservation_scope = segment_reservation_count_scope_v2();
+            reset_production_counts_v2();
+            let error =
+                prepare_segment_v2(&mut raw_executor, &v2_run, &v2_genesis.1, &v2_genesis.0)
+                    .map(|_| ())
+                    .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                NativeTrainingPreparedSegmentV2ErrorKind::InputBindingInvalid
+            );
+            assert_eq!(evidence_scope.counts(), (0, 0), "zero evidence work");
+            assert_eq!(reservation_scope.count(), 0, "zero group reservations");
+            assert_eq!(
+                segment_candidate_counts_for_test_v2(),
+                (0, 0),
+                "zero candidate clones and zero update attempts"
+            );
+            assert_eq!(train_state_snapshot_call_count_for_test_v1(), 0);
+            assert_eq!(payload_encode_counts_for_test_v1(), (0, 0));
+        }
+
+        // Off-diagonal 2: a legacy run against a V2-sealed executor.
+        {
+            let seed = fresh_executor_v2(&legacy.run);
+            let candidate = seed.checkpoint_candidate_v1().unwrap();
+            let mut v2_executor =
+                crate::native_training_executor_v1::NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_v2(
+                    execution_config_v2(&legacy.run),
+                    &candidate,
+                    &v2_run,
+                )
+                .unwrap();
+            let evidence_scope = store_evidence_count_scope_v2();
+            let reservation_scope = segment_reservation_count_scope_v2();
+            reset_production_counts_v2();
+            let error = prepare_segment_v2(
+                &mut v2_executor,
+                &legacy.run,
+                &legacy.boundary,
+                &legacy.checkpoint,
+            )
+            .map(|_| ())
+            .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                NativeTrainingPreparedSegmentV2ErrorKind::InputBindingInvalid
+            );
+            assert_eq!(evidence_scope.counts(), (0, 0));
+            assert_eq!(reservation_scope.count(), 0);
+            assert_eq!(segment_candidate_counts_for_test_v2(), (0, 0));
+            assert_eq!(train_state_snapshot_call_count_for_test_v1(), 0);
+            assert_eq!(payload_encode_counts_for_test_v1(), (0, 0));
+        }
+
+        // Diagonal, legacy: the legacy fixture still prepares end to end.
+        {
+            let mut executor = fresh_executor_v2(&legacy.run);
+            let prepared = prepare_segment_v2(
+                &mut executor,
+                &legacy.run,
+                &legacy.boundary,
+                &legacy.checkpoint,
+            )
+            .unwrap();
+            assert_eq!(prepared.parent_generation_index(), 0);
+            drop(prepared);
+        }
+
+        // Diagonal, V2: proven end to end by
+        // `genuine_v2_segment_prepares_and_commits_with_v2_receipts`.
+    }
+
+    /// Live C2 interior-pair oracle: with K=2 and S=4, every window pair
+    /// offset 0..4, interiors included, rejects the whole segment when
+    /// corrupted, even with an armed reservation failure, proving the
+    /// segment-wide preflight precedes evidence contexts, reservation, and
+    /// candidate clone.
+    #[test]
+    fn segment_pair_corruption_tables_hit_every_pair_and_precede_reservation() {
+        use crate::native_full_episode_trajectory_v2::{
+            arm_window_pair_corruption_for_test_v2, NativeWindowPairCorruptionForTestV2,
+        };
+        use crate::native_training_store_run_v2::test_fixture_bytes_environment_randomization_v2;
+        use crate::native_training_store_update_group_v1::store_evidence_count_scope_v2;
+
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let v2_run =
+            decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2()).unwrap();
+        assert_eq!(v2_run.batch_episodes(), 2, "the fixture is K=2");
+        assert_eq!(v2_run.checkpoint_segment_updates(), 4, "the fixture is S=4");
+        let (v2_checkpoint, v2_boundary) = {
+            let executor = fresh_executor_v2(&v2_run);
+            let candidate = executor.checkpoint_candidate_v1().unwrap();
+            let checkpoint =
+                build_genesis_checkpoint_manifest_v3(&v2_run, candidate.payload()).unwrap();
+            let segment = build_genesis_segment_manifest_v2(&v2_run, &checkpoint).unwrap();
+            let boundary =
+                build_genesis_native_training_boundary_v2(&v2_run, &segment, &checkpoint).unwrap();
+            (checkpoint, boundary)
+        };
+        let seed = fresh_executor_v2(&v2_run);
+        let genesis_candidate = seed.checkpoint_candidate_v1().unwrap();
+
+        for pair_offset in 0..4_u64 {
+            for corruption in [
+                NativeWindowPairCorruptionForTestV2::EpisodeIndexDrift,
+                NativeWindowPairCorruptionForTestV2::PairRootDrift,
+                NativeWindowPairCorruptionForTestV2::LearnerSeatSwap,
+                NativeWindowPairCorruptionForTestV2::DeckHashDrift,
+                NativeWindowPairCorruptionForTestV2::DeckIdInvalid,
+            ] {
+                let mut executor =
+                    crate::native_training_executor_v1::NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_v2(
+                        execution_config_v2(&v2_run),
+                        &genesis_candidate,
+                        &v2_run,
+                    )
+                    .unwrap();
+                let evidence_scope = store_evidence_count_scope_v2();
+                let reservation_scope = segment_reservation_count_scope_v2();
+                reset_production_counts_v2();
+                let _corruption_guard =
+                    arm_window_pair_corruption_for_test_v2(pair_offset, corruption);
+                // The armed reservation failure must never win: the pair
+                // preflight fires first, so the error is InputBindingInvalid,
+                // not ResourceExhausted.
+                let _reservation_guard = arm_reservation_failure_for_test_v2();
+                let error =
+                    prepare_segment_v2(&mut executor, &v2_run, &v2_boundary, &v2_checkpoint)
+                        .map(|_| ())
+                        .unwrap_err();
+                assert_eq!(
+                    error.kind(),
+                    NativeTrainingPreparedSegmentV2ErrorKind::InputBindingInvalid,
+                    "pair {pair_offset} corruption {corruption:?} must reject as pair preflight"
+                );
+                assert_eq!(
+                    evidence_scope.counts(),
+                    (0, 0),
+                    "zero evidence contexts and zero projections"
+                );
+                assert_eq!(reservation_scope.count(), 0, "zero group reservations");
+                assert_eq!(
+                    segment_candidate_counts_for_test_v2(),
+                    (0, 0),
+                    "zero candidate clones and zero update attempts"
+                );
+            }
+        }
+    }
+
+    /// Live C2 genuine V2 segment on CPU: a run-bound V2 executor prepares a
+    /// complete K=2, S=4 segment, every episode of every update carries a V2
+    /// receipt with the outer digest beside the inner compatibility digest,
+    /// the receipt-gated commit succeeds against the exact expected receipt,
+    /// and only the trainer state moves.
+    #[test]
+    fn genuine_v2_segment_prepares_and_commits_with_v2_receipts() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_environment_randomization_v2;
+
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let guard = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_guard_v1();
+        let v2_run =
+            decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2()).unwrap();
+        let (v2_checkpoint, v2_boundary) = {
+            let executor = fresh_executor_v2(&v2_run);
+            let candidate = executor.checkpoint_candidate_v1().unwrap();
+            let checkpoint =
+                build_genesis_checkpoint_manifest_v3(&v2_run, candidate.payload()).unwrap();
+            let segment = build_genesis_segment_manifest_v2(&v2_run, &checkpoint).unwrap();
+            let boundary =
+                build_genesis_native_training_boundary_v2(&v2_run, &segment, &checkpoint).unwrap();
+            (checkpoint, boundary)
+        };
+        let seed = fresh_executor_v2(&v2_run);
+        let genesis_candidate = seed.checkpoint_candidate_v1().unwrap();
+        let mut executor =
+            crate::native_training_executor_v1::NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_v2(
+                execution_config_v2(&v2_run),
+                &genesis_candidate,
+                &v2_run,
+            )
+            .unwrap();
+        let config_before = executor.config().clone();
+
+        let evidence_scope =
+            crate::native_training_store_update_group_v1::store_evidence_count_scope_v2();
+        let reservation_scope = segment_reservation_count_scope_v2();
+        let prepared =
+            prepare_segment_v2(&mut executor, &v2_run, &v2_boundary, &v2_checkpoint).unwrap();
+        // Positive instrumentation controls: the admitted S=4 segment builds
+        // exactly two evidence contexts, projects one evidence body per
+        // update, and reserves the group vector exactly once, so a deleted
+        // increment site cannot hide behind the zero-only rejection proofs.
+        assert_eq!(evidence_scope.counts(), (2, 4));
+        assert_eq!(reservation_scope.count(), 1);
+        assert_eq!(prepared.parent_generation_index(), 0);
+        assert_eq!(prepared.expected_generation_index(), 4);
+        // S=4 updates of K=2 episodes: eight genuine environment-V2 resets
+        // and zero legacy resets.
+        assert_eq!(guard.environment_v2_session_reset_count(), 8);
+        assert_eq!(guard.legacy_session_reset_count(), 0);
+
+        let view = prepared.publication_view_v2();
+        let payload_sha256 = view.checkpoint_payload_sha256_v2();
+        let manifest_sha256 = view.checkpoint_manifest_sha256_v2();
+        // Every emitted wire episode is validated by the Store suite; here
+        // the receipt-gated commit is the subject.
+        prepared
+            .commit_v2(test_persistence_receipt_v2(
+                4,
+                payload_sha256,
+                manifest_sha256,
+            ))
+            .unwrap();
+        assert_eq!(executor.progress().successful_update_count, 4);
+        assert_eq!(executor.progress().next_episode_index, 8);
+        assert_eq!(
+            executor.environment_trajectory_contract_v1(),
+            crate::native_training_store_run_v2::NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            "commit replaces only the trainer, never the sealed mode"
+        );
+        assert_eq!(executor.config(), &config_before);
     }
 }

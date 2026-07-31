@@ -513,10 +513,9 @@ fn load_generation_v2(
             // chokepoint every walk/resume/publish path reaches -- see
             // `decode_genesis_checkpoint_manifest_dispatch_v2_v3`'s doc for
             // the dispatch rule.
-            let checkpoint = decode_genesis_checkpoint_manifest_dispatch_v2_v3(
-                &manifest, &payload, run,
-            )
-            .map_err(|_| error)?;
+            let checkpoint =
+                decode_genesis_checkpoint_manifest_dispatch_v2_v3(&manifest, &payload, run)
+                    .map_err(|_| error)?;
             let segment = decode_genesis_segment_manifest_v2(&segment_manifest, run, &checkpoint)
                 .map_err(|_| error)?;
             let boundary = decode_genesis_native_training_boundary_v2(
@@ -891,20 +890,21 @@ fn reconstruct_executor_v2(
     // dispatch on) is what makes `MULTIRUN_WIDE=1` actually train past
     // generation zero. Absent, this reproduces the frozen resume path
     // byte-for-byte.
+    // Both branches reconstruct through the crate-private run-bound
+    // constructors: checkpoint bytes deliberately carry no mode, so the
+    // sealed trajectory contract is rederived from the validated run's own
+    // decode-time classification on every resumed window.
     if run.record().contracts.wide_model_experiment_v1.is_some() {
         let candidate = NativeTrainingCheckpointCandidateV1::import_verified_wide_v1(
             metadata,
             &state.latest_payload,
             digests,
         )
-        .map_err(|error| {
-            failed
-        })?;
-        NativeTrainingExecutorV1::from_checkpoint_candidate_wide_v1(config, &candidate).map_err(
-            |error| {
-                failed
-            },
+        .map_err(|_error| failed)?;
+        NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_wide_v2(
+            config, &candidate, run,
         )
+        .map_err(|_error| failed)
     } else {
         let candidate = NativeTrainingCheckpointCandidateV1::import_verified_v1(
             metadata,
@@ -912,7 +912,7 @@ fn reconstruct_executor_v2(
             digests,
         )
         .map_err(|_| failed)?;
-        NativeTrainingExecutorV1::from_checkpoint_candidate_v1(config, &candidate)
+        NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_v2(config, &candidate, run)
             .map_err(|_| failed)
     }
 }

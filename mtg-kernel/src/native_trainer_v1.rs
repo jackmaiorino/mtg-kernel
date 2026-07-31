@@ -15,11 +15,12 @@
 //! identity.  Those frozen contracts are consumed unchanged.
 
 use crate::async_flat_scored_rollout_v2::{
-    expected_scorer_contract, run_async_flat_scored_rollout_native_observed_v2,
-    AsyncFlatScoredObservedRunErrorV2, AsyncFlatScoredRolloutErrorV2,
-    AsyncFlatScoredRolloutMetricsV2, FlatBatchScorerErrorV2, FlatBatchScorerV2,
-    FlatScoredObserverPhaseV2, FlatScoredSelectedEventV2, FlatScoredTerminalEventV2,
-    FlatScoredTrajectoryObserverV2, FlatScoringBatchViewV2, ValidatedOwnedFlatScoringDecisionV2,
+    expected_scorer_contract, run_async_flat_scored_rollout_native_environment_randomization_v2,
+    run_async_flat_scored_rollout_native_observed_v2, AsyncFlatScoredObservedRunErrorV2,
+    AsyncFlatScoredRolloutErrorV2, AsyncFlatScoredRolloutMetricsV2, FlatBatchScorerErrorV2,
+    FlatBatchScorerV2, FlatScoredObserverPhaseV2, FlatScoredSelectedEventV2,
+    FlatScoredTerminalEventV2, FlatScoredTrajectoryObserverV2, FlatScoringBatchViewV2,
+    ValidatedOwnedFlatScoringDecisionV2,
 };
 use crate::async_rollout_v2::{
     AsyncRolloutConfigV2, ASYNC_ROLLOUT_MAX_SESSIONS_PER_WORKER_V2, ASYNC_ROLLOUT_MAX_WORKERS_V2,
@@ -31,20 +32,29 @@ use crate::flat_policy_v2::FlatDecisionBindingV2;
 use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2, NativeFlatTensorizerV2,
 };
-use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1;
+use crate::native_full_episode_trajectory_v2::{
+    preflight_native_environment_window_v2, NativeEnvironmentWindowPreflightAuthorityV2,
+    NativeFullEpisodeTrajectoryErrorV2, NativeTrainingTrajectoryReceiptV2,
+};
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 #[cfg(test)]
 use crate::native_policy_train_step_v1::{
     packed_actual_recompute_call_count_for_test_v1, FIXED_BACKWARD_PARTITION_COUNT_V1,
 };
 use crate::native_policy_train_step_v1::{
-    NativePolicyForwardInputV1, NativePolicyPackedForwardBuilderV1,
-    NativePolicyPackedForwardTapeV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
-    NativePolicyTrainErrorV1, NativePolicyTrainStepResultV1, NativePolicyValueTrainStateV1,
-    NativeScorerBiasGaugeRecordV1, NativeTrainingNumericalBackendV1,
+    NativePolicyForwardInputV1,
+    NativePolicyPackedForwardBuilderV1,
+    NativePolicyPackedForwardTapeV1,
+    NativePolicyPhysicalDecisionV1,
+    NativePolicySubstepV1,
+    NativePolicyTrainErrorV1,
+    NativePolicyTrainStepResultV1,
+    NativePolicyValueTrainStateV1,
     // Capacity-experiment wide-net (kernel-policy-value-net-8w128) sibling
     // (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3, task item 3).
     NativePolicyValueTrainStateWideV1,
+    NativeScorerBiasGaugeRecordV1,
+    NativeTrainingNumericalBackendV1,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativeNamedParameterV1,
@@ -57,6 +67,7 @@ use crate::native_trainer_schedule_v1::{
 use crate::native_training_phase_diagnostic_v1::{
     NativeTrainingPhaseProfileV1, NativeTrainingPhaseRecorderV1, NativeTrainingPhaseV1,
 };
+use crate::native_training_store_run_v2::NativeRunEnvironmentTrajectoryContractV1;
 use crate::private_physical_trajectory_core::{
     FlatGroupedTrajectoryBatchCore, FlatPhysicalLearnerSeatRuleCore,
     FlatPhysicalTrajectoryObserverCore, FlatPhysicalUpdateStagingCore, FlatSelectedSampleCore,
@@ -89,6 +100,64 @@ pub(crate) const NATIVE_TRAINER_CONTRACT_IDENTITY_V2: &str =
 pub(crate) const NATIVE_TRAINER_MIN_BATCH_EPISODES_V2: u64 = 2;
 pub(crate) const NATIVE_TRAINER_MAX_BATCH_EPISODES_V2: u64 = 10_000;
 const NATIVE_TRAINER_U63_MAX_V2: u64 = (1_u64 << 63) - 1;
+
+// Zero-side-effect ordering instrumentation: caller-thread counters proving
+// which construction stages ran before a rejection. Test-only; production
+// builds compile these away entirely.
+#[cfg(test)]
+thread_local! {
+    static TRAINER_ASSOCIATION_CHANNEL_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+    static TRAINER_OBSERVER_CONSTRUCTION_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+    static TRAINER_SCORER_CONSTRUCTION_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Run-local RAII counting scope: entry zeroes the calling thread's counters
+/// after saving them; drop restores the saved values on every exit path,
+/// including panics, so stale evidence can never leak into a later test on a
+/// reused harness thread and nested scopes stay isolated.
+#[cfg(test)]
+pub(crate) struct TrainerConstructionCountScopeV2 {
+    saved: (u64, u64, u64),
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl TrainerConstructionCountScopeV2 {
+    /// `(association_channels, observer_constructions, scorer_constructions)`
+    /// observed on the calling thread inside this scope.
+    pub(crate) fn counts(&self) -> (u64, u64, u64) {
+        (
+            TRAINER_ASSOCIATION_CHANNEL_COUNT_V2.with(std::cell::Cell::get),
+            TRAINER_OBSERVER_CONSTRUCTION_COUNT_V2.with(std::cell::Cell::get),
+            TRAINER_SCORER_CONSTRUCTION_COUNT_V2.with(std::cell::Cell::get),
+        )
+    }
+}
+
+#[cfg(test)]
+impl Drop for TrainerConstructionCountScopeV2 {
+    fn drop(&mut self) {
+        TRAINER_ASSOCIATION_CHANNEL_COUNT_V2.with(|count| count.set(self.saved.0));
+        TRAINER_OBSERVER_CONSTRUCTION_COUNT_V2.with(|count| count.set(self.saved.1));
+        TRAINER_SCORER_CONSTRUCTION_COUNT_V2.with(|count| count.set(self.saved.2));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn trainer_construction_count_scope_v2() -> TrainerConstructionCountScopeV2 {
+    let saved = (
+        TRAINER_ASSOCIATION_CHANNEL_COUNT_V2.with(|count| count.replace(0)),
+        TRAINER_OBSERVER_CONSTRUCTION_COUNT_V2.with(|count| count.replace(0)),
+        TRAINER_SCORER_CONSTRUCTION_COUNT_V2.with(|count| count.replace(0)),
+    );
+    TrainerConstructionCountScopeV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativePolicyAssociationErrorV1 {
@@ -172,6 +241,8 @@ fn native_policy_association_channel_v1() -> (
     NativePolicyAssociationProducerV1,
     NativePolicyAssociationConsumerV1,
 ) {
+    #[cfg(test)]
+    TRAINER_ASSOCIATION_CHANNEL_COUNT_V2.with(|count| count.set(count.get() + 1));
     let shared = Rc::new(RefCell::new(NativePolicyAssociationStateV1::default()));
     (
         NativePolicyAssociationProducerV1 {
@@ -374,6 +445,8 @@ fn native_policy_association_channel_wide_v1() -> (
     NativePolicyAssociationProducerWideV1,
     NativePolicyAssociationConsumerWideV1,
 ) {
+    #[cfg(test)]
+    TRAINER_ASSOCIATION_CHANNEL_COUNT_V2.with(|count| count.set(count.get() + 1));
     let shared = Rc::new(RefCell::new(NativePolicyAssociationStateWideV1::default()));
     (
         NativePolicyAssociationProducerWideV1 {
@@ -486,6 +559,8 @@ impl NativePolicyBatchScorerWideV2 {
         model: &NativePolicyValueNetWideV1,
         associations: NativePolicyAssociationProducerWideV1,
     ) -> Result<Self, NativePolicyTrainErrorV1> {
+        #[cfg(test)]
+        TRAINER_SCORER_CONSTRUCTION_COUNT_V2.with(|count| count.set(count.get() + 1));
         model
             .validate_parameters_wide_v1()
             .map_err(NativePolicyTrainErrorV1::Model)?;
@@ -843,6 +918,10 @@ impl NativePolicyBatchScorerV2 {
         associations: NativePolicyAssociationProducerV1,
         forward_worker_limit: usize,
     ) -> Result<Self, NativePolicyTrainErrorV1> {
+        // The scorer constructor can spawn forward workers, so its
+        // construction is itself a counted side effect for ordering proofs.
+        #[cfg(test)]
+        TRAINER_SCORER_CONSTRUCTION_COUNT_V2.with(|count| count.set(count.get() + 1));
         let forward_builder = Arc::new(NativePolicyPackedForwardBuilderV1::from_model_v1(model)?);
         let available_workers = thread::available_parallelism()
             .map(|parallelism| parallelism.get())
@@ -1252,10 +1331,103 @@ pub(crate) enum NativePolicyTrajectoryErrorV1 {
     FullTrajectoryReceiptInvariant(&'static str),
 }
 
+/// The one production receipt-only terminal validation both trainer
+/// observers apply before any core grouping or association work: exhaustive
+/// variant diagonal, V2-only fact validation, and the schedule/common-fact
+/// binding, in that frozen order.
+fn validate_native_terminal_trajectory_receipt_v1(
+    receipt: &NativeTrainingTrajectoryReceiptV2,
+    expected_environment: NativeRunEnvironmentTrajectoryContractV1,
+    expected_deck_ids: &SessionDeckIdsV1,
+    expected_deck_hashes: SessionDeckHashesV1,
+    base_seed: u64,
+    event: &FlatScoredTerminalEventV2,
+    prior_receipts: &[NativeTrainingTrajectoryReceiptV2],
+) -> Result<(), NativePolicyTrajectoryErrorV1> {
+    // The receipt variant must match the expected sealed contract before
+    // any common accessor is trusted; a mixed receipt vector cannot pass.
+    // Exhaustive on purpose: a future third mode variant must fail
+    // compilation here rather than silently map to Legacy.
+    let expected_v2 = match expected_environment {
+        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => false,
+        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => true,
+    };
+    if receipt.is_environment_randomization_v2() != expected_v2 {
+        return Err(
+            NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                "native terminal trajectory receipt variant does not match the sealed contract",
+            ),
+        );
+    }
+    // V2-only facts are validated, not merely present: the pair index must
+    // be the episode's own pair and the catalog-resolved physical bindings
+    // must equal the ordered configured deck IDs, while a legacy receipt
+    // must project no V2-only fact at all.
+    if expected_v2 {
+        if receipt.pair_index_v2() != Some(event.terminal.episode_id / 2) {
+            return Err(
+                NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                    "native terminal trajectory receipt pair index is not its own pair",
+                ),
+            );
+        }
+        match receipt.deck_ids_v2() {
+            Some(receipt_deck_ids) => {
+                if receipt_deck_ids[0] != expected_deck_ids[0]
+                    || receipt_deck_ids[1] != expected_deck_ids[1]
+                {
+                    return Err(
+                        NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                            "native terminal trajectory receipt deck bindings drifted",
+                        ),
+                    );
+                }
+            }
+            None => {
+                return Err(
+                    NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                        "native terminal trajectory receipt deck bindings drifted",
+                    ),
+                );
+            }
+        }
+    } else if receipt.pair_index_v2().is_some() || receipt.deck_ids_v2().is_some() {
+        return Err(
+            NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                "a legacy trajectory receipt must project no V2-only fact",
+            ),
+        );
+    }
+    let expected_schedule =
+        native_trainer_episode_schedule_v1(base_seed, event.terminal.episode_id).map_err(|_| {
+            NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                "native terminal schedule provenance cannot be reconstructed",
+            )
+        })?;
+    if receipt.episode_index() != event.terminal.episode_id
+        || receipt.environment_seed() != expected_schedule.environment_seed
+        || receipt.learner_seat() != expected_schedule.learner_seat
+        || receipt.deck_hashes() != expected_deck_hashes
+        || receipt.policy_step_count() != event.terminal.policy_step_count
+        || receipt.physical_decision_count() != event.terminal.physical_decision_count
+        || receipt.learner_policy_step_count() != event.learner_action_count
+        || prior_receipts
+            .iter()
+            .any(|prior| prior.episode_index() == receipt.episode_index())
+    {
+        return Err(
+            NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                "native terminal trajectory receipt does not match its terminal",
+            ),
+        );
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 struct NativePolicyObservedTrajectoryV1 {
     grouped: NativePolicyGroupedTrajectoryV1,
-    full_trajectory_receipts: Vec<NativeFullEpisodeTrajectoryReceiptV1>,
+    full_trajectory_receipts: Vec<NativeTrainingTrajectoryReceiptV2>,
 }
 
 #[derive(Debug)]
@@ -1266,8 +1438,10 @@ struct NativePolicyTrajectoryObserverV1 {
     >,
     associations: NativePolicyAssociationConsumerV1,
     base_seed: u64,
+    expected_deck_ids: SessionDeckIdsV1,
     expected_deck_hashes: SessionDeckHashesV1,
-    full_trajectory_receipts: Vec<NativeFullEpisodeTrajectoryReceiptV1>,
+    expected_environment: NativeRunEnvironmentTrajectoryContractV1,
+    full_trajectory_receipts: Vec<NativeTrainingTrajectoryReceiptV2>,
 }
 
 impl NativePolicyTrajectoryObserverV1 {
@@ -1275,9 +1449,13 @@ impl NativePolicyTrajectoryObserverV1 {
         first_episode_id: u64,
         episode_count: u64,
         base_seed: u64,
+        expected_deck_ids: SessionDeckIdsV1,
         expected_deck_hashes: SessionDeckHashesV1,
+        expected_environment: NativeRunEnvironmentTrajectoryContractV1,
         associations: NativePolicyAssociationConsumerV1,
     ) -> Result<Self, NativePolicyTrajectoryErrorV1> {
+        #[cfg(test)]
+        TRAINER_OBSERVER_CONSTRUCTION_COUNT_V2.with(|count| count.set(count.get() + 1));
         let core =
             FlatPhysicalTrajectoryObserverCore::new_episode_parity(first_episode_id, episode_count)
                 .map_err(|error| {
@@ -1294,7 +1472,9 @@ impl NativePolicyTrajectoryObserverV1 {
             core,
             associations,
             base_seed,
+            expected_deck_ids,
             expected_deck_hashes,
+            expected_environment,
             full_trajectory_receipts: Vec::with_capacity(receipt_capacity),
         })
     }
@@ -1340,32 +1520,15 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
                 "native terminal is missing its full trajectory receipt",
             ),
         )?;
-        let expected_schedule =
-            native_trainer_episode_schedule_v1(self.base_seed, event.terminal.episode_id).map_err(
-                |_| {
-                    NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
-                        "native terminal schedule provenance cannot be reconstructed",
-                    )
-                },
-            )?;
-        if receipt.episode_index != event.terminal.episode_id
-            || receipt.environment_seed != expected_schedule.environment_seed
-            || receipt.learner_seat != expected_schedule.learner_seat
-            || receipt.deck_hashes != self.expected_deck_hashes
-            || receipt.policy_step_count != event.terminal.policy_step_count
-            || receipt.physical_decision_count != event.terminal.physical_decision_count
-            || receipt.learner_policy_step_count != event.learner_action_count
-            || self
-                .full_trajectory_receipts
-                .iter()
-                .any(|prior| prior.episode_index == receipt.episode_index)
-        {
-            return Err(
-                NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
-                    "native terminal trajectory receipt does not match its terminal",
-                ),
-            );
-        }
+        validate_native_terminal_trajectory_receipt_v1(
+            &receipt,
+            self.expected_environment,
+            &self.expected_deck_ids,
+            self.expected_deck_hashes,
+            self.base_seed,
+            &event,
+            &self.full_trajectory_receipts,
+        )?;
         self.core
             .observe_terminal(FlatTerminalSampleCore {
                 terminal: event.terminal,
@@ -1384,7 +1547,9 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
             core,
             associations,
             base_seed: _,
+            expected_deck_ids: _,
             expected_deck_hashes: _,
+            expected_environment: _,
             full_trajectory_receipts,
         } = self;
         associations
@@ -1410,7 +1575,7 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
 // existing frozen call site; behavior there is unchanged.
 fn validate_full_trajectory_receipts_v1<Input>(
     grouped: &FlatGroupedTrajectoryBatchCore<FlatDecisionBindingV2, Input>,
-    receipts: &[NativeFullEpisodeTrajectoryReceiptV1],
+    receipts: &[NativeTrainingTrajectoryReceiptV2],
 ) -> Result<(), NativePolicyTrajectoryErrorV1> {
     if receipts.len() != grouped.episodes.len() {
         return Err(
@@ -1422,20 +1587,21 @@ fn validate_full_trajectory_receipts_v1<Input>(
     for episode in &grouped.episodes {
         let mut matches = receipts
             .iter()
-            .filter(|receipt| receipt.episode_index == episode.episode_id);
+            .filter(|receipt| receipt.episode_index() == episode.episode_id);
         let receipt = matches.next().ok_or(
             NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
                 "grouped episode has no trajectory receipt",
             ),
         )?;
         if matches.next().is_some()
-            || receipt.learner_seat != episode.learner_seat
-            || receipt.policy_step_count != episode.terminal.policy_step_count
-            || receipt.physical_decision_count != episode.terminal.physical_decision_count
-            || receipt.learner_policy_step_count != episode.learner_policy_step_count
-            || receipt.opponent_policy_step_count != episode.opponent_policy_step_count
-            || receipt.learner_physical_decision_count != episode.learner_physical_decision_count
-            || receipt.opponent_physical_decision_count != episode.opponent_physical_decision_count
+            || receipt.learner_seat() != episode.learner_seat
+            || receipt.policy_step_count() != episode.terminal.policy_step_count
+            || receipt.physical_decision_count() != episode.terminal.physical_decision_count
+            || receipt.learner_policy_step_count() != episode.learner_policy_step_count
+            || receipt.opponent_policy_step_count() != episode.opponent_policy_step_count
+            || receipt.learner_physical_decision_count() != episode.learner_physical_decision_count
+            || receipt.opponent_physical_decision_count()
+                != episode.opponent_physical_decision_count
         {
             return Err(
                 NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
@@ -1464,7 +1630,7 @@ type NativePolicyGroupedTrajectoryWideV1 =
 #[derive(Debug)]
 struct NativePolicyObservedTrajectoryWideV1 {
     grouped: NativePolicyGroupedTrajectoryWideV1,
-    full_trajectory_receipts: Vec<NativeFullEpisodeTrajectoryReceiptV1>,
+    full_trajectory_receipts: Vec<NativeTrainingTrajectoryReceiptV2>,
 }
 
 #[derive(Debug)]
@@ -1475,8 +1641,10 @@ struct NativePolicyTrajectoryObserverWideV1 {
     >,
     associations: NativePolicyAssociationConsumerWideV1,
     base_seed: u64,
+    expected_deck_ids: SessionDeckIdsV1,
     expected_deck_hashes: SessionDeckHashesV1,
-    full_trajectory_receipts: Vec<NativeFullEpisodeTrajectoryReceiptV1>,
+    expected_environment: NativeRunEnvironmentTrajectoryContractV1,
+    full_trajectory_receipts: Vec<NativeTrainingTrajectoryReceiptV2>,
 }
 
 impl NativePolicyTrajectoryObserverWideV1 {
@@ -1484,9 +1652,13 @@ impl NativePolicyTrajectoryObserverWideV1 {
         first_episode_id: u64,
         episode_count: u64,
         base_seed: u64,
+        expected_deck_ids: SessionDeckIdsV1,
         expected_deck_hashes: SessionDeckHashesV1,
+        expected_environment: NativeRunEnvironmentTrajectoryContractV1,
         associations: NativePolicyAssociationConsumerWideV1,
     ) -> Result<Self, NativePolicyTrajectoryErrorV1> {
+        #[cfg(test)]
+        TRAINER_OBSERVER_CONSTRUCTION_COUNT_V2.with(|count| count.set(count.get() + 1));
         let core =
             FlatPhysicalTrajectoryObserverCore::new_episode_parity(first_episode_id, episode_count)
                 .map_err(|error| {
@@ -1503,7 +1675,9 @@ impl NativePolicyTrajectoryObserverWideV1 {
             core,
             associations,
             base_seed,
+            expected_deck_ids,
             expected_deck_hashes,
+            expected_environment,
             full_trajectory_receipts: Vec::with_capacity(receipt_capacity),
         })
     }
@@ -1549,32 +1723,15 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverWideV1 {
                 "native terminal is missing its full trajectory receipt",
             ),
         )?;
-        let expected_schedule =
-            native_trainer_episode_schedule_v1(self.base_seed, event.terminal.episode_id).map_err(
-                |_| {
-                    NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
-                        "native terminal schedule provenance cannot be reconstructed",
-                    )
-                },
-            )?;
-        if receipt.episode_index != event.terminal.episode_id
-            || receipt.environment_seed != expected_schedule.environment_seed
-            || receipt.learner_seat != expected_schedule.learner_seat
-            || receipt.deck_hashes != self.expected_deck_hashes
-            || receipt.policy_step_count != event.terminal.policy_step_count
-            || receipt.physical_decision_count != event.terminal.physical_decision_count
-            || receipt.learner_policy_step_count != event.learner_action_count
-            || self
-                .full_trajectory_receipts
-                .iter()
-                .any(|prior| prior.episode_index == receipt.episode_index)
-        {
-            return Err(
-                NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
-                    "native terminal trajectory receipt does not match its terminal",
-                ),
-            );
-        }
+        validate_native_terminal_trajectory_receipt_v1(
+            &receipt,
+            self.expected_environment,
+            &self.expected_deck_ids,
+            self.expected_deck_hashes,
+            self.base_seed,
+            &event,
+            &self.full_trajectory_receipts,
+        )?;
         self.core
             .observe_terminal(FlatTerminalSampleCore {
                 terminal: event.terminal,
@@ -1593,7 +1750,9 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverWideV1 {
             core,
             associations,
             base_seed: _,
+            expected_deck_ids: _,
             expected_deck_hashes: _,
+            expected_environment: _,
             full_trajectory_receipts,
         } = self;
         associations
@@ -1654,9 +1813,10 @@ pub struct NativeTrainerEpisodeEvidenceV1 {
     pub learner_policy_step_count: u64,
     pub learner_trace_hash: u64,
     pub terminal_outcome: TerminalOutcomeV1,
-    /// Full both-actor accepted-action commitment. The legacy learner-only
-    /// trace remains diagnostic and is not a persisted trajectory identity.
-    pub full_trajectory_receipt: NativeFullEpisodeTrajectoryReceiptV1,
+    /// Full both-actor accepted-action commitment as the opaque run-bound
+    /// receipt. The legacy learner-only trace remains diagnostic and is not a
+    /// persisted trajectory identity.
+    pub full_trajectory_receipt: NativeTrainingTrajectoryReceiptV2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1741,6 +1901,36 @@ pub(crate) enum NativeTrainerErrorV1 {
         substep_index: usize,
     },
     CounterOverflow,
+    /// The whole-window environment randomization V2 pair preflight rejected
+    /// the batch before any rollout construction.
+    EnvironmentWindowPreflight(NativeFullEpisodeTrajectoryErrorV2),
+}
+
+/// Exhaustive by sealed contract: the legacy arm never constructs an
+/// authority, and the V2 arm validates every pair of the whole K-episode
+/// window before returning the move-only consumed authority.
+fn preflight_environment_window_authority_v2(
+    environment: NativeRunEnvironmentTrajectoryContractV1,
+    base_seed: u64,
+    first_episode_index: u64,
+    batch_episodes: u64,
+    deck_ids: &SessionDeckIdsV1,
+    deck_hashes: SessionDeckHashesV1,
+) -> Result<Option<NativeEnvironmentWindowPreflightAuthorityV2>, NativeTrainerErrorV1> {
+    match environment {
+        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => Ok(None),
+        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => {
+            preflight_native_environment_window_v2(
+                base_seed,
+                first_episode_index,
+                batch_episodes,
+                deck_ids,
+                deck_hashes,
+            )
+            .map(Some)
+            .map_err(NativeTrainerErrorV1::EnvironmentWindowPreflight)
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2080,20 +2270,22 @@ impl NativeTrainerStateV2 {
     pub(crate) fn run_even_batch_update_v2(
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
+        environment: NativeRunEnvironmentTrajectoryContractV1,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
-        self.run_even_batch_update_dispatch_v2(config, &mut phase_recorder)
+        self.run_even_batch_update_dispatch_v2(config, environment, &mut phase_recorder)
     }
 
     pub(crate) fn run_even_batch_update_profiled_v2(
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
+        environment: NativeRunEnvironmentTrajectoryContractV1,
     ) -> Result<(NativeTrainerUpdateEvidenceV2, NativeTrainingPhaseProfileV1), NativeTrainerErrorV1>
     {
         let mut profile = NativeTrainingPhaseProfileV1::default();
         let evidence = {
             let mut phase_recorder = NativeTrainingPhaseRecorderV1::enabled_v1(&mut profile);
-            self.run_even_batch_update_dispatch_v2(config, &mut phase_recorder)?
+            self.run_even_batch_update_dispatch_v2(config, environment, &mut phase_recorder)?
         };
         Ok((evidence, profile))
     }
@@ -2107,14 +2299,15 @@ impl NativeTrainerStateV2 {
     fn run_even_batch_update_dispatch_v2(
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
+        environment: NativeRunEnvironmentTrajectoryContractV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         match &self.train_state {
             NativeTrainerModelStateV2::Frozen(_) => {
-                self.run_even_batch_update_inner_v2(config, phase_recorder)
+                self.run_even_batch_update_inner_v2(config, environment, phase_recorder)
             }
             NativeTrainerModelStateV2::Wide(_) => {
-                self.run_even_batch_update_wide_inner_v2(config, phase_recorder)
+                self.run_even_batch_update_wide_inner_v2(config, environment, phase_recorder)
             }
         }
     }
@@ -2122,6 +2315,7 @@ impl NativeTrainerStateV2 {
     fn run_even_batch_update_inner_v2(
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
+        environment: NativeRunEnvironmentTrajectoryContractV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         let update_started = Instant::now();
@@ -2167,6 +2361,19 @@ impl NativeTrainerStateV2 {
             .map_err(NativeTrainerErrorV1::Schedule)?;
         native_trainer_episode_schedule_v1(self.base_seed, end_episode_index - 1)
             .map_err(NativeTrainerErrorV1::Schedule)?;
+        // Whole-window environment pair preflight, exhaustively by the sealed
+        // contract, before rollout-config deck cloning, association-channel,
+        // observer, or scorer construction. The V2 arm mints the move-only
+        // consumed authority the rollout requires before it will reserve
+        // results, open channels, spawn workers, or reset a session.
+        let environment_authority = preflight_environment_window_authority_v2(
+            environment,
+            self.base_seed,
+            first_episode_index,
+            config.batch_episodes,
+            &config.deck_ids,
+            expected_deck_hashes,
+        )?;
 
         let rollout_config = AsyncRolloutConfigV2 {
             deck_ids: config.deck_ids.clone(),
@@ -2197,7 +2404,9 @@ impl NativeTrainerStateV2 {
             first_episode_index,
             config.batch_episodes,
             self.base_seed,
+            config.deck_ids.clone(),
             expected_deck_hashes,
+            environment,
             consumer,
         )
         .map_err(NativeTrainerErrorV1::ObserverConstruction)?;
@@ -2213,13 +2422,23 @@ impl NativeTrainerStateV2 {
         }
         phase_recorder.finish_v1(setup_timer);
         let rollout_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::Rollout);
-        let rollout_result = run_async_flat_scored_rollout_native_observed_v2(
-            rollout_config,
-            self.base_seed,
-            self.ladder_opponent.clone(),
-            &mut scorer,
-            observer,
-        );
+        let rollout_result = match environment_authority {
+            None => run_async_flat_scored_rollout_native_observed_v2(
+                rollout_config,
+                self.base_seed,
+                self.ladder_opponent.clone(),
+                &mut scorer,
+                observer,
+            ),
+            Some(authority) => run_async_flat_scored_rollout_native_environment_randomization_v2(
+                rollout_config,
+                self.base_seed,
+                authority,
+                self.ladder_opponent.clone(),
+                &mut scorer,
+                observer,
+            ),
+        };
         phase_recorder.finish_v1(rollout_timer);
         let scorer_accepted_batch_count = scorer.accepted_batch_count;
         let scorer_accepted_decision_count = scorer.accepted_decision_count;
@@ -2288,7 +2507,10 @@ impl NativeTrainerStateV2 {
             mutate_grouped_train_revalidation_for_test_v1(&mut grouped, mutation)?;
         }
 
-        let model_digest_before = self.train_state_v1().model_v1().parameter_manifest_sha256_v1();
+        let model_digest_before = self
+            .train_state_v1()
+            .model_v1()
+            .parameter_manifest_sha256_v1();
         let parameters_before = self.train_state_v1().model_v1().parameter_snapshot_v1();
         let adam_step_before = self.train_state_v1().adam_step_v1();
         let mut candidate_train_state = self.train_state_v1().clone();
@@ -2439,6 +2661,7 @@ impl NativeTrainerStateV2 {
     fn run_even_batch_update_wide_inner_v2(
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
+        environment: NativeRunEnvironmentTrajectoryContractV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         let update_started = Instant::now();
@@ -2472,6 +2695,17 @@ impl NativeTrainerStateV2 {
             .map_err(NativeTrainerErrorV1::Schedule)?;
         native_trainer_episode_schedule_v1(self.base_seed, end_episode_index - 1)
             .map_err(NativeTrainerErrorV1::Schedule)?;
+        // Whole-window environment pair preflight; see the narrow inner
+        // update for the ordering contract. Both branches pass the same
+        // sealed mode.
+        let environment_authority = preflight_environment_window_authority_v2(
+            environment,
+            self.base_seed,
+            first_episode_index,
+            config.batch_episodes,
+            &config.deck_ids,
+            expected_deck_hashes,
+        )?;
 
         let rollout_config = AsyncRolloutConfigV2 {
             deck_ids: config.deck_ids.clone(),
@@ -2494,7 +2728,9 @@ impl NativeTrainerStateV2 {
             first_episode_index,
             config.batch_episodes,
             self.base_seed,
+            config.deck_ids.clone(),
             expected_deck_hashes,
+            environment,
             consumer,
         )
         .map_err(NativeTrainerErrorV1::ObserverConstruction)?;
@@ -2503,13 +2739,23 @@ impl NativeTrainerStateV2 {
                 .map_err(NativeTrainerErrorV1::Train)?;
         phase_recorder.finish_v1(setup_timer);
         let rollout_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::Rollout);
-        let rollout_result = run_async_flat_scored_rollout_native_observed_v2(
-            rollout_config,
-            self.base_seed,
-            self.ladder_opponent.clone(),
-            &mut scorer,
-            observer,
-        );
+        let rollout_result = match environment_authority {
+            None => run_async_flat_scored_rollout_native_observed_v2(
+                rollout_config,
+                self.base_seed,
+                self.ladder_opponent.clone(),
+                &mut scorer,
+                observer,
+            ),
+            Some(authority) => run_async_flat_scored_rollout_native_environment_randomization_v2(
+                rollout_config,
+                self.base_seed,
+                authority,
+                self.ladder_opponent.clone(),
+                &mut scorer,
+                observer,
+            ),
+        };
         phase_recorder.finish_v1(rollout_timer);
         let scorer_accepted_batch_count = scorer.accepted_batch_count;
         let scorer_accepted_decision_count = scorer.accepted_decision_count;
@@ -2565,26 +2811,32 @@ impl NativeTrainerStateV2 {
             .train_state_wide_v1()
             .model_v1()
             .parameter_manifest_sha256_wide_v1();
-        let parameters_before = self.train_state_wide_v1().model_v1().parameter_snapshot_wide_v1();
+        let parameters_before = self
+            .train_state_wide_v1()
+            .model_v1()
+            .parameter_snapshot_wide_v1();
         let adam_step_before = self.train_state_wide_v1().adam_step_v1();
         let mut candidate_train_state = self.train_state_wide_v1().clone();
         phase_recorder.finish_v1(grouping_timer);
-        let (train_result, episode_evidence, learner_group_count) = train_grouped_candidate_wide_v1(
-            &mut candidate_train_state,
-            &grouped,
-            &full_trajectory_receipts,
-            NativeTrainerGroupedTrainConfigV1 {
-                value_coefficient: f32::from_bits(config.value_coefficient_bits),
-                learning_rate: f32::from_bits(config.learning_rate_bits),
-                recompute_worker_limit: config.worker_count,
-                numerical_backend: config.numerical_backend,
-                backward_worker_limit: config.backward_worker_limit,
-            },
-            phase_recorder,
-        )?;
+        let (train_result, episode_evidence, learner_group_count) =
+            train_grouped_candidate_wide_v1(
+                &mut candidate_train_state,
+                &grouped,
+                &full_trajectory_receipts,
+                NativeTrainerGroupedTrainConfigV1 {
+                    value_coefficient: f32::from_bits(config.value_coefficient_bits),
+                    learning_rate: f32::from_bits(config.learning_rate_bits),
+                    recompute_worker_limit: config.worker_count,
+                    numerical_backend: config.numerical_backend,
+                    backward_worker_limit: config.backward_worker_limit,
+                },
+                phase_recorder,
+            )?;
         let finalization_timer =
             phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
-        let parameters_after = candidate_train_state.model_v1().parameter_snapshot_wide_v1();
+        let parameters_after = candidate_train_state
+            .model_v1()
+            .parameter_snapshot_wide_v1();
         let model_digest_after = candidate_train_state
             .model_v1()
             .parameter_manifest_sha256_wide_v1();
@@ -2705,7 +2957,7 @@ impl NativeTrainerStateV2 {
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         assert!(self.pending_test_association_mutation.is_none());
         self.pending_test_association_mutation = Some(mutation);
-        self.run_even_batch_update_v2(config)
+        self.run_even_batch_update_v2(config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
     }
 
     #[cfg(test)]
@@ -2715,7 +2967,7 @@ impl NativeTrainerStateV2 {
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         assert!(!self.pending_test_train_non_selected_logit_mutation);
         self.pending_test_train_non_selected_logit_mutation = true;
-        self.run_even_batch_update_v2(config)
+        self.run_even_batch_update_v2(config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
     }
 
     #[cfg(test)]
@@ -2726,7 +2978,7 @@ impl NativeTrainerStateV2 {
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         assert!(self.pending_test_train_revalidation_mutation.is_none());
         self.pending_test_train_revalidation_mutation = Some(mutation);
-        self.run_even_batch_update_v2(config)
+        self.run_even_batch_update_v2(config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
     }
 
     #[cfg(test)]
@@ -2736,7 +2988,7 @@ impl NativeTrainerStateV2 {
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         assert!(!self.pending_test_forward_worker_panic);
         self.pending_test_forward_worker_panic = true;
-        self.run_even_batch_update_v2(config)
+        self.run_even_batch_update_v2(config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
     }
 
     #[cfg(test)]
@@ -2746,7 +2998,7 @@ impl NativeTrainerStateV2 {
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         assert!(!self.pending_test_physical_substep_count_mutation);
         self.pending_test_physical_substep_count_mutation = true;
-        self.run_even_batch_update_v2(config)
+        self.run_even_batch_update_v2(config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
     }
 }
 
@@ -3136,7 +3388,7 @@ fn validate_grouped_batch_v2<Input>(
 fn train_grouped_candidate_v1(
     candidate: &mut NativePolicyValueTrainStateV1,
     grouped: &NativePolicyGroupedTrajectoryV1,
-    full_trajectory_receipts: &[NativeFullEpisodeTrajectoryReceiptV1],
+    full_trajectory_receipts: &[NativeTrainingTrajectoryReceiptV2],
     execution: NativeTrainerGroupedTrainConfigV1,
     #[cfg(test)] test_physical_substep_count_mutation: bool,
     phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
@@ -3162,7 +3414,7 @@ fn train_grouped_candidate_v1(
     for episode in &grouped.episodes {
         let mut matching_receipts = full_trajectory_receipts
             .iter()
-            .filter(|receipt| receipt.episode_index == episode.episode_id);
+            .filter(|receipt| receipt.episode_index() == episode.episode_id);
         let full_trajectory_receipt =
             matching_receipts
                 .next()
@@ -3339,7 +3591,7 @@ fn train_grouped_candidate_v1(
 fn train_grouped_candidate_wide_v1(
     candidate: &mut NativePolicyValueTrainStateWideV1,
     grouped: &NativePolicyGroupedTrajectoryWideV1,
-    full_trajectory_receipts: &[NativeFullEpisodeTrajectoryReceiptV1],
+    full_trajectory_receipts: &[NativeTrainingTrajectoryReceiptV2],
     execution: NativeTrainerGroupedTrainConfigV1,
     phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
 ) -> Result<
@@ -3364,7 +3616,7 @@ fn train_grouped_candidate_wide_v1(
     for episode in &grouped.episodes {
         let mut matching_receipts = full_trajectory_receipts
             .iter()
-            .filter(|receipt| receipt.episode_index == episode.episode_id);
+            .filter(|receipt| receipt.episode_index() == episode.episode_id);
         let full_trajectory_receipt =
             matching_receipts
                 .next()
@@ -3918,9 +4170,15 @@ mod tests {
         let mut profiled = initial;
         let config = burn_pair_config_v2(1, 1, 1);
 
-        let ordinary_evidence = ordinary.run_even_batch_update_v2(&config).unwrap();
-        let (profiled_evidence, profile) =
-            profiled.run_even_batch_update_profiled_v2(&config).unwrap();
+        let ordinary_evidence = ordinary
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
+        let (profiled_evidence, profile) = profiled
+            .run_even_batch_update_profiled_v2(
+                &config,
+                NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+            )
+            .unwrap();
 
         assert_eq!(
             without_observed_timing_v2(ordinary_evidence),
@@ -4025,7 +4283,9 @@ mod tests {
 
         let mut config = burn_even_batch_config_v2(2, 1, 1, 1);
         config.deck_ids = ["Rally".to_owned(), "Rally".to_owned()];
-        let evidence = trainer.run_even_batch_update_v2(&config).unwrap();
+        let evidence = trainer
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
 
         assert_eq!(evidence.first_episode_index, 0);
         assert_eq!(evidence.episode_count, 2);
@@ -4040,7 +4300,7 @@ mod tests {
                     .unwrap();
             assert_eq!(episode.learner_seat, schedule.learner_seat);
             assert_eq!(
-                episode.full_trajectory_receipt.environment_seed,
+                episode.full_trajectory_receipt.environment_seed(),
                 schedule.environment_seed
             );
         }
@@ -4132,12 +4392,18 @@ mod tests {
 
         let narrow_recompute_count_before = packed_actual_recompute_call_count_for_test_v1();
         let narrow_evidence = narrow
-            .run_even_batch_update_v2(&burn_pair_config_v2(1, 1, 1))
+            .run_even_batch_update_v2(
+                &burn_pair_config_v2(1, 1, 1),
+                NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+            )
             .unwrap();
         let narrow_recompute_count_after = packed_actual_recompute_call_count_for_test_v1();
         let wide_recompute_count_before = narrow_recompute_count_after;
         let wide_evidence = wide
-            .run_even_batch_update_v2(&burn_pair_config_v2(2, 2, 3))
+            .run_even_batch_update_v2(
+                &burn_pair_config_v2(2, 2, 3),
+                NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+            )
             .unwrap();
         let wide_recompute_count_after = packed_actual_recompute_call_count_for_test_v1();
 
@@ -4214,7 +4480,7 @@ mod tests {
         assert_eq!(
             narrow_evidence.episodes[0]
                 .full_trajectory_receipt
-                .trajectory_sha256,
+                .trajectory_sha256(),
             [
                 218, 58, 252, 127, 21, 185, 50, 121, 19, 64, 114, 39, 237, 157, 11, 206, 2, 100,
                 249, 37, 3, 248, 145, 82, 102, 176, 154, 247, 122, 191, 134, 7,
@@ -4223,7 +4489,7 @@ mod tests {
         assert_eq!(
             narrow_evidence.episodes[1]
                 .full_trajectory_receipt
-                .trajectory_sha256,
+                .trajectory_sha256(),
             [
                 0, 225, 21, 221, 53, 228, 140, 20, 20, 160, 25, 212, 244, 84, 87, 177, 246, 163,
                 191, 9, 245, 195, 100, 216, 166, 134, 107, 212, 163, 200, 224, 119,
@@ -4249,29 +4515,32 @@ mod tests {
                 let receipt = episode.full_trajectory_receipt;
                 let expected_schedule =
                     native_trainer_episode_schedule_v1(71_501, episode.episode_index).unwrap();
-                assert_eq!(receipt.episode_index, episode.episode_index);
-                assert_eq!(receipt.environment_seed, expected_schedule.environment_seed);
-                assert_eq!(receipt.learner_seat, episode.learner_seat);
-                assert_eq!(receipt.deck_hashes, [0x5fdb_7b92_986b_6fc1; 2]);
-                assert_ne!(receipt.trajectory_sha256, [0; 32]);
+                assert_eq!(receipt.episode_index(), episode.episode_index);
                 assert_eq!(
-                    receipt.learner_policy_step_count,
+                    receipt.environment_seed(),
+                    expected_schedule.environment_seed
+                );
+                assert_eq!(receipt.learner_seat(), episode.learner_seat);
+                assert_eq!(receipt.deck_hashes(), [0x5fdb_7b92_986b_6fc1; 2]);
+                assert_ne!(receipt.trajectory_sha256(), [0; 32]);
+                assert_eq!(
+                    receipt.learner_policy_step_count(),
                     episode.learner_policy_step_count
                 );
                 assert_eq!(
-                    receipt.learner_physical_decision_count,
+                    receipt.learner_physical_decision_count(),
                     episode.learner_group_count
                 );
-                assert!(receipt.opponent_policy_step_count > 0);
-                assert!(receipt.opponent_physical_decision_count > 0);
+                assert!(receipt.opponent_policy_step_count() > 0);
+                assert!(receipt.opponent_physical_decision_count() > 0);
                 assert_eq!(
-                    receipt.policy_step_count,
-                    receipt.learner_policy_step_count + receipt.opponent_policy_step_count
+                    receipt.policy_step_count(),
+                    receipt.learner_policy_step_count() + receipt.opponent_policy_step_count()
                 );
                 assert_eq!(
-                    receipt.physical_decision_count,
-                    receipt.learner_physical_decision_count
-                        + receipt.opponent_physical_decision_count
+                    receipt.physical_decision_count(),
+                    receipt.learner_physical_decision_count()
+                        + receipt.opponent_physical_decision_count()
                 );
             }
             assert!(evidence.learner_group_count > 0);
@@ -4391,7 +4660,10 @@ mod tests {
         );
 
         let second_evidence = narrow
-            .run_even_batch_update_v2(&burn_pair_config_v2(1, 1, 1))
+            .run_even_batch_update_v2(
+                &burn_pair_config_v2(1, 1, 1),
+                NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+            )
             .unwrap();
         assert_eq!(second_evidence.first_episode_index, 2);
         assert_eq!(
@@ -4434,7 +4706,10 @@ mod tests {
         let before = exact_state_snapshot_v1(&trainer);
         assert_eq!(trainer.batch_episodes, 4);
         assert_eq!(
-            trainer.run_even_batch_update_v2(&burn_even_batch_config_v2(2, 1, 1, 1)),
+            trainer.run_even_batch_update_v2(
+                &burn_even_batch_config_v2(2, 1, 1, 1),
+                NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+            ),
             Err(NativeTrainerErrorV1::InvalidUpdateConfig("batch_episodes"))
         );
         assert_eq!(trainer.batch_episodes, 4);
@@ -4482,9 +4757,13 @@ mod tests {
         let mut config = burn_pair_config_v2(1, 1, 1);
         config.numerical_backend = NativeTrainingNumericalBackendV1::FixedFourPartitions;
         config.backward_worker_limit = 1;
-        let single_evidence = single_worker.run_even_batch_update_v2(&config).unwrap();
+        let single_evidence = single_worker
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
         config.backward_worker_limit = FIXED_BACKWARD_PARTITION_COUNT_V1;
-        let four_evidence = four_workers.run_even_batch_update_v2(&config).unwrap();
+        let four_evidence = four_workers
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
 
         assert_eq!(
             without_observed_timing_v2(single_evidence),
@@ -4504,10 +4783,16 @@ mod tests {
             let mut narrow = initial.clone();
             let mut wide = initial;
             let narrow_evidence = narrow
-                .run_even_batch_update_v2(&burn_even_batch_config_v2(batch_episodes, 1, 1, 1))
+                .run_even_batch_update_v2(
+                    &burn_even_batch_config_v2(batch_episodes, 1, 1, 1),
+                    NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+                )
                 .unwrap();
             let wide_evidence = wide
-                .run_even_batch_update_v2(&burn_even_batch_config_v2(batch_episodes, 4, 4, 16))
+                .run_even_batch_update_v2(
+                    &burn_even_batch_config_v2(batch_episodes, 4, 4, 16),
+                    NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+                )
                 .unwrap();
 
             assert_eq!(narrow_evidence.episode_count, batch_episodes);
@@ -4539,7 +4824,7 @@ mod tests {
                     }
                 );
                 assert_eq!(
-                    episode.full_trajectory_receipt.environment_seed,
+                    episode.full_trajectory_receipt.environment_seed(),
                     native_trainer_episode_schedule_v1(71_501, expected_index)
                         .unwrap()
                         .environment_seed
@@ -4547,8 +4832,8 @@ mod tests {
             }
             for pair in narrow_evidence.episodes.chunks_exact(2) {
                 assert_eq!(
-                    pair[0].full_trajectory_receipt.environment_seed,
-                    pair[1].full_trajectory_receipt.environment_seed
+                    pair[0].full_trajectory_receipt.environment_seed(),
+                    pair[1].full_trajectory_receipt.environment_seed()
                 );
             }
             assert_eq!(narrow_evidence.adam_step_before, 0);
@@ -4602,7 +4887,9 @@ mod tests {
         let _lock = acquire_async_flat_scored_test_lock_v1();
         let config = burn_even_batch_config_v2(4, 2, 2, 4);
         let mut uninterrupted = trainer_v2(4);
-        uninterrupted.run_even_batch_update_v2(&config).unwrap();
+        uninterrupted
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
 
         let persisted_progress = uninterrupted.progress_v2();
         let persisted_snapshot = uninterrupted.train_state_v1().snapshot_v1().unwrap();
@@ -4646,8 +4933,12 @@ mod tests {
             persisted_state_sha
         );
 
-        let uninterrupted_evidence = uninterrupted.run_even_batch_update_v2(&config).unwrap();
-        let resumed_evidence = resumed.run_even_batch_update_v2(&config).unwrap();
+        let uninterrupted_evidence = uninterrupted
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
+        let resumed_evidence = resumed
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
         assert_eq!(
             without_observed_timing_v2(uninterrupted_evidence),
             without_observed_timing_v2(resumed_evidence)
@@ -4845,8 +5136,12 @@ mod tests {
         );
         assert_eq!(exact_state_snapshot_v1(&faulted), before);
 
-        let faulted_evidence = faulted.run_even_batch_update_v2(&config).unwrap();
-        let reference_evidence = reference.run_even_batch_update_v2(&config).unwrap();
+        let faulted_evidence = faulted
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
+        let reference_evidence = reference
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
         assert_eq!(
             without_observed_timing_v2(faulted_evidence),
             without_observed_timing_v2(reference_evidence)
@@ -4983,5 +5278,441 @@ mod tests {
             ));
             assert_eq!(exact_state_snapshot_v1(&trainer), before);
         }
+    }
+
+    /// Live C2 genuine environment randomization V2 even/odd pair on CPU,
+    /// with genuinely distinct physical P0/P1 decks so seat-swap-stable
+    /// bindings cannot pass vacuously.
+    ///
+    /// Mode-specific reset tracing is the witness for the actual V2 reset:
+    /// `Some(outer)` on a receipt is never accepted as that evidence. The
+    /// outer digest of every receipt is independently reconstructed through
+    /// the frozen 34-atom envelope from the receipt's own start facts plus
+    /// its inner digest, and inner never equals outer.
+    #[test]
+    fn genuine_environment_v2_pair_executes_with_distinct_decks_and_reconstructible_outer() {
+        use crate::native_full_episode_trajectory_v2::{
+            independent_envelope_sha256_for_test_v2, validate_start_v2,
+            NativeFullEpisodeTrajectoryStartV2,
+        };
+
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        let guard = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_guard_v1();
+        let construction_scope = trainer_construction_count_scope_v2();
+        const RUN_BASE_SEED_V1: u64 = 71_501;
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        let (mut trainer, _) = NativeTrainerStateV2::from_common_model_snapshot_v2(
+            RUN_BASE_SEED_V1,
+            2,
+            &manifest_path,
+            &payload_path,
+        )
+        .unwrap();
+        let mut config = burn_pair_config_v2(1, 1, 1);
+        config.deck_ids = ["Rally".to_owned(), "Burn".to_owned()];
+        let rally_hash = runtime_deck_by_id("Rally").unwrap().runtime_deck_hash;
+        let burn_hash = runtime_deck_by_id("Burn").unwrap().runtime_deck_hash;
+        assert_ne!(rally_hash, burn_hash, "the two physical decks must differ");
+
+        let evidence = trainer
+            .run_even_batch_update_v2(
+                &config,
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            )
+            .unwrap();
+
+        // Actual environment-V2 resets, exactly one per episode, and zero
+        // legacy resets anywhere in the run.
+        assert_eq!(guard.environment_v2_session_reset_count(), 2);
+        assert_eq!(guard.legacy_session_reset_count(), 0);
+        assert_eq!(
+            construction_scope.counts(),
+            (1, 1, 1),
+            "one association channel, one observer, one scorer"
+        );
+
+        assert_eq!(evidence.episodes.len(), 2);
+        let expected_root = native_trainer_episode_schedule_v1(RUN_BASE_SEED_V1, 0)
+            .unwrap()
+            .environment_seed;
+        for episode in &evidence.episodes {
+            let receipt = episode.full_trajectory_receipt;
+            let outer = receipt
+                .outer_trajectory_sha256_v2()
+                .expect("a V2 receipt carries the outer digest");
+            let inner = receipt.trajectory_sha256();
+            assert_ne!(inner, outer, "inner and outer digests must differ");
+            assert_eq!(
+                receipt.environment_seed(),
+                expected_root,
+                "both episodes share the exact schedule pair root"
+            );
+            assert_eq!(receipt.deck_hashes(), [rally_hash, burn_hash]);
+            // Independent reconstruction: the from-scratch 34-atom framing
+            // helper over the receipt's own start facts plus its inner
+            // digest, never the production envelope checking itself.
+            let start = validate_start_v2(&NativeFullEpisodeTrajectoryStartV2 {
+                episode_index: receipt.episode_index(),
+                pair_environment_seed: receipt.environment_seed(),
+                deck_ids: [config.deck_ids[0].clone(), config.deck_ids[1].clone()],
+                deck_hashes: receipt.deck_hashes(),
+                learner_seat: receipt.learner_seat(),
+            })
+            .unwrap();
+            assert_eq!(
+                independent_envelope_sha256_for_test_v2(&start, inner),
+                outer,
+                "the outer digest must reconstruct from start facts plus inner"
+            );
+        }
+        assert_eq!(
+            (
+                evidence.episodes[0].full_trajectory_receipt.learner_seat(),
+                evidence.episodes[1].full_trajectory_receipt.learner_seat(),
+            ),
+            (PlayerSeatV1::P0, PlayerSeatV1::P1),
+            "the even/odd pair alternates learner seats"
+        );
+        assert_ne!(
+            evidence.episodes[0]
+                .full_trajectory_receipt
+                .trajectory_sha256(),
+            evidence.episodes[1]
+                .full_trajectory_receipt
+                .trajectory_sha256(),
+            "the two episodes are distinct executions"
+        );
+        // Frozen V2 outer goldens: the deterministic distinct-deck pair's
+        // exact inner and outer digests, pinned as literals so outer-envelope
+        // drift is a fail-closed rejection rather than a silent re-freeze.
+        let digest_hexes: Vec<(String, String)> = evidence
+            .episodes
+            .iter()
+            .map(|episode| {
+                let receipt = episode.full_trajectory_receipt;
+                (
+                    crate::native_training_store_digest_v1::lower_hex_raw32_v1(
+                        receipt.trajectory_sha256(),
+                    ),
+                    crate::native_training_store_digest_v1::lower_hex_raw32_v1(
+                        receipt.outer_trajectory_sha256_v2().unwrap(),
+                    ),
+                )
+            })
+            .collect();
+        assert_eq!(
+            digest_hexes,
+            [
+                (
+                    "ebd9ea5f032da7614c7be7c279cf20195ae30d1f8d3c8c82f0e89190f06bbae7".to_owned(),
+                    "ba6a186f425cc565163e3029f25912a6897bba11094fe918936c3a2120030b92".to_owned(),
+                ),
+                (
+                    "8409a4c296401c52474d67d40e15ee1e37dbd59a50024ccd910be70ba6dad2c3".to_owned(),
+                    "2a43305e9711c169eb3687d0ef8d87b687ef833888a7bcf21cec7b0ad3b52e2e".to_owned(),
+                ),
+            ],
+            "the distinct-deck V2 pair goldens drifted"
+        );
+        assert_eq!(evidence.adam_step_before, 0);
+        assert_eq!(evidence.adam_step_after, 1);
+        assert_eq!(trainer.progress_v2().next_episode_index, 2);
+    }
+
+    /// Live C2 ordering: an armed window-pair corruption makes the V2 whole
+    /// window preflight reject before rollout-config deck cloning,
+    /// association channels, observer construction, scorer construction,
+    /// result reservation, message/control channels, worker spawn, or any
+    /// session reset, and the trainer state does not move.
+    #[test]
+    fn v2_window_preflight_rejects_before_any_construction_with_zero_side_effects() {
+        use crate::async_flat_scored_rollout_v1::rollout_construction_count_scope_v2;
+        use crate::native_full_episode_trajectory_v2::{
+            arm_window_pair_corruption_for_test_v2, NativeWindowPairCorruptionForTestV2,
+        };
+
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        let guard = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_guard_v1();
+        let construction_scope = trainer_construction_count_scope_v2();
+        let rollout_scope = rollout_construction_count_scope_v2();
+        const RUN_BASE_SEED_V1: u64 = 71_501;
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        let (mut trainer, _) = NativeTrainerStateV2::from_common_model_snapshot_v2(
+            RUN_BASE_SEED_V1,
+            2,
+            &manifest_path,
+            &payload_path,
+        )
+        .unwrap();
+        let progress_before = trainer.progress_v2();
+        let state_before = trainer.train_state_v1().state_sha256_v1().unwrap();
+
+        let _corruption = arm_window_pair_corruption_for_test_v2(
+            0,
+            NativeWindowPairCorruptionForTestV2::PairRootDrift,
+        );
+        let error = trainer
+            .run_even_batch_update_v2(
+                &burn_pair_config_v2(1, 1, 1),
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            NativeTrainerErrorV1::EnvironmentWindowPreflight(_)
+        ));
+        assert_eq!(
+            construction_scope.counts(),
+            (0, 0, 0),
+            "zero association channels, observers, and scorers"
+        );
+        assert_eq!(
+            rollout_scope.counts(),
+            (0, 0, 0, 0),
+            "zero reservations, message channels, control channels, spawns"
+        );
+        assert_eq!(guard.legacy_session_reset_count(), 0);
+        assert_eq!(guard.environment_v2_session_reset_count(), 0);
+        assert_eq!(trainer.progress_v2(), progress_before);
+        assert_eq!(
+            trainer.train_state_v1().state_sha256_v1().unwrap(),
+            state_before,
+            "a rejected preflight must leave the trainer state untouched"
+        );
+    }
+
+    /// Live C2 direct-drive observer battery: both private trainer observers
+    /// are fed the same crafted terminal pattern the runner battery uses, so
+    /// deleting either thin observer callsite or any individual receipt
+    /// check in the shared production helper fails here without a rollout.
+    #[test]
+    fn both_trainer_observers_reject_each_receipt_fact_through_the_shared_helper() {
+        use crate::async_flat_scored_rollout_v2::FlatScoredTerminalEventV2;
+        use crate::async_rollout::AsyncRolloutTerminalV1;
+        use crate::native_full_episode_trajectory_v2::{
+            envelope_probe_receipt_for_test_v2, zero_learner_envelope_probe_receipt_for_test_v2,
+            NativeTrainingTrajectoryReceiptV2, NativeV2ReceiptFactMutationForTestV2,
+        };
+        use crate::rl::{TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2};
+
+        const BASE_SEED_V1: u64 = 71_501;
+        let rally = runtime_deck_by_id("Rally").unwrap();
+        let burn = runtime_deck_by_id("Burn").unwrap();
+        let deck_ids: SessionDeckIdsV1 = ["Rally".to_owned(), "Burn".to_owned()];
+        let deck_hashes = [rally.runtime_deck_hash, burn.runtime_deck_hash];
+        let schedule = native_trainer_episode_schedule_v1(BASE_SEED_V1, 0).unwrap();
+        let genuine = envelope_probe_receipt_for_test_v2(
+            0,
+            schedule.environment_seed,
+            &deck_ids,
+            deck_hashes,
+        );
+        // Fresh private observers have seen zero selected events, so the
+        // thin-callsite cases use the zero-learner probe; the count-2 probe
+        // stays for the shared-helper battery below.
+        let zero_learner = zero_learner_envelope_probe_receipt_for_test_v2(
+            0,
+            schedule.environment_seed,
+            &deck_ids,
+            deck_hashes,
+        );
+        let event_with = |receipt: NativeTrainingTrajectoryReceiptV2| FlatScoredTerminalEventV2 {
+            terminal: AsyncRolloutTerminalV1 {
+                episode_id: receipt.episode_index(),
+                terminal_outcome: TerminalOutcomeV1::P0Win,
+                terminal_classification: TerminalClassificationV1::Natural,
+                terminal_code: TerminalSafeCodeV2::NaturalGameOver,
+                winner: Some(PlayerSeatV1::P0),
+                terminal_reward: [1, -1],
+                policy_step_count: receipt.policy_step_count(),
+                physical_decision_count: receipt.physical_decision_count(),
+            },
+            learner_action_count: receipt.learner_policy_step_count(),
+            learner_trace_hash: crate::async_flat_scored_rollout_v1::initial_learner_trace_hash_v1(
+                receipt.episode_index(),
+            ),
+            native_full_trajectory_receipt: Some(receipt),
+        };
+        let invariant_of = |error: NativePolicyTrajectoryErrorV1| match error {
+            NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(message) => message,
+            other => panic!("expected a receipt invariant, got {other:?}"),
+        };
+
+        // Thin-callsite battery, narrow observer: positive control, then
+        // wrong variant plus the observer-pinned V2-only facts.
+        let narrow_case = |receipt: NativeTrainingTrajectoryReceiptV2| {
+            let (_producer, consumer) = native_policy_association_channel_v1();
+            let mut observer = NativePolicyTrajectoryObserverV1::new_v1(
+                0,
+                2,
+                BASE_SEED_V1,
+                deck_ids.clone(),
+                deck_hashes,
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                consumer,
+            )
+            .unwrap();
+            observer.observe_terminal_v2(event_with(receipt))
+        };
+        // Thin-callsite battery, wide observer: identical pattern.
+        let wide_case = |receipt: NativeTrainingTrajectoryReceiptV2| {
+            let (_producer, consumer) = native_policy_association_channel_wide_v1();
+            let mut observer = NativePolicyTrajectoryObserverWideV1::new_v1(
+                0,
+                2,
+                BASE_SEED_V1,
+                deck_ids.clone(),
+                deck_hashes,
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                consumer,
+            )
+            .unwrap();
+            observer.observe_terminal_v2(event_with(receipt))
+        };
+
+        for (label, case) in [
+            ("narrow", &narrow_case as &dyn Fn(_) -> _),
+            ("wide", &wide_case),
+        ] {
+            case(zero_learner).unwrap_or_else(|error| {
+                panic!("{label}: the coherent crafted terminal must be admitted: {error:?}")
+            });
+            let flipped =
+                zero_learner.variant_flipped_preserving_commons_for_test_v2([rally.id, burn.id]);
+            assert_eq!(
+                invariant_of(case(flipped).unwrap_err()),
+                "native terminal trajectory receipt variant does not match the sealed contract",
+                "{label}: wrong variant"
+            );
+            for (mutation, expected_invariant) in [
+                (
+                    NativeV2ReceiptFactMutationForTestV2::PairIndex,
+                    "native terminal trajectory receipt pair index is not its own pair",
+                ),
+                (
+                    NativeV2ReceiptFactMutationForTestV2::DeckId0,
+                    "native terminal trajectory receipt deck bindings drifted",
+                ),
+                (
+                    NativeV2ReceiptFactMutationForTestV2::DeckId1,
+                    "native terminal trajectory receipt deck bindings drifted",
+                ),
+            ] {
+                let mut corrupted = zero_learner;
+                corrupted.mutate_environment_fact_for_test_v2(mutation);
+                assert_eq!(
+                    invariant_of(case(corrupted).unwrap_err()),
+                    expected_invariant,
+                    "{label}: {mutation:?}"
+                );
+            }
+        }
+
+        // Wrong variant in the opposite direction: a Legacy-expected helper
+        // call sees a V2 receipt.
+        let legacy_receipt =
+            genuine.variant_flipped_preserving_commons_for_test_v2([rally.id, burn.id]);
+        assert!(!legacy_receipt.is_environment_randomization_v2());
+        assert_eq!(
+            invariant_of(
+                validate_native_terminal_trajectory_receipt_v1(
+                    &genuine,
+                    NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+                    &deck_ids,
+                    deck_hashes,
+                    BASE_SEED_V1,
+                    &event_with(genuine),
+                    &[],
+                )
+                .unwrap_err()
+            ),
+            "native terminal trajectory receipt variant does not match the sealed contract",
+            "legacy-expected helper must reject a V2 receipt"
+        );
+
+        // Remaining receipt fields, directly against the shared production
+        // helper, with the coherent positive control first.
+        validate_native_terminal_trajectory_receipt_v1(
+            &genuine,
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            &deck_ids,
+            deck_hashes,
+            BASE_SEED_V1,
+            &event_with(genuine),
+            &[],
+        )
+        .expect("the coherent receipt must pass the shared helper");
+        for (mutation, expected_invariant) in [
+            (
+                NativeV2ReceiptFactMutationForTestV2::EpisodeIndex,
+                "native terminal trajectory receipt does not match its terminal",
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::PairRoot,
+                "native terminal trajectory receipt does not match its terminal",
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::DeckHash0,
+                "native terminal trajectory receipt does not match its terminal",
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::DeckHash1,
+                "native terminal trajectory receipt does not match its terminal",
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::LearnerSeat,
+                "native terminal trajectory receipt does not match its terminal",
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::PolicyStepCount,
+                "native terminal trajectory receipt does not match its terminal",
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::PhysicalDecisionCount,
+                "native terminal trajectory receipt does not match its terminal",
+            ),
+            (
+                NativeV2ReceiptFactMutationForTestV2::LearnerPolicyStepCount,
+                "native terminal trajectory receipt does not match its terminal",
+            ),
+        ] {
+            let mut corrupted = genuine;
+            corrupted.mutate_environment_fact_for_test_v2(mutation);
+            // The event stays the fixed genuine baseline, so only the
+            // receipt drifts.
+            assert_eq!(
+                invariant_of(
+                    validate_native_terminal_trajectory_receipt_v1(
+                        &corrupted,
+                        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                        &deck_ids,
+                        deck_hashes,
+                        BASE_SEED_V1,
+                        &event_with(genuine),
+                        &[],
+                    )
+                    .unwrap_err()
+                ),
+                expected_invariant,
+                "shared helper: {mutation:?}"
+            );
+        }
+        // Duplicate-episode scan through prior receipts.
+        assert_eq!(
+            invariant_of(
+                validate_native_terminal_trajectory_receipt_v1(
+                    &genuine,
+                    NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                    &deck_ids,
+                    deck_hashes,
+                    BASE_SEED_V1,
+                    &event_with(genuine),
+                    &[genuine],
+                )
+                .unwrap_err()
+            ),
+            "native terminal trajectory receipt does not match its terminal",
+            "a duplicate episode receipt must reject"
+        );
     }
 }

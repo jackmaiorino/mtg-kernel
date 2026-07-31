@@ -49,6 +49,59 @@ pub const UPDATE_GROUP_RECORD_CONTRACT_SHA256_V1: &str =
     crate::native_training_store_checkpoint_v3::NATIVE_TRAINING_STORE_RECORD_CONTRACT_SHA256_V1;
 
 const U63_MAX_V1: u64 = (1_u64 << 63) - 1;
+
+// Zero-side-effect ordering instrumentation: caller-thread counters proving
+// whether evidence-context construction or Store evidence projection ran
+// before a rejection. Test-only.
+#[cfg(test)]
+thread_local! {
+    static EVIDENCE_CONTEXT_CONSTRUCTION_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+    static STORE_EVIDENCE_PROJECTION_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Run-local RAII counting scope: entry zeroes the calling thread's counters
+/// after saving them; drop restores the saved values on every exit path,
+/// including panics, so stale evidence can never leak into a later test on a
+/// reused harness thread and nested scopes stay isolated.
+#[cfg(test)]
+pub(crate) struct StoreEvidenceCountScopeV2 {
+    saved: (u64, u64),
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl StoreEvidenceCountScopeV2 {
+    /// `(evidence_context_constructions, store_evidence_projections)`
+    /// observed on the calling thread inside this scope.
+    pub(crate) fn counts(&self) -> (u64, u64) {
+        (
+            EVIDENCE_CONTEXT_CONSTRUCTION_COUNT_V2.with(std::cell::Cell::get),
+            STORE_EVIDENCE_PROJECTION_COUNT_V2.with(std::cell::Cell::get),
+        )
+    }
+}
+
+#[cfg(test)]
+impl Drop for StoreEvidenceCountScopeV2 {
+    fn drop(&mut self) {
+        EVIDENCE_CONTEXT_CONSTRUCTION_COUNT_V2.with(|count| count.set(self.saved.0));
+        STORE_EVIDENCE_PROJECTION_COUNT_V2.with(|count| count.set(self.saved.1));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn store_evidence_count_scope_v2() -> StoreEvidenceCountScopeV2 {
+    let saved = (
+        EVIDENCE_CONTEXT_CONSTRUCTION_COUNT_V2.with(|count| count.replace(0)),
+        STORE_EVIDENCE_PROJECTION_COUNT_V2.with(|count| count.replace(0)),
+    );
+    StoreEvidenceCountScopeV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
+}
 // Widened 2026-07-21 (ledger #307) in lockstep with the segment continuation
 // row bound to admit K=256+ update groups.
 const MAX_LOGICAL_ROWS_V1: u64 = 4_194_304;
@@ -761,6 +814,8 @@ pub(crate) fn resume_update_evidence_chain_v1(
     parent: &ValidatedNativeTrainingBoundaryV2,
     parent_checkpoint: &CheckpointManifestV3,
 ) -> Result<UpdateEvidenceChainContextV1> {
+    #[cfg(test)]
+    EVIDENCE_CONTEXT_CONSTRUCTION_COUNT_V2.with(|count| count.set(count.get() + 1));
     let parent_facts = parent.boundary_facts_v2();
     let generation_index = parent_facts.generation_index;
     let segment_ordinal = parent_facts.segment_ordinal;
@@ -860,6 +915,11 @@ pub fn build_update_group_v1(
 ) -> Result<ValidatedUpdateGroupAdvanceV1> {
     validate_context_run_v1(run, &context)?;
     validate_prepared_execution_config_v1(run, prepared.execution_config_v1())?;
+    validate_run_transition_environment_diagonal_v1(
+        run,
+        prepared.environment_trajectory_contract_v1(),
+    )?;
+    preflight_receipt_environment_diagonal_v1(run, prepared.observation())?;
     let predecessor_checkpoint = prepared
         .pre_update_checkpoint_candidate_v1()
         .map_err(|_| error_v1(UpdateGroupV1ErrorKind::CheckpointMismatch))?;
@@ -874,6 +934,63 @@ pub fn build_update_group_v1(
     )
 }
 
+/// Exhaustive Store admission of the run/transition mode diagonal: a Legacy
+/// run admits only a Legacy-sealed producer and an environment randomization
+/// V2 run admits only a V2-sealed producer. No wildcard; every receipt
+/// variant is then rechecked against the same run mode before it is
+/// projected into evidence.
+fn validate_run_transition_environment_diagonal_v1(
+    run: &ValidatedTrainRunV2,
+    transition_environment: NativeRunEnvironmentTrajectoryContractV1,
+) -> Result<()> {
+    match (
+        run.environment_trajectory_contract_v1(),
+        transition_environment,
+    ) {
+        (
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+        )
+        | (
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+        ) => Ok(()),
+        (
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+        )
+        | (
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+        ) => Err(error_v1(UpdateGroupV1ErrorKind::RunBinding)),
+    }
+}
+
+/// Pure, allocation-free receipt-diagonal preflight: every receipt variant in
+/// the observation must sit on the run-mode diagonal. Both Store entry points
+/// run this before predecessor export, transition consumption, or any
+/// evidence work, so a mixed or off-diagonal receipt vector rejects with zero
+/// side effects. Exhaustive on purpose.
+fn preflight_receipt_environment_diagonal_v1(
+    run: &ValidatedTrainRunV2,
+    observation: &NativeTrainingUpdateObservationV2,
+) -> Result<()> {
+    let expected_v2 = match run.environment_trajectory_contract_v1() {
+        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => false,
+        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => true,
+    };
+    for episode in &observation.episodes {
+        if episode
+            .full_trajectory_receipt
+            .is_environment_randomization_v2()
+            != expected_v2
+        {
+            return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn build_compact_update_group_v2(
     run: &ValidatedTrainRunV2,
     context: UpdateEvidenceChainContextV1,
@@ -885,6 +1002,11 @@ pub(crate) fn build_compact_update_group_v2(
 )> {
     validate_context_run_v1(run, &context)?;
     validate_prepared_execution_config_v1(run, transition.execution_config_v2())?;
+    validate_run_transition_environment_diagonal_v1(
+        run,
+        transition.environment_trajectory_contract_v1(),
+    )?;
+    preflight_receipt_environment_diagonal_v1(run, transition.observation_v2())?;
     let (predecessor, successor, observation, final_checkpoint) = transition.into_parts_v2();
     let predecessor_view = UpdateCheckpointFactsV1::from_intrinsic_v2(&predecessor);
     let successor_view = UpdateCheckpointFactsV1::from_intrinsic_v2(&successor);
@@ -938,29 +1060,11 @@ pub(crate) fn validate_prepared_execution_config_v1(
     run: &ValidatedTrainRunV2,
     config: &NativeTrainingExecutionConfigV1,
 ) -> Result<()> {
-    // Inactive-manifest gate (Phase C1). A run classified as the environment
-    // randomization V2 trajectory contract is decodable and classifiable but
-    // not runnable: nothing in this build can train it. This is the first
-    // clause on purpose.
-    //
-    // Production orchestration reaches this validator before the side effects
-    // that matter: the science loop calls it before store bootstrap and path
-    // creation, resume calls it before root recapture, exclusive locking,
-    // store walking, and recognized-stage deletion, and prepared-segment
-    // preparation calls it before candidate cloning and update. That ordering
-    // is a property of those call sites, not of this function; a direct caller
-    // may already hold prepared state when it calls in, so this clause is a
-    // fail-closed check rather than a proof about the whole system.
-    //
-    // Written as an exhaustive two-arm match with no wildcard: a future third
-    // classifier variant fails compilation here instead of silently slipping
-    // through an equality test.
-    match run.environment_trajectory_contract_v1() {
-        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => {}
-        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => {
-            return Err(error_v1(UpdateGroupV1ErrorKind::RunBinding));
-        }
-    }
+    // Since C2 the environment randomization V2 trajectory contract is live,
+    // so this validator carries no mode gate: it compares only the ordinary
+    // config/run facts. Mode admission is the exhaustive run/executor and
+    // run/transition/receipt diagonals proven at `prepare_segment_v2` and at
+    // both Store update-group entry points.
     let record = run.record();
     let worker_count = u64::try_from(config.worker_count)
         .map_err(|_| error_v1(UpdateGroupV1ErrorKind::RunBinding))?;
@@ -1182,6 +1286,14 @@ fn evidence_from_observation_v1(
     observation: &NativeTrainingUpdateObservationV2,
     successor: &UpdateCheckpointFactsV1,
 ) -> Result<UpdateEvidenceWireV1> {
+    #[cfg(test)]
+    STORE_EVIDENCE_PROJECTION_COUNT_V2.with(|count| count.set(count.get() + 1));
+    // Exhaustive on purpose: a future third mode variant must fail
+    // compilation here rather than silently map to Legacy.
+    let expected_v2_receipts = match run.environment_trajectory_contract_v1() {
+        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => false,
+        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => true,
+    };
     let expected_k = usize::try_from(run.batch_episodes())
         .map_err(|_| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
     if observation.episodes.len() != expected_k {
@@ -1206,15 +1318,45 @@ fn evidence_from_observation_v1(
         )
         .map_err(|_| error_v1(UpdateGroupV1ErrorKind::ScheduleBinding))?;
         let receipt = observed.full_trajectory_receipt;
+        // Every receipt variant must sit on the run-mode diagonal before any
+        // common accessor is projected into evidence.
+        if receipt.is_environment_randomization_v2() != expected_v2_receipts {
+            return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+        }
+        // V2-only facts are validated, not merely present: the pair index
+        // must be the episode's own pair and the catalog-resolved physical
+        // bindings must equal the ordered run deck IDs, while a legacy
+        // receipt must project no V2-only fact at all. This runs before the
+        // run deck IDs are projected into the wire episode, so corrupt
+        // V2-only facts cannot be laundered into a valid 18-field
+        // EpisodeWire.
+        if expected_v2_receipts {
+            if receipt.pair_index_v2() != Some(expected_episode_index / 2) {
+                return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+            }
+            match receipt.deck_ids_v2() {
+                Some(receipt_deck_ids) => {
+                    let run_deck_ids = &run.record().environment.deck_ids;
+                    if receipt_deck_ids[0] != run_deck_ids[0]
+                        || receipt_deck_ids[1] != run_deck_ids[1]
+                    {
+                        return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+                    }
+                }
+                None => return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding)),
+            }
+        } else if receipt.pair_index_v2().is_some() || receipt.deck_ids_v2().is_some() {
+            return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+        }
         if observed.episode_index != expected_episode_index
-            || receipt.episode_index != expected_episode_index
+            || receipt.episode_index() != expected_episode_index
             || schedule.episode_index != expected_episode_index
             || schedule.learner_seat != observed.learner_seat
-            || receipt.learner_seat != observed.learner_seat
-            || receipt.environment_seed != schedule.environment_seed
-            || receipt.deck_hashes != run_deck_hashes
-            || observed.learner_group_count != receipt.learner_physical_decision_count
-            || observed.learner_policy_step_count != receipt.learner_policy_step_count
+            || receipt.learner_seat() != observed.learner_seat
+            || receipt.environment_seed() != schedule.environment_seed
+            || receipt.deck_hashes() != run_deck_hashes
+            || observed.learner_group_count != receipt.learner_physical_decision_count()
+            || observed.learner_policy_step_count != receipt.learner_policy_step_count()
         {
             return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
         }
@@ -1225,26 +1367,26 @@ fn evidence_from_observation_v1(
         }
         validate_episode_count_lattice_v1(
             run,
-            receipt.policy_step_count,
-            receipt.physical_decision_count,
-            receipt.learner_policy_step_count,
-            receipt.learner_physical_decision_count,
-            receipt.opponent_policy_step_count,
-            receipt.opponent_physical_decision_count,
+            receipt.policy_step_count(),
+            receipt.physical_decision_count(),
+            receipt.learner_policy_step_count(),
+            receipt.learner_physical_decision_count(),
+            receipt.opponent_policy_step_count(),
+            receipt.opponent_physical_decision_count(),
         )?;
-        total_policy_steps = checked_u63_add_v1(total_policy_steps, receipt.policy_step_count)?;
+        total_policy_steps = checked_u63_add_v1(total_policy_steps, receipt.policy_step_count())?;
         total_physical_decisions =
-            checked_u63_add_v1(total_physical_decisions, receipt.physical_decision_count)?;
+            checked_u63_add_v1(total_physical_decisions, receipt.physical_decision_count())?;
         learner_policy_steps =
-            checked_u63_add_v1(learner_policy_steps, receipt.learner_policy_step_count)?;
+            checked_u63_add_v1(learner_policy_steps, receipt.learner_policy_step_count())?;
         learner_physical_decisions = checked_u63_add_v1(
             learner_physical_decisions,
-            receipt.learner_physical_decision_count,
+            receipt.learner_physical_decision_count(),
         )?;
         episodes.push(EpisodeWireV1 {
             schema: EPISODE_SCHEMA_V1.to_owned(),
             episode_index: expected_episode_index,
-            environment_seed_u64_hex: format!("{:016x}", receipt.environment_seed),
+            environment_seed_u64_hex: format!("{:016x}", receipt.environment_seed()),
             deck_ids: run.record().environment.deck_ids.clone(),
             deck_hashes_u64_hex: run.record().environment.deck_hashes_u64_hex.clone(),
             learner_seat: seat_wire_v1(observed.learner_seat),
@@ -1253,13 +1395,16 @@ fn evidence_from_observation_v1(
             winner,
             terminal_classification: "natural".to_owned(),
             terminal_code: "natural-game-over".to_owned(),
-            policy_step_count: receipt.policy_step_count,
-            physical_decision_count: receipt.physical_decision_count,
-            learner_policy_step_count: receipt.learner_policy_step_count,
-            opponent_policy_step_count: receipt.opponent_policy_step_count,
-            learner_physical_decision_count: receipt.learner_physical_decision_count,
-            opponent_physical_decision_count: receipt.opponent_physical_decision_count,
-            trajectory_sha256: lower_hex_raw32_v1(receipt.trajectory_sha256),
+            policy_step_count: receipt.policy_step_count(),
+            physical_decision_count: receipt.physical_decision_count(),
+            learner_policy_step_count: receipt.learner_policy_step_count(),
+            opponent_policy_step_count: receipt.opponent_policy_step_count(),
+            learner_physical_decision_count: receipt.learner_physical_decision_count(),
+            opponent_physical_decision_count: receipt.opponent_physical_decision_count(),
+            // Legacy projects its V1 trajectory digest; environment V2
+            // projects the inner V1 digest through the same compatibility
+            // accessor. The V2 outer digest never enters EpisodeWire.
+            trajectory_sha256: lower_hex_raw32_v1(receipt.trajectory_sha256()),
         });
     }
     if total_policy_steps == 0
@@ -2366,7 +2511,13 @@ mod tests {
     use super::*;
     use crate::canonical_json_v1::to_canonical_json_bytes_v1;
     use crate::common_model_snapshot_v1::common_model_snapshot_paths_v1;
-    use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+    use crate::native_policy_train_step_v1::{
+        reset_train_state_snapshot_call_count_for_test_v1,
+        train_state_snapshot_call_count_for_test_v1, NativeTrainingNumericalBackendV1,
+    };
+    use crate::native_train_state_payload_v1::{
+        payload_encode_counts_for_test_v1, reset_payload_encode_counts_for_test_v1,
+    };
     use crate::native_training_executor_v1::{
         NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1,
     };
@@ -3201,7 +3352,8 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // Phase C1 inactive environment-randomization-V2 manifest gate.
+    // Live C2 environment-randomization-V2 mode-diagonal and frozen-byte
+    // suites.
     //
     // These live in this module, not a sibling one, so they can reach the
     // private `execution_config_v1` helper above without widening any
@@ -3227,22 +3379,19 @@ mod tests {
     #[cfg(windows)]
     use crate::native_training_store_resume_v2::{
         resume_native_training_store_v2, validate_native_training_store_v2,
-        NativeTrainingStoreResumeV2ErrorKind,
     };
     #[cfg(windows)]
-    use crate::native_training_store_root_v2::{
-        NativeTrainingStoreRootV2ErrorKind, ValidatedNativeTrainingStoreRootV2,
-    };
+    use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
     #[cfg(windows)]
     use crate::native_training_store_v2::publish_genesis_generation_v2;
 
     /// Unique temporary parent, one per test, following the pattern the
     /// science-loop and resume suites already use. `std` only.
-    struct InactiveGateParentV1 {
+    struct StoreSuiteParentV1 {
         parent: PathBuf,
     }
 
-    impl InactiveGateParentV1 {
+    impl StoreSuiteParentV1 {
         fn new(label: &str) -> Self {
             static ORDINAL: AtomicU64 = AtomicU64::new(0);
             let ordinal = ORDINAL.fetch_add(1, Ordering::Relaxed);
@@ -3257,16 +3406,9 @@ mod tests {
         fn path(&self) -> &Path {
             &self.parent
         }
-
-        fn is_empty(&self) -> bool {
-            fs::read_dir(&self.parent)
-                .expect("read test parent")
-                .next()
-                .is_none()
-        }
     }
 
-    impl Drop for InactiveGateParentV1 {
+    impl Drop for StoreSuiteParentV1 {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.parent);
         }
@@ -3281,9 +3423,9 @@ mod tests {
         decode_train_run_v2(&test_fixture_bytes_v2()).expect("the legacy fixture decodes")
     }
 
-    /// The V2 fixture really does decode and classify as V2. Every rejection
-    /// below is therefore an inactive-gate rejection and not an artifact of an
-    /// undecodable record.
+    /// The V2 fixture really does decode and classify as V2, so every
+    /// diagonal admission and rejection below binds to a genuinely
+    /// V2-classified run rather than an undecodable record.
     #[test]
     fn v2_fixture_decodes_and_classifies_as_v2() {
         assert_eq!(
@@ -3301,54 +3443,47 @@ mod tests {
         );
     }
 
-    /// The shared prepared-execution validator rejects the V2 run directly,
-    /// with the legacy run as the nonvacuity control on the same config.
+    /// Live C2: the shared prepared-execution validator carries no mode gate.
+    /// Both classifications admit the same matching config, and ordinary
+    /// config drift still rejects under both run modes.
     #[test]
-    fn prepared_execution_config_rejects_v2_and_admits_legacy() {
+    fn prepared_execution_config_admits_both_modes_and_still_binds_config() {
         let legacy = legacy_run_v1();
         let v2 = coherent_v2_run_v1();
         let config = execution_config_v1(&v2);
 
         validate_prepared_execution_config_v1(&legacy, &config)
-            .expect("the config is otherwise valid: legacy accepts it");
-        assert_eq!(
-            validate_prepared_execution_config_v1(&v2, &config)
-                .unwrap_err()
-                .kind(),
-            UpdateGroupV1ErrorKind::RunBinding
-        );
+            .expect("the legacy run admits the matching config");
+        validate_prepared_execution_config_v1(&v2, &config)
+            .expect("the V2 run admits the same matching config since C2");
+
+        let mut drifted = execution_config_v1(&v2);
+        drifted.run_base_seed ^= 1;
+        for run in [&legacy, &v2] {
+            assert_eq!(
+                validate_prepared_execution_config_v1(run, &drifted)
+                    .unwrap_err()
+                    .kind(),
+                UpdateGroupV1ErrorKind::RunBinding,
+                "ordinary config binding must keep rejecting under both modes"
+            );
+        }
     }
 
-    /// Phase C1 required test 5. The science loop rejects a V2 run before the
-    /// target store path exists.
-    ///
-    /// Runs on every platform: `run_native_science_loop_v1` calls
-    /// `validate_prepared_execution_config_v1` as its first statement
-    /// (`native_science_loop_v1.rs` lines 223 through 225) and only then
-    /// bootstraps (line 227), so the rejection precedes the platform check the
-    /// bootstrap would otherwise raise.
-    ///
-    /// The config is proven nonvacuous by validating it against the legacy run
-    /// first, and the snapshot manifest and payload paths are deliberately
-    /// missing: if the gate did not fire, the loop would fail somewhere else
-    /// and with a different kind.
+    /// Live C2: the science loop's input validation no longer rejects a V2
+    /// run. With deliberately missing snapshot paths the loop must fail
+    /// somewhere past input validation, with a kind other than InputInvalid,
+    /// which is exactly what proves the inactive gate is gone.
     #[test]
-    fn v2_science_loop_rejects_before_the_target_path_exists() {
-        let parent = InactiveGateParentV1::new("science-gate");
-        let legacy = legacy_run_v1();
+    fn v2_science_loop_proceeds_past_input_validation() {
+        let parent = StoreSuiteParentV1::new("science-live");
         let v2 = coherent_v2_run_v1();
         let config = execution_config_v1(&v2);
-        validate_prepared_execution_config_v1(&legacy, &config)
-            .expect("the config is otherwise valid: legacy accepts it");
+        validate_prepared_execution_config_v1(&v2, &config)
+            .expect("the V2 run admits its own config since C2");
 
-        let target = parent.path().join("store");
         let missing_manifest = parent.path().join("missing-snapshot-manifest.json");
         let missing_payload = parent.path().join("missing-snapshot-payload.bin");
-        assert!(parent.is_empty());
-        assert!(fs::symlink_metadata(&target).is_err());
-        assert!(fs::symlink_metadata(&missing_manifest).is_err());
-        assert!(fs::symlink_metadata(&missing_payload).is_err());
-
         let runner_config = NativeCheckpointRunnerConfigV1 {
             evaluation_base_seed: 7_777,
             first_episode_index: 0,
@@ -3368,21 +3503,18 @@ mod tests {
             None,
             None,
         )
-        .expect_err("a V2 run must never reach the science loop's bootstrap");
-        assert_eq!(error.kind(), NativeScienceLoopV1ErrorKind::InputInvalid);
-        assert_eq!(error.code(), "native-science-loop-input-invalid");
-
-        // Nothing was created: no store root, no snapshot sentinels, and the
-        // parent is still exactly as empty as it was before the call.
-        assert!(fs::symlink_metadata(&target).is_err());
-        assert!(fs::symlink_metadata(&missing_manifest).is_err());
-        assert!(fs::symlink_metadata(&missing_payload).is_err());
-        assert!(parent.is_empty());
+        .expect_err("missing snapshot paths cannot produce a complete run");
+        assert_ne!(
+            error.kind(),
+            NativeScienceLoopV1ErrorKind::InputInvalid,
+            "a V2 run must pass input validation and fail later"
+        );
     }
 
-    /// Phase C1 required test 9. `EpisodeWireV1`'s maximum shape and canonical
-    /// output are unchanged, and its serialized value carries no environment
-    /// randomization V2 section, no outer digest, and no receipt field.
+    /// Frozen since C1 and preserved by live C2: `EpisodeWireV1`'s maximum
+    /// shape and canonical output are unchanged, and its serialized value
+    /// carries no environment randomization V2 section, no outer digest, and
+    /// no receipt field.
     ///
     /// The first assertion is the real non-expansion proof. A maximum-width
     /// episode serialized standalone is one token plus one final LF; the
@@ -3668,112 +3800,852 @@ mod tests {
         root
     }
 
-    /// Phase C1 required test 6. Resume rejects a V2 run before root recapture,
-    /// before exclusive locking, and before recognized-stage cleanup.
+    /// Live C2 required test: V2 publish, commit, Windows resume, and
+    /// next-update continuation preserve the sealed mode and evidence while
+    /// checkpoint bytes carry no mode.
     ///
-    /// `resume_native_training_store_v2` calls the run validator first and only
-    /// then recaptures, locks, walks, and deletes
-    /// (`native_training_store_resume_v2.rs` lines 321 through 341). Each probe
-    /// below arranges a store state in which a missed gate would produce a
-    /// *different, observable* outcome, so the shared `RunInvalid` result is
-    /// evidence of ordering and not merely of rejection.
+    /// The V2-bound Store is driven from genesis to the exact no-op through
+    /// `resume_native_training_store_v2`: every continuation's reconstructed
+    /// executor must rederive the environment randomization V2 seal from the
+    /// validated run alone, every prepared segment must publish and commit,
+    /// and a recognized stage must be deleted by the now-admitted cleanup
+    /// plan.
     #[cfg(windows)]
     #[test]
-    fn v2_resume_rejects_before_recapture_locking_and_stage_cleanup() {
-        const STAGE_SENTINEL_V1: &[u8] = b"phase-c1-inactive-manifest-stage-sentinel";
+    fn v2_resume_drives_publish_commit_and_continuation_with_rederived_mode() {
+        use crate::native_training_store_prepared_segment_v2::prepare_segment_v2;
+        use crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2;
+        use crate::native_training_store_v2::publish_prepared_segment_v2;
 
-        let parent = InactiveGateParentV1::new("resume-gate");
+        let parent = StoreSuiteParentV1::new("resume-live-v2");
         let v2 = coherent_v2_run_v1();
-
-        // The complete genesis Store is published with the V2 run itself. A
-        // legacy-bound Store would make probe 3 vacuous: absent the gate, the
-        // walk would reject on the run/Store mismatch before ever reaching the
-        // stage deletion plan, so stage survival would prove nothing.
         let root = bootstrap_and_publish_genesis_c1_v1(parent.path(), &v2);
 
-        // A recognized stage leaf: exactly the shape resume's cleanup loop
-        // deletes under the exclusive lock.
+        // A recognized stage leaf: live C2 resume must now delete it under
+        // the exclusive lock instead of rejecting the run.
         let stage = root
             .directory_path_v2(NativeTrainingStoreDirectoryV2::Segments)
             .join(".segment-00000000.json.stage-v2");
-        fs::write(&stage, STAGE_SENTINEL_V1).unwrap();
+        fs::write(&stage, b"live-c2-stage-sentinel").unwrap();
 
-        let expect_run_invalid_v1 =
-            |root: &ValidatedNativeTrainingStoreRootV2, run: &ValidatedTrainRunV2, probe: &str| {
-                let error = resume_native_training_store_v2(root, run, execution_config_v1(run))
-                    .expect_err(probe);
-                assert_eq!(
-                    error.kind(),
-                    NativeTrainingStoreResumeV2ErrorKind::RunInvalid,
-                    "{probe}"
-                );
-                assert_eq!(error.code(), "native-training-store-resume-run-invalid");
-            };
+        let target = v2.requested_successful_updates();
+        let mut expected_parent = 0_u64;
+        loop {
+            match resume_native_training_store_v2(&root, &v2, execution_config_v1(&v2)).unwrap() {
+                NativeTrainingStoreResumeV2::Complete {
+                    latest_generation_index,
+                } => {
+                    assert_eq!(latest_generation_index, target);
+                    break;
+                }
+                NativeTrainingStoreResumeV2::Continue(mut continuation) => {
+                    assert!(
+                        fs::symlink_metadata(&stage).is_err(),
+                        "live C2 resume must apply the recognized-stage deletion plan"
+                    );
+                    assert_eq!(continuation.parent_generation_index, expected_parent);
+                    // The reconstructed executor rederives the V2 seal from
+                    // the validated run although checkpoint bytes carry no
+                    // mode.
+                    assert_eq!(
+                        continuation.executor.environment_trajectory_contract_v1(),
+                        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+                    );
+                    let prepared = prepare_segment_v2(
+                        &mut continuation.executor,
+                        &v2,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                    )
+                    .unwrap();
+                    let receipt = publish_prepared_segment_v2(
+                        &root,
+                        &v2,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                        &prepared,
+                    )
+                    .unwrap();
+                    prepared.commit_v2(receipt).unwrap();
+                    expected_parent += v2.checkpoint_segment_updates();
+                }
+            }
+        }
+        assert_eq!(expected_parent, target);
+        let state = validate_native_training_store_v2(&root, &v2)
+            .expect("the completed V2 Store walks cleanly");
+        assert_eq!(state.latest_generation_index(), target);
+    }
 
-        // Probe 1: pre-recapture. Replacing `heads` with an empty directory is
-        // proven to make recapture report `IdentityChanged`
-        // (`native_training_store_root_v2.rs` tests around lines 1058 through
-        // 1073), so a missed gate would surface `RootInvalid` here.
-        let heads = root
-            .directory_path_v2(NativeTrainingStoreDirectoryV2::Heads)
-            .to_path_buf();
-        let heads_moved = heads.with_file_name("heads-moved");
-        fs::rename(&heads, &heads_moved).unwrap();
-        fs::create_dir(&heads).unwrap();
+    /// Live C2 wide resume witness: a genuinely wide plus environment
+    /// randomization V2 Store resume must reach the production wide
+    /// reconstruction branch through the run-bound wide checkpoint
+    /// constructor. Checkpoint bytes are mode-free, so the post-seal
+    /// construction counter, scoped around the single resume call, is the
+    /// witness that kills a reverted raw wide constructor. The wide
+    /// Sequential continuation is deliberately not trained.
+    #[cfg(windows)]
+    #[test]
+    fn wide_v2_resume_reconstructs_through_the_run_bound_wide_constructor() {
+        use crate::native_training_executor_v1::{
+            run_bound_checkpoint_construction_count_scope_v2, NativeTrainingExecutorV1,
+        };
+        use crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2;
+        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_wide_environment_v2;
+
+        let parent = StoreSuiteParentV1::new("resume-wide-v2");
+        let wide_v2 = decode_train_run_v2(
+            &test_fixture_bytes_with_schedule_and_base_seed_wide_environment_v2(
+                NativeTrainingNumericalBackendV1::Sequential,
+                2,
+                4,
+                4,
+                2,
+                4,
+                8,
+                32_768,
+                65_536,
+                71_501,
+            ),
+        )
+        .expect("the wide V2 fixture decodes");
         assert_eq!(
-            root.recapture_v2().unwrap_err().kind(),
-            NativeTrainingStoreRootV2ErrorKind::IdentityChanged,
-            "the replacement must really break recapture, or probe 1 is vacuous"
+            wide_v2.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
         );
-        expect_run_invalid_v1(&root, &v2, "probe 1: rejection must precede recapture");
-        assert_eq!(fs::read(&stage).unwrap(), STAGE_SENTINEL_V1);
-        fs::remove_dir(&heads).unwrap();
-        fs::rename(&heads_moved, &heads).unwrap();
-        root.recapture_v2()
-            .expect("the original members are restored in order");
 
-        // Probe 2: pre-lock. A second validated root holds the exclusive lock,
-        // so a missed gate would surface the lock conflict as `StoreBusy`.
-        let second = ValidatedNativeTrainingStoreRootV2::open_v2(
-            root.directory_path_v2(NativeTrainingStoreDirectoryV2::Root),
+        // Publish the wide genesis; the payload is byte-identical to the
+        // run-bound sibling's, so publication stays the production shape.
+        let bootstrapped = bootstrap_native_training_store_v2(parent.path(), "store").unwrap();
+        let root = bootstrapped.into_root();
+        let (wide_manifest, wide_payload_path) =
+            crate::common_model_snapshot_v1::wide_model_snapshot_paths_v1();
+        let genesis_executor = NativeTrainingExecutorV1::from_common_model_snapshot_wide_v1(
+            execution_config_v1(&wide_v2),
+            &wide_manifest,
+            &wide_payload_path,
         )
         .unwrap();
-        let guard = second.lock_exclusive_v2().unwrap();
-        assert_eq!(
-            root.lock_exclusive_v2().unwrap_err().kind(),
-            NativeTrainingStoreRootV2ErrorKind::StoreBusy,
-            "the lock must really be contended, or probe 2 is vacuous"
-        );
-        expect_run_invalid_v1(
+        let payload = genesis_executor
+            .checkpoint_candidate_v1()
+            .unwrap()
+            .payload()
+            .to_vec();
+        let checkpoint = build_genesis_checkpoint_manifest_v3(&wide_v2, &payload).unwrap();
+        let segment = build_genesis_segment_manifest_v2(&wide_v2, &checkpoint).unwrap();
+        let boundary =
+            build_genesis_native_training_boundary_v2(&wide_v2, &segment, &checkpoint).unwrap();
+        let reference = build_checkpoint_reference_v2(&wide_v2, &boundary).unwrap();
+        let latest = build_latest_v2(&boundary, &reference).unwrap();
+        let _ = publish_genesis_generation_v2(
             &root,
-            &v2,
-            "probe 2: rejection must precede exclusive locking",
+            &wide_v2,
+            &payload,
+            &checkpoint,
+            &segment,
+            &boundary,
+            &reference,
+            &latest,
+        )
+        .unwrap();
+
+        // The single resume call, scoped exactly.
+        let scope = run_bound_checkpoint_construction_count_scope_v2();
+        let resumed =
+            resume_native_training_store_v2(&root, &wide_v2, execution_config_v1(&wide_v2))
+                .expect("the wide V2 store must resume since C2");
+        assert_eq!(
+            scope.counts(),
+            (0, 1),
+            "wide resume must reconstruct through the run-bound wide constructor"
         );
-        assert_eq!(fs::read(&stage).unwrap(), STAGE_SENTINEL_V1);
-        drop(guard);
+        match resumed {
+            NativeTrainingStoreResumeV2::Continue(continuation) => {
+                assert_eq!(continuation.parent_generation_index, 0);
+                assert_eq!(
+                    continuation.executor.environment_trajectory_contract_v1(),
+                    NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                    "the continuation executor must rederive the V2 seal"
+                );
+                assert!(continuation.executor.snapshot_receipt().is_none());
+            }
+            NativeTrainingStoreResumeV2::Complete { .. } => {
+                panic!("generation zero of a target-four run cannot be complete")
+            }
+        }
+    }
 
-        // Probe 3: pre-cleanup. The Store is healthy, recaptured, unlocked, and
-        // bound to this very run.
-        //
-        // Nonvacuity comes from the walk itself: `validate_native_training_store_v2`
-        // is the same complete-Store validation resume performs after locking,
-        // and it accepts this exact state at generation 0 with the recognized
-        // stage present. So absent the gate, resume would reach the deletion
-        // plan and remove the stage. That it survives is the ordering proof.
-        let state = validate_native_training_store_v2(&root, &v2)
-            .expect("the V2-bound complete genesis Store walks cleanly");
-        assert_eq!(state.latest_generation_index(), 0);
-        assert_eq!(fs::read(&stage).unwrap(), STAGE_SENTINEL_V1);
-
-        expect_run_invalid_v1(
-            &root,
+    /// Live C2 science-loop proof for the run-bound genesis callsite: the
+    /// complete science loop drives a V2 run end to end from real snapshots,
+    /// which can only succeed if the ordinary genesis branch constructs its
+    /// executor through the run-bound snapshot constructor and every later
+    /// window rederives the V2 seal.
+    #[cfg(windows)]
+    #[test]
+    fn v2_science_loop_completes_end_to_end_from_real_snapshots() {
+        let parent = StoreSuiteParentV1::new("science-live-v2");
+        let v2 = coherent_v2_run_v1();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let runner_config = NativeCheckpointRunnerConfigV1 {
+            evaluation_base_seed: 7_777,
+            first_episode_index: 0,
+            episode_count: 2,
+            scheduler_timeout: Duration::from_secs(600),
+            measure_broker_service_time: false,
+        };
+        let genesis_scope =
+            crate::native_training_executor_v1::run_bound_snapshot_construction_count_scope_v2();
+        let report = run_native_science_loop_v1(
+            parent.path(),
+            "store",
             &v2,
-            "probe 3: rejection must precede the stage deletion plan",
+            execution_config_v1(&v2),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config,
+            None,
+            None,
+        )
+        .expect("the V2 science loop must complete end to end since C2");
+        // Genesis bytes are mode-free, so byte equality cannot prove the
+        // callsite; this counter can. A reverted raw genesis constructor
+        // makes this exact assertion fail.
+        assert_eq!(
+            genesis_scope.counts(),
+            (1, 0),
+            "the ordinary narrow genesis site must construct run-bound exactly once"
         );
         assert_eq!(
-            fs::read(&stage).unwrap(),
-            STAGE_SENTINEL_V1,
-            "the recognized stage must survive a gated resume byte for byte"
+            report.latest_generation_index(),
+            v2.requested_successful_updates()
+        );
+        for run_result in [report.reference_run(), report.candidate_run()] {
+            for binding in run_result.episode_bindings() {
+                assert!(
+                    binding.outer_trajectory_sha256_v2().is_some(),
+                    "V2 evaluation bindings must retain the outer evidence"
+                );
+            }
+        }
+    }
+
+    /// Live C2 frozen-byte proof against the pre-C2 baseline captured at
+    /// `058d11f0dccf9e485cd6577bd52ca2b57e3253c9`: every target pins the
+    /// float-free episode projection, and the x86_64 Linux-gnu target where
+    /// that baseline was captured additionally pins the whole-group bytes
+    /// (trained loss/gauge/model bits carry platform libm last bits, so the
+    /// full-byte pin is per-target by construction).
+    #[test]
+    fn legacy_update_group_matches_pre_c2_projection_with_linux_gnu_full_byte_pin() {
+        use sha2::Digest;
+
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let run = legacy_run_v1();
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let mut executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(&run),
+            &manifest,
+            &payload,
+        )
+        .unwrap();
+        let genesis_payload = executor
+            .checkpoint_candidate_v1()
+            .unwrap()
+            .payload()
+            .to_vec();
+        let genesis = build_genesis_checkpoint_manifest_v3(&run, &genesis_payload).unwrap();
+        let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let prepared = executor.prepare_update_v2().unwrap();
+        let advance = build_update_group_v1(&run, context, &prepared).unwrap();
+        let (group, _context) = advance.into_parts();
+        // Trained loss/gauge/model bits carry platform libm last bits, so the
+        // whole-group literal is a per-target witness in the same spirit as
+        // the recorded burn-pair numerical witness; it was captured from the
+        // pre-C2 baseline checkout on this exact target.
+        #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+        {
+            let canonical_sha256: [u8; 32] = Sha256::digest(group.canonical_bytes()).into();
+            assert_eq!(
+                lower_hex_raw32_v1(canonical_sha256),
+                "0644682ac8697833c7498449c6f170019df70f2c9fbfba2bb73c283b7cc93dd3",
+                "the legacy update group canonical bytes drifted from the pre-C2 baseline"
+            );
+            assert_eq!(
+                lower_hex_raw32_v1(group.update_evidence_sha256()),
+                "f3f2e325d2afebd3792ecbfd72c4e50cfb1f455d849918fa34a61db255cbbe37",
+                "the legacy update evidence digest drifted from the pre-C2 baseline"
+            );
+            assert_eq!(group.canonical_bytes().len(), 78_190);
+        }
+        // The episode projection carries counts, seeds, deck bindings, and
+        // trajectory digests but no float bits, so this pre-C2 pin is
+        // platform-independent.
+        let value: Value = serde_json::from_slice(group.canonical_bytes()).unwrap();
+        let episodes_cj =
+            to_canonical_json_bytes_v1(&value["evidence"]["episodes"], episode_null_policy_v1())
+                .unwrap();
+        let episodes_sha256: [u8; 32] = Sha256::digest(&episodes_cj).into();
+        assert_eq!(
+            lower_hex_raw32_v1(episodes_sha256),
+            "a250bc19d5ce9a756e89c1e40abaaf59b532eead9ad8fd748c60b8b4221f70b3",
+            "the legacy episode projection drifted from the pre-C2 baseline"
+        );
+    }
+
+    /// Shared live-C2 authority builder: genesis checkpoint, boundary, and a
+    /// prepared transition from an executor sealed to the requested mode,
+    /// always over the same K=2 genesis window.
+    struct LiveC2AuthoritiesV1 {
+        run: ValidatedTrainRunV2,
+        genesis: CheckpointManifestV3,
+    }
+
+    fn live_c2_authorities_v1(v2: bool) -> LiveC2AuthoritiesV1 {
+        use crate::native_training_store_run_v2::test_fixture_bytes_environment_randomization_v2;
+        let run = if v2 {
+            decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2()).unwrap()
+        } else {
+            legacy_run_v1()
+        };
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(&run),
+            &manifest,
+            &payload,
+        )
+        .unwrap();
+        let genesis_payload = executor
+            .checkpoint_candidate_v1()
+            .unwrap()
+            .payload()
+            .to_vec();
+        let genesis = build_genesis_checkpoint_manifest_v3(&run, &genesis_payload).unwrap();
+        LiveC2AuthoritiesV1 { run, genesis }
+    }
+
+    fn sealed_transition_v1(
+        authorities: &LiveC2AuthoritiesV1,
+        v2_sealed: bool,
+    ) -> crate::native_training_executor_v1::NativeTrainingPreparedTransitionV2 {
+        use crate::native_training_store_run_v2::test_fixture_bytes_environment_randomization_v2;
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let seed_executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(&authorities.run),
+            &manifest,
+            &payload,
+        )
+        .unwrap();
+        let genesis_candidate = seed_executor.checkpoint_candidate_v1().unwrap();
+        let mut executor = if v2_sealed {
+            let v2_run =
+                decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2()).unwrap();
+            NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_v2(
+                execution_config_v1(&authorities.run),
+                &genesis_candidate,
+                &v2_run,
+            )
+            .unwrap()
+        } else {
+            NativeTrainingExecutorV1::from_checkpoint_candidate_v1(
+                execution_config_v1(&authorities.run),
+                &genesis_candidate,
+            )
+            .unwrap()
+        };
+        let facts = executor.intrinsic_checkpoint_facts_v2().unwrap();
+        let mut candidate = executor.begin_segment_candidate_v2().unwrap();
+        let transition = candidate.prepare_transition_v2(facts, true).unwrap();
+        transition
+    }
+
+    /// Live C2 Store diagonal: all eight homogeneous run/transition/receipt
+    /// triples, with the evidence context always built from the tested run so
+    /// an earlier context mismatch cannot make the oracle vacuous. Only LLL
+    /// and VVV admit; run/transition off-diagonals reject as RunBinding and
+    /// receipt off-variants reject as EpisodeBinding, each with zero evidence
+    /// projections (the compact entry constructs no context of its own, so
+    /// the projection counter is the meaningful zero here).
+    #[test]
+    fn store_admits_only_the_lll_and_vvv_triples() {
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let legacy = live_c2_authorities_v1(false);
+        let v2 = live_c2_authorities_v1(true);
+
+        // Donor receipts per variant, harvested from genuine executions over
+        // the same genesis window.
+        let legacy_donor = sealed_transition_v1(&legacy, false);
+        let v2_donor = sealed_transition_v1(&v2, true);
+        let legacy_receipts: Vec<_> = legacy_donor
+            .observation_v2()
+            .episodes
+            .iter()
+            .map(|episode| episode.full_trajectory_receipt)
+            .collect();
+        let v2_receipts: Vec<_> = v2_donor
+            .observation_v2()
+            .episodes
+            .iter()
+            .map(|episode| episode.full_trajectory_receipt)
+            .collect();
+        assert!(legacy_receipts
+            .iter()
+            .all(|receipt| !receipt.is_environment_randomization_v2()));
+        assert!(v2_receipts
+            .iter()
+            .all(|receipt| receipt.is_environment_randomization_v2()));
+
+        for run_is_v2 in [false, true] {
+            for transition_is_v2 in [false, true] {
+                for receipts_are_v2 in [false, true] {
+                    let authorities = if run_is_v2 { &v2 } else { &legacy };
+                    let context =
+                        begin_update_evidence_chain_v1(&authorities.run, &authorities.genesis)
+                            .unwrap();
+                    let mut transition = sealed_transition_v1(authorities, transition_is_v2);
+                    if receipts_are_v2 != transition_is_v2 {
+                        let donors = if receipts_are_v2 {
+                            &v2_receipts
+                        } else {
+                            &legacy_receipts
+                        };
+                        for (index, donor) in donors.iter().enumerate() {
+                            transition.swap_observation_receipt_for_test_v2(index, *donor);
+                        }
+                    }
+                    let scope = store_evidence_count_scope_v2();
+                    let outcome =
+                        build_compact_update_group_v2(&authorities.run, context, transition);
+                    match (run_is_v2, transition_is_v2, receipts_are_v2) {
+                        (false, false, false) | (true, true, true) => {
+                            let (advance, _successor, checkpoint) =
+                                outcome.expect("the homogeneous diagonal must admit");
+                            assert!(checkpoint.is_some());
+                            let (_group, advanced) = advance.into_parts();
+                            assert_eq!(advanced.next_update_index(), 2);
+                            // Positive instrumentation control: the admitted
+                            // diagonal projects exactly once and constructs
+                            // no context of its own, so a deleted increment
+                            // site cannot hide behind zero-only assertions.
+                            assert_eq!(scope.counts(), (0, 1));
+                        }
+                        (run_v2, transition_v2, _) if run_v2 != transition_v2 => {
+                            let error = outcome.map(|_| ()).unwrap_err();
+                            assert_eq!(error.kind(), UpdateGroupV1ErrorKind::RunBinding);
+                            assert_eq!(
+                                scope.counts().1,
+                                0,
+                                "an off-diagonal transition must project zero evidence"
+                            );
+                        }
+                        _ => {
+                            let error = outcome.map(|_| ()).unwrap_err();
+                            assert_eq!(error.kind(), UpdateGroupV1ErrorKind::EpisodeBinding);
+                            assert_eq!(
+                                scope.counts().1,
+                                0,
+                                "an off-variant receipt vector must reject before any \
+                                 evidence projection"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Mixed receipt vector: one swapped episode is enough to reject.
+        let context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
+        let mut mixed = sealed_transition_v1(&v2, true);
+        mixed.swap_observation_receipt_for_test_v2(1, legacy_receipts[1]);
+        let scope = store_evidence_count_scope_v2();
+        assert_eq!(
+            build_compact_update_group_v2(&v2.run, context, mixed)
+                .map(|_| ())
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::EpisodeBinding
+        );
+        assert_eq!(scope.counts().1, 0, "zero evidence projections");
+
+        // Cross-episode swap inside one genuine V2 observation: variants
+        // stay on the diagonal, so the preflight passes and the projection
+        // itself must reject the swapped episode binding.
+        let context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
+        let mut crossed = sealed_transition_v1(&v2, true);
+        let first = crossed.observation_v2().episodes[0].full_trajectory_receipt;
+        let second = crossed.observation_v2().episodes[1].full_trajectory_receipt;
+        crossed.swap_observation_receipt_for_test_v2(0, second);
+        crossed.swap_observation_receipt_for_test_v2(1, first);
+        assert_eq!(
+            build_compact_update_group_v2(&v2.run, context, crossed)
+                .map(|_| ())
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::EpisodeBinding
+        );
+    }
+
+    /// Live C2 genuine V2 Store emission oracle: a genuinely V2-produced
+    /// update group's every wire episode has exactly the frozen eighteen
+    /// keys, `trajectory_sha256` is the inner compatibility digest hex and
+    /// never the outer digest, no outer/V2 key or substring appears anywhere
+    /// in the group bytes, and the update digest is domain-separated by the
+    /// raw run SHA alone.
+    #[test]
+    fn genuine_v2_store_emission_keeps_episode_wire_frozen_and_domain_separated() {
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let v2 = live_c2_authorities_v1(true);
+        let context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
+        let transition = sealed_transition_v1(&v2, true);
+        let recorded: Vec<([u8; 32], [u8; 32], u64)> = transition
+            .observation_v2()
+            .episodes
+            .iter()
+            .map(|episode| {
+                let receipt = episode.full_trajectory_receipt;
+                (
+                    receipt.trajectory_sha256(),
+                    receipt
+                        .outer_trajectory_sha256_v2()
+                        .expect("a genuine V2 receipt carries the outer digest"),
+                    receipt.episode_index(),
+                )
+            })
+            .collect();
+        let (advance, _successor, _checkpoint) =
+            build_compact_update_group_v2(&v2.run, context, transition).unwrap();
+        let (group, _advanced) = advance.into_parts();
+
+        let value: Value = serde_json::from_slice(group.canonical_bytes()).unwrap();
+        let episodes = value["evidence"]["episodes"].as_array().unwrap();
+        assert_eq!(episodes.len(), recorded.len());
+        for (episode, (inner, outer, episode_index)) in episodes.iter().zip(&recorded) {
+            let object = episode.as_object().unwrap();
+            let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            assert_eq!(
+                keys, EPISODE_KEYS_ORACLE_V1,
+                "a genuinely V2-produced wire episode must keep exactly the 18 frozen keys"
+            );
+            assert_eq!(episode["episode_index"].as_u64().unwrap(), *episode_index);
+            assert_eq!(
+                episode["trajectory_sha256"].as_str().unwrap(),
+                lower_hex_raw32_v1(*inner),
+                "the wire digest is the inner compatibility digest"
+            );
+            assert_ne!(
+                episode["trajectory_sha256"].as_str().unwrap(),
+                lower_hex_raw32_v1(*outer),
+                "the wire digest must never be the outer digest"
+            );
+        }
+        let rendered = String::from_utf8(group.canonical_bytes().to_vec()).unwrap();
+        for forbidden in [
+            "environment_randomization_v2",
+            "trajectory_sha256_v2",
+            "outer_trajectory_sha256",
+            "outer_digest",
+            "receipt",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "the V2 group bytes must not carry {forbidden}"
+            );
+        }
+        for (_, outer, _) in &recorded {
+            assert!(
+                !rendered.contains(&lower_hex_raw32_v1(*outer)),
+                "the outer digest hex must not appear anywhere in the group bytes"
+            );
+        }
+
+        // Independent digest-framing oracle: the frozen five-atom framing is
+        // reimplemented from scratch, proven equal to the production digest
+        // for the real raw run SHA, and then rerun differing ONLY in the raw
+        // run SHA to prove domain separation.
+        fn independent_update_digest_v1(
+            run_sha256: [u8; 32],
+            update_index: u64,
+            previous: Option<[u8; 32]>,
+            evidence_cj: &[u8],
+        ) -> [u8; 32] {
+            fn append_atom(bytes: &mut Vec<u8>, tag: &str, payload: &[u8]) {
+                bytes.extend_from_slice(&u32::try_from(tag.len()).unwrap().to_be_bytes());
+                bytes.extend_from_slice(tag.as_bytes());
+                bytes.extend_from_slice(&u64::try_from(payload.len()).unwrap().to_be_bytes());
+                bytes.extend_from_slice(payload);
+            }
+            let mut framed = Vec::new();
+            // The identity is a frozen local literal on purpose: an oracle
+            // importing the production constant could not catch its drift.
+            append_atom(
+                &mut framed,
+                "domain",
+                b"mtg-kernel-native-training-update-evidence-sha256-v1",
+            );
+            append_atom(&mut framed, "run_sha256", &run_sha256);
+            append_atom(
+                &mut framed,
+                "update_index_u64be",
+                &update_index.to_be_bytes(),
+            );
+            append_atom(
+                &mut framed,
+                "previous_update_evidence_sha256",
+                previous.as_ref().map_or(&[][..], |value| value.as_slice()),
+            );
+            append_atom(&mut framed, "evidence_canonical_json", evidence_cj);
+            Sha256::digest(framed).into()
+        }
+        let evidence_cj =
+            to_canonical_json_bytes_v1(&value["evidence"], episode_null_policy_v1()).unwrap();
+        let run_sha = parse_digest_v1(v2.run.run_sha256()).unwrap();
+        let independent = independent_update_digest_v1(run_sha, 1, None, &evidence_cj);
+        assert_eq!(
+            independent,
+            group.update_evidence_sha256(),
+            "the from-scratch framing must equal the production digest"
+        );
+        let mut other_run_sha = run_sha;
+        other_run_sha[0] ^= 1;
+        assert_ne!(
+            independent_update_digest_v1(other_run_sha, 1, None, &evidence_cj),
+            independent,
+            "the update digest must be domain-separated by the raw run SHA alone"
+        );
+
+        // Direct checkpoint byte proof: the V2 genesis checkpoint manifest
+        // carries no outer digest, no mode key, and no environment
+        // randomization section string.
+        let manifest_text = String::from_utf8(v2.genesis.canonical_bytes().to_vec()).unwrap();
+        for forbidden in [
+            "environment_randomization_v2",
+            "trajectory_sha256_v2",
+            "outer_trajectory_sha256",
+            "outer_digest",
+            "\"mode\"",
+        ] {
+            assert!(
+                !manifest_text.contains(forbidden),
+                "the checkpoint manifest must not carry {forbidden}"
+            );
+        }
+    }
+
+    const EPISODE_KEYS_ORACLE_V1: [&str; 18] = [
+        "deck_hashes_u64_hex",
+        "deck_ids",
+        "environment_seed_u64_hex",
+        "episode_index",
+        "learner_physical_decision_count",
+        "learner_policy_step_count",
+        "learner_return",
+        "learner_seat",
+        "opponent_physical_decision_count",
+        "opponent_policy_step_count",
+        "physical_decision_count",
+        "policy_step_count",
+        "schema",
+        "terminal_classification",
+        "terminal_code",
+        "terminal_outcome",
+        "trajectory_sha256",
+        "winner",
+    ];
+
+    /// Live C2 guard-path coverage: `build_update_group_v1`'s prepared-update
+    /// entry admits a genuine V2 prepared update, its wire bytes are
+    /// byte-identical to the compact path over the same window, and both
+    /// off-diagonal run/producer pairings reject before predecessor export
+    /// with zero evidence projections.
+    #[test]
+    fn full_prepared_guard_path_admits_v2_and_rejects_the_off_diagonals() {
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let legacy = live_c2_authorities_v1(false);
+        let v2 = live_c2_authorities_v1(true);
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+
+        let sealed_executor = |authorities: &LiveC2AuthoritiesV1, v2_sealed: bool| {
+            let seed_executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+                execution_config_v1(&authorities.run),
+                &manifest,
+                &payload,
+            )
+            .unwrap();
+            let genesis_candidate = seed_executor.checkpoint_candidate_v1().unwrap();
+            if v2_sealed {
+                NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_v2(
+                    execution_config_v1(&authorities.run),
+                    &genesis_candidate,
+                    &v2.run,
+                )
+                .unwrap()
+            } else {
+                NativeTrainingExecutorV1::from_checkpoint_candidate_v1(
+                    execution_config_v1(&authorities.run),
+                    &genesis_candidate,
+                )
+                .unwrap()
+            }
+        };
+
+        // Genuine V2 admission through the guard path, byte-equal to the
+        // compact path over the same genesis window. The positive
+        // predecessor-export control: building through the guard exports the
+        // unchanged predecessor (one extra snapshot and payload encode on
+        // top of the prepared update's own final export).
+        let mut v2_executor = sealed_executor(&v2, true);
+        let context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
+        reset_train_state_snapshot_call_count_for_test_v1();
+        reset_payload_encode_counts_for_test_v1();
+        let prepared = v2_executor.prepare_update_v2().unwrap();
+        assert!(prepared.observation().episodes.iter().all(|episode| episode
+            .full_trajectory_receipt
+            .is_environment_randomization_v2()));
+        assert_eq!(train_state_snapshot_call_count_for_test_v1(), 1);
+        assert_eq!(payload_encode_counts_for_test_v1(), (1, 1));
+        let advance = build_update_group_v1(&v2.run, context, &prepared).unwrap();
+        assert_eq!(
+            train_state_snapshot_call_count_for_test_v1(),
+            2,
+            "the admitted guard path exports the predecessor exactly once"
+        );
+        assert_eq!(payload_encode_counts_for_test_v1(), (2, 2));
+        let (guard_group, _advanced) = advance.into_parts();
+        drop(prepared);
+
+        let compact_context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
+        let compact_transition = sealed_transition_v1(&v2, true);
+        let (compact_advance, _successor, _checkpoint) =
+            build_compact_update_group_v2(&v2.run, compact_context, compact_transition).unwrap();
+        let (compact_group, _compact_advanced) = compact_advance.into_parts();
+        assert_eq!(
+            guard_group.canonical_bytes(),
+            compact_group.canonical_bytes(),
+            "the guard and compact paths must emit identical V2 wire bytes"
+        );
+        assert_eq!(
+            guard_group.update_evidence_sha256(),
+            compact_group.update_evidence_sha256()
+        );
+
+        // Off-diagonal 1: V2 run against a Legacy-sealed prepared producer.
+        // The rejection precedes predecessor export: zero train-state
+        // snapshots and zero payload encodes, on top of zero projections.
+        let mut legacy_producer = sealed_executor(&v2, false);
+        let context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
+        let prepared = legacy_producer.prepare_update_v2().unwrap();
+        let scope = store_evidence_count_scope_v2();
+        reset_train_state_snapshot_call_count_for_test_v1();
+        reset_payload_encode_counts_for_test_v1();
+        assert_eq!(
+            build_update_group_v1(&v2.run, context, &prepared)
+                .map(|_| ())
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::RunBinding
+        );
+        assert_eq!(scope.counts().1, 0, "zero evidence projections");
+        assert_eq!(
+            train_state_snapshot_call_count_for_test_v1(),
+            0,
+            "the off-diagonal rejection must precede predecessor export"
+        );
+        assert_eq!(payload_encode_counts_for_test_v1(), (0, 0));
+        drop(prepared);
+
+        // Off-diagonal 2: legacy run against a V2-sealed prepared producer.
+        let mut v2_producer = sealed_executor(&legacy, true);
+        let context = begin_update_evidence_chain_v1(&legacy.run, &legacy.genesis).unwrap();
+        let prepared = v2_producer.prepare_update_v2().unwrap();
+        let scope = store_evidence_count_scope_v2();
+        reset_train_state_snapshot_call_count_for_test_v1();
+        reset_payload_encode_counts_for_test_v1();
+        assert_eq!(
+            build_update_group_v1(&legacy.run, context, &prepared)
+                .map(|_| ())
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::RunBinding
+        );
+        assert_eq!(scope.counts().1, 0, "zero evidence projections");
+        assert_eq!(
+            train_state_snapshot_call_count_for_test_v1(),
+            0,
+            "the off-diagonal rejection must precede predecessor export"
+        );
+        assert_eq!(payload_encode_counts_for_test_v1(), (0, 0));
+        drop(prepared);
+    }
+
+    /// Live C2 V2-fact mutation battery: every bound V2-only or common
+    /// binding fact of a genuine V2 receipt, corrupted one at a time through
+    /// the crate-private test seam, rejects Store evidence construction as an
+    /// episode-binding failure. Deck mutations cover both indices; the pure
+    /// order swap is representable-equal under the symmetric run fixture and
+    /// is therefore proven at the asymmetric trainer layer instead.
+    #[test]
+    fn v2_receipt_fact_mutations_reject_store_evidence_construction() {
+        use crate::native_full_episode_trajectory_v2::NativeV2ReceiptFactMutationForTestV2;
+
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let v2 = live_c2_authorities_v1(true);
+        for mutation in [
+            NativeV2ReceiptFactMutationForTestV2::PairIndex,
+            NativeV2ReceiptFactMutationForTestV2::DeckId0,
+            NativeV2ReceiptFactMutationForTestV2::DeckId1,
+            NativeV2ReceiptFactMutationForTestV2::EpisodeIndex,
+            NativeV2ReceiptFactMutationForTestV2::PairRoot,
+            NativeV2ReceiptFactMutationForTestV2::DeckHash0,
+            NativeV2ReceiptFactMutationForTestV2::DeckHash1,
+            NativeV2ReceiptFactMutationForTestV2::LearnerSeat,
+        ] {
+            let context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
+            let mut transition = sealed_transition_v1(&v2, true);
+            let mut corrupted = transition.observation_v2().episodes[0].full_trajectory_receipt;
+            corrupted.mutate_environment_fact_for_test_v2(mutation);
+            transition.swap_observation_receipt_for_test_v2(0, corrupted);
+            assert_eq!(
+                build_compact_update_group_v2(&v2.run, context, transition)
+                    .map(|_| ())
+                    .unwrap_err()
+                    .kind(),
+                UpdateGroupV1ErrorKind::EpisodeBinding,
+                "mutation {mutation:?} must reject evidence construction"
+            );
+        }
+
+        // A pure order swap is representable-equal under the symmetric
+        // Rally/Rally run fixture, so it is exercised where the bindings are
+        // genuinely asymmetric: the trainer's Rally/Burn genuine pair pins
+        // the ordered deck hashes and the order-binding outer envelope, and
+        // the per-index DeckId0/DeckId1 mutations above prove each index is
+        // compared on its own.
+
+        // Observation scalar mutation: one episode's own index scalar drifts
+        // while its receipt stays genuine.
+        let context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
+        let mut scalar = sealed_transition_v1(&v2, true);
+        scalar.mutate_observation_episode_index_for_test_v2(0);
+        assert_eq!(
+            build_compact_update_group_v2(&v2.run, context, scalar)
+                .map(|_| ())
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::EpisodeBinding,
+            "an observation scalar drift must reject evidence construction"
+        );
+
+        // Whole episode-wrapper swap: both coherent wrappers, wrong slots.
+        let context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
+        let mut swapped = sealed_transition_v1(&v2, true);
+        swapped.swap_observation_episodes_for_test_v2(0, 1);
+        assert_eq!(
+            build_compact_update_group_v2(&v2.run, context, swapped)
+                .map(|_| ())
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::EpisodeBinding,
+            "a whole episode-wrapper swap must reject evidence construction"
         );
     }
 }

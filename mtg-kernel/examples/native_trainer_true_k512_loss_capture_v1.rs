@@ -862,7 +862,7 @@ fn episode_records(
         environment_seeds_recomputed_from_frozen_schedule &= expected_schedule.episode_index
             == expected_index
             && expected_schedule.pair_index == expected_index / 2
-            && receipt.environment_seed == expected_schedule.environment_seed;
+            && receipt.environment_seed() == expected_schedule.environment_seed;
         learner_seats_recomputed_from_frozen_schedule &= expected_schedule.learner_seat
             == expected_parity_seat
             && episode.learner_seat == expected_schedule.learner_seat;
@@ -875,18 +875,19 @@ fn episode_records(
                 == Some(episode.episode_index)
                 && previous.learner_seat == PlayerSeatV1::P0
                 && episode.learner_seat == PlayerSeatV1::P1
-                && previous.full_trajectory_receipt.environment_seed == receipt.environment_seed;
+                && previous.full_trajectory_receipt.environment_seed()
+                    == receipt.environment_seed();
         }
         if episode.episode_index != expected_index
-            || receipt.episode_index != episode.episode_index
-            || receipt.learner_seat != episode.learner_seat
-            || receipt.learner_policy_step_count != episode.learner_policy_step_count
-            || receipt.learner_physical_decision_count != episode.learner_group_count
+            || receipt.episode_index() != episode.episode_index
+            || receipt.learner_seat() != episode.learner_seat
+            || receipt.learner_policy_step_count() != episode.learner_policy_step_count
+            || receipt.learner_physical_decision_count() != episode.learner_group_count
         {
             return Err(AppError::new("genuine episode provenance invariant failed"));
         }
         environment_seed_occurrences
-            .entry(receipt.environment_seed)
+            .entry(receipt.environment_seed())
             .or_default()
             .push(ordinal);
         let group_count = usize::try_from(episode.learner_group_count)
@@ -903,19 +904,19 @@ fn episode_records(
         }
         digest.update(expected_index.to_be_bytes());
         digest.update(episode.episode_index.to_be_bytes());
-        digest.update(receipt.environment_seed.to_be_bytes());
-        digest.update(receipt.deck_hashes[0].to_be_bytes());
-        digest.update(receipt.deck_hashes[1].to_be_bytes());
+        digest.update(receipt.environment_seed().to_be_bytes());
+        digest.update(receipt.deck_hashes()[0].to_be_bytes());
+        digest.update(receipt.deck_hashes()[1].to_be_bytes());
         digest.update([seat_code(episode.learner_seat)]);
         digest.update([episode.learner_return as u8]);
         digest.update(episode.learner_group_count.to_be_bytes());
         digest.update(episode.learner_policy_step_count.to_be_bytes());
-        digest.update(receipt.trajectory_sha256);
+        digest.update(receipt.trajectory_sha256());
         records.push(EpisodeRecord {
             ordinal,
             episode_index: episode.episode_index,
-            environment_seed: receipt.environment_seed,
-            deck_hashes: receipt.deck_hashes,
+            environment_seed: receipt.environment_seed(),
+            deck_hashes: receipt.deck_hashes(),
             learner_seat: seat_name(episode.learner_seat),
             learner_return: episode.learner_return,
             terminal_outcome: terminal_name(episode.terminal_outcome),
@@ -923,11 +924,11 @@ fn episode_records(
             learner_policy_step_count: episode.learner_policy_step_count,
             term_begin_inclusive: term_begin,
             term_end_exclusive: term_end,
-            full_trajectory_sha256: hex_bytes(&receipt.trajectory_sha256),
-            full_policy_step_count: receipt.policy_step_count,
-            full_physical_decision_count: receipt.physical_decision_count,
-            opponent_policy_step_count: receipt.opponent_policy_step_count,
-            opponent_physical_decision_count: receipt.opponent_physical_decision_count,
+            full_trajectory_sha256: hex_bytes(&receipt.trajectory_sha256()),
+            full_policy_step_count: receipt.policy_step_count(),
+            full_physical_decision_count: receipt.physical_decision_count(),
+            opponent_policy_step_count: receipt.opponent_policy_step_count(),
+            opponent_physical_decision_count: receipt.opponent_physical_decision_count(),
         });
         term_begin = term_end;
     }

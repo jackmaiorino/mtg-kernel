@@ -282,57 +282,94 @@ pub struct NativeStoreProductionCaptureGuardV2 {
     environment: TrainRunEnvironmentV2,
 }
 
-/// Distinct code for the Phase C1 inactive-manifest rejection, so it is
-/// never confused with an ordinary captured-tuple mismatch.
-pub(crate) const NATIVE_STORE_PRODUCTION_CAPTURE_INACTIVE_ENV_RANDOMIZATION_V2_CODE: &str =
-    "validated_run_environment_randomization_v2_inactive";
-
-/// Phase C1 inactive-manifest gate for production capture.
-///
-/// Written as an exhaustive two-arm match with no wildcard: a future third
-/// classifier variant fails compilation here instead of silently slipping
-/// through an equality test. It consults only the classifier result, so it is
-/// independent of every captured tuple value the guard holds. The test suite
-/// exercises it both ways: directly, and through a real
-/// `NativeStoreProductionCaptureGuardV2::begin` guard driving
-/// `require_matches_run_v2`, where a legacy run passes this clause and goes on
-/// to the ordinary captured-tuple comparison while a V2 run stops here.
-fn reject_inactive_environment_randomization_v2(run: &ValidatedTrainRunV2) -> Result<()> {
-    match run.environment_trajectory_contract_v1() {
-        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => Ok(()),
-        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => Err(capture_error(
-            NativeStoreProductionCaptureErrorKindV2::RunMismatch,
-            NATIVE_STORE_PRODUCTION_CAPTURE_INACTIVE_ENV_RANDOMIZATION_V2_CODE,
-        )),
-    }
-}
-
-/// The complete run-admission decision for production capture: the Phase C1
-/// inactive-manifest gate as the literal first clause, then the exact captured
-/// tuple comparison.
+/// The complete run-admission decision for production capture, with split
+/// capture authority by the sealed run classification.
 ///
 /// Pure by construction. It borrows the captured values instead of reaching
-/// into a guard, which is what lets the ordering between the two stages be
-/// proven without constructing a `NativeStoreProductionCaptureGuardV2`. It
-/// changes no admission rule: the clause order, the error kind, and both
-/// codes are exactly what `require_matches_run_v2` applied before.
+/// into a guard, which is what lets the decision be proven without
+/// constructing a `NativeStoreProductionCaptureGuardV2`.
+///
+/// The guard only ever captures the actual live legacy declaration tuple
+/// `(RL_SESSION_PROTOCOL_VERSION, RL_SESSION_SCHEMA_VERSION, None)`; that is
+/// required first, before either run-mode arm. A legacy run then retains the
+/// full thirteen-field environment equality exactly as before. An environment
+/// randomization V2 run compares the ten common live environment facts
+/// exactly and relies on the sealed validated-run classifier as the sole
+/// authority for its V6/V6 manifest declaration: capture makes no claim of
+/// having observed a V2 reset, shuffle, environment root, or trajectory.
+/// Every mismatch is the ordinary captured-tuple rejection.
 fn require_captured_values_match_run_v2(
     run: &ValidatedTrainRunV2,
     captured: NativeStoreProductionCapturedValuesV2<'_>,
 ) -> Result<()> {
-    // Inactive-manifest gate (Phase C1). Production capture never binds a run
-    // classified as the environment randomization V2 trajectory contract. This
-    // precedes `run.record()` and every tuple comparison, and carries its own
-    // code so the rejection is distinguishable from an ordinary captured-tuple
-    // mismatch.
-    reject_inactive_environment_randomization_v2(run)?;
+    // All thirteen captured environment fields, destructured without `..` so
+    // a future field forces this decision to be revisited at compile time.
+    let TrainRunEnvironmentV2 {
+        card_db_hash_u64_hex: captured_card_db_hash_u64_hex,
+        runtime_catalog_schema: captured_runtime_catalog_schema,
+        runtime_catalog_protocol: captured_runtime_catalog_protocol,
+        runtime_catalog_sha256: captured_runtime_catalog_sha256,
+        deck_ids: captured_deck_ids,
+        deck_hashes_u64_hex: captured_deck_hashes_u64_hex,
+        protocol: captured_protocol,
+        protocol_version: captured_protocol_version,
+        schema_version: captured_schema_version,
+        kernel_version: captured_kernel_version,
+        surface_version: captured_surface_version,
+        policy_surface_version: captured_policy_surface_version,
+        environment_randomization_v2: captured_environment_randomization_v2,
+    } = captured.environment;
+
+    // The captured declaration must be exactly the live legacy tuple; any
+    // other captured declaration is a capture-side fault and rejects before
+    // either run-mode arm consults it.
+    if *captured_protocol_version != u64::from(RL_SESSION_PROTOCOL_VERSION)
+        || *captured_schema_version != u64::from(RL_SESSION_SCHEMA_VERSION)
+        || captured_environment_randomization_v2.is_some()
+    {
+        return Err(capture_error(
+            NativeStoreProductionCaptureErrorKindV2::RunMismatch,
+            "validated_run_capture_tuple_mismatch",
+        ));
+    }
+
     let record = run.record();
     if record.package != *captured.package
         || record.toolchain != *captured.toolchain
         || record.source != *captured.source
         || record.runtime != *captured.runtime
-        || record.environment != *captured.environment
     {
+        return Err(capture_error(
+            NativeStoreProductionCaptureErrorKindV2::RunMismatch,
+            "validated_run_capture_tuple_mismatch",
+        ));
+    }
+
+    // Exhaustive two-arm split, no wildcard: a future third classifier
+    // variant fails compilation here.
+    let environment_matches = match run.environment_trajectory_contract_v1() {
+        NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => {
+            // Full thirteen-field environment equality, exactly as before.
+            record.environment == *captured.environment
+        }
+        NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => {
+            // The ten common live environment facts exactly; the three
+            // declaration-only fields (protocol_version, schema_version,
+            // environment_randomization_v2) are the sealed classifier's
+            // authority, already proven at run decode.
+            record.environment.card_db_hash_u64_hex == *captured_card_db_hash_u64_hex
+                && record.environment.runtime_catalog_schema == *captured_runtime_catalog_schema
+                && record.environment.runtime_catalog_protocol == *captured_runtime_catalog_protocol
+                && record.environment.runtime_catalog_sha256 == *captured_runtime_catalog_sha256
+                && record.environment.deck_ids == *captured_deck_ids
+                && record.environment.deck_hashes_u64_hex == *captured_deck_hashes_u64_hex
+                && record.environment.protocol == *captured_protocol
+                && record.environment.kernel_version == *captured_kernel_version
+                && record.environment.surface_version == *captured_surface_version
+                && record.environment.policy_surface_version == *captured_policy_surface_version
+        }
+    };
+    if !environment_matches {
         return Err(capture_error(
             NativeStoreProductionCaptureErrorKindV2::RunMismatch,
             "validated_run_capture_tuple_mismatch",
@@ -404,13 +441,14 @@ impl NativeStoreProductionCaptureGuardV2 {
         }
     }
 
-    /// Requires an already validated run to contain this exact captured tuple.
+    /// Requires an already validated run to match this exact captured tuple
+    /// under the split capture authority.
     ///
     /// The entire decision lives in `require_captured_values_match_run_v2`,
     /// which consumes only the validated run and borrowed captured values.
-    /// At this admission stage, the guard supplies `captured_values()`, so both
-    /// the inactive-manifest gate and the tuple comparison stay reachable by
-    /// tests that cannot construct a guard.
+    /// At this admission stage, the guard supplies `captured_values()`, so
+    /// the live-Legacy declaration requirement and both run-mode comparison
+    /// arms stay reachable by tests that cannot construct a guard.
     pub fn require_matches_run_v2(&self, run: &ValidatedTrainRunV2) -> Result<()> {
         require_captured_values_match_run_v2(run, self.captured_values())
     }
@@ -1567,45 +1605,19 @@ mod tests {
         );
     }
 
-    /// Phase C1 required test 8. Production capture rejects a run classified as
-    /// the environment randomization V2 trajectory contract, with the distinct
-    /// inactive code, and still accepts the legacy control.
+    /// C2 split capture authority. The guard only ever captures the live
+    /// Legacy declaration tuple; a Legacy run retains full thirteen-field
+    /// environment equality while an environment randomization V2 run is
+    /// admitted on exactly the ten common live environment facts, with the
+    /// V6/V6 manifest declaration left to the sealed run classifier. Every
+    /// mismatch is the one ordinary captured-tuple rejection code.
     ///
-    /// This drives `require_captured_values_match_run_v2`, the pure helper that
-    /// carries the whole admission decision and that
+    /// This drives `require_captured_values_match_run_v2`, the pure helper
     /// `require_matches_run_v2` delegates to verbatim via
-    /// `self.captured_values()`. It deliberately does NOT call
-    /// `NativeStoreProductionCaptureGuardV2::begin`.
-    ///
-    /// `begin` cannot honestly run inside libtest, and no amount of tree
-    /// hygiene changes that. It validates the *currently running* executable
-    /// with `validate_executable_path(&path, "mtg-kernel-native.exe")`. Under
-    /// `cargo test` the running process is the libtest harness binary,
-    /// `mtg_kernel-<hash>.exe`, so the leaf can never match and `begin` fails
-    /// with `Path`/`executable_leaf_mismatch` before returning a guard or
-    /// reaching either classifier arm. An earlier revision of this test called
-    /// `begin` and failed exactly there. Making it pass would have meant
-    /// weakening the production executable check, which must not happen: that
-    /// check is the reason a production tuple cannot be minted by an arbitrary
-    /// process. So the test targets the pure helper instead, and the guard's
-    /// one-line delegation is what carries the result back to `begin`'s caller.
-    ///
-    /// Ordering is proven by running each fixture against the *opposite*
-    /// fixture's captured values:
-    ///
-    /// - legacy run vs V2 captured values must pass the inactive gate and then
-    ///   fail the tuple comparison with `validated_run_capture_tuple_mismatch`,
-    ///   which shows control really does flow past the first clause into
-    ///   `run.record()`;
-    /// - V2 run vs legacy captured values must stop at the gate with the
-    ///   distinct inactive code, even though the tuple stage would also have
-    ///   rejected it. Only ordering can explain which code comes back.
-    ///
-    /// The asserted inequality of the two environments is what makes this
-    /// non-vacuous: both directions genuinely mismatch at the tuple stage, so
-    /// the differing codes isolate the gate rather than the data.
+    /// `self.captured_values()`; `begin` cannot honestly run inside libtest
+    /// because it validates the currently running executable.
     #[test]
-    fn inactive_manifest_gate_rejects_v2_before_the_ordinary_tuple_comparison() {
+    fn split_capture_authority_admits_the_diagonal_and_rejects_every_mismatch() {
         use crate::native_training_store_run_v2::{
             decode_train_run_v2, test_fixture_bytes_environment_randomization_v2,
             test_fixture_bytes_v2,
@@ -1623,87 +1635,213 @@ mod tests {
             NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
         );
 
-        // Non-vacuity: the two fixtures really do carry different environments,
-        // so each cross-wise pairing below is a genuine tuple mismatch.
-        assert_ne!(
-            legacy.record().environment,
-            v2.record().environment,
-            "the ordering oracle needs two genuinely different captured tuples"
+        // The two fixtures share every common live environment fact and
+        // differ only in the three declaration fields; that non-vacuously
+        // separates the two admission arms below.
+        assert_ne!(legacy.record().environment, v2.record().environment);
+        let live_legacy_environment = legacy.record().environment.clone();
+        assert_eq!(
+            (
+                live_legacy_environment.protocol_version,
+                live_legacy_environment.schema_version,
+                live_legacy_environment
+                    .environment_randomization_v2
+                    .is_none(),
+            ),
+            (
+                u64::from(RL_SESSION_PROTOCOL_VERSION),
+                u64::from(RL_SESSION_SCHEMA_VERSION),
+                true,
+            ),
+            "the fixture's legacy environment is the live Legacy capture shape"
         );
 
-        let legacy_values = NativeStoreProductionCapturedValuesV2 {
-            package: &legacy.record().package,
-            toolchain: &legacy.record().toolchain,
-            source: &legacy.record().source,
-            runtime: &legacy.record().runtime,
-            environment: &legacy.record().environment,
-        };
-        let v2_values = NativeStoreProductionCapturedValuesV2 {
-            package: &v2.record().package,
-            toolchain: &v2.record().toolchain,
-            source: &v2.record().source,
-            runtime: &v2.record().runtime,
-            environment: &v2.record().environment,
-        };
+        // The two fixtures agree on every non-environment tuple member, so
+        // one captured tuple, built entirely from the legacy/live fixture,
+        // is genuinely shared by both runs below.
+        assert_eq!(legacy.record().package, v2.record().package);
+        assert_eq!(legacy.record().toolchain, v2.record().toolchain);
+        assert_eq!(legacy.record().source, v2.record().source);
+        assert_eq!(legacy.record().runtime, v2.record().runtime);
+        fn values_with<'a>(
+            environment: &'a TrainRunEnvironmentV2,
+            live: &'a ValidatedTrainRunV2,
+        ) -> NativeStoreProductionCapturedValuesV2<'a> {
+            NativeStoreProductionCapturedValuesV2 {
+                package: &live.record().package,
+                toolchain: &live.record().toolchain,
+                source: &live.record().source,
+                runtime: &live.record().runtime,
+                environment,
+            }
+        }
 
-        // Legacy run against V2 captured values: past the gate, stopped by the
-        // ordinary tuple comparison.
-        let legacy_error = require_captured_values_match_run_v2(&legacy, v2_values)
-            .expect_err("mismatched captured values must be rejected");
-        assert_eq!(
-            legacy_error.kind(),
-            NativeStoreProductionCaptureErrorKindV2::RunMismatch
-        );
-        assert_eq!(
-            legacy_error.code(),
-            "validated_run_capture_tuple_mismatch",
-            "legacy must pass the inactive gate and fail at the tuple comparison"
-        );
+        // Diagonal admission: both run modes are admitted against the one
+        // captured tuple built from the legacy/live fixture alone.
+        require_captured_values_match_run_v2(
+            &legacy,
+            values_with(&live_legacy_environment, &legacy),
+        )
+        .expect("a legacy run matching its own captured tuple is admitted");
+        require_captured_values_match_run_v2(&v2, values_with(&live_legacy_environment, &legacy))
+            .expect("a V2 run is admitted on the ten common live facts");
 
-        // V2 run against legacy captured values: stopped at the gate first,
-        // even though the tuple stage would have rejected it too.
-        let v2_error = require_captured_values_match_run_v2(&v2, legacy_values)
-            .expect_err("the V2 run must be rejected by production capture");
-        assert_eq!(
-            v2_error.kind(),
-            NativeStoreProductionCaptureErrorKindV2::RunMismatch
-        );
-        assert_eq!(
-            v2_error.code(),
-            NATIVE_STORE_PRODUCTION_CAPTURE_INACTIVE_ENV_RANDOMIZATION_V2_CODE
-        );
-        assert_eq!(
-            v2_error.code(),
-            "validated_run_environment_randomization_v2_inactive"
-        );
-        assert_ne!(
-            v2_error.code(),
-            legacy_error.code(),
-            "the inactive rejection must be distinguishable from a tuple mismatch"
-        );
+        let expect_tuple_mismatch =
+            |run: &ValidatedTrainRunV2, environment: &TrainRunEnvironmentV2, label: &str| {
+                let error =
+                    require_captured_values_match_run_v2(run, values_with(environment, &legacy))
+                        .unwrap_err();
+                assert_eq!(
+                    error.kind(),
+                    NativeStoreProductionCaptureErrorKindV2::RunMismatch,
+                    "{label}"
+                );
+                assert_eq!(
+                    error.code(),
+                    "validated_run_capture_tuple_mismatch",
+                    "{label}"
+                );
+            };
 
-        // A V2 run is refused even when the captured values match it exactly,
-        // so the gate is not standing in for a tuple mismatch.
-        assert_eq!(
-            require_captured_values_match_run_v2(&v2, v2_values)
-                .expect_err("an exactly matching V2 tuple is still inactive")
-                .code(),
-            NATIVE_STORE_PRODUCTION_CAPTURE_INACTIVE_ENV_RANDOMIZATION_V2_CODE
-        );
+        // Every common live environment fact, mutated one at a time, rejects
+        // under both run modes; both indices of each two-element deck array
+        // are mutated individually.
+        let common_mutations: Vec<(&str, Box<dyn Fn(&mut TrainRunEnvironmentV2)>)> = vec![
+            (
+                "card_db_hash",
+                Box::new(|e| e.card_db_hash_u64_hex.push('0')),
+            ),
+            (
+                "catalog_schema",
+                Box::new(|e| e.runtime_catalog_schema.push('x')),
+            ),
+            (
+                "catalog_protocol",
+                Box::new(|e| e.runtime_catalog_protocol.push('x')),
+            ),
+            (
+                "catalog_sha256",
+                Box::new(|e| e.runtime_catalog_sha256.push('0')),
+            ),
+            ("deck_ids[0]", Box::new(|e| e.deck_ids[0].push('x'))),
+            ("deck_ids[1]", Box::new(|e| e.deck_ids[1].push('x'))),
+            (
+                "deck_hashes[0]",
+                Box::new(|e| e.deck_hashes_u64_hex[0].push('0')),
+            ),
+            (
+                "deck_hashes[1]",
+                Box::new(|e| e.deck_hashes_u64_hex[1].push('0')),
+            ),
+            ("protocol", Box::new(|e| e.protocol.push('x'))),
+            ("kernel_version", Box::new(|e| e.kernel_version.push('x'))),
+            ("surface_version", Box::new(|e| e.surface_version ^= 1)),
+            (
+                "policy_surface_version",
+                Box::new(|e| e.policy_surface_version ^= 1),
+            ),
+        ];
+        for (label, mutate) in &common_mutations {
+            let mut mutated = live_legacy_environment.clone();
+            mutate(&mut mutated);
+            expect_tuple_mismatch(&legacy, &mutated, label);
+            expect_tuple_mismatch(&v2, &mutated, label);
+        }
 
-        // And a legacy run against its own captured values is admitted, which
-        // proves the helper is not rejecting unconditionally.
-        require_captured_values_match_run_v2(&legacy, legacy_values)
-            .expect("a legacy run matching its own captured tuple is admitted");
+        // Every non-Legacy captured declaration rejects under both run
+        // modes: the guard's captured declaration must stay the exact live
+        // Legacy tuple even when the run itself is V2.
+        let declaration_mutations: Vec<(&str, Box<dyn Fn(&mut TrainRunEnvironmentV2)>)> = vec![
+            (
+                "captured protocol_version",
+                Box::new(|e| e.protocol_version += 1),
+            ),
+            (
+                "captured schema_version",
+                Box::new(|e| e.schema_version += 1),
+            ),
+            (
+                "captured environment_randomization_v2",
+                Box::new(|e| {
+                    e.environment_randomization_v2 =
+                        decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2())
+                            .unwrap()
+                            .record()
+                            .environment
+                            .environment_randomization_v2
+                            .clone();
+                }),
+            ),
+        ];
+        for (label, mutate) in &declaration_mutations {
+            let mut mutated = live_legacy_environment.clone();
+            mutate(&mut mutated);
+            expect_tuple_mismatch(&legacy, &mutated, label);
+            expect_tuple_mismatch(&v2, &mutated, label);
+        }
 
-        // The gate helper itself is closed over the classifier alone.
-        reject_inactive_environment_randomization_v2(&legacy)
-            .expect("the legacy control passes the inactive gate");
-        assert_eq!(
-            reject_inactive_environment_randomization_v2(&v2)
-                .unwrap_err()
-                .code(),
-            NATIVE_STORE_PRODUCTION_CAPTURE_INACTIVE_ENV_RANDOMIZATION_V2_CODE
-        );
+        // Every non-environment tuple member mismatch rejects for both run
+        // modes: cross-wire each member from the opposite fixture's record
+        // after proving that member actually differs, or mutate a copy when
+        // the two fixtures agree on it.
+        let mut drifted_package = legacy.record().package.clone();
+        drifted_package.name.push('x');
+        let mut drifted_toolchain = legacy.record().toolchain.clone();
+        drifted_toolchain.rustc_version.push('x');
+        let mut drifted_source = legacy.record().source.clone();
+        drifted_source.source_tree_sha256.push('0');
+        let mut drifted_runtime = legacy.record().runtime.clone();
+        drifted_runtime.os.push('x');
+        for run in [&legacy, &v2] {
+            let record = run.record();
+            let error = require_captured_values_match_run_v2(
+                run,
+                NativeStoreProductionCapturedValuesV2 {
+                    package: &drifted_package,
+                    toolchain: &record.toolchain,
+                    source: &record.source,
+                    runtime: &record.runtime,
+                    environment: &live_legacy_environment,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "validated_run_capture_tuple_mismatch");
+            let error = require_captured_values_match_run_v2(
+                run,
+                NativeStoreProductionCapturedValuesV2 {
+                    package: &record.package,
+                    toolchain: &drifted_toolchain,
+                    source: &record.source,
+                    runtime: &record.runtime,
+                    environment: &live_legacy_environment,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "validated_run_capture_tuple_mismatch");
+            let error = require_captured_values_match_run_v2(
+                run,
+                NativeStoreProductionCapturedValuesV2 {
+                    package: &record.package,
+                    toolchain: &record.toolchain,
+                    source: &drifted_source,
+                    runtime: &record.runtime,
+                    environment: &live_legacy_environment,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "validated_run_capture_tuple_mismatch");
+            let error = require_captured_values_match_run_v2(
+                run,
+                NativeStoreProductionCapturedValuesV2 {
+                    package: &record.package,
+                    toolchain: &record.toolchain,
+                    source: &record.source,
+                    runtime: &drifted_runtime,
+                    environment: &live_legacy_environment,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "validated_run_capture_tuple_mismatch");
+        }
     }
 }

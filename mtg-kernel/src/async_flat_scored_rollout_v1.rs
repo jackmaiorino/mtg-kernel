@@ -39,8 +39,11 @@ use crate::flat_policy_v1::{
 };
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
 use crate::native_full_episode_trajectory_v1::{
-    NativeFullEpisodeTrajectoryAccumulatorV1, NativeFullEpisodeTrajectoryDecisionRowV1,
-    NativeFullEpisodeTrajectoryReceiptV1, NativeTrajectoryActorRoleV1,
+    NativeFullEpisodeTrajectoryDecisionRowV1, NativeTrajectoryActorRoleV1,
+};
+use crate::native_full_episode_trajectory_v2::{
+    NativeEnvironmentWindowPreflightAuthorityV2, NativeFullEpisodeTrajectoryStartV2,
+    NativeRunBoundFullEpisodeAccumulatorV2, NativeTrainingTrajectoryReceiptV2,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_opponent_sampler_v1::select_native_trainer_opponent_action_v1;
@@ -82,12 +85,38 @@ const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// Crate-private execution schedule selected before worker construction.
 /// Public V1/V2 entry points always select `Legacy`; only the native trainer
-/// integration path may select the frozen Python-compatible schedule.
+/// integration path may select the frozen Python-compatible schedule, and
+/// only the environment randomization V2 trainer path, which must also
+/// surrender a consumed window-preflight authority, may select the
+/// environment V2 variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(crate) enum FlatScoredExecutionScheduleV1 {
     Legacy,
     NativeTrainerV1 { base_seed: u64 },
+    NativeTrainerEnvironmentRandomizationV2 { base_seed: u64 },
+}
+
+/// Private worker projection of the sealed run environment, derived once from
+/// the execution schedule after the consumed window-preflight authority has
+/// been validated. This is the only environment fact a worker or session
+/// reset ever sees; the authority itself never crosses into a worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlatScoredSessionEnvironmentV1 {
+    Legacy,
+    EnvironmentRandomizationV2,
+}
+
+impl FlatScoredExecutionScheduleV1 {
+    /// Exhaustive: every schedule maps to exactly one session environment.
+    pub(crate) const fn session_environment_v1(self) -> FlatScoredSessionEnvironmentV1 {
+        match self {
+            Self::Legacy | Self::NativeTrainerV1 { .. } => FlatScoredSessionEnvironmentV1::Legacy,
+            Self::NativeTrainerEnvironmentRandomizationV2 { .. } => {
+                FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -394,6 +423,8 @@ struct TestRunInstrumentationV1 {
     fail_reply_send_worker_id: std::sync::atomic::AtomicUsize,
     consumed_action_count: AtomicU64,
     terminal_ack_count: AtomicU64,
+    legacy_session_reset_count: AtomicU64,
+    environment_v2_session_reset_count: AtomicU64,
     capture_action_events: AtomicBool,
     action_events: std::sync::Mutex<Vec<TestScoredActionEventV1>>,
 }
@@ -409,6 +440,8 @@ impl Default for TestRunInstrumentationV1 {
             fail_reply_send_worker_id: std::sync::atomic::AtomicUsize::new(usize::MAX),
             consumed_action_count: AtomicU64::new(0),
             terminal_ack_count: AtomicU64::new(0),
+            legacy_session_reset_count: AtomicU64::new(0),
+            environment_v2_session_reset_count: AtomicU64::new(0),
             capture_action_events: AtomicBool::new(false),
             action_events: std::sync::Mutex::new(Vec::new()),
         }
@@ -421,6 +454,68 @@ std::thread_local! {
         std::cell::RefCell<Option<Arc<TestRunInstrumentationV1>>> = const {
             std::cell::RefCell::new(None)
         };
+}
+
+// Zero-side-effect ordering instrumentation: caller-thread counters proving
+// which rollout construction stages ran before a rejection. Test-only.
+#[cfg(test)]
+std::thread_local! {
+    static ROLLOUT_RESULT_RESERVATION_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+    static ROLLOUT_MESSAGE_CHANNEL_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+    static ROLLOUT_CONTROL_CHANNEL_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+    static ROLLOUT_WORKER_SPAWN_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Run-local RAII counting scope: entry zeroes the calling thread's counters
+/// after saving them; drop restores the saved values on every exit path,
+/// including panics, so stale evidence can never leak into a later test on a
+/// reused harness thread and nested scopes stay isolated.
+#[cfg(test)]
+pub(crate) struct RolloutConstructionCountScopeV2 {
+    saved: (u64, u64, u64, u64),
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl RolloutConstructionCountScopeV2 {
+    /// `(result_reservations, message_channels, control_channels,
+    /// worker_spawns)` observed on the calling thread inside this scope.
+    pub(crate) fn counts(&self) -> (u64, u64, u64, u64) {
+        (
+            ROLLOUT_RESULT_RESERVATION_COUNT_V2.with(std::cell::Cell::get),
+            ROLLOUT_MESSAGE_CHANNEL_COUNT_V2.with(std::cell::Cell::get),
+            ROLLOUT_CONTROL_CHANNEL_COUNT_V2.with(std::cell::Cell::get),
+            ROLLOUT_WORKER_SPAWN_COUNT_V2.with(std::cell::Cell::get),
+        )
+    }
+}
+
+#[cfg(test)]
+impl Drop for RolloutConstructionCountScopeV2 {
+    fn drop(&mut self) {
+        ROLLOUT_RESULT_RESERVATION_COUNT_V2.with(|count| count.set(self.saved.0));
+        ROLLOUT_MESSAGE_CHANNEL_COUNT_V2.with(|count| count.set(self.saved.1));
+        ROLLOUT_CONTROL_CHANNEL_COUNT_V2.with(|count| count.set(self.saved.2));
+        ROLLOUT_WORKER_SPAWN_COUNT_V2.with(|count| count.set(self.saved.3));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn rollout_construction_count_scope_v2() -> RolloutConstructionCountScopeV2 {
+    let saved = (
+        ROLLOUT_RESULT_RESERVATION_COUNT_V2.with(|count| count.replace(0)),
+        ROLLOUT_MESSAGE_CHANNEL_COUNT_V2.with(|count| count.replace(0)),
+        ROLLOUT_CONTROL_CHANNEL_COUNT_V2.with(|count| count.replace(0)),
+        ROLLOUT_WORKER_SPAWN_COUNT_V2.with(|count| count.replace(0)),
+    );
+    RolloutConstructionCountScopeV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
 }
 
 // Retained for downstream tests that coordinate their own expensive rollout
@@ -498,6 +593,24 @@ impl AsyncFlatScoredTestGuardV1 {
             .load(Ordering::SeqCst)
     }
 
+    /// Successful legacy session resets observed by runs this guard
+    /// instruments.
+    pub(crate) fn legacy_session_reset_count(&self) -> u64 {
+        self.instrumentation
+            .legacy_session_reset_count
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Successful environment randomization V2 session resets observed by
+    /// runs this guard instruments. Mode-specific on purpose: `Some(outer)`
+    /// on a receipt is never accepted as evidence that a V2 reset actually
+    /// ran; only the family-specific reset succeeding counts here.
+    pub(crate) fn environment_v2_session_reset_count(&self) -> u64 {
+        self.instrumentation
+            .environment_v2_session_reset_count
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn instrumentation_arc(&self) -> Arc<TestRunInstrumentationV1> {
         Arc::clone(&self.instrumentation)
     }
@@ -507,10 +620,15 @@ impl AsyncFlatScoredTestGuardV1 {
 pub(crate) fn acquire_async_flat_scored_test_guard_v1() -> AsyncFlatScoredTestGuardV1 {
     let instrumentation = Arc::new(TestRunInstrumentationV1::default());
     ACTIVE_TEST_RUN_INSTRUMENTATION_V1.with(|active| {
+        let mut active = active.borrow_mut();
+        // Occupancy is checked before installation so a rejected nested
+        // acquisition leaves the prior state untouched instead of installing
+        // an orphan inner instrumentation before the panic.
         assert!(
-            active.replace(Some(Arc::clone(&instrumentation))).is_none(),
+            active.is_none(),
             "nested async-flat-scored test instrumentation is unsupported"
         );
+        *active = Some(Arc::clone(&instrumentation));
     });
     AsyncFlatScoredTestGuardV1 {
         instrumentation,
@@ -647,9 +765,11 @@ pub(crate) struct FlatScoredTerminalEventV1 {
     pub(crate) terminal: AsyncRolloutTerminalV1,
     pub(crate) learner_action_count: u64,
     pub(crate) learner_trace_hash: u64,
-    /// Present only on the crate-private native Flat Action V2 schedule. The
-    /// public legacy observer path always supplies `None`.
-    pub(crate) native_full_trajectory_receipt: Option<NativeFullEpisodeTrajectoryReceiptV1>,
+    /// Present only on the crate-private native schedules. The public legacy
+    /// observer path always supplies `None`. The opaque run-bound wrapper
+    /// carries either the legacy V1 receipt or the environment randomization
+    /// V2 receipt, matching the schedule that produced the episode.
+    pub(crate) native_full_trajectory_receipt: Option<NativeTrainingTrajectoryReceiptV2>,
 }
 
 /// Crate-private staging boundary for a future native learner. Implementations
@@ -1177,6 +1297,7 @@ pub(crate) trait FlatScoredFamilyCore: Copy + Send + Sync + 'static {
         config: &AsyncRolloutConfigV2,
         episode_id: u64,
         environment_seed: u64,
+        environment: FlatScoredSessionEnvironmentV1,
     ) -> Result<FastActorSessionV1, ()>;
 
     fn encode_packet(
@@ -1401,7 +1522,7 @@ struct RoundTerminalV1 {
     terminal: AsyncRolloutTerminalV1,
     learner_action_count: u64,
     learner_trace_hash: u64,
-    native_full_trajectory_receipt: Option<NativeFullEpisodeTrajectoryReceiptV1>,
+    native_full_trajectory_receipt: Option<NativeTrainingTrajectoryReceiptV2>,
 }
 
 struct WorkerRoundCore<F: FlatScoredFamilyCore> {
@@ -1523,7 +1644,7 @@ struct LocalLaneCore<F: FlatScoredFamilyCore> {
     opponent_policy: SplitMix64,
     learner_seat: PlayerSeatV1,
     native_schedule: Option<NativeLaneScheduleStateV1>,
-    native_full_trajectory: Option<NativeFullEpisodeTrajectoryAccumulatorV1>,
+    native_full_trajectory: Option<NativeRunBoundFullEpisodeAccumulatorV2>,
     learner_action_count: u64,
     learner_trace_hash: u64,
     /// Set once per lane at construction; absence reproduces today's
@@ -1629,7 +1750,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         selected_index: action.scored.selected_index,
                         flat_action_v2_commitment: commitment,
                     };
-                    trajectory.preflight_candidate_v1(row).map_err(|_| {
+                    trajectory.preflight_candidate(row).map_err(|_| {
                         self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding)
                     })?;
                     Some(row)
@@ -1673,7 +1794,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                 let Some(trajectory) = self.native_full_trajectory.as_mut() else {
                     return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
                 };
-                if trajectory.record_accepted_v1(row).is_err() {
+                if trajectory.record_accepted(row).is_err() {
                     return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
                 }
             }
@@ -1743,7 +1864,10 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                 config.learner_seat,
                 None,
             ),
-            FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed } => {
+            FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed }
+            | FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 {
+                base_seed,
+            } => {
                 let episode =
                     native_trainer_episode_schedule_v1(base_seed, episode_id).map_err(|_| {
                         self.episode_id = episode_id;
@@ -1770,18 +1894,54 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                 )
             }
         };
-        let session = F::reset_session(config, episode_id, environment_seed).map_err(|_| {
+        let session_environment = execution_schedule.session_environment_v1();
+        let session = F::reset_session(config, episode_id, environment_seed, session_environment)
+            .map_err(|_| {
             self.episode_id = episode_id;
             self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
         })?;
+        // Counted only after the family-specific reset succeeded: a V1-family
+        // rejection of the V2 projection must never register as a V2 reset,
+        // so this trace is a genuine mode-specific reset witness.
+        #[cfg(test)]
+        {
+            let counter = match session_environment {
+                FlatScoredSessionEnvironmentV1::Legacy => {
+                    &self.test_instrumentation.legacy_session_reset_count
+                }
+                FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2 => {
+                    &self.test_instrumentation.environment_v2_session_reset_count
+                }
+            };
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
+        // The run-bound accumulator variant is decided exhaustively by the
+        // same schedule that selected the session reset, so a legacy lane can
+        // never envelope and a V2 lane can never skip the envelope.
         let native_full_trajectory = if native_schedule.is_some() {
-            match NativeFullEpisodeTrajectoryAccumulatorV1::new_v1(
-                episode_id,
-                environment_seed,
-                &config.deck_ids,
-                session.native_full_trajectory_deck_hashes_v1(),
-                learner_seat,
-            ) {
+            let accumulator = match session_environment {
+                FlatScoredSessionEnvironmentV1::Legacy => {
+                    NativeRunBoundFullEpisodeAccumulatorV2::new_legacy_v1(
+                        episode_id,
+                        environment_seed,
+                        &config.deck_ids,
+                        session.native_full_trajectory_deck_hashes_v1(),
+                        learner_seat,
+                    )
+                }
+                FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2 => {
+                    NativeRunBoundFullEpisodeAccumulatorV2::new_environment_randomization_v2(
+                        &NativeFullEpisodeTrajectoryStartV2 {
+                            episode_index: episode_id,
+                            pair_environment_seed: environment_seed,
+                            deck_ids: config.deck_ids.clone(),
+                            deck_hashes: session.native_full_trajectory_deck_hashes_v1(),
+                            learner_seat,
+                        },
+                    )
+                }
+            };
+            match accumulator {
                 Ok(trajectory) => Some(trajectory),
                 Err(_) => {
                     self.episode_id = episode_id;
@@ -1841,7 +2001,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         match (self.native_schedule, self.native_full_trajectory.take()) {
                             (Some(_), Some(trajectory)) => Some(
                                 trajectory
-                                    .finish_natural_v1(compact_terminal, terminal_deck_hashes)
+                                    .finish_natural(compact_terminal, terminal_deck_hashes)
                                     .map_err(|_| {
                                         self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
                                     })?,
@@ -2018,7 +2178,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                             .as_ref()
                             .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
                         trajectory
-                            .preflight_candidate_v1(row)
+                            .preflight_candidate(row)
                             .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
                         Some(row)
                     } else {
@@ -2043,7 +2203,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         let Some(trajectory) = self.native_full_trajectory.as_mut() else {
                             return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
                         };
-                        if trajectory.record_accepted_v1(row).is_err() {
+                        if trajectory.record_accepted(row).is_err() {
                             return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
                         }
                     }
@@ -2456,7 +2616,15 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV1 {
         config: &AsyncRolloutConfigV2,
         episode_id: u64,
         environment_seed: u64,
+        environment: FlatScoredSessionEnvironmentV1,
     ) -> Result<FastActorSessionV1, ()> {
+        // The V1 family explicitly rejects the environment randomization V2
+        // projection before any session allocation: it has no V2 reset and
+        // must never silently fall back to the legacy one.
+        match environment {
+            FlatScoredSessionEnvironmentV1::Legacy => {}
+            FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2 => return Err(()),
+        }
         FastActorSessionV1::reset_with_decks_and_limits(
             episode_id,
             environment_seed,
@@ -2752,11 +2920,11 @@ impl BrokerEpisodeV1 {
             (FlatScoredExecutionScheduleV1::Legacy, None) => {
                 derive_async_flat_scored_action_seed_v1(learner_policy_seed, episode_id, ordinal)
             }
-            (FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. }, Some(preflight))
-                if preflight.opponent_selected_index.is_none() =>
-            {
-                preflight.action_seed
-            }
+            (
+                FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. }
+                | FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { .. },
+                Some(preflight),
+            ) if preflight.opponent_selected_index.is_none() => preflight.action_seed,
             _ => return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation),
         };
         Ok((ordinal, seed))
@@ -2986,6 +3154,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
         config,
         FlatScoredExecutionScheduleV1::Legacy,
         None,
+        None,
         &mut scorer,
         observer,
     )
@@ -2998,14 +3167,13 @@ pub(crate) fn run_async_flat_scored_rollout_core<
 >(
     config: AsyncRolloutConfigV2,
     execution_schedule: FlatScoredExecutionScheduleV1,
+    environment_authority: Option<NativeEnvironmentWindowPreflightAuthorityV2>,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     scorer: &mut S,
     mut observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
 {
     let api_started = Instant::now();
-    #[cfg(test)]
-    let test_instrumentation = current_test_run_instrumentation_v1();
     if !(1..=ASYNC_ROLLOUT_MAX_WORKERS_V2).contains(&config.worker_count) {
         return Err(AsyncFlatScoredRolloutErrorV1::InvalidWorkerCount {
             requested: config.worker_count,
@@ -3042,17 +3210,61 @@ pub(crate) fn run_async_flat_scored_rollout_core<
         .first_episode_id
         .checked_add(config.episode_count)
         .ok_or(AsyncFlatScoredRolloutErrorV1::EpisodeRangeOverflow)?;
-    if let FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed } = execution_schedule {
-        native_trainer_episode_schedule_v1(base_seed, config.first_episode_id)
-            .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
-        native_trainer_episode_schedule_v1(base_seed, end_episode_id - 1)
-            .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+    match execution_schedule {
+        FlatScoredExecutionScheduleV1::Legacy => {}
+        FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed }
+        | FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { base_seed } => {
+            native_trainer_episode_schedule_v1(base_seed, config.first_episode_id)
+                .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+            native_trainer_episode_schedule_v1(base_seed, end_episode_id - 1)
+                .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+        }
     }
+    // Exhaustive schedule/authority diagonal, after the basic range and
+    // topology checks and before result reservation, channel creation,
+    // worker spawn, or any session reset. The move-only authority is
+    // consumed here, exactly once; workers only ever see the private
+    // session-environment projection derived from the schedule.
+    match (execution_schedule, environment_authority) {
+        (
+            FlatScoredExecutionScheduleV1::Legacy
+            | FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. },
+            None,
+        ) => {}
+        (
+            FlatScoredExecutionScheduleV1::Legacy
+            | FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. },
+            Some(_),
+        ) => {
+            return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
+        }
+        (FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { .. }, None) => {
+            return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
+        }
+        (
+            FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { base_seed },
+            Some(authority),
+        ) => {
+            if !authority.matches_window_v2(
+                base_seed,
+                config.first_episode_id,
+                config.episode_count,
+                &config.deck_ids,
+            ) {
+                return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
+            }
+            drop(authority);
+        }
+    }
+    #[cfg(test)]
+    let test_instrumentation = current_test_run_instrumentation_v1();
     let episode_count_usize = usize::try_from(config.episode_count).map_err(|_| {
         AsyncFlatScoredRolloutErrorV1::EpisodeCountExceedsAddressSpace {
             requested: config.episode_count,
         }
     })?;
+    #[cfg(test)]
+    ROLLOUT_RESULT_RESERVATION_COUNT_V2.with(|count| count.set(count.get() + 1));
     let mut episodes = Vec::new();
     episodes
         .try_reserve_exact(episode_count_usize)
@@ -3060,6 +3272,8 @@ pub(crate) fn run_async_flat_scored_rollout_core<
             requested: config.episode_count,
         })?;
 
+    #[cfg(test)]
+    ROLLOUT_MESSAGE_CHANNEL_COUNT_V2.with(|count| count.set(count.get() + 1));
     let (message_tx, message_rx) = mpsc::sync_channel(config.worker_count);
     let cancel = Arc::new(AtomicBool::new(false));
     let released_epoch = Arc::new(AtomicU64::new(0));
@@ -3077,10 +3291,14 @@ pub(crate) fn run_async_flat_scored_rollout_core<
     let mut control_txs = Vec::with_capacity(config.worker_count);
     let mut handles: Vec<Option<JoinHandle<()>>> = Vec::with_capacity(config.worker_count);
     for worker_id in 0..config.worker_count {
+        #[cfg(test)]
+        ROLLOUT_CONTROL_CHANNEL_COUNT_V2.with(|count| count.set(count.get() + 1));
         let (control_tx, control_rx) = mpsc::channel();
         let worker_message_tx = message_tx.clone();
         let worker_runtime = worker_runtime.clone();
         let worker_config = config.clone();
+        #[cfg(test)]
+        ROLLOUT_WORKER_SPAWN_COUNT_V2.with(|count| count.set(count.get() + 1));
         let spawn = thread::Builder::new()
             .name(format!("{}-{worker_id}", F::WORKER_NAME))
             .spawn(move || {

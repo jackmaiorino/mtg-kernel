@@ -15,6 +15,7 @@
 
 use crate::common_model_snapshot_v1::CommonModelSnapshotRecordV1;
 pub use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1 as NativeTrainingTrajectoryReceiptV1;
+pub use crate::native_full_episode_trajectory_v2::NativeTrainingTrajectoryReceiptV2;
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 pub use crate::native_policy_train_step_v1::{
     NativeGaugeSubstepBoundV1 as NativeTrainingGaugeSubstepObservationV1,
@@ -31,9 +32,10 @@ use crate::native_policy_value_net_v1::{
     NativePolicyValueModelConfigV1, NativePolicyValueNetV1, NativePolicyValueNetWideV1,
 };
 use crate::native_train_state_payload_v1::{
-    decode_native_train_state_payload_verified_v1, decode_native_train_state_payload_verified_wide_v1,
-    encode_native_train_state_payload_v1, encode_native_train_state_payload_wide_v1,
-    NativeTrainStatePayloadDigestsV1, NativeTrainStatePayloadErrorV1,
+    decode_native_train_state_payload_verified_v1,
+    decode_native_train_state_payload_verified_wide_v1, encode_native_train_state_payload_v1,
+    encode_native_train_state_payload_wide_v1, NativeTrainStatePayloadDigestsV1,
+    NativeTrainStatePayloadErrorV1,
 };
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_trainer_v1::{
@@ -50,6 +52,9 @@ pub use crate::native_trainer_v1::{
 pub use crate::native_training_phase_diagnostic_v1::{
     NativeTrainingPhaseProfileV1, NativeTrainingPhaseRecordV1, NativeTrainingPhaseV1,
 };
+use crate::native_training_store_run_v2::{
+    NativeRunEnvironmentTrajectoryContractV1, ValidatedTrainRunV2,
+};
 use crate::native_training_store_v2::NativeTrainingPersistenceReceiptV2;
 use crate::rl::PlayerSeatV1;
 use sha2::{Digest, Sha256};
@@ -65,6 +70,103 @@ use std::time::Duration;
 thread_local! {
     static SEGMENT_CANDIDATE_CLONE_COUNT_V2: Cell<u64> = const { Cell::new(0) };
     static SEGMENT_CANDIDATE_UPDATE_ATTEMPT_COUNT_V2: Cell<u64> = const { Cell::new(0) };
+    static RUN_BOUND_SNAPSHOT_NARROW_COUNT_V2: Cell<u64> = const { Cell::new(0) };
+    static RUN_BOUND_SNAPSHOT_WIDE_COUNT_V2: Cell<u64> = const { Cell::new(0) };
+}
+
+// The run-bound checkpoint construction witness lives in the Windows-gated
+// wide resume suite, so its instrumentation is structurally gated the same
+// way rather than warning as dead code on other targets.
+#[cfg(all(test, windows))]
+thread_local! {
+    static RUN_BOUND_CHECKPOINT_NARROW_COUNT_V2: Cell<u64> = const { Cell::new(0) };
+    static RUN_BOUND_CHECKPOINT_WIDE_COUNT_V2: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Run-local RAII counting scope over successful run-bound checkpoint
+/// constructions, so resume-branch witnesses fail if a production
+/// reconstruction site reverts to a raw constructor; drop restores the saved
+/// values on every exit path, including panics.
+#[cfg(all(test, windows))]
+pub(crate) struct RunBoundCheckpointConstructionCountScopeV2 {
+    saved: (u64, u64),
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(all(test, windows))]
+impl RunBoundCheckpointConstructionCountScopeV2 {
+    /// `(narrow, wide)` successful run-bound checkpoint constructions on the
+    /// calling thread inside this scope.
+    pub(crate) fn counts(&self) -> (u64, u64) {
+        (
+            RUN_BOUND_CHECKPOINT_NARROW_COUNT_V2.with(Cell::get),
+            RUN_BOUND_CHECKPOINT_WIDE_COUNT_V2.with(Cell::get),
+        )
+    }
+}
+
+#[cfg(all(test, windows))]
+impl Drop for RunBoundCheckpointConstructionCountScopeV2 {
+    fn drop(&mut self) {
+        RUN_BOUND_CHECKPOINT_NARROW_COUNT_V2.with(|count| count.set(self.saved.0));
+        RUN_BOUND_CHECKPOINT_WIDE_COUNT_V2.with(|count| count.set(self.saved.1));
+    }
+}
+
+#[cfg(all(test, windows))]
+pub(crate) fn run_bound_checkpoint_construction_count_scope_v2(
+) -> RunBoundCheckpointConstructionCountScopeV2 {
+    let saved = (
+        RUN_BOUND_CHECKPOINT_NARROW_COUNT_V2.with(|count| count.replace(0)),
+        RUN_BOUND_CHECKPOINT_WIDE_COUNT_V2.with(|count| count.replace(0)),
+    );
+    RunBoundCheckpointConstructionCountScopeV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
+}
+
+/// Run-local RAII counting scope over successful run-bound snapshot
+/// constructions, so callsite proofs fail if a production genesis site
+/// reverts to a raw constructor; drop restores the saved values on every
+/// exit path, including panics.
+#[cfg(test)]
+pub(crate) struct RunBoundSnapshotConstructionCountScopeV2 {
+    saved: (u64, u64),
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl RunBoundSnapshotConstructionCountScopeV2 {
+    /// `(narrow, wide)` successful run-bound snapshot constructions on the
+    /// calling thread inside this scope.
+    pub(crate) fn counts(&self) -> (u64, u64) {
+        (
+            RUN_BOUND_SNAPSHOT_NARROW_COUNT_V2.with(Cell::get),
+            RUN_BOUND_SNAPSHOT_WIDE_COUNT_V2.with(Cell::get),
+        )
+    }
+}
+
+#[cfg(test)]
+impl Drop for RunBoundSnapshotConstructionCountScopeV2 {
+    fn drop(&mut self) {
+        RUN_BOUND_SNAPSHOT_NARROW_COUNT_V2.with(|count| count.set(self.saved.0));
+        RUN_BOUND_SNAPSHOT_WIDE_COUNT_V2.with(|count| count.set(self.saved.1));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn run_bound_snapshot_construction_count_scope_v2(
+) -> RunBoundSnapshotConstructionCountScopeV2 {
+    let saved = (
+        RUN_BOUND_SNAPSHOT_NARROW_COUNT_V2.with(|count| count.replace(0)),
+        RUN_BOUND_SNAPSHOT_WIDE_COUNT_V2.with(|count| count.replace(0)),
+    );
+    RunBoundSnapshotConstructionCountScopeV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
 }
 
 #[cfg(test)]
@@ -820,6 +922,10 @@ fn trainer_executor_error_v1(error: NativeTrainerErrorV1) -> NativeTrainingExecu
             NativeTrainingExecutorErrorKindV1::Counter,
             "trainer_counter_overflow",
         ),
+        NativeTrainerErrorV1::EnvironmentWindowPreflight(_) => (
+            NativeTrainingExecutorErrorKindV1::Rollout,
+            "trainer_environment_window_preflight_rejected",
+        ),
     };
     NativeTrainingExecutorErrorV1::with_diagnostic(kind, code, error)
 }
@@ -858,6 +964,9 @@ fn bootstrap_executor_error_v1(
 #[derive(Debug)]
 pub(crate) struct NativeTrainingPreparedTransitionV2 {
     execution_config: Arc<NativeTrainingExecutionConfigV1>,
+    /// The producing executor's sealed run trajectory contract, carried so
+    /// the Store can prove the run/transition/receipt diagonal.
+    environment_trajectory_contract: NativeRunEnvironmentTrajectoryContractV1,
     predecessor: NativeTrainingIntrinsicCheckpointFactsV2,
     successor: NativeTrainingIntrinsicCheckpointFactsV2,
     observation: NativeTrainingUpdateObservationV2,
@@ -870,6 +979,47 @@ impl NativeTrainingPreparedTransitionV2 {
     /// this sealed projection rather than accepting a second raw config.
     pub(crate) fn execution_config_v2(&self) -> &NativeTrainingExecutionConfigV1 {
         &self.execution_config
+    }
+
+    /// The producing executor's sealed run trajectory contract.
+    pub(crate) const fn environment_trajectory_contract_v1(
+        &self,
+    ) -> NativeRunEnvironmentTrajectoryContractV1 {
+        self.environment_trajectory_contract
+    }
+
+    /// Read-only observation view so the Store can scan every receipt variant
+    /// against the run mode before this transition is consumed.
+    pub(crate) const fn observation_v2(&self) -> &NativeTrainingUpdateObservationV2 {
+        &self.observation
+    }
+
+    /// Test-only receipt swap so Store diagonal tests can drive every
+    /// run/transition/receipt triple, including off-variant receipt vectors
+    /// that the sealed production path can never produce.
+    #[cfg(test)]
+    pub(crate) fn swap_observation_receipt_for_test_v2(
+        &mut self,
+        index: usize,
+        receipt: crate::native_full_episode_trajectory_v2::NativeTrainingTrajectoryReceiptV2,
+    ) {
+        self.observation.episodes[index].full_trajectory_receipt = receipt;
+    }
+
+    /// Test-only observation scalar corruption: drifts one episode's own
+    /// index scalar so Store batteries can prove observation-level facts are
+    /// validated independently of receipt facts.
+    #[cfg(test)]
+    pub(crate) fn mutate_observation_episode_index_for_test_v2(&mut self, index: usize) {
+        self.observation.episodes[index].episode_index ^= 1;
+    }
+
+    /// Test-only whole episode-wrapper swap: exchanges two complete episode
+    /// observations, receipts included, so Store batteries can prove the
+    /// positional binding rejects a coherent-but-misplaced wrapper.
+    #[cfg(test)]
+    pub(crate) fn swap_observation_episodes_for_test_v2(&mut self, left: usize, right: usize) {
+        self.observation.episodes.swap(left, right);
     }
 
     pub(crate) fn into_parts_v2(
@@ -897,6 +1047,9 @@ pub(crate) struct NativeTrainingSegmentCandidateV2<'executor> {
     executor: &'executor mut NativeTrainingExecutorV1,
     config: Arc<NativeTrainingExecutionConfigV1>,
     update_config: NativeTrainerUpdateConfigV2,
+    /// Copied from the live executor's sealed contract at clone time; every
+    /// candidate update and prepared transition executes under it.
+    environment_trajectory_contract: NativeRunEnvironmentTrajectoryContractV1,
     candidate_trainer: NativeTrainerStateV2,
 }
 
@@ -934,6 +1087,14 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
     /// or adding a second, caller-supplied configuration authority.
     pub(crate) fn execution_config_v1(&self) -> &NativeTrainingExecutionConfigV1 {
         self.candidate.executor.config()
+    }
+
+    /// The producing candidate's sealed run trajectory contract, so the Store
+    /// can recheck the run/prepared/receipt diagonal at its public entry.
+    pub(crate) const fn environment_trajectory_contract_v1(
+        &self,
+    ) -> NativeRunEnvironmentTrajectoryContractV1 {
+        self.candidate.environment_trajectory_contract
     }
 
     /// Re-exports the unchanged live predecessor as a verified checkpoint.
@@ -1078,6 +1239,16 @@ pub struct NativeTrainingExecutorV1 {
     update_config: NativeTrainerUpdateConfigV2,
     trainer: NativeTrainerStateV2,
     snapshot_receipt: Option<NativeTrainingSnapshotReceiptV1>,
+    /// The sealed run trajectory contract this executor executes under.
+    ///
+    /// Immutable after construction: there is no setter, no public
+    /// constructor can select it, and it lives in no serialized config,
+    /// checkpoint manifest, or train-state payload. Every public raw
+    /// snapshot/checkpoint constructor seals `LegacyV1`; only the
+    /// crate-private run-bound constructors, which consume a
+    /// `&ValidatedTrainRunV2`, can derive `EnvironmentRandomizationV2` from
+    /// the run's own sealed classification.
+    environment_trajectory_contract: NativeRunEnvironmentTrajectoryContractV1,
 }
 
 impl std::fmt::Debug for NativeTrainingExecutorV1 {
@@ -1112,15 +1283,14 @@ impl<'executor> NativeTrainingSegmentCandidateV2<'executor> {
         SEGMENT_CANDIDATE_UPDATE_ATTEMPT_COUNT_V2.with(|count| count.set(count.get() + 1));
         let observation = self
             .candidate_trainer
-            .run_even_batch_update_v2(&self.update_config)
-            .map_err(|error| {
-                trainer_executor_error_v1(error)
-            })?;
-        let successor = intrinsic_checkpoint_facts_from_parts_v2(&self.config, &self.candidate_trainer)
-            ?;
+            .run_even_batch_update_v2(&self.update_config, self.environment_trajectory_contract)
+            .map_err(|error| trainer_executor_error_v1(error))?;
+        let successor =
+            intrinsic_checkpoint_facts_from_parts_v2(&self.config, &self.candidate_trainer)?;
         validate_current_observation_from_parts_v2(
             &self.config,
             &self.candidate_trainer,
+            self.environment_trajectory_contract,
             &observation,
         )?;
         let final_checkpoint = if export_final_checkpoint {
@@ -1141,6 +1311,7 @@ impl<'executor> NativeTrainingSegmentCandidateV2<'executor> {
         };
         Ok(NativeTrainingPreparedTransitionV2 {
             execution_config: Arc::clone(&self.config),
+            environment_trajectory_contract: self.environment_trajectory_contract,
             predecessor,
             successor,
             observation,
@@ -1154,6 +1325,7 @@ impl<'executor> NativeTrainingSegmentCandidateV2<'executor> {
     ) -> Result<NativeTrainingPreparedUpdateV2<'executor>, NativeTrainingExecutorErrorV1> {
         let NativeTrainingPreparedTransitionV2 {
             execution_config: _,
+            environment_trajectory_contract: _,
             predecessor: _,
             successor: _,
             observation,
@@ -1211,6 +1383,8 @@ impl NativeTrainingExecutorV1 {
             update_config,
             trainer,
             snapshot_receipt: Some(snapshot_receipt.into()),
+            // Raw public construction is always the legacy contract.
+            environment_trajectory_contract: NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
         })
     }
 
@@ -1238,7 +1412,46 @@ impl NativeTrainingExecutorV1 {
             update_config,
             trainer,
             snapshot_receipt: Some(snapshot_receipt.into()),
+            // Raw public construction is always the legacy contract.
+            environment_trajectory_contract: NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
         })
+    }
+
+    /// Crate-private run-bound sibling of
+    /// [`Self::from_common_model_snapshot_v1`]: identical construction, with
+    /// the sealed trajectory contract derived from the validated run's own
+    /// decode-time classification instead of the raw-public Legacy seal. The
+    /// ordinary science-loop genesis sites construct through this so a V2 run
+    /// can never pair a Legacy-sealed genesis executor with V2 orchestration.
+    pub(crate) fn from_common_model_snapshot_run_bound_v2(
+        config: NativeTrainingExecutionConfigV1,
+        manifest_path: &Path,
+        payload_path: &Path,
+        run: &ValidatedTrainRunV2,
+    ) -> Result<Self, NativeTrainingExecutorErrorV1> {
+        let mut executor =
+            Self::from_common_model_snapshot_v1(config, manifest_path, payload_path)?;
+        executor.environment_trajectory_contract = run.environment_trajectory_contract_v1();
+        #[cfg(test)]
+        RUN_BOUND_SNAPSHOT_NARROW_COUNT_V2.with(|count| count.set(count.get() + 1));
+        Ok(executor)
+    }
+
+    /// Crate-private run-bound sibling of
+    /// [`Self::from_common_model_snapshot_wide_v1`], deriving the sealed
+    /// trajectory contract from the validated run.
+    pub(crate) fn from_common_model_snapshot_run_bound_wide_v2(
+        config: NativeTrainingExecutionConfigV1,
+        manifest_path: &Path,
+        payload_path: &Path,
+        run: &ValidatedTrainRunV2,
+    ) -> Result<Self, NativeTrainingExecutorErrorV1> {
+        let mut executor =
+            Self::from_common_model_snapshot_wide_v1(config, manifest_path, payload_path)?;
+        executor.environment_trajectory_contract = run.environment_trajectory_contract_v1();
+        #[cfg(test)]
+        RUN_BOUND_SNAPSHOT_WIDE_COUNT_V2.with(|count| count.set(count.get() + 1));
+        Ok(executor)
     }
 
     /// Reconstructs an executor from an immutable verified candidate.
@@ -1302,6 +1515,11 @@ impl NativeTrainingExecutorV1 {
             update_config,
             trainer,
             snapshot_receipt: None,
+            // Raw public construction is always the legacy contract, even for
+            // bytes that were originally produced by a V2-mode executor: the
+            // payload carries no mode, and only a run-bound constructor can
+            // rederive V2 from a validated run.
+            environment_trajectory_contract: NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
         })
     }
 
@@ -1362,7 +1580,49 @@ impl NativeTrainingExecutorV1 {
             update_config,
             trainer,
             snapshot_receipt: None,
+            // Raw public construction is always the legacy contract.
+            environment_trajectory_contract: NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
         })
+    }
+
+    /// Crate-private run-bound sibling of
+    /// [`Self::from_checkpoint_candidate_v1`]: identical reconstruction, with
+    /// the sealed trajectory contract rederived from the validated run's own
+    /// decode-time classification. Checkpoint bytes deliberately carry no
+    /// mode; both branches of Store resume reconstruct through this so a
+    /// V2-classified run resumes as a V2-sealed executor.
+    pub(crate) fn from_checkpoint_candidate_run_bound_v2(
+        config: NativeTrainingExecutionConfigV1,
+        checkpoint: &NativeTrainingCheckpointCandidateV1,
+        run: &ValidatedTrainRunV2,
+    ) -> Result<Self, NativeTrainingExecutorErrorV1> {
+        let mut executor = Self::from_checkpoint_candidate_v1(config, checkpoint)?;
+        executor.environment_trajectory_contract = run.environment_trajectory_contract_v1();
+        #[cfg(all(test, windows))]
+        RUN_BOUND_CHECKPOINT_NARROW_COUNT_V2.with(|count| count.set(count.get() + 1));
+        Ok(executor)
+    }
+
+    /// Crate-private run-bound sibling of
+    /// [`Self::from_checkpoint_candidate_wide_v1`], rederiving the sealed
+    /// trajectory contract from the validated run.
+    pub(crate) fn from_checkpoint_candidate_run_bound_wide_v2(
+        config: NativeTrainingExecutionConfigV1,
+        checkpoint: &NativeTrainingCheckpointCandidateV1,
+        run: &ValidatedTrainRunV2,
+    ) -> Result<Self, NativeTrainingExecutorErrorV1> {
+        let mut executor = Self::from_checkpoint_candidate_wide_v1(config, checkpoint)?;
+        executor.environment_trajectory_contract = run.environment_trajectory_contract_v1();
+        #[cfg(all(test, windows))]
+        RUN_BOUND_CHECKPOINT_WIDE_COUNT_V2.with(|count| count.set(count.get() + 1));
+        Ok(executor)
+    }
+
+    /// The sealed run trajectory contract this executor executes under.
+    pub(crate) const fn environment_trajectory_contract_v1(
+        &self,
+    ) -> NativeRunEnvironmentTrajectoryContractV1 {
+        self.environment_trajectory_contract
     }
 
     pub fn config(&self) -> &NativeTrainingExecutionConfigV1 {
@@ -1444,6 +1704,7 @@ impl NativeTrainingExecutorV1 {
         Ok(NativeTrainingSegmentCandidateV2 {
             config: Arc::new(self.config.clone()),
             update_config: self.update_config.clone(),
+            environment_trajectory_contract: self.environment_trajectory_contract,
             candidate_trainer,
             executor: self,
         })
@@ -1492,7 +1753,7 @@ impl NativeTrainingExecutorV1 {
         &mut self,
     ) -> Result<NativeTrainingUpdateObservationV2, NativeTrainingExecutorErrorV1> {
         self.trainer
-            .run_even_batch_update_v2(&self.update_config)
+            .run_even_batch_update_v2(&self.update_config, self.environment_trajectory_contract)
             .map_err(trainer_executor_error_v1)
     }
 
@@ -1511,7 +1772,10 @@ impl NativeTrainingExecutorV1 {
         NativeTrainingExecutorErrorV1,
     > {
         self.trainer
-            .run_even_batch_update_profiled_v2(&self.update_config)
+            .run_even_batch_update_profiled_v2(
+                &self.update_config,
+                self.environment_trajectory_contract,
+            )
             .map_err(trainer_executor_error_v1)
     }
 
@@ -1566,7 +1830,12 @@ impl NativeTrainingExecutorV1 {
         &self,
         observation: &NativeTrainingUpdateObservationV2,
     ) -> Result<(), NativeTrainingExecutorErrorV1> {
-        validate_current_observation_from_parts_v2(&self.config, &self.trainer, observation)
+        validate_current_observation_from_parts_v2(
+            &self.config,
+            &self.trainer,
+            self.environment_trajectory_contract,
+            observation,
+        )
     }
 }
 
@@ -1593,13 +1862,16 @@ fn checkpoint_candidate_from_parts_with_facts_v2(
     // below unify into the same locals; only which snapshot accessor and
     // which codec pair is called differs.
     let (snapshot, encoded, decoded) = if trainer.is_wide_v1() {
-        let snapshot = trainer.train_state_wide_v1().snapshot_v1().map_err(|error| {
-            NativeTrainingExecutorErrorV1::with_diagnostic(
-                NativeTrainingExecutorErrorKindV1::TrainState,
-                "live_train_state_invalid",
-                error,
-            )
-        })?;
+        let snapshot = trainer
+            .train_state_wide_v1()
+            .snapshot_v1()
+            .map_err(|error| {
+                NativeTrainingExecutorErrorV1::with_diagnostic(
+                    NativeTrainingExecutorErrorKindV1::TrainState,
+                    "live_train_state_invalid",
+                    error,
+                )
+            })?;
         let encoded = encode_native_train_state_payload_wide_v1(&snapshot)
             .map_err(payload_executor_error_v1)?;
         let decoded = decode_native_train_state_payload_verified_wide_v1(
@@ -1657,6 +1929,7 @@ fn checkpoint_candidate_from_parts_with_facts_v2(
 fn validate_current_observation_from_parts_v2(
     config: &NativeTrainingExecutionConfigV1,
     trainer: &NativeTrainerStateV2,
+    expected_environment: NativeRunEnvironmentTrajectoryContractV1,
     observation: &NativeTrainingUpdateObservationV2,
 ) -> Result<(), NativeTrainingExecutorErrorV1> {
     let progress = NativeTrainingProgressV1::from(trainer.progress_v2());
@@ -1682,7 +1955,10 @@ fn validate_current_observation_from_parts_v2(
             .model_v1()
             .parameter_manifest_sha256_wide_v1()
     } else {
-        trainer.train_state_v1().model_v1().parameter_manifest_sha256_v1()
+        trainer
+            .train_state_v1()
+            .model_v1()
+            .parameter_manifest_sha256_v1()
     };
 
     if observation.trainer_contract_identity != NATIVE_TRAINER_CONTRACT_IDENTITY_V2
@@ -1718,19 +1994,30 @@ fn validate_current_observation_from_parts_v2(
             .checked_add(u64::try_from(offset).map_err(|_| checkpoint_observation_mismatch_v1())?)
             .ok_or_else(checkpoint_observation_mismatch_v1)?;
         let receipt = &episode.full_trajectory_receipt;
+        // The receipt variant must match the executor's sealed contract
+        // before any common accessor is trusted; a mixed receipt vector
+        // cannot pass. Exhaustive on purpose: a future third mode variant
+        // must fail compilation here rather than silently map to Legacy.
+        let expected_v2 = match expected_environment {
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1 => false,
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2 => true,
+        };
+        if receipt.is_environment_randomization_v2() != expected_v2 {
+            return Err(checkpoint_observation_mismatch_v1());
+        }
         if episode.episode_index != expected_episode_index
-            || receipt.episode_index != expected_episode_index
-            || receipt.learner_seat != episode.learner_seat
-            || receipt.learner_policy_step_count != episode.learner_policy_step_count
-            || receipt.learner_physical_decision_count != episode.learner_group_count
+            || receipt.episode_index() != expected_episode_index
+            || receipt.learner_seat() != episode.learner_seat
+            || receipt.learner_policy_step_count() != episode.learner_policy_step_count
+            || receipt.learner_physical_decision_count() != episode.learner_group_count
         {
             return Err(checkpoint_observation_mismatch_v1());
         }
         physical_decision_count = physical_decision_count
-            .checked_add(receipt.physical_decision_count)
+            .checked_add(receipt.physical_decision_count())
             .ok_or_else(checkpoint_observation_mismatch_v1)?;
         policy_step_count = policy_step_count
-            .checked_add(receipt.policy_step_count)
+            .checked_add(receipt.policy_step_count())
             .ok_or_else(checkpoint_observation_mismatch_v1)?;
         learner_group_count = learner_group_count
             .checked_add(episode.learner_group_count)
@@ -1777,7 +2064,9 @@ fn intrinsic_checkpoint_facts_from_parts_v2(
             (
                 train_state.adam_step_v1(),
                 train_state.scorer_bias_anchor_f32_bits_v1(),
-                train_state.model_v1().parameter_manifest_sha256_raw_wide_v1(),
+                train_state
+                    .model_v1()
+                    .parameter_manifest_sha256_raw_wide_v1(),
                 train_state_sha256,
             )
         } else {
@@ -2128,6 +2417,7 @@ mod tests {
             assert_eq!(segment_candidate_counts_for_test_v2(), (1, step + 1));
             let NativeTrainingPreparedTransitionV2 {
                 execution_config: _,
+                environment_trajectory_contract: _,
                 predecessor: actual_predecessor,
                 successor,
                 observation,
@@ -2245,14 +2535,14 @@ mod tests {
             first
                 .episodes
                 .iter()
-                .map(|episode| episode.full_trajectory_receipt.physical_decision_count)
+                .map(|episode| episode.full_trajectory_receipt.physical_decision_count())
                 .sum::<u64>(),
             first.physical_decision_count
         );
         assert!(first
             .episodes
             .iter()
-            .all(|episode| episode.full_trajectory_receipt.trajectory_sha256 != [0; 32]));
+            .all(|episode| episode.full_trajectory_receipt.trajectory_sha256() != [0; 32]));
         assert!(!first.selected_outputs.is_empty());
         assert!(!first.physical_terms.is_empty());
         assert_eq!(first.scorer_bias_gauge.parameter_name, "scorer.2.bias");
@@ -2804,5 +3094,501 @@ mod tests {
         assert!(executor_debug.len() < 1_024, "{executor_debug}");
         assert!(checkpoint_debug.contains("payload_byte_count"));
         assert!(!checkpoint_debug.contains("parameters"));
+    }
+
+    /// Execution config derived from the validated run exactly as production
+    /// resume derives it: run decks, run limits, run topology, run
+    /// optimization bits, sequential Store backend.
+    fn run_matched_config_v1(
+        run: &crate::native_training_store_run_v2::ValidatedTrainRunV2,
+    ) -> NativeTrainingExecutionConfigV1 {
+        let record = run.record();
+        let parse_bits = |hex: &str| u32::from_str_radix(hex, 16).unwrap();
+        NativeTrainingExecutionConfigV1 {
+            run_base_seed: record.schedule.base_seed,
+            batch_episodes: run.batch_episodes(),
+            deck_ids: record.environment.deck_ids.clone(),
+            max_physical_decisions: record.limits.max_physical_decisions,
+            max_policy_steps: record.limits.max_policy_steps,
+            worker_count: usize::try_from(record.topology.worker_count).unwrap(),
+            sessions_per_worker: usize::try_from(record.topology.sessions_per_worker).unwrap(),
+            broker_batch_target: usize::try_from(record.topology.broker_batch_target).unwrap(),
+            scheduler_timeout: Duration::from_millis(record.topology.scheduler_timeout_ms),
+            measure_broker_service_time: record.topology.measure_broker_service_time,
+            value_coefficient_bits: parse_bits(&record.optimization.value_coefficient_f32_bits),
+            learning_rate_bits: parse_bits(&record.optimization.learning_rate_f32_bits),
+            numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
+            backward_worker_limit: 1,
+        }
+    }
+
+    /// Live C2 mode persistence: all four public raw constructors seal
+    /// Legacy, even when re-importing bytes a genuinely V2-sealed executor
+    /// produced; only the crate-private run-bound constructors derive V2;
+    /// and checkpoint bytes carry no mode, so run-bound reconstruction is
+    /// what rederives it.
+    #[test]
+    fn raw_constructors_stay_legacy_and_run_bound_reconstruction_rederives_v2() {
+        use crate::common_model_snapshot_v1::wide_model_snapshot_paths_v1;
+        use crate::native_training_store_run_v2::{
+            decode_train_run_v2, test_fixture_bytes_environment_randomization_v2,
+            test_fixture_bytes_v2, NativeRunEnvironmentTrajectoryContractV1,
+        };
+
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let legacy_run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let v2_run =
+            decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2()).unwrap();
+
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        // The config is derived from the validated run exactly as production
+        // resume derives it; the two fixtures share every execution fact, so
+        // one coherent config serves both.
+        let config = run_matched_config_v1(&v2_run);
+        assert_eq!(config, run_matched_config_v1(&legacy_run));
+
+        // Raw public constructor 1: narrow snapshot.
+        let legacy_executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            config.clone(),
+            &manifest,
+            &payload,
+        )
+        .unwrap();
+        assert_eq!(
+            legacy_executor.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+        );
+
+        // Raw public constructor 2: wide snapshot.
+        let (wide_manifest, wide_payload) = wide_model_snapshot_paths_v1();
+        let wide_executor = NativeTrainingExecutorV1::from_common_model_snapshot_wide_v1(
+            config.clone(),
+            &wide_manifest,
+            &wide_payload,
+        )
+        .unwrap();
+        assert_eq!(
+            wide_executor.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+        );
+
+        // Run-bound snapshot constructors derive exactly the run's sealed
+        // classification, in both directions.
+        assert_eq!(
+            NativeTrainingExecutorV1::from_common_model_snapshot_run_bound_v2(
+                config.clone(),
+                &manifest,
+                &payload,
+                &legacy_run,
+            )
+            .unwrap()
+            .environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+        );
+        let mut v2_executor = NativeTrainingExecutorV1::from_common_model_snapshot_run_bound_v2(
+            config.clone(),
+            &manifest,
+            &payload,
+            &v2_run,
+        )
+        .unwrap();
+        assert_eq!(
+            v2_executor.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+
+        // A genuinely V2-produced checkpoint: run one real V2 update, then
+        // export.
+        let v2_observation = v2_executor.run_update_v2().unwrap();
+        assert!(v2_observation.episodes.iter().all(|episode| episode
+            .full_trajectory_receipt
+            .outer_trajectory_sha256_v2()
+            .is_some()));
+        let v2_produced = v2_executor.checkpoint_candidate_v1().unwrap();
+
+        // Raw public constructor 3: narrow checkpoint re-import of the
+        // V2-produced bytes stays Legacy.
+        let reimported = NativeTrainingCheckpointCandidateV1::import_verified_v1(
+            v2_produced.metadata(),
+            v2_produced.payload(),
+            v2_produced.digests(),
+        )
+        .unwrap();
+        assert_eq!(
+            NativeTrainingExecutorV1::from_checkpoint_candidate_v1(config.clone(), &reimported)
+                .unwrap()
+                .environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+            "V2-produced checkpoint bytes re-import as Legacy through the raw path"
+        );
+
+        // Raw public constructor 4: wide checkpoint re-import stays Legacy.
+        let wide_candidate = wide_executor.checkpoint_candidate_v1().unwrap();
+        let wide_reimported = NativeTrainingCheckpointCandidateV1::import_verified_wide_v1(
+            wide_candidate.metadata(),
+            wide_candidate.payload(),
+            wide_candidate.digests(),
+        )
+        .unwrap();
+        assert_eq!(
+            NativeTrainingExecutorV1::from_checkpoint_candidate_wide_v1(
+                config.clone(),
+                &wide_reimported,
+            )
+            .unwrap()
+            .environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+        );
+
+        // Run-bound checkpoint reconstruction rederives V2 from the run.
+        assert_eq!(
+            NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_v2(
+                config.clone(),
+                &reimported,
+                &v2_run,
+            )
+            .unwrap()
+            .environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+
+        // Genuine wide V2 constructor coverage: both wide run-bound
+        // constructors seal V2 from a genuinely wide V2 run, the exported
+        // wide checkpoint rederives V2 through wide run-bound
+        // reconstruction, and the bytes/digests survive the round trip.
+        // Genuine wide V2 rollout execution lives in the checkpoint-runner
+        // oracle; the frozen wide train step is CudaBurnDense-only.
+        {
+            use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_wide_environment_v2;
+            let wide_v2_run = decode_train_run_v2(
+                &test_fixture_bytes_with_schedule_and_base_seed_wide_environment_v2(
+                    NativeTrainingNumericalBackendV1::Sequential,
+                    2,
+                    4,
+                    4,
+                    2,
+                    4,
+                    8,
+                    32_768,
+                    65_536,
+                    71_501,
+                ),
+            )
+            .unwrap();
+            assert_eq!(
+                wide_v2_run.environment_trajectory_contract_v1(),
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+            );
+            let wide_config = run_matched_config_v1(&wide_v2_run);
+            let wide_v2_executor =
+                NativeTrainingExecutorV1::from_common_model_snapshot_run_bound_wide_v2(
+                    wide_config.clone(),
+                    &wide_manifest,
+                    &wide_payload,
+                    &wide_v2_run,
+                )
+                .unwrap();
+            assert_eq!(
+                wide_v2_executor.environment_trajectory_contract_v1(),
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+            );
+            // The frozen wide TRAIN step is CudaBurnDense-only, so the live
+            // wide V2 rollout coverage lives in the genuinely wide checkpoint
+            // runner oracle; here the wide constructors' seal and mode-free
+            // bytes are the subject.
+            let wide_v2_candidate = wide_v2_executor.checkpoint_candidate_v1().unwrap();
+            let wide_rebound =
+                NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_wide_v2(
+                    wide_config,
+                    &wide_v2_candidate,
+                    &wide_v2_run,
+                )
+                .unwrap();
+            assert_eq!(
+                wide_rebound.environment_trajectory_contract_v1(),
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                "wide checkpoint reconstruction rederives V2 from the run"
+            );
+            let wide_reexport = wide_rebound.checkpoint_candidate_v1().unwrap();
+            assert_eq!(
+                wide_v2_candidate.payload(),
+                wide_reexport.payload(),
+                "wide checkpoint bytes carry no mode and survive reconstruction"
+            );
+            assert_eq!(wide_v2_candidate.digests(), wide_reexport.digests());
+        }
+
+        // Checkpoint bytes carry no mode: a Legacy-sealed and a V2-sealed
+        // executor over the identical state export byte-identical payloads
+        // and digests.
+        let legacy_export = legacy_executor.checkpoint_candidate_v1().unwrap();
+        let v2_twin = NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_v2(
+            config.clone(),
+            &legacy_export,
+            &v2_run,
+        )
+        .unwrap();
+        let v2_twin_export = v2_twin.checkpoint_candidate_v1().unwrap();
+        assert_eq!(
+            legacy_export.payload(),
+            v2_twin_export.payload(),
+            "the exported train-state payload must carry no mode byte"
+        );
+        assert_eq!(legacy_export.digests(), v2_twin_export.digests());
+    }
+
+    /// Live C2 direct-update persistence: a V2-resumed executor's public
+    /// `run_update_v2`, `prepare_update_v2`, and profiled update all emit V2
+    /// receipts before any prepared-segment call; a failed commit and a
+    /// successful commit both leave the sealed mode, config, and snapshot
+    /// receipt untouched, mutating only the trainer; and the next direct
+    /// update continues in V2.
+    #[test]
+    fn v2_resumed_executor_direct_updates_commit_and_continue_in_v2() {
+        use crate::native_training_store_run_v2::{
+            decode_train_run_v2, test_fixture_bytes_environment_randomization_v2,
+            NativeRunEnvironmentTrajectoryContractV1,
+        };
+        use crate::native_training_store_v2::test_persistence_receipt_v2;
+
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let v2_run =
+            decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2()).unwrap();
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let config = run_matched_config_v1(&v2_run);
+        let seed_executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            config.clone(),
+            &manifest,
+            &payload,
+        )
+        .unwrap();
+        let genesis_candidate = seed_executor.checkpoint_candidate_v1().unwrap();
+        let mut executor = NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_v2(
+            config.clone(),
+            &genesis_candidate,
+            &v2_run,
+        )
+        .unwrap();
+        assert_eq!(
+            executor.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        assert!(executor.snapshot_receipt().is_none());
+        let config_before = executor.config().clone();
+
+        let assert_v2_observation = |observation: &NativeTrainingUpdateObservationV2| {
+            assert!(observation.episodes.iter().all(|episode| episode
+                .full_trajectory_receipt
+                .outer_trajectory_sha256_v2()
+                .is_some()));
+        };
+
+        // Public direct update 1: run_update_v2, before any prepared call.
+        let first = executor.run_update_v2().unwrap();
+        assert_v2_observation(&first);
+
+        // Public direct update 2: the profiled update.
+        let (second, _profile) = executor.run_update_with_phase_profile_v1().unwrap();
+        assert_v2_observation(&second);
+
+        // Public direct update 3: prepare_update_v2, with a failed commit
+        // first and a successful commit after.
+        let progress_before = executor.progress();
+        let prepared = executor.prepare_update_v2().unwrap();
+        assert_v2_observation(prepared.observation());
+        let bound = prepared.bind_manifest_bytes_v2(b"manifest".to_vec().into_boxed_slice());
+        let wrong = test_persistence_receipt_v2(
+            bound.expected_generation_index() ^ 1,
+            bound.expected_payload_sha256(),
+            bound.expected_manifest_sha256(),
+        );
+        assert_eq!(
+            bound.commit_v2(wrong).unwrap_err().code(),
+            "persistence_receipt_mismatch"
+        );
+        assert_eq!(
+            executor.progress(),
+            progress_before,
+            "a failed commit must leave the live executor untouched"
+        );
+        assert_eq!(
+            executor.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+
+        let prepared = executor.prepare_update_v2().unwrap();
+        assert_v2_observation(prepared.observation());
+        let expected_end = prepared.observation().adam_step_after;
+        let bound = prepared.bind_manifest_bytes_v2(b"manifest".to_vec().into_boxed_slice());
+        let receipt = test_persistence_receipt_v2(
+            bound.expected_generation_index(),
+            bound.expected_payload_sha256(),
+            bound.expected_manifest_sha256(),
+        );
+        let committed = bound.commit_v2(receipt).unwrap();
+        assert_v2_observation(&committed);
+        assert_eq!(executor.progress().successful_update_count, expected_end);
+
+        // Only the trainer moved: the sealed mode, the config, and the
+        // absent snapshot receipt are all unchanged.
+        assert_eq!(
+            executor.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        assert_eq!(executor.config(), &config_before);
+        assert!(executor.snapshot_receipt().is_none());
+
+        // The next direct update continues in V2.
+        let next = executor.run_update_v2().unwrap();
+        assert_v2_observation(&next);
+    }
+
+    /// Live C2 observation-export variant negatives: both flip directions
+    /// preserve every common receipt accessor exactly, so only the deleted
+    /// variant check could admit them; the export must reject with the exact
+    /// checkpoint-binding code, leave the live state untouched, and stay
+    /// retryable with the original observation.
+    #[test]
+    fn observation_export_rejects_opposite_variant_receipts_with_identical_commons() {
+        use crate::native_training_store_run_v2::{
+            decode_train_run_v2, test_fixture_bytes_environment_randomization_v2,
+            NativeRunEnvironmentTrajectoryContractV1,
+        };
+        use crate::runtime_decks::runtime_deck_by_id;
+
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let burn_id = runtime_deck_by_id("Burn").unwrap().id;
+        let flip_observation = |observation: &NativeTrainingUpdateObservationV2| {
+            let mut flipped = observation.clone();
+            for episode in &mut flipped.episodes {
+                let flipped_receipt = episode
+                    .full_trajectory_receipt
+                    .variant_flipped_preserving_commons_for_test_v2([burn_id, burn_id]);
+                assert_eq!(
+                    flipped_receipt.common_accessor_tuple_for_test_v2(),
+                    episode
+                        .full_trajectory_receipt
+                        .common_accessor_tuple_for_test_v2(),
+                    "the flip must preserve every common accessor exactly"
+                );
+                assert_ne!(
+                    flipped_receipt.is_environment_randomization_v2(),
+                    episode
+                        .full_trajectory_receipt
+                        .is_environment_randomization_v2(),
+                    "only the variant toggles"
+                );
+                episode.full_trajectory_receipt = flipped_receipt;
+            }
+            flipped
+        };
+
+        // Direction 1: Legacy executor, V2-variant receipts.
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let mut legacy_executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            burn_config_v1(2),
+            &manifest,
+            &payload,
+        )
+        .unwrap();
+        let observation = legacy_executor.run_update_v2().unwrap();
+        let baseline = legacy_executor
+            .checkpoint_candidate_for_observation_v2(&observation)
+            .expect("the genuine observation must export first");
+        let progress_before = legacy_executor.progress();
+        let flipped = flip_observation(&observation);
+        let error = legacy_executor
+            .checkpoint_candidate_for_observation_v2(&flipped)
+            .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding
+        );
+        assert_eq!(error.code(), "checkpoint_observation_mismatch");
+        assert_eq!(legacy_executor.progress(), progress_before);
+        let retried = legacy_executor
+            .checkpoint_candidate_for_observation_v2(&observation)
+            .expect("the original observation must stay exportable");
+        assert_eq!(retried.digests(), baseline.digests());
+
+        // Direction 2: V2-sealed executor, Legacy-variant receipts.
+        let v2_run =
+            decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2()).unwrap();
+        let seed_candidate = legacy_executor.checkpoint_candidate_v1().unwrap();
+        let mut v2_executor = NativeTrainingExecutorV1::from_checkpoint_candidate_run_bound_v2(
+            burn_config_v1(2),
+            &seed_candidate,
+            &v2_run,
+        )
+        .unwrap();
+        assert_eq!(
+            v2_executor.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        let observation = v2_executor.run_update_v2().unwrap();
+        let baseline = v2_executor
+            .checkpoint_candidate_for_observation_v2(&observation)
+            .expect("the genuine V2 observation must export first");
+        let progress_before = v2_executor.progress();
+        let flipped = flip_observation(&observation);
+        let error = v2_executor
+            .checkpoint_candidate_for_observation_v2(&flipped)
+            .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            NativeTrainingExecutorErrorKindV1::CheckpointBinding
+        );
+        assert_eq!(error.code(), "checkpoint_observation_mismatch");
+        assert_eq!(v2_executor.progress(), progress_before);
+        let retried = v2_executor
+            .checkpoint_candidate_for_observation_v2(&observation)
+            .expect("the original V2 observation must stay exportable");
+        assert_eq!(retried.digests(), baseline.digests());
+    }
+
+    /// Live C2 executor error-contract pin: a public `run_update_v2` on a
+    /// narrow run-bound V2 genesis executor with an armed pair-zero root
+    /// drift must surface exactly the Rollout kind and the
+    /// `trainer_environment_window_preflight_rejected` code, with the live
+    /// checkpoint and progress untouched.
+    #[test]
+    fn public_run_update_surfaces_the_window_preflight_error_contract() {
+        use crate::native_full_episode_trajectory_v2::{
+            arm_window_pair_corruption_for_test_v2, NativeWindowPairCorruptionForTestV2,
+        };
+        use crate::native_training_store_run_v2::{
+            decode_train_run_v2, test_fixture_bytes_environment_randomization_v2,
+        };
+
+        let _lock = crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1();
+        let v2_run =
+            decode_train_run_v2(&test_fixture_bytes_environment_randomization_v2()).unwrap();
+        let (manifest, payload) = common_model_snapshot_paths_v1();
+        let mut executor = NativeTrainingExecutorV1::from_common_model_snapshot_run_bound_v2(
+            run_matched_config_v1(&v2_run),
+            &manifest,
+            &payload,
+            &v2_run,
+        )
+        .unwrap();
+        let progress_before = executor.progress();
+        let facts_before = executor.checkpoint_candidate_v1().unwrap();
+
+        let _corruption = arm_window_pair_corruption_for_test_v2(
+            0,
+            NativeWindowPairCorruptionForTestV2::PairRootDrift,
+        );
+        let error = executor.run_update_v2().unwrap_err();
+        assert_eq!(error.kind(), NativeTrainingExecutorErrorKindV1::Rollout);
+        assert_eq!(
+            error.code(),
+            "trainer_environment_window_preflight_rejected"
+        );
+        assert_eq!(executor.progress(), progress_before);
+        assert_eq!(
+            executor.checkpoint_candidate_v1().unwrap().digests(),
+            facts_before.digests(),
+            "a rejected preflight must leave the live checkpoint untouched"
+        );
     }
 }

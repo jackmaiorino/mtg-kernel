@@ -11,9 +11,9 @@ use crate::async_flat_scored_rollout_v1::{
     AsyncFlatScoredRolloutErrorV1, AsyncFlatScoredRolloutMetricsV1, AsyncFlatScoredRolloutResultV1,
     AsyncFlatScoredWorkerPhaseV1, FlatBatchScorerCore, FlatBatchScorerErrorV1,
     FlatScoredExecutionScheduleV1, FlatScoredFamilyCore, FlatScoredObserverPhaseV1,
-    FlatScoredSelectedEventCore, FlatScoredTerminalEventV1, FlatScoredTrajectoryObserverCore,
-    RoundDecisionCore, ASYNC_FLAT_SCORED_SAMPLER_ID_V1, ASYNC_FLAT_SCORED_SAMPLER_VERSION_V1,
-    ASYNC_FLAT_SCORED_SPLITMIX_GAMMA_V1,
+    FlatScoredSelectedEventCore, FlatScoredSessionEnvironmentV1, FlatScoredTerminalEventV1,
+    FlatScoredTrajectoryObserverCore, RoundDecisionCore, ASYNC_FLAT_SCORED_SAMPLER_ID_V1,
+    ASYNC_FLAT_SCORED_SAMPLER_VERSION_V1, ASYNC_FLAT_SCORED_SPLITMIX_GAMMA_V1,
 };
 use crate::async_rollout::{AsyncRolloutEpisodeV1, AsyncRolloutTerminalV1};
 use crate::async_rollout_v2::{
@@ -33,6 +33,9 @@ use crate::flat_policy_v2::{
     FLAT_POLICY_TYPED_LAYOUT_VERSION_V2, FLAT_SCORER_ACTION_REF_VERSION_V2,
     FLAT_SCORER_PACKET_VERSION_V2, FLAT_SCORER_VISIBLE_MANIFEST_V2,
     FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V2,
+};
+use crate::native_full_episode_trajectory_v2::{
+    NativeEnvironmentWindowPreflightAuthorityV2, NativeTrainingTrajectoryReceiptV2,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::rl::{TerminalClassificationV1, TerminalSafeCodeV2};
@@ -177,8 +180,7 @@ pub(crate) struct FlatScoredTerminalEventV2 {
     pub(crate) terminal: AsyncRolloutTerminalV1,
     pub(crate) learner_action_count: u64,
     pub(crate) learner_trace_hash: u64,
-    pub(crate) native_full_trajectory_receipt:
-        Option<crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1>,
+    pub(crate) native_full_trajectory_receipt: Option<NativeTrainingTrajectoryReceiptV2>,
 }
 
 pub(crate) trait FlatScoredTrajectoryObserverV2: Sized {
@@ -771,15 +773,35 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV2 {
         config: &AsyncRolloutConfigV2,
         episode_id: u64,
         environment_seed: u64,
+        environment: FlatScoredSessionEnvironmentV1,
     ) -> Result<FastActorSessionV1, ()> {
-        FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
-            episode_id,
-            environment_seed,
-            config.max_physical_decisions,
-            config.max_policy_steps,
-            config.deck_ids.clone(),
-        )
-        .map_err(|_| ())
+        // Exhaustive by session environment: legacy execution keeps the
+        // frozen flat-action V2 reset exactly, while the environment
+        // randomization V2 projection selects the combined activation
+        // boundary, where `environment_seed` is the full-width shared pair
+        // root the frozen trainer schedule derived.
+        match environment {
+            FlatScoredSessionEnvironmentV1::Legacy => {
+                FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+                    episode_id,
+                    environment_seed,
+                    config.max_physical_decisions,
+                    config.max_policy_steps,
+                    config.deck_ids.clone(),
+                )
+                .map_err(|_| ())
+            }
+            FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2 => {
+                FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+                    episode_id,
+                    environment_seed,
+                    config.max_physical_decisions,
+                    config.max_policy_steps,
+                    config.deck_ids.clone(),
+                )
+                .map_err(|_| ())
+            }
+        }
     }
 
     fn encode_packet(
@@ -1056,6 +1078,7 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v2<O: FlatScoredTrajectoryO
         config,
         FlatScoredExecutionScheduleV1::Legacy,
         None,
+        None,
         scorer,
         observer,
     )
@@ -1081,6 +1104,32 @@ pub(crate) fn run_async_flat_scored_rollout_native_observed_v2<
     run_async_flat_scored_rollout_observed_with_schedule_v2(
         config,
         FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed },
+        None,
+        ladder_opponent,
+        scorer,
+        observer,
+    )
+}
+
+/// Internal environment randomization V2 native-trainer execution path. The
+/// caller must surrender the move-only whole-window preflight authority; the
+/// shared core validates it against this exact window and consumes it before
+/// result reservation, channel creation, worker spawn, or any session reset.
+pub(crate) fn run_async_flat_scored_rollout_native_environment_randomization_v2<
+    O: FlatScoredTrajectoryObserverV2,
+>(
+    config: AsyncRolloutConfigV2,
+    base_seed: u64,
+    environment_authority: NativeEnvironmentWindowPreflightAuthorityV2,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    scorer: &mut impl FlatBatchScorerV2,
+    observer: O,
+) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
+{
+    run_async_flat_scored_rollout_observed_with_schedule_v2(
+        config,
+        FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { base_seed },
+        Some(environment_authority),
         ladder_opponent,
         scorer,
         observer,
@@ -1090,6 +1139,7 @@ pub(crate) fn run_async_flat_scored_rollout_native_observed_v2<
 fn run_async_flat_scored_rollout_observed_with_schedule_v2<O: FlatScoredTrajectoryObserverV2>(
     config: AsyncRolloutConfigV2,
     execution_schedule: FlatScoredExecutionScheduleV1,
+    environment_authority: Option<NativeEnvironmentWindowPreflightAuthorityV2>,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     scorer: &mut impl FlatBatchScorerV2,
     observer: O,
@@ -1100,6 +1150,7 @@ fn run_async_flat_scored_rollout_observed_with_schedule_v2<O: FlatScoredTrajecto
     match run_async_flat_scored_rollout_core::<FlatScoredFamilyV2, _, _>(
         config,
         execution_schedule,
+        environment_authority,
         ladder_opponent,
         &mut scorer,
         observer,
@@ -1286,6 +1337,7 @@ mod tests {
             &shaped,
             0,
             crate::rl::derive_env_seed(shaped.environment_seed, 0),
+            FlatScoredSessionEnvironmentV1::Legacy,
         )
         .unwrap();
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
@@ -1671,5 +1723,269 @@ mod tests {
                 }
             )
         ));
+    }
+
+    /// Live C2 schedule/authority diagonal at the shared rollout core: a V2
+    /// schedule without its consumed window authority, a V2 schedule with a
+    /// foreign-window authority, and a legacy native schedule carrying an
+    /// authority all reject before result reservation, channel creation,
+    /// worker spawn, or any session reset.
+    #[test]
+    fn rollout_core_rejects_every_off_diagonal_schedule_authority_pairing() {
+        use crate::async_flat_scored_rollout_v1::{
+            acquire_async_flat_scored_test_guard_v1, acquire_async_flat_scored_test_lock_v1,
+            rollout_construction_count_scope_v2,
+        };
+        use crate::native_full_episode_trajectory_v2::preflight_native_environment_window_v2;
+        use crate::runtime_decks::runtime_deck_by_id;
+
+        struct UnreachableScorerV2;
+        impl FlatBatchScorerV2 for UnreachableScorerV2 {
+            fn score_batch_v2(
+                &mut self,
+                _batch: &FlatScoringBatchViewV2<'_>,
+                _action_logits: &mut [f32],
+                _values: &mut [f32],
+            ) -> Result<(), FlatBatchScorerErrorV2> {
+                unreachable!("a rejected rollout must never score")
+            }
+        }
+
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        let guard = acquire_async_flat_scored_test_guard_v1();
+        let base_seed = 71_501_u64;
+        let rally_hash = runtime_deck_by_id("Rally").unwrap().runtime_deck_hash;
+        let mint_authority = |first: u64, count: u64| {
+            preflight_native_environment_window_v2(
+                base_seed,
+                first,
+                count,
+                &["Rally".to_owned(), "Rally".to_owned()],
+                [rally_hash; 2],
+            )
+            .map_err(|_| ())
+            .unwrap_or_else(|()| panic!("the probe window must preflight"))
+        };
+
+        // (V2 schedule, no authority): rejected.
+        {
+            let scope = rollout_construction_count_scope_v2();
+            let mut scorer = UnreachableScorerV2;
+            let error = run_async_flat_scored_rollout_observed_with_schedule_v2(
+                config(2),
+                FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 {
+                    base_seed,
+                },
+                None,
+                None,
+                &mut scorer,
+                NoopFlatScoredTrajectoryObserverV2,
+            )
+            .map(|_| ())
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                AsyncFlatScoredObservedRunErrorV2::Rollout(
+                    AsyncFlatScoredRolloutErrorV2::BrokerProtocolViolation
+                )
+            ));
+            assert_eq!(scope.counts(), (0, 0, 0, 0));
+        }
+
+        // (V2 schedule, foreign-window authority): rejected before any
+        // construction; minted for episodes 2..4 while the config runs 0..2.
+        {
+            let scope = rollout_construction_count_scope_v2();
+            let mut scorer = UnreachableScorerV2;
+            let foreign = mint_authority(2, 2);
+            let error = run_async_flat_scored_rollout_observed_with_schedule_v2(
+                config(2),
+                FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 {
+                    base_seed,
+                },
+                Some(foreign),
+                None,
+                &mut scorer,
+                NoopFlatScoredTrajectoryObserverV2,
+            )
+            .map(|_| ())
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                AsyncFlatScoredObservedRunErrorV2::Rollout(
+                    AsyncFlatScoredRolloutErrorV2::BrokerProtocolViolation
+                )
+            ));
+            assert_eq!(scope.counts(), (0, 0, 0, 0));
+        }
+
+        // (public legacy schedule, authority present): rejected. Together
+        // with the native-trainer arm below this closes the schedule side of
+        // the matrix.
+        {
+            let scope = rollout_construction_count_scope_v2();
+            let mut scorer = UnreachableScorerV2;
+            let stray = mint_authority(0, 2);
+            let error = run_async_flat_scored_rollout_observed_with_schedule_v2(
+                config(2),
+                FlatScoredExecutionScheduleV1::Legacy,
+                Some(stray),
+                None,
+                &mut scorer,
+                NoopFlatScoredTrajectoryObserverV2,
+            )
+            .map(|_| ())
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                AsyncFlatScoredObservedRunErrorV2::Rollout(
+                    AsyncFlatScoredRolloutErrorV2::BrokerProtocolViolation
+                )
+            ));
+            assert_eq!(scope.counts(), (0, 0, 0, 0));
+        }
+
+        // (legacy native schedule, authority present): rejected.
+        {
+            let scope = rollout_construction_count_scope_v2();
+            let mut scorer = UnreachableScorerV2;
+            let stray = mint_authority(0, 2);
+            let error = run_async_flat_scored_rollout_observed_with_schedule_v2(
+                config(2),
+                FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed },
+                Some(stray),
+                None,
+                &mut scorer,
+                NoopFlatScoredTrajectoryObserverV2,
+            )
+            .map(|_| ())
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                AsyncFlatScoredObservedRunErrorV2::Rollout(
+                    AsyncFlatScoredRolloutErrorV2::BrokerProtocolViolation
+                )
+            ));
+            assert_eq!(scope.counts(), (0, 0, 0, 0));
+        }
+        assert_eq!(guard.legacy_session_reset_count(), 0);
+        assert_eq!(guard.environment_v2_session_reset_count(), 0);
+    }
+
+    /// Live C2: the V1 family explicitly rejects the environment V2
+    /// projection at its reset seam, so a V2 schedule driven through the V1
+    /// family fails in the worker reset phase with zero successful resets of
+    /// either mode, while the same probe proves the run got past the entry
+    /// gate (spawn happened).
+    #[test]
+    fn v1_family_rejects_environment_v2_reset_with_zero_successful_resets() {
+        use crate::async_flat_scored_rollout_v1::{
+            acquire_async_flat_scored_test_guard_v1, acquire_async_flat_scored_test_lock_v1,
+            rollout_construction_count_scope_v2, run_async_flat_scored_rollout_core,
+            AsyncFlatScoredObservedRunErrorV1, AsyncFlatScoredRolloutErrorV1, FlatScoredFamilyV1,
+            FlatScoredSessionEnvironmentV1,
+        };
+        use crate::native_full_episode_trajectory_v2::preflight_native_environment_window_v2;
+        use crate::runtime_decks::runtime_deck_by_id;
+
+        // Direct seam proof: the family rejects before any allocation.
+        assert!(FlatScoredFamilyV1::reset_session(
+            &config(2),
+            0,
+            71_501,
+            FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2,
+        )
+        .is_err());
+
+        // Whole-core proof with a scorer adapter over the V1 packet family.
+        struct UnreachableScorerCoreV1;
+        impl crate::async_flat_scored_rollout_v1::FlatBatchScorerCore<FlatScoredFamilyV1>
+            for UnreachableScorerCoreV1
+        {
+            fn score_batch_core(
+                &mut self,
+                _contract: <FlatScoredFamilyV1 as FlatScoredFamilyCore>::Contract,
+                _decisions: &[RoundDecisionCore<FlatScoredFamilyV1>],
+                _action_offsets: &[usize],
+                _action_logits: &mut [f32],
+                _values: &mut [f32],
+            ) -> Result<(), FlatBatchScorerErrorV1> {
+                unreachable!("a V1-family V2 run must fail at reset, before scoring")
+            }
+        }
+        struct NoopObserverCoreV1;
+        impl
+            crate::async_flat_scored_rollout_v1::FlatScoredTrajectoryObserverCore<
+                FlatScoredFamilyV1,
+            > for NoopObserverCoreV1
+        {
+            type Error = std::convert::Infallible;
+            type Output = ();
+            const OBSERVES_TRAJECTORY: bool = false;
+            fn observe_selected_core(
+                &mut self,
+                _event: FlatScoredSelectedEventCore<'_, FlatScoredFamilyV1>,
+            ) -> Result<(), Self::Error> {
+                Ok(())
+            }
+            fn observe_terminal_core(
+                &mut self,
+                _event: FlatScoredTerminalEventV1,
+            ) -> Result<(), Self::Error> {
+                Ok(())
+            }
+            fn finish_core(self) -> Result<Self::Output, Self::Error> {
+                Ok(())
+            }
+        }
+
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        let guard = acquire_async_flat_scored_test_guard_v1();
+        let scope = rollout_construction_count_scope_v2();
+        let base_seed = 71_501_u64;
+        let rally_hash = runtime_deck_by_id("Rally").unwrap().runtime_deck_hash;
+        let authority = preflight_native_environment_window_v2(
+            base_seed,
+            0,
+            2,
+            &["Rally".to_owned(), "Rally".to_owned()],
+            [rally_hash; 2],
+        )
+        .map_err(|_| ())
+        .expect("the probe window must preflight");
+        let mut scorer = UnreachableScorerCoreV1;
+        let error = run_async_flat_scored_rollout_core::<FlatScoredFamilyV1, _, _>(
+            config(2),
+            FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { base_seed },
+            Some(authority),
+            None,
+            &mut scorer,
+            NoopObserverCoreV1,
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            AsyncFlatScoredObservedRunErrorV1::Rollout(
+                AsyncFlatScoredRolloutErrorV1::WorkerFailed { .. }
+            )
+        ));
+        let (reservations, message_channels, control_channels, spawns) = scope.counts();
+        assert_eq!(
+            (reservations, message_channels),
+            (1, 1),
+            "the run passed the entry gate before the family rejected"
+        );
+        assert!(control_channels >= 1 && spawns >= 1);
+        assert_eq!(
+            guard.legacy_session_reset_count(),
+            0,
+            "the V1 family must not fall back to a legacy reset"
+        );
+        assert_eq!(
+            guard.environment_v2_session_reset_count(),
+            0,
+            "a V1-family rejection must never count as a successful V2 reset"
+        );
     }
 }
