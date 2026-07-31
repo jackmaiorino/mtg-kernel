@@ -1787,11 +1787,11 @@ mod tests {
         let mut drifted_package = legacy.record().package.clone();
         drifted_package.name.push('x');
         let mut drifted_toolchain = legacy.record().toolchain.clone();
-        drifted_toolchain.rustc_version.push('x');
+        drifted_toolchain.rustc_release.push('x');
         let mut drifted_source = legacy.record().source.clone();
         drifted_source.source_tree_sha256.push('0');
         let mut drifted_runtime = legacy.record().runtime.clone();
-        drifted_runtime.os.push('x');
+        drifted_runtime.os_system.push('x');
         for run in [&legacy, &v2] {
             let record = run.record();
             let error = require_captured_values_match_run_v2(
