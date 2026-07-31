@@ -39,11 +39,19 @@ const PRE_TRANSFORM_BINDING_IDENTITY_V1: &str =
     "sha256-length-framed-retained-action-semantic-operational-core-ref-object-scorer-projection-canonical-json-tail-v1";
 const PRE_TRANSFORM_BINDING_ENCODING_V1: &str =
     "ordered typed rows; atom=u32be(label_len)||label||u64be(value_len)||value; integer and f32-bit arrays are little-endian; JSON and digest blocks are raw bytes";
-const SLOT69_V1: usize = 69;
+/// `pub(super)` so the sibling action-block diagnostic can validate the
+/// retained PRE -> FULL relation against this exact repair coordinate without
+/// duplicating the authority as a second magic number.
+pub(super) const SLOT69_V1: usize = 69;
 const ACTION_NON_DIGEST_INGRESS_DIM_V1: usize = ACTION_EXPLICIT_END_V1 + HIDDEN_DIM_V1;
 
+/// Visibility is `pub(super)` (not private) solely so the sibling
+/// `action_block_gradient_diagnostic_v1` module can reuse this frozen
+/// transform instead of recreating it. The whole
+/// `checkpoint_reliance_probe_v1` tree is `#[cfg(test)]`, so this widens no
+/// production surface.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DigestGateV1 {
+pub(super) enum DigestGateV1 {
     Full,
     Zero,
     Scaled(u32),
@@ -72,8 +80,9 @@ impl DigestGateV1 {
     }
 }
 
+/// `pub(super)` for the same test-only reuse reason as [`DigestGateV1`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AdmissionTransformErrorV1 {
+pub(super) enum AdmissionTransformErrorV1 {
     ActionShape,
     ActionKind,
     ActionFlag,
@@ -113,7 +122,10 @@ fn exact_positive_zero_v1(value: f32) -> bool {
     value.to_bits() == 0
 }
 
-fn repair_and_gate_v1(
+/// `pub(super)` so the sibling action-block gradient diagnostic reuses this
+/// exact repair-and-gate transform rather than recreating it. Behaviour is
+/// unchanged.
+pub(super) fn repair_and_gate_v1(
     baseline: &NativeFlatDecisionTensorV2,
     actions: &[FlatScorerActionCoreV2],
     gate: DigestGateV1,
@@ -329,7 +341,9 @@ fn assert_only_slot69_and_digest_may_change_v1(
     }
 }
 
-fn synthetic_action_tensor_v1(
+/// `pub(super)` so the sibling action-block gradient diagnostic builds its
+/// fixtures from the same synthetic tensor shape this module already pins.
+pub(super) fn synthetic_action_tensor_v1(
     kinds_and_flags: &[(FlatScorerActionKindV2, u16)],
 ) -> (NativeFlatDecisionTensorV2, Vec<FlatScorerActionCoreV2>) {
     let mut tensor = synthetic_tensor_v1(1, kinds_and_flags.len());

@@ -105,6 +105,16 @@ pub(super) fn clear_resident_device_state_for_test_v1() {
     *resident_device_state_slot_v1() = None;
 }
 
+/// Stronger dedicated-process gate: no resident entry and no prior import or
+/// reuse event may have occurred. Counters are monotonic for the process, so
+/// clearing the slot cannot manufacture freshness.
+#[cfg(test)]
+pub(crate) fn resident_device_process_is_fresh_for_test_v1() -> bool {
+    resident_device_state_slot_v1().is_none()
+        && RESIDENT_IMPORT_COUNT_V1.load(std::sync::atomic::Ordering::Relaxed) == 0
+        && RESIDENT_REUSE_COUNT_V1.load(std::sync::atomic::Ordering::Relaxed) == 0
+}
+
 fn named_tensors_bit_identical_v1(
     left: &[NativeNamedParameterV1],
     right: &[NativeNamedParameterV1],
@@ -201,17 +211,33 @@ pub(super) fn validate_transported_logit_row_v2(
 /// versa) and the two widths safely share the single
 /// `RESIDENT_DEVICE_STATE_V1` slot: a width switch is just a cache miss that
 /// re-imports, never silent cross-contamination.
+/// The `capture_named_gradients` selector exists only under `cfg(test)`
+/// (authority #136). In a non-test build the parameter is absent from the
+/// signature, the capture branch is absent from the compiled body, and the
+/// result's `gradients` field stays the same empty vector it has always
+/// been -- production carries no selector, template, branch, or extra
+/// return.
 fn train_step_cuda_burn_dense_inner_v1(
     snapshot: NativePolicyValueTrainSnapshotV1,
     wide: bool,
     groups: &[NativePolicyPhysicalDecisionV1<'_>],
     value_coefficient: f32,
     learning_rate: f32,
-) -> Result<(NativePolicyTrainStepResultV1, NativePolicyValueTrainSnapshotV1), NativePolicyTrainErrorV1>
-{
+    #[cfg(test)] capture_named_gradients: bool,
+) -> Result<
+    (
+        NativePolicyTrainStepResultV1,
+        NativePolicyValueTrainSnapshotV1,
+    ),
+    NativePolicyTrainErrorV1,
+> {
     if groups.is_empty() {
         return Err(NativePolicyTrainErrorV1::EmptyBatch);
     }
+    // The capture template is the input snapshot's OWN 33 named parameters.
+    // The device import borrows the snapshot, so the capture branch reads
+    // `snapshot.parameters` in place: no clone is performed for any
+    // capture-false caller, and none at all.
     // Flatten every substep in order, retaining group structure.
     let mut views = Vec::new();
     let mut selected_action_indices = Vec::new();
@@ -393,9 +419,52 @@ fn train_step_cuda_burn_dense_inner_v1(
             code: "cuda-burn-dense-bridge-value-cardinality",
         });
     }
+    // The sole accumulated-gradient apply point.
+    #[cfg(not(test))]
     device_state
         .apply_accumulated_v1(accumulator, learning_rate)
         .map_err(bridge_error_v1)?;
+    #[cfg(test)]
+    let captured_named_gradients: Vec<NativeNamedParameterV1> = if capture_named_gradients {
+        let capture_template = &snapshot.parameters;
+        // Fail closed on the literal frozen cardinality before the export.
+        if capture_template.len() != 33 {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-capture-cardinality",
+            });
+        }
+        let captured = device_state
+            .apply_accumulated_with_named_gradient_export_v1(
+                accumulator,
+                learning_rate,
+                capture_template,
+            )
+            .map_err(bridge_error_v1)?;
+        // Fail closed on exact count, names, order, shapes, and finite
+        // values before anything downstream may read the stream.
+        if captured.len() != 33 || captured.len() != capture_template.len() {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-capture-cardinality",
+            });
+        }
+        for (produced, expected) in captured.iter().zip(capture_template) {
+            if produced.name != expected.name
+                || produced.shape != expected.shape
+                || produced.values.len() != expected.values.len()
+                || produced.values.iter().any(|value| !value.is_finite())
+            {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-capture-manifest",
+                });
+            }
+        }
+        captured
+    } else {
+        device_state
+            .apply_accumulated_v1(accumulator, learning_rate)
+            .map_err(bridge_error_v1)?;
+        Vec::new()
+    };
 
     // Tolerance-gate the CUDA outputs against the transported scorer bits,
     // then build every evidence field from the transported bits in the exact
@@ -855,7 +924,10 @@ fn train_step_cuda_burn_dense_inner_v1(
             adam_step,
             selected_outputs,
             physical_terms,
+            #[cfg(not(test))]
             gradients: Vec::new(),
+            #[cfg(test)]
+            gradients: captured_named_gradients,
             scorer_bias_gauge,
         },
         updated_snapshot,
@@ -880,12 +952,65 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         groups,
         value_coefficient,
         learning_rate,
+        #[cfg(test)]
+        false,
     )?;
-    *state =
-        NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &updated_snapshot)
-            .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
-                code: "cuda-burn-dense-bridge-state-reimport-failure",
-            })?;
+    *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+        code: "cuda-burn-dense-bridge-state-reimport-failure",
+    })?;
+    Ok(result)
+}
+
+/// Diagnostic-only frozen-width sibling of
+/// [`train_step_cuda_burn_dense_v1`] (authority #136).
+///
+/// Same inner update and same validated-snapshot commit as the frozen
+/// wrapper above; the only difference is that it requests named-gradient
+/// capture and requires all 33 tensors to come back. It exists only under
+/// `cfg(test)`, so no production caller can reach it and the frozen wrapper
+/// is byte-semantics-equivalent to its pre-#136 form.
+#[cfg(test)]
+pub(crate) fn train_step_cuda_burn_dense_capture_named_gradients_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_coefficient: f32,
+    learning_rate: f32,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    let snapshot = state
+        .snapshot_v1()
+        .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-snapshot-failure",
+        })?;
+    let expected_tensor_count = snapshot.parameters.len();
+    if expected_tensor_count != 33 {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-capture-cardinality",
+        });
+    }
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        false,
+        groups,
+        value_coefficient,
+        learning_rate,
+        true,
+    )?;
+    if result.gradients.len() != 33 || result.gradients.len() != expected_tensor_count {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-capture-cardinality",
+        });
+    }
+    *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+        code: "cuda-burn-dense-bridge-state-reimport-failure",
+    })?;
     Ok(result)
 }
 
@@ -918,6 +1043,8 @@ pub(crate) fn train_step_cuda_burn_dense_wide_v1(
         groups,
         value_coefficient,
         learning_rate,
+        #[cfg(test)]
+        false,
     )?;
     *state = NativePolicyValueTrainStateWideV1::from_snapshot_wide_v1(
         state.model_v1().clone(),

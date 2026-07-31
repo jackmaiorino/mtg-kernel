@@ -14,9 +14,9 @@
 //! land mana are generated from metadata, while exceptional rules text is
 //! still composed explicitly below.
 //!
-//! The build also embeds a Git commit-tree integrity proof: build HEAD,
-//! clean/dirty status, and a deterministic SHA-256 over every tracked path,
-//! mode, type, and Git blob (or gitlink id). This is not a sealed-builder or
+//! The build also embeds a Git commit-tree integrity proof: build HEAD, its
+//! exact Git tree object, clean/dirty status, and a deterministic SHA-256 over
+//! every tracked path, mode, type, and Git blob (or gitlink id). This is not a sealed-builder or
 //! complete rustc-input attestation; it does not claim to capture toolchain,
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
@@ -371,6 +371,19 @@ fn configure_commit_tree_binding(repo_root: &Path) {
     {
         panic!("build HEAD binding is not a lowercase SHA-1 commit id");
     }
+    let treeish = format!("{head}^{{tree}}");
+    let tree = git_text(
+        repo_root,
+        &["rev-parse", "--verify", &treeish],
+        "build Git tree binding",
+    );
+    if tree.len() != 40
+        || !tree
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        panic!("build Git tree binding is not a lowercase SHA-1 tree id");
+    }
     let status = git_output(
         repo_root,
         &["status", "--porcelain=v1", "--untracked-files=all"],
@@ -379,6 +392,7 @@ fn configure_commit_tree_binding(repo_root: &Path) {
     let clean = status.is_empty();
     let tree_sha256 = tracked_tree_sha256(repo_root, &head);
     println!("cargo:rustc-env=MTG_KERNEL_BUILD_GIT_HEAD={head}");
+    println!("cargo:rustc-env=MTG_KERNEL_BUILD_GIT_TREE={tree}");
     println!("cargo:rustc-env=MTG_KERNEL_BUILD_GIT_CLEAN={clean}");
     println!("cargo:rustc-env=MTG_KERNEL_BUILD_TRACKED_TREE_SHA256={tree_sha256}");
     println!("cargo:rustc-env=MTG_KERNEL_BUILD_TRACKED_TREE_CONTRACT={TRACKED_TREE_HASH_CONTRACT}");

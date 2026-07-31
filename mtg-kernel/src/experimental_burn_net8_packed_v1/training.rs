@@ -725,6 +725,15 @@ impl ExperimentalDeviceTrainStateV1 {
     /// Canonicalizes the accumulated gauge gradient to exact zero, applies one
     /// Adam step over the accumulated gradients, and commits the candidate
     /// model and moments.
+    ///
+    /// This is the ordinary production entry point.
+    ///
+    /// In a non-test build this body is compiled from the `cfg(not(test))`
+    /// definition below: it takes no export argument, contains no export
+    /// branch, and returns no export value. Named-gradient capture exists
+    /// only under `cfg(test)`, so production carries the export neither in
+    /// its signature nor in its instruction stream.
+    #[cfg(not(test))]
     pub(crate) fn apply_accumulated_v1(
         &mut self,
         accumulator: burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
@@ -768,6 +777,95 @@ impl ExperimentalDeviceTrainStateV1 {
         self.adam_step = next_step;
         CudaAutodiffBackendV1::sync(&self.device)?;
         Ok(())
+    }
+
+    /// Test-build entry point. Arithmetically identical to the production
+    /// body above; it simply routes through the capture body with capture
+    /// disabled so both builds share one audited sequence under test.
+    #[cfg(test)]
+    pub(crate) fn apply_accumulated_v1(
+        &mut self,
+        accumulator: burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
+        learning_rate: f32,
+    ) -> Result<(), Box<dyn Error>> {
+        let exported = self.apply_accumulated_capture_v1(accumulator, learning_rate, None)?;
+        debug_assert!(exported.is_none());
+        Ok(())
+    }
+
+    /// Opt-in diagnostic variant: identical arithmetic to
+    /// [`Self::apply_accumulated_v1`], but additionally returns the 33 named
+    /// gradients read **after** gauge canonicalization and **before** Adam
+    /// consumes them.
+    ///
+    /// The read happens on gradients already materialized by the completed
+    /// backward pass, so it adds no work to any timed production region.
+    #[cfg(test)]
+    pub(crate) fn apply_accumulated_with_named_gradient_export_v1(
+        &mut self,
+        accumulator: burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
+        learning_rate: f32,
+        template: &[NativeNamedParameterV1],
+    ) -> Result<Vec<NativeNamedParameterV1>, Box<dyn Error>> {
+        self.apply_accumulated_capture_v1(accumulator, learning_rate, Some(template))?
+            .ok_or_else(|| training_error("named-gradient export was requested but not produced"))
+    }
+
+    /// Capture-capable body. Exists only under `cfg(test)`; no production
+    /// build compiles this function or its export branch.
+    #[cfg(test)]
+    fn apply_accumulated_capture_v1(
+        &mut self,
+        accumulator: burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
+        learning_rate: f32,
+        export_template: Option<&[NativeNamedParameterV1]>,
+    ) -> Result<Option<Vec<NativeNamedParameterV1>>, Box<dyn Error>> {
+        let mut accumulator = accumulator;
+        let mut gradients = accumulator.grads();
+        if gradients.len() != PARAMETER_TENSOR_COUNT_V1 {
+            return Err(training_error(format!(
+                "CUDA accumulated gradient tensor count mismatch: {} != {PARAMETER_TENSOR_COUNT_V1}",
+                gradients.len()
+            )));
+        }
+        let gauge_parameter = self
+            .model
+            .scorer
+            .output
+            .bias
+            .as_ref()
+            .ok_or_else(|| training_error("scorer output has no bias"))?;
+        let gauge_gradient = gradients
+            .remove::<CudaBackendV1, 1>(gauge_parameter.id)
+            .ok_or_else(|| training_error("scorer output bias gradient is missing"))?;
+        gradients.register(gauge_parameter.id, gauge_gradient.zeros_like());
+
+        // The single authorized export point: after gauge canonicalization,
+        // strictly before `DeviceAdamMapperV1` consumes `gradients`.
+        let exported_gradients = match export_template {
+            Some(template) => Some(export_named_state_v1(&self.model, &gradients, template)?),
+            None => None,
+        };
+
+        let next_step = self
+            .adam_step
+            .checked_add(1)
+            .ok_or_else(|| training_error("experimental Adam step overflow"))?;
+        let mut mapper = DeviceAdamMapperV1::new(
+            gradients,
+            &self.first_moments,
+            &self.second_moments,
+            next_step,
+            learning_rate,
+        )?;
+        let candidate_model = self.model.clone().map(&mut mapper);
+        let (candidate_first_moments, candidate_second_moments) = mapper.finish_v1()?;
+        self.model = candidate_model;
+        self.first_moments = candidate_first_moments;
+        self.second_moments = candidate_second_moments;
+        self.adam_step = next_step;
+        CudaAutodiffBackendV1::sync(&self.device)?;
+        Ok(exported_gradients)
     }
 }
 
