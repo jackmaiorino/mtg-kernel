@@ -143,6 +143,12 @@ pub(super) const DESIGN_DOCUMENT_SHA256_V1: &str =
 pub(super) const DESIGN_DOCUMENT_BYTE_COUNT_V1: u64 = 8_734;
 pub(super) const DESIGN_DOCUMENT_LINE_COUNT_V1: u64 = 159;
 
+/// The repaired-FULL value-coefficient screen's accepted design bytes.
+pub(super) const VALUE_COEFFICIENT_SCREEN_DESIGN_SHA256_V1: &str =
+    "c0d6c66190c12c52836c41a4e17fe551bbe26b1700c48258cc4d49cb33db1b54";
+pub(super) const VALUE_COEFFICIENT_SCREEN_DESIGN_BYTE_COUNT_V1: u64 = 2_885;
+pub(super) const VALUE_COEFFICIENT_SCREEN_DESIGN_LINE_COUNT_V1: u64 = 68;
+
 /// Pool3 opponent contract document, copied and rehashed, never retyped.
 pub(super) const POOL3_DOCUMENT_SHA256_V1: &str =
     "6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71";
@@ -185,10 +191,16 @@ const PREFLIGHT_LIVE_TEST_NAME_SUFFIX_V1: &str =
     "::action_block_gradient_preflight_seed949999_gpu1_v1";
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 const FORMAL_LIVE_TEST_NAME_SUFFIX_V1: &str = "::action_block_gradient_formal_six_unit_gpu1_v1";
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+const VALUE_COEFFICIENT_SCREEN_LIVE_TEST_NAME_SUFFIX_V1: &str =
+    "::value_coefficient_screen_three_unit_gpu1_v1";
 const PREFLIGHT_UPDATE_PAIR_SCHEMA_V1: &str =
     "mtg_kernel_action_block_gradient_preflight_update_pair/v1";
 const FORMAL_UNIT_TAPE_SCHEMA_V1: &str = "action-block-gradient-formal-unit-tape/v1";
 const FORMAL_MANIFEST_SCHEMA_V1: &str = "action-block-gradient-formal-manifest/v1";
+const VALUE_COEFFICIENT_SCREEN_UNIT_TAPE_SCHEMA_V1: &str = "value-coefficient-screen-unit-tape/v1";
+const VALUE_COEFFICIENT_SCREEN_SUMMARY_SCHEMA_V1: &str = "value-coefficient-screen-summary/v1";
+const VALUE_COEFFICIENT_SCREEN_MANIFEST_SCHEMA_V1: &str = "value-coefficient-screen-manifest/v1";
 
 // These values must be supplied while compiling the one live-preflight test
 // binary. `option_env!` embeds them without making ordinary feature builds
@@ -227,12 +239,37 @@ pub(super) const ACTION_ENCODER_COLUMNS_V1: usize = 259;
 
 /// Production loss and canonical-gauge Adam authorities, frozen as bits.
 pub(super) const VALUE_COEFFICIENT_BITS_V1: u32 = 0x3f00_0000;
+pub(super) const LOW_VALUE_COEFFICIENT_BITS_V1: u32 = 0x3d80_0000; // 0.0625f32
 pub(super) const LEARNING_RATE_BITS_V1: u32 = 0x3a83_126f;
 pub(super) const ADAM_BETA1_BITS_V1: u32 = 0x3f66_6666;
 pub(super) const ADAM_BETA2_BITS_V1: u32 = 0x3f7f_be77;
 pub(super) const ADAM_EPSILON_BITS_V1: u32 = 0x322b_cc77;
 pub(super) const ADAM_WEIGHT_DECAY_BITS_V1: u32 = 0x0000_0000;
 pub(super) const ADAM_AMSGRAD_V1: bool = false;
+
+/// Sealed exact authority for the only value-loss coefficients this
+/// diagnostic may send to CUDA or bind into update evidence. Keeping this as
+/// an enum rather than accepting arbitrary `f32`/`u32` values prevents a
+/// caller from constructing a self-consistent frame around an unapproved
+/// coefficient.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ValueCoefficientAuthorityV1 {
+    Baseline,
+    Low,
+}
+
+impl ValueCoefficientAuthorityV1 {
+    pub(super) const fn bits_v1(self) -> u32 {
+        match self {
+            Self::Baseline => VALUE_COEFFICIENT_BITS_V1,
+            Self::Low => LOW_VALUE_COEFFICIENT_BITS_V1,
+        }
+    }
+
+    pub(super) const fn value_v1(self) -> f32 {
+        f32::from_bits(self.bits_v1())
+    }
+}
 
 /// Fixed numerical envelope. Do not substitute the historical `0.03803`
 /// envelope or the experimental CPU/CUDA parity tolerances.
@@ -277,6 +314,20 @@ pub(super) const FORMAL_VALIDATION_COUNTS_V1: [[u32; 4]; BOOTSTRAP_UNIT_COUNT_V1
     [24, 13, 15, 12],
     [18, 12, 14, 20],
 ];
+
+/// The exploratory screen has three paired units and no bootstrap claim.
+pub(super) const VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1: usize = 3;
+pub(super) const VALUE_COEFFICIENT_SCREEN_REQUIRED_JOINT_UNITS_V1: usize = 2;
+pub(super) const VALUE_COEFFICIENT_SCREEN_ARTIFACT_COUNT_V1: usize = 11;
+pub(super) const VALUE_COEFFICIENT_SCREEN_TRAINING_SEEDS_V1: [u64;
+    VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1] = [952_001, 952_002, 952_003];
+pub(super) const VALUE_COEFFICIENT_SCREEN_VALIDATION_SEEDS_V1: [u64;
+    VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1] = [953_001, 953_002, 953_003];
+pub(super) const VALUE_COEFFICIENT_SCREEN_TRAINING_COUNTS_V1: [[u32; 4];
+    VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1] = [[29, 10, 10, 15], [24, 15, 14, 11], [37, 11, 9, 7]];
+pub(super) const VALUE_COEFFICIENT_SCREEN_VALIDATION_COUNTS_V1: [[u32; 4];
+    VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1] =
+    [[24, 16, 12, 12], [32, 10, 12, 10], [22, 15, 11, 16]];
 
 // ---------------------------------------------------------------------------
 // Opponent strata and pure schedule counts.
@@ -1103,6 +1154,66 @@ impl DiagnosticTapeAuthorityV1 for FormalSeedAuthorityV1 {
 
     fn allows_update_v1(&self) -> bool {
         self.role == FormalTapeRoleV1::Training
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ValueCoefficientScreenTapeRoleV1 {
+    Training,
+    Validation,
+}
+
+/// Private seed/count authority for the three-unit exploratory screen. The
+/// validation constructor can never authorize a training update.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ValueCoefficientScreenSeedAuthorityV1 {
+    unit_index: usize,
+    role: ValueCoefficientScreenTapeRoleV1,
+}
+
+impl ValueCoefficientScreenSeedAuthorityV1 {
+    fn training_v1(unit_index: usize) -> Self {
+        assert!(unit_index < VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1);
+        Self {
+            unit_index,
+            role: ValueCoefficientScreenTapeRoleV1::Training,
+        }
+    }
+
+    fn validation_v1(unit_index: usize) -> Self {
+        assert!(unit_index < VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1);
+        Self {
+            unit_index,
+            role: ValueCoefficientScreenTapeRoleV1::Validation,
+        }
+    }
+}
+
+impl DiagnosticTapeAuthorityV1 for ValueCoefficientScreenSeedAuthorityV1 {
+    fn seed_v1(&self) -> u64 {
+        match self.role {
+            ValueCoefficientScreenTapeRoleV1::Training => {
+                VALUE_COEFFICIENT_SCREEN_TRAINING_SEEDS_V1[self.unit_index]
+            }
+            ValueCoefficientScreenTapeRoleV1::Validation => {
+                VALUE_COEFFICIENT_SCREEN_VALIDATION_SEEDS_V1[self.unit_index]
+            }
+        }
+    }
+
+    fn expected_counts_v1(&self) -> [u32; 4] {
+        match self.role {
+            ValueCoefficientScreenTapeRoleV1::Training => {
+                VALUE_COEFFICIENT_SCREEN_TRAINING_COUNTS_V1[self.unit_index]
+            }
+            ValueCoefficientScreenTapeRoleV1::Validation => {
+                VALUE_COEFFICIENT_SCREEN_VALIDATION_COUNTS_V1[self.unit_index]
+            }
+        }
+    }
+
+    fn allows_update_v1(&self) -> bool {
+        self.role == ValueCoefficientScreenTapeRoleV1::Training
     }
 }
 
@@ -3478,6 +3589,7 @@ fn matches_native_manifest_v1(stream: &[NativeNamedParameterV1]) -> bool {
 /// published under a valid-looking digest.
 pub(super) fn frame_update_v1(
     treatment: &str,
+    value_coefficient: ValueCoefficientAuthorityV1,
     named_gradients: &[NativeNamedParameterV1],
     parameters_before: &[NativeNamedParameterV1],
     parameters_after: &[NativeNamedParameterV1],
@@ -3557,7 +3669,7 @@ pub(super) fn frame_update_v1(
     writer.u32_array_v1(
         "adam_authority_bits",
         &[
-            VALUE_COEFFICIENT_BITS_V1,
+            value_coefficient.bits_v1(),
             LEARNING_RATE_BITS_V1,
             ADAM_BETA1_BITS_V1,
             ADAM_BETA2_BITS_V1,
@@ -3694,6 +3806,7 @@ struct Promoted2Generation384GenesisSealV1(());
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 struct ValidatedActualArmV1 {
     treatment: ActualTreatmentV1,
+    value_coefficient: ValueCoefficientAuthorityV1,
     state: NativePolicyValueTrainStateV1,
     before: NativePolicyValueTrainSnapshotV1,
 }
@@ -3704,6 +3817,7 @@ struct ValidatedActualArmV1 {
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 struct ActualUpdateEvidenceV1 {
     treatment: ActualTreatmentV1,
+    value_coefficient: ValueCoefficientAuthorityV1,
     result: NativePolicyTrainStepResultV1,
     before: NativePolicyValueTrainSnapshotV1,
     after: NativePolicyValueTrainSnapshotV1,
@@ -3727,6 +3841,20 @@ struct ActualPairedUpdateV1 {
     half_state: NativePolicyValueTrainStateV1,
     full: ActualUpdateEvidenceV1,
     half: ActualUpdateEvidenceV1,
+    tape_frame: FramedWriterV1,
+}
+
+/// A coefficient-screen pair starts both arms from exact bit-identical FULL
+/// genesis snapshots. It intentionally carries no cross-arm gradient proof:
+/// changing the value-loss coefficient is expected to change gradients.
+/// Each arm is still independently loss-verified, Adam-replayed, finiteness
+/// checked, and delta-framed before either state becomes visible.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+struct ActualValueCoefficientPairedUpdateV1 {
+    baseline_state: NativePolicyValueTrainStateV1,
+    low_state: NativePolicyValueTrainStateV1,
+    baseline: ActualUpdateEvidenceV1,
+    low: ActualUpdateEvidenceV1,
     tape_frame: FramedWriterV1,
 }
 
@@ -3788,6 +3916,25 @@ fn genesis_snapshots_match_authority_v1(
         && named_streams_bit_equal_v1(&full.parameters, &restored_half)
         && full.scorer_bias_anchor_bits == genesis.scorer_bias_anchor_bits
         && half.scorer_bias_anchor_bits == genesis.scorer_bias_anchor_bits
+}
+
+/// Both coefficient-screen arms must be independent step-zero states loaded
+/// from the exact authoritative FULL parameter stream. This is stricter than
+/// merely requiring the two candidates to equal each other: a pair of equal
+/// but unauthoritative snapshots is rejected.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn full_genesis_twins_match_authority_v1(
+    baseline: &NativePolicyValueTrainSnapshotV1,
+    low: &NativePolicyValueTrainSnapshotV1,
+    genesis: &Promoted2Generation384GenesisV1,
+) -> bool {
+    snapshot_is_genesis_v1(baseline)
+        && snapshot_is_genesis_v1(low)
+        && named_streams_bit_equal_v1(&baseline.parameters, &genesis.full_parameters)
+        && named_streams_bit_equal_v1(&low.parameters, &genesis.full_parameters)
+        && named_streams_bit_equal_v1(&baseline.parameters, &low.parameters)
+        && baseline.scorer_bias_anchor_bits == genesis.scorer_bias_anchor_bits
+        && low.scorer_bias_anchor_bits == genesis.scorer_bias_anchor_bits
 }
 
 /// Re-forward every treatment tensor with the exact supplied genesis state.
@@ -3861,6 +4008,7 @@ fn gauge_bounds_match_backward_action_counts_v1(
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn actual_result_matches_tape_v1(
     result: &NativePolicyTrainStepResultV1,
+    value_coefficient: ValueCoefficientAuthorityV1,
     before: &NativePolicyValueTrainSnapshotV1,
     after: &NativePolicyValueTrainSnapshotV1,
     tape: &ValidatedJoinedTapeForUpdateV1<'_>,
@@ -3962,8 +4110,7 @@ fn actual_result_matches_tape_v1(
             group_cursor += 1;
         }
     }
-    let loss = (policy_sum + f32::from_bits(VALUE_COEFFICIENT_BITS_V1) * value_sum)
-        / group_count_u32 as f32;
+    let loss = (policy_sum + value_coefficient.value_v1() * value_sum) / group_count_u32 as f32;
     if selected_cursor != substep_count
         || group_cursor != group_count
         || result.policy_sum.to_bits() != policy_sum.to_bits()
@@ -4247,6 +4394,8 @@ fn actual_updates_cross_arm_valid_v1(
 ) -> bool {
     if full.treatment != ActualTreatmentV1::Full
         || half.treatment != ActualTreatmentV1::Half
+        || full.value_coefficient != ValueCoefficientAuthorityV1::Baseline
+        || half.value_coefficient != ValueCoefficientAuthorityV1::Baseline
         || full.result.gradients.len() != NAMED_TENSOR_COUNT_V1
         || half.result.gradients.len() != NAMED_TENSOR_COUNT_V1
         || full.before.parameters.len() != NAMED_TENSOR_COUNT_V1
@@ -4317,6 +4466,7 @@ fn execute_validated_actual_arm_v1(
     tape: &ValidatedJoinedTapeForUpdateV1<'_>,
 ) -> Result<(NativePolicyValueTrainStateV1, ActualUpdateEvidenceV1), ActualUpdateErrorV1> {
     let treatment = arm.treatment;
+    let value_coefficient = arm.value_coefficient;
     let before = arm.before;
     let mut substep_groups: Vec<Vec<NativePolicySubstepV1<'_>>> = Vec::new();
     let mut terminal_returns: Vec<i8> = Vec::new();
@@ -4353,7 +4503,7 @@ fn execute_validated_actual_arm_v1(
     let result = crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_capture_named_gradients_v1(
         &mut arm.state,
         &groups,
-        f32::from_bits(VALUE_COEFFICIENT_BITS_V1),
+        value_coefficient.value_v1(),
         f32::from_bits(LEARNING_RATE_BITS_V1),
     )
     .map_err(|_| ActualUpdateErrorV1::CudaUpdate)?;
@@ -4367,12 +4517,13 @@ fn execute_validated_actual_arm_v1(
     if result.adam_step != 1 || after.adam_step != 1 {
         return Err(ActualUpdateErrorV1::WrongAdamStep);
     }
-    if !actual_result_matches_tape_v1(&result, &before, &after, tape) {
+    if !actual_result_matches_tape_v1(&result, value_coefficient, &before, &after, tape) {
         return Err(ActualUpdateErrorV1::ResultMismatch);
     }
     let deltas = derived_deltas_v1(&before.parameters, &after.parameters);
     let frame = frame_update_v1(
         treatment.label_v1(),
+        value_coefficient,
         &result.gradients,
         &before.parameters,
         &after.parameters,
@@ -4383,6 +4534,7 @@ fn execute_validated_actual_arm_v1(
     .map_err(ActualUpdateErrorV1::Frame)?;
     let evidence = ActualUpdateEvidenceV1 {
         treatment,
+        value_coefficient,
         result,
         before,
         after,
@@ -4429,6 +4581,7 @@ fn execute_actual_paired_update_v1(
     let (full_state, full) = execute_validated_actual_arm_v1(
         ValidatedActualArmV1 {
             treatment: ActualTreatmentV1::Full,
+            value_coefficient: ValueCoefficientAuthorityV1::Baseline,
             state: full_state,
             before: full_before,
         },
@@ -4440,6 +4593,7 @@ fn execute_actual_paired_update_v1(
     let (half_state, half) = execute_validated_actual_arm_v1(
         ValidatedActualArmV1 {
             treatment: ActualTreatmentV1::Half,
+            value_coefficient: ValueCoefficientAuthorityV1::Baseline,
             state: half_state,
             before: half_before,
         },
@@ -4456,6 +4610,79 @@ fn execute_actual_paired_update_v1(
         half_state,
         full,
         half,
+        tape_frame: validated_tape.frame,
+    })
+}
+
+/// Runs the value-coefficient screen's paired update from two exact FULL
+/// genesis twins. The two arms differ only in the sealed coefficient sent to
+/// the production grouped CUDA update and bound into the resulting evidence.
+///
+/// Unlike [`execute_actual_paired_update_v1`], this path deliberately does
+/// not apply the HALF transform's cross-arm gradient/delta identities: those
+/// identities are not valid when the loss itself differs. Each arm must
+/// independently clear the complete result, Adam, finiteness, and exact-delta
+/// lattice before the pair is returned.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn execute_actual_value_coefficient_paired_update_v1(
+    authority: &impl DiagnosticTapeAuthorityV1,
+    genesis: &Promoted2Generation384GenesisV1,
+    expected_deck_ids: &SessionDeckIdsV1,
+    expected_deck_hashes: SessionDeckHashesV1,
+    tape: &JoinedTapeV1,
+    baseline_state: NativePolicyValueTrainStateV1,
+    low_state: NativePolicyValueTrainStateV1,
+) -> Result<ActualValueCoefficientPairedUpdateV1, ActualUpdateErrorV1> {
+    let validated_tape = ValidatedJoinedTapeForUpdateV1::new_v1(
+        authority,
+        expected_deck_ids,
+        expected_deck_hashes,
+        tape,
+    )?;
+    let baseline_before = baseline_state
+        .snapshot_v1()
+        .map_err(|_| ActualUpdateErrorV1::SnapshotBefore)?;
+    let low_before = low_state
+        .snapshot_v1()
+        .map_err(|_| ActualUpdateErrorV1::SnapshotBefore)?;
+    if !snapshot_is_genesis_v1(&baseline_before) || !snapshot_is_genesis_v1(&low_before) {
+        return Err(ActualUpdateErrorV1::NonGenesisState);
+    }
+    if !full_genesis_twins_match_authority_v1(&baseline_before, &low_before, genesis) {
+        return Err(ActualUpdateErrorV1::GenesisParameterRelation);
+    }
+    state_matches_joined_tape_v1(&baseline_state, &validated_tape, ActualTreatmentV1::Full)?;
+    state_matches_joined_tape_v1(&low_state, &validated_tape, ActualTreatmentV1::Full)?;
+
+    let (baseline_state, baseline) = execute_validated_actual_arm_v1(
+        ValidatedActualArmV1 {
+            treatment: ActualTreatmentV1::Full,
+            value_coefficient: ValueCoefficientAuthorityV1::Baseline,
+            state: baseline_state,
+            before: baseline_before,
+        },
+        &validated_tape,
+    )?;
+    if !actual_update_matches_independent_adam_v1(&baseline) {
+        return Err(ActualUpdateErrorV1::AdamReplayMismatch);
+    }
+    let (low_state, low) = execute_validated_actual_arm_v1(
+        ValidatedActualArmV1 {
+            treatment: ActualTreatmentV1::Full,
+            value_coefficient: ValueCoefficientAuthorityV1::Low,
+            state: low_state,
+            before: low_before,
+        },
+        &validated_tape,
+    )?;
+    if !actual_update_matches_independent_adam_v1(&low) {
+        return Err(ActualUpdateErrorV1::AdamReplayMismatch);
+    }
+    Ok(ActualValueCoefficientPairedUpdateV1 {
+        baseline_state,
+        low_state,
+        baseline,
+        low,
         tape_frame: validated_tape.frame,
     })
 }
@@ -5197,6 +5424,48 @@ fn frame_formal_unit_tape_v1(
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn frame_value_coefficient_screen_unit_tape_v1(
+    training_authority: &ValueCoefficientScreenSeedAuthorityV1,
+    validation_authority: &ValueCoefficientScreenSeedAuthorityV1,
+    expected_deck_ids: &SessionDeckIdsV1,
+    expected_deck_hashes: SessionDeckHashesV1,
+    training: &JoinedTapeV1,
+    validation: &JoinedTapeV1,
+) -> Result<FramedWriterV1, TapeFramingErrorV1> {
+    if training_authority.role != ValueCoefficientScreenTapeRoleV1::Training
+        || validation_authority.role != ValueCoefficientScreenTapeRoleV1::Validation
+        || training_authority.unit_index != validation_authority.unit_index
+    {
+        return Err(TapeFramingErrorV1::CountsDisagreeWithSchedule);
+    }
+    validate_joined_tape_side_v1(
+        training_authority,
+        expected_deck_ids,
+        expected_deck_hashes,
+        training,
+    )?;
+    validate_joined_tape_side_v1(
+        validation_authority,
+        expected_deck_ids,
+        expected_deck_hashes,
+        validation,
+    )?;
+    if validation
+        .groups_per_stratum_v1()
+        .iter()
+        .any(|count| *count == 0)
+    {
+        return Err(TapeFramingErrorV1::EmptyStratumGroup);
+    }
+    let mut writer = FramedWriterV1::new_v1(VALUE_COEFFICIENT_SCREEN_UNIT_TAPE_SCHEMA_V1);
+    writer.u64_v1("unit_index", training_authority.unit_index as u64);
+    writer.u64_v1("episodes_per_tape", EPISODES_PER_TAPE_V1);
+    frame_joined_tape_side_v1(&mut writer, "training", training)?;
+    frame_joined_tape_side_v1(&mut writer, "validation", validation)?;
+    Ok(writer)
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn run_seed949999_preflight_repeat_v1(
     gpu: &ValidatedPreflightGpuV1,
     authorities: &PreflightLiveAuthoritiesV1,
@@ -5266,6 +5535,15 @@ struct FormalUnitArtifactsV1 {
     tape_frame: FramedWriterV1,
     full_update_frame: FramedWriterV1,
     half_update_frame: FramedWriterV1,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+struct ValueCoefficientScreenUnitArtifactsV1 {
+    unit_index: usize,
+    summary_input: ValueCoefficientScreenSummaryUnitInputV1,
+    tape_frame: FramedWriterV1,
+    production_update_frame: FramedWriterV1,
+    low_update_frame: FramedWriterV1,
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -5403,6 +5681,195 @@ fn run_formal_unit_v1(
         tape_frame,
         full_update_frame: paired.full.frame,
         half_update_frame: paired.half.frame,
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn value_coefficient_update_authority_payload_v1(
+    value_coefficient: ValueCoefficientAuthorityV1,
+) -> Vec<u8> {
+    let authorities = [
+        value_coefficient.bits_v1(),
+        LEARNING_RATE_BITS_V1,
+        ADAM_BETA1_BITS_V1,
+        ADAM_BETA2_BITS_V1,
+        ADAM_EPSILON_BITS_V1,
+        ADAM_WEIGHT_DECAY_BITS_V1,
+    ];
+    let mut payload = Vec::with_capacity(authorities.len() * 4);
+    for authority in authorities {
+        payload.extend_from_slice(&authority.to_le_bytes());
+    }
+    payload
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn run_value_coefficient_screen_unit_v1(
+    unit_index: usize,
+    gpu: &ValidatedPreflightGpuV1,
+    authorities: &PreflightLiveAuthoritiesV1,
+) -> ValueCoefficientScreenUnitArtifactsV1 {
+    require_bridge_gpu_binding_v1(gpu);
+    let training_authority = ValueCoefficientScreenSeedAuthorityV1::training_v1(unit_index);
+    let validation_authority = ValueCoefficientScreenSeedAuthorityV1::validation_v1(unit_index);
+    let production_state = fresh_state_from_parameters_v1(&authorities.genesis.full_parameters);
+    let low_state = fresh_state_from_parameters_v1(&authorities.genesis.full_parameters);
+    // The established neutral scorer proves the repaired FULL/HALF lineage.
+    // This H state is immutable tape-generation evidence and never updates.
+    let tape_half_state = fresh_state_from_parameters_v1(&authorities.genesis.half_parameters);
+
+    // Both tapes are generated at the common genesis before either
+    // coefficient arm updates. Low is a bit-identical FULL genesis twin, so
+    // the published actions are also exactly those Low would have produced.
+    let training_tape = run_neutral_tape_v1(
+        &training_authority,
+        authorities,
+        &production_state,
+        &tape_half_state,
+    );
+    let validation_tape = run_neutral_tape_v1(
+        &validation_authority,
+        authorities,
+        &production_state,
+        &tape_half_state,
+    );
+    let tape_frame = frame_value_coefficient_screen_unit_tape_v1(
+        &training_authority,
+        &validation_authority,
+        &authorities.deck_ids,
+        authorities.deck_hashes,
+        &training_tape,
+        &validation_tape,
+    )
+    .expect("value-coefficient training and validation tapes must bind as one unit");
+
+    let production_before = evaluate_held_out_loss_v1(
+        &production_state,
+        ActualTreatmentV1::Full,
+        &validation_tape,
+        true,
+    )
+    .expect("production-coefficient genesis held-out loss must evaluate");
+    let low_before =
+        evaluate_held_out_loss_v1(&low_state, ActualTreatmentV1::Full, &validation_tape, true)
+            .expect("low-coefficient genesis held-out loss must evaluate");
+    assert!(stratum_means_bit_equal_v1(
+        production_before.means,
+        low_before.means
+    ));
+    assert_eq!(
+        production_before.combined.to_bits(),
+        low_before.combined.to_bits()
+    );
+
+    require_bridge_gpu_binding_v1(gpu);
+    let paired = execute_actual_value_coefficient_paired_update_v1(
+        &training_authority,
+        &authorities.genesis,
+        &authorities.deck_ids,
+        authorities.deck_hashes,
+        &training_tape,
+        production_state,
+        low_state,
+    )
+    .expect("value-coefficient paired update and every numerical gate must pass");
+    assert_eq!(paired.baseline.treatment, ActualTreatmentV1::Full);
+    assert_eq!(paired.low.treatment, ActualTreatmentV1::Full);
+    assert_eq!(
+        paired.baseline.value_coefficient,
+        ValueCoefficientAuthorityV1::Baseline
+    );
+    assert_eq!(
+        paired.low.value_coefficient,
+        ValueCoefficientAuthorityV1::Low
+    );
+    assert!(frame_has_schema_prefix_v1(
+        paired.tape_frame.bytes_v1(),
+        JOINED_TAPE_SCHEMA_V1
+    ));
+
+    let production_after = evaluate_held_out_loss_v1(
+        &paired.baseline_state,
+        ActualTreatmentV1::Full,
+        &validation_tape,
+        false,
+    )
+    .expect("production-coefficient post-update held-out loss must evaluate");
+    let low_after = evaluate_held_out_loss_v1(
+        &paired.low_state,
+        ActualTreatmentV1::Full,
+        &validation_tape,
+        false,
+    )
+    .expect("low-coefficient post-update held-out loss must evaluate");
+
+    let summary_input = ValueCoefficientScreenSummaryUnitInputV1 {
+        unit_index,
+        training_seed: training_authority.seed_v1(),
+        validation_seed: validation_authority.seed_v1(),
+        production_loss_before_bits: production_before.combined.to_bits(),
+        production_loss_after_bits: production_after.combined.to_bits(),
+        low_loss_before_bits: low_before.combined.to_bits(),
+        low_loss_after_bits: low_after.combined.to_bits(),
+        promoted2_low_loss_before_bits: low_before.promoted2_v1().to_bits(),
+        promoted2_low_loss_after_bits: low_after.promoted2_v1().to_bits(),
+        tape_sha256: tape_frame.sha256_v1(),
+        production_update_sha256: paired.baseline.sha256_v1(),
+        low_update_sha256: paired.low.sha256_v1(),
+    };
+    for value in [
+        summary_input.production_improvement_v1(),
+        summary_input.low_improvement_v1(),
+        summary_input.paired_difference_v1(),
+        summary_input.promoted2_low_improvement_v1(),
+    ] {
+        assert!(value.is_finite());
+    }
+    assert!(frame_has_schema_prefix_v1(
+        tape_frame.bytes_v1(),
+        VALUE_COEFFICIENT_SCREEN_UNIT_TAPE_SCHEMA_V1
+    ));
+    for (frame, coefficient) in [
+        (
+            &paired.baseline.frame,
+            ValueCoefficientAuthorityV1::Baseline,
+        ),
+        (&paired.low.frame, ValueCoefficientAuthorityV1::Low),
+    ] {
+        assert!(frame_has_schema_prefix_v1(
+            frame.bytes_v1(),
+            UPDATE_SCHEMA_V1
+        ));
+        assert_eq!(
+            exact_framed_atom_occurrences_v1(
+                frame.bytes_v1(),
+                "treatment",
+                TREATMENT_FULL_V1.as_bytes(),
+            ),
+            1
+        );
+        let payload = value_coefficient_update_authority_payload_v1(coefficient);
+        assert_eq!(
+            exact_framed_atom_occurrences_v1(frame.bytes_v1(), "adam_authority_bits", &payload,),
+            1
+        );
+    }
+    eprintln!(
+        "value-coefficient screen unit {}: train_seed={} validation_seed={} I_P_bits={:016x} I_L_bits={:016x} d_bits={:016x} p2_L_bits={:016x}",
+        unit_index + 1,
+        training_authority.seed_v1(),
+        validation_authority.seed_v1(),
+        summary_input.production_improvement_v1().to_bits(),
+        summary_input.low_improvement_v1().to_bits(),
+        summary_input.paired_difference_v1().to_bits(),
+        summary_input.promoted2_low_improvement_v1().to_bits(),
+    );
+    ValueCoefficientScreenUnitArtifactsV1 {
+        unit_index,
+        summary_input,
+        tape_frame,
+        production_update_frame: paired.baseline.frame,
+        low_update_frame: paired.low.frame,
     }
 }
 
@@ -6397,6 +6864,393 @@ pub(super) fn frame_summary_v1(
     Ok(writer)
 }
 
+// ---------------------------------------------------------------------------
+// Three-unit repaired-FULL value-coefficient screen arithmetic and summary.
+// This is deliberately separate from the six-unit bootstrap classifier.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ValueCoefficientScreenSummaryUnitInputV1 {
+    pub(super) unit_index: usize,
+    pub(super) training_seed: u64,
+    pub(super) validation_seed: u64,
+    pub(super) production_loss_before_bits: u64,
+    pub(super) production_loss_after_bits: u64,
+    pub(super) low_loss_before_bits: u64,
+    pub(super) low_loss_after_bits: u64,
+    pub(super) promoted2_low_loss_before_bits: u64,
+    pub(super) promoted2_low_loss_after_bits: u64,
+    pub(super) tape_sha256: String,
+    pub(super) production_update_sha256: String,
+    pub(super) low_update_sha256: String,
+}
+
+impl ValueCoefficientScreenSummaryUnitInputV1 {
+    pub(super) fn production_improvement_v1(&self) -> f64 {
+        improvement_v1(
+            f64::from_bits(self.production_loss_before_bits),
+            f64::from_bits(self.production_loss_after_bits),
+        )
+    }
+
+    pub(super) fn low_improvement_v1(&self) -> f64 {
+        improvement_v1(
+            f64::from_bits(self.low_loss_before_bits),
+            f64::from_bits(self.low_loss_after_bits),
+        )
+    }
+
+    pub(super) fn paired_difference_v1(&self) -> f64 {
+        paired_difference_v1(self.low_improvement_v1(), self.production_improvement_v1())
+    }
+
+    pub(super) fn promoted2_low_improvement_v1(&self) -> f64 {
+        improvement_v1(
+            f64::from_bits(self.promoted2_low_loss_before_bits),
+            f64::from_bits(self.promoted2_low_loss_after_bits),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ValueCoefficientScreenDispositionV1 {
+    Advance0p0625,
+    DoNotAdvance,
+    Invalid,
+}
+
+impl ValueCoefficientScreenDispositionV1 {
+    pub(super) const fn name_v1(self) -> &'static str {
+        match self {
+            Self::Advance0p0625 => "ADVANCE-0P0625",
+            Self::DoNotAdvance => "DO-NOT-ADVANCE",
+            Self::Invalid => "INVALID",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ValueCoefficientScreenGateEvidenceV1 {
+    pub(super) identity_and_numerical_gates_pass: bool,
+    pub(super) finite_inputs_and_means: bool,
+    pub(super) joint_positive_units_gate: bool,
+    pub(super) mean_paired_difference_gate: bool,
+    pub(super) mean_low_improvement_gate: bool,
+    pub(super) mean_promoted2_low_improvement_gate: bool,
+}
+
+impl ValueCoefficientScreenGateEvidenceV1 {
+    const fn all_pass_v1(self) -> bool {
+        self.identity_and_numerical_gates_pass
+            && self.finite_inputs_and_means
+            && self.joint_positive_units_gate
+            && self.mean_paired_difference_gate
+            && self.mean_low_improvement_gate
+            && self.mean_promoted2_low_improvement_gate
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ValueCoefficientScreenResultV1 {
+    pub(super) disposition: ValueCoefficientScreenDispositionV1,
+    pub(super) production_improvements: [f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+    pub(super) low_improvements: [f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+    pub(super) paired_differences: [f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+    pub(super) promoted2_low_improvements: [f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+    pub(super) joint_positive_unit_count: usize,
+    pub(super) mean_paired_difference: Option<f64>,
+    pub(super) mean_low_improvement: Option<f64>,
+    pub(super) mean_promoted2_low_improvement: Option<f64>,
+    pub(super) gates: ValueCoefficientScreenGateEvidenceV1,
+}
+
+/// Positive-zero f64 accumulation in unit order, followed by one division.
+fn value_coefficient_screen_mean_v1(
+    values: &[f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+) -> Option<f64> {
+    if values.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
+    let mut sum = 0.0f64;
+    for value in values {
+        sum += *value;
+        if !sum.is_finite() {
+            return None;
+        }
+    }
+    let mean = sum / VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1 as f64;
+    mean.is_finite().then_some(mean)
+}
+
+/// Exact exploratory screen. There is intentionally no bootstrap or
+/// inferential claim at three units.
+pub(super) fn classify_value_coefficient_screen_v1(
+    production_improvements: &[f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+    low_improvements: &[f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+    promoted2_low_improvements: &[f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+    identity_and_numerical_gates_pass: bool,
+) -> ValueCoefficientScreenResultV1 {
+    let mut paired_differences = [0.0f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1];
+    for index in 0..VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1 {
+        paired_differences[index] =
+            paired_difference_v1(low_improvements[index], production_improvements[index]);
+    }
+    let mean_paired_difference = value_coefficient_screen_mean_v1(&paired_differences);
+    let mean_low_improvement = value_coefficient_screen_mean_v1(low_improvements);
+    let mean_promoted2_low_improvement =
+        value_coefficient_screen_mean_v1(promoted2_low_improvements);
+    let finite_inputs_and_means = production_improvements
+        .iter()
+        .chain(low_improvements)
+        .chain(promoted2_low_improvements)
+        .chain(&paired_differences)
+        .all(|value| value.is_finite())
+        && mean_paired_difference.is_some()
+        && mean_low_improvement.is_some()
+        && mean_promoted2_low_improvement.is_some();
+    let joint_positive_unit_count = paired_differences
+        .iter()
+        .zip(promoted2_low_improvements)
+        .filter(|(difference, promoted2)| **difference > 0.0 && **promoted2 > 0.0)
+        .count();
+    let gates = ValueCoefficientScreenGateEvidenceV1 {
+        identity_and_numerical_gates_pass,
+        finite_inputs_and_means,
+        joint_positive_units_gate: joint_positive_unit_count
+            >= VALUE_COEFFICIENT_SCREEN_REQUIRED_JOINT_UNITS_V1,
+        mean_paired_difference_gate: mean_paired_difference.is_some_and(|value| value > 0.0),
+        mean_low_improvement_gate: mean_low_improvement.is_some_and(|value| value > 0.0),
+        mean_promoted2_low_improvement_gate: mean_promoted2_low_improvement
+            .is_some_and(|value| value > 0.0),
+    };
+    let disposition = if !identity_and_numerical_gates_pass || !finite_inputs_and_means {
+        ValueCoefficientScreenDispositionV1::Invalid
+    } else if gates.all_pass_v1() {
+        ValueCoefficientScreenDispositionV1::Advance0p0625
+    } else {
+        ValueCoefficientScreenDispositionV1::DoNotAdvance
+    };
+    ValueCoefficientScreenResultV1 {
+        disposition,
+        production_improvements: *production_improvements,
+        low_improvements: *low_improvements,
+        paired_differences,
+        promoted2_low_improvements: *promoted2_low_improvements,
+        joint_positive_unit_count,
+        mean_paired_difference,
+        mean_low_improvement,
+        mean_promoted2_low_improvement,
+        gates,
+    }
+}
+
+fn optional_f64_bits_equal_v1(left: Option<f64>, right: Option<f64>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => left.to_bits() == right.to_bits(),
+        _ => false,
+    }
+}
+
+pub(super) fn verify_value_coefficient_screen_result_v1(
+    published: &ValueCoefficientScreenResultV1,
+) -> bool {
+    let recomputed = classify_value_coefficient_screen_v1(
+        &published.production_improvements,
+        &published.low_improvements,
+        &published.promoted2_low_improvements,
+        published.gates.identity_and_numerical_gates_pass,
+    );
+    recomputed.disposition == published.disposition
+        && recomputed.joint_positive_unit_count == published.joint_positive_unit_count
+        && recomputed.gates == published.gates
+        && f64_arrays_bit_equal_v1(
+            &recomputed.production_improvements,
+            &published.production_improvements,
+        )
+        && f64_arrays_bit_equal_v1(&recomputed.low_improvements, &published.low_improvements)
+        && f64_arrays_bit_equal_v1(
+            &recomputed.paired_differences,
+            &published.paired_differences,
+        )
+        && f64_arrays_bit_equal_v1(
+            &recomputed.promoted2_low_improvements,
+            &published.promoted2_low_improvements,
+        )
+        && optional_f64_bits_equal_v1(
+            recomputed.mean_paired_difference,
+            published.mean_paired_difference,
+        )
+        && optional_f64_bits_equal_v1(
+            recomputed.mean_low_improvement,
+            published.mean_low_improvement,
+        )
+        && optional_f64_bits_equal_v1(
+            recomputed.mean_promoted2_low_improvement,
+            published.mean_promoted2_low_improvement,
+        )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ValueCoefficientScreenSummaryErrorV1 {
+    MalformedUnits,
+    RawInputsDisagreeWithUnits,
+    ForgedResult,
+}
+
+fn derive_value_coefficient_screen_inputs_v1(
+    units: &[ValueCoefficientScreenSummaryUnitInputV1],
+) -> Option<(
+    [f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+    [f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+    [f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1],
+    bool,
+)> {
+    if units.len() != VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1 {
+        return None;
+    }
+    let mut production = [0.0f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1];
+    let mut low = [0.0f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1];
+    let mut promoted2_low = [0.0f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1];
+    let mut initial_losses_bit_identical = true;
+    for (index, unit) in units.iter().enumerate() {
+        if unit.unit_index != index
+            || unit.training_seed != VALUE_COEFFICIENT_SCREEN_TRAINING_SEEDS_V1[index]
+            || unit.validation_seed != VALUE_COEFFICIENT_SCREEN_VALIDATION_SEEDS_V1[index]
+            || !lowercase_sha256_v1(&unit.tape_sha256)
+            || !lowercase_sha256_v1(&unit.production_update_sha256)
+            || !lowercase_sha256_v1(&unit.low_update_sha256)
+        {
+            return None;
+        }
+        initial_losses_bit_identical &=
+            unit.production_loss_before_bits == unit.low_loss_before_bits;
+        production[index] = unit.production_improvement_v1();
+        low[index] = unit.low_improvement_v1();
+        promoted2_low[index] = unit.promoted2_low_improvement_v1();
+    }
+    Some((production, low, promoted2_low, initial_losses_bit_identical))
+}
+
+pub(super) fn frame_value_coefficient_screen_summary_v1(
+    units: &[ValueCoefficientScreenSummaryUnitInputV1],
+    result: &ValueCoefficientScreenResultV1,
+) -> Result<FramedWriterV1, ValueCoefficientScreenSummaryErrorV1> {
+    let (production, low, promoted2_low, initial_losses_bit_identical) =
+        derive_value_coefficient_screen_inputs_v1(units)
+            .ok_or(ValueCoefficientScreenSummaryErrorV1::MalformedUnits)?;
+    if !f64_arrays_bit_equal_v1(&production, &result.production_improvements)
+        || !f64_arrays_bit_equal_v1(&low, &result.low_improvements)
+        || !f64_arrays_bit_equal_v1(&promoted2_low, &result.promoted2_low_improvements)
+        || (result.gates.identity_and_numerical_gates_pass && !initial_losses_bit_identical)
+    {
+        return Err(ValueCoefficientScreenSummaryErrorV1::RawInputsDisagreeWithUnits);
+    }
+    if !verify_value_coefficient_screen_result_v1(result) {
+        return Err(ValueCoefficientScreenSummaryErrorV1::ForgedResult);
+    }
+    let mut writer = FramedWriterV1::new_v1(VALUE_COEFFICIENT_SCREEN_SUMMARY_SCHEMA_V1);
+    writer.u64_v1("unit_count", units.len() as u64);
+    writer.u32_array_v1(
+        "value_coefficient_bits",
+        &[VALUE_COEFFICIENT_BITS_V1, LOW_VALUE_COEFFICIENT_BITS_V1],
+    );
+    for unit in units {
+        let label = format!("unit[{}]", unit.unit_index);
+        writer.u64_v1(&format!("{label}.training_seed"), unit.training_seed);
+        writer.u64_v1(&format!("{label}.validation_seed"), unit.validation_seed);
+        for (field, bits) in [
+            (
+                "production_loss_before_bits",
+                unit.production_loss_before_bits,
+            ),
+            (
+                "production_loss_after_bits",
+                unit.production_loss_after_bits,
+            ),
+            ("low_loss_before_bits", unit.low_loss_before_bits),
+            ("low_loss_after_bits", unit.low_loss_after_bits),
+            (
+                "promoted2_low_loss_before_bits",
+                unit.promoted2_low_loss_before_bits,
+            ),
+            (
+                "promoted2_low_loss_after_bits",
+                unit.promoted2_low_loss_after_bits,
+            ),
+        ] {
+            writer.u64_v1(&format!("{label}.{field}"), bits);
+        }
+        writer.text_v1(&format!("{label}.tape_sha256"), &unit.tape_sha256);
+        writer.text_v1(
+            &format!("{label}.production_update_sha256"),
+            &unit.production_update_sha256,
+        );
+        writer.text_v1(
+            &format!("{label}.low_update_sha256"),
+            &unit.low_update_sha256,
+        );
+    }
+    writer.text_v1("disposition", result.disposition.name_v1());
+    writer.f64_bits_array_v1("production_improvements", &result.production_improvements);
+    writer.f64_bits_array_v1("low_improvements", &result.low_improvements);
+    writer.f64_bits_array_v1("paired_differences", &result.paired_differences);
+    writer.f64_bits_array_v1(
+        "promoted2_low_improvements",
+        &result.promoted2_low_improvements,
+    );
+    writer.u64_v1(
+        "joint_positive_unit_count",
+        result.joint_positive_unit_count as u64,
+    );
+    writer.u64_v1(
+        "required_joint_positive_units",
+        VALUE_COEFFICIENT_SCREEN_REQUIRED_JOINT_UNITS_V1 as u64,
+    );
+    for (label, value) in [
+        ("mean_paired_difference", result.mean_paired_difference),
+        ("mean_low_improvement", result.mean_low_improvement),
+        (
+            "mean_promoted2_low_improvement",
+            result.mean_promoted2_low_improvement,
+        ),
+    ] {
+        match value {
+            Some(value) => writer.f64_bits_array_v1(label, &[value]),
+            None => writer.atom_v1(label, b""),
+        }
+    }
+    for (label, outcome) in [
+        (
+            "gate.identity_and_numerical",
+            result.gates.identity_and_numerical_gates_pass,
+        ),
+        (
+            "gate.finite_inputs_and_means",
+            result.gates.finite_inputs_and_means,
+        ),
+        (
+            "gate.joint_positive_units",
+            result.gates.joint_positive_units_gate,
+        ),
+        (
+            "gate.mean_paired_difference",
+            result.gates.mean_paired_difference_gate,
+        ),
+        (
+            "gate.mean_low_improvement",
+            result.gates.mean_low_improvement_gate,
+        ),
+        (
+            "gate.mean_promoted2_low_improvement",
+            result.gates.mean_promoted2_low_improvement_gate,
+        ),
+    ] {
+        writer.u64_v1(label, u64::from(outcome));
+    }
+    Ok(writer)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ManifestFramingErrorV1 {
     GitObject,
@@ -6637,12 +7491,151 @@ fn frame_formal_manifest_v1(
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ValueCoefficientScreenPublishedUnitV1 {
+    unit_index: usize,
+    training_seed: u64,
+    validation_seed: u64,
+    tape: FormalArtifactIdentityV1,
+    production_update: FormalArtifactIdentityV1,
+    low_update: FormalArtifactIdentityV1,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn frame_value_coefficient_screen_manifest_v1(
+    provenance: &ValidatedPreflightProvenanceV1,
+    gpu: &ValidatedPreflightGpuV1,
+    units: &[ValueCoefficientScreenPublishedUnitV1],
+    summary: &FormalArtifactIdentityV1,
+    result: &ValueCoefficientScreenResultV1,
+) -> FramedWriterV1 {
+    assert_eq!(units.len(), VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1);
+    assert!(verify_value_coefficient_screen_result_v1(result));
+    assert_eq!(gpu.ordinal, PREFLIGHT_GPU_ORDINAL_U64_V1);
+    assert_eq!(gpu.name, PREFLIGHT_GPU_NAME_V1);
+    assert_eq!(gpu.uuid, PREFLIGHT_GPU_UUID_V1);
+    let mut writer = FramedWriterV1::new_v1(VALUE_COEFFICIENT_SCREEN_MANIFEST_SCHEMA_V1);
+    writer.text_v1("design_sha256", VALUE_COEFFICIENT_SCREEN_DESIGN_SHA256_V1);
+    writer.u64_v1(
+        "design_bytes",
+        VALUE_COEFFICIENT_SCREEN_DESIGN_BYTE_COUNT_V1,
+    );
+    writer.u64_v1(
+        "design_lines",
+        VALUE_COEFFICIENT_SCREEN_DESIGN_LINE_COUNT_V1,
+    );
+    writer.text_v1("git_commit", provenance.git_commit);
+    writer.text_v1("git_tree", provenance.git_tree);
+    writer.text_v1("tracked_tree_sha256", provenance.tracked_tree_sha256);
+    writer.text_v1("tracked_tree_contract", provenance.tracked_tree_contract);
+    writer.text_v1("toolchain", &provenance.toolchain);
+    writer.text_v1(
+        "rustc_executable_sha256",
+        &provenance.rustc_executable_sha256,
+    );
+    writer.text_v1("linker_path", &provenance.linker_path);
+    writer.text_v1(
+        "linker_executable_sha256",
+        &provenance.linker_executable_sha256,
+    );
+    writer.text_v1("nvidia_smi_path", &provenance.nvidia_smi_path);
+    writer.text_v1("nvidia_smi_sha256", &provenance.nvidia_smi_sha256);
+    writer.text_v1("test_executable_sha256", &provenance.test_executable_sha256);
+    writer.u64_v1(
+        "test_executable_byte_len",
+        provenance.test_executable_byte_len,
+    );
+    writer.text_v1("target", "x86_64-pc-windows-msvc");
+    writer.text_v1("backend_identity", DIAGNOSTIC_BACKEND_IDENTITY_V1);
+    writer.text_v1("vendored_tree_object", VENDORED_SIMPLEUNIT_TREE_OBJECT_V1);
+    writer.text_v1("pool3_sha256", POOL3_DOCUMENT_SHA256_V1);
+    writer.text_v1("source_run_sha256", SOURCE_RUN_SHA256_V1);
+    writer.text_v1("source_checkpoint_sha256", SOURCE_CHECKPOINT_SHA256_V1);
+    writer.text_v1("source_sidecar_sha256", SOURCE_SIDECAR_SHA256_V1);
+    writer.text_v1("source_payload_sha256", SOURCE_PAYLOAD_SHA256_V1);
+    writer.text_v1(
+        "source_model_parameter_sha256",
+        SOURCE_MODEL_PARAMETER_SHA256_V1,
+    );
+    writer.u64_v1("source_base_seed", SOURCE_BASE_SEED_V1);
+    writer.u64_v1("source_generation", SOURCE_GENERATION_V1);
+    writer.u64_v1("episode_count_per_tape", EPISODES_PER_TAPE_V1);
+    writer.u32_array_v1(
+        "value_coefficient_bits",
+        &[VALUE_COEFFICIENT_BITS_V1, LOW_VALUE_COEFFICIENT_BITS_V1],
+    );
+    writer.u64_v1("gpu_ordinal", gpu.ordinal);
+    writer.text_v1("gpu_name", &gpu.name);
+    writer.text_v1("gpu_uuid", &gpu.uuid);
+    writer.u64_v1(
+        "artifact_count",
+        VALUE_COEFFICIENT_SCREEN_ARTIFACT_COUNT_V1 as u64,
+    );
+    writer.u64_v1("unit_count", units.len() as u64);
+    for (index, unit) in units.iter().enumerate() {
+        assert_eq!(unit.unit_index, index);
+        assert_eq!(
+            unit.training_seed,
+            VALUE_COEFFICIENT_SCREEN_TRAINING_SEEDS_V1[index]
+        );
+        assert_eq!(
+            unit.validation_seed,
+            VALUE_COEFFICIENT_SCREEN_VALIDATION_SEEDS_V1[index]
+        );
+        let unit_number = index + 1;
+        assert_eq!(
+            unit.tape.basename,
+            format!("unit-{unit_number:02}-tape.frame")
+        );
+        assert_eq!(
+            unit.production_update.basename,
+            format!("unit-{unit_number:02}-production-update.frame")
+        );
+        assert_eq!(
+            unit.low_update.basename,
+            format!("unit-{unit_number:02}-low-update.frame")
+        );
+        let label = format!("unit[{index}]");
+        writer.u64_v1(&format!("{label}.training_seed"), unit.training_seed);
+        writer.u64_v1(&format!("{label}.validation_seed"), unit.validation_seed);
+        writer.u32_array_v1(
+            &format!("{label}.training_counts"),
+            &VALUE_COEFFICIENT_SCREEN_TRAINING_COUNTS_V1[index],
+        );
+        writer.u32_array_v1(
+            &format!("{label}.validation_counts"),
+            &VALUE_COEFFICIENT_SCREEN_VALIDATION_COUNTS_V1[index],
+        );
+        for (role, artifact) in [
+            ("tape", &unit.tape),
+            ("production_update", &unit.production_update),
+            ("low_update", &unit.low_update),
+        ] {
+            assert!(exact_lower_hex_v1(&artifact.sha256, 64));
+            assert!(artifact.exact_length > 0);
+            writer.text_v1(&format!("{label}.{role}.basename"), &artifact.basename);
+            writer.u64_v1(&format!("{label}.{role}.byte_len"), artifact.exact_length);
+            writer.text_v1(&format!("{label}.{role}.sha256"), &artifact.sha256);
+        }
+    }
+    assert_eq!(summary.basename, "summary.frame");
+    assert!(exact_lower_hex_v1(&summary.sha256, 64));
+    assert!(summary.exact_length > 0);
+    writer.text_v1("summary.basename", &summary.basename);
+    writer.u64_v1("summary.byte_len", summary.exact_length);
+    writer.text_v1("summary.sha256", &summary.sha256);
+    writer.text_v1("disposition", result.disposition.name_v1());
+    writer
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 struct FormalStagingPublicationV1 {
     outer_parent: crate::durable_publication_v1::ValidatedPublicationParentV1,
     staging_parent: crate::durable_publication_v1::ValidatedPublicationParentV1,
     staging_dir: PathBuf,
     final_dir: PathBuf,
     artifacts: Vec<FormalArtifactIdentityV1>,
+    expected_artifact_count: usize,
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -6652,6 +7645,19 @@ impl FormalStagingPublicationV1 {
             std::env::var("MTG_KERNEL_ACTION_BLOCK_FORMAL_OUTPUT_DIR_V1")
                 .expect("an explicit new formal output directory is required"),
         );
+        Self::begin_requested_v1(requested, 20)
+    }
+
+    fn begin_value_coefficient_screen_v1() -> Self {
+        let requested = PathBuf::from(
+            std::env::var("MTG_KERNEL_VALUE_COEFFICIENT_SCREEN_OUTPUT_DIR_V1")
+                .expect("an explicit new value-coefficient screen output directory is required"),
+        );
+        Self::begin_requested_v1(requested, VALUE_COEFFICIENT_SCREEN_ARTIFACT_COUNT_V1)
+    }
+
+    fn begin_requested_v1(requested: PathBuf, expected_artifact_count: usize) -> Self {
+        assert!(expected_artifact_count > 0);
         assert!(requested.is_absolute(), "formal output must be absolute");
         let leaf = requested
             .file_name()
@@ -6683,7 +7689,8 @@ impl FormalStagingPublicationV1 {
             staging_parent,
             staging_dir,
             final_dir,
-            artifacts: Vec::with_capacity(20),
+            artifacts: Vec::with_capacity(expected_artifact_count),
+            expected_artifact_count,
         }
     }
 
@@ -6773,8 +7780,8 @@ impl FormalStagingPublicationV1 {
     fn finish_v1(self) -> (PathBuf, Vec<FormalArtifactIdentityV1>) {
         assert_eq!(
             self.artifacts.len(),
-            20,
-            "formal inventory must contain 20 files"
+            self.expected_artifact_count,
+            "publication inventory must contain its frozen file count"
         );
         Self::verify_inventory_v1(&self.staging_parent, &self.artifacts);
         crate::durable_publication_v1::revalidate_parent_v1(&self.outer_parent)
@@ -6877,6 +7884,126 @@ fn action_block_gradient_formal_six_unit_gpu1_v1() {
             .promoted2_read
             .expect("finite formal promoted2 bootstrap")
             .low_index_value
+            .to_bits(),
+        summary.sha256,
+        manifest.sha256,
+        final_dir.display(),
+    );
+    drop(gpu);
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[test]
+#[ignore = "authorized single-shot three-unit value-coefficient screen; native Windows/MSVC, dedicated process, and explicit invocation required"]
+fn value_coefficient_screen_three_unit_gpu1_v1() {
+    assert!(
+        cfg!(all(
+            target_arch = "x86_64",
+            target_os = "windows",
+            target_env = "msvc"
+        )),
+        "the value-coefficient screen is native Windows/MSVC only"
+    );
+    let provenance = PreflightProvenanceGuardV1::begin_v1();
+    let gpu = require_fresh_physical_gpu1_v1(VALUE_COEFFICIENT_SCREEN_LIVE_TEST_NAME_SUFFIX_V1);
+    let exclusivity = BoundedGpu1ExclusivityMonitorV1::start_v1();
+    let authorities = load_preflight_live_authorities_v1();
+    let mut publication = FormalStagingPublicationV1::begin_value_coefficient_screen_v1();
+    let mut summary_inputs = Vec::with_capacity(VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1);
+    let mut published_units = Vec::with_capacity(VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1);
+
+    for unit_index in 0..VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1 {
+        let artifacts = run_value_coefficient_screen_unit_v1(unit_index, &gpu, &authorities);
+        assert_eq!(artifacts.unit_index, unit_index);
+        let unit_number = unit_index + 1;
+        let tape = publication.publish_frame_v1(
+            format!("unit-{unit_number:02}-tape.frame"),
+            artifacts.tape_frame,
+        );
+        let production_update = publication.publish_frame_v1(
+            format!("unit-{unit_number:02}-production-update.frame"),
+            artifacts.production_update_frame,
+        );
+        let low_update = publication.publish_frame_v1(
+            format!("unit-{unit_number:02}-low-update.frame"),
+            artifacts.low_update_frame,
+        );
+        assert_eq!(tape.sha256, artifacts.summary_input.tape_sha256);
+        assert_eq!(
+            production_update.sha256,
+            artifacts.summary_input.production_update_sha256
+        );
+        assert_eq!(low_update.sha256, artifacts.summary_input.low_update_sha256);
+        published_units.push(ValueCoefficientScreenPublishedUnitV1 {
+            unit_index,
+            training_seed: artifacts.summary_input.training_seed,
+            validation_seed: artifacts.summary_input.validation_seed,
+            tape,
+            production_update,
+            low_update,
+        });
+        summary_inputs.push(artifacts.summary_input);
+    }
+
+    let (production, low, promoted2_low, initial_losses_bit_identical) =
+        derive_value_coefficient_screen_inputs_v1(&summary_inputs)
+            .expect("three ordered value-coefficient units must derive classifier inputs");
+    assert!(initial_losses_bit_identical);
+    let result = classify_value_coefficient_screen_v1(&production, &low, &promoted2_low, true);
+    assert!(verify_value_coefficient_screen_result_v1(&result));
+    assert_ne!(
+        result.disposition,
+        ValueCoefficientScreenDispositionV1::Invalid
+    );
+    let summary_frame = frame_value_coefficient_screen_summary_v1(&summary_inputs, &result)
+        .expect("value-coefficient summary must bind its authoritative unit inputs");
+    let summary = publication.publish_frame_v1("summary.frame".to_owned(), summary_frame);
+
+    exclusivity.finish_v1(&gpu);
+    let provenance = provenance.finish_v1();
+    let manifest_frame = frame_value_coefficient_screen_manifest_v1(
+        &provenance,
+        &gpu,
+        &published_units,
+        &summary,
+        &result,
+    );
+    let manifest = publication.publish_frame_v1("manifest.frame".to_owned(), manifest_frame);
+    let (final_dir, inventory) = publication.finish_v1();
+    assert_eq!(inventory.len(), VALUE_COEFFICIENT_SCREEN_ARTIFACT_COUNT_V1);
+    let expected_basenames = (0..VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1)
+        .flat_map(|index| {
+            let unit_number = index + 1;
+            [
+                format!("unit-{unit_number:02}-tape.frame"),
+                format!("unit-{unit_number:02}-production-update.frame"),
+                format!("unit-{unit_number:02}-low-update.frame"),
+            ]
+        })
+        .chain(["summary.frame".to_owned(), "manifest.frame".to_owned()])
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inventory
+            .iter()
+            .map(|artifact| artifact.basename.clone())
+            .collect::<Vec<_>>(),
+        expected_basenames
+    );
+    eprintln!(
+        "value-coefficient screen result: disposition={} joint_positive={}/3 mean_d_bits={:016x} mean_I_L_bits={:016x} mean_p2_L_bits={:016x} summary={} manifest={} dir={}",
+        result.disposition.name_v1(),
+        result.joint_positive_unit_count,
+        result
+            .mean_paired_difference
+            .expect("valid screen mean d")
+            .to_bits(),
+        result
+            .mean_low_improvement
+            .expect("valid screen mean I(L)")
+            .to_bits(),
+        result
+            .mean_promoted2_low_improvement
+            .expect("valid screen mean promoted(2) I(L)")
             .to_bits(),
         summary.sha256,
         manifest.sha256,
@@ -8132,6 +9259,71 @@ fn formal_seed_pool3_count_goldens_reproduce_exactly_v1() {
     }
 }
 
+/// The exploratory screen's six tape authorities are fresh, disjoint, and
+/// reproduce the predeclared Pool3 schedules exactly. Validation authority
+/// remains structurally unable to reach the updater.
+#[test]
+fn value_coefficient_screen_seed_authorities_reproduce_and_are_disjoint_v1() {
+    let mut observed = std::collections::HashSet::new();
+    for unit in 0..VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1 {
+        let training = ValueCoefficientScreenSeedAuthorityV1::training_v1(unit);
+        let validation = ValueCoefficientScreenSeedAuthorityV1::validation_v1(unit);
+        assert_eq!(
+            training.seed_v1(),
+            VALUE_COEFFICIENT_SCREEN_TRAINING_SEEDS_V1[unit]
+        );
+        assert_eq!(
+            validation.seed_v1(),
+            VALUE_COEFFICIENT_SCREEN_VALIDATION_SEEDS_V1[unit]
+        );
+        assert_eq!(
+            training.expected_counts_v1(),
+            VALUE_COEFFICIENT_SCREEN_TRAINING_COUNTS_V1[unit]
+        );
+        assert_eq!(
+            validation.expected_counts_v1(),
+            VALUE_COEFFICIENT_SCREEN_VALIDATION_COUNTS_V1[unit]
+        );
+        assert!(training.allows_update_v1());
+        assert!(!validation.allows_update_v1());
+        assert!(observed.insert(training.seed_v1()));
+        assert!(observed.insert(validation.seed_v1()));
+
+        let reproduced_training = pool_choice_counts_v1(training.seed_v1(), EPISODES_PER_TAPE_V1);
+        let reproduced_validation =
+            pool_choice_counts_v1(validation.seed_v1(), EPISODES_PER_TAPE_V1);
+        assert_eq!(
+            reproduced_training.as_array_v1(),
+            VALUE_COEFFICIENT_SCREEN_TRAINING_COUNTS_V1[unit]
+        );
+        assert_eq!(
+            reproduced_validation.as_array_v1(),
+            VALUE_COEFFICIENT_SCREEN_VALIDATION_COUNTS_V1[unit]
+        );
+        assert_eq!(reproduced_training.total_v1(), EPISODES_PER_TAPE_V1 as u32);
+        assert_eq!(
+            reproduced_validation.total_v1(),
+            EPISODES_PER_TAPE_V1 as u32
+        );
+        assert!(reproduced_validation
+            .as_array_v1()
+            .iter()
+            .all(|count| *count > 0));
+    }
+    assert_eq!(observed.len(), VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1 * 2);
+    assert!(!observed.contains(&PREFLIGHT_BASE_SEED_V1));
+    for seed in FORMAL_TRAINING_SEEDS_V1
+        .iter()
+        .chain(FORMAL_VALIDATION_SEEDS_V1.iter())
+    {
+        assert!(!observed.contains(seed));
+    }
+    assert_eq!(VALUE_COEFFICIENT_SCREEN_ARTIFACT_COUNT_V1, 11);
+    assert_eq!(VALUE_COEFFICIENT_SCREEN_DESIGN_SHA256_V1.len(), 64);
+    assert_eq!(VALUE_COEFFICIENT_SCREEN_DESIGN_BYTE_COUNT_V1, 2_885);
+    assert_eq!(VALUE_COEFFICIENT_SCREEN_DESIGN_LINE_COUNT_V1, 68);
+}
+
 /// Every validation stratum must contain at least one learner physical
 /// decision group, so no stratum mean is taken over an empty set.
 #[test]
@@ -8154,6 +9346,15 @@ fn frozen_scale_and_authority_bits_decode_exactly_v1() {
     assert_eq!(f32::from_bits(HALF_DIGEST_SCALE_BITS_V1), 0.5f32);
     assert_eq!(f32::from_bits(DOUBLE_WEIGHT_SCALE_BITS_V1), 2.0f32);
     assert_eq!(f32::from_bits(VALUE_COEFFICIENT_BITS_V1), 0.5f32);
+    assert_eq!(f32::from_bits(LOW_VALUE_COEFFICIENT_BITS_V1), 0.0625f32);
+    assert_eq!(
+        ValueCoefficientAuthorityV1::Baseline.bits_v1(),
+        VALUE_COEFFICIENT_BITS_V1
+    );
+    assert_eq!(
+        ValueCoefficientAuthorityV1::Low.bits_v1(),
+        LOW_VALUE_COEFFICIENT_BITS_V1
+    );
     assert_eq!(f32::from_bits(ADAM_WEIGHT_DECAY_BITS_V1), 0.0f32);
     assert!(!ADAM_AMSGRAD_V1);
     // The digest block the design names, [99,195), and the transformed
@@ -9849,6 +11050,31 @@ fn loader_sealed_genesis_rejects_consistent_unused_and_state_mutations_v1() {
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 #[test]
+fn coefficient_screen_requires_two_exact_authoritative_full_genesis_twins_v1() {
+    let (genesis, baseline, _) = genesis_authority_fixture_v1();
+    let low = baseline.clone();
+    assert!(full_genesis_twins_match_authority_v1(
+        &baseline, &low, &genesis
+    ));
+
+    let mut wrong_low = low.clone();
+    wrong_low.parameters[0].values[0] =
+        f32::from_bits(wrong_low.parameters[0].values[0].to_bits() + 1);
+    assert!(!full_genesis_twins_match_authority_v1(
+        &baseline, &wrong_low, &genesis
+    ));
+
+    let mut advanced_low = low;
+    advanced_low.adam_step = 1;
+    assert!(!full_genesis_twins_match_authority_v1(
+        &baseline,
+        &advanced_low,
+        &genesis
+    ));
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[test]
 fn independent_adam_scalar_and_canonical_scorer_bias_have_bit_goldens_v1() {
     let adam = IndependentAdamStepV1::new_v1(1).unwrap();
     let (parameter, first, second) = adam.coordinate_v1(0.25, 0.5, 0.0, 0.0).unwrap();
@@ -9943,6 +11169,7 @@ fn paired_coordinate_gate_covers_both_rows_and_digest_boundaries_v1() {
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn result_lattice_fixture_v1(
     tape: &JoinedTapeV1,
+    value_coefficient: ValueCoefficientAuthorityV1,
 ) -> (
     NativePolicyValueTrainSnapshotV1,
     NativePolicyValueTrainSnapshotV1,
@@ -10024,8 +11251,7 @@ fn result_lattice_fixture_v1(
             group_index += 1;
         }
     }
-    let loss =
-        (policy_sum + f32::from_bits(VALUE_COEFFICIENT_BITS_V1) * value_sum) / group_index as f32;
+    let loss = (policy_sum + value_coefficient.value_v1() * value_sum) / group_index as f32;
     // The production accumulator appends gauge bounds in backward traversal
     // order, independently of the forward-ordered selected outputs and
     // physical terms above.
@@ -10097,9 +11323,14 @@ fn actual_result_lattice_rejects_counts_order_fields_and_malformed_streams_v1() 
     let (authority, deck_ids, deck_hashes, tape) = joined_fixture_v1();
     let validated =
         ValidatedJoinedTapeForUpdateV1::new_v1(&authority, &deck_ids, deck_hashes, &tape).unwrap();
-    let (before, after, result) = result_lattice_fixture_v1(&tape);
+    let (before, after, result) =
+        result_lattice_fixture_v1(&tape, ValueCoefficientAuthorityV1::Baseline);
     assert!(actual_result_matches_tape_v1(
-        &result, &before, &after, &validated
+        &result,
+        ValueCoefficientAuthorityV1::Baseline,
+        &before,
+        &after,
+        &validated
     ));
 
     let mut mutations: Vec<NativePolicyTrainStepResultV1> = Vec::new();
@@ -10172,18 +11403,48 @@ fn actual_result_lattice_rejects_counts_order_fields_and_malformed_streams_v1() 
 
     for mutation in mutations {
         assert!(!actual_result_matches_tape_v1(
-            &mutation, &before, &after, &validated,
+            &mutation,
+            ValueCoefficientAuthorityV1::Baseline,
+            &before,
+            &after,
+            &validated,
         ));
     }
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 #[test]
+fn actual_result_loss_is_bound_to_exact_value_coefficient_v1() {
+    let (authority, deck_ids, deck_hashes, tape) = joined_fixture_v1();
+    let validated =
+        ValidatedJoinedTapeForUpdateV1::new_v1(&authority, &deck_ids, deck_hashes, &tape).unwrap();
+    let (before, after, low_result) =
+        result_lattice_fixture_v1(&tape, ValueCoefficientAuthorityV1::Low);
+    assert!(actual_result_matches_tape_v1(
+        &low_result,
+        ValueCoefficientAuthorityV1::Low,
+        &before,
+        &after,
+        &validated,
+    ));
+    assert!(!actual_result_matches_tape_v1(
+        &low_result,
+        ValueCoefficientAuthorityV1::Baseline,
+        &before,
+        &after,
+        &validated,
+    ));
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[test]
 fn independent_adam_full_stream_rejects_parameter_moment_and_shape_mutations_v1() {
     let (_, _, _, tape) = joined_fixture_v1();
-    let (before, after, result) = result_lattice_fixture_v1(&tape);
+    let (before, after, result) =
+        result_lattice_fixture_v1(&tape, ValueCoefficientAuthorityV1::Baseline);
     let evidence = ActualUpdateEvidenceV1 {
         treatment: ActualTreatmentV1::Full,
+        value_coefficient: ValueCoefficientAuthorityV1::Baseline,
         deltas: derived_deltas_v1(&before.parameters, &after.parameters),
         frame: FramedWriterV1::new_v1(UPDATE_SCHEMA_V1),
         result,
@@ -10196,6 +11457,7 @@ fn independent_adam_full_stream_rejects_parameter_moment_and_shape_mutations_v1(
     wrong_parameter.parameters[0].values[0] += 0.01;
     let mut candidate = ActualUpdateEvidenceV1 {
         treatment: evidence.treatment,
+        value_coefficient: evidence.value_coefficient,
         result: evidence.result.clone(),
         before: evidence.before.clone(),
         after: wrong_parameter,
@@ -10272,6 +11534,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
 
     let frame = frame_update_v1(
         TREATMENT_HALF_V1,
+        ValueCoefficientAuthorityV1::Baseline,
         &gradients,
         &before,
         &after,
@@ -10280,13 +11543,40 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         &deltas,
     )
     .unwrap();
-    assert_eq!(frame.sha256_v1().len(), 64);
+    // Captured from commit 852bd810 before coefficient authority became an
+    // explicit argument: baseline FULL/HALF framing must remain byte exact.
+    assert_eq!(
+        frame.sha256_v1(),
+        "bb5140b136af5370ca14fce77219f0536fd4b05b12a38e3a123aa753c2bbb2af"
+    );
+    let low_frame = frame_update_v1(
+        TREATMENT_HALF_V1,
+        ValueCoefficientAuthorityV1::Low,
+        &gradients,
+        &before,
+        &after,
+        &moments,
+        &moments,
+        &deltas,
+    )
+    .unwrap();
+    let coefficient_byte_differences = frame
+        .bytes_v1()
+        .iter()
+        .zip(low_frame.bytes_v1())
+        .filter_map(|(baseline, low)| (baseline != low).then_some((*baseline, *low)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        coefficient_byte_differences,
+        vec![(0x00, 0x80), (0x3f, 0x3d)]
+    );
     assert_eq!(NAMED_TENSOR_COUNT_V1, 33);
     assert_eq!(native_train_state_parameter_layout_v1().len(), 33);
 
     // Both legal treatments are accepted; anything else is rejected.
     assert!(frame_update_v1(
         TREATMENT_FULL_V1,
+        ValueCoefficientAuthorityV1::Baseline,
         &gradients,
         &before,
         &after,
@@ -10298,6 +11588,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert_eq!(
         frame_update_v1(
             "SOMETHING-ELSE",
+            ValueCoefficientAuthorityV1::Baseline,
             &gradients,
             &before,
             &after,
@@ -10312,6 +11603,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert_eq!(
         frame_update_v1(
             TREATMENT_HALF_V1,
+            ValueCoefficientAuthorityV1::Baseline,
             &gradients[..32],
             &before,
             &after,
@@ -10329,6 +11621,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert_eq!(
         frame_update_v1(
             TREATMENT_HALF_V1,
+            ValueCoefficientAuthorityV1::Baseline,
             &dummies,
             &before,
             &after,
@@ -10345,6 +11638,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert_eq!(
         frame_update_v1(
             TREATMENT_HALF_V1,
+            ValueCoefficientAuthorityV1::Baseline,
             &gradients,
             &wrong_shape,
             &after,
@@ -10361,6 +11655,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert_eq!(
         frame_update_v1(
             TREATMENT_HALF_V1,
+            ValueCoefficientAuthorityV1::Baseline,
             &gradients,
             &nonfinite,
             &after,
@@ -10375,6 +11670,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert_eq!(
         frame_update_v1(
             TREATMENT_HALF_V1,
+            ValueCoefficientAuthorityV1::Baseline,
             &gradients,
             &before,
             &after,
@@ -10389,6 +11685,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert_eq!(
         frame_update_v1(
             TREATMENT_HALF_V1,
+            ValueCoefficientAuthorityV1::Baseline,
             &gradients,
             &before,
             &after,
@@ -10406,6 +11703,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert_eq!(
         frame_update_v1(
             TREATMENT_HALF_V1,
+            ValueCoefficientAuthorityV1::Baseline,
             &gradients,
             &before,
             &after,
@@ -10421,6 +11719,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert_eq!(
         frame_update_v1(
             TREATMENT_HALF_V1,
+            ValueCoefficientAuthorityV1::Baseline,
             &gradients,
             &before,
             &oversized_after,
@@ -10435,6 +11734,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert_ne!(
         frame_update_v1(
             TREATMENT_FULL_V1,
+            ValueCoefficientAuthorityV1::Baseline,
             &gradients,
             &before,
             &after,
@@ -10582,6 +11882,241 @@ fn forged_classifier_results_are_rejected_by_recomputation_v1() {
     // it: a NO-NOMINATION must have at least one failed nomination gate.
     assert!(!no_nomination.gates.all_pass_v1());
     assert!(genuine.gates.all_pass_v1());
+}
+
+#[test]
+fn value_coefficient_screen_classifier_enforces_every_strict_gate_v1() {
+    let production = [0.0f64; VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1];
+    let advance_low = [1.0, 1.0, -0.25];
+    let advance_promoted2 = [1.0, 1.0, -0.25];
+    let advance =
+        classify_value_coefficient_screen_v1(&production, &advance_low, &advance_promoted2, true);
+    assert_eq!(
+        advance.disposition,
+        ValueCoefficientScreenDispositionV1::Advance0p0625
+    );
+    assert_eq!(advance.joint_positive_unit_count, 2);
+    assert!(advance.gates.all_pass_v1());
+    assert!(verify_value_coefficient_screen_result_v1(&advance));
+
+    let joint_only = classify_value_coefficient_screen_v1(
+        &production,
+        &[1.0, 1.0, 1.0],
+        &[1.0, -0.25, -0.25],
+        true,
+    );
+    assert_eq!(
+        joint_only.disposition,
+        ValueCoefficientScreenDispositionV1::DoNotAdvance
+    );
+    assert_eq!(joint_only.joint_positive_unit_count, 1);
+    assert!(!joint_only.gates.joint_positive_units_gate);
+    assert!(joint_only.gates.mean_paired_difference_gate);
+    assert!(joint_only.gates.mean_low_improvement_gate);
+    assert!(joint_only.gates.mean_promoted2_low_improvement_gate);
+
+    let mean_difference_only = classify_value_coefficient_screen_v1(
+        &[0.0, 0.0, 4.0],
+        &[1.0, 1.0, 1.0],
+        &[1.0, 1.0, 1.0],
+        true,
+    );
+    assert_eq!(mean_difference_only.joint_positive_unit_count, 2);
+    assert!(!mean_difference_only.gates.mean_paired_difference_gate);
+    assert!(mean_difference_only.gates.joint_positive_units_gate);
+    assert!(mean_difference_only.gates.mean_low_improvement_gate);
+    assert!(
+        mean_difference_only
+            .gates
+            .mean_promoted2_low_improvement_gate
+    );
+
+    let mean_low_only = classify_value_coefficient_screen_v1(
+        &[-2.0, -2.0, -2.0],
+        &[-1.0, -1.0, -1.0],
+        &[1.0, 1.0, 1.0],
+        true,
+    );
+    assert!(mean_low_only.gates.joint_positive_units_gate);
+    assert!(mean_low_only.gates.mean_paired_difference_gate);
+    assert!(!mean_low_only.gates.mean_low_improvement_gate);
+    assert!(mean_low_only.gates.mean_promoted2_low_improvement_gate);
+
+    let mean_promoted2_only = classify_value_coefficient_screen_v1(
+        &production,
+        &[1.0, 1.0, 1.0],
+        &[1.0, 1.0, -3.0],
+        true,
+    );
+    assert_eq!(mean_promoted2_only.joint_positive_unit_count, 2);
+    assert!(mean_promoted2_only.gates.joint_positive_units_gate);
+    assert!(mean_promoted2_only.gates.mean_paired_difference_gate);
+    assert!(mean_promoted2_only.gates.mean_low_improvement_gate);
+    assert!(
+        !mean_promoted2_only
+            .gates
+            .mean_promoted2_low_improvement_gate
+    );
+
+    for result in [
+        classify_value_coefficient_screen_v1(&production, &advance_low, &advance_promoted2, false),
+        classify_value_coefficient_screen_v1(
+            &[f64::NAN, 0.0, 0.0],
+            &advance_low,
+            &advance_promoted2,
+            true,
+        ),
+        classify_value_coefficient_screen_v1(
+            &production,
+            &[f64::INFINITY, 1.0, 1.0],
+            &advance_promoted2,
+            true,
+        ),
+        classify_value_coefficient_screen_v1(
+            &production,
+            &[f64::MAX, f64::MAX, -f64::MAX],
+            &advance_promoted2,
+            true,
+        ),
+    ] {
+        assert_eq!(
+            result.disposition,
+            ValueCoefficientScreenDispositionV1::Invalid
+        );
+        assert!(verify_value_coefficient_screen_result_v1(&result));
+    }
+
+    // The written arithmetic is +0 followed by unit-order additions and one
+    // division. This distinguishes it from reassociation or pairwise sums.
+    let ordered = value_coefficient_screen_mean_v1(&[1.0e16, -1.0e16, 1.0]).unwrap();
+    let reassociated = value_coefficient_screen_mean_v1(&[1.0e16, 1.0, -1.0e16]).unwrap();
+    assert_eq!(ordered.to_bits(), (1.0f64 / 3.0).to_bits());
+    assert_eq!(reassociated.to_bits(), 0.0f64.to_bits());
+}
+
+fn value_coefficient_screen_summary_unit_fixture_v1(
+    index: usize,
+    production_after: f64,
+    low_after: f64,
+    promoted2_low_after: f64,
+) -> ValueCoefficientScreenSummaryUnitInputV1 {
+    ValueCoefficientScreenSummaryUnitInputV1 {
+        unit_index: index,
+        training_seed: VALUE_COEFFICIENT_SCREEN_TRAINING_SEEDS_V1[index],
+        validation_seed: VALUE_COEFFICIENT_SCREEN_VALIDATION_SEEDS_V1[index],
+        production_loss_before_bits: 1.0f64.to_bits(),
+        production_loss_after_bits: production_after.to_bits(),
+        low_loss_before_bits: 1.0f64.to_bits(),
+        low_loss_after_bits: low_after.to_bits(),
+        promoted2_low_loss_before_bits: 1.0f64.to_bits(),
+        promoted2_low_loss_after_bits: promoted2_low_after.to_bits(),
+        tape_sha256: "a".repeat(64),
+        production_update_sha256: "b".repeat(64),
+        low_update_sha256: "c".repeat(64),
+    }
+}
+
+fn value_coefficient_screen_summary_units_fixture_v1(
+) -> Vec<ValueCoefficientScreenSummaryUnitInputV1> {
+    (0..VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1)
+        .map(|index| {
+            let jitter = index as f64 * 0.01;
+            value_coefficient_screen_summary_unit_fixture_v1(
+                index,
+                0.90 + jitter,
+                0.80 + jitter,
+                0.70 + jitter,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn value_coefficient_screen_summary_binds_raw_units_and_rejects_forgery_v1() {
+    let units = value_coefficient_screen_summary_units_fixture_v1();
+    let (production, low, promoted2_low, initial_identical) =
+        derive_value_coefficient_screen_inputs_v1(&units).unwrap();
+    assert!(initial_identical);
+    for index in 0..VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1 {
+        assert_eq!(
+            production[index].to_bits(),
+            units[index].production_improvement_v1().to_bits()
+        );
+        assert_eq!(
+            low[index].to_bits(),
+            units[index].low_improvement_v1().to_bits()
+        );
+        assert_eq!(
+            (low[index] - production[index]).to_bits(),
+            units[index].paired_difference_v1().to_bits()
+        );
+        assert_eq!(
+            promoted2_low[index].to_bits(),
+            units[index].promoted2_low_improvement_v1().to_bits()
+        );
+    }
+    let result = classify_value_coefficient_screen_v1(&production, &low, &promoted2_low, true);
+    assert_eq!(
+        result.disposition,
+        ValueCoefficientScreenDispositionV1::Advance0p0625
+    );
+    let frame = frame_value_coefficient_screen_summary_v1(&units, &result).unwrap();
+    assert!(frame.bytes_v1().starts_with(
+        FramedWriterV1::new_v1(VALUE_COEFFICIENT_SCREEN_SUMMARY_SCHEMA_V1).bytes_v1()
+    ));
+    for value in production
+        .iter()
+        .chain(low.iter())
+        .chain(result.paired_differences.iter())
+        .chain(promoted2_low.iter())
+    {
+        assert!(frame
+            .bytes_v1()
+            .windows(8)
+            .any(|window| window == value.to_bits().to_le_bytes()));
+    }
+
+    let mut initial_mismatch = units.clone();
+    initial_mismatch[0].low_loss_before_bits = 0.99f64.to_bits();
+    let (production, low, promoted2_low, initial_identical) =
+        derive_value_coefficient_screen_inputs_v1(&initial_mismatch).unwrap();
+    assert!(!initial_identical);
+    let mismatch_result =
+        classify_value_coefficient_screen_v1(&production, &low, &promoted2_low, true);
+    assert_eq!(
+        frame_value_coefficient_screen_summary_v1(&initial_mismatch, &mismatch_result),
+        Err(ValueCoefficientScreenSummaryErrorV1::RawInputsDisagreeWithUnits)
+    );
+
+    let mut wrong_seed = units.clone();
+    wrong_seed[0].training_seed += 1;
+    assert!(derive_value_coefficient_screen_inputs_v1(&wrong_seed).is_none());
+    let mut wrong_order = units.clone();
+    wrong_order.swap(0, 1);
+    assert!(derive_value_coefficient_screen_inputs_v1(&wrong_order).is_none());
+    let mut wrong_digest = units.clone();
+    wrong_digest[0].tape_sha256 = "A".repeat(64);
+    assert!(derive_value_coefficient_screen_inputs_v1(&wrong_digest).is_none());
+
+    let mut forged = result.clone();
+    forged.joint_positive_unit_count += 1;
+    assert_eq!(
+        frame_value_coefficient_screen_summary_v1(&units, &forged),
+        Err(ValueCoefficientScreenSummaryErrorV1::ForgedResult)
+    );
+    let self_consistent_replacement = classify_value_coefficient_screen_v1(
+        &[production[0] + 0.5, production[1], production[2]],
+        &low,
+        &promoted2_low,
+        true,
+    );
+    assert!(verify_value_coefficient_screen_result_v1(
+        &self_consistent_replacement
+    ));
+    assert_eq!(
+        frame_value_coefficient_screen_summary_v1(&units, &self_consistent_replacement),
+        Err(ValueCoefficientScreenSummaryErrorV1::RawInputsDisagreeWithUnits)
+    );
 }
 
 /// The diagnostic-only backend identity is exactly the design's string and
