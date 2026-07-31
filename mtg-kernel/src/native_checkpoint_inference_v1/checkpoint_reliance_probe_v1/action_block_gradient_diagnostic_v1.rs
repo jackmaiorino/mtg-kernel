@@ -36,10 +36,11 @@
 //! `checkpoint_reliance_probe_v1` is declared `#[cfg(test)]` in
 //! `native_checkpoint_inference_v1.rs`), so nothing in this file is reachable
 //! from a production library build. The pure diagnostic is Store-independent.
-//! Its sole ignored live preflight may use the pinned Store authority loader's
-//! shared read lock and may publish only diagnostic evidence to an explicit
-//! new external directory; it never takes an exclusive Store lock, resumes a
-//! run, or publishes or mutates a checkpoint. Formal measurement remains held.
+//! Its ignored live preflight and separately authorized single-shot formal
+//! driver may use the pinned Store authority loader's shared read lock and may
+//! publish only diagnostic evidence to explicit new external directories;
+//! neither takes an exclusive Store lock, resumes a run, or publishes or
+//! mutates a checkpoint.
 
 use super::action_ingress_admission_v2::{
     repair_and_gate_v1, synthetic_action_tensor_v1, AdmissionTransformErrorV1, DigestGateV1,
@@ -182,8 +183,12 @@ const PREFLIGHT_CUDA_DEVICE_ORDER_V1: &str = "PCI_BUS_ID";
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 const PREFLIGHT_LIVE_TEST_NAME_SUFFIX_V1: &str =
     "::action_block_gradient_preflight_seed949999_gpu1_v1";
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+const FORMAL_LIVE_TEST_NAME_SUFFIX_V1: &str = "::action_block_gradient_formal_six_unit_gpu1_v1";
 const PREFLIGHT_UPDATE_PAIR_SCHEMA_V1: &str =
     "mtg_kernel_action_block_gradient_preflight_update_pair/v1";
+const FORMAL_UNIT_TAPE_SCHEMA_V1: &str = "action-block-gradient-formal-unit-tape/v1";
+const FORMAL_MANIFEST_SCHEMA_V1: &str = "action-block-gradient-formal-manifest/v1";
 
 // These values must be supplied while compiling the one live-preflight test
 // binary. `option_env!` embeds them without making ordinary feature builds
@@ -251,13 +256,27 @@ pub(super) const EPISODES_PER_TAPE_V1: u64 = 64;
 pub(super) const PREFLIGHT_BASE_SEED_V1: u64 = 949_999;
 /// The preflight tape's exact Pool3 choices, straight from the design.
 pub(super) const PREFLIGHT_REQUIRED_COUNTS_V1: [u32; 4] = [27, 13, 13, 11];
-/// Formal seeds. Authority #130 permits these in pure schedule tests only:
-/// they may not reach an episode, forward, loss, gradient, update, or
-/// classifier until formal measurement is separately authorized.
+/// Formal seeds, admitted only by the private single-shot formal authorities.
 pub(super) const FORMAL_TRAINING_SEEDS_V1: [u64; BOOTSTRAP_UNIT_COUNT_V1] =
     [950_001, 950_002, 950_003, 950_004, 950_005, 950_006];
 pub(super) const FORMAL_VALIDATION_SEEDS_V1: [u64; BOOTSTRAP_UNIT_COUNT_V1] =
     [951_001, 951_002, 951_003, 951_004, 951_005, 951_006];
+pub(super) const FORMAL_TRAINING_COUNTS_V1: [[u32; 4]; BOOTSTRAP_UNIT_COUNT_V1] = [
+    [25, 12, 19, 8],
+    [20, 19, 11, 14],
+    [39, 8, 7, 10],
+    [28, 11, 12, 13],
+    [18, 12, 13, 21],
+    [25, 14, 17, 8],
+];
+pub(super) const FORMAL_VALIDATION_COUNTS_V1: [[u32; 4]; BOOTSTRAP_UNIT_COUNT_V1] = [
+    [27, 13, 13, 11],
+    [30, 12, 11, 11],
+    [25, 12, 11, 16],
+    [28, 14, 10, 12],
+    [24, 13, 15, 12],
+    [18, 12, 14, 20],
+];
 
 // ---------------------------------------------------------------------------
 // Opponent strata and pure schedule counts.
@@ -1014,6 +1033,79 @@ impl PreflightSeed949999AuthorityV1 {
     }
 }
 
+/// Private seed/count capability shared by the already-qualified preflight
+/// and the separately authorized formal tapes. Callers cannot inject an
+/// arbitrary seed or substitute schedule counts.
+pub(super) trait DiagnosticTapeAuthorityV1 {
+    fn seed_v1(&self) -> u64;
+    fn expected_counts_v1(&self) -> [u32; 4];
+    fn allows_update_v1(&self) -> bool;
+}
+
+impl DiagnosticTapeAuthorityV1 for PreflightSeed949999AuthorityV1 {
+    fn seed_v1(&self) -> u64 {
+        PREFLIGHT_BASE_SEED_V1
+    }
+
+    fn expected_counts_v1(&self) -> [u32; 4] {
+        PREFLIGHT_REQUIRED_COUNTS_V1
+    }
+
+    fn allows_update_v1(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FormalTapeRoleV1 {
+    Training,
+    Validation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FormalSeedAuthorityV1 {
+    unit_index: usize,
+    role: FormalTapeRoleV1,
+}
+
+impl FormalSeedAuthorityV1 {
+    fn training_v1(unit_index: usize) -> Self {
+        assert!(unit_index < BOOTSTRAP_UNIT_COUNT_V1);
+        Self {
+            unit_index,
+            role: FormalTapeRoleV1::Training,
+        }
+    }
+
+    fn validation_v1(unit_index: usize) -> Self {
+        assert!(unit_index < BOOTSTRAP_UNIT_COUNT_V1);
+        Self {
+            unit_index,
+            role: FormalTapeRoleV1::Validation,
+        }
+    }
+}
+
+impl DiagnosticTapeAuthorityV1 for FormalSeedAuthorityV1 {
+    fn seed_v1(&self) -> u64 {
+        match self.role {
+            FormalTapeRoleV1::Training => FORMAL_TRAINING_SEEDS_V1[self.unit_index],
+            FormalTapeRoleV1::Validation => FORMAL_VALIDATION_SEEDS_V1[self.unit_index],
+        }
+    }
+
+    fn expected_counts_v1(&self) -> [u32; 4] {
+        match self.role {
+            FormalTapeRoleV1::Training => FORMAL_TRAINING_COUNTS_V1[self.unit_index],
+            FormalTapeRoleV1::Validation => FORMAL_VALIDATION_COUNTS_V1[self.unit_index],
+        }
+    }
+
+    fn allows_update_v1(&self) -> bool {
+        self.role == FormalTapeRoleV1::Training
+    }
+}
+
 const PREFLIGHT_DECK_ID_V1: &str = "Rally";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1045,7 +1137,7 @@ fn receipt_outer_commitment_matches_v1(
 /// accepted merely because it is nonzero: the outer envelope is rebuilt
 /// independently over the exact inner digest and validated start.
 fn validate_preflight_receipt_v1(
-    authority: &PreflightSeed949999AuthorityV1,
+    authority: &impl DiagnosticTapeAuthorityV1,
     expected_deck_ids: &SessionDeckIdsV1,
     expected_deck_hashes: SessionDeckHashesV1,
     expected: ReceiptExpectedFactsV1,
@@ -1457,7 +1549,7 @@ impl JoinedTapeV1 {
 /// `base_seed` is the run's own authority; every episode's stratum is
 /// recomputed from it through the production schedule rather than trusted.
 pub(super) fn join_rollout_v1(
-    authority: &PreflightSeed949999AuthorityV1,
+    authority: &impl DiagnosticTapeAuthorityV1,
     expected_deck_ids: &SessionDeckIdsV1,
     expected_deck_hashes: SessionDeckHashesV1,
     observed: ObservedRolloutV1,
@@ -2895,7 +2987,7 @@ fn frame_expected_decision_v1(
 }
 
 fn validate_joined_receipt_v1(
-    authority: &PreflightSeed949999AuthorityV1,
+    authority: &impl DiagnosticTapeAuthorityV1,
     expected_deck_ids: &SessionDeckIdsV1,
     expected_deck_hashes: SessionDeckHashesV1,
     episode: &JoinedEpisodeV1,
@@ -2992,13 +3084,13 @@ fn frame_joined_receipt_v1(
 }
 
 fn validate_joined_tape_side_v1(
-    authority: &PreflightSeed949999AuthorityV1,
+    authority: &impl DiagnosticTapeAuthorityV1,
     expected_deck_ids: &SessionDeckIdsV1,
     expected_deck_hashes: SessionDeckHashesV1,
     tape: &JoinedTapeV1,
 ) -> Result<(), TapeFramingErrorV1> {
     if tape.base_seed != authority.seed_v1()
-        || tape.counts.as_array_v1() != PREFLIGHT_REQUIRED_COUNTS_V1
+        || tape.counts.as_array_v1() != authority.expected_counts_v1()
     {
         return Err(TapeFramingErrorV1::CountsDisagreeWithSchedule);
     }
@@ -3314,7 +3406,7 @@ fn frame_joined_tape_side_v1(
 /// prevents a caller from projecting away receipt facts, complete bindings,
 /// the pre-repair row, or either treatment tensor before hashing.
 pub(super) fn frame_joined_tape_v1(
-    authority: &PreflightSeed949999AuthorityV1,
+    authority: &impl DiagnosticTapeAuthorityV1,
     expected_deck_ids: &SessionDeckIdsV1,
     expected_deck_hashes: SessionDeckHashesV1,
     tape: &JoinedTapeV1,
@@ -3535,6 +3627,7 @@ impl ActualTreatmentV1 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ActualUpdateErrorV1 {
     Tape(TapeFramingErrorV1),
+    UnauthorizedTapeRole,
     EmptyTape,
     SnapshotBefore,
     NonGenesisState,
@@ -3562,11 +3655,14 @@ struct ValidatedJoinedTapeForUpdateV1<'a> {
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 impl<'a> ValidatedJoinedTapeForUpdateV1<'a> {
     fn new_v1(
-        authority: &PreflightSeed949999AuthorityV1,
+        authority: &impl DiagnosticTapeAuthorityV1,
         expected_deck_ids: &SessionDeckIdsV1,
         expected_deck_hashes: SessionDeckHashesV1,
         tape: &'a JoinedTapeV1,
     ) -> Result<Self, ActualUpdateErrorV1> {
+        if !authority.allows_update_v1() {
+            return Err(ActualUpdateErrorV1::UnauthorizedTapeRole);
+        }
         let frame = frame_joined_tape_v1(authority, expected_deck_ids, expected_deck_hashes, tape)
             .map_err(ActualUpdateErrorV1::Tape)?;
         if tape.total_group_count_v1() == 0 {
@@ -4301,7 +4397,7 @@ fn execute_validated_actual_arm_v1(
 /// numerical proof is complete.
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn execute_actual_paired_update_v1(
-    authority: &PreflightSeed949999AuthorityV1,
+    authority: &impl DiagnosticTapeAuthorityV1,
     genesis: &Promoted2Generation384GenesisV1,
     expected_deck_ids: &SessionDeckIdsV1,
     expected_deck_hashes: SessionDeckHashesV1,
@@ -4450,7 +4546,7 @@ fn cuda_uuid_text_v1(uuid: cudarc::driver::sys::CUuuid) -> String {
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-fn require_dedicated_exact_test_process_v1() {
+fn require_dedicated_exact_test_process_v1(expected_test_suffix: &str) {
     let arguments = std::env::args().collect::<Vec<_>>();
     assert!(
         arguments.iter().any(|argument| argument == "--exact"),
@@ -4463,8 +4559,8 @@ fn require_dedicated_exact_test_process_v1() {
     assert!(
         arguments
             .iter()
-            .any(|argument| argument.ends_with(PREFLIGHT_LIVE_TEST_NAME_SUFFIX_V1)),
-        "live preflight must use its fully-qualified exact test name"
+            .any(|argument| argument.ends_with(expected_test_suffix)),
+        "live diagnostic must use its fully-qualified exact test name"
     );
     let single_threaded = arguments
         .iter()
@@ -4651,8 +4747,8 @@ impl BoundedGpu1ExclusivityMonitorV1 {
 /// external query independently proves physical index, headless state, and
 /// absence of foreign compute clients.
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-fn require_fresh_physical_gpu1_v1() -> ValidatedPreflightGpuV1 {
-    require_dedicated_exact_test_process_v1();
+fn require_fresh_physical_gpu1_v1(expected_test_suffix: &str) -> ValidatedPreflightGpuV1 {
+    require_dedicated_exact_test_process_v1(expected_test_suffix);
     assert_eq!(
         std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
         Ok(PREFLIGHT_GPU_ORDINAL_V1),
@@ -4852,19 +4948,17 @@ fn fresh_state_from_parameters_v1(
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-fn run_seed949999_preflight_repeat_v1(
-    gpu: &ValidatedPreflightGpuV1,
+fn run_neutral_tape_v1(
+    authority: &impl DiagnosticTapeAuthorityV1,
     authorities: &PreflightLiveAuthoritiesV1,
-) -> PreflightRepeatArtifactsV1 {
-    require_bridge_gpu_binding_v1(gpu);
-    let full_state = fresh_state_from_parameters_v1(&authorities.genesis.full_parameters);
-    let half_state = fresh_state_from_parameters_v1(&authorities.genesis.half_parameters);
+    full_state: &NativePolicyValueTrainStateV1,
+    half_state: &NativePolicyValueTrainStateV1,
+) -> JoinedTapeV1 {
     let full_forward = NativePolicyPackedForwardBuilderV1::from_model_v1(full_state.model_v1())
         .expect("FULL rollout forward builder");
     let half_forward = NativePolicyPackedForwardBuilderV1::from_model_v1(half_state.model_v1())
         .expect("HALF rollout forward builder");
     let mut scorer = TreatmentAwareScorerV1::new_v1(full_forward, half_forward);
-    let authority = PreflightSeed949999AuthorityV1::seal_v1();
     let environment_authority = preflight_native_environment_window_v2(
         authority.seed_v1(),
         0,
@@ -4899,7 +4993,7 @@ fn run_seed949999_preflight_repeat_v1(
         &mut scorer,
         observer,
     )
-    .expect("authorized seed-949999 Pool3 rollout must complete");
+    .expect("authorized Pool3 diagnostic rollout must complete");
     assert_eq!(rollout.episodes.len() as u64, EPISODES_PER_TAPE_V1);
     assert!(rollout.all_natural());
     assert_eq!(
@@ -4921,13 +5015,197 @@ fn run_seed949999_preflight_repeat_v1(
     assert_eq!(scorer.last_failure_v1(), None);
     let retained = scorer.into_retained_v1();
     let tape = join_rollout_v1(
-        &authority,
+        authority,
         &authorities.deck_ids,
         authorities.deck_hashes,
         observed,
         retained,
     )
     .expect("rollout, receipts, scored rows, and schedule must join exactly once");
+    assert_eq!(tape.counts.as_array_v1(), authority.expected_counts_v1());
+    tape
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HeldOutEvaluationErrorV1 {
+    EmptyStratum,
+    Forward,
+    InitialOutputMismatch,
+    Atom(ValidationAtomErrorV1),
+    NonFinite,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct HeldOutLossV1 {
+    means: StratumMeansV1,
+    combined: f64,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+impl HeldOutLossV1 {
+    fn promoted2_v1(self) -> f64 {
+        f64::from(self.means.promoted2)
+    }
+}
+
+/// CPU-only held-out policy loss over the frozen validation trajectory.
+/// Actions, terminal returns, and advantages remain those selected at
+/// genesis; only the requested state/treatment logits are re-forwarded.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn evaluate_held_out_loss_v1(
+    state: &NativePolicyValueTrainStateV1,
+    treatment: ActualTreatmentV1,
+    tape: &JoinedTapeV1,
+    require_initial_outputs: bool,
+) -> Result<HeldOutLossV1, HeldOutEvaluationErrorV1> {
+    let forward = NativePolicyPackedForwardBuilderV1::from_model_v1(state.model_v1())
+        .map_err(|_| HeldOutEvaluationErrorV1::Forward)?;
+    let mut sums = [0.0f32; 4];
+    let mut counts = [0u32; 4];
+    for episode in &tape.episodes {
+        let stratum = usize::try_from(episode.stratum)
+            .ok()
+            .filter(|value| *value < 4)
+            .ok_or(HeldOutEvaluationErrorV1::NonFinite)?;
+        for group in &episode.groups {
+            let first = group
+                .substeps
+                .first()
+                .ok_or(HeldOutEvaluationErrorV1::NonFinite)?;
+            let advantage = frozen_advantage_v1(
+                episode.authenticated_terminal.learner_return_v1(),
+                first.retained.initial_value,
+            );
+            if !advantage.is_finite() {
+                return Err(HeldOutEvaluationErrorV1::NonFinite);
+            }
+            let mut logits_by_substep = Vec::with_capacity(group.substeps.len());
+            let mut selected_actions = Vec::with_capacity(group.substeps.len());
+            for substep in &group.substeps {
+                let output = forward
+                    .forward_v1(encoded_decision_view_v1(
+                        treatment.tensor_v1(&substep.retained.lineage),
+                    ))
+                    .map_err(|_| HeldOutEvaluationErrorV1::Forward)?;
+                if !output.value_v1().is_finite()
+                    || output.logits_v1().iter().any(|value| !value.is_finite())
+                {
+                    return Err(HeldOutEvaluationErrorV1::NonFinite);
+                }
+                if require_initial_outputs
+                    && (output.value_v1().to_bits() != substep.predicted_value_bits
+                        || output.logits_v1().len() != substep.raw_action_logit_bits.len()
+                        || output
+                            .logits_v1()
+                            .iter()
+                            .zip(&substep.raw_action_logit_bits)
+                            .any(|(value, expected)| value.to_bits() != *expected))
+                {
+                    return Err(HeldOutEvaluationErrorV1::InitialOutputMismatch);
+                }
+                logits_by_substep.push(output.logits_v1().to_vec());
+                selected_actions.push(substep.selected_index as usize);
+            }
+            let atom = validation_atom_v1(&logits_by_substep, &selected_actions, advantage)
+                .map_err(HeldOutEvaluationErrorV1::Atom)?;
+            sums[stratum] += atom;
+            if !sums[stratum].is_finite() {
+                return Err(HeldOutEvaluationErrorV1::NonFinite);
+            }
+            counts[stratum] = counts[stratum]
+                .checked_add(1)
+                .ok_or(HeldOutEvaluationErrorV1::NonFinite)?;
+        }
+    }
+    if counts.iter().any(|count| *count == 0) {
+        return Err(HeldOutEvaluationErrorV1::EmptyStratum);
+    }
+    let mut means = [0.0f32; 4];
+    for index in 0..4 {
+        means[index] = sums[index] / counts[index] as f32;
+        if !means[index].is_finite() {
+            return Err(HeldOutEvaluationErrorV1::NonFinite);
+        }
+    }
+    let means = StratumMeansV1 {
+        promoted2: means[0],
+        predecessor_a: means[1],
+        predecessor_b: means[2],
+        uniform: means[3],
+    };
+    let combined = combined_validation_loss_v1(means);
+    if !combined.is_finite() {
+        return Err(HeldOutEvaluationErrorV1::NonFinite);
+    }
+    Ok(HeldOutLossV1 { means, combined })
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn stratum_means_bit_equal_v1(left: StratumMeansV1, right: StratumMeansV1) -> bool {
+    [
+        (left.promoted2, right.promoted2),
+        (left.predecessor_a, right.predecessor_a),
+        (left.predecessor_b, right.predecessor_b),
+        (left.uniform, right.uniform),
+    ]
+    .iter()
+    .all(|(left, right)| left.to_bits() == right.to_bits())
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn frame_formal_unit_tape_v1(
+    training_authority: &FormalSeedAuthorityV1,
+    validation_authority: &FormalSeedAuthorityV1,
+    expected_deck_ids: &SessionDeckIdsV1,
+    expected_deck_hashes: SessionDeckHashesV1,
+    training: &JoinedTapeV1,
+    validation: &JoinedTapeV1,
+) -> Result<FramedWriterV1, TapeFramingErrorV1> {
+    if training_authority.role != FormalTapeRoleV1::Training
+        || validation_authority.role != FormalTapeRoleV1::Validation
+        || training_authority.unit_index != validation_authority.unit_index
+    {
+        return Err(TapeFramingErrorV1::CountsDisagreeWithSchedule);
+    }
+    validate_joined_tape_side_v1(
+        training_authority,
+        expected_deck_ids,
+        expected_deck_hashes,
+        training,
+    )?;
+    validate_joined_tape_side_v1(
+        validation_authority,
+        expected_deck_ids,
+        expected_deck_hashes,
+        validation,
+    )?;
+    if validation
+        .groups_per_stratum_v1()
+        .iter()
+        .any(|count| *count == 0)
+    {
+        return Err(TapeFramingErrorV1::EmptyStratumGroup);
+    }
+    let mut writer = FramedWriterV1::new_v1(FORMAL_UNIT_TAPE_SCHEMA_V1);
+    writer.u64_v1("unit_index", training_authority.unit_index as u64);
+    writer.u64_v1("episodes_per_tape", EPISODES_PER_TAPE_V1);
+    frame_joined_tape_side_v1(&mut writer, "training", training)?;
+    frame_joined_tape_side_v1(&mut writer, "validation", validation)?;
+    Ok(writer)
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn run_seed949999_preflight_repeat_v1(
+    gpu: &ValidatedPreflightGpuV1,
+    authorities: &PreflightLiveAuthoritiesV1,
+) -> PreflightRepeatArtifactsV1 {
+    require_bridge_gpu_binding_v1(gpu);
+    let full_state = fresh_state_from_parameters_v1(&authorities.genesis.full_parameters);
+    let half_state = fresh_state_from_parameters_v1(&authorities.genesis.half_parameters);
+    let authority = PreflightSeed949999AuthorityV1::seal_v1();
+    let tape = run_neutral_tape_v1(&authority, authorities, &full_state, &half_state);
     // Close the environment-read seam immediately before the bridge selects
     // its CudaDevice ordinal for both arm updates.
     require_bridge_gpu_binding_v1(gpu);
@@ -4978,6 +5256,153 @@ fn run_seed949999_preflight_repeat_v1(
         full_update_frame: paired.full.frame,
         half_update_frame: paired.half.frame,
         update_pair_frame: pair_frame,
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+struct FormalUnitArtifactsV1 {
+    unit_index: usize,
+    summary_input: SummaryUnitInputV1,
+    tape_frame: FramedWriterV1,
+    full_update_frame: FramedWriterV1,
+    half_update_frame: FramedWriterV1,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn run_formal_unit_v1(
+    unit_index: usize,
+    gpu: &ValidatedPreflightGpuV1,
+    authorities: &PreflightLiveAuthoritiesV1,
+) -> FormalUnitArtifactsV1 {
+    require_bridge_gpu_binding_v1(gpu);
+    let training_authority = FormalSeedAuthorityV1::training_v1(unit_index);
+    let validation_authority = FormalSeedAuthorityV1::validation_v1(unit_index);
+    let full_state = fresh_state_from_parameters_v1(&authorities.genesis.full_parameters);
+    let half_state = fresh_state_from_parameters_v1(&authorities.genesis.half_parameters);
+
+    // Both tapes are fixed at the common genesis before either treatment is
+    // updated. The validation actions and advantages therefore remain held
+    // out from the one training update.
+    let training_tape =
+        run_neutral_tape_v1(&training_authority, authorities, &full_state, &half_state);
+    let validation_tape =
+        run_neutral_tape_v1(&validation_authority, authorities, &full_state, &half_state);
+    let tape_frame = frame_formal_unit_tape_v1(
+        &training_authority,
+        &validation_authority,
+        &authorities.deck_ids,
+        authorities.deck_hashes,
+        &training_tape,
+        &validation_tape,
+    )
+    .expect("formal training and validation tapes must bind as one unit");
+
+    let full_before =
+        evaluate_held_out_loss_v1(&full_state, ActualTreatmentV1::Full, &validation_tape, true)
+            .expect("FULL genesis held-out loss must evaluate");
+    let half_before =
+        evaluate_held_out_loss_v1(&half_state, ActualTreatmentV1::Half, &validation_tape, true)
+            .expect("HALF genesis held-out loss must evaluate");
+    assert!(stratum_means_bit_equal_v1(
+        full_before.means,
+        half_before.means
+    ));
+    assert_eq!(
+        full_before.combined.to_bits(),
+        half_before.combined.to_bits()
+    );
+
+    require_bridge_gpu_binding_v1(gpu);
+    let paired = execute_actual_paired_update_v1(
+        &training_authority,
+        &authorities.genesis,
+        &authorities.deck_ids,
+        authorities.deck_hashes,
+        &training_tape,
+        full_state,
+        half_state,
+    )
+    .expect("formal paired update and every numerical gate must pass");
+    let full_after = evaluate_held_out_loss_v1(
+        &paired.full_state,
+        ActualTreatmentV1::Full,
+        &validation_tape,
+        false,
+    )
+    .expect("FULL post-update held-out loss must evaluate");
+    let half_after = evaluate_held_out_loss_v1(
+        &paired.half_state,
+        ActualTreatmentV1::Half,
+        &validation_tape,
+        false,
+    )
+    .expect("HALF post-update held-out loss must evaluate");
+
+    let tape_sha256 = tape_frame.sha256_v1();
+    let full_update_sha256 = paired.full.sha256_v1();
+    let half_update_sha256 = paired.half.sha256_v1();
+    let summary_input = SummaryUnitInputV1 {
+        unit_index,
+        training_seed: training_authority.seed_v1(),
+        validation_seed: validation_authority.seed_v1(),
+        full_loss_before_bits: full_before.combined.to_bits(),
+        full_loss_after_bits: full_after.combined.to_bits(),
+        half_loss_before_bits: half_before.combined.to_bits(),
+        half_loss_after_bits: half_after.combined.to_bits(),
+        promoted2_half_loss_before_bits: half_before.promoted2_v1().to_bits(),
+        promoted2_half_loss_after_bits: half_after.promoted2_v1().to_bits(),
+        tape_sha256,
+        full_update_sha256,
+        half_update_sha256,
+    };
+    assert!(summary_input.improvement_full_v1().is_finite());
+    assert!(summary_input.improvement_half_v1().is_finite());
+    assert!(summary_input.paired_difference_v1().is_finite());
+    assert!(summary_input.promoted2_improvement_v1().is_finite());
+    assert!(frame_has_schema_prefix_v1(
+        tape_frame.bytes_v1(),
+        FORMAL_UNIT_TAPE_SCHEMA_V1
+    ));
+    assert!(frame_has_schema_prefix_v1(
+        paired.full.frame.bytes_v1(),
+        UPDATE_SCHEMA_V1
+    ));
+    assert!(frame_has_schema_prefix_v1(
+        paired.half.frame.bytes_v1(),
+        UPDATE_SCHEMA_V1
+    ));
+    assert_eq!(
+        exact_framed_atom_occurrences_v1(
+            paired.full.frame.bytes_v1(),
+            "treatment",
+            TREATMENT_FULL_V1.as_bytes(),
+        ),
+        1
+    );
+    assert_eq!(
+        exact_framed_atom_occurrences_v1(
+            paired.half.frame.bytes_v1(),
+            "treatment",
+            TREATMENT_HALF_V1.as_bytes(),
+        ),
+        1
+    );
+    eprintln!(
+        "formal unit {}: train_seed={} validation_seed={} I_F_bits={:016x} I_H_bits={:016x} d_bits={:016x} p2_H_bits={:016x}",
+        unit_index + 1,
+        training_authority.seed_v1(),
+        validation_authority.seed_v1(),
+        summary_input.improvement_full_v1().to_bits(),
+        summary_input.improvement_half_v1().to_bits(),
+        summary_input.paired_difference_v1().to_bits(),
+        summary_input.promoted2_improvement_v1().to_bits(),
+    );
+    FormalUnitArtifactsV1 {
+        unit_index,
+        summary_input,
+        tape_frame,
+        full_update_frame: paired.full.frame,
+        half_update_frame: paired.half.frame,
     }
 }
 
@@ -5715,7 +6140,7 @@ fn action_block_gradient_preflight_seed949999_gpu1_v1() {
         "the validated Store authority and real preflight are native Windows/MSVC only"
     );
     let provenance = PreflightProvenanceGuardV1::begin_v1();
-    let gpu = require_fresh_physical_gpu1_v1();
+    let gpu = require_fresh_physical_gpu1_v1(PREFLIGHT_LIVE_TEST_NAME_SUFFIX_V1);
     let exclusivity = BoundedGpu1ExclusivityMonitorV1::start_v1();
     let authorities = load_preflight_live_authorities_v1();
     let first = run_seed949999_preflight_repeat_v1(&gpu, &authorities);
@@ -6094,6 +6519,370 @@ pub(super) fn frame_manifest_v1(
     writer.text_v1("half_update_sha256", input.half_update_sha256);
     writer.text_v1("update_pair_sha256", input.update_pair_sha256);
     Ok(writer)
+}
+
+// ---------------------------------------------------------------------------
+// Authorized single-shot six-unit formal measurement.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FormalArtifactIdentityV1 {
+    basename: String,
+    exact_length: u64,
+    sha256: String,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FormalPublishedUnitV1 {
+    unit_index: usize,
+    training_seed: u64,
+    validation_seed: u64,
+    tape: FormalArtifactIdentityV1,
+    full_update: FormalArtifactIdentityV1,
+    half_update: FormalArtifactIdentityV1,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn frame_formal_manifest_v1(
+    provenance: &ValidatedPreflightProvenanceV1,
+    gpu: &ValidatedPreflightGpuV1,
+    units: &[FormalPublishedUnitV1],
+    summary: &FormalArtifactIdentityV1,
+    result: &ClassifierResultV1,
+) -> FramedWriterV1 {
+    assert_eq!(units.len(), BOOTSTRAP_UNIT_COUNT_V1);
+    assert!(verify_classifier_result_v1(result));
+    assert_eq!(gpu.ordinal, PREFLIGHT_GPU_ORDINAL_U64_V1);
+    assert_eq!(gpu.name, PREFLIGHT_GPU_NAME_V1);
+    assert_eq!(gpu.uuid, PREFLIGHT_GPU_UUID_V1);
+    let mut writer = FramedWriterV1::new_v1(FORMAL_MANIFEST_SCHEMA_V1);
+    writer.text_v1("design_sha256", DESIGN_DOCUMENT_SHA256_V1);
+    writer.u64_v1("design_bytes", DESIGN_DOCUMENT_BYTE_COUNT_V1);
+    writer.u64_v1("design_lines", DESIGN_DOCUMENT_LINE_COUNT_V1);
+    writer.text_v1("git_commit", provenance.git_commit);
+    writer.text_v1("git_tree", provenance.git_tree);
+    writer.text_v1("tracked_tree_sha256", provenance.tracked_tree_sha256);
+    writer.text_v1("tracked_tree_contract", provenance.tracked_tree_contract);
+    writer.text_v1("toolchain", &provenance.toolchain);
+    writer.text_v1(
+        "rustc_executable_sha256",
+        &provenance.rustc_executable_sha256,
+    );
+    writer.text_v1("linker_path", &provenance.linker_path);
+    writer.text_v1(
+        "linker_executable_sha256",
+        &provenance.linker_executable_sha256,
+    );
+    writer.text_v1("nvidia_smi_path", &provenance.nvidia_smi_path);
+    writer.text_v1("nvidia_smi_sha256", &provenance.nvidia_smi_sha256);
+    writer.text_v1("test_executable_sha256", &provenance.test_executable_sha256);
+    writer.u64_v1(
+        "test_executable_byte_len",
+        provenance.test_executable_byte_len,
+    );
+    writer.text_v1("target", "x86_64-pc-windows-msvc");
+    writer.text_v1("backend_identity", DIAGNOSTIC_BACKEND_IDENTITY_V1);
+    writer.text_v1("vendored_tree_object", VENDORED_SIMPLEUNIT_TREE_OBJECT_V1);
+    writer.text_v1("pool3_sha256", POOL3_DOCUMENT_SHA256_V1);
+    writer.text_v1("source_run_sha256", SOURCE_RUN_SHA256_V1);
+    writer.text_v1("source_checkpoint_sha256", SOURCE_CHECKPOINT_SHA256_V1);
+    writer.text_v1("source_sidecar_sha256", SOURCE_SIDECAR_SHA256_V1);
+    writer.text_v1("source_payload_sha256", SOURCE_PAYLOAD_SHA256_V1);
+    writer.text_v1(
+        "source_model_parameter_sha256",
+        SOURCE_MODEL_PARAMETER_SHA256_V1,
+    );
+    writer.u64_v1("source_base_seed", SOURCE_BASE_SEED_V1);
+    writer.u64_v1("source_generation", SOURCE_GENERATION_V1);
+    writer.u64_v1("gpu_ordinal", gpu.ordinal);
+    writer.text_v1("gpu_name", &gpu.name);
+    writer.text_v1("gpu_uuid", &gpu.uuid);
+    writer.u64_v1("unit_count", units.len() as u64);
+    for (index, unit) in units.iter().enumerate() {
+        assert_eq!(unit.unit_index, index);
+        assert_eq!(unit.training_seed, FORMAL_TRAINING_SEEDS_V1[index]);
+        assert_eq!(unit.validation_seed, FORMAL_VALIDATION_SEEDS_V1[index]);
+        let label = format!("unit[{index}]");
+        writer.u64_v1(&format!("{label}.training_seed"), unit.training_seed);
+        writer.u64_v1(&format!("{label}.validation_seed"), unit.validation_seed);
+        writer.u32_array_v1(
+            &format!("{label}.training_counts"),
+            &FORMAL_TRAINING_COUNTS_V1[index],
+        );
+        writer.u32_array_v1(
+            &format!("{label}.validation_counts"),
+            &FORMAL_VALIDATION_COUNTS_V1[index],
+        );
+        for (role, artifact) in [
+            ("tape", &unit.tape),
+            ("full_update", &unit.full_update),
+            ("half_update", &unit.half_update),
+        ] {
+            assert!(exact_lower_hex_v1(&artifact.sha256, 64));
+            assert!(artifact.exact_length > 0);
+            writer.text_v1(&format!("{label}.{role}.basename"), &artifact.basename);
+            writer.u64_v1(&format!("{label}.{role}.byte_len"), artifact.exact_length);
+            writer.text_v1(&format!("{label}.{role}.sha256"), &artifact.sha256);
+        }
+    }
+    assert!(exact_lower_hex_v1(&summary.sha256, 64));
+    assert!(summary.exact_length > 0);
+    writer.text_v1("summary.basename", &summary.basename);
+    writer.u64_v1("summary.byte_len", summary.exact_length);
+    writer.text_v1("summary.sha256", &summary.sha256);
+    writer.text_v1("disposition", result.disposition.name_v1());
+    writer
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+struct FormalStagingPublicationV1 {
+    outer_parent: crate::durable_publication_v1::ValidatedPublicationParentV1,
+    staging_parent: crate::durable_publication_v1::ValidatedPublicationParentV1,
+    staging_dir: PathBuf,
+    final_dir: PathBuf,
+    artifacts: Vec<FormalArtifactIdentityV1>,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+impl FormalStagingPublicationV1 {
+    fn begin_v1() -> Self {
+        let requested = PathBuf::from(
+            std::env::var("MTG_KERNEL_ACTION_BLOCK_FORMAL_OUTPUT_DIR_V1")
+                .expect("an explicit new formal output directory is required"),
+        );
+        assert!(requested.is_absolute(), "formal output must be absolute");
+        let leaf = requested
+            .file_name()
+            .expect("formal output must have a normal leaf")
+            .to_os_string();
+        let requested_parent = requested
+            .parent()
+            .expect("formal output must have an existing parent");
+        let outer_parent =
+            crate::durable_publication_v1::capture_existing_publication_parent_v1(requested_parent)
+                .expect("formal parent must be a validated existing directory");
+        let final_dir = crate::durable_publication_v1::child_path_v1(&outer_parent, &leaf)
+            .expect("formal output leaf must be one safe child name");
+        let mut staging_leaf = leaf.clone();
+        staging_leaf.push(".partial");
+        let staging_dir =
+            crate::durable_publication_v1::child_path_v1(&outer_parent, &staging_leaf)
+                .expect("formal staging leaf must be one safe child name");
+        require_absent_path_v1(&final_dir, "final formal directory");
+        require_absent_path_v1(&staging_dir, "staging formal directory");
+        crate::durable_publication_v1::revalidate_parent_v1(&outer_parent)
+            .expect("formal parent must remain stable before staging creation");
+        std::fs::create_dir(&staging_dir).expect("formal staging directory must be created new");
+        let staging_parent =
+            crate::durable_publication_v1::capture_existing_publication_parent_v1(&staging_dir)
+                .expect("new formal staging directory must validate");
+        Self {
+            outer_parent,
+            staging_parent,
+            staging_dir,
+            final_dir,
+            artifacts: Vec::with_capacity(20),
+        }
+    }
+
+    fn publish_frame_v1(
+        &mut self,
+        basename: String,
+        frame: FramedWriterV1,
+    ) -> FormalArtifactIdentityV1 {
+        assert!(
+            !self.artifacts.iter().any(|item| item.basename == basename),
+            "formal artifact basename must be unique"
+        );
+        let exact_length = frame.buffer.len() as u64;
+        let sha256 = frame.sha256_v1();
+        let expectation =
+            crate::durable_publication_v1::DurableFileExpectationV1::from_bytes(&frame.buffer)
+                .expect("formal artifact expectation must construct");
+        let stage_name = format!("{basename}.publish-stage");
+        let receipt = crate::durable_move_publication_v2::publish_immutable_file_by_move_v2(
+            &self.staging_parent,
+            stage_name,
+            &basename,
+            &frame.buffer,
+            expectation,
+        )
+        .unwrap_or_else(|_| panic!("durable formal publication failed: {basename}"));
+        assert_eq!(receipt.exact_length(), exact_length);
+        assert_eq!(lower_hex_raw32_v1(receipt.sha256()), sha256);
+        let identity = FormalArtifactIdentityV1 {
+            basename,
+            exact_length,
+            sha256,
+        };
+        self.artifacts.push(identity.clone());
+        identity
+    }
+
+    fn verify_inventory_v1(
+        parent: &crate::durable_publication_v1::ValidatedPublicationParentV1,
+        expected: &[FormalArtifactIdentityV1],
+    ) {
+        let mut observed = std::fs::read_dir(parent.canonical_path())
+            .expect("formal artifact directory inventory must read")
+            .map(|entry| {
+                let entry = entry.expect("formal artifact directory entry must read");
+                assert!(
+                    entry
+                        .file_type()
+                        .expect("formal artifact type must read")
+                        .is_file(),
+                    "formal artifact inventory may contain only regular files"
+                );
+                entry
+                    .file_name()
+                    .to_str()
+                    .expect("formal artifact basename must be UTF-8")
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        observed.sort();
+        let mut expected_names = expected
+            .iter()
+            .map(|item| item.basename.clone())
+            .collect::<Vec<_>>();
+        expected_names.sort();
+        assert_eq!(
+            observed, expected_names,
+            "formal artifact inventory must be exact"
+        );
+        for artifact in expected {
+            let path = crate::durable_publication_v1::child_path_v1(
+                parent,
+                std::ffi::OsStr::new(&artifact.basename),
+            )
+            .expect("formal artifact basename must remain safe");
+            let metadata =
+                std::fs::symlink_metadata(&path).expect("formal artifact metadata must reread");
+            assert!(metadata.file_type().is_file());
+            assert!(!metadata.file_type().is_symlink());
+            let mut file = std::fs::File::open(&path).expect("formal artifact must reopen");
+            let recaptured = identity_from_open_file_v1(&mut file);
+            assert_eq!(recaptured.exact_length, artifact.exact_length);
+            assert_eq!(recaptured.sha256, artifact.sha256);
+        }
+    }
+
+    fn finish_v1(self) -> (PathBuf, Vec<FormalArtifactIdentityV1>) {
+        assert_eq!(
+            self.artifacts.len(),
+            20,
+            "formal inventory must contain 20 files"
+        );
+        Self::verify_inventory_v1(&self.staging_parent, &self.artifacts);
+        crate::durable_publication_v1::revalidate_parent_v1(&self.outer_parent)
+            .expect("formal parent must remain stable before directory publication");
+        require_absent_path_v1(&self.final_dir, "final formal directory");
+        move_preflight_directory_write_through_v1(&self.staging_dir, &self.final_dir)
+            .expect("complete formal directory must publish without replacement");
+        crate::durable_publication_v1::revalidate_parent_v1(&self.outer_parent)
+            .expect("formal parent must remain stable after directory publication");
+        require_absent_path_v1(&self.staging_dir, "published formal staging directory");
+        let final_parent =
+            crate::durable_publication_v1::capture_existing_publication_parent_v1(&self.final_dir)
+                .expect("published formal directory must validate");
+        Self::verify_inventory_v1(&final_parent, &self.artifacts);
+        (final_parent.canonical_path().to_path_buf(), self.artifacts)
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[test]
+#[ignore = "authorized single-shot six-unit formal HALF measurement; native Windows/MSVC, dedicated process, and explicit invocation required"]
+fn action_block_gradient_formal_six_unit_gpu1_v1() {
+    assert!(
+        cfg!(all(
+            target_arch = "x86_64",
+            target_os = "windows",
+            target_env = "msvc"
+        )),
+        "the formal measurement is native Windows/MSVC only"
+    );
+    let provenance = PreflightProvenanceGuardV1::begin_v1();
+    let gpu = require_fresh_physical_gpu1_v1(FORMAL_LIVE_TEST_NAME_SUFFIX_V1);
+    let exclusivity = BoundedGpu1ExclusivityMonitorV1::start_v1();
+    let authorities = load_preflight_live_authorities_v1();
+    let mut publication = FormalStagingPublicationV1::begin_v1();
+    let mut summary_inputs = Vec::with_capacity(BOOTSTRAP_UNIT_COUNT_V1);
+    let mut published_units = Vec::with_capacity(BOOTSTRAP_UNIT_COUNT_V1);
+
+    for unit_index in 0..BOOTSTRAP_UNIT_COUNT_V1 {
+        let artifacts = run_formal_unit_v1(unit_index, &gpu, &authorities);
+        assert_eq!(artifacts.unit_index, unit_index);
+        let tape = publication.publish_frame_v1(
+            format!("unit-{:02}-tape.frame", unit_index + 1),
+            artifacts.tape_frame,
+        );
+        let full_update = publication.publish_frame_v1(
+            format!("unit-{:02}-full-update.frame", unit_index + 1),
+            artifacts.full_update_frame,
+        );
+        let half_update = publication.publish_frame_v1(
+            format!("unit-{:02}-half-update.frame", unit_index + 1),
+            artifacts.half_update_frame,
+        );
+        assert_eq!(tape.sha256, artifacts.summary_input.tape_sha256);
+        assert_eq!(
+            full_update.sha256,
+            artifacts.summary_input.full_update_sha256
+        );
+        assert_eq!(
+            half_update.sha256,
+            artifacts.summary_input.half_update_sha256
+        );
+        published_units.push(FormalPublishedUnitV1 {
+            unit_index,
+            training_seed: artifacts.summary_input.training_seed,
+            validation_seed: artifacts.summary_input.validation_seed,
+            tape,
+            full_update,
+            half_update,
+        });
+        summary_inputs.push(artifacts.summary_input);
+    }
+
+    let (paired_differences, promoted2_improvements) = derive_classifier_inputs_v1(&summary_inputs)
+        .expect("six ordered formal units must derive classifier inputs");
+    let result = classify_v1(&paired_differences, &promoted2_improvements, true);
+    assert!(verify_classifier_result_v1(&result));
+    let summary_frame = frame_summary_v1(&summary_inputs, &result)
+        .expect("formal summary must bind its authoritative unit inputs");
+    let summary = publication.publish_frame_v1("summary.frame".to_owned(), summary_frame);
+
+    exclusivity.finish_v1(&gpu);
+    let provenance = provenance.finish_v1();
+    let manifest_frame =
+        frame_formal_manifest_v1(&provenance, &gpu, &published_units, &summary, &result);
+    let manifest = publication.publish_frame_v1("manifest.frame".to_owned(), manifest_frame);
+    let (final_dir, inventory) = publication.finish_v1();
+    assert_eq!(inventory.len(), 20);
+    eprintln!(
+        "formal HALF result: disposition={} positive_d={}/6 d_low_bits={:016x} positive_p2={}/6 p2_low_bits={:016x} summary={} manifest={} dir={}",
+        result.disposition.name_v1(),
+        result.positive_paired_count,
+        result
+            .paired_read
+            .expect("finite formal paired bootstrap")
+            .low_index_value
+            .to_bits(),
+        result.positive_promoted2_count,
+        result
+            .promoted2_read
+            .expect("finite formal promoted2 bootstrap")
+            .low_index_value
+            .to_bits(),
+        summary.sha256,
+        manifest.sha256,
+        final_dir.display(),
+    );
+    drop(gpu);
 }
 
 // ---------------------------------------------------------------------------
@@ -7300,12 +8089,27 @@ fn preflight_seed_949999_draws_the_required_pool3_counts_v1() {
     assert_eq!(counts.total_v1(), EPISODES_PER_TAPE_V1 as u32);
 }
 
-/// Pure schedule reproduction of the formal count goldens. Authority #130
-/// permits exactly this and no more for the formal seeds: no episode,
-/// forward, loss, gradient, update, or classifier is reached here.
+/// Pure schedule reproduction of the formal count goldens and the private
+/// runtime authorities that now admit exactly those twelve tapes.
 #[test]
 fn formal_seed_pool3_count_goldens_reproduce_exactly_v1() {
     for (unit, (training_golden, validation_golden)) in FORMAL_COUNT_GOLDENS_V1.iter().enumerate() {
+        assert_eq!(*training_golden, FORMAL_TRAINING_COUNTS_V1[unit]);
+        assert_eq!(*validation_golden, FORMAL_VALIDATION_COUNTS_V1[unit]);
+        let training_authority = FormalSeedAuthorityV1::training_v1(unit);
+        let validation_authority = FormalSeedAuthorityV1::validation_v1(unit);
+        assert_eq!(training_authority.seed_v1(), FORMAL_TRAINING_SEEDS_V1[unit]);
+        assert_eq!(
+            validation_authority.seed_v1(),
+            FORMAL_VALIDATION_SEEDS_V1[unit]
+        );
+        assert_eq!(training_authority.expected_counts_v1(), *training_golden);
+        assert_eq!(
+            validation_authority.expected_counts_v1(),
+            *validation_golden
+        );
+        assert!(training_authority.allows_update_v1());
+        assert!(!validation_authority.allows_update_v1());
         let training = pool_choice_counts_v1(FORMAL_TRAINING_SEEDS_V1[unit], EPISODES_PER_TAPE_V1);
         let validation =
             pool_choice_counts_v1(FORMAL_VALIDATION_SEEDS_V1[unit], EPISODES_PER_TAPE_V1);
@@ -7821,6 +8625,32 @@ fn validation_atom_uses_production_log_softmax_and_the_frozen_advantage_v1() {
     let (_, row) = selected_log_softmax(&[2.0, -1.0, 0.5], 0).unwrap();
     let total: f32 = row.iter().map(|value| value.exp()).sum();
     assert!((total - 1.0).abs() < 1e-6);
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[test]
+fn held_out_evaluator_uses_real_groups_and_rejects_an_empty_stratum_v1() {
+    let (_authority, _deck_ids, _deck_hashes, mut tape) = joined_fixture_v1();
+    let parameters = native_stream_fixture_v1(0.0);
+    let state = fresh_state_from_parameters_v1(&parameters);
+    let loss = evaluate_held_out_loss_v1(&state, ActualTreatmentV1::Full, &tape, false)
+        .expect("all-zero model must yield a finite held-out projection");
+    assert!(loss.combined.is_finite());
+    assert!(loss.promoted2_v1().is_finite());
+    assert_eq!(
+        evaluate_held_out_loss_v1(&state, ActualTreatmentV1::Full, &tape, true),
+        Err(HeldOutEvaluationErrorV1::InitialOutputMismatch)
+    );
+
+    for episode in &mut tape.episodes {
+        if episode.stratum == 0 {
+            episode.groups.clear();
+        }
+    }
+    assert_eq!(
+        evaluate_held_out_loss_v1(&state, ActualTreatmentV1::Full, &tape, false),
+        Err(HeldOutEvaluationErrorV1::EmptyStratum)
+    );
 }
 
 /// Authority #131: F and H come from ONE repaired-FULL bit-copy lineage.
@@ -8417,9 +9247,9 @@ fn honest_nan_bearing_units_produce_a_verifiable_invalid_summary_v1() {
     );
 }
 
-/// Owns the borrowed data a hierarchical tape fixture points at. Only the
-/// preflight seed `949999` is used: formal seeds are restricted to pure
-/// count-golden tests.
+/// Owns the borrowed data a hierarchical tape fixture points at. This CPU
+/// fixture deliberately keeps using the preflight seed `949999`; the formal
+/// seeds enter live episodes only through their sealed runtime authorities.
 struct TapeFixtureV1 {
     tensor: NativeFlatDecisionTensorV2,
     actions: Vec<FlatScorerActionCoreV2>,
