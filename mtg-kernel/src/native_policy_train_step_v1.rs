@@ -36,6 +36,9 @@ use crate::native_policy_value_net_v1::{
     NativePolicyValueErrorV1,
     NativePolicyValueModelConfigV1,
     NativePolicyValueNetV1,
+    // Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings;
+    // see the W_EXPECTED_PARAMETER_SHAPES table below.
+    NativePolicyValueNetWideV1,
     ValidatedCountsV1,
     ACTION_FEATURE_DIM_V1,
     ACTION_REF_FEATURE_DIM_V1,
@@ -47,9 +50,6 @@ use crate::native_policy_value_net_v1::{
     OBJECT_GROUP_COUNT_V1,
     PARAMETER_COUNT_V1,
     STATE_DIM_V1,
-    // Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings;
-    // see the W_EXPECTED_PARAMETER_SHAPES table below.
-    NativePolicyValueNetWideV1,
     W_CARD_EMBEDDING_DIM_V1,
     W_HIDDEN_DIM_V1,
     W_PARAMETER_COUNT_V1,
@@ -908,6 +908,12 @@ enum BackwardExecutionV1 {
     FixedPartitions { worker_limit: usize },
 }
 
+#[derive(Clone, Copy)]
+enum TrainingObjectiveV1 {
+    TerminalReinforceValue,
+    BehaviorClone,
+}
+
 impl NativePolicyValueTrainStateV1 {
     pub(crate) fn new_v1(model: NativePolicyValueNetV1) -> Result<Self, NativePolicyTrainErrorV1> {
         let parameters = model.parameter_snapshot_v1();
@@ -1166,6 +1172,7 @@ impl NativePolicyValueTrainStateV1 {
             learning_rate,
             recompute_worker_limit,
             BackwardExecutionV1::Sequential,
+            TrainingObjectiveV1::TerminalReinforceValue,
             &mut phase_recorder,
         )
     }
@@ -1184,6 +1191,7 @@ impl NativePolicyValueTrainStateV1 {
             learning_rate,
             recompute_worker_limit,
             BackwardExecutionV1::Sequential,
+            TrainingObjectiveV1::TerminalReinforceValue,
             phase_recorder,
         )
     }
@@ -1231,7 +1239,28 @@ impl NativePolicyValueTrainStateV1 {
             BackwardExecutionV1::FixedPartitions {
                 worker_limit: backward_worker_limit,
             },
+            TrainingObjectiveV1::TerminalReinforceValue,
             phase_recorder,
+        )
+    }
+
+    /// Applies policy cross-entropy only against externally selected actions.
+    /// The value head receives exactly zero gradient. Callers must still supply
+    /// fresh expected forward bits from this state's current model.
+    pub(crate) fn behavior_clone_step_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
+        self.train_step_with_recompute_workers_inner_v1(
+            groups,
+            1.0,
+            learning_rate,
+            1,
+            BackwardExecutionV1::Sequential,
+            TrainingObjectiveV1::BehaviorClone,
+            &mut phase_recorder,
         )
     }
 
@@ -1242,6 +1271,7 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         recompute_worker_limit: usize,
         backward_execution: BackwardExecutionV1,
+        objective: TrainingObjectiveV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         let forward_loss_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
@@ -1410,11 +1440,17 @@ impl NativePolicyValueTrainStateV1 {
 
             let joint_log_probability = joint_log_probability.expect("nonempty group checked");
             let value = tapes[0].tape.value_v1();
-            let target = f32::from(group.terminal_return);
-            let advantage = target - value;
-            let policy_term = -joint_log_probability * advantage;
-            let value_error = value - target;
-            let value_term = value_error * value_error;
+            let (advantage, value_error, policy_term, value_term) = match objective {
+                TrainingObjectiveV1::TerminalReinforceValue => {
+                    let target = f32::from(group.terminal_return);
+                    let advantage = target - value;
+                    let policy_term = -joint_log_probability * advantage;
+                    let value_error = value - target;
+                    let value_term = value_error * value_error;
+                    (advantage, value_error, policy_term, value_term)
+                }
+                TrainingObjectiveV1::BehaviorClone => (1.0, 0.0, -joint_log_probability, 0.0),
+            };
             policy_sum += policy_term;
             value_sum += value_term;
             physical_terms.push(NativePhysicalLossTermV1 {
@@ -7762,6 +7798,57 @@ mod tests {
                 }
             )
         );
+    }
+
+    #[test]
+    fn behavior_clone_is_policy_cross_entropy_with_exact_zero_value_head_gradient() {
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let before = state.model_v1().parameter_snapshot_v1();
+        let case = case_by_name(&forward, "ordered_edges_and_action_refs");
+        let output = state.model_v1().forward_v1(encoded(case)).unwrap();
+        let expected_logits = output
+            .logits
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>();
+        let selected = output.logits.len() - 1;
+        let substeps = [NativePolicySubstepV1 {
+            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded(case))),
+            selected_action_index: selected,
+            expected_raw_action_logit_bits: &expected_logits,
+            expected_value_bits: output.value.to_bits(),
+        }];
+        let groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 0,
+        }];
+
+        let result = state
+            .behavior_clone_step_v1(&groups, golden.optimizer.learning_rate)
+            .unwrap();
+        assert_eq!(result.value_sum.to_bits(), 0.0f32.to_bits());
+        assert_eq!(result.loss.to_bits(), result.policy_sum.to_bits());
+        assert!(result.policy_sum > 0.0);
+        assert_eq!(result.adam_step, 1);
+
+        let after = state.model_v1().parameter_snapshot_v1();
+        let mut checked_value_head_parameters = 0_usize;
+        for (before, after) in before.iter().zip(&after) {
+            if before.name.starts_with("value_head.") {
+                checked_value_head_parameters += 1;
+                assert_eq!(before.values, after.values, "{} drifted", before.name);
+            }
+        }
+        assert_eq!(checked_value_head_parameters, 4);
+        assert!(before
+            .iter()
+            .zip(&after)
+            .any(|(before, after)| before.name.starts_with("scorer.")
+                && before.values != after.values));
     }
 
     #[test]

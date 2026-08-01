@@ -16,6 +16,9 @@ use crate::flat_policy_v2::{FlatDecisionBindingV2, FlatScoringDecisionViewV2};
 use crate::native_checkpoint_inference_v1::{
     NativeCheckpointInferenceOutputV1, NativeCheckpointInferenceV1,
 };
+use crate::native_cp7_behavior_clone_v1::{
+    load_cp7_behavior_clone_inference_v1, NativeCp7BehaviorCloneInferenceV1,
+};
 use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorizerV2,
     NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2, NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
@@ -98,6 +101,9 @@ pub enum ShadowCheckpointAuthorityV1 {
     /// bit-identical to promoted(2) g384. This is portable, but is never
     /// reported as the original checkpoint payload or manifest.
     PortablePromoted2WeightsGenesis { root: PathBuf },
+    /// A raw, fully verified policy-CE derivative produced by the narrow CP7
+    /// behavior-clone trainer. Existing Store authorities remain unchanged.
+    Cp7BehaviorCloneDerivative { root: PathBuf },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -212,6 +218,9 @@ fn checkpoint_ref_v1(
             PORTABLE_SIDECAR_SHA256_V1,
             PORTABLE_PAYLOAD_SHA256_V1,
         )),
+        ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. } => Err(
+            ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointIdentity),
+        ),
     }
 }
 
@@ -219,7 +228,8 @@ fn authority_root_v1(authority: &ShadowCheckpointAuthorityV1) -> &Path {
     match authority {
         ShadowCheckpointAuthorityV1::OriginalPromoted2Generation384Store { root }
         | ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration { root, .. }
-        | ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { root } => root,
+        | ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { root }
+        | ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { root } => root,
     }
 }
 
@@ -287,6 +297,14 @@ fn require_portable_source_binding_v1(
 fn load_checkpoint_v1(
     requested: ShadowCheckpointAuthorityV1,
 ) -> Result<LoadedShadowCheckpointV1, ShadowScorerStartupErrorV1> {
+    if matches!(
+        &requested,
+        ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. }
+    ) {
+        return Err(ShadowScorerStartupErrorV1::new(
+            ShadowScorerStartupErrorKindV1::CheckpointIdentity,
+        ));
+    }
     let checkpoint_ref = checkpoint_ref_v1(&requested)?;
     let authority =
         resolve_ladder_checkpoint_authority_v1(authority_root_v1(&requested), &checkpoint_ref)
@@ -321,6 +339,7 @@ fn load_checkpoint_v1(
                 Some(SOURCE_MODEL_PARAMETER_SHA256_V1),
             )
         }
+        ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. } => unreachable!(),
     };
     // Dynamic identity expectations come from the already chain-validated
     // manifest, while the two legacy authorities retain their additional
@@ -380,6 +399,7 @@ fn load_checkpoint_v1(
             checkpoint_ref.state_sha256.clone(),
             expected_train_state.clone(),
         ),
+        ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. } => unreachable!(),
     };
     let identity = ShadowCheckpointIdentityV1 {
         authority_kind: authority_kind.to_owned(),
@@ -428,6 +448,20 @@ impl ShadowModelScorerV1 for NativeShadowModelScorerV1 {
         Ok(ShadowModelOutputV1 {
             logits: output.action_logits().to_vec(),
             value: output.value(),
+        })
+    }
+}
+
+struct Cp7BehaviorCloneShadowModelScorerV1 {
+    inference: NativeCp7BehaviorCloneInferenceV1,
+}
+
+impl ShadowModelScorerV1 for Cp7BehaviorCloneShadowModelScorerV1 {
+    fn score_v1(&self, decision: FlatScoringDecisionViewV2<'_>) -> Result<ShadowModelOutputV1, ()> {
+        let output = self.inference.score_decision_v1(decision)?;
+        Ok(ShadowModelOutputV1 {
+            logits: output.logits_v1().to_vec(),
+            value: output.value_v1(),
         })
     }
 }
@@ -1003,6 +1037,37 @@ struct ShadowScorerServiceV1 {
 
 impl ShadowScorerServiceV1 {
     fn load_v1(authority: ShadowCheckpointAuthorityV1) -> Result<Self, ShadowScorerStartupErrorV1> {
+        if let ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { root } = &authority {
+            let inference = load_cp7_behavior_clone_inference_v1(root).map_err(|_| {
+                ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
+            })?;
+            let identity = ShadowCheckpointIdentityV1 {
+                authority_kind: "cp7-behavior-clone-derivative-v1".to_owned(),
+                source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                source_generation: SOURCE_GENERATION_V1,
+                source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+                source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+                source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+                source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+                loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                loaded_generation: inference.adam_step_v1(),
+                loaded_checkpoint_sha256: lower_hex_raw32_v1(inference.manifest_sha256_v1()),
+                loaded_payload_sha256: lower_hex_raw32_v1(inference.payload_sha256_v1()),
+                loaded_train_state_sha256: lower_hex_raw32_v1(inference.native_state_sha256_v1()),
+                model_parameter_sha256: lower_hex_raw32_v1(inference.model_parameter_sha256_v1()),
+                environment_trajectory_contract: SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
+                sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+                sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+            };
+            return Ok(Self {
+                model: Box::new(Cp7BehaviorCloneShadowModelScorerV1 { inference }),
+                identity,
+                max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
+                max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
+                active: None,
+                teacher_export: None,
+            });
+        }
         let loaded = load_checkpoint_v1(authority)?;
         Ok(Self {
             model: Box::new(NativeShadowModelScorerV1 {
@@ -2182,6 +2247,47 @@ mod tests {
         assert!(output
             .lines()
             .all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok()));
+    }
+
+    #[test]
+    #[ignore = "reads the external CP7 behavior-clone derivative"]
+    fn real_cp7_behavior_clone_derivative_loads_scores_and_reports_identity_v1() {
+        let root = std::env::var_os("MTG_KERNEL_CP7_BEHAVIOR_CLONE_ROOT_V1")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                if cfg!(windows) {
+                    PathBuf::from(r"D:\mtg-kernel-cp7-bc-train-base970001-grid-strict-v1")
+                } else {
+                    PathBuf::from("/mnt/d/mtg-kernel-cp7-bc-train-base970001-grid-strict-v1")
+                }
+            });
+        let mut service = ShadowScorerServiceV1::load_v1(
+            ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { root },
+        )
+        .unwrap();
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("cp7-bc")));
+        assert_eq!(response["response_type"], "decision");
+        assert_eq!(
+            response["checkpoint"]["authority_kind"],
+            "cp7-behavior-clone-derivative-v1"
+        );
+        assert_eq!(response["checkpoint"]["loaded_generation"], 141);
+        assert_eq!(
+            response["checkpoint"]["loaded_checkpoint_sha256"],
+            "6ba733fead0d36c26cd24630245fa6f2a1216ae60c73f46d45e83b4cc714676c"
+        );
+        assert_eq!(
+            response["checkpoint"]["loaded_payload_sha256"],
+            "de1132f6b8b55975154133b91a2f2ea90bc1159676a041057fd827e728eca4e1"
+        );
+        assert_eq!(
+            response["checkpoint"]["loaded_train_state_sha256"],
+            "64df1692fae7f78d0d4d4a4d6489325d253125276ca578c94912c9bd12374b56"
+        );
+        assert_eq!(
+            response["checkpoint"]["model_parameter_sha256"],
+            "3f4da9d761771cf0d7cfe2da19b52dd93dd0bc59466d92318cc11fc850d8c4dc"
+        );
     }
 
     #[test]

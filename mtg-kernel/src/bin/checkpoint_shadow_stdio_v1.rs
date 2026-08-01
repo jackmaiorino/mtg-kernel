@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: checkpoint_shadow_stdio_v1 (--original-store-root PATH [--generation N] | --portable-derivative-root PATH) [--xmage-cp7-teacher-jsonl PATH]"
+        "usage: checkpoint_shadow_stdio_v1 (--original-store-root PATH [--generation N] | --portable-derivative-root PATH | --cp7-behavior-clone-root PATH) [--xmage-cp7-teacher-jsonl PATH]"
     );
     std::process::exit(2);
 }
@@ -15,6 +15,7 @@ fn usage_v1() -> ! {
 enum AuthorityRootV1 {
     Original(PathBuf),
     Portable(PathBuf),
+    Cp7BehaviorClone(PathBuf),
 }
 
 fn parse_args_v1(raw: Vec<OsString>) -> Result<(ShadowCheckpointAuthorityV1, Option<PathBuf>), ()> {
@@ -30,6 +31,8 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<(ShadowCheckpointAuthorityV1, Opt
             authority_root = Some(AuthorityRootV1::Original(PathBuf::from(&pair[1])));
         } else if flag == "--portable-derivative-root" && authority_root.is_none() {
             authority_root = Some(AuthorityRootV1::Portable(PathBuf::from(&pair[1])));
+        } else if flag == "--cp7-behavior-clone-root" && authority_root.is_none() {
+            authority_root = Some(AuthorityRootV1::Cp7BehaviorClone(PathBuf::from(&pair[1])));
         } else if flag == "--generation" && generation.is_none() {
             generation = Some(pair[1].to_str().ok_or(())?.parse::<u64>().map_err(|_| ())?);
         } else if flag == "--xmage-cp7-teacher-jsonl" && teacher_jsonl.is_none() {
@@ -48,7 +51,12 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<(ShadowCheckpointAuthorityV1, Opt
         (Some(AuthorityRootV1::Portable(root)), None) => {
             ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { root }
         }
-        (Some(AuthorityRootV1::Portable(_)), Some(_)) | (None, _) => return Err(()),
+        (Some(AuthorityRootV1::Cp7BehaviorClone(root)), None) => {
+            ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { root }
+        }
+        (Some(AuthorityRootV1::Portable(_)), Some(_))
+        | (Some(AuthorityRootV1::Cp7BehaviorClone(_)), Some(_))
+        | (None, _) => return Err(()),
     };
     Ok((authority, teacher_jsonl))
 }
@@ -135,6 +143,24 @@ mod tests {
             "store".into(),
             "--generation".into(),
             "not-a-generation".into(),
+        ])
+        .is_err());
+
+        let (derivative, export) = parse_args_v1(vec![
+            "--cp7-behavior-clone-root".into(),
+            "cp7-derivative".into(),
+        ])
+        .unwrap();
+        assert_eq!(export, None);
+        assert!(matches!(
+            derivative,
+            ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. }
+        ));
+        assert!(parse_args_v1(vec![
+            "--cp7-behavior-clone-root".into(),
+            "cp7-derivative".into(),
+            "--generation".into(),
+            "1".into(),
         ])
         .is_err());
     }
