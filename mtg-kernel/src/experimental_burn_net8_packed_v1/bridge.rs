@@ -29,6 +29,8 @@ use crate::native_policy_train_step_v1::{
 #[cfg(test)]
 use crate::native_policy_train_step_v1::wide_owned_train_snapshot_state_sha256_v1;
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+#[cfg(test)]
+use crate::native_trainer_v1::EntropyCoefficientAuthorityV1;
 use std::error::Error;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -91,6 +93,77 @@ fn log_softmax_f64_for_measurement_v1(row: &[f32], index: usize) -> f64 {
         .sum::<f64>()
         .ln();
     (f64::from(row[index]) - maximum) - log_sum
+}
+
+/// Stable legal-row entropy over the exact flattened device logits returned by
+/// the training forward.  Offsets are the legal-action boundary authority, so
+/// padding never enters this host witness.  Using finite shifted log
+/// probabilities avoids `0 * -inf` when an exponential underflows.
+#[cfg(test)]
+pub(super) fn stable_legal_entropy_sum_f64_v1(
+    logits: &[f32],
+    action_offsets: &[usize],
+) -> Result<f64, NativePolicyTrainErrorV1> {
+    if action_offsets.len() < 2
+        || action_offsets.first().copied() != Some(0)
+        || action_offsets.last().copied() != Some(logits.len())
+    {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-entropy-offset-cardinality",
+        });
+    }
+    let mut total = 0.0_f64;
+    for offsets in action_offsets.windows(2) {
+        let begin = offsets[0];
+        let end = offsets[1];
+        if begin >= end || end > logits.len() {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-entropy-empty-action-row",
+            });
+        }
+        let row = &logits[begin..end];
+        if row.iter().any(|value| !value.is_finite()) {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-entropy-nonfinite-logit",
+            });
+        }
+        // A singleton contributes canonical positive zero by definition.
+        if row.len() == 1 {
+            continue;
+        }
+        let maximum = row
+            .iter()
+            .copied()
+            .map(f64::from)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let shifted = row
+            .iter()
+            .copied()
+            .map(f64::from)
+            .map(|value| value - maximum)
+            .collect::<Vec<_>>();
+        let exponential_sum = shifted.iter().map(|value| value.exp()).sum::<f64>();
+        let log_normalizer = exponential_sum.ln();
+        let row_entropy = shifted
+            .iter()
+            .map(|value| {
+                let log_probability = *value - log_normalizer;
+                -log_probability.exp() * log_probability
+            })
+            .sum::<f64>();
+        if !row_entropy.is_finite() || row_entropy < 0.0 {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-entropy-nonfinite",
+            });
+        }
+        total += row_entropy;
+    }
+    if !total.is_finite() {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-entropy-nonfinite",
+        });
+    }
+    Ok(total)
 }
 
 #[cfg(test)]
@@ -224,6 +297,7 @@ fn train_step_cuda_burn_dense_inner_v1(
     value_coefficient: f32,
     learning_rate: f32,
     #[cfg(test)] capture_named_gradients: bool,
+    #[cfg(test)] entropy_coefficient: EntropyCoefficientAuthorityV1,
 ) -> Result<
     (
         NativePolicyTrainStepResultV1,
@@ -357,6 +431,8 @@ fn train_step_cuda_burn_dense_inner_v1(
             &chunk_group_first_substeps,
             &terminal_returns[chunk_start_group..chunk_end_group],
             &device,
+            #[cfg(test)]
+            entropy_coefficient,
         )
         .map_err(bridge_error_v1)?;
         let chunk_batch = DevicePackedBatch::upload(&device, &chunk_workspace);
@@ -367,6 +443,8 @@ fn train_step_cuda_burn_dense_inner_v1(
                 &chunk_plan,
                 value_coefficient,
                 total_group_count,
+                #[cfg(test)]
+                entropy_coefficient,
             )
             .map_err(bridge_error_v1)?;
         let chunk_substep_count = substep_end - substep_begin;
@@ -799,7 +877,27 @@ fn train_step_cuda_burn_dense_inner_v1(
             substep_count,
         });
     }
-    let loss = (policy_sum + value_coefficient * value_sum) / group_count;
+    let production_loss = (policy_sum + value_coefficient * value_sum) / group_count;
+    #[cfg(not(test))]
+    let loss = production_loss;
+    #[cfg(test)]
+    let loss = match entropy_coefficient {
+        // Literal legacy evidence bits for beta zero.
+        EntropyCoefficientAuthorityV1::Zero => production_loss,
+        EntropyCoefficientAuthorityV1::Beta0p1 => {
+            let entropy_sum =
+                stable_legal_entropy_sum_f64_v1(&logit_outputs, &global_action_offsets)?;
+            let objective = f64::from(production_loss)
+                - f64::from(entropy_coefficient.value_v1()) * entropy_sum / f64::from(group_count);
+            let objective = objective as f32;
+            if !objective.is_finite() {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-entropy-objective-nonfinite",
+                });
+            }
+            objective
+        }
+    };
     #[cfg(test)]
     if measurement_mode {
         #[derive(serde::Serialize)]
@@ -896,6 +994,12 @@ fn train_step_cuda_burn_dense_inner_v1(
             )?;
         }
     }
+    // In the beta candidate `raw_residual` is the measured gradient of the
+    // complete policy+value+entropy graph.  The entropy graph is expressed in
+    // differentiable first-logit differences (training.rs), so its common-bias
+    // derivative cancels structurally.  Deliberately do not widen or bypass
+    // the established policy bound here: any remaining entropy roundoff must
+    // fit that fail-closed bound or the smoke is numerically invalid.
     let scorer_bias_gauge = gauge_accumulator.finish(raw_residual, parameter_before_bits)?;
 
     // Export the device state. The CPU-side state replacement (through the
@@ -954,6 +1058,45 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         learning_rate,
         #[cfg(test)]
         false,
+        #[cfg(test)]
+        EntropyCoefficientAuthorityV1::Zero,
+    )?;
+    *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+        code: "cuda-burn-dense-bridge-state-reimport-failure",
+    })?;
+    Ok(result)
+}
+
+/// Test-only frozen-width entropy-smoke sibling.  Its sealed coefficient is
+/// absent from production builds and it commits through the same validated
+/// snapshot reconstruction as the production wrapper.  The trainer routes
+/// beta zero to [`train_step_cuda_burn_dense_v1`] directly; accepting `Zero`
+/// here exists only for the bridge bit-identity qualification test.
+#[cfg(test)]
+pub(crate) fn train_step_cuda_burn_dense_entropy_smoke_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_coefficient: f32,
+    learning_rate: f32,
+    entropy_coefficient: EntropyCoefficientAuthorityV1,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    let snapshot = state
+        .snapshot_v1()
+        .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-snapshot-failure",
+        })?;
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        false,
+        groups,
+        value_coefficient,
+        learning_rate,
+        false,
+        entropy_coefficient,
     )?;
     *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
         state.model_v1().clone(),
@@ -998,6 +1141,53 @@ pub(crate) fn train_step_cuda_burn_dense_capture_named_gradients_v1(
         value_coefficient,
         learning_rate,
         true,
+        EntropyCoefficientAuthorityV1::Zero,
+    )?;
+    if result.gradients.len() != 33 || result.gradients.len() != expected_tensor_count {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-capture-cardinality",
+        });
+    }
+    *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+        code: "cuda-burn-dense-bridge-state-reimport-failure",
+    })?;
+    Ok(result)
+}
+
+/// Named-gradient capture variant of the test-only entropy sibling.  It is
+/// used only to qualify beta zero against the established capture wrapper;
+/// the 32-update smoke uses the non-capturing entry point above.
+#[cfg(test)]
+pub(super) fn train_step_cuda_burn_dense_entropy_smoke_capture_named_gradients_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_coefficient: f32,
+    learning_rate: f32,
+    entropy_coefficient: EntropyCoefficientAuthorityV1,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    let snapshot = state
+        .snapshot_v1()
+        .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-snapshot-failure",
+        })?;
+    let expected_tensor_count = snapshot.parameters.len();
+    if expected_tensor_count != 33 {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-capture-cardinality",
+        });
+    }
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        false,
+        groups,
+        value_coefficient,
+        learning_rate,
+        true,
+        entropy_coefficient,
     )?;
     if result.gradients.len() != 33 || result.gradients.len() != expected_tensor_count {
         return Err(NativePolicyTrainErrorV1::CudaBackend {
@@ -1045,6 +1235,8 @@ pub(crate) fn train_step_cuda_burn_dense_wide_v1(
         learning_rate,
         #[cfg(test)]
         false,
+        #[cfg(test)]
+        EntropyCoefficientAuthorityV1::Zero,
     )?;
     *state = NativePolicyValueTrainStateWideV1::from_snapshot_wide_v1(
         state.model_v1().clone(),

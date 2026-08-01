@@ -86,7 +86,7 @@ use crate::native_policy_train_step_v1::{
     NativeGaugeSubstepBoundV1, NativePhysicalLossTermV1, NativePolicyForwardInputV1,
     NativePolicyPhysicalDecisionV1, NativePolicySubstepV1, NativePolicyTrainStepResultV1,
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, NativeScorerBiasGaugeRecordV1,
-    NativeSelectedOutputV1, CANONICAL_GAUGE_PARAMETERS_V1,
+    NativeSelectedOutputV1, NativeTrainingNumericalBackendV1, CANONICAL_GAUGE_PARAMETERS_V1,
 };
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 use crate::native_policy_value_net_v1::NativePolicyValueNetV1;
@@ -101,12 +101,18 @@ use crate::native_trainer_schedule_v1::{
 };
 use crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+use crate::native_trainer_v1::{
+    EntropyCoefficientAuthorityV1, NativeTrainerStateV2, NativeTrainerUpdateConfigV2,
+    NativeTrainerUpdateEvidenceV2,
+};
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 use crate::native_training_store_checkpoint_v3::derive_genesis_weights_only_payload_v2_v3;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 use crate::native_training_store_run_v2::{
-    OpponentLadderCheckpointRefV1, OpponentLadderPoolContractV1,
+    NativeRunEnvironmentTrajectoryContractV1, OpponentLadderCheckpointRefV1,
+    OpponentLadderPoolContractV1,
 };
 use crate::private_physical_trajectory_core::{
     decision_kind_code, player_seat_code, FlatGroupedEpisodeCore, FlatGroupedTrajectoryBatchCore,
@@ -154,6 +160,12 @@ pub(super) const LEARNING_RATE_SCREEN_DESIGN_SHA256_V1: &str =
     "ef2b72d5af781d8f0907334f03aa2abe0cb617f6b136d2aec06676cf2f721806";
 pub(super) const LEARNING_RATE_SCREEN_DESIGN_BYTE_COUNT_V1: u64 = 3_834;
 pub(super) const LEARNING_RATE_SCREEN_DESIGN_LINE_COUNT_V1: u64 = 84;
+
+/// The rapid entropy-trajectory smoke's frozen design bytes.
+pub(super) const ENTROPY_TRAJECTORY_SMOKE_DESIGN_SHA256_V1: &str =
+    "3cd50463ad67e3845ed9aad98adc54526d6b3606191de0ee0af99e61507ec2df";
+pub(super) const ENTROPY_TRAJECTORY_SMOKE_DESIGN_BYTE_COUNT_V1: u64 = 6_227;
+pub(super) const ENTROPY_TRAJECTORY_SMOKE_DESIGN_LINE_COUNT_V1: u64 = 83;
 
 /// Pool3 opponent contract document, copied and rehashed, never retyped.
 pub(super) const POOL3_DOCUMENT_SHA256_V1: &str =
@@ -203,6 +215,9 @@ const VALUE_COEFFICIENT_SCREEN_LIVE_TEST_NAME_SUFFIX_V1: &str =
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 const LEARNING_RATE_SCREEN_LIVE_TEST_NAME_SUFFIX_V1: &str =
     "::learning_rate_screen_three_unit_gpu1_v1";
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+const ENTROPY_TRAJECTORY_SMOKE_LIVE_TEST_NAME_SUFFIX_V1: &str =
+    "::entropy_trajectory_smoke_gpu1_v1";
 const PREFLIGHT_UPDATE_PAIR_SCHEMA_V1: &str =
     "mtg_kernel_action_block_gradient_preflight_update_pair/v1";
 const FORMAL_UNIT_TAPE_SCHEMA_V1: &str = "action-block-gradient-formal-unit-tape/v1";
@@ -213,6 +228,8 @@ const VALUE_COEFFICIENT_SCREEN_MANIFEST_SCHEMA_V1: &str = "value-coefficient-scr
 const LEARNING_RATE_SCREEN_UNIT_TAPE_SCHEMA_V1: &str = "learning-rate-screen-unit-tape/v1";
 const LEARNING_RATE_SCREEN_SUMMARY_SCHEMA_V1: &str = "learning-rate-screen-summary/v1";
 const LEARNING_RATE_SCREEN_MANIFEST_SCHEMA_V1: &str = "learning-rate-screen-manifest/v1";
+const ENTROPY_TRAJECTORY_SMOKE_SUMMARY_SCHEMA_V1: &str = "entropy-trajectory-smoke-summary/v1";
+const ENTROPY_TRAJECTORY_SMOKE_MANIFEST_SCHEMA_V1: &str = "entropy-trajectory-smoke-manifest/v1";
 
 // These values must be supplied while compiling the one live-preflight test
 // binary. `option_env!` embeds them without making ordinary feature builds
@@ -379,6 +396,38 @@ pub(super) const LEARNING_RATE_SCREEN_TRAINING_COUNTS_V1: [[u32; 4];
 pub(super) const LEARNING_RATE_SCREEN_VALIDATION_COUNTS_V1: [[u32; 4];
     LEARNING_RATE_SCREEN_UNIT_COUNT_V1] = [[29, 9, 9, 17], [29, 12, 14, 9], [21, 12, 13, 18]];
 
+/// One-seed, 32-update rapid entropy-trajectory smoke authorities.
+pub(super) const ENTROPY_SMOKE_TRAINING_SEED_V1: u64 = 956_001;
+pub(super) const ENTROPY_SMOKE_VALIDATION_SEED_V1: u64 = 957_001;
+pub(super) const ENTROPY_SMOKE_BOOTSTRAP_SEED_V1: u64 = 959_001;
+pub(super) const ENTROPY_SMOKE_EPISODES_PER_UPDATE_V1: u64 = 64;
+pub(super) const ENTROPY_SMOKE_UPDATE_COUNT_V1: u64 = 32;
+pub(super) const ENTROPY_SMOKE_TRAINING_EPISODE_COUNT_V1: u64 = 2_048;
+pub(super) const ENTROPY_SMOKE_SAFETY_FIRST_EPISODE_V1: u64 = 1_024;
+pub(super) const ENTROPY_SMOKE_SAFETY_GAME_COUNT_V1: usize = 1_024;
+pub(super) const ENTROPY_SMOKE_SAFETY_CLUSTER_COUNT_V1: usize = 512;
+pub(super) const ENTROPY_SMOKE_BOOTSTRAP_RESAMPLE_COUNT_V1: usize = 10_000;
+pub(super) const ENTROPY_SMOKE_BOOTSTRAP_UPPER_INDEX_V1: usize = 9_499;
+pub(super) const ENTROPY_SMOKE_CHECKPOINT_UPDATES_V1: [u64; 5] = [0, 8, 16, 24, 32];
+pub(super) const ENTROPY_SMOKE_TRAINING_COUNTS_V1: [u32; 4] = [784, 423, 431, 410];
+pub(super) const ENTROPY_SMOKE_CUMULATIVE_COUNTS_V1: [[u32; 4]; 4] = [
+    [203, 99, 100, 110],
+    [392, 213, 217, 202],
+    [595, 321, 310, 310],
+    [784, 423, 431, 410],
+];
+pub(super) const ENTROPY_SMOKE_VALIDATION_COUNTS_V1: [u32; 4] = [25, 10, 10, 19];
+pub(super) const ENTROPY_SMOKE_TRAINING_SCHEDULE_SHA256_V1: &str =
+    "29db2caec9de96f35d89fc6202c7ac3aa3a795335191d304b5bf76e15f38a914";
+pub(super) const ENTROPY_SMOKE_VALIDATION_SCHEDULE_SHA256_V1: &str =
+    "e65d0ba2c7cdf25b1280f3b8de77885765b78d564a501e0635e823efea0e8251";
+pub(super) const ENTROPY_SMOKE_CONTROL_BETA_BITS_V1: u32 = 0x0000_0000;
+pub(super) const ENTROPY_SMOKE_CANDIDATE_BETA_BITS_V1: u32 = 0x3dcc_cccd;
+pub(super) const ENTROPY_SMOKE_ENDPOINT_H_DELTA_MIN_BITS_V1: u64 = 0.01f64.to_bits();
+pub(super) const ENTROPY_SMOKE_ENDPOINT_PMAX_DELTA_MAX_BITS_V1: u64 = (-0.005f64).to_bits();
+pub(super) const ENTROPY_SMOKE_SAFETY_CATASTROPHE_BITS_V1: u64 = (-0.05f64).to_bits();
+pub(super) const ENTROPY_SMOKE_ARTIFACT_COUNT_V1: usize = 2;
+
 // ---------------------------------------------------------------------------
 // Opponent strata and pure schedule counts.
 // ---------------------------------------------------------------------------
@@ -428,6 +477,22 @@ pub(super) fn pool_choice_counts_v1(base_seed: u64, episode_count: u64) -> PoolC
         }
     }
     counts
+}
+
+/// SHA-256 of the ordered production Pool3 member ordinals, one byte per
+/// absolute episode (`0,1,2,3` in the published stratum order).
+fn pool_choice_schedule_sha256_v1(base_seed: u64, episode_count: u64) -> String {
+    let mut hasher = Sha256::new();
+    for episode_index in 0..episode_count {
+        let member = ladder_pool_member_for_episode_v1(base_seed, episode_index)
+            .expect("entropy smoke base seeds are inside u63");
+        hasher.update([stratum_ordinal_v1(member) as u8]);
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1324,6 +1389,31 @@ impl DiagnosticTapeAuthorityV1 for LearningRateScreenSeedAuthorityV1 {
 
     fn allows_update_v1(&self) -> bool {
         self.role == LearningRateScreenTapeRoleV1::Training
+    }
+}
+
+/// The entropy smoke's fixed genesis corpus is validation-only. It can drive
+/// the common retained-row rollout but can never authorize an updater.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EntropySmokeValidationAuthorityV1(());
+
+impl EntropySmokeValidationAuthorityV1 {
+    const fn seal_v1() -> Self {
+        Self(())
+    }
+}
+
+impl DiagnosticTapeAuthorityV1 for EntropySmokeValidationAuthorityV1 {
+    fn seed_v1(&self) -> u64 {
+        ENTROPY_SMOKE_VALIDATION_SEED_V1
+    }
+
+    fn expected_counts_v1(&self) -> [u32; 4] {
+        ENTROPY_SMOKE_VALIDATION_COUNTS_V1
+    }
+
+    fn allows_update_v1(&self) -> bool {
+        false
     }
 }
 
@@ -5580,6 +5670,692 @@ fn run_neutral_tape_v1(
     tape
 }
 
+// ---------------------------------------------------------------------------
+// Rapid entropy-trajectory smoke: fixed-corpus metrics and safety arithmetic.
+// The retained validation hierarchy is generated exactly once at common
+// genesis. Every checkpoint is re-forwarded over every repaired-FULL legal
+// row; singleton rows remain in the output commitment but not metric means.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct EntropyMetricSliceV1 {
+    non_singleton_row_count: u64,
+    mean_entropy_nats: f64,
+    mean_normalized_entropy: f64,
+    mean_pmax: f64,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+impl EntropyMetricSliceV1 {
+    fn bit_equal_v1(self, other: Self) -> bool {
+        self.non_singleton_row_count == other.non_singleton_row_count
+            && self.mean_entropy_nats.to_bits() == other.mean_entropy_nats.to_bits()
+            && self.mean_normalized_entropy.to_bits() == other.mean_normalized_entropy.to_bits()
+            && self.mean_pmax.to_bits() == other.mean_pmax.to_bits()
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Debug, PartialEq)]
+struct EntropyCheckpointReadV1 {
+    update: u64,
+    complete_output_sha256: String,
+    overall: EntropyMetricSliceV1,
+    strata: [EntropyMetricSliceV1; 4],
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+impl EntropyCheckpointReadV1 {
+    fn bit_equal_v1(&self, other: &Self) -> bool {
+        self.update == other.update
+            && self.complete_output_sha256 == other.complete_output_sha256
+            && self.overall.bit_equal_v1(other.overall)
+            && self
+                .strata
+                .iter()
+                .zip(other.strata)
+                .all(|(left, right)| left.bit_equal_v1(right))
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Copy, Debug, Default)]
+struct EntropyMetricAccumulatorV1 {
+    count: u64,
+    entropy_sum: f64,
+    normalized_entropy_sum: f64,
+    pmax_sum: f64,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+impl EntropyMetricAccumulatorV1 {
+    fn push_v1(&mut self, entropy: f64, normalized_entropy: f64, pmax: f64) {
+        assert!(entropy.is_finite() && entropy >= 0.0);
+        assert!(normalized_entropy.is_finite() && normalized_entropy >= 0.0);
+        assert!(pmax.is_finite() && pmax > 0.0 && pmax <= 1.0);
+        self.count = self.count.checked_add(1).expect("row count fits u64");
+        self.entropy_sum += entropy;
+        self.normalized_entropy_sum += normalized_entropy;
+        self.pmax_sum += pmax;
+        assert!(self.entropy_sum.is_finite());
+        assert!(self.normalized_entropy_sum.is_finite());
+        assert!(self.pmax_sum.is_finite());
+    }
+
+    fn finish_v1(self) -> EntropyMetricSliceV1 {
+        assert!(
+            self.count > 0,
+            "every fixed-corpus stratum needs a non-singleton row"
+        );
+        let denominator = self.count as f64;
+        let output = EntropyMetricSliceV1 {
+            non_singleton_row_count: self.count,
+            mean_entropy_nats: self.entropy_sum / denominator,
+            mean_normalized_entropy: self.normalized_entropy_sum / denominator,
+            mean_pmax: self.pmax_sum / denominator,
+        };
+        assert!(output.mean_entropy_nats.is_finite());
+        assert!(output.mean_normalized_entropy.is_finite());
+        assert!(output.mean_pmax.is_finite());
+        output
+    }
+}
+
+/// Stable f64 measurement softmax over one f32 legal-action row. This is
+/// descriptive only and is intentionally independent of the training loss's
+/// f32 CUDA reduction.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn entropy_row_metrics_v1(logits: &[f32]) -> Option<(f64, f64, f64)> {
+    if logits.len() <= 1 || logits.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
+    let maximum = logits
+        .iter()
+        .map(|value| f64::from(*value))
+        .fold(f64::NEG_INFINITY, f64::max);
+    let mut weights = Vec::with_capacity(logits.len());
+    let mut normalizer = 0.0f64;
+    for logit in logits {
+        let weight = (f64::from(*logit) - maximum).exp();
+        if !weight.is_finite() || weight < 0.0 {
+            return None;
+        }
+        normalizer += weight;
+        weights.push(weight);
+    }
+    if !normalizer.is_finite() || normalizer <= 0.0 {
+        return None;
+    }
+    let mut entropy = 0.0f64;
+    let mut pmax = 0.0f64;
+    for weight in weights {
+        let probability = weight / normalizer;
+        if !probability.is_finite() || probability < 0.0 || probability > 1.0 {
+            return None;
+        }
+        if probability > 0.0 {
+            entropy -= probability * probability.ln();
+        }
+        pmax = pmax.max(probability);
+    }
+    let log_action_count = (logits.len() as f64).ln();
+    let normalized_entropy = entropy / log_action_count;
+    if !entropy.is_finite()
+        || entropy < 0.0
+        || !normalized_entropy.is_finite()
+        || normalized_entropy < 0.0
+        || !pmax.is_finite()
+        || pmax <= 0.0
+        || pmax > 1.0
+    {
+        return None;
+    }
+    Some((entropy, normalized_entropy, pmax))
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn evaluate_entropy_fixed_corpus_v1(
+    update: u64,
+    state: &NativePolicyValueTrainStateV1,
+    tape: &JoinedTapeV1,
+    require_genesis_outputs: bool,
+) -> EntropyCheckpointReadV1 {
+    assert!(ENTROPY_SMOKE_CHECKPOINT_UPDATES_V1.contains(&update));
+    assert_eq!(tape.base_seed, ENTROPY_SMOKE_VALIDATION_SEED_V1);
+    assert_eq!(
+        tape.counts.as_array_v1(),
+        ENTROPY_SMOKE_VALIDATION_COUNTS_V1
+    );
+    let forward = NativePolicyPackedForwardBuilderV1::from_model_v1(state.model_v1())
+        .expect("fixed-corpus forward builder must construct");
+    let mut overall = EntropyMetricAccumulatorV1::default();
+    let mut strata = [EntropyMetricAccumulatorV1::default(); 4];
+    let mut output_hasher = Sha256::new();
+    output_hasher.update(b"mtg-kernel-entropy-smoke-fixed-corpus-output/v1");
+    let mut complete_row_count = 0u64;
+
+    for episode in &tape.episodes {
+        let stratum = usize::try_from(episode.stratum)
+            .ok()
+            .filter(|value| *value < 4)
+            .expect("joined fixed corpus stratum is canonical");
+        for group in &episode.groups {
+            for (substep_index, substep) in group.substeps.iter().enumerate() {
+                let output = forward
+                    .forward_v1(encoded_decision_view_v1(
+                        ActualTreatmentV1::Full.tensor_v1(&substep.retained.lineage),
+                    ))
+                    .expect("every retained repaired-FULL row must re-forward");
+                assert!(output.value_v1().is_finite());
+                assert!(!output.logits_v1().is_empty());
+                assert!(output.logits_v1().iter().all(|value| value.is_finite()));
+                if require_genesis_outputs {
+                    assert_eq!(output.value_v1().to_bits(), substep.predicted_value_bits);
+                    assert_eq!(
+                        output.logits_v1().len(),
+                        substep.raw_action_logit_bits.len()
+                    );
+                    assert!(output
+                        .logits_v1()
+                        .iter()
+                        .zip(&substep.raw_action_logit_bits)
+                        .all(|(value, expected)| value.to_bits() == *expected));
+                }
+
+                complete_row_count = complete_row_count
+                    .checked_add(1)
+                    .expect("fixed-corpus row count fits u64");
+                output_hasher.update(episode.episode_id.to_be_bytes());
+                output_hasher.update(group.physical_decision_id.to_be_bytes());
+                output_hasher.update((substep_index as u64).to_be_bytes());
+                output_hasher.update((output.logits_v1().len() as u64).to_be_bytes());
+                for logit in output.logits_v1() {
+                    output_hasher.update(logit.to_bits().to_le_bytes());
+                }
+                output_hasher.update(output.value_v1().to_bits().to_le_bytes());
+
+                if output.logits_v1().len() > 1 {
+                    let (entropy, normalized_entropy, pmax) =
+                        entropy_row_metrics_v1(output.logits_v1())
+                            .expect("finite non-singleton row metrics must exist");
+                    overall.push_v1(entropy, normalized_entropy, pmax);
+                    strata[stratum].push_v1(entropy, normalized_entropy, pmax);
+                }
+            }
+        }
+    }
+    assert_eq!(complete_row_count as usize, tape.total_substep_count_v1());
+    let strata = strata.map(EntropyMetricAccumulatorV1::finish_v1);
+    let overall = overall.finish_v1();
+    assert_eq!(
+        overall.non_singleton_row_count,
+        strata
+            .iter()
+            .map(|read| read.non_singleton_row_count)
+            .sum::<u64>()
+    );
+    let complete_output_sha256 = output_hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    EntropyCheckpointReadV1 {
+        update,
+        complete_output_sha256,
+        overall,
+        strata,
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EntropySmokeDispositionV1 {
+    Invalid,
+    StopCatastrophe,
+    SignalExtend64,
+    ValidNoSignal,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+impl EntropySmokeDispositionV1 {
+    const fn name_v1(self) -> &'static str {
+        match self {
+            Self::Invalid => "INVALID",
+            Self::StopCatastrophe => "STOP-CATASTROPHE",
+            Self::SignalExtend64 => "SIGNAL-EXTEND-64",
+            Self::ValidNoSignal => "VALID-NO-SIGNAL",
+        }
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Copy, Debug)]
+struct EntropySafetyReadV1 {
+    control_score: f64,
+    candidate_score: f64,
+    candidate_minus_control: f64,
+    bootstrap_upper_95: f64,
+}
+
+fn splitmix64_next_v1(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut value = *state;
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn entropy_safety_read_v1(
+    control_returns: &[(u64, i8)],
+    candidate_returns: &[(u64, i8)],
+) -> EntropySafetyReadV1 {
+    assert_eq!(control_returns.len(), ENTROPY_SMOKE_SAFETY_GAME_COUNT_V1);
+    assert_eq!(candidate_returns.len(), ENTROPY_SMOKE_SAFETY_GAME_COUNT_V1);
+    let mut control_sum = 0.0f64;
+    let mut candidate_sum = 0.0f64;
+    let mut clusters = [0.0f64; ENTROPY_SMOKE_SAFETY_CLUSTER_COUNT_V1];
+    for cluster_index in 0..ENTROPY_SMOKE_SAFETY_CLUSTER_COUNT_V1 {
+        let even_offset = cluster_index * 2;
+        let odd_offset = even_offset + 1;
+        let expected_even = ENTROPY_SMOKE_SAFETY_FIRST_EPISODE_V1 + even_offset as u64;
+        let expected_odd = expected_even + 1;
+        assert_eq!(control_returns[even_offset].0, expected_even);
+        assert_eq!(control_returns[odd_offset].0, expected_odd);
+        assert_eq!(candidate_returns[even_offset].0, expected_even);
+        assert_eq!(candidate_returns[odd_offset].0, expected_odd);
+        let score = |value: i8| {
+            assert!((-1..=1).contains(&value));
+            f64::from(value + 1) / 2.0
+        };
+        let control_even = score(control_returns[even_offset].1);
+        let control_odd = score(control_returns[odd_offset].1);
+        let candidate_even = score(candidate_returns[even_offset].1);
+        let candidate_odd = score(candidate_returns[odd_offset].1);
+        control_sum += control_even + control_odd;
+        candidate_sum += candidate_even + candidate_odd;
+        clusters[cluster_index] =
+            ((candidate_even + candidate_odd) - (control_even + control_odd)) / 2.0;
+    }
+    let denominator = ENTROPY_SMOKE_SAFETY_GAME_COUNT_V1 as f64;
+    let control_score = control_sum / denominator;
+    let candidate_score = candidate_sum / denominator;
+    let candidate_minus_control = candidate_score - control_score;
+    assert_eq!(
+        candidate_minus_control.to_bits(),
+        (clusters.iter().sum::<f64>() / ENTROPY_SMOKE_SAFETY_CLUSTER_COUNT_V1 as f64).to_bits()
+    );
+
+    let mut state = ENTROPY_SMOKE_BOOTSTRAP_SEED_V1;
+    let mut resamples = Vec::with_capacity(ENTROPY_SMOKE_BOOTSTRAP_RESAMPLE_COUNT_V1);
+    for _ in 0..ENTROPY_SMOKE_BOOTSTRAP_RESAMPLE_COUNT_V1 {
+        let mut sum = 0.0f64;
+        for _ in 0..ENTROPY_SMOKE_SAFETY_CLUSTER_COUNT_V1 {
+            let index = (splitmix64_next_v1(&mut state)
+                % ENTROPY_SMOKE_SAFETY_CLUSTER_COUNT_V1 as u64) as usize;
+            sum += clusters[index];
+        }
+        resamples.push(sum / ENTROPY_SMOKE_SAFETY_CLUSTER_COUNT_V1 as f64);
+    }
+    resamples.sort_by(f64::total_cmp);
+    let bootstrap_upper_95 = resamples[ENTROPY_SMOKE_BOOTSTRAP_UPPER_INDEX_V1];
+    assert!(bootstrap_upper_95.is_finite());
+    EntropySafetyReadV1 {
+        control_score,
+        candidate_score,
+        candidate_minus_control,
+        bootstrap_upper_95,
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Copy, Debug)]
+struct EntropySmokeClassificationV1 {
+    disposition: EntropySmokeDispositionV1,
+    positive_joint_checkpoint_count: usize,
+    endpoint_entropy_delta: f64,
+    endpoint_pmax_delta: f64,
+    mechanism_gate: bool,
+    gross_safety_gate: bool,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn classify_entropy_smoke_v1(
+    control: &[EntropyCheckpointReadV1],
+    candidate: &[EntropyCheckpointReadV1],
+    safety: EntropySafetyReadV1,
+    validity_gates: bool,
+) -> EntropySmokeClassificationV1 {
+    let shape_valid = control.len() == ENTROPY_SMOKE_CHECKPOINT_UPDATES_V1.len()
+        && candidate.len() == ENTROPY_SMOKE_CHECKPOINT_UPDATES_V1.len()
+        && control
+            .iter()
+            .zip(candidate)
+            .zip(ENTROPY_SMOKE_CHECKPOINT_UPDATES_V1)
+            .all(|((control, candidate), update)| {
+                control.update == update
+                    && candidate.update == update
+                    && control.overall.mean_entropy_nats.is_finite()
+                    && candidate.overall.mean_entropy_nats.is_finite()
+                    && control.overall.mean_pmax.is_finite()
+                    && candidate.overall.mean_pmax.is_finite()
+            });
+    let mut positive_joint_checkpoint_count = 0usize;
+    if shape_valid {
+        for index in 1..ENTROPY_SMOKE_CHECKPOINT_UPDATES_V1.len() {
+            let entropy_delta = candidate[index].overall.mean_entropy_nats
+                - control[index].overall.mean_entropy_nats;
+            let pmax_delta = candidate[index].overall.mean_pmax - control[index].overall.mean_pmax;
+            if entropy_delta > 0.0 && pmax_delta < 0.0 {
+                positive_joint_checkpoint_count += 1;
+            }
+        }
+    }
+    let endpoint_entropy_delta = if shape_valid {
+        candidate[4].overall.mean_entropy_nats - control[4].overall.mean_entropy_nats
+    } else {
+        f64::NAN
+    };
+    let endpoint_pmax_delta = if shape_valid {
+        candidate[4].overall.mean_pmax - control[4].overall.mean_pmax
+    } else {
+        f64::NAN
+    };
+    let mechanism_gate = shape_valid
+        && positive_joint_checkpoint_count >= 3
+        && endpoint_entropy_delta >= f64::from_bits(ENTROPY_SMOKE_ENDPOINT_H_DELTA_MIN_BITS_V1)
+        && endpoint_pmax_delta <= f64::from_bits(ENTROPY_SMOKE_ENDPOINT_PMAX_DELTA_MAX_BITS_V1);
+    let gross_safety_gate =
+        safety.bootstrap_upper_95 >= f64::from_bits(ENTROPY_SMOKE_SAFETY_CATASTROPHE_BITS_V1);
+    let valid = validity_gates
+        && shape_valid
+        && endpoint_entropy_delta.is_finite()
+        && endpoint_pmax_delta.is_finite()
+        && safety.control_score.is_finite()
+        && safety.candidate_score.is_finite()
+        && safety.candidate_minus_control.is_finite()
+        && safety.bootstrap_upper_95.is_finite();
+    let disposition = if !valid {
+        EntropySmokeDispositionV1::Invalid
+    } else if !gross_safety_gate {
+        EntropySmokeDispositionV1::StopCatastrophe
+    } else if mechanism_gate {
+        EntropySmokeDispositionV1::SignalExtend64
+    } else {
+        EntropySmokeDispositionV1::ValidNoSignal
+    };
+    EntropySmokeClassificationV1 {
+        disposition,
+        positive_joint_checkpoint_count,
+        endpoint_entropy_delta,
+        endpoint_pmax_delta,
+        mechanism_gate,
+        gross_safety_gate,
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+struct EntropyArmRunV1 {
+    checkpoints: Vec<EntropyCheckpointReadV1>,
+    safety_returns: Vec<(u64, i8)>,
+    reported_loss_bits: Vec<u32>,
+    genesis_state_sha256: String,
+    endpoint_state_sha256: String,
+    receipt_facts_sha256: String,
+    learner_group_count: u64,
+    learner_substep_count: u64,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn entropy_smoke_update_config_v1(deck_ids: &SessionDeckIdsV1) -> NativeTrainerUpdateConfigV2 {
+    NativeTrainerUpdateConfigV2 {
+        deck_ids: deck_ids.clone(),
+        batch_episodes: ENTROPY_SMOKE_EPISODES_PER_UPDATE_V1,
+        max_physical_decisions: 1_024,
+        max_policy_steps: 2_048,
+        worker_count: 2,
+        sessions_per_worker: 32,
+        broker_batch_target: 16,
+        scheduler_timeout: Duration::from_millis(30_000),
+        measure_broker_service_time: false,
+        value_coefficient_bits: VALUE_COEFFICIENT_BITS_V1,
+        learning_rate_bits: LEARNING_RATE_BITS_V1,
+        numerical_backend: NativeTrainingNumericalBackendV1::CudaBurnDense,
+        backward_worker_limit: 1,
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn hash_entropy_receipt_fact_v1(
+    hasher: &mut Sha256,
+    episode: &crate::native_trainer_v1::NativeTrainerEpisodeEvidenceV1,
+) {
+    assert!(episode
+        .full_trajectory_receipt
+        .is_environment_randomization_v2());
+    assert_eq!(
+        episode.full_trajectory_receipt.episode_index(),
+        episode.episode_index
+    );
+    assert_eq!(
+        episode.full_trajectory_receipt.learner_seat(),
+        episode.learner_seat
+    );
+    let outcome_code = match episode.terminal_outcome {
+        TerminalOutcomeV1::P0Win => 0u8,
+        TerminalOutcomeV1::P1Win => 1u8,
+        TerminalOutcomeV1::Draw => 2u8,
+        TerminalOutcomeV1::Truncated | TerminalOutcomeV1::Halted => {
+            panic!("entropy smoke accepts only natural terminal receipts")
+        }
+    };
+    hasher.update(episode.episode_index.to_be_bytes());
+    hasher.update([match episode.learner_seat {
+        PlayerSeatV1::P0 => 0,
+        PlayerSeatV1::P1 => 1,
+    }]);
+    hasher.update([episode.learner_return as u8, outcome_code]);
+    hasher.update(episode.learner_group_count.to_be_bytes());
+    hasher.update(episode.learner_policy_step_count.to_be_bytes());
+    hasher.update(episode.learner_trace_hash.to_be_bytes());
+    hasher.update(
+        episode
+            .full_trajectory_receipt
+            .environment_seed()
+            .to_be_bytes(),
+    );
+    for deck_hash in episode.full_trajectory_receipt.deck_hashes() {
+        hasher.update(deck_hash.to_be_bytes());
+    }
+    hasher.update(episode.full_trajectory_receipt.trajectory_sha256());
+    hasher.update(
+        episode
+            .full_trajectory_receipt
+            .outer_trajectory_sha256_v2()
+            .expect("V2 receipt must carry its outer trajectory digest"),
+    );
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn run_entropy_smoke_arm_v1(
+    gpu: &ValidatedPreflightGpuV1,
+    trainer: &mut NativeTrainerStateV2,
+    config: &NativeTrainerUpdateConfigV2,
+    fixed_corpus: &JoinedTapeV1,
+    coefficient: EntropyCoefficientAuthorityV1,
+) -> EntropyArmRunV1 {
+    require_bridge_gpu_binding_v1(gpu);
+    assert_eq!(trainer.base_seed_v2(), ENTROPY_SMOKE_TRAINING_SEED_V1);
+    let genesis_state_sha256 = lower_hex_raw32_v1(
+        trainer
+            .train_state_v1()
+            .state_sha256_v1()
+            .expect("valid entropy arm genesis state"),
+    );
+    let mut checkpoints = vec![evaluate_entropy_fixed_corpus_v1(
+        0,
+        trainer.train_state_v1(),
+        fixed_corpus,
+        true,
+    )];
+    let mut safety_returns = Vec::with_capacity(ENTROPY_SMOKE_SAFETY_GAME_COUNT_V1);
+    let mut reported_loss_bits = Vec::with_capacity(ENTROPY_SMOKE_UPDATE_COUNT_V1 as usize);
+    let mut receipt_hasher = Sha256::new();
+    receipt_hasher.update(b"mtg-kernel-entropy-smoke-receipt-facts/v1");
+    let mut learner_group_count = 0u64;
+    let mut learner_substep_count = 0u64;
+    let mut observed_counts = PoolCountsV1::default();
+
+    for update in 1..=ENTROPY_SMOKE_UPDATE_COUNT_V1 {
+        let evidence: NativeTrainerUpdateEvidenceV2 = trainer
+            .run_even_batch_update_entropy_smoke_v1(
+                config,
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                coefficient,
+            )
+            .expect("authorized entropy-smoke update must complete");
+        let expected_first = (update - 1) * ENTROPY_SMOKE_EPISODES_PER_UPDATE_V1;
+        assert_eq!(evidence.first_episode_index, expected_first);
+        assert_eq!(evidence.episode_count, ENTROPY_SMOKE_EPISODES_PER_UPDATE_V1);
+        assert_eq!(
+            evidence.episodes.len() as u64,
+            ENTROPY_SMOKE_EPISODES_PER_UPDATE_V1
+        );
+        assert_eq!(evidence.adam_step_before, update - 1);
+        assert_eq!(evidence.adam_step_after, update);
+        assert!(f32::from_bits(evidence.policy_sum_bits).is_finite());
+        assert!(f32::from_bits(evidence.value_sum_bits).is_finite());
+        assert!(f32::from_bits(evidence.loss_bits).is_finite());
+        assert!(evidence.changed_non_gauge_parameter_count > 0);
+        assert_eq!(evidence.scorer_bias_gauge.canonical_gradient.to_bits(), 0);
+        assert_eq!(
+            evidence.scorer_bias_gauge.parameter_before_bits,
+            evidence.scorer_bias_gauge.parameter_after_bits
+        );
+        reported_loss_bits.push(evidence.loss_bits);
+        learner_group_count = learner_group_count
+            .checked_add(evidence.learner_group_count)
+            .expect("group total fits u64");
+        learner_substep_count = learner_substep_count
+            .checked_add(evidence.learner_policy_step_count)
+            .expect("substep total fits u64");
+
+        let mut pair_environment_seed = None;
+        for (offset, episode) in evidence.episodes.iter().enumerate() {
+            let expected_episode = expected_first + offset as u64;
+            assert_eq!(episode.episode_index, expected_episode);
+            assert!((-1..=1).contains(&episode.learner_return));
+            let schedule = native_trainer_episode_schedule_v1(
+                ENTROPY_SMOKE_TRAINING_SEED_V1,
+                expected_episode,
+            )
+            .expect("training episode schedule must derive");
+            assert_eq!(episode.learner_seat, schedule.learner_seat);
+            assert_eq!(
+                episode.full_trajectory_receipt.environment_seed(),
+                schedule.environment_seed
+            );
+            if expected_episode & 1 == 0 {
+                pair_environment_seed = Some(schedule.environment_seed);
+            } else {
+                assert_eq!(pair_environment_seed, Some(schedule.environment_seed));
+                pair_environment_seed = None;
+            }
+            hash_entropy_receipt_fact_v1(&mut receipt_hasher, episode);
+            match ladder_pool_member_for_episode_v1(
+                ENTROPY_SMOKE_TRAINING_SEED_V1,
+                episode.episode_index,
+            )
+            .expect("training schedule member must derive")
+            {
+                OpponentLadderPoolMemberV2::Primary => observed_counts.promoted2 += 1,
+                OpponentLadderPoolMemberV2::PredecessorA => observed_counts.predecessor_a += 1,
+                OpponentLadderPoolMemberV2::PredecessorB => observed_counts.predecessor_b += 1,
+                OpponentLadderPoolMemberV2::UniformFloor => observed_counts.uniform += 1,
+            }
+            if expected_episode >= ENTROPY_SMOKE_SAFETY_FIRST_EPISODE_V1 {
+                safety_returns.push((expected_episode, episode.learner_return));
+            }
+        }
+        assert_eq!(pair_environment_seed, None);
+
+        if let Some(checkpoint_index) = ENTROPY_SMOKE_CHECKPOINT_UPDATES_V1
+            .iter()
+            .position(|value| *value == update)
+        {
+            assert!(checkpoint_index > 0);
+            assert_eq!(
+                observed_counts.as_array_v1(),
+                ENTROPY_SMOKE_CUMULATIVE_COUNTS_V1[checkpoint_index - 1]
+            );
+            checkpoints.push(evaluate_entropy_fixed_corpus_v1(
+                update,
+                trainer.train_state_v1(),
+                fixed_corpus,
+                false,
+            ));
+        }
+        drop(evidence);
+    }
+
+    let progress = trainer.progress_v2();
+    assert_eq!(
+        progress.next_episode_index,
+        ENTROPY_SMOKE_TRAINING_EPISODE_COUNT_V1
+    );
+    assert_eq!(
+        progress.successful_update_count,
+        ENTROPY_SMOKE_UPDATE_COUNT_V1
+    );
+    assert_eq!(
+        progress.completed_episode_count,
+        ENTROPY_SMOKE_TRAINING_EPISODE_COUNT_V1
+    );
+    assert_eq!(
+        trainer.train_state_v1().adam_step_v1(),
+        ENTROPY_SMOKE_UPDATE_COUNT_V1
+    );
+    assert_eq!(
+        observed_counts.as_array_v1(),
+        ENTROPY_SMOKE_TRAINING_COUNTS_V1
+    );
+    assert_eq!(checkpoints.len(), ENTROPY_SMOKE_CHECKPOINT_UPDATES_V1.len());
+    assert_eq!(safety_returns.len(), ENTROPY_SMOKE_SAFETY_GAME_COUNT_V1);
+    let snapshot = trainer
+        .train_state_v1()
+        .snapshot_v1()
+        .expect("entropy arm endpoint snapshot must validate");
+    assert_eq!(snapshot.adam_step, ENTROPY_SMOKE_UPDATE_COUNT_V1);
+    assert!(snapshot
+        .parameters
+        .iter()
+        .chain(&snapshot.first_moments)
+        .chain(&snapshot.second_moments)
+        .flat_map(|parameter| &parameter.values)
+        .all(|value| value.is_finite()));
+    let endpoint_state_sha256 = lower_hex_raw32_v1(
+        snapshot
+            .state_sha256_v1()
+            .expect("entropy arm endpoint hash must validate"),
+    );
+    let receipt_facts_sha256 = receipt_hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    EntropyArmRunV1 {
+        checkpoints,
+        safety_returns,
+        reported_loss_bits,
+        genesis_state_sha256,
+        endpoint_state_sha256,
+        receipt_facts_sha256,
+        learner_group_count,
+        learner_substep_count,
+    }
+}
+
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HeldOutEvaluationErrorV1 {
@@ -8761,6 +9537,14 @@ impl FormalStagingPublicationV1 {
         Self::begin_requested_v1(requested, LEARNING_RATE_SCREEN_ARTIFACT_COUNT_V1)
     }
 
+    fn begin_entropy_trajectory_smoke_v1() -> Self {
+        let requested = PathBuf::from(
+            std::env::var("MTG_KERNEL_ENTROPY_TRAJECTORY_SMOKE_OUTPUT_DIR_V1")
+                .expect("an explicit new entropy-trajectory smoke output directory is required"),
+        );
+        Self::begin_requested_v1(requested, ENTROPY_SMOKE_ARTIFACT_COUNT_V1)
+    }
+
     fn begin_requested_v1(requested: PathBuf, expected_artifact_count: usize) -> Self {
         assert!(expected_artifact_count > 0);
         assert!(requested.is_absolute(), "formal output must be absolute");
@@ -8903,6 +9687,337 @@ impl FormalStagingPublicationV1 {
         Self::verify_inventory_v1(&final_parent, &self.artifacts);
         (final_parent.canonical_path().to_path_buf(), self.artifacts)
     }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn frame_entropy_checkpoint_v1(
+    writer: &mut FramedWriterV1,
+    label: &str,
+    checkpoint: &EntropyCheckpointReadV1,
+) {
+    writer.u64_v1(&format!("{label}.update"), checkpoint.update);
+    writer.text_v1(
+        &format!("{label}.complete_output_sha256"),
+        &checkpoint.complete_output_sha256,
+    );
+    for (metric_label, metric) in std::iter::once(("overall", checkpoint.overall)).chain(
+        checkpoint
+            .strata
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, metric)| {
+                (
+                    ["promoted2", "predecessor_a", "predecessor_b", "uniform"][index],
+                    metric,
+                )
+            }),
+    ) {
+        let metric_prefix = format!("{label}.{metric_label}");
+        writer.u64_v1(
+            &format!("{metric_prefix}.non_singleton_rows"),
+            metric.non_singleton_row_count,
+        );
+        writer.f64_bits_array_v1(
+            &format!("{metric_prefix}.h_hnorm_pmax"),
+            &[
+                metric.mean_entropy_nats,
+                metric.mean_normalized_entropy,
+                metric.mean_pmax,
+            ],
+        );
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn frame_entropy_smoke_summary_v1(
+    control: &EntropyArmRunV1,
+    candidate: &EntropyArmRunV1,
+    safety: EntropySafetyReadV1,
+    result: EntropySmokeClassificationV1,
+) -> FramedWriterV1 {
+    let mut writer = FramedWriterV1::new_v1(ENTROPY_TRAJECTORY_SMOKE_SUMMARY_SCHEMA_V1);
+    writer.text_v1("design_sha256", ENTROPY_TRAJECTORY_SMOKE_DESIGN_SHA256_V1);
+    writer.u64_v1("training_seed", ENTROPY_SMOKE_TRAINING_SEED_V1);
+    writer.u64_v1("validation_seed", ENTROPY_SMOKE_VALIDATION_SEED_V1);
+    writer.u64_v1("updates", ENTROPY_SMOKE_UPDATE_COUNT_V1);
+    writer.u64_v1("episodes_per_update", ENTROPY_SMOKE_EPISODES_PER_UPDATE_V1);
+    writer.u32_array_v1("training_counts", &ENTROPY_SMOKE_TRAINING_COUNTS_V1);
+    writer.u32_array_v1("validation_counts", &ENTROPY_SMOKE_VALIDATION_COUNTS_V1);
+    writer.text_v1(
+        "training_schedule_sha256",
+        ENTROPY_SMOKE_TRAINING_SCHEDULE_SHA256_V1,
+    );
+    writer.text_v1(
+        "validation_schedule_sha256",
+        ENTROPY_SMOKE_VALIDATION_SCHEDULE_SHA256_V1,
+    );
+    writer.u32_array_v1(
+        "beta_bits_control_candidate",
+        &[
+            ENTROPY_SMOKE_CONTROL_BETA_BITS_V1,
+            ENTROPY_SMOKE_CANDIDATE_BETA_BITS_V1,
+        ],
+    );
+    writer.u32_array_v1("value_coefficient_bits", &[VALUE_COEFFICIENT_BITS_V1]);
+    writer.u32_array_v1("learning_rate_bits", &[LEARNING_RATE_BITS_V1]);
+    for (arm_label, arm) in [("control", control), ("candidate", candidate)] {
+        writer.text_v1(
+            &format!("{arm_label}.genesis_state_sha256"),
+            &arm.genesis_state_sha256,
+        );
+        writer.text_v1(
+            &format!("{arm_label}.endpoint_state_sha256"),
+            &arm.endpoint_state_sha256,
+        );
+        writer.text_v1(
+            &format!("{arm_label}.receipt_facts_sha256"),
+            &arm.receipt_facts_sha256,
+        );
+        writer.u64_v1(
+            &format!("{arm_label}.learner_group_count"),
+            arm.learner_group_count,
+        );
+        writer.u64_v1(
+            &format!("{arm_label}.learner_substep_count"),
+            arm.learner_substep_count,
+        );
+        // This field is deliberately named "reported": it binds the bridge
+        // result without making an independent objective-replay claim.
+        writer.u32_array_v1(
+            &format!("{arm_label}.reported_loss_bits"),
+            &arm.reported_loss_bits,
+        );
+        for checkpoint in &arm.checkpoints {
+            frame_entropy_checkpoint_v1(
+                &mut writer,
+                &format!("{arm_label}.checkpoint_u{}", checkpoint.update),
+                checkpoint,
+            );
+        }
+    }
+    writer.u64_v1(
+        "safety_game_count",
+        ENTROPY_SMOKE_SAFETY_GAME_COUNT_V1 as u64,
+    );
+    writer.u64_v1(
+        "safety_environment_pair_cluster_count",
+        ENTROPY_SMOKE_SAFETY_CLUSTER_COUNT_V1 as u64,
+    );
+    writer.u64_v1("bootstrap_seed", ENTROPY_SMOKE_BOOTSTRAP_SEED_V1);
+    writer.u64_v1(
+        "bootstrap_resample_count",
+        ENTROPY_SMOKE_BOOTSTRAP_RESAMPLE_COUNT_V1 as u64,
+    );
+    writer.u64_v1(
+        "bootstrap_upper_index_zero_based",
+        ENTROPY_SMOKE_BOOTSTRAP_UPPER_INDEX_V1 as u64,
+    );
+    writer.text_v1(
+        "bootstrap_algorithm",
+        "SplitMix64 state=959001; advance/mix once per draw; mixed_u64%512; 512 draws/resample; sort total_cmp; read index 9499",
+    );
+    writer.f64_bits_array_v1(
+        "safety_control_candidate_delta_upper95",
+        &[
+            safety.control_score,
+            safety.candidate_score,
+            safety.candidate_minus_control,
+            safety.bootstrap_upper_95,
+        ],
+    );
+    writer.u64_v1(
+        "positive_joint_checkpoint_count",
+        result.positive_joint_checkpoint_count as u64,
+    );
+    writer.f64_bits_array_v1(
+        "endpoint_entropy_delta_pmax_delta",
+        &[result.endpoint_entropy_delta, result.endpoint_pmax_delta],
+    );
+    writer.u64_v1("mechanism_gate", u64::from(result.mechanism_gate));
+    writer.u64_v1("gross_safety_gate", u64::from(result.gross_safety_gate));
+    writer.text_v1("disposition", result.disposition.name_v1());
+    writer
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn frame_entropy_smoke_manifest_v1(
+    provenance: &ValidatedPreflightProvenanceV1,
+    gpu: &ValidatedPreflightGpuV1,
+    summary: &FormalArtifactIdentityV1,
+    disposition: EntropySmokeDispositionV1,
+) -> FramedWriterV1 {
+    assert_eq!(summary.basename, "summary.frame");
+    let mut writer = FramedWriterV1::new_v1(ENTROPY_TRAJECTORY_SMOKE_MANIFEST_SCHEMA_V1);
+    writer.text_v1("design_sha256", ENTROPY_TRAJECTORY_SMOKE_DESIGN_SHA256_V1);
+    writer.u64_v1(
+        "design_bytes",
+        ENTROPY_TRAJECTORY_SMOKE_DESIGN_BYTE_COUNT_V1,
+    );
+    writer.u64_v1(
+        "design_lines",
+        ENTROPY_TRAJECTORY_SMOKE_DESIGN_LINE_COUNT_V1,
+    );
+    writer.text_v1("git_commit", provenance.git_commit);
+    writer.text_v1("git_tree", provenance.git_tree);
+    writer.text_v1("tracked_tree_sha256", provenance.tracked_tree_sha256);
+    writer.text_v1("tracked_tree_contract", provenance.tracked_tree_contract);
+    writer.text_v1("toolchain", &provenance.toolchain);
+    writer.text_v1(
+        "rustc_executable_sha256",
+        &provenance.rustc_executable_sha256,
+    );
+    writer.text_v1("linker_path", &provenance.linker_path);
+    writer.text_v1(
+        "linker_executable_sha256",
+        &provenance.linker_executable_sha256,
+    );
+    writer.text_v1("nvidia_smi_path", &provenance.nvidia_smi_path);
+    writer.text_v1("nvidia_smi_sha256", &provenance.nvidia_smi_sha256);
+    writer.text_v1("test_executable_sha256", &provenance.test_executable_sha256);
+    writer.u64_v1(
+        "test_executable_byte_len",
+        provenance.test_executable_byte_len,
+    );
+    writer.text_v1("target", "x86_64-pc-windows-msvc");
+    writer.text_v1("backend_identity", DIAGNOSTIC_BACKEND_IDENTITY_V1);
+    writer.text_v1("pool3_sha256", POOL3_DOCUMENT_SHA256_V1);
+    writer.text_v1("source_run_sha256", SOURCE_RUN_SHA256_V1);
+    writer.text_v1("source_checkpoint_sha256", SOURCE_CHECKPOINT_SHA256_V1);
+    writer.text_v1("source_sidecar_sha256", SOURCE_SIDECAR_SHA256_V1);
+    writer.text_v1("source_payload_sha256", SOURCE_PAYLOAD_SHA256_V1);
+    writer.text_v1(
+        "source_model_parameter_sha256",
+        SOURCE_MODEL_PARAMETER_SHA256_V1,
+    );
+    writer.u64_v1("source_generation", SOURCE_GENERATION_V1);
+    writer.u64_v1("gpu_ordinal", gpu.ordinal);
+    writer.text_v1("gpu_name", &gpu.name);
+    writer.text_v1("gpu_uuid", &gpu.uuid);
+    writer.u64_v1("artifact_count", ENTROPY_SMOKE_ARTIFACT_COUNT_V1 as u64);
+    writer.text_v1("summary.basename", &summary.basename);
+    writer.u64_v1("summary.byte_len", summary.exact_length);
+    writer.text_v1("summary.sha256", &summary.sha256);
+    writer.text_v1("disposition", disposition.name_v1());
+    writer
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[test]
+#[ignore = "authorized one-seed 32-update entropy trajectory smoke; native Windows/MSVC, dedicated process, and explicit invocation required"]
+fn entropy_trajectory_smoke_gpu1_v1() {
+    assert!(
+        cfg!(all(
+            target_arch = "x86_64",
+            target_os = "windows",
+            target_env = "msvc"
+        )),
+        "the entropy trajectory smoke is native Windows/MSVC only"
+    );
+    assert_eq!(
+        pool_choice_schedule_sha256_v1(
+            ENTROPY_SMOKE_TRAINING_SEED_V1,
+            ENTROPY_SMOKE_TRAINING_EPISODE_COUNT_V1,
+        ),
+        ENTROPY_SMOKE_TRAINING_SCHEDULE_SHA256_V1
+    );
+    assert_eq!(
+        pool_choice_schedule_sha256_v1(ENTROPY_SMOKE_VALIDATION_SEED_V1, EPISODES_PER_TAPE_V1),
+        ENTROPY_SMOKE_VALIDATION_SCHEDULE_SHA256_V1
+    );
+    let mut publication = FormalStagingPublicationV1::begin_entropy_trajectory_smoke_v1();
+    let provenance = PreflightProvenanceGuardV1::begin_v1();
+    let gpu = require_fresh_physical_gpu1_v1(ENTROPY_TRAJECTORY_SMOKE_LIVE_TEST_NAME_SUFFIX_V1);
+    let exclusivity = BoundedGpu1ExclusivityMonitorV1::start_v1();
+    let authorities = load_preflight_live_authorities_v1();
+    let validation_authority = EntropySmokeValidationAuthorityV1::seal_v1();
+    let validation_full = fresh_state_from_parameters_v1(&authorities.genesis.full_parameters);
+    let validation_half = fresh_state_from_parameters_v1(&authorities.genesis.half_parameters);
+    let fixed_corpus = run_neutral_tape_v1(
+        &validation_authority,
+        &authorities,
+        &validation_full,
+        &validation_half,
+    );
+
+    let control_state = fresh_state_from_parameters_v1(&authorities.genesis.full_parameters);
+    let candidate_state = fresh_state_from_parameters_v1(&authorities.genesis.full_parameters);
+    assert_eq!(
+        control_state
+            .snapshot_v1()
+            .expect("control genesis snapshot"),
+        candidate_state
+            .snapshot_v1()
+            .expect("candidate genesis snapshot")
+    );
+    let mut control_trainer = NativeTrainerStateV2::new_v2(
+        ENTROPY_SMOKE_TRAINING_SEED_V1,
+        ENTROPY_SMOKE_EPISODES_PER_UPDATE_V1,
+        control_state,
+    )
+    .expect("control trainer must construct");
+    let mut candidate_trainer = NativeTrainerStateV2::new_v2(
+        ENTROPY_SMOKE_TRAINING_SEED_V1,
+        ENTROPY_SMOKE_EPISODES_PER_UPDATE_V1,
+        candidate_state,
+    )
+    .expect("candidate trainer must construct");
+    control_trainer.set_ladder_opponent_v1(Some(Arc::clone(&authorities.engine)));
+    candidate_trainer.set_ladder_opponent_v1(Some(Arc::clone(&authorities.engine)));
+    let config = entropy_smoke_update_config_v1(&authorities.deck_ids);
+
+    // Keep each arm contiguous so the content-keyed resident CUDA slot imports
+    // only at the one arm switch instead of on all 64 updates.
+    let control = run_entropy_smoke_arm_v1(
+        &gpu,
+        &mut control_trainer,
+        &config,
+        &fixed_corpus,
+        EntropyCoefficientAuthorityV1::Zero,
+    );
+    let candidate = run_entropy_smoke_arm_v1(
+        &gpu,
+        &mut candidate_trainer,
+        &config,
+        &fixed_corpus,
+        EntropyCoefficientAuthorityV1::Beta0p1,
+    );
+    assert_eq!(control.genesis_state_sha256, candidate.genesis_state_sha256);
+    assert!(control.checkpoints[0].bit_equal_v1(&candidate.checkpoints[0]));
+    let safety = entropy_safety_read_v1(&control.safety_returns, &candidate.safety_returns);
+    let result =
+        classify_entropy_smoke_v1(&control.checkpoints, &candidate.checkpoints, safety, true);
+    assert_ne!(result.disposition, EntropySmokeDispositionV1::Invalid);
+
+    let summary_frame = frame_entropy_smoke_summary_v1(&control, &candidate, safety, result);
+    let summary = publication.publish_frame_v1("summary.frame".to_owned(), summary_frame);
+    exclusivity.finish_v1(&gpu);
+    let provenance = provenance.finish_v1();
+    let manifest_frame =
+        frame_entropy_smoke_manifest_v1(&provenance, &gpu, &summary, result.disposition);
+    let manifest = publication.publish_frame_v1("manifest.frame".to_owned(), manifest_frame);
+    let (final_dir, inventory) = publication.finish_v1();
+    assert_eq!(inventory.len(), ENTROPY_SMOKE_ARTIFACT_COUNT_V1);
+    assert_eq!(
+        inventory
+            .iter()
+            .map(|artifact| artifact.basename.as_str())
+            .collect::<Vec<_>>(),
+        ["summary.frame", "manifest.frame"]
+    );
+    eprintln!(
+        "entropy smoke result: disposition={} joint_checkpoints={}/4 endpoint_H_delta_bits={:016x} endpoint_Pmax_delta_bits={:016x} safety_delta_bits={:016x} safety_upper95_bits={:016x} summary={} manifest={} dir={}",
+        result.disposition.name_v1(),
+        result.positive_joint_checkpoint_count,
+        result.endpoint_entropy_delta.to_bits(),
+        result.endpoint_pmax_delta.to_bits(),
+        safety.candidate_minus_control.to_bits(),
+        safety.bootstrap_upper_95.to_bits(),
+        summary.sha256,
+        manifest.sha256,
+        final_dir.display(),
+    );
+    drop(gpu);
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -13804,6 +14919,74 @@ fn learning_rate_screen_summary_binds_raw_units_authorities_and_rejects_forgery_
         frame_learning_rate_screen_summary_v1(&units, &self_consistent_replacement),
         Err(LearningRateScreenSummaryErrorV1::RawInputsDisagreeWithUnits)
     );
+}
+
+#[test]
+fn entropy_smoke_schedule_counts_and_raw_ordinal_hashes_match_the_frozen_design_v1() {
+    assert_eq!(
+        pool_choice_counts_v1(
+            ENTROPY_SMOKE_TRAINING_SEED_V1,
+            ENTROPY_SMOKE_TRAINING_EPISODE_COUNT_V1,
+        )
+        .as_array_v1(),
+        ENTROPY_SMOKE_TRAINING_COUNTS_V1
+    );
+    for (index, update) in [8u64, 16, 24, 32].iter().copied().enumerate() {
+        assert_eq!(
+            pool_choice_counts_v1(
+                ENTROPY_SMOKE_TRAINING_SEED_V1,
+                update * ENTROPY_SMOKE_EPISODES_PER_UPDATE_V1,
+            )
+            .as_array_v1(),
+            ENTROPY_SMOKE_CUMULATIVE_COUNTS_V1[index]
+        );
+    }
+    assert_eq!(
+        pool_choice_schedule_sha256_v1(
+            ENTROPY_SMOKE_TRAINING_SEED_V1,
+            ENTROPY_SMOKE_TRAINING_EPISODE_COUNT_V1,
+        ),
+        ENTROPY_SMOKE_TRAINING_SCHEDULE_SHA256_V1
+    );
+    assert_eq!(
+        pool_choice_counts_v1(ENTROPY_SMOKE_VALIDATION_SEED_V1, EPISODES_PER_TAPE_V1).as_array_v1(),
+        ENTROPY_SMOKE_VALIDATION_COUNTS_V1
+    );
+    assert_eq!(
+        pool_choice_schedule_sha256_v1(ENTROPY_SMOKE_VALIDATION_SEED_V1, EPISODES_PER_TAPE_V1),
+        ENTROPY_SMOKE_VALIDATION_SCHEDULE_SHA256_V1
+    );
+}
+
+#[test]
+fn entropy_smoke_splitmix64_stream_is_exact_v1() {
+    let mut state = ENTROPY_SMOKE_BOOTSTRAP_SEED_V1;
+    assert_eq!(splitmix64_next_v1(&mut state), 0x1e47_328f_7a79_ba2c);
+    assert_eq!(splitmix64_next_v1(&mut state), 0xd1b6_940a_d035_549e);
+    assert_eq!(splitmix64_next_v1(&mut state), 0x6f4d_4963_4a8a_a7b7);
+    assert_eq!(splitmix64_next_v1(&mut state), 0x49b4_dd08_2d76_4f01);
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[test]
+fn entropy_smoke_metric_and_cluster_bootstrap_arithmetic_is_exact_v1() {
+    assert_eq!(entropy_row_metrics_v1(&[3.0]), None);
+    let (entropy, normalized, pmax) = entropy_row_metrics_v1(&[0.0, 0.0]).unwrap();
+    assert_eq!(entropy.to_bits(), std::f64::consts::LN_2.to_bits());
+    assert_eq!(normalized.to_bits(), 1.0f64.to_bits());
+    assert_eq!(pmax.to_bits(), 0.5f64.to_bits());
+
+    let control = (0..ENTROPY_SMOKE_SAFETY_GAME_COUNT_V1)
+        .map(|offset| (ENTROPY_SMOKE_SAFETY_FIRST_EPISODE_V1 + offset as u64, -1))
+        .collect::<Vec<_>>();
+    let candidate = (0..ENTROPY_SMOKE_SAFETY_GAME_COUNT_V1)
+        .map(|offset| (ENTROPY_SMOKE_SAFETY_FIRST_EPISODE_V1 + offset as u64, 0))
+        .collect::<Vec<_>>();
+    let read = entropy_safety_read_v1(&control, &candidate);
+    assert_eq!(read.control_score.to_bits(), 0.0f64.to_bits());
+    assert_eq!(read.candidate_score.to_bits(), 0.5f64.to_bits());
+    assert_eq!(read.candidate_minus_control.to_bits(), 0.5f64.to_bits());
+    assert_eq!(read.bootstrap_upper_95.to_bits(), 0.5f64.to_bits());
 }
 
 /// The diagnostic-only backend identity is exactly the design's string and

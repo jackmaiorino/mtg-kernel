@@ -17,6 +17,8 @@ use crate::native_policy_train_step_v1::{
 // PARAMETER_COUNT_V1, used only by ExperimentalDeviceTrainStateV1's wide
 // import/export path below.
 use crate::native_policy_value_net_v1::W_PARAMETER_COUNT_V1;
+#[cfg(test)]
+use crate::native_trainer_v1::EntropyCoefficientAuthorityV1;
 use burn::backend::Autodiff;
 use burn::module::{AutodiffModule, ModuleMapper, ModuleVisitor, ParamId};
 use burn::optim::GradientsParams;
@@ -654,6 +656,7 @@ impl ExperimentalDeviceTrainStateV1 {
         plan: &DenseGroupLossPlanV1,
         value_coefficient: f32,
         normalization_group_count: f32,
+        #[cfg(test)] entropy_coefficient: EntropyCoefficientAuthorityV1,
     ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
         // Capacity-experiment dispatch: `self.wide` records which width
         // `self.model`'s resident tensors were imported as (see the `wide`
@@ -670,6 +673,7 @@ impl ExperimentalDeviceTrainStateV1 {
         // storage but retain neither autodiff nodes nor a second graph.
         let logit_outputs = logits.clone().inner();
         let value_outputs = values.clone().inner();
+        #[cfg(not(test))]
         let loss = dense_group_loss_v1(
             logits,
             values,
@@ -677,6 +681,25 @@ impl ExperimentalDeviceTrainStateV1 {
             value_coefficient,
             normalization_group_count,
         )?;
+        #[cfg(test)]
+        let loss = match entropy_coefficient {
+            // Preserve the literal established loss graph for the control.
+            EntropyCoefficientAuthorityV1::Zero => dense_group_loss_v1(
+                logits,
+                values,
+                plan,
+                value_coefficient,
+                normalization_group_count,
+            )?,
+            EntropyCoefficientAuthorityV1::Beta0p1 => dense_group_loss_with_entropy_v1(
+                logits,
+                values,
+                plan,
+                value_coefficient,
+                normalization_group_count,
+                entropy_coefficient.value_v1(),
+            )?,
+        };
         let raw_gradients = loss.backward();
         let mut gradients = GradientsParams::from_grads(raw_gradients, &self.model);
         if gradients.len() != PARAMETER_TENSOR_COUNT_V1 {
@@ -1592,6 +1615,11 @@ impl ModuleMapper<CudaAutodiffBackendV1> for DeviceAdamMapperV1<'_> {
 pub(crate) struct DenseGroupLossPlanV1 {
     pad_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
     pad_mask: Tensor<CudaAutodiffBackendV1, 2>,
+    /// Explicit legal-action mask for the test-only entropy sibling.  It is
+    /// absent for beta zero, so the production path performs no extra upload
+    /// or allocation even in a test build.
+    #[cfg(test)]
+    legal_action_mask: Option<Tensor<CudaAutodiffBackendV1, 2>>,
     selected_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
     group_scatter: Tensor<CudaAutodiffBackendV1, 1, Int>,
     group_first_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
@@ -1608,6 +1636,7 @@ pub(crate) fn build_dense_group_loss_plan_v1(
     group_first_substeps: &[usize],
     terminal_returns: &[i8],
     device: &burn_cuda::CudaDevice,
+    #[cfg(test)] entropy_coefficient: EntropyCoefficientAuthorityV1,
 ) -> Result<DenseGroupLossPlanV1, Box<dyn Error>> {
     let substeps = selected_action_indices.len();
     let group_count = terminal_returns.len();
@@ -1629,6 +1658,11 @@ pub(crate) fn build_dense_group_loss_plan_v1(
     }
     let mut pad_gather = Vec::with_capacity(substeps * max_actions);
     let mut pad_mask = Vec::with_capacity(substeps * max_actions);
+    #[cfg(test)]
+    let mut legal_action_mask = match entropy_coefficient {
+        EntropyCoefficientAuthorityV1::Zero => None,
+        EntropyCoefficientAuthorityV1::Beta0p1 => Some(Vec::with_capacity(substeps * max_actions)),
+    };
     let mut selected_gather = Vec::with_capacity(substeps);
     let mut group_scatter = Vec::with_capacity(substeps);
     for substep in 0..substeps {
@@ -1646,9 +1680,17 @@ pub(crate) fn build_dense_group_loss_plan_v1(
             if action < count {
                 pad_gather.push(i32::try_from(begin + action)?);
                 pad_mask.push(0.0_f32);
+                #[cfg(test)]
+                if let Some(mask) = &mut legal_action_mask {
+                    mask.push(1.0_f32);
+                }
             } else {
                 pad_gather.push(i32::try_from(begin)?);
                 pad_mask.push(DENSE_PAD_MASK_NEGATIVE_V1);
+                #[cfg(test)]
+                if let Some(mask) = &mut legal_action_mask {
+                    mask.push(0.0_f32);
+                }
             }
         }
         selected_gather.push(i32::try_from(begin + selected)?);
@@ -1675,6 +1717,9 @@ pub(crate) fn build_dense_group_loss_plan_v1(
             device,
         ),
         pad_mask: Tensor::from_data(TensorData::new(pad_mask, [substeps, max_actions]), device),
+        #[cfg(test)]
+        legal_action_mask: legal_action_mask
+            .map(|mask| Tensor::from_data(TensorData::new(mask, [substeps, max_actions]), device)),
         selected_gather: Tensor::from_data(TensorData::new(selected_gather, [substeps]), device),
         group_scatter: Tensor::from_data(TensorData::new(group_scatter, [substeps]), device),
         group_first_gather: Tensor::from_data(
@@ -1760,6 +1805,133 @@ fn dense_group_loss_v1(
         (policy_sum + value_sum.mul_scalar(value_coefficient))
             .div_scalar(normalization_group_count),
     )
+}
+
+/// Test-only sibling of the production dense grouped loss.  The policy and
+/// value terms retain the production association, while the entropy term is
+/// computed over the explicit legal-action mask and normalized by the same
+/// complete-update physical-group count.  Padding logits are finite and their
+/// probabilities are masked before multiplication by log-probability, so the
+/// graph never forms `0 * -inf`.
+#[cfg(test)]
+fn dense_group_loss_with_entropy_v1(
+    logits: Tensor<CudaAutodiffBackendV1, 1>,
+    values: Tensor<CudaAutodiffBackendV1, 1>,
+    plan: &DenseGroupLossPlanV1,
+    value_coefficient: f32,
+    normalization_group_count: f32,
+    entropy_coefficient: f32,
+) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
+    if values.dims()[0] != plan.substeps
+        || !value_coefficient.is_finite()
+        || value_coefficient <= 0.0
+        || !normalization_group_count.is_finite()
+        || normalization_group_count < plan.group_count as f32
+        || entropy_coefficient.to_bits() != EntropyCoefficientAuthorityV1::Beta0p1.bits_v1()
+    {
+        return Err(training_error(
+            "dense entropy group loss shape/parameter mismatch",
+        ));
+    }
+    let legal_action_mask = plan
+        .legal_action_mask
+        .as_ref()
+        .ok_or_else(|| training_error("dense entropy group loss is missing its legal mask"))?
+        .clone();
+    let padded = logits
+        .clone()
+        .select(0, plan.pad_gather.clone())
+        .reshape([plan.substeps, plan.max_actions])
+        + plan.pad_mask.clone();
+    let row_max = padded.clone().max_dim(1).detach();
+    let centered = padded.clone() - row_max.clone();
+    let log_normalizer = centered.clone().exp().sum_dim(1).log();
+    let log_sum_exp = log_normalizer.clone() + row_max;
+    let selected_logits = logits.select(0, plan.selected_gather.clone());
+    let selected_log_probabilities = selected_logits - log_sum_exp.squeeze_dim::<1>(1);
+    let joint_log_probabilities = Tensor::zeros([plan.group_count], &plan.targets.device())
+        .scatter(
+            0,
+            plan.group_scatter.clone(),
+            selected_log_probabilities,
+            IndexingUpdateOp::Add,
+        );
+    let group_values = values.select(0, plan.group_first_gather.clone());
+    let advantage = plan.targets.clone() - group_values.clone().detach();
+    let policy_sum = joint_log_probabilities
+        .mul(advantage)
+        .mul_scalar(-1.0)
+        .sum();
+    let value_error = group_values - plan.targets.clone();
+    let value_sum = value_error.clone().mul(value_error).sum();
+
+    // Build the entropy softmax from differentiable differences to the first
+    // legal logit in each row.  The subsequent detached maximum is only a
+    // numerical stabilizer: every entropy path already depends on logit
+    // differences, so a common scorer-bias shift cancels structurally before
+    // autodiff and contributes no new gauge direction.
+    let entropy_anchor = padded.clone().slice([0..plan.substeps, 0..1]);
+    let entropy_relative = padded - entropy_anchor;
+    let entropy_row_max = entropy_relative.clone().max_dim(1).detach();
+    let entropy_centered = entropy_relative - entropy_row_max;
+    let entropy_log_normalizer = entropy_centered.clone().exp().sum_dim(1).log();
+    let log_probabilities = entropy_centered.clone() - entropy_log_normalizer.clone();
+    let probabilities = log_probabilities.clone().exp();
+    // Positive-surprisal association canonicalizes a singleton's `0 - 0` to
+    // +0 instead of obtaining -0 by negating its log-probability.
+    let positive_surprisals = entropy_log_normalizer - entropy_centered;
+    let entropy_sum = probabilities
+        .mul(legal_action_mask)
+        .mul(positive_surprisals)
+        .sum();
+    Ok((policy_sum + value_sum.mul_scalar(value_coefficient)
+        - entropy_sum.mul_scalar(entropy_coefficient))
+    .div_scalar(normalization_group_count))
+}
+
+/// Stable host reference used only by the entropy seam's pure unit tests.
+/// Trailing entries model padding and are intentionally never inspected.
+#[cfg(test)]
+fn legal_entropy_reference_v1(logits_with_padding: &[f32], legal_count: usize) -> (f64, Vec<f64>) {
+    assert!((1..=logits_with_padding.len()).contains(&legal_count));
+    let legal = &logits_with_padding[..legal_count];
+    assert!(legal.iter().all(|value| value.is_finite()));
+    if legal_count == 1 {
+        return (0.0_f64, vec![1.0_f64]);
+    }
+    let maximum = legal
+        .iter()
+        .copied()
+        .map(f64::from)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let exponentials = legal
+        .iter()
+        .copied()
+        .map(f64::from)
+        .map(|value| (value - maximum).exp())
+        .collect::<Vec<_>>();
+    let denominator = exponentials.iter().sum::<f64>();
+    let probabilities = exponentials
+        .iter()
+        .map(|value| value / denominator)
+        .collect::<Vec<_>>();
+    let entropy = probabilities
+        .iter()
+        .map(|probability| -probability * probability.ln())
+        .sum::<f64>();
+    assert!(entropy.is_finite());
+    (entropy, probabilities)
+}
+
+/// Gradient of the test objective contribution `-beta * H` with respect to
+/// one legal logit row, computed analytically in f64.
+#[cfg(test)]
+fn entropy_loss_logit_gradient_reference_v1(logits: &[f32], beta: f64) -> Vec<f64> {
+    let (entropy, probabilities) = legal_entropy_reference_v1(logits, logits.len());
+    probabilities
+        .iter()
+        .map(|probability| beta * probability * (probability.ln() + entropy))
+        .collect()
 }
 
 /// Device-resident dense-padded loss plan, built once per packed batch. The
@@ -3580,6 +3752,169 @@ mod tests {
     use super::*;
 
     #[test]
+    fn entropy_reference_is_legal_only_and_singleton_is_positive_zero() {
+        let (unpadded, unpadded_probabilities) = legal_entropy_reference_v1(&[2.0, -1.0], 2);
+        let (padded, padded_probabilities) =
+            legal_entropy_reference_v1(&[2.0, -1.0, f32::NEG_INFINITY, f32::NAN], 2);
+        assert_eq!(unpadded.to_bits(), padded.to_bits());
+        assert_eq!(unpadded_probabilities, padded_probabilities);
+        assert!(padded.is_finite());
+
+        let (singleton, singleton_probabilities) =
+            legal_entropy_reference_v1(&[17.0, f32::NEG_INFINITY], 1);
+        assert_eq!(singleton.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(singleton_probabilities, vec![1.0]);
+    }
+
+    #[test]
+    fn bridge_entropy_witness_is_stable_finite_and_changes_the_reported_objective() {
+        let logits = [17.0_f32, 2.0, -1.0];
+        let offsets = [0_usize, 1, 3];
+        let entropy_sum =
+            super::bridge::stable_legal_entropy_sum_f64_v1(&logits, &offsets).unwrap();
+        let expected = legal_entropy_reference_v1(&logits[1..], 2).0;
+        assert!((entropy_sum - expected).abs() <= 1.0e-15);
+
+        let production_loss = 0.75_f32;
+        let group_count = 2.0_f32;
+        let candidate = (f64::from(production_loss)
+            - f64::from(EntropyCoefficientAuthorityV1::Beta0p1.value_v1()) * entropy_sum
+                / f64::from(group_count)) as f32;
+        assert!(candidate.is_finite());
+        assert!(candidate < production_loss);
+
+        assert!(super::bridge::stable_legal_entropy_sum_f64_v1(&[f32::NAN], &[0, 1]).is_err());
+        assert!(super::bridge::stable_legal_entropy_sum_f64_v1(&[0.0], &[1, 1]).is_err());
+    }
+
+    #[test]
+    fn two_action_entropy_gradient_moves_a_nonuniform_policy_toward_uniformity() {
+        let logits = [2.0_f32, -1.0_f32];
+        let gradients = entropy_loss_logit_gradient_reference_v1(
+            &logits,
+            f64::from(EntropyCoefficientAuthorityV1::Beta0p1.value_v1()),
+        );
+        assert!(gradients[0] > 0.0);
+        assert!(gradients[1] < 0.0);
+        assert!((gradients[0] + gradients[1]).abs() <= 1.0e-15);
+        let learning_rate = 0.5_f64;
+        let updated = [
+            f64::from(logits[0]) - learning_rate * gradients[0],
+            f64::from(logits[1]) - learning_rate * gradients[1],
+        ];
+        assert!((updated[0] - updated[1]).abs() < f64::from(logits[0] - logits[1]).abs());
+    }
+
+    #[test]
+    fn entropy_uses_the_complete_update_group_denominator_across_chunks() {
+        let rows = [[2.0_f32, -1.0_f32], [0.25, -0.5], [1.0, 1.0]];
+        let row_entropies = rows
+            .iter()
+            .map(|row| legal_entropy_reference_v1(row, row.len()).0)
+            .collect::<Vec<_>>();
+        let whole_group_count = 5.0_f64;
+        let whole = row_entropies.iter().sum::<f64>() / whole_group_count;
+        let chunked = row_entropies[..1].iter().sum::<f64>() / whole_group_count
+            + row_entropies[1..].iter().sum::<f64>() / whole_group_count;
+        assert!((whole - chunked).abs() <= 1.0e-15);
+
+        let incorrectly_chunk_normalized = row_entropies[..1].iter().sum::<f64>() / 2.0
+            + row_entropies[1..].iter().sum::<f64>() / 3.0;
+        assert!((whole - incorrectly_chunk_normalized).abs() > 1.0e-3);
+    }
+
+    #[test]
+    #[ignore = "requires a CUDA device, run explicitly"]
+    fn burn_entropy_gradient_padding_singleton_and_whole_group_normalization() {
+        let device = burn_cuda::CudaDevice::new(1);
+        let beta = EntropyCoefficientAuthorityV1::Beta0p1;
+
+        let mut two_action_host = HostPackingWorkspace::default();
+        two_action_host.action_offsets = vec![0, 2];
+        let two_action_plan =
+            build_dense_group_loss_plan_v1(&two_action_host, &[0], &[0], &[0], &[0], &device, beta)
+                .unwrap();
+        let two_action_logits = Tensor::<CudaAutodiffBackendV1, 1>::from_data(
+            TensorData::new(vec![2.0_f32, -1.0], [2]),
+            &device,
+        )
+        .require_grad();
+        let two_action_values = Tensor::<CudaAutodiffBackendV1, 1>::from_data(
+            TensorData::new(vec![0.0_f32], [1]),
+            &device,
+        );
+        let two_action_loss = dense_group_loss_with_entropy_v1(
+            two_action_logits.clone(),
+            two_action_values,
+            &two_action_plan,
+            VALUE_COEFFICIENT_V1,
+            1.0,
+            beta.value_v1(),
+        )
+        .unwrap();
+        let two_action_loss_value = two_action_loss.clone().into_data().to_vec::<f32>().unwrap()[0];
+        let two_action_raw_gradients = two_action_loss.backward();
+        let two_action_gradient = two_action_logits
+            .grad(&two_action_raw_gradients)
+            .expect("two-action entropy gradient")
+            .into_data()
+            .to_vec::<f32>()
+            .unwrap();
+        assert!(two_action_loss_value.is_finite() && two_action_loss_value < 0.0);
+        assert!(two_action_gradient[0] > 0.0);
+        assert!(two_action_gradient[1] < 0.0);
+        assert!((two_action_gradient[0] + two_action_gradient[1]).abs() <= 2.0e-6);
+
+        // Add a singleton group ahead of the same two-action group.  Dense
+        // padding duplicates the singleton's legal logit into its padded slot;
+        // the explicit mask must make both its entropy and gradient +0, while
+        // the real two-action contribution is divided by the whole G=2.
+        let mut padded_host = HostPackingWorkspace::default();
+        padded_host.action_offsets = vec![0, 1, 3];
+        let padded_plan = build_dense_group_loss_plan_v1(
+            &padded_host,
+            &[0, 0],
+            &[0, 1],
+            &[0, 1],
+            &[0, 0],
+            &device,
+            beta,
+        )
+        .unwrap();
+        let padded_logits = Tensor::<CudaAutodiffBackendV1, 1>::from_data(
+            TensorData::new(vec![17.0_f32, 2.0, -1.0], [3]),
+            &device,
+        )
+        .require_grad();
+        let padded_values = Tensor::<CudaAutodiffBackendV1, 1>::from_data(
+            TensorData::new(vec![0.0_f32, 0.0], [2]),
+            &device,
+        );
+        let padded_loss = dense_group_loss_with_entropy_v1(
+            padded_logits.clone(),
+            padded_values,
+            &padded_plan,
+            VALUE_COEFFICIENT_V1,
+            2.0,
+            beta.value_v1(),
+        )
+        .unwrap();
+        let padded_loss_value = padded_loss.clone().into_data().to_vec::<f32>().unwrap()[0];
+        let padded_raw_gradients = padded_loss.backward();
+        let padded_gradient = padded_logits
+            .grad(&padded_raw_gradients)
+            .expect("padded entropy gradient")
+            .into_data()
+            .to_vec::<f32>()
+            .unwrap();
+        CudaAutodiffBackendV1::sync(&device).unwrap();
+        assert_eq!(padded_gradient[0].to_bits(), 0.0_f32.to_bits());
+        assert!((padded_loss_value - two_action_loss_value / 2.0).abs() <= 2.0e-6);
+        assert!((padded_gradient[1] - two_action_gradient[0] / 2.0).abs() <= 2.0e-6);
+        assert!((padded_gradient[2] - two_action_gradient[1] / 2.0).abs() <= 2.0e-6);
+    }
+
+    #[test]
     fn all_native_parameter_layouts_round_trip_through_burn_order() {
         let model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -3918,6 +4253,249 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "requires a CUDA device, run explicitly and alone"]
+    fn entropy_beta_zero_is_bit_identical_and_beta_preserves_the_gauge() {
+        use crate::native_policy_train_step_v1::{
+            NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
+            NativePolicyTrainStepResultV1,
+        };
+
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1"),
+            "run the dedicated entropy bridge qualification on frozen GPU ordinal 1",
+        );
+
+        fn named_streams_bit_identical(
+            left: &[NativeNamedParameterV1],
+            right: &[NativeNamedParameterV1],
+        ) -> bool {
+            left.len() == right.len()
+                && left.iter().zip(right).all(|(left, right)| {
+                    left.name == right.name
+                        && left.shape == right.shape
+                        && left.values.len() == right.values.len()
+                        && left
+                            .values
+                            .iter()
+                            .zip(&right.values)
+                            .all(|(left, right)| left.to_bits() == right.to_bits())
+                })
+        }
+
+        fn results_bit_identical(
+            left: &NativePolicyTrainStepResultV1,
+            right: &NativePolicyTrainStepResultV1,
+        ) -> bool {
+            left.policy_sum.to_bits() == right.policy_sum.to_bits()
+                && left.value_sum.to_bits() == right.value_sum.to_bits()
+                && left.loss.to_bits() == right.loss.to_bits()
+                && left.adam_step == right.adam_step
+                && left.selected_outputs.len() == right.selected_outputs.len()
+                && left
+                    .selected_outputs
+                    .iter()
+                    .zip(&right.selected_outputs)
+                    .all(|(left, right)| {
+                        left.group_index == right.group_index
+                            && left.substep_index == right.substep_index
+                            && left.selected_action_index == right.selected_action_index
+                            && left.selected_logit.to_bits() == right.selected_logit.to_bits()
+                            && left.value.to_bits() == right.value.to_bits()
+                            && left.selected_log_probability.to_bits()
+                                == right.selected_log_probability.to_bits()
+                    })
+                && left.physical_terms.len() == right.physical_terms.len()
+                && left
+                    .physical_terms
+                    .iter()
+                    .zip(&right.physical_terms)
+                    .all(|(left, right)| {
+                        left.joint_log_probability.to_bits()
+                            == right.joint_log_probability.to_bits()
+                            && left.value.to_bits() == right.value.to_bits()
+                            && left.terminal_return == right.terminal_return
+                            && left.substep_count == right.substep_count
+                    })
+                && named_streams_bit_identical(&left.gradients, &right.gradients)
+                && left.scorer_bias_gauge.parameter_name == right.scorer_bias_gauge.parameter_name
+                && left.scorer_bias_gauge.substep_count == right.scorer_bias_gauge.substep_count
+                && left.scorer_bias_gauge.total_action_count
+                    == right.scorer_bias_gauge.total_action_count
+                && left.scorer_bias_gauge.max_action_count
+                    == right.scorer_bias_gauge.max_action_count
+                && left.scorer_bias_gauge.sum_abs_policy_coefficients.to_bits()
+                    == right
+                        .scorer_bias_gauge
+                        .sum_abs_policy_coefficients
+                        .to_bits()
+                && left.scorer_bias_gauge.per_substep_bound_sum.to_bits()
+                    == right.scorer_bias_gauge.per_substep_bound_sum.to_bits()
+                && left.scorer_bias_gauge.cross_substep_bound.to_bits()
+                    == right.scorer_bias_gauge.cross_substep_bound.to_bits()
+                && left.scorer_bias_gauge.raw_gradient_residual.to_bits()
+                    == right.scorer_bias_gauge.raw_gradient_residual.to_bits()
+                && left.scorer_bias_gauge.derived_absolute_bound.to_bits()
+                    == right.scorer_bias_gauge.derived_absolute_bound.to_bits()
+                && left.scorer_bias_gauge.high_precision_residual.to_bits()
+                    == right.scorer_bias_gauge.high_precision_residual.to_bits()
+                && left.scorer_bias_gauge.canonical_gradient.to_bits()
+                    == right.scorer_bias_gauge.canonical_gradient.to_bits()
+                && left.scorer_bias_gauge.parameter_before_bits
+                    == right.scorer_bias_gauge.parameter_before_bits
+                && left.scorer_bias_gauge.parameter_after_bits
+                    == right.scorer_bias_gauge.parameter_after_bits
+                && left.scorer_bias_gauge.substep_bounds.len()
+                    == right.scorer_bias_gauge.substep_bounds.len()
+                && left
+                    .scorer_bias_gauge
+                    .substep_bounds
+                    .iter()
+                    .zip(&right.scorer_bias_gauge.substep_bounds)
+                    .all(|(left, right)| {
+                        left.action_count == right.action_count
+                            && left.abs_policy_coefficient.to_bits()
+                                == right.abs_policy_coefficient.to_bits()
+                            && left.gamma_operation_count == right.gamma_operation_count
+                            && left.gamma.to_bits() == right.gamma.to_bits()
+                            && left.bound_component.to_bits() == right.bound_component.to_bits()
+                    })
+        }
+
+        let native_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut seed_state = NativePolicyValueTrainStateV1::new_v1(native_model).unwrap();
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        load_common_model_snapshot_v1(&manifest_path, &payload_path, &mut seed_state).unwrap();
+        let seed_snapshot = seed_state.snapshot_v1().unwrap();
+        let cases = load_real_fixture_cases().unwrap();
+        let group_sizes = [1_usize, 2, 1, 3];
+        let substep_total = group_sizes.iter().sum::<usize>();
+        struct ExpectedBitsV1 {
+            case_index: usize,
+            selected: usize,
+            logit_bits: Vec<u32>,
+            value_bits: u32,
+        }
+        let expected = (0..substep_total)
+            .map(|flat| {
+                let case_index = flat % cases.len();
+                let output = seed_state
+                    .model_v1()
+                    .forward_v1(cases[case_index].view())
+                    .unwrap();
+                ExpectedBitsV1 {
+                    case_index,
+                    selected: flat % output.logits.len(),
+                    logit_bits: output.logits.iter().map(|value| value.to_bits()).collect(),
+                    value_bits: output.value.to_bits(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut group_substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = Vec::new();
+        let mut flat = 0_usize;
+        for size in group_sizes {
+            let mut substeps = Vec::new();
+            for _ in 0..size {
+                let entry = &expected[flat];
+                substeps.push(NativePolicySubstepV1 {
+                    forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                        cases[entry.case_index].view(),
+                    )),
+                    selected_action_index: entry.selected,
+                    expected_raw_action_logit_bits: &entry.logit_bits,
+                    expected_value_bits: entry.value_bits,
+                });
+                flat += 1;
+            }
+            group_substeps.push(substeps);
+        }
+        let terminal_returns = [1_i8, -1, 0, 1];
+        let groups = group_substeps
+            .iter()
+            .zip(terminal_returns)
+            .map(
+                |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
+                    substeps,
+                    terminal_return,
+                },
+            )
+            .collect::<Vec<_>>();
+
+        let fresh_state = || {
+            NativePolicyValueTrainStateV1::from_snapshot_v1(
+                seed_state.model_v1().clone(),
+                &seed_snapshot,
+            )
+            .unwrap()
+        };
+        super::bridge::clear_resident_device_state_for_test_v1();
+        let mut production_state = fresh_state();
+        let production = super::bridge::train_step_cuda_burn_dense_capture_named_gradients_v1(
+            &mut production_state,
+            &groups,
+            VALUE_COEFFICIENT_V1,
+            BENCHMARK_LEARNING_RATE_V1,
+        )
+        .unwrap();
+        let production_snapshot = production_state.snapshot_v1().unwrap();
+
+        super::bridge::clear_resident_device_state_for_test_v1();
+        let mut beta_zero_state = fresh_state();
+        let beta_zero =
+            super::bridge::train_step_cuda_burn_dense_entropy_smoke_capture_named_gradients_v1(
+                &mut beta_zero_state,
+                &groups,
+                VALUE_COEFFICIENT_V1,
+                BENCHMARK_LEARNING_RATE_V1,
+                EntropyCoefficientAuthorityV1::Zero,
+            )
+            .unwrap();
+        let beta_zero_snapshot = beta_zero_state.snapshot_v1().unwrap();
+        assert!(results_bit_identical(&production, &beta_zero));
+        assert!(super::bridge::snapshots_bit_identical_v1(
+            &production_snapshot,
+            &beta_zero_snapshot,
+        ));
+
+        super::bridge::clear_resident_device_state_for_test_v1();
+        let mut beta_state = fresh_state();
+        let beta =
+            super::bridge::train_step_cuda_burn_dense_entropy_smoke_capture_named_gradients_v1(
+                &mut beta_state,
+                &groups,
+                VALUE_COEFFICIENT_V1,
+                BENCHMARK_LEARNING_RATE_V1,
+                EntropyCoefficientAuthorityV1::Beta0p1,
+            )
+            .unwrap();
+        let production_objective =
+            (beta.policy_sum + VALUE_COEFFICIENT_V1 * beta.value_sum) / groups.len() as f32;
+        assert!(beta.loss.is_finite());
+        assert!(beta.loss < production_objective);
+        assert_eq!(beta.scorer_bias_gauge.canonical_gradient.to_bits(), 0);
+        assert_eq!(
+            beta.scorer_bias_gauge.parameter_before_bits,
+            beta.scorer_bias_gauge.parameter_after_bits
+        );
+        assert!(
+            f64::from(beta.scorer_bias_gauge.raw_gradient_residual).abs()
+                <= beta.scorer_bias_gauge.derived_absolute_bound
+        );
+        let scorer_bias_gradient = beta
+            .gradients
+            .iter()
+            .find(|gradient| gradient.name == "scorer.2.bias")
+            .expect("captured scorer-bias gradient");
+        assert!(scorer_bias_gradient
+            .values
+            .iter()
+            .all(|value| value.to_bits() == 0));
+        super::bridge::clear_resident_device_state_for_test_v1();
+    }
+
     /// Capacity-experiment live GPU verification (task item 5b, the subset
     /// achievable without the self-play rollout scorer -- see the final
     /// report): a small multi-update wide CUDA training run, genesis to a
@@ -4136,6 +4714,7 @@ mod tests {
                     &group_first_substeps,
                     &terminal_returns,
                     &device,
+                    EntropyCoefficientAuthorityV1::Zero,
                 )
                 .unwrap();
                 let chunk_batch =
@@ -4149,6 +4728,7 @@ mod tests {
                         &plan,
                         VALUE_COEFFICIENT_V1,
                         views.len() as f32,
+                        EntropyCoefficientAuthorityV1::Zero,
                     )
                     .unwrap();
                 assert!(outputs.raw_gauge_residual.is_finite());

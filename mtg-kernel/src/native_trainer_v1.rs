@@ -1786,6 +1786,31 @@ pub(crate) struct NativeTrainerUpdateConfigV2 {
     pub(crate) backward_worker_limit: usize,
 }
 
+/// Test-only exact authority for the entropy-trajectory smoke.  Keeping the
+/// coefficient sealed prevents the diagnostic entry point from becoming an
+/// arbitrary loss-configuration surface, and compiling it only under tests
+/// keeps the production trainer contract unchanged.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EntropyCoefficientAuthorityV1 {
+    Zero,
+    Beta0p1,
+}
+
+#[cfg(test)]
+impl EntropyCoefficientAuthorityV1 {
+    pub(crate) const fn bits_v1(self) -> u32 {
+        match self {
+            Self::Zero => 0x0000_0000,
+            Self::Beta0p1 => 0x3dcc_cccd,
+        }
+    }
+
+    pub(crate) const fn value_v1(self) -> f32 {
+        f32::from_bits(self.bits_v1())
+    }
+}
+
 #[derive(Clone, Copy)]
 struct NativeTrainerGroupedTrainConfigV1 {
     value_coefficient: f32,
@@ -1793,6 +1818,8 @@ struct NativeTrainerGroupedTrainConfigV1 {
     recompute_worker_limit: usize,
     numerical_backend: NativeTrainingNumericalBackendV1,
     backward_worker_limit: usize,
+    #[cfg(test)]
+    entropy_coefficient: EntropyCoefficientAuthorityV1,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2273,7 +2300,42 @@ impl NativeTrainerStateV2 {
         environment: NativeRunEnvironmentTrajectoryContractV1,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
-        self.run_even_batch_update_dispatch_v2(config, environment, &mut phase_recorder)
+        self.run_even_batch_update_dispatch_v2(
+            config,
+            environment,
+            #[cfg(test)]
+            EntropyCoefficientAuthorityV1::Zero,
+            &mut phase_recorder,
+        )
+    }
+
+    /// Test-only in-memory entropy-smoke entry point.  The sealed authority is
+    /// threaded only to the frozen CUDA loss seam; beta zero still reaches the
+    /// ordinary production updater, and no persisted trainer configuration or
+    /// Store identity can carry an entropy coefficient.
+    #[cfg(test)]
+    pub(crate) fn run_even_batch_update_entropy_smoke_v1(
+        &mut self,
+        config: &NativeTrainerUpdateConfigV2,
+        environment: NativeRunEnvironmentTrajectoryContractV1,
+        entropy_coefficient: EntropyCoefficientAuthorityV1,
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+        if entropy_coefficient != EntropyCoefficientAuthorityV1::Zero
+            && (self.is_wide_v1()
+                || config.numerical_backend != NativeTrainingNumericalBackendV1::CudaBurnDense
+                || !cfg!(feature = "experimental-burn-net8-packed-cuda-v1"))
+        {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "entropy_coefficient_requires_frozen_cuda",
+            ));
+        }
+        let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
+        self.run_even_batch_update_dispatch_v2(
+            config,
+            environment,
+            entropy_coefficient,
+            &mut phase_recorder,
+        )
     }
 
     pub(crate) fn run_even_batch_update_profiled_v2(
@@ -2285,7 +2347,13 @@ impl NativeTrainerStateV2 {
         let mut profile = NativeTrainingPhaseProfileV1::default();
         let evidence = {
             let mut phase_recorder = NativeTrainingPhaseRecorderV1::enabled_v1(&mut profile);
-            self.run_even_batch_update_dispatch_v2(config, environment, &mut phase_recorder)?
+            self.run_even_batch_update_dispatch_v2(
+                config,
+                environment,
+                #[cfg(test)]
+                EntropyCoefficientAuthorityV1::Zero,
+                &mut phase_recorder,
+            )?
         };
         Ok((evidence, profile))
     }
@@ -2300,13 +2368,24 @@ impl NativeTrainerStateV2 {
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
         environment: NativeRunEnvironmentTrajectoryContractV1,
+        #[cfg(test)] entropy_coefficient: EntropyCoefficientAuthorityV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         match &self.train_state {
-            NativeTrainerModelStateV2::Frozen(_) => {
-                self.run_even_batch_update_inner_v2(config, environment, phase_recorder)
-            }
+            NativeTrainerModelStateV2::Frozen(_) => self.run_even_batch_update_inner_v2(
+                config,
+                environment,
+                #[cfg(test)]
+                entropy_coefficient,
+                phase_recorder,
+            ),
             NativeTrainerModelStateV2::Wide(_) => {
+                #[cfg(test)]
+                if entropy_coefficient != EntropyCoefficientAuthorityV1::Zero {
+                    return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                        "entropy_coefficient_requires_frozen_cuda",
+                    ));
+                }
                 self.run_even_batch_update_wide_inner_v2(config, environment, phase_recorder)
             }
         }
@@ -2316,6 +2395,7 @@ impl NativeTrainerStateV2 {
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
         environment: NativeRunEnvironmentTrajectoryContractV1,
+        #[cfg(test)] entropy_coefficient: EntropyCoefficientAuthorityV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         let update_started = Instant::now();
@@ -2525,6 +2605,8 @@ impl NativeTrainerStateV2 {
                 recompute_worker_limit: config.worker_count,
                 numerical_backend: config.numerical_backend,
                 backward_worker_limit: config.backward_worker_limit,
+                #[cfg(test)]
+                entropy_coefficient,
             },
             #[cfg(test)]
             test_physical_substep_count_mutation,
@@ -2829,6 +2911,8 @@ impl NativeTrainerStateV2 {
                     recompute_worker_limit: config.worker_count,
                     numerical_backend: config.numerical_backend,
                     backward_worker_limit: config.backward_worker_limit,
+                    #[cfg(test)]
+                    entropy_coefficient: EntropyCoefficientAuthorityV1::Zero,
                 },
                 phase_recorder,
             )?;
@@ -3527,12 +3611,36 @@ fn train_grouped_candidate_v1(
         // through the validating snapshot constructor.
         #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
         NativeTrainingNumericalBackendV1::CudaBurnDense => {
-            crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
-                candidate,
-                &borrowed_groups,
-                execution.value_coefficient,
-                execution.learning_rate,
-            )
+            #[cfg(not(test))]
+            {
+                crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
+                    candidate,
+                    &borrowed_groups,
+                    execution.value_coefficient,
+                    execution.learning_rate,
+                )
+            }
+            #[cfg(test)]
+            {
+                match execution.entropy_coefficient {
+                    // The control is deliberately the existing production
+                    // bridge call, not beta-zero arithmetic in the entropy
+                    // sibling.
+                    EntropyCoefficientAuthorityV1::Zero => crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
+                        candidate,
+                        &borrowed_groups,
+                        execution.value_coefficient,
+                        execution.learning_rate,
+                    ),
+                    EntropyCoefficientAuthorityV1::Beta0p1 => crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_entropy_smoke_v1(
+                        candidate,
+                        &borrowed_groups,
+                        execution.value_coefficient,
+                        execution.learning_rate,
+                        execution.entropy_coefficient,
+                    ),
+                }
+            }
         }
         #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
         NativeTrainingNumericalBackendV1::CudaBurnDense => {
@@ -3934,6 +4042,23 @@ mod tests {
 
     static SNAPSHOT_CORRUPTION_ORDINAL_V1: AtomicU64 = AtomicU64::new(0);
 
+    #[test]
+    fn entropy_smoke_authority_bits_are_exact_and_positive_zero_is_canonical() {
+        assert_eq!(EntropyCoefficientAuthorityV1::Zero.bits_v1(), 0x0000_0000);
+        assert_eq!(
+            EntropyCoefficientAuthorityV1::Zero.value_v1().to_bits(),
+            0x0000_0000
+        );
+        assert_eq!(
+            EntropyCoefficientAuthorityV1::Beta0p1.bits_v1(),
+            0x3dcc_cccd
+        );
+        assert_eq!(
+            EntropyCoefficientAuthorityV1::Beta0p1.value_v1().to_bits(),
+            0x3dcc_cccd
+        );
+    }
+
     struct CorruptedSnapshotPayloadV1 {
         path: PathBuf,
     }
@@ -3999,6 +4124,33 @@ mod tests {
                 .unwrap();
         let train_state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
         NativeTrainerStateV2::new_v2(71_501, batch_episodes, train_state).unwrap()
+    }
+
+    #[test]
+    fn entropy_smoke_rejects_a_non_cuda_candidate_before_mutating_the_trainer() {
+        let mut trainer = trainer_v2(2);
+        let before_progress = trainer.progress_v2();
+        let before_state = trainer.train_state_v1().state_sha256_v1().unwrap();
+        let config = burn_pair_config_v2(1, 2, 2);
+        assert_eq!(
+            config.numerical_backend,
+            NativeTrainingNumericalBackendV1::Sequential
+        );
+        assert_eq!(
+            trainer.run_even_batch_update_entropy_smoke_v1(
+                &config,
+                NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
+                EntropyCoefficientAuthorityV1::Beta0p1,
+            ),
+            Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "entropy_coefficient_requires_frozen_cuda"
+            ))
+        );
+        assert_eq!(trainer.progress_v2(), before_progress);
+        assert_eq!(
+            trainer.train_state_v1().state_sha256_v1().unwrap(),
+            before_state
+        );
     }
 
     fn exact_state_snapshot_v1(
