@@ -131,14 +131,14 @@ struct NativeOpenPhysicalGroupV1 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct NativeActionPreflightV1 {
-    action_seed: u64,
-    actor_physical_decision_ordinal: u64,
+pub(crate) struct NativeActionPreflightV1 {
+    pub(crate) action_seed: u64,
+    pub(crate) actor_physical_decision_ordinal: u64,
     opponent_selected_index: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct NativeLaneScheduleStateV1 {
+pub(crate) struct NativeLaneScheduleStateV1 {
     base_seed: u64,
     episode_index: u64,
     learner_seat: PlayerSeatV1,
@@ -159,7 +159,7 @@ struct NativeLaneScheduleStateV1 {
 }
 
 impl NativeLaneScheduleStateV1 {
-    fn new(
+    pub(crate) fn new(
         base_seed: u64,
         episode_index: u64,
         learner_seat: PlayerSeatV1,
@@ -199,7 +199,7 @@ impl NativeLaneScheduleStateV1 {
     /// Validate the entire declared group at substep zero before deriving or
     /// releasing its first action. The checks depend only on episode-local
     /// state and frozen trainer caps, never worker/lane/batch topology.
-    fn preflight_action_seed(
+    pub(crate) fn preflight_action_seed(
         &mut self,
         decision: FastActorDecisionV1,
         max_physical_decisions: u64,
@@ -338,7 +338,7 @@ impl NativeLaneScheduleStateV1 {
     /// Commit only after the selected action has been accepted by the engine.
     /// Actor-local physical ordinals advance on the declared final substep,
     /// never on policy substeps or scheduler rounds.
-    fn commit_action(&mut self, decision: FastActorDecisionV1) -> Result<(), ()> {
+    pub(crate) fn commit_action(&mut self, decision: FastActorDecisionV1) -> Result<(), ()> {
         let open = self.open_group.as_mut().ok_or(())?;
         if open.physical_decision_id != decision.physical_decision_id
             || open.acting_player != decision.acting_player
@@ -379,7 +379,7 @@ impl NativeLaneScheduleStateV1 {
         Ok(())
     }
 
-    fn validate_terminal(self, terminal: &RlSessionTerminalV1) -> Result<(), ()> {
+    pub(crate) fn validate_terminal(self, terminal: &RlSessionTerminalV1) -> Result<(), ()> {
         if self.open_group.is_some()
             || terminal.episode_id != self.episode_index
             || terminal.terminal_classification != TerminalClassificationV1::Natural

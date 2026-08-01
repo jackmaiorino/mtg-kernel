@@ -73,6 +73,9 @@ pub(crate) mod native_policy_value_net_v1;
 // Pure in-memory bridge from already-validated Store authorities and exact
 // train-state bytes to a private, immutable native inference model.
 pub mod native_checkpoint_inference_v1;
+// Strict JSONL bridge from one exact checkpoint inference authority to the
+// production FastActor/FlatScoredFamilyV2 decision path.
+pub mod native_checkpoint_shadow_stdio_v1;
 // Trainer-schedule-compatible in-memory checkpoint runner. It derives the
 // engine/topology contract from a validated run and publishes no artifacts.
 pub mod native_checkpoint_runner_v1;
