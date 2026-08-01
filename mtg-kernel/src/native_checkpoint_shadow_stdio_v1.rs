@@ -20,7 +20,9 @@ use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorizerV2,
     NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2, NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
 };
-use crate::native_ladder_pool_resolution_v1::resolve_ladder_checkpoint_authority_v1;
+use crate::native_ladder_pool_resolution_v1::{
+    resolve_ladder_checkpoint_authority_v1, stage_ladder_checkpoint_ref_v1,
+};
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
 use crate::native_training_store_run_v2::{
@@ -88,6 +90,10 @@ const FIXED_MAX_POLICY_STEPS_V1: u64 = 2_048;
 pub enum ShadowCheckpointAuthorityV1 {
     /// The original promoted(2), generation-384 complete Store root.
     OriginalPromoted2Generation384Store { root: PathBuf },
+    /// One explicitly selected generation from the original promoted(2)
+    /// complete Store. The checkpoint digests are staged from the named Store
+    /// boundary and then revalidated by the normal chain-proven loader.
+    OriginalPromoted2StoreGeneration { root: PathBuf, generation: u64 },
     /// A generation-0, weights-only derivative whose model parameters are
     /// bit-identical to promoted(2) g384. This is portable, but is never
     /// reported as the original checkpoint payload or manifest.
@@ -96,13 +102,13 @@ pub enum ShadowCheckpointAuthorityV1 {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ShadowCheckpointIdentityV1 {
-    pub authority_kind: &'static str,
-    pub source_run_sha256: &'static str,
+    pub authority_kind: String,
+    pub source_run_sha256: String,
     pub source_generation: u64,
-    pub source_checkpoint_sha256: &'static str,
-    pub source_sidecar_sha256: &'static str,
-    pub source_payload_sha256: &'static str,
-    pub source_train_state_sha256: &'static str,
+    pub source_checkpoint_sha256: String,
+    pub source_sidecar_sha256: String,
+    pub source_payload_sha256: String,
+    pub source_train_state_sha256: String,
     pub loaded_run_sha256: String,
     pub loaded_generation: u64,
     pub loaded_checkpoint_sha256: String,
@@ -163,36 +169,56 @@ struct LoadedShadowCheckpointV1 {
     max_policy_steps: u64,
 }
 
-fn fixed_ref_v1(authority: &ShadowCheckpointAuthorityV1) -> OpponentLadderCheckpointRefV1 {
-    let (source_run_sha256, generation, checkpoint_sha256, sidecar_sha256, state_sha256) =
-        match authority {
-            ShadowCheckpointAuthorityV1::OriginalPromoted2Generation384Store { .. } => (
-                SOURCE_RUN_SHA256_V1,
-                SOURCE_GENERATION_V1,
-                SOURCE_CHECKPOINT_SHA256_V1,
-                SOURCE_SIDECAR_SHA256_V1,
-                SOURCE_PAYLOAD_SHA256_V1,
-            ),
-            ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { .. } => (
-                PORTABLE_RUN_SHA256_V1,
-                PORTABLE_GENERATION_V1,
-                PORTABLE_CHECKPOINT_SHA256_V1,
-                PORTABLE_SIDECAR_SHA256_V1,
-                PORTABLE_PAYLOAD_SHA256_V1,
-            ),
-        };
-    OpponentLadderCheckpointRefV1 {
+fn checkpoint_ref_v1(
+    authority: &ShadowCheckpointAuthorityV1,
+) -> Result<OpponentLadderCheckpointRefV1, ShadowScorerStartupErrorV1> {
+    let fixed = |source_run_sha256: &str,
+                 generation: u64,
+                 checkpoint_sha256: &str,
+                 sidecar_sha256: &str,
+                 state_sha256: &str| OpponentLadderCheckpointRefV1 {
         source_run_sha256: source_run_sha256.to_owned(),
         generation,
         checkpoint_sha256: checkpoint_sha256.to_owned(),
         sidecar_sha256: sidecar_sha256.to_owned(),
         state_sha256: state_sha256.to_owned(),
+    };
+    match authority {
+        ShadowCheckpointAuthorityV1::OriginalPromoted2Generation384Store { .. } => Ok(fixed(
+            SOURCE_RUN_SHA256_V1,
+            SOURCE_GENERATION_V1,
+            SOURCE_CHECKPOINT_SHA256_V1,
+            SOURCE_SIDECAR_SHA256_V1,
+            SOURCE_PAYLOAD_SHA256_V1,
+        )),
+        ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration { root, generation } => {
+            let checkpoint_ref =
+                stage_ladder_checkpoint_ref_v1(root, *generation).map_err(|_| {
+                    ShadowScorerStartupErrorV1::new(
+                        ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                    )
+                })?;
+            if checkpoint_ref.source_run_sha256 != SOURCE_RUN_SHA256_V1 {
+                return Err(ShadowScorerStartupErrorV1::new(
+                    ShadowScorerStartupErrorKindV1::CheckpointIdentity,
+                ));
+            }
+            Ok(checkpoint_ref)
+        }
+        ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { .. } => Ok(fixed(
+            PORTABLE_RUN_SHA256_V1,
+            PORTABLE_GENERATION_V1,
+            PORTABLE_CHECKPOINT_SHA256_V1,
+            PORTABLE_SIDECAR_SHA256_V1,
+            PORTABLE_PAYLOAD_SHA256_V1,
+        )),
     }
 }
 
 fn authority_root_v1(authority: &ShadowCheckpointAuthorityV1) -> &Path {
     match authority {
         ShadowCheckpointAuthorityV1::OriginalPromoted2Generation384Store { root }
+        | ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration { root, .. }
         | ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { root } => root,
     }
 }
@@ -215,14 +241,14 @@ fn require_inference_identity_v1(
     expected_checkpoint: &str,
     expected_payload: &str,
     expected_train_state: &str,
+    expected_model_parameter: &str,
 ) -> Result<(), ShadowScorerStartupErrorV1> {
     if lower_hex_raw32_v1(inference.run_sha256()) != expected_run
         || inference.generation_index() != expected_generation
         || lower_hex_raw32_v1(inference.checkpoint_manifest_sha256()) != expected_checkpoint
         || lower_hex_raw32_v1(inference.checkpoint_payload_sha256()) != expected_payload
         || lower_hex_raw32_v1(inference.train_state_sha256()) != expected_train_state
-        || lower_hex_raw32_v1(inference.model_parameter_sha256())
-            != SOURCE_MODEL_PARAMETER_SHA256_V1
+        || lower_hex_raw32_v1(inference.model_parameter_sha256()) != expected_model_parameter
     {
         return Err(ShadowScorerStartupErrorV1::new(
             ShadowScorerStartupErrorKindV1::CheckpointIdentity,
@@ -261,15 +287,14 @@ fn require_portable_source_binding_v1(
 fn load_checkpoint_v1(
     requested: ShadowCheckpointAuthorityV1,
 ) -> Result<LoadedShadowCheckpointV1, ShadowScorerStartupErrorV1> {
-    let fixed_ref = fixed_ref_v1(&requested);
+    let checkpoint_ref = checkpoint_ref_v1(&requested)?;
     let authority =
-        resolve_ladder_checkpoint_authority_v1(authority_root_v1(&requested), &fixed_ref).map_err(
-            |_error| {
+        resolve_ladder_checkpoint_authority_v1(authority_root_v1(&requested), &checkpoint_ref)
+            .map_err(|_error| {
                 #[cfg(test)]
                 eprintln!("shadow checkpoint authority resolution failed: {_error:?}");
                 ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
-            },
-        )?;
+            })?;
     validate_run_limits_v1(authority.run())?;
     if authority.run().environment_trajectory_contract_v1()
         != NativeRunEnvironmentTrajectoryContractV1::LegacyV1
@@ -279,53 +304,91 @@ fn load_checkpoint_v1(
         ));
     }
 
-    let (
-        authority_kind,
-        expected_run,
-        expected_generation,
-        expected_checkpoint,
-        expected_payload,
-        expected_train_state,
-    ) = match requested {
+    let (authority_kind, pinned_train_state, pinned_model_parameter) = match &requested {
         ShadowCheckpointAuthorityV1::OriginalPromoted2Generation384Store { .. } => (
             "original-promoted2-generation384-store",
-            SOURCE_RUN_SHA256_V1,
-            SOURCE_GENERATION_V1,
-            SOURCE_CHECKPOINT_SHA256_V1,
-            SOURCE_PAYLOAD_SHA256_V1,
-            SOURCE_TRAIN_STATE_SHA256_V1,
+            Some(SOURCE_TRAIN_STATE_SHA256_V1),
+            Some(SOURCE_MODEL_PARAMETER_SHA256_V1),
         ),
+        ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration { .. } => {
+            ("original-promoted2-validated-store-generation", None, None)
+        }
         ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { .. } => {
             require_portable_source_binding_v1(authority.run())?;
             (
                 "portable-promoted2-weights-generation0",
-                PORTABLE_RUN_SHA256_V1,
-                PORTABLE_GENERATION_V1,
-                PORTABLE_CHECKPOINT_SHA256_V1,
-                PORTABLE_PAYLOAD_SHA256_V1,
-                PORTABLE_TRAIN_STATE_SHA256_V1,
+                Some(PORTABLE_TRAIN_STATE_SHA256_V1),
+                Some(SOURCE_MODEL_PARAMETER_SHA256_V1),
             )
         }
     };
+    // Dynamic identity expectations come from the already chain-validated
+    // manifest, while the two legacy authorities retain their additional
+    // hardcoded train-state and model-parameter pins.
+    let expected_train_state = lower_hex_raw32_v1(authority.checkpoint().train_state_sha256());
+    let expected_model_parameter =
+        lower_hex_raw32_v1(authority.checkpoint().model_parameter_sha256());
+    if pinned_train_state
+        .map(|expected| expected_train_state != expected)
+        .unwrap_or(false)
+        || pinned_model_parameter
+            .map(|expected| expected_model_parameter != expected)
+            .unwrap_or(false)
+    {
+        return Err(ShadowScorerStartupErrorV1::new(
+            ShadowScorerStartupErrorKindV1::CheckpointIdentity,
+        ));
+    }
+    // This load is the strict model/tensorizer validation chokepoint. It
+    // rejects a run whose architecture, feature encoding, tensorizer
+    // contract, parameter layout, or checkpoint payload bindings drift from
+    // the compiled scorer, including for an explicitly selected generation.
     let inference = authority.load_handle_v1().map_err(|_| {
         ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
     })?;
     require_inference_identity_v1(
         &inference,
-        expected_run,
-        expected_generation,
-        expected_checkpoint,
-        expected_payload,
-        expected_train_state,
+        &checkpoint_ref.source_run_sha256,
+        checkpoint_ref.generation,
+        &checkpoint_ref.checkpoint_sha256,
+        &checkpoint_ref.state_sha256,
+        &expected_train_state,
+        &expected_model_parameter,
     )?;
+    let (
+        source_run_sha256,
+        source_generation,
+        source_checkpoint_sha256,
+        source_sidecar_sha256,
+        source_payload_sha256,
+        source_train_state_sha256,
+    ) = match &requested {
+        ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { .. } => (
+            SOURCE_RUN_SHA256_V1.to_owned(),
+            SOURCE_GENERATION_V1,
+            SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+            SOURCE_SIDECAR_SHA256_V1.to_owned(),
+            SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+            SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+        ),
+        ShadowCheckpointAuthorityV1::OriginalPromoted2Generation384Store { .. }
+        | ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration { .. } => (
+            checkpoint_ref.source_run_sha256.clone(),
+            checkpoint_ref.generation,
+            checkpoint_ref.checkpoint_sha256.clone(),
+            checkpoint_ref.sidecar_sha256.clone(),
+            checkpoint_ref.state_sha256.clone(),
+            expected_train_state.clone(),
+        ),
+    };
     let identity = ShadowCheckpointIdentityV1 {
-        authority_kind,
-        source_run_sha256: SOURCE_RUN_SHA256_V1,
-        source_generation: SOURCE_GENERATION_V1,
-        source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1,
-        source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1,
-        source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1,
-        source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1,
+        authority_kind: authority_kind.to_owned(),
+        source_run_sha256,
+        source_generation,
+        source_checkpoint_sha256,
+        source_sidecar_sha256,
+        source_payload_sha256,
+        source_train_state_sha256,
         loaded_run_sha256: lower_hex_raw32_v1(inference.run_sha256()),
         loaded_generation: inference.generation_index(),
         loaded_checkpoint_sha256: lower_hex_raw32_v1(inference.checkpoint_manifest_sha256()),
@@ -958,13 +1021,13 @@ impl ShadowScorerServiceV1 {
         Self {
             model,
             identity: ShadowCheckpointIdentityV1 {
-                authority_kind: "test-only",
-                source_run_sha256: SOURCE_RUN_SHA256_V1,
+                authority_kind: "test-only".to_owned(),
+                source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
                 source_generation: SOURCE_GENERATION_V1,
-                source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1,
-                source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1,
-                source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1,
-                source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1,
+                source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+                source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+                source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+                source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
                 loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
                 loaded_generation: SOURCE_GENERATION_V1,
                 loaded_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
@@ -1482,22 +1545,17 @@ impl ShadowScorerServiceV1 {
             },
             FastActorResponseV1::Terminal(_) => None,
         };
-        let teacher_terminal_record = match (&self.teacher_export, &next) {
-            (Some(export), FastActorResponseV1::Terminal(terminal)) => {
-                Some(export.terminal_record_v1(active, terminal.clone()))
-            }
-            _ => None,
-        };
         if let Some(export) = self.teacher_export.as_mut() {
             let write_result = teacher_decision_record
                 .as_ref()
                 .map(|record| export.write_decision_v1(record))
                 .transpose()
-                .and_then(|_| {
-                    teacher_terminal_record
-                        .as_ref()
-                        .map(|record| export.write_terminal_v1(record))
-                        .transpose()
+                .and_then(|_| match &next {
+                    FastActorResponseV1::Terminal(terminal) => {
+                        let record = export.terminal_record_v1(active, terminal.clone());
+                        export.write_terminal_v1(&record)
+                    }
+                    FastActorResponseV1::Decision(_) => Ok(()),
                 });
             if write_result.is_err() {
                 active.session.restore_v1(&session_before);
@@ -1758,6 +1816,24 @@ mod tests {
     }
 
     #[test]
+    fn default_original_authority_remains_hard_pinned_to_generation384_v1() {
+        let checkpoint_ref = checkpoint_ref_v1(
+            &ShadowCheckpointAuthorityV1::OriginalPromoted2Generation384Store {
+                root: PathBuf::from("unused-by-fixed-selection"),
+            },
+        )
+        .unwrap();
+        assert_eq!(checkpoint_ref.source_run_sha256, SOURCE_RUN_SHA256_V1);
+        assert_eq!(checkpoint_ref.generation, SOURCE_GENERATION_V1);
+        assert_eq!(
+            checkpoint_ref.checkpoint_sha256,
+            SOURCE_CHECKPOINT_SHA256_V1
+        );
+        assert_eq!(checkpoint_ref.sidecar_sha256, SOURCE_SIDECAR_SHA256_V1);
+        assert_eq!(checkpoint_ref.state_sha256, SOURCE_PAYLOAD_SHA256_V1);
+    }
+
+    #[test]
     fn repeat_score_is_bit_identical_and_rust_selects_candidate_action_v1() {
         let mut service = service_v1();
         let reset = value_v1(&service.handle_line_v1(&reset_line_v1("reset-1")));
@@ -1954,6 +2030,57 @@ mod tests {
     }
 
     #[test]
+    fn opponent_decision_that_reaches_terminal_gets_two_consecutive_record_ordinals_v1() {
+        let (mut service, bytes) = service_with_teacher_export_v1(Box::new(FirstActionTestModelV1));
+        service.max_physical_decisions = 4_096;
+        service.max_policy_steps = 8_192;
+        let mut response = value_v1(&service.handle_line_v1(&reset_line_v1("teacher-terminal")));
+        let mut terminal_was_reached_by_opponent = false;
+        for ordinal in 0..8_192_u64 {
+            assert_eq!(response["response_type"], "decision");
+            let candidate_controls = response["decision"]["candidate_controls_current_actor"]
+                .as_bool()
+                .unwrap();
+            let step = response["decision"]["step"].as_u64().unwrap();
+            let selected = response["decision"]["selected_action_index"]
+                .as_u64()
+                .unwrap_or(0);
+            response = value_v1(&service.handle_line_v1(&format!(
+                "{{\"request_type\":\"step\",\"request_id\":\"teacher-terminal-{ordinal}\",\"episode_id\":2,\"expected_step\":{step},\"selected_index\":{selected}}}"
+            )));
+            if response["response_type"] == "terminal" {
+                terminal_was_reached_by_opponent = !candidate_controls;
+                break;
+            }
+        }
+        assert_eq!(response["response_type"], "terminal");
+        assert!(terminal_was_reached_by_opponent);
+
+        let rows = teacher_rows_v1(&bytes);
+        assert!(rows.len() >= 3);
+        for (expected_ordinal, row) in rows.iter().enumerate() {
+            assert_eq!(row["record_ordinal"], expected_ordinal as u64);
+        }
+        let decision = &rows[rows.len() - 2];
+        let terminal = &rows[rows.len() - 1];
+        assert_eq!(decision["record_type"], "decision");
+        assert_eq!(terminal["record_type"], "terminal");
+        assert_eq!(
+            terminal["record_ordinal"].as_u64().unwrap(),
+            decision["record_ordinal"].as_u64().unwrap() + 1
+        );
+        let preceding_teacher_decisions = rows[..rows.len() - 2]
+            .iter()
+            .filter(|row| row["record_type"] == "decision")
+            .count() as u64;
+        assert_eq!(
+            decision["teacher_decision_ordinal"],
+            preceding_teacher_decisions
+        );
+        assert!(terminal.get("teacher_decision_ordinal").is_none());
+    }
+
+    #[test]
     fn rejected_terminal_transition_does_not_export_teacher_rows_v1() {
         let (mut service, bytes) =
             service_with_teacher_export_v1(Box::new(DeterministicTestModelV1));
@@ -2096,6 +2223,133 @@ mod tests {
         assert_eq!(
             response["checkpoint"]["loaded_checkpoint_sha256"],
             SOURCE_CHECKPOINT_SHA256_V1
+        );
+    }
+
+    #[test]
+    #[ignore = "reads the original external promoted2 Store at selected generation 0"]
+    fn real_original_selected_generation0_authority_loads_and_reports_exact_identity_v1() {
+        let root = std::env::var_os("MTG_KERNEL_SHADOW_ORIGINAL_ROOT_V1")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                if cfg!(windows) {
+                    PathBuf::from(r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary")
+                } else {
+                    PathBuf::from("/mnt/d/mtg-kernel-ladder-pilot-20260725/pool3/primary")
+                }
+            });
+        let mut service = ShadowScorerServiceV1::load_v1(
+            ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration {
+                root,
+                generation: 0,
+            },
+        )
+        .unwrap();
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("selected-g0")));
+        assert_eq!(response["response_type"], "decision");
+        let checkpoint = &response["checkpoint"];
+        assert_eq!(
+            checkpoint["authority_kind"],
+            "original-promoted2-validated-store-generation"
+        );
+        assert_eq!(checkpoint["source_run_sha256"], SOURCE_RUN_SHA256_V1);
+        assert_eq!(checkpoint["source_generation"], 0);
+        assert_eq!(checkpoint["loaded_generation"], 0);
+        assert_eq!(
+            checkpoint["source_checkpoint_sha256"],
+            "82b25bbcf340015d2f353dbf3bd877c44e5e57ef53fb4b2cc4d3aa9ff54bd8af"
+        );
+        assert_eq!(
+            checkpoint["source_sidecar_sha256"],
+            "7e64b53e7d74f82a5a6746e98cc99ef6859afd6ceae43fd708d0adca02866a4e"
+        );
+        assert_eq!(
+            checkpoint["source_payload_sha256"],
+            "795dc4245d02a9b10702c3df282e7819e8e6657896e1db53c05e711ee32c9c9a"
+        );
+        assert_eq!(
+            checkpoint["source_train_state_sha256"],
+            "95b1c20acbd09ba4d65b80aed953811618858e6e182d98e3904026decf1fcf82"
+        );
+        assert_eq!(
+            checkpoint["model_parameter_sha256"],
+            "0635d2defb8facd700ede34789434956fc4a2fd3b5058cc2df5dd820398b4c22"
+        );
+        assert_eq!(
+            checkpoint["source_checkpoint_sha256"],
+            checkpoint["loaded_checkpoint_sha256"]
+        );
+        assert_eq!(
+            checkpoint["source_payload_sha256"],
+            checkpoint["loaded_payload_sha256"]
+        );
+        assert_eq!(
+            checkpoint["source_train_state_sha256"],
+            checkpoint["loaded_train_state_sha256"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "walks the original external promoted2 Store to selected generation 256"]
+    fn real_original_selected_generation256_authority_loads_and_reports_exact_identity_v1() {
+        let root = std::env::var_os("MTG_KERNEL_SHADOW_ORIGINAL_ROOT_V1")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                if cfg!(windows) {
+                    PathBuf::from(r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary")
+                } else {
+                    PathBuf::from("/mnt/d/mtg-kernel-ladder-pilot-20260725/pool3/primary")
+                }
+            });
+        let mut service = ShadowScorerServiceV1::load_v1(
+            ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration {
+                root,
+                generation: 256,
+            },
+        )
+        .unwrap();
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("selected-g256")));
+        assert_eq!(response["response_type"], "decision");
+        let checkpoint = &response["checkpoint"];
+        assert_eq!(
+            checkpoint["authority_kind"],
+            "original-promoted2-validated-store-generation"
+        );
+        assert_eq!(checkpoint["source_run_sha256"], SOURCE_RUN_SHA256_V1);
+        assert_eq!(checkpoint["source_generation"], 256);
+        assert_eq!(checkpoint["loaded_generation"], 256);
+        assert_eq!(
+            checkpoint["source_checkpoint_sha256"],
+            "9b538d3c7b2d70ef6cecf812610ecb177930efd846c04ebf5ccdeb72e967dd3a"
+        );
+        assert_eq!(
+            checkpoint["source_sidecar_sha256"],
+            "f57448b4552ac4da59ec7ee266c3b81564461b1f62b0b2670ad792cd1bf082a3"
+        );
+        assert_eq!(
+            checkpoint["source_payload_sha256"],
+            "cd46a1d0bc3f73e0620f8179f0e049f6529ccd44a1d05e9a6577c85810c6a153"
+        );
+        assert_eq!(
+            checkpoint["source_train_state_sha256"],
+            "1fd307374184d03eb89568c3de1d6f1012aa480c0b16f852e4e83f63167b1504"
+        );
+        assert_eq!(
+            checkpoint["model_parameter_sha256"],
+            "8a123fbc5deaa12a0840513a6f0fc9c4280357396e76109757424fd7d4e9b999"
+        );
+        assert_eq!(
+            checkpoint["source_checkpoint_sha256"],
+            checkpoint["loaded_checkpoint_sha256"]
+        );
+        assert_eq!(
+            checkpoint["source_payload_sha256"],
+            checkpoint["loaded_payload_sha256"]
+        );
+        assert_eq!(
+            checkpoint["source_train_state_sha256"],
+            checkpoint["loaded_train_state_sha256"]
         );
     }
 }
