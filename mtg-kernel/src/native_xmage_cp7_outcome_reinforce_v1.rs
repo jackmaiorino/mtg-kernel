@@ -24,7 +24,7 @@ use crate::native_policy_train_step_v1::{
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativePolicyValueModelConfigV1,
-    NativePolicyValueNetV1,
+    NativePolicyValueNetV1, HIDDEN_DIM_V1,
 };
 use crate::native_train_state_payload_v1::{
     decode_native_train_state_payload_verified_v1, encode_native_train_state_payload_v1,
@@ -418,6 +418,7 @@ struct OutcomePhysicalDecisionV1 {
     first_record_ordinal: u64,
     pair_index: u64,
     episode_id: u64,
+    candidate_seat: PlayerSeatV1,
     terminal_return: i8,
     decision_kind: String,
     examples: Vec<OutcomeExampleV1>,
@@ -743,6 +744,7 @@ fn finalize_episode_v1(
             first_record_ordinal: first.record_ordinal,
             pair_index: pending.pair_index,
             episode_id: pending.episode_id,
+            candidate_seat: pending.candidate_seat,
             terminal_return: terminal.candidate_terminal_reward,
             decision_kind: first.decision_kind.clone(),
             examples: slice.to_vec(),
@@ -2953,6 +2955,80 @@ impl NativeXmageCp7OutcomeInferenceOutputV1 {
     }
 }
 
+/// Frozen-parent scoring output with the exact encoder activations consumed by
+/// a residual policy head. `action_hidden` is row-major
+/// `[logits.len(), HIDDEN_DIM_V1]`.
+pub(crate) struct NativeXmageCp7OutcomeInferenceLatentOutputV1 {
+    output: NativeXmageCp7OutcomeInferenceOutputV1,
+    state_hidden: [f32; HIDDEN_DIM_V1],
+    action_hidden: Vec<f32>,
+}
+
+impl NativeXmageCp7OutcomeInferenceLatentOutputV1 {
+    pub(crate) fn logits_v1(&self) -> &[f32] {
+        self.output.logits_v1()
+    }
+
+    pub(crate) fn value_v1(&self) -> f32 {
+        self.output.value_v1()
+    }
+
+    pub(crate) fn state_hidden_v1(&self) -> &[f32; HIDDEN_DIM_V1] {
+        &self.state_hidden
+    }
+
+    pub(crate) fn action_hidden_v1(&self) -> &[f32] {
+        &self.action_hidden
+    }
+}
+
+/// One strict outcome-corpus substep converted to frozen-parent features.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativeXmageCp7OutcomeBilinearSubstepV1 {
+    pub(crate) parent_logits: Vec<f32>,
+    pub(crate) parent_value: f32,
+    pub(crate) selected_index: usize,
+    pub(crate) state_hidden: [f32; HIDDEN_DIM_V1],
+    pub(crate) action_hidden: Vec<f32>,
+}
+
+/// One autoregressive physical decision. The first-substep exported value is
+/// retained separately because existing episode-balanced objectives use it as
+/// their frozen baseline.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativeXmageCp7OutcomeBilinearGroupV1 {
+    pub(crate) pair_index: u64,
+    pub(crate) episode_id: u64,
+    pub(crate) candidate_seat: PlayerSeatV1,
+    pub(crate) terminal_return: i8,
+    pub(crate) decision_kind: String,
+    pub(crate) first_substep_old_value: f32,
+    pub(crate) substeps: Vec<NativeXmageCp7OutcomeBilinearSubstepV1>,
+}
+
+/// Strictly validated corpus metadata and frozen-parent latent rows for a
+/// bilinear residual trainer. Hashes are raw SHA-256 bytes.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativeXmageCp7OutcomeBilinearDatasetV1 {
+    pub(crate) jsonl_sha256: [u8; 32],
+    pub(crate) export_contract: String,
+    pub(crate) schema_version: u32,
+    pub(crate) decision_row_count: usize,
+    pub(crate) terminal_row_count: usize,
+    pub(crate) episode_count: usize,
+    pub(crate) pair_count: usize,
+    pub(crate) pair_indices: Vec<u64>,
+    pub(crate) physical_group_count: usize,
+    pub(crate) terminal_return_counts: [u64; 3],
+    pub(crate) parent_manifest_sha256: [u8; 32],
+    pub(crate) parent_payload_sha256: [u8; 32],
+    pub(crate) parent_native_state_sha256: [u8; 32],
+    pub(crate) parent_model_parameter_sha256: [u8; 32],
+    pub(crate) parent_corpus_sha256: [u8; 32],
+    pub(crate) parent_adam_step: u64,
+    pub(crate) groups: Vec<NativeXmageCp7OutcomeBilinearGroupV1>,
+}
+
 /// Move-only immutable scorer loaded through the strict outcome derivative
 /// manifest and raw-state verification boundary.
 pub(crate) struct NativeXmageCp7OutcomeInferenceV1 {
@@ -2988,6 +3064,46 @@ impl NativeXmageCp7OutcomeInferenceV1 {
         Ok(NativeXmageCp7OutcomeInferenceOutputV1 {
             logits: output.logits,
             value: output.value,
+        })
+    }
+
+    pub(crate) fn score_decision_with_latents_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+    ) -> Result<NativeXmageCp7OutcomeInferenceLatentOutputV1, ()> {
+        let mut tensorizer = NativeFlatTensorizerV2::new();
+        let mut tensor = NativeFlatDecisionTensorV2::default();
+        tensorizer.fill(decision, &mut tensor).map_err(|_| ())?;
+        let latent = self
+            .state
+            .model_v1()
+            .forward_with_latents_v1(flat_tensor_view_v1(&tensor))
+            .map_err(|_| ())?;
+        let expected_action_hidden = decision
+            .actions()
+            .len()
+            .checked_mul(HIDDEN_DIM_V1)
+            .ok_or(())?;
+        if latent.output.logits.len() != decision.actions().len()
+            || latent.output.logits.is_empty()
+            || latent.output.logits.iter().any(|value| !value.is_finite())
+            || !latent.output.value.is_finite()
+            || latent
+                .state_hidden
+                .iter()
+                .chain(&latent.action_hidden)
+                .any(|value| !value.is_finite())
+            || latent.action_hidden.len() != expected_action_hidden
+        {
+            return Err(());
+        }
+        Ok(NativeXmageCp7OutcomeInferenceLatentOutputV1 {
+            output: NativeXmageCp7OutcomeInferenceOutputV1 {
+                logits: latent.output.logits,
+                value: latent.output.value,
+            },
+            state_hidden: latent.state_hidden,
+            action_hidden: latent.action_hidden,
         })
     }
 
@@ -3034,6 +3150,154 @@ pub(crate) fn load_xmage_cp7_outcome_inference_v1(
         return Err(invalid_data_v1("loaded outcome corpus identity mismatch").into());
     }
     Ok(inference)
+}
+
+fn inference_parent_binding_v1(
+    parent: &NativeXmageCp7OutcomeInferenceV1,
+) -> ParentBindingManifestV1 {
+    ParentBindingManifestV1 {
+        authority_kind: "xmage-cp7-outcome-reinforce-derivative-v1".to_owned(),
+        manifest_sha256: lower_hex_raw32_v1(parent.manifest_sha256),
+        payload_sha256: lower_hex_raw32_v1(parent.payload_sha256),
+        native_state_sha256: lower_hex_raw32_v1(parent.native_state_sha256),
+        model_parameter_sha256: lower_hex_raw32_v1(parent.model_parameter_sha256),
+        corpus_sha256: lower_hex_raw32_v1(parent.corpus_sha256),
+        adam_step: parent.adam_step,
+    }
+}
+
+fn validate_bilinear_parent_transport_v1(
+    example: &OutcomeExampleV1,
+    logits: &[f32],
+    value: f32,
+) -> DynResultV1<()> {
+    if logits.len() != example.legal_action_count
+        || logits.len() != example.old_policy_logits_f32_bits.len()
+    {
+        return Err(invalid_data_v1("bilinear parent forward width mismatch").into());
+    }
+    let exported_value = f32::from_bits(example.old_value_f32_bits);
+    if value.to_bits() != example.old_value_f32_bits
+        && (value - exported_value).abs() > transport_bound_v1(exported_value)
+    {
+        return Err(invalid_data_v1(format!(
+            "bilinear parent value transport exceeds envelope at decision {}",
+            example.outcome_decision_ordinal
+        ))
+        .into());
+    }
+    for (action_index, (actual, expected_bits)) in logits
+        .iter()
+        .copied()
+        .zip(example.old_policy_logits_f32_bits.iter().copied())
+        .enumerate()
+    {
+        if actual.to_bits() == expected_bits {
+            continue;
+        }
+        let expected = f32::from_bits(expected_bits);
+        if (actual - expected).abs() > transport_bound_v1(expected) {
+            return Err(invalid_data_v1(format!(
+                "bilinear parent logit transport exceeds envelope at decision {} action {}",
+                example.outcome_decision_ordinal, action_index
+            ))
+            .into());
+        }
+    }
+    Ok(())
+}
+
+/// Loads the existing strict outcome JSONL contract, binds it to the selected
+/// frozen derivative parent, and converts every physical group to normal
+/// parent outputs plus exact state/action encoder activations.
+pub(crate) fn load_xmage_cp7_outcome_bilinear_dataset_v1(
+    path: &Path,
+    parent: &NativeXmageCp7OutcomeInferenceV1,
+) -> DynResultV1<NativeXmageCp7OutcomeBilinearDatasetV1> {
+    let dataset = load_outcome_dataset_v1(path)?;
+    let parent_binding = inference_parent_binding_v1(parent);
+    if !validate_parent_binding_v1(&parent_binding)
+        || !corpus_matches_training_source_v1(&dataset, Some(&parent_binding))
+    {
+        return Err(invalid_data_v1(
+            "bilinear outcome corpus does not match the selected frozen parent",
+        )
+        .into());
+    }
+
+    let mut converted_groups = Vec::with_capacity(dataset.groups.len());
+    let mut converted_substep_count = 0_usize;
+    for group in &dataset.groups {
+        let first = group
+            .examples
+            .first()
+            .ok_or_else(|| invalid_data_v1("empty bilinear outcome physical group"))?;
+        let mut substeps = Vec::with_capacity(group.examples.len());
+        for example in &group.examples {
+            let latent = parent
+                .state
+                .model_v1()
+                .forward_with_latents_v1(example.tensor.view_v1())?;
+            validate_bilinear_parent_transport_v1(
+                example,
+                &latent.output.logits,
+                latent.output.value,
+            )?;
+            if latent.action_hidden.len()
+                != example
+                    .legal_action_count
+                    .checked_mul(HIDDEN_DIM_V1)
+                    .ok_or_else(|| invalid_data_v1("bilinear action latent length overflow"))?
+            {
+                return Err(invalid_data_v1("bilinear action latent width mismatch").into());
+            }
+            substeps.push(NativeXmageCp7OutcomeBilinearSubstepV1 {
+                parent_logits: latent.output.logits,
+                parent_value: latent.output.value,
+                selected_index: example.selected_index,
+                state_hidden: latent.state_hidden,
+                action_hidden: latent.action_hidden,
+            });
+            converted_substep_count = converted_substep_count
+                .checked_add(1)
+                .ok_or_else(|| invalid_data_v1("bilinear substep count overflow"))?;
+        }
+        converted_groups.push(NativeXmageCp7OutcomeBilinearGroupV1 {
+            pair_index: group.pair_index,
+            episode_id: group.episode_id,
+            candidate_seat: group.candidate_seat,
+            terminal_return: group.terminal_return,
+            decision_kind: group.decision_kind.clone(),
+            first_substep_old_value: f32::from_bits(first.old_value_f32_bits),
+            substeps,
+        });
+    }
+    if converted_substep_count != dataset.decision_row_count
+        || converted_groups.len() != dataset.groups.len()
+    {
+        return Err(invalid_data_v1("bilinear outcome conversion count mismatch").into());
+    }
+
+    let jsonl_sha256 = parse_lower_hex_raw32_v1(&dataset.jsonl_sha256)?;
+    Ok(NativeXmageCp7OutcomeBilinearDatasetV1 {
+        jsonl_sha256,
+        export_contract: dataset.export_contract,
+        schema_version: dataset.schema_version,
+        decision_row_count: dataset.decision_row_count,
+        terminal_row_count: dataset.terminal_row_count,
+        episode_count: dataset.episode_count,
+        pair_count: dataset.pair_indices.len(),
+        pair_indices: dataset.pair_indices,
+        physical_group_count: converted_groups.len(),
+        terminal_return_counts: dataset.terminal_return_counts,
+        parent_manifest_sha256: parent.manifest_sha256,
+        parent_payload_sha256: parent.payload_sha256,
+        parent_native_state_sha256: parent.native_state_sha256,
+        parent_model_parameter_sha256: parent.model_parameter_sha256,
+        parent_corpus_sha256: parent.corpus_sha256,
+        parent_adam_step: parent.adam_step,
+        groups: converted_groups,
+    })
 }
 
 #[derive(Clone, Debug, Serialize)]

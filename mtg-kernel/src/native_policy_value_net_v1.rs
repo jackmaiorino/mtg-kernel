@@ -349,6 +349,15 @@ pub(crate) struct NativePolicyValueOutputV1 {
     pub(crate) value: f32,
 }
 
+/// Exact final encoder activations paired with the ordinary policy/value
+/// output. `action_hidden` is row-major `[action_count, HIDDEN_DIM_V1]`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativePolicyValueLatentOutputV1 {
+    pub(crate) output: NativePolicyValueOutputV1,
+    pub(crate) state_hidden: [f32; HIDDEN_DIM_V1],
+    pub(crate) action_hidden: Vec<f32>,
+}
+
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NativeActionIngressCaptureV1 {
@@ -542,14 +551,42 @@ impl NativePolicyValueNetV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
-        self.forward_with_action_ingress_capture_v1(encoded, None)
+        let (output, _, _) = self.forward_with_captures_v1(encoded, None)?;
+        Ok(output)
     }
 
-    fn forward_with_action_ingress_capture_v1(
+    /// Returns the ordinary forward result and the exact 64-wide state/action
+    /// encoder outputs consumed by the frozen scorer. This is a read-only
+    /// runtime/diagnostic seam; it does not alter the model or scorer path.
+    pub(crate) fn forward_with_latents_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueLatentOutputV1, NativePolicyValueErrorV1> {
+        let (output, state_hidden, action_hidden) = self.forward_with_captures_v1(encoded, None)?;
+        let expected_action_hidden =
+            checked_product(output.logits.len(), HIDDEN_DIM_V1, "action_hidden")?;
+        exact_len("action_hidden", action_hidden.len(), expected_action_hidden)?;
+        finite_slice("state_hidden", &state_hidden)?;
+        finite_slice("action_hidden", &action_hidden)?;
+        let state_hidden = state_hidden.try_into().map_err(|values: Vec<f32>| {
+            NativePolicyValueErrorV1::ShapeMismatch {
+                field: "state_hidden",
+                expected: HIDDEN_DIM_V1,
+                actual: values.len(),
+            }
+        })?;
+        Ok(NativePolicyValueLatentOutputV1 {
+            output,
+            state_hidden,
+            action_hidden,
+        })
+    }
+
+    fn forward_with_captures_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
         mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
-    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+    ) -> Result<(NativePolicyValueOutputV1, Vec<f32>, Vec<f32>), NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.config)?;
 
         let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT_V1);
@@ -690,7 +727,11 @@ impl NativePolicyValueNetV1 {
                 position: 0,
             });
         }
-        Ok(NativePolicyValueOutputV1 { logits, value })
+        Ok((
+            NativePolicyValueOutputV1 { logits, value },
+            state_hidden,
+            action_hidden,
+        ))
     }
 
     #[cfg(test)]
@@ -702,8 +743,8 @@ impl NativePolicyValueNetV1 {
         let schema = encoded.schema;
         let action_count = encoded.action_features.len() / ACTION_FEATURE_DIM_V1;
         let mut action_ref_pooled = Vec::new();
-        let output =
-            self.forward_with_action_ingress_capture_v1(encoded, Some(&mut action_ref_pooled))?;
+        let (output, _, _) =
+            self.forward_with_captures_v1(encoded, Some(&mut action_ref_pooled))?;
         Ok((
             output,
             NativeActionIngressCaptureV1 {
@@ -2178,6 +2219,18 @@ mod tests {
         assert_eq!(fixture.cases.len(), 2);
         for case in &fixture.cases {
             let output = model.forward_v1(view(case)).expect("golden forwards");
+            let latent = model
+                .forward_with_latents_v1(view(case))
+                .expect("golden latent forwards");
+            assert_eq!(latent.output, output, "{}", case.name);
+            assert!(latent.state_hidden.iter().all(|value| value.is_finite()));
+            assert_eq!(
+                latent.action_hidden.len(),
+                output.logits.len() * HIDDEN_DIM_V1,
+                "{}",
+                case.name
+            );
+            assert!(latent.action_hidden.iter().all(|value| value.is_finite()));
             assert_eq!(
                 output.logits.len(),
                 case.torch_logits.len(),
