@@ -16,7 +16,10 @@ use crate::flat_policy_v2::{FlatDecisionBindingV2, FlatScoringDecisionViewV2};
 use crate::native_checkpoint_inference_v1::{
     NativeCheckpointInferenceOutputV1, NativeCheckpointInferenceV1,
 };
-use crate::native_flat_tensorizer_v2::{NativeFlatDecisionTensorV2, NativeFlatTensorizerV2};
+use crate::native_flat_tensorizer_v2::{
+    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2,
+    NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2, NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+};
 use crate::native_ladder_pool_resolution_v1::resolve_ladder_checkpoint_authority_v1;
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
@@ -35,7 +38,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::io::{self, BufRead, Write};
+use std::fs::OpenOptions;
+use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 pub const CHECKPOINT_SHADOW_STDIO_PROTOCOL_V1: &str = "mtg-kernel-checkpoint-shadow-stdio/v1";
@@ -43,6 +47,10 @@ pub const CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V1: u32 = 1;
 pub const CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1: &str =
     "mtg-kernel-checkpoint-shadow-model-input-framed-sha256/v1";
 pub const CHECKPOINT_SHADOW_MAX_REQUEST_BYTES_V1: usize = 1_048_576;
+pub const XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-teacher-jsonl/v1";
+pub const XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1: u32 = 1;
+
+const XMAGE_CP7_TEACHER_SELECTION_SOURCE_V1: &str = "xmage_rally_cp7_mapper";
 
 const SOURCE_RUN_SHA256_V1: &str =
     "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae";
@@ -365,6 +373,7 @@ impl ShadowModelScorerV1 for NativeShadowModelScorerV1 {
 struct ScoredCurrentDecisionV1 {
     expected: FastActorDecisionV1,
     binding: FlatDecisionBindingV2,
+    tensor: NativeFlatDecisionTensorV2,
     action_semantics: Vec<ActionSemanticV1>,
     logits_f32_bits: Vec<u32>,
     value_f32_bits: u32,
@@ -386,6 +395,257 @@ struct ActiveShadowSessionV1 {
     pair_environment_seed: u64,
     initial_library_card_definition_ids: [Vec<u16>; 2],
     current: Option<ScoredCurrentDecisionV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+struct XmageCp7TeacherTensorV1 {
+    state_f32_bits: Vec<u32>,
+    object_features_f32_bits: Vec<u32>,
+    object_card_ids: Vec<i64>,
+    object_groups: Vec<i64>,
+    object_node_ids: Vec<i64>,
+    edge_features_f32_bits: Vec<u32>,
+    edge_source_indices: Vec<i64>,
+    edge_target_indices: Vec<i64>,
+    action_features_f32_bits: Vec<u32>,
+    action_ref_features_f32_bits: Vec<u32>,
+    action_ref_card_ids: Vec<i64>,
+    action_ref_action_indices: Vec<i64>,
+    action_ref_node_indices: Vec<i64>,
+}
+
+impl XmageCp7TeacherTensorV1 {
+    fn from_native_v1(tensor: &NativeFlatDecisionTensorV2) -> Self {
+        Self {
+            state_f32_bits: f32_bits_v1(&tensor.state),
+            object_features_f32_bits: f32_bits_v1(&tensor.object_features),
+            object_card_ids: tensor.object_card_ids.clone(),
+            object_groups: tensor.object_groups.clone(),
+            object_node_ids: tensor.object_node_ids.clone(),
+            edge_features_f32_bits: f32_bits_v1(&tensor.edge_features),
+            edge_source_indices: tensor.edge_source_indices.clone(),
+            edge_target_indices: tensor.edge_target_indices.clone(),
+            action_features_f32_bits: f32_bits_v1(&tensor.action_features),
+            action_ref_features_f32_bits: f32_bits_v1(&tensor.action_ref_features),
+            action_ref_card_ids: tensor.action_ref_card_ids.clone(),
+            action_ref_action_indices: tensor.action_ref_action_indices.clone(),
+            action_ref_node_indices: tensor.action_ref_node_indices.clone(),
+        }
+    }
+}
+
+fn f32_bits_v1(values: &[f32]) -> Vec<u32> {
+    values.iter().map(|value| value.to_bits()).collect()
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "record_type", rename_all = "snake_case")]
+enum XmageCp7TeacherRecordV1 {
+    Header {
+        schema_version: u32,
+        record_ordinal: u64,
+        export_contract: &'static str,
+        selection_source: &'static str,
+        tensorizer_identity: &'static str,
+        tensorizer_features_source_sha256: &'static str,
+        model_input_commitment: &'static str,
+        checkpoint: ShadowCheckpointIdentityV1,
+    },
+    Decision {
+        schema_version: u32,
+        record_ordinal: u64,
+        teacher_decision_ordinal: u64,
+        selection_source: &'static str,
+        deck_ids: SessionDeckIdsV1,
+        randomization_identity: &'static str,
+        base_seed_u64_hex: String,
+        pair_index: u64,
+        pair_environment_seed_u64_hex: String,
+        episode_id: u64,
+        step: u64,
+        environment_revision: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        acting_player: PlayerSeatV1,
+        decision_kind: &'static str,
+        candidate_seat: PlayerSeatV1,
+        actor_physical_decision_ordinal: u64,
+        legal_action_count: u32,
+        candidate_order_commitment_128_hex: String,
+        model_input_sha256: String,
+        old_policy_logits_f32_bits: Vec<u32>,
+        old_value_f32_bits: u32,
+        action_semantics: Vec<ActionSemanticV1>,
+        selected_index: u32,
+        selected_semantic: ActionSemanticV1,
+        tensor: XmageCp7TeacherTensorV1,
+    },
+    Terminal {
+        schema_version: u32,
+        record_ordinal: u64,
+        deck_ids: SessionDeckIdsV1,
+        randomization_identity: &'static str,
+        base_seed_u64_hex: String,
+        pair_index: u64,
+        pair_environment_seed_u64_hex: String,
+        episode_id: u64,
+        candidate_seat: PlayerSeatV1,
+        terminal: RlSessionTerminalV1,
+        diagnostic_state_hash_u64_hex: String,
+        core_environment_hash_u64_hex: String,
+    },
+}
+
+struct XmageCp7TeacherJsonlWriterV1 {
+    writer: Box<dyn Write>,
+    next_record_ordinal: u64,
+    next_teacher_decision_ordinal: u64,
+}
+
+impl XmageCp7TeacherJsonlWriterV1 {
+    fn create_v1(
+        path: &Path,
+        checkpoint: &ShadowCheckpointIdentityV1,
+    ) -> Result<Self, Box<dyn Error>> {
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        Self::from_writer_v1(Box::new(BufWriter::new(file)), checkpoint)
+            .map_err(|error| Box::new(error) as Box<dyn Error>)
+    }
+
+    fn from_writer_v1(
+        writer: Box<dyn Write>,
+        checkpoint: &ShadowCheckpointIdentityV1,
+    ) -> io::Result<Self> {
+        let mut export = Self {
+            writer,
+            next_record_ordinal: 0,
+            next_teacher_decision_ordinal: 0,
+        };
+        export.write_v1(&XmageCp7TeacherRecordV1::Header {
+            schema_version: XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1,
+            record_ordinal: 0,
+            export_contract: XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1,
+            selection_source: XMAGE_CP7_TEACHER_SELECTION_SOURCE_V1,
+            tensorizer_identity: NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+            tensorizer_features_source_sha256: NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
+            model_input_commitment: CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1,
+            checkpoint: checkpoint.clone(),
+        })?;
+        export.next_record_ordinal = 1;
+        Ok(export)
+    }
+
+    fn decision_record_v1(
+        &self,
+        active: &ActiveShadowSessionV1,
+        scored: &ScoredCurrentDecisionV1,
+        selected_index: u32,
+    ) -> Result<XmageCp7TeacherRecordV1, ()> {
+        if scored.expected.acting_player == active.candidate_seat {
+            return Err(());
+        }
+        let selected = usize::try_from(selected_index).map_err(|_| ())?;
+        let selected_semantic = scored.action_semantics.get(selected).ok_or(())?.clone();
+        Ok(XmageCp7TeacherRecordV1::Decision {
+            schema_version: XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1,
+            record_ordinal: self.next_record_ordinal,
+            teacher_decision_ordinal: self.next_teacher_decision_ordinal,
+            selection_source: XMAGE_CP7_TEACHER_SELECTION_SOURCE_V1,
+            deck_ids: active.deck_ids.clone(),
+            randomization_identity: SHADOW_RANDOMIZATION_IDENTITY_V1,
+            base_seed_u64_hex: u64_hex_v1(active.base_seed),
+            pair_index: active.pair_index,
+            pair_environment_seed_u64_hex: u64_hex_v1(active.pair_environment_seed),
+            episode_id: scored.expected.episode_id,
+            step: scored.expected.step,
+            environment_revision: scored.expected.environment_revision,
+            physical_decision_id: scored.expected.physical_decision_id,
+            substep_index: scored.expected.substep_index,
+            substep_count: scored.expected.substep_count,
+            acting_player: scored.expected.acting_player,
+            decision_kind: decision_kind_v1(scored.expected.decision_kind),
+            candidate_seat: active.candidate_seat,
+            actor_physical_decision_ordinal: scored.actor_physical_decision_ordinal,
+            legal_action_count: scored.expected.legal_action_count,
+            candidate_order_commitment_128_hex: lower_hex_bytes_v1(
+                &scored.binding.action_binding.candidate_order_commitment,
+            ),
+            model_input_sha256: scored.model_input_sha256.clone(),
+            old_policy_logits_f32_bits: scored.logits_f32_bits.clone(),
+            old_value_f32_bits: scored.value_f32_bits,
+            action_semantics: scored.action_semantics.clone(),
+            selected_index,
+            selected_semantic,
+            tensor: XmageCp7TeacherTensorV1::from_native_v1(&scored.tensor),
+        })
+    }
+
+    fn terminal_record_v1(
+        &self,
+        active: &ActiveShadowSessionV1,
+        terminal: RlSessionTerminalV1,
+    ) -> XmageCp7TeacherRecordV1 {
+        XmageCp7TeacherRecordV1::Terminal {
+            schema_version: XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1,
+            record_ordinal: self.next_record_ordinal,
+            deck_ids: active.deck_ids.clone(),
+            randomization_identity: SHADOW_RANDOMIZATION_IDENTITY_V1,
+            base_seed_u64_hex: u64_hex_v1(active.base_seed),
+            pair_index: active.pair_index,
+            pair_environment_seed_u64_hex: u64_hex_v1(active.pair_environment_seed),
+            episode_id: terminal.episode_id,
+            candidate_seat: active.candidate_seat,
+            terminal,
+            diagnostic_state_hash_u64_hex: u64_hex_v1(active.session.diagnostic_state_hash()),
+            core_environment_hash_u64_hex: u64_hex_v1(
+                active.session.privileged_core_environment_hash(),
+            ),
+        }
+    }
+
+    fn write_decision_v1(&mut self, record: &XmageCp7TeacherRecordV1) -> io::Result<()> {
+        if !matches!(record, XmageCp7TeacherRecordV1::Decision { .. }) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CP7 teacher decision writer received a non-decision row",
+            ));
+        }
+        self.write_v1(record)?;
+        self.next_record_ordinal = self
+            .next_record_ordinal
+            .checked_add(1)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "record ordinal exhausted"))?;
+        self.next_teacher_decision_ordinal = self
+            .next_teacher_decision_ordinal
+            .checked_add(1)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::Other, "teacher decision ordinal exhausted")
+            })?;
+        Ok(())
+    }
+
+    fn write_terminal_v1(&mut self, record: &XmageCp7TeacherRecordV1) -> io::Result<()> {
+        if !matches!(record, XmageCp7TeacherRecordV1::Terminal { .. }) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CP7 teacher terminal writer received a non-terminal row",
+            ));
+        }
+        self.write_v1(record)?;
+        self.next_record_ordinal = self
+            .next_record_ordinal
+            .checked_add(1)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "record ordinal exhausted"))?;
+        Ok(())
+    }
+
+    fn write_v1(&mut self, record: &XmageCp7TeacherRecordV1) -> io::Result<()> {
+        serde_json::to_writer(&mut self.writer, record)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -675,6 +935,7 @@ struct ShadowScorerServiceV1 {
     max_physical_decisions: u64,
     max_policy_steps: u64,
     active: Option<ActiveShadowSessionV1>,
+    teacher_export: Option<XmageCp7TeacherJsonlWriterV1>,
 }
 
 impl ShadowScorerServiceV1 {
@@ -688,6 +949,7 @@ impl ShadowScorerServiceV1 {
             max_physical_decisions: loaded.max_physical_decisions,
             max_policy_steps: loaded.max_policy_steps,
             active: None,
+            teacher_export: None,
         })
     }
 
@@ -716,7 +978,19 @@ impl ShadowScorerServiceV1 {
             max_physical_decisions: 128,
             max_policy_steps: 16_384,
             active: None,
+            teacher_export: None,
         }
+    }
+
+    fn install_teacher_export_v1(
+        &mut self,
+        writer: XmageCp7TeacherJsonlWriterV1,
+    ) -> Result<(), ()> {
+        if self.active.is_some() || self.teacher_export.is_some() {
+            return Err(());
+        }
+        self.teacher_export = Some(writer);
+        Ok(())
     }
 
     fn score_session_v1(
@@ -792,6 +1066,7 @@ impl ShadowScorerServiceV1 {
         let scored = ScoredCurrentDecisionV1 {
             expected,
             binding,
+            tensor,
             action_semantics,
             logits_f32_bits: output.logits.iter().map(|value| value.to_bits()).collect(),
             value_f32_bits: output.value.to_bits(),
@@ -1107,6 +1382,24 @@ impl ShadowScorerServiceV1 {
                 )
             }
         };
+        let teacher_decision_record = match self.teacher_export.as_ref() {
+            Some(export) if scored.expected.acting_player != active.candidate_seat => {
+                match export.decision_record_v1(active, scored, selected_index) {
+                    Ok(record) => Some(record),
+                    Err(()) => {
+                        return response_v1(
+                            Some(request_id),
+                            &self.identity,
+                            error_body_v1(
+                                "teacher_export_record_invalid",
+                                "the accepted CP7 teacher row could not be constructed",
+                            ),
+                        )
+                    }
+                }
+            }
+            _ => None,
+        };
         let session_before = active.session.snapshot_v1();
         let schedule_before = active.schedule;
         let expected = scored.expected;
@@ -1189,6 +1482,36 @@ impl ShadowScorerServiceV1 {
             },
             FastActorResponseV1::Terminal(_) => None,
         };
+        let teacher_terminal_record = match (&self.teacher_export, &next) {
+            (Some(export), FastActorResponseV1::Terminal(terminal)) => {
+                Some(export.terminal_record_v1(active, terminal.clone()))
+            }
+            _ => None,
+        };
+        if let Some(export) = self.teacher_export.as_mut() {
+            let write_result = teacher_decision_record
+                .as_ref()
+                .map(|record| export.write_decision_v1(record))
+                .transpose()
+                .and_then(|_| {
+                    teacher_terminal_record
+                        .as_ref()
+                        .map(|record| export.write_terminal_v1(record))
+                        .transpose()
+                });
+            if write_result.is_err() {
+                active.session.restore_v1(&session_before);
+                active.schedule = schedule_before;
+                return response_v1(
+                    Some(request_id),
+                    &self.identity,
+                    error_body_v1(
+                        "teacher_export_write_failed",
+                        "the accepted CP7 teacher row could not be persisted",
+                    ),
+                );
+            }
+        }
         active.current = next_scored;
         let body = match next {
             FastActorResponseV1::Decision(_) => match Self::decision_body_v1(active, false) {
@@ -1276,7 +1599,32 @@ fn serialize_response_v1(response: &ShadowScorerResponseV1) -> String {
 pub fn run_checkpoint_shadow_stdio_v1(
     authority: ShadowCheckpointAuthorityV1,
 ) -> Result<(), Box<dyn Error>> {
+    run_checkpoint_shadow_stdio_configured_v1(authority, None)
+}
+
+/// Opt-in XMage CP7 teacher export. The destination is created exclusively;
+/// callers must promote only the file from a fully successful anchor run.
+pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_teacher_jsonl_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    teacher_jsonl: PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    run_checkpoint_shadow_stdio_configured_v1(authority, Some(teacher_jsonl))
+}
+
+fn run_checkpoint_shadow_stdio_configured_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    teacher_jsonl: Option<PathBuf>,
+) -> Result<(), Box<dyn Error>> {
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
+    if let Some(path) = teacher_jsonl {
+        let export = XmageCp7TeacherJsonlWriterV1::create_v1(&path, &service.identity)?;
+        service.install_teacher_export_v1(export).map_err(|()| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CP7 teacher export must be installed before reset",
+            )
+        })?;
+    }
     run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
     Ok(())
 }
@@ -1308,6 +1656,24 @@ fn run_jsonl_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct SharedBytesV1(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedBytesV1 {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "shared writer poisoned"))?
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     struct DeterministicTestModelV1;
 
@@ -1343,6 +1709,29 @@ mod tests {
 
     fn service_v1() -> ShadowScorerServiceV1 {
         ShadowScorerServiceV1::with_test_model_v1(Box::new(DeterministicTestModelV1))
+    }
+
+    fn service_with_teacher_export_v1(
+        model: Box<dyn ShadowModelScorerV1>,
+    ) -> (ShadowScorerServiceV1, SharedBytesV1) {
+        let mut service = ShadowScorerServiceV1::with_test_model_v1(model);
+        let bytes = SharedBytesV1::default();
+        let export = XmageCp7TeacherJsonlWriterV1::from_writer_v1(
+            Box::new(bytes.clone()),
+            &service.identity,
+        )
+        .unwrap();
+        service.install_teacher_export_v1(export).unwrap();
+        (service, bytes)
+    }
+
+    fn teacher_rows_v1(bytes: &SharedBytesV1) -> Vec<serde_json::Value> {
+        let bytes = bytes.0.lock().unwrap().clone();
+        String::from_utf8(bytes)
+            .unwrap()
+            .lines()
+            .map(value_v1)
+            .collect()
     }
 
     fn reset_line_v1(request_id: &str) -> String {
@@ -1461,6 +1850,126 @@ mod tests {
             stepped["applied_action"]["candidate_order_commitment_128_hex"],
             before["decision"]["candidate_order_commitment_128_hex"]
         );
+    }
+
+    #[test]
+    fn teacher_export_records_only_an_accepted_opponent_tensor_action_v1() {
+        let (mut service, bytes) =
+            service_with_teacher_export_v1(Box::new(DeterministicTestModelV1));
+        let mut response = value_v1(&service.handle_line_v1(&reset_line_v1("teacher-reset")));
+        for ordinal in 0..512_u64 {
+            assert_eq!(response["response_type"], "decision");
+            if !response["decision"]["candidate_controls_current_actor"]
+                .as_bool()
+                .unwrap()
+            {
+                break;
+            }
+            let step = response["decision"]["step"].as_u64().unwrap();
+            let selected = response["decision"]["selected_action_index"]
+                .as_u64()
+                .unwrap();
+            response = value_v1(&service.handle_line_v1(&format!(
+                "{{\"request_type\":\"step\",\"request_id\":\"teacher-candidate-{ordinal}\",\"episode_id\":2,\"expected_step\":{step},\"selected_index\":{selected}}}"
+            )));
+        }
+        assert_eq!(
+            response["decision"]["candidate_controls_current_actor"],
+            false
+        );
+        assert_eq!(teacher_rows_v1(&bytes).len(), 1);
+
+        let step = response["decision"]["step"].as_u64().unwrap();
+        let stale = value_v1(&service.handle_line_v1(&format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"teacher-stale\",\"episode_id\":2,\"expected_step\":{},\"selected_index\":0}}",
+            step + 1
+        )));
+        assert_eq!(stale["error_code"], "expected_step_mismatch");
+        assert_eq!(teacher_rows_v1(&bytes).len(), 1);
+
+        let before = response["decision"].clone();
+        let accepted = value_v1(&service.handle_line_v1(&format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"teacher-opponent\",\"episode_id\":2,\"expected_step\":{step},\"selected_index\":0}}"
+        )));
+        assert_ne!(accepted["response_type"], "error");
+        let rows = teacher_rows_v1(&bytes);
+        assert_eq!(rows.len(), 2);
+        let header = &rows[0];
+        assert_eq!(header["record_type"], "header");
+        assert_eq!(
+            header["export_contract"],
+            XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1
+        );
+        assert_eq!(header["record_ordinal"], 0);
+        assert_eq!(
+            header["model_input_commitment"],
+            CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1
+        );
+
+        let row = &rows[1];
+        assert_eq!(row["record_type"], "decision");
+        assert_eq!(row["record_ordinal"], 1);
+        assert_eq!(row["teacher_decision_ordinal"], 0);
+        assert_eq!(row["selection_source"], "xmage_rally_cp7_mapper");
+        assert_ne!(row["acting_player"], row["candidate_seat"]);
+        assert_eq!(row["step"], before["step"]);
+        assert_eq!(row["physical_decision_id"], before["physical_decision_id"]);
+        assert_eq!(row["selected_index"], 0);
+        assert_eq!(row["selected_semantic"], before["action_semantics"][0]);
+        assert_eq!(row["action_semantics"], before["action_semantics"]);
+        assert_eq!(row["old_policy_logits_f32_bits"], before["logits_f32_bits"]);
+        assert_eq!(row["old_value_f32_bits"], before["value_f32_bits"]);
+        assert_eq!(row["model_input_sha256"], before["model_input_sha256"]);
+        assert_eq!(
+            row["tensor"]["state_f32_bits"].as_array().unwrap().len(),
+            219
+        );
+        assert_eq!(
+            row["tensor"]["action_features_f32_bits"]
+                .as_array()
+                .unwrap()
+                .len(),
+            before["legal_action_count"].as_u64().unwrap() as usize * 195
+        );
+        for field in [
+            "state_f32_bits",
+            "object_features_f32_bits",
+            "object_card_ids",
+            "object_groups",
+            "object_node_ids",
+            "edge_features_f32_bits",
+            "edge_source_indices",
+            "edge_target_indices",
+            "action_features_f32_bits",
+            "action_ref_features_f32_bits",
+            "action_ref_card_ids",
+            "action_ref_action_indices",
+            "action_ref_node_indices",
+        ] {
+            assert!(
+                row["tensor"][field].is_array(),
+                "missing tensor field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_terminal_transition_does_not_export_teacher_rows_v1() {
+        let (mut service, bytes) =
+            service_with_teacher_export_v1(Box::new(DeterministicTestModelV1));
+        service.max_physical_decisions = 1;
+        service.max_policy_steps = 128;
+        let before = value_v1(&service.handle_line_v1(&reset_line_v1("teacher-cap")));
+        let selected = before["decision"]["selected_action_index"]
+            .as_u64()
+            .unwrap();
+        let rejected = value_v1(&service.handle_line_v1(&format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"teacher-cap-step\",\"episode_id\":2,\"expected_step\":0,\"selected_index\":{selected}}}"
+        )));
+        assert_eq!(rejected["error_code"], "native_terminal_validation_failed");
+        let rows = teacher_rows_v1(&bytes);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["record_type"], "header");
     }
 
     #[test]
