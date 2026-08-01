@@ -11,7 +11,7 @@ if (Test-Path -LiteralPath $preflightRoot) {
 }
 New-Item -ItemType Directory -Force -Path $preflightRoot | Out-Null
 
-$status = & git -c "safe.directory=$($repoRoot.Replace('\', '/'))" -C $repoRoot status --porcelain
+$status = @(& git -c "safe.directory=$($repoRoot.Replace('\', '/'))" -C $repoRoot status --porcelain)
 if ($LASTEXITCODE -ne 0 -or $status.Count -ne 0) {
     throw 'formal preflight requires a clean worktree'
 }
