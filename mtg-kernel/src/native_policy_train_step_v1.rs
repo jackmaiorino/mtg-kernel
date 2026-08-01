@@ -704,6 +704,20 @@ pub(crate) struct NativePolicyPhysicalDecisionV1<'a> {
     pub(crate) terminal_return: i8,
 }
 
+/// Frozen, caller-derived coefficients for one physical decision.
+///
+/// `policy_advantage` is the complete coefficient applied to the selected
+/// joint log probability before the train step's uniform group mean. This
+/// lets a narrow offline trainer declare centering, standardization, and
+/// episode weighting without weakening the ordinary terminal-REINFORCE path.
+/// `value_weight` analogously weights squared error to `value_target`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NativePolicyFrozenObjectiveTermV1 {
+    pub(crate) policy_advantage: f32,
+    pub(crate) value_target: f32,
+    pub(crate) value_weight: f32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NativeSelectedOutputV1 {
     pub(crate) group_index: usize,
@@ -779,6 +793,13 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     InvalidTerminalReturn {
         group_index: usize,
         value: i8,
+    },
+    FrozenObjectiveTermCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidFrozenObjectiveTerm {
+        group_index: usize,
     },
     SelectedActionOutOfRange {
         group_index: usize,
@@ -909,9 +930,10 @@ enum BackwardExecutionV1 {
 }
 
 #[derive(Clone, Copy)]
-enum TrainingObjectiveV1 {
+enum TrainingObjectiveV1<'a> {
     TerminalReinforceValue,
     BehaviorClone,
+    FrozenWeighted(&'a [NativePolicyFrozenObjectiveTermV1]),
 }
 
 impl NativePolicyValueTrainStateV1 {
@@ -1264,6 +1286,29 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    /// Applies one sequential CPU update using caller-frozen continuous policy
+    /// coefficients and per-group value targets/weights. The standard
+    /// `train_step_v1` path remains unchanged and is still the only entry point
+    /// for canonical terminal REINFORCE.
+    pub(crate) fn train_step_with_frozen_objective_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        terms: &[NativePolicyFrozenObjectiveTermV1],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
+        self.train_step_with_recompute_workers_inner_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            1,
+            BackwardExecutionV1::Sequential,
+            TrainingObjectiveV1::FrozenWeighted(terms),
+            &mut phase_recorder,
+        )
+    }
+
     fn train_step_with_recompute_workers_inner_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
@@ -1271,7 +1316,7 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         recompute_worker_limit: usize,
         backward_execution: BackwardExecutionV1,
-        objective: TrainingObjectiveV1,
+        objective: TrainingObjectiveV1<'_>,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         let forward_loss_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
@@ -1289,6 +1334,22 @@ impl NativePolicyValueTrainStateV1 {
         }
         if !learning_rate.is_finite() || learning_rate <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidLearningRate);
+        }
+        if let TrainingObjectiveV1::FrozenWeighted(terms) = objective {
+            if terms.len() != groups.len() {
+                return Err(NativePolicyTrainErrorV1::FrozenObjectiveTermCountMismatch {
+                    expected: groups.len(),
+                    actual: terms.len(),
+                });
+            }
+            if let Some(group_index) = terms.iter().position(|term| {
+                !term.policy_advantage.is_finite()
+                    || !term.value_target.is_finite()
+                    || !term.value_weight.is_finite()
+                    || term.value_weight <= 0.0
+            }) {
+                return Err(NativePolicyTrainErrorV1::InvalidFrozenObjectiveTerm { group_index });
+            }
         }
 
         let parameters = self.model.parameter_snapshot_v1();
@@ -1450,6 +1511,16 @@ impl NativePolicyValueTrainStateV1 {
                     (advantage, value_error, policy_term, value_term)
                 }
                 TrainingObjectiveV1::BehaviorClone => (1.0, 0.0, -joint_log_probability, 0.0),
+                TrainingObjectiveV1::FrozenWeighted(terms) => {
+                    let term = terms[group_index];
+                    let value_delta = value - term.value_target;
+                    (
+                        term.policy_advantage,
+                        value_delta * term.value_weight,
+                        -joint_log_probability * term.policy_advantage,
+                        value_delta * value_delta * term.value_weight,
+                    )
+                }
             };
             policy_sum += policy_term;
             value_sum += value_term;
@@ -7798,6 +7869,88 @@ mod tests {
                 }
             )
         );
+    }
+
+    #[test]
+    fn frozen_weighted_objective_uses_exact_declared_coefficients_transactionally() {
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let parameters = state.model_v1().parameter_snapshot_v1();
+        let first = state.first_moment_snapshot_v1();
+        let second = state.second_moment_snapshot_v1();
+        let case = case_by_name(&forward, "ordered_edges_and_action_refs");
+        let output = state.model_v1().forward_v1(encoded(case)).unwrap();
+        let logit_bits = output
+            .logits
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>();
+        let substeps = [NativePolicySubstepV1 {
+            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded(case))),
+            selected_action_index: 1,
+            expected_raw_action_logit_bits: &logit_bits,
+            expected_value_bits: output.value.to_bits(),
+        }];
+        let groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 1,
+        }];
+
+        assert_eq!(
+            state.train_step_with_frozen_objective_v1(
+                &groups,
+                &[],
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            ),
+            Err(NativePolicyTrainErrorV1::FrozenObjectiveTermCountMismatch {
+                expected: 1,
+                actual: 0,
+            })
+        );
+        assert_state_unchanged(&state, &parameters, &first, &second, 0);
+
+        let invalid_terms = [NativePolicyFrozenObjectiveTermV1 {
+            policy_advantage: f32::NAN,
+            value_target: -0.25,
+            value_weight: 0.5,
+        }];
+        assert_eq!(
+            state.train_step_with_frozen_objective_v1(
+                &groups,
+                &invalid_terms,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            ),
+            Err(NativePolicyTrainErrorV1::InvalidFrozenObjectiveTerm { group_index: 0 })
+        );
+        assert_state_unchanged(&state, &parameters, &first, &second, 0);
+
+        let terms = [NativePolicyFrozenObjectiveTermV1 {
+            policy_advantage: 0.75,
+            value_target: -0.25,
+            value_weight: 0.5,
+        }];
+        let (selected_log_probability, _) =
+            selected_log_softmax(&output.logits, substeps[0].selected_action_index).unwrap();
+        let expected_policy_sum = -selected_log_probability * terms[0].policy_advantage;
+        let value_delta = output.value - terms[0].value_target;
+        let expected_value_sum = value_delta * value_delta * terms[0].value_weight;
+        let result = state
+            .train_step_with_frozen_objective_v1(
+                &groups,
+                &terms,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        assert_eq!(result.policy_sum.to_bits(), expected_policy_sum.to_bits());
+        assert_eq!(result.value_sum.to_bits(), expected_value_sum.to_bits());
+        assert_eq!(result.adam_step, 1);
+        assert_eq!(state.adam_step_v1(), 1);
     }
 
     #[test]

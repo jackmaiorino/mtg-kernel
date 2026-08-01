@@ -17,8 +17,8 @@ use crate::native_flat_tensorizer_v2::{
 };
 use crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_ref_v1;
 use crate::native_policy_train_step_v1::{
-    NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
-    NativePolicyValueTrainStateV1, TRAINER_ALGORITHM_V1,
+    NativePolicyForwardInputV1, NativePolicyFrozenObjectiveTermV1, NativePolicyPhysicalDecisionV1,
+    NativePolicySubstepV1, NativePolicyValueTrainStateV1, TRAINER_ALGORITHM_V1,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativePolicyValueModelConfigV1,
@@ -47,6 +47,7 @@ use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 pub const XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-outcome-jsonl/v1";
+pub const XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2: &str = "mtg-kernel-xmage-cp7-outcome-jsonl/v2";
 pub const XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1: &str = "candidate_checkpoint_policy";
 pub const XMAGE_CP7_OUTCOME_DERIVATIVE_SCHEMA_V1: &str =
     "mtg-kernel-xmage-cp7-outcome-reinforce-derivative/v1";
@@ -59,6 +60,13 @@ const DERIVATIVE_PAYLOAD_FILENAME_V1: &str = "checkpoint.state.f32le";
 const DERIVATIVE_MANIFEST_FILENAME_V1: &str = "checkpoint.json";
 const TRAINING_ORDER_V1: &str = "jsonl-record-order-epoch-major-contiguous-batches/v1";
 const OPTIMIZER_V1: &str = "native-adam-canonical-scorer-bias-gauge-v1";
+const STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1: &str =
+    "terminal_reinforce_frozen_source_value_standardized_episode_balanced/v1";
+const STANDARDIZED_EPISODE_BALANCED_TRANSFORM_V1: &str =
+    "frozen-source-value-population-standardization-equal-episode-mass/v1";
+const STANDARDIZED_EPISODE_BALANCED_CLI_V1: &str = "standardized-episode-balanced";
+const RAW_ADVANTAGE_CLI_V1: &str = "raw";
+const ADVANTAGE_STANDARD_DEVIATION_FLOOR_V1: f64 = 1.0e-6;
 
 const SOURCE_RUN_SHA256_V1: &str =
     "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae";
@@ -91,7 +99,7 @@ fn invalid_data_v1(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct CheckpointIdentityWireV1 {
     authority_kind: String,
@@ -151,6 +159,8 @@ struct DecisionWireV1 {
     schema_version: u32,
     record_ordinal: u64,
     outcome_decision_ordinal: u64,
+    #[serde(default)]
+    checkpoint: Option<CheckpointIdentityWireV1>,
     selection_source: String,
     deck_ids: Vec<String>,
     randomization_identity: String,
@@ -184,6 +194,8 @@ struct TerminalWireV1 {
     record_type: String,
     schema_version: u32,
     record_ordinal: u64,
+    #[serde(default)]
+    checkpoint: Option<CheckpointIdentityWireV1>,
     deck_ids: Vec<String>,
     randomization_identity: String,
     base_seed_u64_hex: String,
@@ -422,6 +434,9 @@ struct PairObservationV1 {
 #[derive(Clone, Debug)]
 struct OutcomeDatasetV1 {
     jsonl_sha256: String,
+    export_contract: String,
+    schema_version: u32,
+    policy_checkpoint: CheckpointIdentityWireV1,
     decision_row_count: usize,
     terminal_row_count: usize,
     episode_count: usize,
@@ -441,18 +456,8 @@ fn rally_deck_ids_v1(value: &[String]) -> bool {
     value.len() == 2 && value[0] == "Rally" && value[1] == "Rally"
 }
 
-fn validate_header_v1(header: &HeaderWireV1) -> DynResultV1<()> {
-    let checkpoint = &header.checkpoint;
-    let valid = header.record_type == "header"
-        && header.schema_version == 1
-        && header.record_ordinal == 0
-        && header.export_contract == XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1
-        && header.selection_source == XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1
-        && header.tensorizer_identity == NATIVE_FLAT_TENSORIZER_IDENTITY_V2
-        && header.tensorizer_features_source_sha256
-            == NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2
-        && header.model_input_commitment == MODEL_INPUT_COMMITMENT_V1
-        && checkpoint.authority_kind == AUTHORITY_KIND_V1
+fn exact_g384_checkpoint_v1(checkpoint: &CheckpointIdentityWireV1) -> bool {
+    checkpoint.authority_kind == AUTHORITY_KIND_V1
         && checkpoint.source_run_sha256 == SOURCE_RUN_SHA256_V1
         && checkpoint.source_generation == SOURCE_GENERATION_V1
         && checkpoint.source_checkpoint_sha256 == SOURCE_CHECKPOINT_SHA256_V1
@@ -465,16 +470,76 @@ fn validate_header_v1(header: &HeaderWireV1) -> DynResultV1<()> {
         && checkpoint.loaded_payload_sha256 == SOURCE_PAYLOAD_SHA256_V1
         && checkpoint.loaded_train_state_sha256 == SOURCE_TRAIN_STATE_SHA256_V1
         && checkpoint.model_parameter_sha256 == SOURCE_MODEL_PARAMETER_SHA256_V1
+}
+
+fn outcome_parent_checkpoint_v1(checkpoint: &CheckpointIdentityWireV1) -> bool {
+    checkpoint.authority_kind == "xmage-cp7-outcome-reinforce-derivative-v1"
+        && checkpoint.source_run_sha256 == SOURCE_RUN_SHA256_V1
+        && checkpoint.source_generation == SOURCE_GENERATION_V1
+        && checkpoint.source_checkpoint_sha256 == SOURCE_CHECKPOINT_SHA256_V1
+        && checkpoint.source_sidecar_sha256 == SOURCE_SIDECAR_SHA256_V1
+        && checkpoint.source_payload_sha256 == SOURCE_PAYLOAD_SHA256_V1
+        && checkpoint.source_train_state_sha256 == SOURCE_TRAIN_STATE_SHA256_V1
+        && checkpoint.loaded_run_sha256 == SOURCE_RUN_SHA256_V1
+        && checkpoint.loaded_generation > 0
+        && valid_lower_hex_v1(&checkpoint.loaded_checkpoint_sha256, 64)
+        && valid_lower_hex_v1(&checkpoint.loaded_payload_sha256, 64)
+        && valid_lower_hex_v1(&checkpoint.loaded_train_state_sha256, 64)
+        && valid_lower_hex_v1(&checkpoint.model_parameter_sha256, 64)
+}
+
+fn validate_header_v1(header: &HeaderWireV1) -> DynResultV1<()> {
+    let checkpoint = &header.checkpoint;
+    let common_valid = header.record_type == "header"
+        && header.record_ordinal == 0
+        && header.selection_source == XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1
+        && header.tensorizer_identity == NATIVE_FLAT_TENSORIZER_IDENTITY_V2
+        && header.tensorizer_features_source_sha256
+            == NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2
+        && header.model_input_commitment == MODEL_INPUT_COMMITMENT_V1
         && checkpoint.environment_trajectory_contract == ENVIRONMENT_TRAJECTORY_CONTRACT_V1
         && checkpoint.sampler_identity == FAST_CATEGORICAL_SAMPLER_VERSION
         && checkpoint.sampler_contract_sha256 == FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256;
-    if !valid {
-        return Err(invalid_data_v1("outcome header is not exact promoted g384 authority").into());
+    let authority_valid = match (header.schema_version, header.export_contract.as_str()) {
+        (1, XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1) => exact_g384_checkpoint_v1(checkpoint),
+        (2, XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2) => outcome_parent_checkpoint_v1(checkpoint),
+        _ => false,
+    };
+    if !common_valid || !authority_valid {
+        return Err(invalid_data_v1("outcome header policy authority is invalid").into());
     }
     Ok(())
 }
 
-fn validate_natural_terminal_v1(row: &TerminalWireV1) -> DynResultV1<()> {
+fn row_checkpoint_binding_valid_v1(
+    schema_version: u32,
+    expected: &CheckpointIdentityWireV1,
+    actual: Option<&CheckpointIdentityWireV1>,
+) -> bool {
+    match schema_version {
+        1 => actual.is_none() && exact_g384_checkpoint_v1(expected),
+        2 => actual == Some(expected) && outcome_parent_checkpoint_v1(expected),
+        _ => false,
+    }
+}
+
+fn row_checkpoint_field_presence_valid_v1(schema_version: u32, row: &serde_json::Value) -> bool {
+    match schema_version {
+        1 => row
+            .as_object()
+            .is_some_and(|object| !object.contains_key("checkpoint")),
+        2 => row
+            .get("checkpoint")
+            .is_some_and(|checkpoint| !checkpoint.is_null()),
+        _ => false,
+    }
+}
+
+fn validate_natural_terminal_v1(
+    row: &TerminalWireV1,
+    schema_version: u32,
+    checkpoint: &CheckpointIdentityWireV1,
+) -> DynResultV1<()> {
     let terminal = &row.terminal;
     let tuple_valid = match terminal.terminal_outcome {
         TerminalOutcomeV1::P0Win => {
@@ -491,7 +556,8 @@ fn validate_natural_terminal_v1(row: &TerminalWireV1) -> DynResultV1<()> {
         PlayerSeatV1::P1 => 1,
     };
     if row.record_type != "terminal"
-        || row.schema_version != 1
+        || row.schema_version != schema_version
+        || !row_checkpoint_binding_valid_v1(schema_version, checkpoint, row.checkpoint.as_ref())
         || terminal.schema_version != RL_SESSION_SCHEMA_VERSION
         || !rally_deck_ids_v1(&terminal.deck_ids)
         || terminal.deck_hashes != [RALLY_DECK_HASH_U64_V1; 2]
@@ -522,11 +588,14 @@ fn decision_from_wire_v1(
     row: DecisionWireV1,
     expected_record_ordinal: u64,
     expected_outcome_decision_ordinal: u64,
+    schema_version: u32,
+    checkpoint: &CheckpointIdentityWireV1,
 ) -> DynResultV1<(OutcomeExampleV1, PlayerSeatV1, String, String)> {
     let legal_action_count = usize::try_from(row.legal_action_count)?;
     let selected_index = usize::try_from(row.selected_index)?;
     if row.record_type != "decision"
-        || row.schema_version != 1
+        || row.schema_version != schema_version
+        || !row_checkpoint_binding_valid_v1(schema_version, checkpoint, row.checkpoint.as_ref())
         || row.record_ordinal != expected_record_ordinal
         || row.outcome_decision_ordinal != expected_outcome_decision_ordinal
         || row.selection_source != XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1
@@ -684,6 +753,9 @@ fn load_outcome_dataset_v1(path: &Path) -> DynResultV1<OutcomeDatasetV1> {
     let mut expected_record_ordinal = 0_u64;
     let mut expected_outcome_decision_ordinal = 0_u64;
     let mut header_seen = false;
+    let mut export_contract = None::<String>;
+    let mut corpus_schema_version = None::<u32>;
+    let mut policy_checkpoint = None::<CheckpointIdentityWireV1>;
     let mut pending: Option<PendingEpisodeV1> = None;
     let mut closed_episodes = BTreeSet::<u64>::new();
     let mut pairs = BTreeMap::<u64, PairObservationV1>::new();
@@ -719,6 +791,9 @@ fn load_outcome_dataset_v1(path: &Path) -> DynResultV1<OutcomeDatasetV1> {
                 }
                 let header: HeaderWireV1 = serde_json::from_value(value)?;
                 validate_header_v1(&header)?;
+                export_contract = Some(header.export_contract.clone());
+                corpus_schema_version = Some(header.schema_version);
+                policy_checkpoint = Some(header.checkpoint.clone());
                 header_seen = true;
                 expected_record_ordinal = 1;
             }
@@ -726,11 +801,24 @@ fn load_outcome_dataset_v1(path: &Path) -> DynResultV1<OutcomeDatasetV1> {
                 if !header_seen {
                     return Err(invalid_data_v1("outcome decision precedes header").into());
                 }
+                let schema_version = corpus_schema_version
+                    .ok_or_else(|| invalid_data_v1("outcome header schema is missing"))?;
+                if !row_checkpoint_field_presence_valid_v1(schema_version, &value) {
+                    return Err(invalid_data_v1(
+                        "outcome decision checkpoint field presence is invalid",
+                    )
+                    .into());
+                }
                 let row: DecisionWireV1 = serde_json::from_value(value)?;
+                let checkpoint = policy_checkpoint
+                    .as_ref()
+                    .ok_or_else(|| invalid_data_v1("outcome header checkpoint is missing"))?;
                 let (example, candidate_seat, base_seed, environment_seed) = decision_from_wire_v1(
                     row,
                     expected_record_ordinal,
                     expected_outcome_decision_ordinal,
+                    schema_version,
+                    checkpoint,
                 )?;
                 if closed_episodes.contains(&example.episode_id) {
                     return Err(invalid_data_v1("outcome decision follows its terminal").into());
@@ -777,11 +865,25 @@ fn load_outcome_dataset_v1(path: &Path) -> DynResultV1<OutcomeDatasetV1> {
                 if !header_seen {
                     return Err(invalid_data_v1("outcome terminal precedes header").into());
                 }
+                let schema_version = corpus_schema_version
+                    .ok_or_else(|| invalid_data_v1("outcome header schema is missing"))?;
+                if !row_checkpoint_field_presence_valid_v1(schema_version, &value) {
+                    return Err(invalid_data_v1(
+                        "outcome terminal checkpoint field presence is invalid",
+                    )
+                    .into());
+                }
                 let terminal: TerminalWireV1 = serde_json::from_value(value)?;
                 if terminal.record_ordinal != expected_record_ordinal {
                     return Err(invalid_data_v1("outcome terminal record ordinal mismatch").into());
                 }
-                validate_natural_terminal_v1(&terminal)?;
+                validate_natural_terminal_v1(
+                    &terminal,
+                    schema_version,
+                    policy_checkpoint
+                        .as_ref()
+                        .ok_or_else(|| invalid_data_v1("outcome header checkpoint is missing"))?,
+                )?;
                 if closed_episodes.contains(&terminal.episode_id) {
                     return Err(invalid_data_v1("duplicate outcome terminal episode").into());
                 }
@@ -873,6 +975,12 @@ fn load_outcome_dataset_v1(path: &Path) -> DynResultV1<OutcomeDatasetV1> {
     groups.sort_by_key(|group| group.first_record_ordinal);
     Ok(OutcomeDatasetV1 {
         jsonl_sha256: lower_hex_raw32_v1(digest.finalize().into()),
+        export_contract: export_contract
+            .ok_or_else(|| invalid_data_v1("outcome export contract is missing"))?,
+        schema_version: corpus_schema_version
+            .ok_or_else(|| invalid_data_v1("outcome schema version is missing"))?,
+        policy_checkpoint: policy_checkpoint
+            .ok_or_else(|| invalid_data_v1("outcome policy checkpoint is missing"))?,
         decision_row_count: usize::try_from(expected_outcome_decision_ordinal)?,
         terminal_row_count,
         episode_count: closed_episodes.len(),
@@ -950,9 +1058,14 @@ fn transport_bound_v1(exported: f32) -> f32 {
 fn audit_source_transport_v1(
     model: &NativePolicyValueNetV1,
     groups: &[OutcomePhysicalDecisionV1],
+    parent_source: bool,
 ) -> DynResultV1<TransportAuditV1> {
     let mut audit = TransportAuditV1 {
-        identity: "exported-g384-forward-envelope/v1".to_owned(),
+        identity: if parent_source {
+            "exported-loaded-outcome-parent-forward-envelope/v1".to_owned()
+        } else {
+            "exported-g384-forward-envelope/v1".to_owned()
+        },
         decision_row_count: 0,
         logit_value_count: 0,
         bit_exact_decision_row_count: 0,
@@ -970,7 +1083,7 @@ fn audit_source_transport_v1(
             if output.logits.len() != example.legal_action_count
                 || output.logits.len() != example.old_policy_logits_f32_bits.len()
             {
-                return Err(invalid_data_v1("g384 outcome forward width mismatch").into());
+                return Err(invalid_data_v1("outcome source forward width mismatch").into());
             }
             audit.decision_row_count += 1;
             audit.logit_value_count += u64::try_from(output.logits.len())?;
@@ -982,7 +1095,7 @@ fn audit_source_transport_v1(
                 let delta = (output.value - exported_value).abs();
                 if delta > transport_bound_v1(exported_value) {
                     return Err(invalid_data_v1(format!(
-                        "g384 value transport exceeds envelope at outcome decision {}",
+                        "outcome source value transport exceeds envelope at decision {}",
                         example.outcome_decision_ordinal
                     ))
                     .into());
@@ -1005,7 +1118,7 @@ fn audit_source_transport_v1(
                 let delta = (actual - expected).abs();
                 if delta > transport_bound_v1(expected) {
                     return Err(invalid_data_v1(format!(
-                        "g384 logit transport exceeds envelope at outcome decision {} action {}",
+                        "outcome source logit transport exceeds envelope at decision {} action {}",
                         example.outcome_decision_ordinal, action_index
                     ))
                     .into());
@@ -1020,6 +1133,216 @@ fn audit_source_transport_v1(
         }
     }
     Ok(audit)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AdvantageModeV1 {
+    Raw,
+    StandardizedEpisodeBalanced,
+}
+
+impl Default for AdvantageModeV1 {
+    fn default() -> Self {
+        Self::Raw
+    }
+}
+
+impl AdvantageModeV1 {
+    fn cli_v1(self) -> &'static str {
+        match self {
+            Self::Raw => RAW_ADVANTAGE_CLI_V1,
+            Self::StandardizedEpisodeBalanced => STANDARDIZED_EPISODE_BALANCED_CLI_V1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AdvantageObservationV1 {
+    episode_id: u64,
+    terminal_return: i8,
+    source_value: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AdvantageTransformManifestV1 {
+    identity: String,
+    raw_advantage: String,
+    source_value_baseline: String,
+    centering_and_standardization_weighting: String,
+    policy_objective_aggregation: String,
+    value_objective_aggregation: String,
+    standard_deviation_floor: f64,
+    source_advantage_mean: f64,
+    source_advantage_population_standard_deviation: f64,
+    normalization_denominator: f64,
+    policy_scale: f32,
+    policy_scale_f32_bits: u32,
+    physical_group_count: usize,
+    contributing_episode_count: usize,
+    zero_decision_episode_count: usize,
+    uniform_core_value_weight_sum: f64,
+    uniform_core_policy_advantage_sum: f64,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedAdvantagesV1 {
+    terms: Vec<NativePolicyFrozenObjectiveTermV1>,
+    manifest: AdvantageTransformManifestV1,
+}
+
+fn prepare_standardized_episode_balanced_advantages_v1(
+    observations: &[AdvantageObservationV1],
+    corpus_episode_count: usize,
+    policy_scale: f32,
+    source_value_baseline: &'static str,
+) -> DynResultV1<PreparedAdvantagesV1> {
+    if observations.is_empty()
+        || corpus_episode_count == 0
+        || !policy_scale.is_finite()
+        || policy_scale <= 0.0
+    {
+        return Err(invalid_data_v1("invalid standardized advantage inputs").into());
+    }
+    let mut episode_group_counts = BTreeMap::<u64, usize>::new();
+    for observation in observations {
+        if !matches!(observation.terminal_return, -1..=1) || !observation.source_value.is_finite() {
+            return Err(invalid_data_v1("invalid standardized advantage observation").into());
+        }
+        let count = episode_group_counts
+            .entry(observation.episode_id)
+            .or_default();
+        *count = count
+            .checked_add(1)
+            .ok_or_else(|| invalid_data_v1("episode physical group count overflow"))?;
+    }
+    let contributing_episode_count = episode_group_counts.len();
+    if contributing_episode_count > corpus_episode_count {
+        return Err(invalid_data_v1("advantage episodes exceed corpus terminals").into());
+    }
+    let group_count = observations.len();
+    let group_count_f64 = group_count as f64;
+    let episode_count_f64 = contributing_episode_count as f64;
+    let mut raw_advantages = Vec::with_capacity(group_count);
+    let mut effective_weights = Vec::with_capacity(group_count);
+    let mut weighted_raw_sum = 0.0_f64;
+    for observation in observations {
+        let episode_group_count = *episode_group_counts
+            .get(&observation.episode_id)
+            .expect("episode count was populated");
+        let effective_weight = group_count_f64 / (episode_count_f64 * episode_group_count as f64);
+        let raw_advantage =
+            f64::from(observation.terminal_return) - f64::from(observation.source_value);
+        raw_advantages.push(raw_advantage);
+        effective_weights.push(effective_weight);
+        weighted_raw_sum += effective_weight * raw_advantage;
+    }
+    let source_advantage_mean = weighted_raw_sum / group_count_f64;
+    let weighted_variance_sum = raw_advantages
+        .iter()
+        .zip(&effective_weights)
+        .map(|(advantage, weight)| {
+            let centered = *advantage - source_advantage_mean;
+            *weight * centered * centered
+        })
+        .sum::<f64>();
+    let source_advantage_population_standard_deviation =
+        (weighted_variance_sum / group_count_f64).sqrt();
+    let normalization_denominator =
+        source_advantage_population_standard_deviation.max(ADVANTAGE_STANDARD_DEVIATION_FLOOR_V1);
+    if !source_advantage_mean.is_finite()
+        || !source_advantage_population_standard_deviation.is_finite()
+        || !normalization_denominator.is_finite()
+    {
+        return Err(invalid_data_v1("nonfinite standardized advantage statistics").into());
+    }
+
+    let mut terms = Vec::with_capacity(group_count);
+    for ((observation, raw_advantage), effective_weight) in observations
+        .iter()
+        .zip(&raw_advantages)
+        .zip(&effective_weights)
+    {
+        let policy_advantage =
+            f64::from(policy_scale) * *effective_weight * (*raw_advantage - source_advantage_mean)
+                / normalization_denominator;
+        let value_weight = *effective_weight;
+        let policy_advantage = policy_advantage as f32;
+        let value_weight = value_weight as f32;
+        if !policy_advantage.is_finite() || !value_weight.is_finite() || value_weight <= 0.0 {
+            return Err(invalid_data_v1("standardized advantage coefficient is not finite").into());
+        }
+        terms.push(NativePolicyFrozenObjectiveTermV1 {
+            policy_advantage,
+            value_target: f32::from(observation.terminal_return),
+            value_weight,
+        });
+    }
+    let uniform_core_value_weight_sum = terms
+        .iter()
+        .map(|term| f64::from(term.value_weight))
+        .sum::<f64>();
+    let uniform_core_policy_advantage_sum = terms
+        .iter()
+        .map(|term| f64::from(term.policy_advantage))
+        .sum::<f64>();
+    Ok(PreparedAdvantagesV1 {
+        terms,
+        manifest: AdvantageTransformManifestV1 {
+            identity: STANDARDIZED_EPISODE_BALANCED_TRANSFORM_V1.to_owned(),
+            raw_advantage: "candidate_terminal_reward_minus_frozen_source_value".to_owned(),
+            source_value_baseline: source_value_baseline.to_owned(),
+            centering_and_standardization_weighting:
+                "population_moments_with_each_contributing_episode_total_mass_one".to_owned(),
+            policy_objective_aggregation: "mean_over_episodes_of_mean_over_episode_physical_groups"
+                .to_owned(),
+            value_objective_aggregation: "mean_over_episodes_of_mean_over_episode_physical_groups"
+                .to_owned(),
+            standard_deviation_floor: ADVANTAGE_STANDARD_DEVIATION_FLOOR_V1,
+            source_advantage_mean,
+            source_advantage_population_standard_deviation,
+            normalization_denominator,
+            policy_scale,
+            policy_scale_f32_bits: policy_scale.to_bits(),
+            physical_group_count: group_count,
+            contributing_episode_count,
+            zero_decision_episode_count: corpus_episode_count - contributing_episode_count,
+            uniform_core_value_weight_sum,
+            uniform_core_policy_advantage_sum,
+        },
+    })
+}
+
+fn prepare_dataset_advantages_v1(
+    dataset: &OutcomeDatasetV1,
+    policy_scale: f32,
+    parent_source: bool,
+) -> DynResultV1<PreparedAdvantagesV1> {
+    let observations = dataset
+        .groups
+        .iter()
+        .map(|group| {
+            let first = group
+                .examples
+                .first()
+                .ok_or_else(|| invalid_data_v1("empty outcome physical group"))?;
+            Ok(AdvantageObservationV1 {
+                episode_id: group.episode_id,
+                terminal_return: group.terminal_return,
+                source_value: f32::from_bits(first.old_value_f32_bits),
+            })
+        })
+        .collect::<DynResultV1<Vec<_>>>()?;
+    prepare_standardized_episode_balanced_advantages_v1(
+        &observations,
+        dataset.episode_count,
+        policy_scale,
+        if parent_source {
+            "exported_loaded_outcome_parent_old_value_f32_bits_first_substep"
+        } else {
+            "exported_g384_old_value_f32_bits_first_substep"
+        },
+    )
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1125,6 +1448,69 @@ fn evaluate_objective_v1(
     })
 }
 
+fn evaluate_frozen_objective_v1(
+    model: &NativePolicyValueNetV1,
+    groups: &[OutcomePhysicalDecisionV1],
+    terms: &[NativePolicyFrozenObjectiveTermV1],
+    value_coefficient: f32,
+) -> DynResultV1<ObjectiveMetricsV1> {
+    if groups.is_empty() || groups.len() != terms.len() {
+        return Err(invalid_data_v1("frozen outcome metric cardinality mismatch").into());
+    }
+    let mut policy_sum = 0.0_f64;
+    let mut value_sum = 0.0_f64;
+    let mut nll_sum = 0.0_f64;
+    let mut value_absolute_sum = 0.0_f64;
+    let mut terminal_return_sum = 0_i64;
+    let mut substep_count = 0_u64;
+    let mut substep_correct = 0_u64;
+    let mut physical_correct = 0_u64;
+    for (group, term) in groups.iter().zip(terms) {
+        let mut joint_log_probability = 0.0_f64;
+        let mut group_top1 = true;
+        let mut value = None;
+        for example in &group.examples {
+            let output = model.forward_v1(example.tensor.view_v1())?;
+            if output.logits.len() != example.legal_action_count {
+                return Err(invalid_data_v1("frozen outcome metric action width mismatch").into());
+            }
+            let (selected_log_probability, correct) =
+                selected_log_probability_and_top1_v1(&output.logits, example.selected_index)?;
+            joint_log_probability += selected_log_probability;
+            group_top1 &= correct;
+            substep_correct += u64::from(correct);
+            substep_count += 1;
+            if value.is_none() {
+                value = Some(f64::from(output.value));
+            }
+        }
+        let value = value.ok_or_else(|| invalid_data_v1("empty frozen outcome physical group"))?;
+        let target = f64::from(term.value_target);
+        let value_weight = f64::from(term.value_weight);
+        policy_sum += -joint_log_probability * f64::from(term.policy_advantage);
+        value_sum += value_weight * (value - target) * (value - target);
+        nll_sum += -joint_log_probability;
+        value_absolute_sum += value_weight * (value - target).abs();
+        terminal_return_sum += i64::from(group.terminal_return);
+        physical_correct += u64::from(group_top1);
+    }
+    let group_count = groups.len() as f64;
+    let mean_policy = policy_sum / group_count;
+    let mean_value = value_sum / group_count;
+    Ok(ObjectiveMetricsV1 {
+        physical_group_count: u64::try_from(groups.len())?,
+        substep_count,
+        mean_policy_surrogate: mean_policy,
+        mean_value_squared_error: mean_value,
+        mean_total_objective: mean_policy + f64::from(value_coefficient) * mean_value,
+        mean_selected_nll_per_physical_group: nll_sum / group_count,
+        substep_top1_accuracy: substep_correct as f64 / substep_count as f64,
+        physical_top1_accuracy: physical_correct as f64 / group_count,
+        mean_absolute_value_error: value_absolute_sum / group_count,
+        mean_terminal_return: terminal_return_sum as f64 / group_count,
+    })
+}
+
 #[derive(Clone, Debug)]
 struct ExpectedForwardBitsV1 {
     logits: Vec<u32>,
@@ -1192,6 +1578,76 @@ fn train_batch_v1(
     Ok(())
 }
 
+fn train_frozen_batch_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    batch: &[OutcomePhysicalDecisionV1],
+    terms: &[NativePolicyFrozenObjectiveTermV1],
+    learning_rate: f32,
+    value_coefficient: f32,
+) -> DynResultV1<()> {
+    if batch.len() != terms.len() {
+        return Err(invalid_data_v1("frozen outcome train batch cardinality mismatch").into());
+    }
+    let expected = batch
+        .iter()
+        .map(|group| {
+            group
+                .examples
+                .iter()
+                .map(|example| {
+                    let output = state.model_v1().forward_v1(example.tensor.view_v1())?;
+                    Ok(ExpectedForwardBitsV1 {
+                        logits: output.logits.iter().map(|value| value.to_bits()).collect(),
+                        value: output.value.to_bits(),
+                    })
+                })
+                .collect::<Result<Vec<_>, crate::native_policy_value_net_v1::NativePolicyValueErrorV1>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let substeps = batch
+        .iter()
+        .zip(&expected)
+        .map(|(group, expected)| {
+            group
+                .examples
+                .iter()
+                .zip(expected)
+                .map(|(example, expected)| NativePolicySubstepV1 {
+                    forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                        example.tensor.view_v1(),
+                    )),
+                    selected_action_index: example.selected_index,
+                    expected_raw_action_logit_bits: &expected.logits,
+                    expected_value_bits: expected.value,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let physical = batch
+        .iter()
+        .zip(&substeps)
+        .map(|(group, substeps)| NativePolicyPhysicalDecisionV1 {
+            substeps,
+            terminal_return: group.terminal_return,
+        })
+        .collect::<Vec<_>>();
+    let result = state.train_step_with_frozen_objective_v1(
+        &physical,
+        terms,
+        value_coefficient,
+        learning_rate,
+    )?;
+    if result.physical_terms.len() != physical.len()
+        || result.adam_step != state.adam_step_v1()
+        || !result.loss.is_finite()
+        || !result.policy_sum.is_finite()
+        || !result.value_sum.is_finite()
+    {
+        return Err(invalid_data_v1("frozen outcome train step receipt is invalid").into());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BatchGroupsV1 {
     All,
@@ -1224,10 +1680,13 @@ impl BatchGroupsV1 {
 struct TrainConfigV1 {
     outcome_jsonl: PathBuf,
     outcome_jsonl_sha256: String,
-    source_store_root: PathBuf,
+    source_store_root: Option<PathBuf>,
+    source_outcome_root: Option<PathBuf>,
     output_dir: PathBuf,
     learning_rate: f32,
     value_coefficient: f32,
+    advantage_mode: AdvantageModeV1,
+    policy_scale: f32,
     epochs: u32,
     batch_groups: BatchGroupsV1,
 }
@@ -1237,10 +1696,13 @@ impl Default for TrainConfigV1 {
         Self {
             outcome_jsonl: PathBuf::new(),
             outcome_jsonl_sha256: String::new(),
-            source_store_root: PathBuf::new(),
+            source_store_root: None,
+            source_outcome_root: None,
             output_dir: PathBuf::new(),
             learning_rate: f32::NAN,
             value_coefficient: f32::NAN,
+            advantage_mode: AdvantageModeV1::Raw,
+            policy_scale: 1.0,
             epochs: 0,
             batch_groups: BatchGroupsV1::All,
         }
@@ -1259,11 +1721,27 @@ struct SourceBindingManifestV1 {
     model_parameter_sha256: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ParentBindingManifestV1 {
+    authority_kind: String,
+    manifest_sha256: String,
+    payload_sha256: String,
+    native_state_sha256: String,
+    model_parameter_sha256: String,
+    corpus_sha256: String,
+    adam_step: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct CorpusBindingManifestV1 {
     jsonl_sha256: String,
     export_contract: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    schema_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    policy_parent: Option<ParentBindingManifestV1>,
     selection_source: String,
     model_input_commitment: String,
     decision_row_count: usize,
@@ -1289,6 +1767,8 @@ struct PhysicalGroupDimensionManifestV1 {
 #[serde(deny_unknown_fields)]
 struct TrainingManifestV1 {
     objective: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    advantage_transform: Option<AdvantageTransformManifestV1>,
     optimizer: String,
     optimizer_reset: bool,
     training_order: String,
@@ -1301,6 +1781,12 @@ struct TrainingManifestV1 {
     effective_batch_groups: usize,
     adam_update_count: u64,
     on_policy_g384_single_update: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    starting_adam_step: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ending_adam_step: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    on_policy_parent_single_update: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1323,6 +1809,8 @@ struct PayloadManifestV1 {
 struct DerivativeManifestV1 {
     schema: String,
     source: SourceBindingManifestV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent: Option<ParentBindingManifestV1>,
     corpus: CorpusBindingManifestV1,
     training: TrainingManifestV1,
     source_transport_audit: TransportAuditV1,
@@ -1409,6 +1897,9 @@ fn publish_derivative_v1(
     config: &TrainConfigV1,
     dataset: &OutcomeDatasetV1,
     effective_batch_groups: usize,
+    parent: Option<ParentBindingManifestV1>,
+    starting_adam_step: u64,
+    advantage_transform: Option<AdvantageTransformManifestV1>,
     source_transport_audit: TransportAuditV1,
     initial_objective_metrics: ObjectiveMetricsV1,
     final_objective_metrics: ObjectiveMetricsV1,
@@ -1434,9 +1925,18 @@ fn publish_derivative_v1(
     let adam_update_count = u64::try_from(updates_per_epoch)?
         .checked_mul(u64::from(config.epochs))
         .ok_or_else(|| invalid_data_v1("Adam update count overflow"))?;
-    if payload.adam_step != adam_update_count {
+    let expected_ending_adam_step = starting_adam_step
+        .checked_add(adam_update_count)
+        .ok_or_else(|| invalid_data_v1("ending Adam step overflow"))?;
+    if payload.adam_step != expected_ending_adam_step {
         return Err(invalid_data_v1("published Adam step disagrees with training schedule").into());
     }
+    let parent_single_update = parent.as_ref().map(|_| {
+        config.epochs == 1
+            && effective_batch_groups == dataset.groups.len()
+            && adam_update_count == 1
+            && corpus_matches_training_source_v1(dataset, parent.as_ref())
+    });
     let manifest = DerivativeManifestV1 {
         schema: XMAGE_CP7_OUTCOME_DERIVATIVE_SCHEMA_V1.to_owned(),
         source: SourceBindingManifestV1 {
@@ -1448,9 +1948,12 @@ fn publish_derivative_v1(
             train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
             model_parameter_sha256: SOURCE_MODEL_PARAMETER_SHA256_V1.to_owned(),
         },
+        parent: parent.clone(),
         corpus: CorpusBindingManifestV1 {
             jsonl_sha256: dataset.jsonl_sha256.clone(),
-            export_contract: XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1.to_owned(),
+            export_contract: dataset.export_contract.clone(),
+            schema_version: parent.as_ref().map(|_| dataset.schema_version),
+            policy_parent: parent.clone(),
             selection_source: XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1.to_owned(),
             model_input_commitment: MODEL_INPUT_COMMITMENT_V1.to_owned(),
             decision_row_count: dataset.decision_row_count,
@@ -1462,9 +1965,15 @@ fn publish_derivative_v1(
             terminal_return_counts_loss_draw_win: dataset.terminal_return_counts,
         },
         training: TrainingManifestV1 {
-            objective: TRAINER_ALGORITHM_V1.to_owned(),
+            objective: match config.advantage_mode {
+                AdvantageModeV1::Raw => TRAINER_ALGORITHM_V1.to_owned(),
+                AdvantageModeV1::StandardizedEpisodeBalanced => {
+                    STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1.to_owned()
+                }
+            },
+            advantage_transform,
             optimizer: OPTIMIZER_V1.to_owned(),
-            optimizer_reset: true,
+            optimizer_reset: parent.is_none(),
             training_order: TRAINING_ORDER_V1.to_owned(),
             learning_rate: config.learning_rate,
             learning_rate_f32_bits: config.learning_rate.to_bits(),
@@ -1474,9 +1983,13 @@ fn publish_derivative_v1(
             requested_batch_groups: config.batch_groups.wire_v1(),
             effective_batch_groups,
             adam_update_count,
-            on_policy_g384_single_update: config.epochs == 1
+            on_policy_g384_single_update: parent.is_none()
+                && config.epochs == 1
                 && effective_batch_groups == dataset.groups.len()
                 && adam_update_count == 1,
+            starting_adam_step: parent.as_ref().map(|_| starting_adam_step),
+            ending_adam_step: parent.as_ref().map(|_| expected_ending_adam_step),
+            on_policy_parent_single_update: parent_single_update,
         },
         source_transport_audit,
         initial_objective_metrics,
@@ -1585,6 +2098,78 @@ fn validate_group_dimensions_v1(corpus: &CorpusBindingManifestV1) -> bool {
         && episode_pairs.len() <= corpus.episode_count
 }
 
+fn validate_advantage_transform_v1(
+    transform: &AdvantageTransformManifestV1,
+    corpus: &CorpusBindingManifestV1,
+    parent_source: bool,
+) -> bool {
+    let contributing_episode_count = corpus
+        .physical_group_dimensions
+        .iter()
+        .map(|dimension| dimension.episode_id)
+        .collect::<BTreeSet<_>>()
+        .len();
+    let expected_zero_decision_episode_count =
+        corpus.episode_count.checked_sub(contributing_episode_count);
+    let expected_value_weight_sum = corpus.physical_group_count as f64;
+    let value_weight_tolerance = 1.0e-6 * expected_value_weight_sum.max(1.0);
+    let policy_sum_tolerance =
+        1.0e-5 * expected_value_weight_sum.max(1.0) * f64::from(transform.policy_scale).max(1.0);
+    transform.identity == STANDARDIZED_EPISODE_BALANCED_TRANSFORM_V1
+        && transform.raw_advantage == "candidate_terminal_reward_minus_frozen_source_value"
+        && transform.source_value_baseline
+            == if parent_source {
+                "exported_loaded_outcome_parent_old_value_f32_bits_first_substep"
+            } else {
+                "exported_g384_old_value_f32_bits_first_substep"
+            }
+        && transform.centering_and_standardization_weighting
+            == "population_moments_with_each_contributing_episode_total_mass_one"
+        && transform.policy_objective_aggregation
+            == "mean_over_episodes_of_mean_over_episode_physical_groups"
+        && transform.value_objective_aggregation
+            == "mean_over_episodes_of_mean_over_episode_physical_groups"
+        && transform.standard_deviation_floor.to_bits()
+            == ADVANTAGE_STANDARD_DEVIATION_FLOOR_V1.to_bits()
+        && transform.source_advantage_mean.is_finite()
+        && transform
+            .source_advantage_population_standard_deviation
+            .is_finite()
+        && transform.source_advantage_population_standard_deviation >= 0.0
+        && transform.normalization_denominator.to_bits()
+            == transform
+                .source_advantage_population_standard_deviation
+                .max(ADVANTAGE_STANDARD_DEVIATION_FLOOR_V1)
+                .to_bits()
+        && transform.policy_scale.to_bits() == transform.policy_scale_f32_bits
+        && transform.policy_scale.is_finite()
+        && transform.policy_scale > 0.0
+        && transform.policy_scale <= 100.0
+        && transform.physical_group_count == corpus.physical_group_count
+        && transform.contributing_episode_count == contributing_episode_count
+        && transform.contributing_episode_count > 0
+        && Some(transform.zero_decision_episode_count) == expected_zero_decision_episode_count
+        && transform.uniform_core_value_weight_sum.is_finite()
+        && (transform.uniform_core_value_weight_sum - expected_value_weight_sum).abs()
+            <= value_weight_tolerance
+        && transform.uniform_core_policy_advantage_sum.is_finite()
+        && transform.uniform_core_policy_advantage_sum.abs() <= policy_sum_tolerance
+}
+
+fn validate_parent_binding_v1(parent: &ParentBindingManifestV1) -> bool {
+    parent.authority_kind == "xmage-cp7-outcome-reinforce-derivative-v1"
+        && parent.adam_step > 0
+        && [
+            &parent.manifest_sha256,
+            &parent.payload_sha256,
+            &parent.native_state_sha256,
+            &parent.model_parameter_sha256,
+            &parent.corpus_sha256,
+        ]
+        .into_iter()
+        .all(|value| valid_lower_hex_v1(value, 64))
+}
+
 fn load_derivative_bundle_v1(
     directory: &Path,
 ) -> DynResultV1<(
@@ -1630,6 +2215,7 @@ fn load_derivative_bundle_v1(
     let corpus = &manifest.corpus;
     let training = &manifest.training;
     let payload = &manifest.payload;
+    let parent = manifest.parent.as_ref();
     let source_valid = source.run_sha256 == SOURCE_RUN_SHA256_V1
         && source.generation == SOURCE_GENERATION_V1
         && source.checkpoint_sha256 == SOURCE_CHECKPOINT_SHA256_V1
@@ -1637,8 +2223,21 @@ fn load_derivative_bundle_v1(
         && source.payload_sha256 == SOURCE_PAYLOAD_SHA256_V1
         && source.train_state_sha256 == SOURCE_TRAIN_STATE_SHA256_V1
         && source.model_parameter_sha256 == SOURCE_MODEL_PARAMETER_SHA256_V1;
+    let corpus_authority_valid = match parent {
+        None => {
+            corpus.export_contract == XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1
+                && corpus.schema_version.is_none()
+                && corpus.policy_parent.is_none()
+        }
+        Some(parent) => {
+            validate_parent_binding_v1(parent)
+                && corpus.export_contract == XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
+                && corpus.schema_version == Some(2)
+                && corpus.policy_parent.as_ref() == Some(parent)
+        }
+    };
     let corpus_valid = valid_lower_hex_v1(&corpus.jsonl_sha256, 64)
-        && corpus.export_contract == XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1
+        && corpus_authority_valid
         && corpus.selection_source == XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1
         && corpus.model_input_commitment == MODEL_INPUT_COMMITMENT_V1
         && corpus.decision_row_count > 0
@@ -1674,9 +2273,46 @@ fn load_derivative_bundle_v1(
             .ok()?
             .checked_mul(u64::from(training.epochs))
     });
-    let training_valid = training.objective == TRAINER_ALGORITHM_V1
+    let starting_adam_step = parent.map_or(0, |binding| binding.adam_step);
+    let expected_ending_adam_step =
+        expected_updates.and_then(|updates| starting_adam_step.checked_add(updates));
+    let single_update = training.epochs == 1
+        && training.effective_batch_groups == corpus.physical_group_count
+        && training.adam_update_count == 1;
+    let objective_valid = match (
+        training.objective.as_str(),
+        training.advantage_transform.as_ref(),
+    ) {
+        (TRAINER_ALGORITHM_V1, None) => true,
+        (STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1, Some(transform)) => {
+            training.epochs == 1
+                && training.requested_batch_groups == "all"
+                && training.effective_batch_groups == corpus.physical_group_count
+                && training.adam_update_count == 1
+                && validate_advantage_transform_v1(transform, corpus, parent.is_some())
+        }
+        _ => false,
+    };
+    let source_schedule_valid = match parent {
+        None => {
+            training.optimizer_reset
+                && training.starting_adam_step.is_none()
+                && training.ending_adam_step.is_none()
+                && training.on_policy_parent_single_update.is_none()
+                && training.on_policy_g384_single_update == single_update
+        }
+        Some(binding) => {
+            single_update
+                && !training.optimizer_reset
+                && training.starting_adam_step == Some(binding.adam_step)
+                && training.ending_adam_step == expected_ending_adam_step
+                && training.on_policy_parent_single_update == Some(single_update)
+                && !training.on_policy_g384_single_update
+        }
+    };
+    let training_valid = objective_valid
         && training.optimizer == OPTIMIZER_V1
-        && training.optimizer_reset
+        && source_schedule_valid
         && training.training_order == TRAINING_ORDER_V1
         && training.learning_rate.to_bits() == training.learning_rate_f32_bits
         && training.learning_rate.is_finite()
@@ -1689,13 +2325,14 @@ fn load_derivative_bundle_v1(
         && training.epochs > 0
         && requested_batch_valid
         && requested_effective == Some(training.effective_batch_groups)
-        && expected_updates == Some(training.adam_update_count)
-        && training.on_policy_g384_single_update
-            == (training.epochs == 1
-                && training.effective_batch_groups == corpus.physical_group_count
-                && training.adam_update_count == 1);
+        && expected_updates == Some(training.adam_update_count);
     let transport = &manifest.source_transport_audit;
-    let transport_valid = transport.identity == "exported-g384-forward-envelope/v1"
+    let transport_valid = transport.identity
+        == if parent.is_some() {
+            "exported-loaded-outcome-parent-forward-envelope/v1"
+        } else {
+            "exported-g384-forward-envelope/v1"
+        }
         && transport.decision_row_count == corpus.decision_row_count as u64
         && transport.bit_exact_decision_row_count + transport.mismatched_decision_row_count
             == transport.decision_row_count
@@ -1707,7 +2344,7 @@ fn load_derivative_bundle_v1(
         && transport.max_logit_absolute_delta >= 0.0;
     let payload_valid = payload.filename == DERIVATIVE_PAYLOAD_FILENAME_V1
         && payload.byte_count == NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
-        && payload.adam_step == training.adam_update_count
+        && Some(payload.adam_step) == expected_ending_adam_step
         && [
             &payload.payload_sha256,
             &payload.parameters_sha256,
@@ -1755,6 +2392,71 @@ fn load_derivative_bundle_v1(
         return Err(invalid_data_v1("loaded outcome derivative semantic digest mismatch").into());
     }
     Ok((state, manifest, manifest_sha256))
+}
+
+struct LoadedTrainingSourceV1 {
+    state: NativePolicyValueTrainStateV1,
+    parent: Option<ParentBindingManifestV1>,
+}
+
+fn load_training_source_v1(config: &TrainConfigV1) -> DynResultV1<LoadedTrainingSourceV1> {
+    match (&config.source_store_root, &config.source_outcome_root) {
+        (Some(root), None) => Ok(LoadedTrainingSourceV1 {
+            state: load_source_train_state_v1(root)?,
+            parent: None,
+        }),
+        (None, Some(root)) => {
+            let (state, manifest, manifest_sha256) = load_derivative_bundle_v1(root)?;
+            let parent = ParentBindingManifestV1 {
+                authority_kind: "xmage-cp7-outcome-reinforce-derivative-v1".to_owned(),
+                manifest_sha256: lower_hex_raw32_v1(manifest_sha256),
+                payload_sha256: manifest.payload.payload_sha256.clone(),
+                native_state_sha256: manifest.payload.native_state_sha256.clone(),
+                model_parameter_sha256: manifest.payload.model_parameter_sha256.clone(),
+                corpus_sha256: manifest.corpus.jsonl_sha256.clone(),
+                adam_step: manifest.payload.adam_step,
+            };
+            if state.adam_step_v1() != parent.adam_step
+                || lower_hex_raw32_v1(state.state_sha256_v1()?) != parent.native_state_sha256
+                || state.model_v1().parameter_manifest_sha256_v1() != parent.model_parameter_sha256
+            {
+                return Err(invalid_data_v1("loaded outcome parent state binding mismatch").into());
+            }
+            Ok(LoadedTrainingSourceV1 {
+                state,
+                parent: Some(parent),
+            })
+        }
+        _ => Err(invalid_data_v1(
+            "exactly one of --source-store-root or --source-outcome-root is required",
+        )
+        .into()),
+    }
+}
+
+fn corpus_matches_training_source_v1(
+    dataset: &OutcomeDatasetV1,
+    parent: Option<&ParentBindingManifestV1>,
+) -> bool {
+    match parent {
+        None => {
+            dataset.schema_version == 1
+                && dataset.export_contract == XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1
+                && exact_g384_checkpoint_v1(&dataset.policy_checkpoint)
+        }
+        Some(parent) => {
+            let checkpoint = &dataset.policy_checkpoint;
+            dataset.schema_version == 2
+                && dataset.export_contract == XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
+                && outcome_parent_checkpoint_v1(checkpoint)
+                && checkpoint.authority_kind == parent.authority_kind
+                && checkpoint.loaded_generation == parent.adam_step
+                && checkpoint.loaded_checkpoint_sha256 == parent.manifest_sha256
+                && checkpoint.loaded_payload_sha256 == parent.payload_sha256
+                && checkpoint.loaded_train_state_sha256 == parent.native_state_sha256
+                && checkpoint.model_parameter_sha256 == parent.model_parameter_sha256
+        }
+    }
 }
 
 fn flat_tensor_view_v1(tensor: &NativeFlatDecisionTensorV2) -> NativeEncodedDecisionViewV1<'_> {
@@ -1885,9 +2587,18 @@ pub struct XmageCp7OutcomeCheckpointSummaryV1 {
     pub adam_step: u64,
     pub learning_rate: f32,
     pub value_coefficient: f32,
+    pub advantage_mode: String,
+    pub policy_scale: f32,
     pub epochs: u32,
     pub effective_batch_groups: usize,
+    pub optimizer_reset: bool,
     pub on_policy_g384_single_update: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_manifest_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub starting_adam_step: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_policy_parent_single_update: Option<bool>,
 }
 
 pub fn verify_xmage_cp7_outcome_checkpoint_v1(
@@ -1904,9 +2615,26 @@ pub fn verify_xmage_cp7_outcome_checkpoint_v1(
         adam_step: state.adam_step_v1(),
         learning_rate: manifest.training.learning_rate,
         value_coefficient: manifest.training.value_coefficient,
+        advantage_mode: if manifest.training.advantage_transform.is_some() {
+            STANDARDIZED_EPISODE_BALANCED_CLI_V1.to_owned()
+        } else {
+            RAW_ADVANTAGE_CLI_V1.to_owned()
+        },
+        policy_scale: manifest
+            .training
+            .advantage_transform
+            .as_ref()
+            .map_or(1.0, |transform| transform.policy_scale),
         epochs: manifest.training.epochs,
         effective_batch_groups: manifest.training.effective_batch_groups,
+        optimizer_reset: manifest.training.optimizer_reset,
         on_policy_g384_single_update: manifest.training.on_policy_g384_single_update,
+        parent_manifest_sha256: manifest
+            .parent
+            .as_ref()
+            .map(|parent| parent.manifest_sha256.clone()),
+        starting_adam_step: manifest.training.starting_adam_step,
+        on_policy_parent_single_update: manifest.training.on_policy_parent_single_update,
     })
 }
 
@@ -1928,6 +2656,16 @@ fn parse_batch_groups_v1(value: &str) -> DynResultV1<BatchGroupsV1> {
         );
     }
     Ok(BatchGroupsV1::Count(count))
+}
+
+fn parse_advantage_mode_v1(value: &str) -> DynResultV1<AdvantageModeV1> {
+    match value {
+        RAW_ADVANTAGE_CLI_V1 => Ok(AdvantageModeV1::Raw),
+        STANDARDIZED_EPISODE_BALANCED_CLI_V1 => Ok(AdvantageModeV1::StandardizedEpisodeBalanced),
+        _ => Err(
+            invalid_data_v1("--advantage-mode must be raw or standardized-episode-balanced").into(),
+        ),
+    }
 }
 
 fn parse_train_config_v1<I>(arguments: I) -> DynResultV1<TrainConfigV1>
@@ -1953,7 +2691,10 @@ where
                     .to_owned()
             }
             "--source-store-root" => {
-                config.source_store_root = next_arg_v1(&mut iterator, flag)?.into()
+                config.source_store_root = Some(next_arg_v1(&mut iterator, flag)?.into())
+            }
+            "--source-outcome-root" => {
+                config.source_outcome_root = Some(next_arg_v1(&mut iterator, flag)?.into())
             }
             "--output-dir" => config.output_dir = next_arg_v1(&mut iterator, flag)?.into(),
             "--learning-rate" => {
@@ -1966,6 +2707,19 @@ where
                 config.value_coefficient = next_arg_v1(&mut iterator, flag)?
                     .to_str()
                     .ok_or_else(|| invalid_data_v1("value coefficient is not UTF-8"))?
+                    .parse()?;
+            }
+            "--advantage-mode" => {
+                config.advantage_mode = parse_advantage_mode_v1(
+                    next_arg_v1(&mut iterator, flag)?
+                        .to_str()
+                        .ok_or_else(|| invalid_data_v1("advantage mode is not UTF-8"))?,
+                )?;
+            }
+            "--policy-scale" => {
+                config.policy_scale = next_arg_v1(&mut iterator, flag)?
+                    .to_str()
+                    .ok_or_else(|| invalid_data_v1("policy scale is not UTF-8"))?
                     .parse()?;
             }
             "--epochs" => {
@@ -1983,7 +2737,7 @@ where
             }
             "--help" | "-h" => {
                 return Err(invalid_data_v1(
-                    "usage: xmage_cp7_outcome_reinforce_v1 train --outcome-jsonl PATH --outcome-jsonl-sha256 HEX64 --source-store-root PATH --output-dir NEW_PATH --learning-rate FLOAT --value-coefficient FLOAT --epochs U32 [--batch-groups all|N]",
+                    "usage: xmage_cp7_outcome_reinforce_v1 train --outcome-jsonl PATH --outcome-jsonl-sha256 HEX64 (--source-store-root PATH | --source-outcome-root PATH) --output-dir NEW_PATH --learning-rate FLOAT --value-coefficient FLOAT --epochs U32 [--batch-groups all|N] [--advantage-mode raw|standardized-episode-balanced] [--policy-scale FLOAT]",
                 )
                 .into())
             }
@@ -1992,11 +2746,19 @@ where
     }
     if config.outcome_jsonl.as_os_str().is_empty()
         || config.outcome_jsonl_sha256.is_empty()
-        || config.source_store_root.as_os_str().is_empty()
         || config.output_dir.as_os_str().is_empty()
+        || (config.source_store_root.is_some() == config.source_outcome_root.is_some())
+        || config
+            .source_store_root
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        || config
+            .source_outcome_root
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
     {
         return Err(invalid_data_v1(
-            "--outcome-jsonl, --outcome-jsonl-sha256, --source-store-root, and --output-dir are required",
+            "--outcome-jsonl, --outcome-jsonl-sha256, --output-dir, and exactly one source root are required",
         )
         .into());
     }
@@ -2007,10 +2769,35 @@ where
         || !config.value_coefficient.is_finite()
         || config.value_coefficient <= 0.0
         || config.value_coefficient > 10.0
+        || !config.policy_scale.is_finite()
+        || config.policy_scale <= 0.0
+        || config.policy_scale > 100.0
         || config.epochs == 0
     {
         return Err(invalid_data_v1(
-            "training requires 0 < learning-rate <= 1e-3, 0 < value-coefficient <= 10, and positive epochs",
+            "training requires 0 < learning-rate <= 1e-3, 0 < value-coefficient <= 10, 0 < policy-scale <= 100, and positive epochs",
+        )
+        .into());
+    }
+    match config.advantage_mode {
+        AdvantageModeV1::Raw if config.policy_scale.to_bits() != 1.0_f32.to_bits() => {
+            return Err(invalid_data_v1("raw advantage mode requires --policy-scale 1").into())
+        }
+        AdvantageModeV1::StandardizedEpisodeBalanced
+            if config.epochs != 1 || config.batch_groups != BatchGroupsV1::All =>
+        {
+            return Err(invalid_data_v1(
+                "standardized-episode-balanced requires --epochs 1 and --batch-groups all",
+            )
+            .into())
+        }
+        _ => {}
+    }
+    if config.source_outcome_root.is_some()
+        && (config.epochs != 1 || config.batch_groups != BatchGroupsV1::All)
+    {
+        return Err(invalid_data_v1(
+            "--source-outcome-root requires --epochs 1 and --batch-groups all",
         )
         .into());
     }
@@ -2023,36 +2810,84 @@ fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpoi
     if dataset.jsonl_sha256 != config.outcome_jsonl_sha256 {
         return Err(invalid_data_v1("outcome JSONL SHA-256 authority mismatch").into());
     }
-    let mut state = load_source_train_state_v1(&config.source_store_root)?;
-    let source_transport_audit = audit_source_transport_v1(state.model_v1(), &dataset.groups)?;
-    let initial_objective_metrics =
-        evaluate_objective_v1(state.model_v1(), &dataset.groups, config.value_coefficient)?;
+    let loaded_source = load_training_source_v1(&config)?;
+    if !corpus_matches_training_source_v1(&dataset, loaded_source.parent.as_ref()) {
+        return Err(
+            invalid_data_v1("outcome corpus does not match selected training source").into(),
+        );
+    }
+    let parent_source = loaded_source.parent.is_some();
+    let starting_adam_step = loaded_source.state.adam_step_v1();
+    let parent = loaded_source.parent;
+    let mut state = loaded_source.state;
+    let source_transport_audit =
+        audit_source_transport_v1(state.model_v1(), &dataset.groups, parent_source)?;
+    let prepared_advantages = match config.advantage_mode {
+        AdvantageModeV1::Raw => None,
+        AdvantageModeV1::StandardizedEpisodeBalanced => Some(prepare_dataset_advantages_v1(
+            &dataset,
+            config.policy_scale,
+            parent_source,
+        )?),
+    };
+    let initial_objective_metrics = match prepared_advantages.as_ref() {
+        Some(prepared) => evaluate_frozen_objective_v1(
+            state.model_v1(),
+            &dataset.groups,
+            &prepared.terms,
+            config.value_coefficient,
+        )?,
+        None => evaluate_objective_v1(state.model_v1(), &dataset.groups, config.value_coefficient)?,
+    };
     let effective_batch_groups = config.batch_groups.effective_v1(dataset.groups.len());
     eprintln!(
-        "loaded XMage CP7 outcomes rows={} episodes={} pairs={} physical_groups={} batch_groups={} epochs={}",
+        "loaded XMage CP7 outcomes rows={} episodes={} pairs={} physical_groups={} batch_groups={} epochs={} advantage_mode={} policy_scale={}",
         dataset.decision_row_count,
         dataset.episode_count,
         dataset.pair_indices.len(),
         dataset.groups.len(),
         effective_batch_groups,
-        config.epochs
+        config.epochs,
+        config.advantage_mode.cli_v1(),
+        config.policy_scale,
     );
-    for _ in 0..config.epochs {
-        for batch in dataset.groups.chunks(effective_batch_groups) {
-            train_batch_v1(
-                &mut state,
-                batch,
-                config.learning_rate,
-                config.value_coefficient,
-            )?;
+    match prepared_advantages.as_ref() {
+        Some(prepared) => train_frozen_batch_v1(
+            &mut state,
+            &dataset.groups,
+            &prepared.terms,
+            config.learning_rate,
+            config.value_coefficient,
+        )?,
+        None => {
+            for _ in 0..config.epochs {
+                for batch in dataset.groups.chunks(effective_batch_groups) {
+                    train_batch_v1(
+                        &mut state,
+                        batch,
+                        config.learning_rate,
+                        config.value_coefficient,
+                    )?;
+                }
+            }
         }
     }
-    let final_objective_metrics =
-        evaluate_objective_v1(state.model_v1(), &dataset.groups, config.value_coefficient)?;
+    let final_objective_metrics = match prepared_advantages.as_ref() {
+        Some(prepared) => evaluate_frozen_objective_v1(
+            state.model_v1(),
+            &dataset.groups,
+            &prepared.terms,
+            config.value_coefficient,
+        )?,
+        None => evaluate_objective_v1(state.model_v1(), &dataset.groups, config.value_coefficient)?,
+    };
     publish_derivative_v1(
         &config,
         &dataset,
         effective_batch_groups,
+        parent,
+        starting_adam_step,
+        prepared_advantages.map(|prepared| prepared.manifest),
         source_transport_audit,
         initial_objective_metrics,
         final_objective_metrics,
@@ -2089,6 +2924,47 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exact_g384_checkpoint_wire_v1() -> CheckpointIdentityWireV1 {
+        CheckpointIdentityWireV1 {
+            authority_kind: AUTHORITY_KIND_V1.to_owned(),
+            source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+            source_generation: SOURCE_GENERATION_V1,
+            source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+            source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+            source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+            source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+            loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+            loaded_generation: SOURCE_GENERATION_V1,
+            loaded_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+            loaded_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+            loaded_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+            model_parameter_sha256: SOURCE_MODEL_PARAMETER_SHA256_V1.to_owned(),
+            environment_trajectory_contract: ENVIRONMENT_TRAJECTORY_CONTRACT_V1.to_owned(),
+            sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION.to_owned(),
+            sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256.to_owned(),
+        }
+    }
+
+    fn parent_binding_and_checkpoint_v1() -> (ParentBindingManifestV1, CheckpointIdentityWireV1) {
+        let parent = ParentBindingManifestV1 {
+            authority_kind: "xmage-cp7-outcome-reinforce-derivative-v1".to_owned(),
+            manifest_sha256: "1".repeat(64),
+            payload_sha256: "2".repeat(64),
+            native_state_sha256: "3".repeat(64),
+            model_parameter_sha256: "4".repeat(64),
+            corpus_sha256: "5".repeat(64),
+            adam_step: 7,
+        };
+        let mut checkpoint = exact_g384_checkpoint_wire_v1();
+        checkpoint.authority_kind = parent.authority_kind.clone();
+        checkpoint.loaded_generation = parent.adam_step;
+        checkpoint.loaded_checkpoint_sha256 = parent.manifest_sha256.clone();
+        checkpoint.loaded_payload_sha256 = parent.payload_sha256.clone();
+        checkpoint.loaded_train_state_sha256 = parent.native_state_sha256.clone();
+        checkpoint.model_parameter_sha256 = parent.model_parameter_sha256.clone();
+        (parent, checkpoint)
+    }
 
     fn complete_train_args_v1() -> Vec<OsString> {
         vec![
@@ -2144,6 +3020,106 @@ mod tests {
             .unwrap();
         zero_value_coefficient[position] = "0".into();
         assert!(parse_train_config_v1(zero_value_coefficient).is_err());
+
+        let mut standardized = complete_train_args_v1();
+        standardized.extend([
+            "--advantage-mode".into(),
+            STANDARDIZED_EPISODE_BALANCED_CLI_V1.into(),
+            "--policy-scale".into(),
+            "2.5".into(),
+        ]);
+        let config = parse_train_config_v1(standardized).unwrap();
+        assert_eq!(
+            config.advantage_mode,
+            AdvantageModeV1::StandardizedEpisodeBalanced
+        );
+        assert_eq!(config.policy_scale.to_bits(), 2.5_f32.to_bits());
+
+        let mut standardized_minibatch = complete_train_args_v1();
+        standardized_minibatch.extend([
+            "--advantage-mode".into(),
+            STANDARDIZED_EPISODE_BALANCED_CLI_V1.into(),
+            "--batch-groups".into(),
+            "64".into(),
+        ]);
+        assert!(parse_train_config_v1(standardized_minibatch).is_err());
+
+        let mut scaled_raw = complete_train_args_v1();
+        scaled_raw.extend(["--policy-scale".into(), "2".into()]);
+        assert!(parse_train_config_v1(scaled_raw).is_err());
+
+        let mut parent_source = complete_train_args_v1();
+        let source_flag = parent_source
+            .iter()
+            .position(|value| value == "--source-store-root")
+            .unwrap();
+        parent_source[source_flag] = "--source-outcome-root".into();
+        assert!(parse_train_config_v1(parent_source).is_ok());
+
+        let mut both_sources = complete_train_args_v1();
+        both_sources.extend(["--source-outcome-root".into(), "parent".into()]);
+        assert!(parse_train_config_v1(both_sources).is_err());
+
+        let mut parent_minibatch = complete_train_args_v1();
+        let source_flag = parent_minibatch
+            .iter()
+            .position(|value| value == "--source-store-root")
+            .unwrap();
+        parent_minibatch[source_flag] = "--source-outcome-root".into();
+        parent_minibatch.extend(["--batch-groups".into(), "64".into()]);
+        assert!(parse_train_config_v1(parent_minibatch).is_err());
+    }
+
+    #[test]
+    fn standardized_episode_balancing_equalizes_episode_mass_and_centers_coefficients_v1() {
+        let observations = [
+            AdvantageObservationV1 {
+                episode_id: 10,
+                terminal_return: 1,
+                source_value: 0.0,
+            },
+            AdvantageObservationV1 {
+                episode_id: 20,
+                terminal_return: -1,
+                source_value: 0.0,
+            },
+            AdvantageObservationV1 {
+                episode_id: 20,
+                terminal_return: -1,
+                source_value: 0.5,
+            },
+            AdvantageObservationV1 {
+                episode_id: 20,
+                terminal_return: -1,
+                source_value: -0.5,
+            },
+        ];
+        let prepared = prepare_standardized_episode_balanced_advantages_v1(
+            &observations,
+            3,
+            2.0,
+            "exported_g384_old_value_f32_bits_first_substep",
+        )
+        .unwrap();
+        let short_episode_mass = f64::from(prepared.terms[0].value_weight);
+        let long_episode_mass = prepared.terms[1..]
+            .iter()
+            .map(|term| f64::from(term.value_weight))
+            .sum::<f64>();
+        assert!((short_episode_mass - 2.0).abs() <= 1.0e-7);
+        assert!((long_episode_mass - 2.0).abs() <= 2.0e-7);
+        assert!((short_episode_mass - long_episode_mass).abs() <= 2.0e-7);
+
+        let policy_coefficient_sum = prepared
+            .terms
+            .iter()
+            .map(|term| f64::from(term.policy_advantage))
+            .sum::<f64>();
+        assert!(policy_coefficient_sum.abs() <= 1.0e-6);
+        assert_eq!(prepared.manifest.contributing_episode_count, 2);
+        assert_eq!(prepared.manifest.zero_decision_episode_count, 1);
+        assert_eq!(prepared.manifest.physical_group_count, 4);
+        assert!(prepared.manifest.source_advantage_mean.abs() <= f64::EPSILON);
     }
 
     #[test]
@@ -2152,6 +3128,7 @@ mod tests {
             record_type: "terminal".to_owned(),
             schema_version: 1,
             record_ordinal: 2,
+            checkpoint: None,
             deck_ids: vec!["Rally".to_owned(), "Rally".to_owned()],
             randomization_identity: RANDOMIZATION_IDENTITY_V1.to_owned(),
             base_seed_u64_hex: "0".repeat(16),
@@ -2179,10 +3156,67 @@ mod tests {
             diagnostic_state_hash_u64_hex: "2".repeat(16),
             core_environment_hash_u64_hex: "3".repeat(16),
         };
-        validate_natural_terminal_v1(&terminal).unwrap();
+        let checkpoint = exact_g384_checkpoint_wire_v1();
+        validate_natural_terminal_v1(&terminal, 1, &checkpoint).unwrap();
         let mut mismatch = terminal.clone();
         mismatch.candidate_terminal_reward = -1;
-        assert!(validate_natural_terminal_v1(&mismatch).is_err());
+        assert!(validate_natural_terminal_v1(&mismatch, 1, &checkpoint).is_err());
+    }
+
+    #[test]
+    fn row_checkpoint_field_presence_is_strict_across_schema_versions_v1() {
+        for record_type in ["decision", "terminal"] {
+            let legacy_missing = serde_json::json!({"record_type": record_type});
+            let legacy_null = serde_json::json!({"record_type": record_type, "checkpoint": null});
+            let iterative_missing = serde_json::json!({"record_type": record_type});
+            let iterative_null =
+                serde_json::json!({"record_type": record_type, "checkpoint": null});
+            let iterative_present = serde_json::json!({
+                "record_type": record_type,
+                "checkpoint": {"authority_kind": "test"}
+            });
+
+            assert!(row_checkpoint_field_presence_valid_v1(1, &legacy_missing));
+            assert!(!row_checkpoint_field_presence_valid_v1(1, &legacy_null));
+            assert!(!row_checkpoint_field_presence_valid_v1(
+                2,
+                &iterative_missing
+            ));
+            assert!(!row_checkpoint_field_presence_valid_v1(2, &iterative_null));
+            assert!(row_checkpoint_field_presence_valid_v1(
+                2,
+                &iterative_present
+            ));
+        }
+    }
+
+    #[test]
+    fn iterative_corpus_requires_the_exact_selected_parent_v1() {
+        let (parent, checkpoint) = parent_binding_and_checkpoint_v1();
+        let mut dataset = OutcomeDatasetV1 {
+            jsonl_sha256: "6".repeat(64),
+            export_contract: XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2.to_owned(),
+            schema_version: 2,
+            policy_checkpoint: checkpoint,
+            decision_row_count: 1,
+            terminal_row_count: 2,
+            episode_count: 2,
+            pair_indices: vec![0],
+            terminal_return_counts: [1, 0, 1],
+            groups: Vec::new(),
+        };
+        assert!(corpus_matches_training_source_v1(&dataset, Some(&parent)));
+        assert!(!corpus_matches_training_source_v1(&dataset, None));
+
+        dataset.policy_checkpoint.loaded_checkpoint_sha256 = "7".repeat(64);
+        assert!(!corpus_matches_training_source_v1(&dataset, Some(&parent)));
+        dataset.policy_checkpoint.loaded_checkpoint_sha256 = parent.manifest_sha256.clone();
+        let mut wrong_parent = parent.clone();
+        wrong_parent.native_state_sha256 = "8".repeat(64);
+        assert!(!corpus_matches_training_source_v1(
+            &dataset,
+            Some(&wrong_parent)
+        ));
     }
 
     #[test]
@@ -2194,5 +3228,35 @@ mod tests {
         assert!(!dataset.groups.is_empty());
         assert_eq!(dataset.episode_count, dataset.terminal_row_count);
         assert_eq!(dataset.episode_count, dataset.pair_indices.len() * 2);
+    }
+
+    #[test]
+    #[ignore = "requires MTG_KERNEL_XMAGE_CP7_OUTCOME_PARENT_ROOT"]
+    fn external_outcome_parent_load_preserves_full_adam_state_v1() {
+        let root = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_XMAGE_CP7_OUTCOME_PARENT_ROOT")
+                .expect("MTG_KERNEL_XMAGE_CP7_OUTCOME_PARENT_ROOT is set"),
+        );
+        let mut config = TrainConfigV1::default();
+        config.source_outcome_root = Some(root.clone());
+        let loaded = load_training_source_v1(&config).unwrap();
+        let (direct, manifest, _) = load_derivative_bundle_v1(&root).unwrap();
+        assert_eq!(
+            loaded.state.snapshot_v1().unwrap(),
+            direct.snapshot_v1().unwrap()
+        );
+        assert_eq!(loaded.state.adam_step_v1(), manifest.payload.adam_step);
+        assert_eq!(
+            loaded.parent.as_ref().unwrap().adam_step,
+            manifest.payload.adam_step
+        );
+        assert!(loaded
+            .state
+            .snapshot_v1()
+            .unwrap()
+            .first_moments
+            .iter()
+            .flat_map(|parameter| &parameter.values)
+            .any(|value| value.to_bits() != 0));
     }
 }

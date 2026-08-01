@@ -59,6 +59,8 @@ pub const XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-teac
 pub const XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1: u32 = 1;
 pub const XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-outcome-jsonl/v1";
 pub const XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1: u32 = 1;
+pub const XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2: &str = "mtg-kernel-xmage-cp7-outcome-jsonl/v2";
+pub const XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V2: u32 = 2;
 
 const XMAGE_CP7_TEACHER_SELECTION_SOURCE_V1: &str = "xmage_rally_cp7_mapper";
 const XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1: &str = "candidate_checkpoint_policy";
@@ -790,6 +792,8 @@ enum XmageCp7OutcomeRecordV1 {
         schema_version: u32,
         record_ordinal: u64,
         outcome_decision_ordinal: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        checkpoint: Option<ShadowCheckpointIdentityV1>,
         selection_source: &'static str,
         deck_ids: SessionDeckIdsV1,
         randomization_identity: &'static str,
@@ -819,6 +823,8 @@ enum XmageCp7OutcomeRecordV1 {
     Terminal {
         schema_version: u32,
         record_ordinal: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        checkpoint: Option<ShadowCheckpointIdentityV1>,
         deck_ids: SessionDeckIdsV1,
         randomization_identity: &'static str,
         base_seed_u64_hex: String,
@@ -846,6 +852,8 @@ struct XmageCp7OutcomeEpisodeV1 {
 
 struct XmageCp7OutcomeJsonlWriterV1 {
     writer: Box<dyn Write>,
+    schema_version: u32,
+    row_checkpoint: Option<ShadowCheckpointIdentityV1>,
     next_record_ordinal: u64,
     next_outcome_decision_ordinal: u64,
     active_episode: Option<XmageCp7OutcomeEpisodeV1>,
@@ -865,16 +873,58 @@ impl XmageCp7OutcomeJsonlWriterV1 {
         writer: Box<dyn Write>,
         checkpoint: &ShadowCheckpointIdentityV1,
     ) -> io::Result<Self> {
+        let exact_g384 = checkpoint.source_run_sha256 == SOURCE_RUN_SHA256_V1
+            && checkpoint.source_generation == SOURCE_GENERATION_V1
+            && checkpoint.source_checkpoint_sha256 == SOURCE_CHECKPOINT_SHA256_V1
+            && checkpoint.source_sidecar_sha256 == SOURCE_SIDECAR_SHA256_V1
+            && checkpoint.source_payload_sha256 == SOURCE_PAYLOAD_SHA256_V1
+            && checkpoint.source_train_state_sha256 == SOURCE_TRAIN_STATE_SHA256_V1
+            && checkpoint.loaded_run_sha256 == SOURCE_RUN_SHA256_V1
+            && checkpoint.loaded_generation == SOURCE_GENERATION_V1
+            && checkpoint.loaded_checkpoint_sha256 == SOURCE_CHECKPOINT_SHA256_V1
+            && checkpoint.loaded_payload_sha256 == SOURCE_PAYLOAD_SHA256_V1
+            && checkpoint.loaded_train_state_sha256 == SOURCE_TRAIN_STATE_SHA256_V1
+            && checkpoint.model_parameter_sha256 == SOURCE_MODEL_PARAMETER_SHA256_V1;
+        let iterative_parent = checkpoint.authority_kind
+            == "xmage-cp7-outcome-reinforce-derivative-v1"
+            && checkpoint.source_run_sha256 == SOURCE_RUN_SHA256_V1
+            && checkpoint.source_generation == SOURCE_GENERATION_V1
+            && checkpoint.source_checkpoint_sha256 == SOURCE_CHECKPOINT_SHA256_V1
+            && checkpoint.source_sidecar_sha256 == SOURCE_SIDECAR_SHA256_V1
+            && checkpoint.source_payload_sha256 == SOURCE_PAYLOAD_SHA256_V1
+            && checkpoint.source_train_state_sha256 == SOURCE_TRAIN_STATE_SHA256_V1
+            && checkpoint.loaded_run_sha256 == SOURCE_RUN_SHA256_V1
+            && checkpoint.loaded_generation > 0;
+        let (schema_version, export_contract, row_checkpoint) = if exact_g384 {
+            (
+                XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1,
+                XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1,
+                None,
+            )
+        } else if iterative_parent {
+            (
+                XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V2,
+                XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2,
+                Some(checkpoint.clone()),
+            )
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CP7 outcome export requires exact g384 or a verified outcome parent",
+            ));
+        };
         let mut export = Self {
             writer,
+            schema_version,
+            row_checkpoint,
             next_record_ordinal: 0,
             next_outcome_decision_ordinal: 0,
             active_episode: None,
         };
         export.write_v1(&XmageCp7OutcomeRecordV1::Header {
-            schema_version: XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1,
+            schema_version,
             record_ordinal: 0,
-            export_contract: XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1,
+            export_contract,
             selection_source: XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1,
             tensorizer_identity: NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
             tensorizer_features_source_sha256: NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
@@ -935,9 +985,10 @@ impl XmageCp7OutcomeJsonlWriterV1 {
         let selected = usize::try_from(selected_index).map_err(|_| ())?;
         let selected_semantic = scored.action_semantics.get(selected).ok_or(())?.clone();
         Ok(XmageCp7OutcomeRecordV1::Decision {
-            schema_version: XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1,
+            schema_version: self.schema_version,
             record_ordinal: self.next_record_ordinal,
             outcome_decision_ordinal: self.next_outcome_decision_ordinal,
+            checkpoint: self.row_checkpoint.clone(),
             selection_source: XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1,
             deck_ids: active.deck_ids.clone(),
             randomization_identity: SHADOW_RANDOMIZATION_IDENTITY_V1,
@@ -986,8 +1037,9 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             return Err(());
         }
         Ok(XmageCp7OutcomeRecordV1::Terminal {
-            schema_version: XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1,
+            schema_version: self.schema_version,
             record_ordinal: self.next_record_ordinal,
+            checkpoint: self.row_checkpoint.clone(),
             deck_ids: active.deck_ids.clone(),
             randomization_identity: SHADOW_RANDOMIZATION_IDENTITY_V1,
             base_seed_u64_hex: u64_hex_v1(active.base_seed),
@@ -1356,6 +1408,7 @@ struct ShadowScorerServiceV1 {
     active: Option<ActiveShadowSessionV1>,
     teacher_export: Option<XmageCp7TeacherJsonlWriterV1>,
     outcome_export: Option<XmageCp7OutcomeJsonlWriterV1>,
+    export_poisoned: bool,
 }
 
 impl ShadowScorerServiceV1 {
@@ -1390,6 +1443,7 @@ impl ShadowScorerServiceV1 {
                 active: None,
                 teacher_export: None,
                 outcome_export: None,
+                export_poisoned: false,
             });
         }
         if let ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root } = &authority {
@@ -1422,6 +1476,7 @@ impl ShadowScorerServiceV1 {
                 active: None,
                 teacher_export: None,
                 outcome_export: None,
+                export_poisoned: false,
             });
         }
         let loaded = load_checkpoint_v1(authority)?;
@@ -1435,6 +1490,7 @@ impl ShadowScorerServiceV1 {
             active: None,
             teacher_export: None,
             outcome_export: None,
+            export_poisoned: false,
         })
     }
 
@@ -1465,6 +1521,7 @@ impl ShadowScorerServiceV1 {
             active: None,
             teacher_export: None,
             outcome_export: None,
+            export_poisoned: false,
         }
     }
 
@@ -1472,7 +1529,11 @@ impl ShadowScorerServiceV1 {
         &mut self,
         writer: XmageCp7TeacherJsonlWriterV1,
     ) -> Result<(), ()> {
-        if self.active.is_some() || self.teacher_export.is_some() || self.outcome_export.is_some() {
+        if self.export_poisoned
+            || self.active.is_some()
+            || self.teacher_export.is_some()
+            || self.outcome_export.is_some()
+        {
             return Err(());
         }
         self.teacher_export = Some(writer);
@@ -1483,7 +1544,11 @@ impl ShadowScorerServiceV1 {
         &mut self,
         writer: XmageCp7OutcomeJsonlWriterV1,
     ) -> Result<(), ()> {
-        if self.active.is_some() || self.teacher_export.is_some() || self.outcome_export.is_some() {
+        if self.export_poisoned
+            || self.active.is_some()
+            || self.teacher_export.is_some()
+            || self.outcome_export.is_some()
+        {
             return Err(());
         }
         self.outcome_export = Some(writer);
@@ -1756,6 +1821,7 @@ impl ShadowScorerServiceV1 {
                 }
             });
             if write_result.is_err() {
+                self.export_poisoned = true;
                 return response_v1(
                     Some(request_id),
                     &self.identity,
@@ -2045,8 +2111,7 @@ impl ShadowScorerServiceV1 {
                     FastActorResponseV1::Decision(_) => Ok(()),
                 });
             if write_result.is_err() {
-                active.session.restore_v1(&session_before);
-                active.schedule = schedule_before;
+                self.export_poisoned = true;
                 return response_v1(
                     Some(request_id),
                     &self.identity,
@@ -2075,8 +2140,7 @@ impl ShadowScorerServiceV1 {
                     FastActorResponseV1::Decision(_) => Ok(()),
                 });
             if write_result.is_err() {
-                active.session.restore_v1(&session_before);
-                active.schedule = schedule_before;
+                self.export_poisoned = true;
                 return response_v1(
                     Some(request_id),
                     &self.identity,
@@ -2105,6 +2169,19 @@ impl ShadowScorerServiceV1 {
     }
 
     fn handle_line_v1(&mut self, line: &str) -> String {
+        if self.export_poisoned {
+            let request_id = parse_strict_json_value(line)
+                .ok()
+                .and_then(|value| request_id_from_value_v1(&value));
+            return serialize_response_v1(&response_v1(
+                request_id,
+                &self.identity,
+                error_body_v1(
+                    "export_poisoned",
+                    "a prior export write failed and this scorer cannot continue",
+                ),
+            ));
+        }
         let response = if line.len() > CHECKPOINT_SHADOW_MAX_REQUEST_BYTES_V1 {
             response_v1(
                 None,
@@ -2251,6 +2328,12 @@ fn run_jsonl_v1(
         }
         writeln!(writer, "{}", service.handle_line_v1(&line))?;
         writer.flush()?;
+        if service.export_poisoned {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "checkpoint shadow export is poisoned after a write failure",
+            ));
+        }
     }
     Ok(())
 }
@@ -2274,6 +2357,33 @@ mod tests {
 
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
+        }
+    }
+
+    #[derive(Clone)]
+    struct FlushFailWriterV1 {
+        bytes: SharedBytesV1,
+        fail_flush: Arc<Mutex<bool>>,
+    }
+
+    impl Write for FlushFailWriterV1 {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.bytes.write(bytes)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            if *self
+                .fail_flush
+                .lock()
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "flush control poisoned"))?
+            {
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "injected export flush failure",
+                ))
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -2340,6 +2450,44 @@ mod tests {
         model: Box<dyn ShadowModelScorerV1>,
     ) -> (ShadowScorerServiceV1, SharedBytesV1) {
         let mut service = ShadowScorerServiceV1::with_test_model_v1(model);
+        let bytes = SharedBytesV1::default();
+        let export = XmageCp7OutcomeJsonlWriterV1::from_writer_v1(
+            Box::new(bytes.clone()),
+            &service.identity,
+        )
+        .unwrap();
+        service.install_outcome_export_v1(export).unwrap();
+        (service, bytes)
+    }
+
+    fn service_with_failing_outcome_export_v1(
+        model: Box<dyn ShadowModelScorerV1>,
+    ) -> (ShadowScorerServiceV1, SharedBytesV1, Arc<Mutex<bool>>) {
+        let mut service = ShadowScorerServiceV1::with_test_model_v1(model);
+        let bytes = SharedBytesV1::default();
+        let fail_flush = Arc::new(Mutex::new(false));
+        let export = XmageCp7OutcomeJsonlWriterV1::from_writer_v1(
+            Box::new(FlushFailWriterV1 {
+                bytes: bytes.clone(),
+                fail_flush: Arc::clone(&fail_flush),
+            }),
+            &service.identity,
+        )
+        .unwrap();
+        service.install_outcome_export_v1(export).unwrap();
+        (service, bytes, fail_flush)
+    }
+
+    fn service_with_iterative_outcome_export_v1(
+        model: Box<dyn ShadowModelScorerV1>,
+    ) -> (ShadowScorerServiceV1, SharedBytesV1) {
+        let mut service = ShadowScorerServiceV1::with_test_model_v1(model);
+        service.identity.authority_kind = "xmage-cp7-outcome-reinforce-derivative-v1".to_owned();
+        service.identity.loaded_generation = 7;
+        service.identity.loaded_checkpoint_sha256 = "1".repeat(64);
+        service.identity.loaded_payload_sha256 = "2".repeat(64);
+        service.identity.loaded_train_state_sha256 = "3".repeat(64);
+        service.identity.model_parameter_sha256 = "4".repeat(64);
         let bytes = SharedBytesV1::default();
         let export = XmageCp7OutcomeJsonlWriterV1::from_writer_v1(
             Box::new(bytes.clone()),
@@ -2720,6 +2868,70 @@ mod tests {
                 "missing tensor field {field}"
             );
         }
+    }
+
+    #[test]
+    fn outcome_export_write_failure_poisoning_prevents_retry_v1() {
+        let (mut service, bytes, fail_flush) =
+            service_with_failing_outcome_export_v1(Box::new(DeterministicTestModelV1));
+        let before = value_v1(&service.handle_line_v1(&reset_line_v1("outcome-poison-reset")));
+        assert_eq!(before["decision"]["candidate_controls_current_actor"], true);
+        let selected = before["decision"]["selected_action_index"]
+            .as_u64()
+            .expect("candidate selection");
+        *fail_flush.lock().unwrap() = true;
+
+        let request = format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"outcome-poison-step\",\"episode_id\":2,\"expected_step\":0,\"selected_index\":{selected}}}"
+        );
+        let failed = value_v1(&service.handle_line_v1(&request));
+        assert_eq!(failed["error_code"], "outcome_export_write_failed");
+        assert!(service.export_poisoned);
+        assert_eq!(outcome_rows_v1(&bytes).len(), 2);
+
+        let retry = value_v1(&service.handle_line_v1(&request));
+        assert_eq!(retry["request_id"], "outcome-poison-step");
+        assert_eq!(retry["error_code"], "export_poisoned");
+        assert_eq!(outcome_rows_v1(&bytes).len(), 2);
+    }
+
+    #[test]
+    fn iterative_outcome_export_repeats_exact_parent_identity_on_all_rows_v2() {
+        let (mut service, bytes) =
+            service_with_iterative_outcome_export_v1(Box::new(FirstActionTestModelV1));
+        service.max_physical_decisions = 4_096;
+        service.max_policy_steps = 8_192;
+        let mut response = value_v1(&service.handle_line_v1(&reset_line_v1("iterative-outcome")));
+        for ordinal in 0..8_192_u64 {
+            assert_eq!(response["response_type"], "decision");
+            let step = response["decision"]["step"].as_u64().unwrap();
+            let selected = response["decision"]["selected_action_index"]
+                .as_u64()
+                .unwrap_or(0);
+            response = value_v1(&service.handle_line_v1(&format!(
+                "{{\"request_type\":\"step\",\"request_id\":\"iterative-outcome-{ordinal}\",\"episode_id\":2,\"expected_step\":{step},\"selected_index\":{selected}}}"
+            )));
+            assert_ne!(response["response_type"], "error");
+            if response["response_type"] == "terminal" {
+                break;
+            }
+        }
+        assert_eq!(response["response_type"], "terminal");
+        let rows = outcome_rows_v1(&bytes);
+        let header = &rows[0];
+        assert_eq!(header["schema_version"], 2);
+        assert_eq!(
+            header["export_contract"],
+            XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
+        );
+        assert_eq!(
+            header["checkpoint"]["loaded_checkpoint_sha256"],
+            "1".repeat(64)
+        );
+        assert!(rows[1..]
+            .iter()
+            .all(|row| row["schema_version"] == 2 && row["checkpoint"] == header["checkpoint"]));
+        assert_eq!(rows.last().unwrap()["record_type"], "terminal");
     }
 
     #[test]
