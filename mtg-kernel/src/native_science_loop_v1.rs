@@ -675,7 +675,8 @@ mod windows_science_loop_tests {
     ///
     /// Sweep knobs arrive via env so one binary serves every point:
     /// MULTIRUN_RUNS, MULTIRUN_UPDATES, MULTIRUN_WORKERS,
-    /// MULTIRUN_SESSIONS, MULTIRUN_BROKER_TARGET. The broker target is
+    /// MULTIRUN_SESSIONS, MULTIRUN_BROKER_TARGET, and
+    /// MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2. The broker target is
     /// the contention knob: the trainer sizes its forward pool as
     /// min(broker_batch_target, actors, cores), so N runs partition the
     /// machine's scoring cores only when N * target <= cores.
@@ -733,6 +734,11 @@ mod windows_science_loop_tests {
         // instead of the uniform identity; the uniform path (MULTIRUN_LADDER
         // unset) is completely untouched.
         let ladder_enabled = env_knob_v1("MULTIRUN_LADDER", 0) != 0;
+        // Macro Self-Play Envrand-V2 Rung V1. This knob changes only the
+        // run-record trajectory declaration. Runtime dispatch remains owned
+        // by the validated record and its sealed executor-mode diagonal.
+        let environment_randomization_v2 =
+            env_knob_v1("MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2", 0) != 0;
         let ladder_pool: Option<crate::native_training_store_run_v2::OpponentLadderPoolContractV1> =
             if ladder_enabled {
                 let pool_dir = std::env::var("MULTIRUN_LADDER_POOL_DIR")
@@ -853,11 +859,15 @@ mod windows_science_loop_tests {
             "MULTIRUN_WIDE=1 is incompatible with MULTIRUN_LADDER_INIT_STORE: \
              the wide protocol trains fresh-init only (contract Section 4)"
         );
+        assert!(
+            !(wide_enabled && environment_randomization_v2),
+            "MULTIRUN_WIDE=1 is not part of the narrow envrand-v2 macro rung"
+        );
         println!(
             "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
              broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset} \
              record_only={record_only} ladder={ladder_enabled} \
-             ladder_init={} wide={wide_enabled}",
+             ladder_init={} wide={wide_enabled} envrand_v2={environment_randomization_v2}",
             ladder_init_store.is_some()
         );
         let started = std::time::Instant::now();
@@ -909,9 +919,28 @@ mod windows_science_loop_tests {
                             }
                         }
                     } else {
-                        match (&ladder_pool, &ladder_init_section) {
-                            (Some(pool), Some(init)) => {
-                                use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2;
+                        match (
+                            &ladder_pool,
+                            &ladder_init_section,
+                            environment_randomization_v2,
+                        ) {
+                            (Some(pool), Some(init), true) => {
+                                crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
+                                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                                    64,
+                                    4,
+                                    updates,
+                                    workers,
+                                    sessions,
+                                    broker_target,
+                                    1_024,
+                                    2_048,
+                                    run_seed,
+                                    pool.clone(),
+                                    init.clone(),
+                                )
+                            }
+                            (Some(pool), Some(init), false) => {
                                 crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
                                     NativeTrainingNumericalBackendV1::CudaBurnDense,
                                     64,
@@ -927,7 +956,22 @@ mod windows_science_loop_tests {
                                     init.clone(),
                                 )
                             }
-                            (Some(pool), None) => {
+                            (Some(pool), None, true) => {
+                                crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
+                                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                                    64,
+                                    4,
+                                    updates,
+                                    workers,
+                                    sessions,
+                                    broker_target,
+                                    1_024,
+                                    2_048,
+                                    run_seed,
+                                    pool.clone(),
+                                )
+                            }
+                            (Some(pool), None, false) => {
                                 use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_v2;
                                 test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
                                     NativeTrainingNumericalBackendV1::CudaBurnDense,
@@ -943,19 +987,35 @@ mod windows_science_loop_tests {
                                     pool.clone(),
                                 )
                             }
-                            (None, None) => test_fixture_bytes_with_schedule_and_base_seed_v2(
-                                NativeTrainingNumericalBackendV1::CudaBurnDense,
-                                64,
-                                4,
-                                updates,
-                                workers,
-                                sessions,
-                                broker_target,
-                                1_024,
-                                2_048,
-                                run_seed,
-                            ),
-                            (None, Some(_)) => panic!(
+                            (None, None, true) => {
+                                crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_environment_v2(
+                                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                                    64,
+                                    4,
+                                    updates,
+                                    workers,
+                                    sessions,
+                                    broker_target,
+                                    1_024,
+                                    2_048,
+                                    run_seed,
+                                )
+                            }
+                            (None, None, false) => {
+                                test_fixture_bytes_with_schedule_and_base_seed_v2(
+                                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                                    64,
+                                    4,
+                                    updates,
+                                    workers,
+                                    sessions,
+                                    broker_target,
+                                    1_024,
+                                    2_048,
+                                    run_seed,
+                                )
+                            }
+                            (None, Some(_), _) => panic!(
                                 "MULTIRUN_LADDER_INIT_STORE requires MULTIRUN_LADDER=1 (continual init is a ladder-identity concept)"
                             ),
                         }
@@ -1426,8 +1486,9 @@ mod windows_science_loop_tests {
     ///
     /// Env: H2H_CANDIDATE_STORE_ROOT, H2H_CANDIDATE_GEN,
     /// H2H_CANDIDATE_BASE_SEED, H2H_CANDIDATE_POOL_JSON,
-    /// H2H_OPPONENT_STORE_ROOT, H2H_PAIRS (default 1_024), H2H_EVAL_SEED
-    /// (default 7_777). Prints `H2H candidate_gen=<g> W/L/D x/y/z of N` plus
+    /// H2H_OPPONENT_STORE_ROOT, H2H_ENVIRONMENT_RANDOMIZATION_V2, H2H_PAIRS
+    /// (default 1_024), H2H_EVAL_SEED (default 7_777). Prints
+    /// `H2H candidate_gen=<g> W/L/D x/y/z of N` plus
     /// the promotion gate's win-rate sub-check verdict computed by actually
     /// calling `native_ladder_promotion_v1::promotion_gate_win_rate_passes_v1`
     /// on the tabulated raw game wins/games (Deliverable 4's "feed the
@@ -1497,9 +1558,15 @@ mod windows_science_loop_tests {
         // Capacity-experiment wide-net knob; see the doc comment. Candidate
         // side only; the opponent stays frozen-identity by protocol.
         let wide = std::env::var("WIDE").is_ok_and(|value| value != "0");
+        let environment_randomization_v2 =
+            std::env::var("H2H_ENVIRONMENT_RANDOMIZATION_V2").is_ok_and(|value| value != "0");
         assert!(
             !(wide && init_store.is_some()),
             "WIDE=1 is not supported with H2H_INIT_STORE: the wide protocol trains fresh-init only"
+        );
+        assert!(
+            !(wide && environment_randomization_v2),
+            "WIDE=1 is not part of the narrow envrand-v2 macro rung"
         );
 
         // Candidate: the SAME ladder run-record reconstruction as
@@ -1508,8 +1575,34 @@ mod windows_science_loop_tests {
             .expect("H2H_CANDIDATE_POOL_JSON must be a readable file");
         let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
             .expect("pool.json must decode as OpponentLadderPoolContractV1");
-        let candidate_run_bytes = match (&init_store, wide) {
-            (Some(dir), false) => {
+        let candidate_run_bytes = match (
+            &init_store,
+            wide,
+            environment_randomization_v2,
+        ) {
+            (Some(dir), false, true) => {
+                let initialization =
+                    crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1(
+                        std::path::Path::new(dir),
+                        init_gen,
+                    )
+                    .expect("stage eval init section");
+                crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
+                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                    64,
+                    4,
+                    ladder_updates,
+                    2,
+                    32,
+                    16,
+                    1_024,
+                    2_048,
+                    candidate_base_seed,
+                    pool,
+                    initialization,
+                )
+            }
+            (Some(dir), false, false) => {
                 let initialization =
                     crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1(
                         std::path::Path::new(dir),
@@ -1517,21 +1610,36 @@ mod windows_science_loop_tests {
                     )
                     .expect("stage eval init section");
                 crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
-            NativeTrainingNumericalBackendV1::CudaBurnDense,
-            64,
-            4,
-            ladder_updates,
-            2,
-            32,
-            16,
-            1_024,
-            2_048,
-            candidate_base_seed,
-            pool,
+                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                    64,
+                    4,
+                    ladder_updates,
+                    2,
+                    32,
+                    16,
+                    1_024,
+                    2_048,
+                    candidate_base_seed,
+                    pool,
                     initialization,
                 )
             }
-            (None, false) => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+            (None, false, true) => {
+                crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
+                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                    64,
+                    4,
+                    ladder_updates,
+                    2,
+                    32,
+                    16,
+                    1_024,
+                    2_048,
+                    candidate_base_seed,
+                    pool,
+                )
+            }
+            (None, false, false) => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
                 NativeTrainingNumericalBackendV1::CudaBurnDense,
                 64,
                 4,
@@ -1544,7 +1652,7 @@ mod windows_science_loop_tests {
                 candidate_base_seed,
                 pool,
             ),
-            (None, true) => test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
+            (None, true, false) => test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
                 NativeTrainingNumericalBackendV1::CudaBurnDense,
                 64,
                 4,
@@ -1557,7 +1665,7 @@ mod windows_science_loop_tests {
                 candidate_base_seed,
                 pool,
             ),
-            (Some(_), true) => unreachable!("guarded above"),
+            (Some(_), true, _) | (None, true, true) => unreachable!("guarded above"),
         };
         let candidate_run =
             decode_train_run_v2(&candidate_run_bytes).expect("candidate ladder run record");
@@ -1610,6 +1718,7 @@ mod windows_science_loop_tests {
             opponent_checkpoint.generation_index(),
             opponent_gen_knob.is_some()
         );
+        println!("H2H envrand_v2={environment_randomization_v2}");
         let primary = load_native_checkpoint_inference_v1(
             &opponent_run,
             opponent_checkpoint,
