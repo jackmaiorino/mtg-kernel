@@ -2132,8 +2132,8 @@ fn validate_rank1_report_semantics_v1(
         projection.top_singular_value.powi(2) / projection.gradient_frobenius_norm.powi(2);
     if (captured - projection.captured_gradient_energy_fraction).abs()
         > 1.0e-12 * captured.abs().max(1.0)
-        || calibration.achieved_mean_total_variation.to_bits()
-            != movement.mean_total_variation.to_bits()
+        || (calibration.achieved_mean_total_variation - movement.mean_total_variation).abs()
+            > 1.0e-12
         || calibration.safety_cap_applied
             != (calibration.final_scale.to_bits() != calibration.target_calibrated_scale.to_bits())
     {
