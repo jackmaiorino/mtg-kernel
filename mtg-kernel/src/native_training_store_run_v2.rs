@@ -2841,6 +2841,42 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_v2(
     )
 }
 
+/// Environment-randomization-V2 variant of
+/// [`test_fixture_bytes_with_schedule_and_base_seed_v2`]. The schedule,
+/// topology, backend, and seed are unchanged; only the complete sealed V2
+/// trajectory tuple is installed before all derived digests are reminted.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(
+    not(all(windows, feature = "experimental-burn-net8-packed-cuda-v1")),
+    allow(dead_code)
+)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_environment_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_environment_v2(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+    )
+}
+
 /// Ladder variant of [`test_fixture_bytes_with_schedule_and_base_seed_v2`]
 /// (Self-Play Ladder Design Contract S2, pilot runner integration): the
 /// SAME schedule/topology/base-seed fields, but the run record carries the
@@ -2866,6 +2902,39 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
     pool: OpponentLadderPoolContractV1,
 ) -> Vec<u8> {
     tests::fixture_bytes_with_schedule_and_base_seed_ladder(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+        pool,
+    )
+}
+
+/// Environment-randomization-V2 composition of
+/// [`test_fixture_bytes_with_schedule_and_base_seed_ladder_v2`]. This is the
+/// fresh-init self-play shape used by a V2 ladder run.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+    pool: OpponentLadderPoolContractV1,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
         backend,
         batch_episodes,
         checkpoint_segment_updates,
@@ -2915,6 +2984,41 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
     initialization: OpponentLadderInitializationContractV1,
 ) -> Vec<u8> {
     tests::fixture_bytes_with_schedule_and_base_seed_ladder_init(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+        pool,
+        initialization,
+    )
+}
+
+/// Environment-randomization-V2 composition of
+/// [`test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2`]. This is
+/// the exact continual-init run-record shape for the macro self-play rung.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+    pool: OpponentLadderPoolContractV1,
+    initialization: OpponentLadderInitializationContractV1,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
         backend,
         batch_episodes,
         checkpoint_segment_updates,
@@ -4009,6 +4113,49 @@ mod tests {
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
 
+    /// Installs the complete environment-randomization-V2 tuple on an
+    /// already-built test run record, then remints every derived field. The
+    /// base builder remains the sole owner of schedule, topology, backend,
+    /// ladder, initialization, and model choices.
+    fn compose_environment_randomization_v2(base_bytes: Vec<u8>) -> Vec<u8> {
+        let wire: TrainRunWireV2 = serde_json::from_slice(&base_bytes).unwrap();
+        let mut record = TrainRunV2::from(wire);
+        record.environment.protocol_version = u64::from(RL_SESSION_PROTOCOL_VERSION_V6);
+        record.environment.schema_version = u64::from(RL_SESSION_SCHEMA_VERSION_V6);
+        record.environment.environment_randomization_v2 =
+            Some(exact_environment_randomization_section_v2());
+        record.contracts.trajectory = v2_trajectory_contract_v2();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_environment_v2(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+    ) -> Vec<u8> {
+        compose_environment_randomization_v2(fixture_bytes_with_schedule_and_base_seed(
+            backend,
+            batch_episodes,
+            checkpoint_segment_updates,
+            requested_successful_updates,
+            worker_count,
+            sessions_per_worker,
+            broker_batch_target,
+            max_physical_decisions,
+            max_policy_steps,
+            base_seed,
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn fixture_bytes_with_schedule_and_base_seed_ladder(
         backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
@@ -4047,6 +4194,35 @@ mod tests {
         record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+        pool: OpponentLadderPoolContractV1,
+    ) -> Vec<u8> {
+        compose_environment_randomization_v2(fixture_bytes_with_schedule_and_base_seed_ladder(
+            backend,
+            batch_episodes,
+            checkpoint_segment_updates,
+            requested_successful_updates,
+            worker_count,
+            sessions_per_worker,
+            broker_batch_target,
+            max_physical_decisions,
+            max_policy_steps,
+            base_seed,
+            pool,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4089,6 +4265,37 @@ mod tests {
         record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+        pool: OpponentLadderPoolContractV1,
+        initialization: OpponentLadderInitializationContractV1,
+    ) -> Vec<u8> {
+        compose_environment_randomization_v2(fixture_bytes_with_schedule_and_base_seed_ladder_init(
+            backend,
+            batch_episodes,
+            checkpoint_segment_updates,
+            requested_successful_updates,
+            worker_count,
+            sessions_per_worker,
+            broker_batch_target,
+            max_physical_decisions,
+            max_policy_steps,
+            base_seed,
+            pool,
+            initialization,
+        ))
     }
 
     /// Stamps `record.model_snapshot`/`contracts.model` with the frozen WIDE
@@ -5577,6 +5784,135 @@ mod tests {
             base_seed,
         );
         assert_eq!(uniform_bytes, uniform_bytes_again);
+    }
+
+    #[test]
+    fn environment_v2_composes_with_uniform_ladder_and_ladder_init_records() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+
+        let args = (
+            64_u64, 4_u64, 8_u64, 2_u64, 32_u64, 16_u64, 1_024_u64, 2_048_u64,
+        );
+        let base_seed = 970_001_u64;
+        let pool = valid_ladder_pool_fixture();
+        let initialization = valid_ladder_initialization_fixture();
+
+        let legacy_ladder_bytes = test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            args.0,
+            args.1,
+            args.2,
+            args.3,
+            args.4,
+            args.5,
+            args.6,
+            args.7,
+            base_seed,
+            pool.clone(),
+        );
+        let legacy_ladder = decode_train_run_v2(&legacy_ladder_bytes).unwrap();
+        assert_eq!(
+            legacy_ladder.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+        );
+
+        let environment_bytes = test_fixture_bytes_with_schedule_and_base_seed_environment_v2(
+            NativeTrainingNumericalBackendV1::Sequential,
+            args.0,
+            args.1,
+            args.2,
+            args.3,
+            args.4,
+            args.5,
+            args.6,
+            args.7,
+            base_seed,
+        );
+        let environment = decode_train_run_v2(&environment_bytes).unwrap();
+        assert_eq!(
+            environment.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        assert!(environment
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_none());
+
+        let ladder_environment_bytes =
+            test_fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
+                NativeTrainingNumericalBackendV1::Sequential,
+                args.0,
+                args.1,
+                args.2,
+                args.3,
+                args.4,
+                args.5,
+                args.6,
+                args.7,
+                base_seed,
+                pool.clone(),
+            );
+        let ladder_environment = decode_train_run_v2(&ladder_environment_bytes).unwrap();
+        assert_eq!(
+            ladder_environment.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        assert_eq!(
+            ladder_environment.record().contracts().opponent_ladder_pool,
+            Some(pool.clone())
+        );
+        assert!(ladder_environment
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
+
+        let ladder_init_environment_bytes =
+            test_fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
+                NativeTrainingNumericalBackendV1::Sequential,
+                args.0,
+                args.1,
+                args.2,
+                args.3,
+                args.4,
+                args.5,
+                args.6,
+                args.7,
+                base_seed,
+                pool,
+                initialization.clone(),
+            );
+        let ladder_init_environment = decode_train_run_v2(&ladder_init_environment_bytes).unwrap();
+        assert_eq!(
+            ladder_init_environment.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        assert_eq!(
+            ladder_init_environment
+                .record()
+                .contracts()
+                .opponent_ladder_initialization,
+            Some(initialization)
+        );
+
+        assert_ne!(legacy_ladder_bytes, ladder_environment_bytes);
+        assert_eq!(
+            legacy_ladder_bytes,
+            test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+                NativeTrainingNumericalBackendV1::Sequential,
+                args.0,
+                args.1,
+                args.2,
+                args.3,
+                args.4,
+                args.5,
+                args.6,
+                args.7,
+                base_seed,
+                valid_ladder_pool_fixture(),
+            )
+        );
     }
 
     /// HARD CONSTRAINT regression (S2 ladder contract Deliverable 1): every
