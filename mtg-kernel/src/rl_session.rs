@@ -43,6 +43,9 @@ pub const FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM: &str =
 /// legacy constant above is frozen and unchanged.
 pub const FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2: &str =
     "fnv1a64-serde-json-fast-actor-core-environment-v2";
+const BASE109_STEP64_DIAGNOSTIC_ENV_V1: &str = "MTG_KERNEL_BASE109_STEP64_DIAGNOSTIC_V1";
+const BASE109_STEP64_DIAGNOSTIC_EPISODE_V1: u64 = 45;
+const BASE109_STEP64_DIAGNOSTIC_POLICY_STEP_V1: u64 = 64;
 pub const CANONICAL_BURN_DECK_ID: &str = "Burn";
 pub const CANONICAL_RALLY_DECK_ID: &str = "Rally";
 
@@ -5239,6 +5242,19 @@ impl FastActorSessionV1 {
             ));
         }
 
+        let base109_step64_selected_semantic = if self.episode_id
+            == BASE109_STEP64_DIAGNOSTIC_EPISODE_V1
+            && self.policy_step_count == BASE109_STEP64_DIAGNOSTIC_POLICY_STEP_V1
+            && std::env::var_os(BASE109_STEP64_DIAGNOSTIC_ENV_V1).is_some()
+        {
+            Some(current.candidates[selected_index].semantic.clone())
+        } else {
+            None
+        };
+        if let Some(selected_semantic) = base109_step64_selected_semantic.as_ref() {
+            self.emit_base109_step64_diagnostic_v1("pre_apply", selected_semantic);
+        }
+
         let apply_result = match apply_path {
             FastActorApplyPathV1::InPlace => {
                 let proof = FastActorCurrentCandidateProofV1::from_current(
@@ -5298,7 +5314,66 @@ impl FastActorSessionV1 {
         self.policy_step_count = next_policy_step_count;
         self.physical_decision_count = next_physical_decision_count;
         self.advance_to_decision_or_terminal();
+        if let Some(selected_semantic) = base109_step64_selected_semantic.as_ref() {
+            self.emit_base109_step64_diagnostic_v1("post_advance", selected_semantic);
+        }
         Ok(self.current_response())
+    }
+
+    fn base109_step64_diagnostic_payload_v1(
+        &self,
+        stage: &str,
+        selected_semantic: &ActionSemanticV1,
+    ) -> Value {
+        let p0_hand_arena_ids: Vec<u32> = self.state.players[PlayerId::P0.index()]
+            .hand
+            .iter()
+            .map(|object| object.0)
+            .collect();
+        let p0_library_top_arena_id = self.state.players[PlayerId::P0.index()]
+            .library
+            .first()
+            .map(|object| object.0);
+        let arena4 = self.state.objects.try_get(ObjectId(4)).map(|object| {
+            serde_json::json!({
+                "arena_id": 4,
+                "card_def": object.card_def,
+                "name": object.name,
+                "zone": object.zone,
+                "owner": PlayerSeatV1::from(object.owner),
+                "controller": PlayerSeatV1::from(object.controller),
+                "zone_change_count": object.zone_change_count,
+            })
+        });
+        serde_json::json!({
+            "stage": stage,
+            "episode_id": self.episode_id,
+            "entry_policy_step_count": BASE109_STEP64_DIAGNOSTIC_POLICY_STEP_V1,
+            "policy_step_count": self.policy_step_count,
+            "physical_decision_count": self.physical_decision_count,
+            "environment_revision": self.environment_revision,
+            "turn": self.state.turn,
+            "step": self.state.step,
+            "active_player": PlayerSeatV1::from(self.state.active_player),
+            "priority_player": PlayerSeatV1::from(self.state.priority_player),
+            "priority_passes": self.state.engine.priority_passes,
+            "priority_round": self.state.engine.priority_round,
+            "lands_played_this_turn": [
+                self.state.players[PlayerId::P0.index()].lands_played_this_turn,
+                self.state.players[PlayerId::P1.index()].lands_played_this_turn,
+            ],
+            "p0_hand_arena_ids": p0_hand_arena_ids,
+            "p0_library_top_arena_id": p0_library_top_arena_id,
+            "arena4": arena4,
+            "selected_semantic": selected_semantic,
+        })
+    }
+
+    fn emit_base109_step64_diagnostic_v1(&self, stage: &str, selected_semantic: &ActionSemanticV1) {
+        eprintln!(
+            "{BASE109_STEP64_DIAGNOSTIC_ENV_V1} {}",
+            self.base109_step64_diagnostic_payload_v1(stage, selected_semantic)
+        );
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
@@ -6683,6 +6758,50 @@ mod tests {
     };
     use crate::state::{Counters, GameObject, GameState, ObjectStateV4, SplitMix64, Step, Zone};
     use std::collections::HashSet;
+
+    #[test]
+    fn base109_step64_diagnostic_payload_reports_native_transition_state() {
+        let mut session =
+            FastActorSessionV1::reset(BASE109_STEP64_DIAGNOSTIC_EPISODE_V1, 1_090_001, 256);
+        session.policy_step_count = BASE109_STEP64_DIAGNOSTIC_POLICY_STEP_V1;
+        session.physical_decision_count = 45;
+        session.environment_revision = 64;
+        session.state.turn = 9;
+        session.state.step = Step::Cleanup;
+        session.state.active_player = PlayerId::P0;
+        session.state.priority_player = PlayerId::P1;
+        session.state.engine.priority_passes = [true, false];
+        session.state.engine.priority_round = 19;
+        session.state.players[PlayerId::P0.index()].lands_played_this_turn = 1;
+        session.state.players[PlayerId::P1.index()].lands_played_this_turn = 0;
+        session.state.players[PlayerId::P0.index()].hand = vec![ObjectId(4)];
+        session.state.players[PlayerId::P0.index()].library = vec![ObjectId(5)];
+        let selected_semantic = ActionSemanticV1::Pass {
+            actor: PlayerSeatV1::P0,
+        };
+
+        let payload = session.base109_step64_diagnostic_payload_v1("pre_apply", &selected_semantic);
+
+        assert_eq!(payload["stage"], serde_json::json!("pre_apply"));
+        assert_eq!(payload["episode_id"], serde_json::json!(45));
+        assert_eq!(payload["entry_policy_step_count"], serde_json::json!(64));
+        assert_eq!(payload["policy_step_count"], serde_json::json!(64));
+        assert_eq!(payload["turn"], serde_json::json!(9));
+        assert_eq!(payload["step"], serde_json::json!("Cleanup"));
+        assert_eq!(payload["active_player"], serde_json::json!("p0"));
+        assert_eq!(payload["priority_player"], serde_json::json!("p1"));
+        assert_eq!(payload["priority_passes"], serde_json::json!([true, false]));
+        assert_eq!(payload["priority_round"], serde_json::json!(19));
+        assert_eq!(payload["lands_played_this_turn"], serde_json::json!([1, 0]));
+        assert_eq!(payload["p0_hand_arena_ids"], serde_json::json!([4]));
+        assert_eq!(payload["p0_library_top_arena_id"], serde_json::json!(5));
+        assert_eq!(payload["arena4"]["arena_id"], serde_json::json!(4));
+        assert_eq!(payload["arena4"]["owner"], serde_json::json!("p0"));
+        assert_eq!(
+            payload["selected_semantic"],
+            serde_json::json!({"action_kind": "pass", "actor": "p0"})
+        );
+    }
 
     fn attacker_state(count: usize) -> GameState {
         let mut state = GameState::new_from_libraries(&[], &[], card_name, 91);
