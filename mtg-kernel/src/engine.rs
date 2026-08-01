@@ -1068,6 +1068,12 @@ const CHAIN_COPY_COST: Cost = Cost {
     x_count: 0,
 };
 
+const CHAIN_COPY_PARTIAL_COST: Cost = Cost {
+    pips: &[mana::Pip::Colored(mana::ManaColor::R)],
+    generic: 0,
+    x_count: 0,
+};
+
 /// Whether the player in the live Chain Lightning payment continuation can
 /// currently pay {R}{R}. The engine still presents the payment decision even
 /// when this is false, matching XMage's effect order; parity drivers use this
@@ -6052,8 +6058,14 @@ fn apply_choose_spell_copy_payment(state: &mut GameState, pay: bool) -> Result<(
         return finish_pending_spell_copy_resolution(state, &pending);
     }
     let Some(plan) = mana::can_pay(&CHAIN_COPY_COST, 0, pending.player, state) else {
-        // XMage asks first, then lets the real payment attempt fail without
-        // creating a copy. The resolution still finishes normally.
+        // XMage's Chain Lightning path calls Cost.pay directly rather than
+        // payOrRollback. An unaffordable {R}{R} attempt therefore still
+        // consumes its first payable red pip before the second pip fails.
+        // Keep this best-effort side effect local to the copy continuation;
+        // ordinary spell and ability payments remain transactional.
+        if let Some(partial) = mana::can_pay(&CHAIN_COPY_PARTIAL_COST, 0, pending.player, state) {
+            pay_plan(state, pending.player, &partial);
+        }
         return finish_pending_spell_copy_resolution(state, &pending);
     };
     pay_plan(state, pending.player, &plan);
@@ -9873,6 +9885,7 @@ mod tests {
     fn chain_lightning_asks_before_an_unpayable_copy_attempt_then_finishes() {
         let mut state = ready_game_in_main1(1);
         let bolt = put_in_hand(&mut state, PlayerId::P0, "Chain Lightning");
+        let arena_before_attempt = state.objects.len();
         step(&mut state, Action::CastSpell(bolt)).unwrap();
         step(
             &mut state,
@@ -9899,6 +9912,89 @@ mod tests {
         assert!(state.stack.is_empty());
         assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
         assert_eq!(state.players[0].graveyard, vec![bolt]);
+        assert_eq!(
+            state.objects.len(),
+            arena_before_attempt,
+            "an attempt with no red resources spends nothing and creates no copy"
+        );
+    }
+
+    #[test]
+    fn chain_lightning_unpayable_copy_attempt_taps_one_available_red_source() {
+        let mut state = ready_game_in_main1(1);
+        let bolt = put_in_hand(&mut state, PlayerId::P0, "Chain Lightning");
+        let red = put_on_battlefield(&mut state, PlayerId::P1, "Mountain");
+        let arena_before_attempt = state.objects.len();
+
+        step(&mut state, Action::CastSpell(bolt)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+        assert!(!pending_spell_copy_cost_is_payable(&state));
+
+        step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+
+        assert!(
+            state.objects.get(red).tapped,
+            "XMage retains the first successful mana activation when the second red pip fails"
+        );
+        assert_eq!(state.players[PlayerId::P1.index()].mana_pool, [0; 6]);
+        assert!(state.engine.pending_spell_copy.is_none());
+        assert!(state.stack.is_empty());
+        assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
+        assert_eq!(
+            state.objects.len(),
+            arena_before_attempt,
+            "a partial payment must not create a spell copy"
+        );
+    }
+
+    #[test]
+    fn chain_lightning_unpayable_copy_attempt_spends_one_floating_red() {
+        let mut state = ready_game_in_main1(1);
+        let bolt = put_in_hand(&mut state, PlayerId::P0, "Chain Lightning");
+        state.players[PlayerId::P1.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        let arena_before_attempt = state.objects.len();
+
+        step(&mut state, Action::CastSpell(bolt)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+        assert!(!pending_spell_copy_cost_is_payable(&state));
+
+        step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+
+        assert_eq!(
+            state.players[PlayerId::P1.index()].mana_pool[ManaColor::R.pool_index()],
+            0,
+            "XMage retains floating mana spent before the second red pip fails"
+        );
+        assert!(state.engine.pending_spell_copy.is_none());
+        assert!(state.stack.is_empty());
+        assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
+        assert_eq!(
+            state.objects.len(),
+            arena_before_attempt,
+            "a partial payment must not create a spell copy"
+        );
     }
 
     #[test]
@@ -9985,6 +10081,41 @@ mod tests {
             4,
             "declining allocates no virtual object"
         );
+    }
+
+    #[test]
+    fn chain_lightning_copy_payment_spends_floating_red_and_taps_the_remaining_source() {
+        let mut state = ready_game_in_main1(1);
+        let bolt = put_in_hand(&mut state, PlayerId::P0, "Chain Lightning");
+        let red = put_on_battlefield(&mut state, PlayerId::P1, "Mountain");
+        state.players[PlayerId::P1.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+
+        step(&mut state, Action::CastSpell(bolt)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+
+        step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+
+        assert!(
+            state.objects.get(red).tapped,
+            "the second red pip must tap the only available red source"
+        );
+        assert_eq!(
+            state.players[PlayerId::P1.index()].mana_pool[ManaColor::R.pool_index()],
+            0,
+            "the first red pip must consume the floating red"
+        );
+        assert_eq!(state.stack.len(), 2, "paying creates exactly one copy");
     }
 
     #[test]
