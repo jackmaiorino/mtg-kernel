@@ -35,6 +35,7 @@ pub const NATIVE_ROLLOUT_TEACHER_ENVELOPE_SCHEMA_V1: &str =
 
 const ROOT_COUNT_V1: usize = 32;
 const RANKING_ROLLOUTS_PER_ACTION_V1: usize = 4;
+const RANKING_ROLLOUTS_PER_ACTION_RANK16_V1: usize = 16;
 const CONFIRMATION_ROLLOUTS_PER_ACTION_V1: usize = 32;
 const MAX_BRANCH_POLICY_STEPS_V1: usize = 512;
 const MAX_SOURCE_EPISODES_V1: usize = 256;
@@ -49,6 +50,8 @@ const PROBE_BASE_SEED_V1: u64 = 0x726f_6c6c_6f75_7431;
 const MAIN_POLICY_DOMAIN_V1: u64 = 0x6d61_696e_706f_6c31;
 const RANKING_POLICY_DOMAIN_V1: u64 = 0x7261_6e6b_706f_6c31;
 const CONFIRM_POLICY_DOMAIN_V1: u64 = 0x636f_6e66_706f_6c31;
+const RANK16_RANKING_POLICY_DOMAIN_V1: u64 = 0x7231_3672_706f_6c31;
+const RANK16_CONFIRM_POLICY_DOMAIN_V1: u64 = 0x7231_3663_706f_6c31;
 const RETAINED_MANIFEST_SHA256_V1: &str =
     "706b3aa80ec7a3c067d458fef06bb2237320543f202fb2349c5cb885975fdbbb";
 const RETAINED_PAYLOAD_SHA256_V1: &str =
@@ -580,9 +583,10 @@ fn evaluate_root_v1(
     })
 }
 
-fn aggregate_v1(
+fn aggregate_with_ranking_samples_v1(
     roots: &[NativeRolloutTeacherRootV1],
     source_episodes_examined: usize,
+    ranking_rollouts_per_action: usize,
 ) -> (NativeRolloutTeacherAggregateV1, NativeRolloutTeacherGatesV1) {
     let mut all_outcomes = NativeRolloutOutcomeCountsV1::default();
     let mut changed_roots = 0usize;
@@ -597,7 +601,7 @@ fn aggregate_v1(
     for root in roots {
         for action in &root.ranking {
             all_outcomes.add_v1(&action.outcomes);
-            if action.outcomes.natural != RANKING_ROLLOUTS_PER_ACTION_V1 as u64 {
+            if action.outcomes.natural != ranking_rollouts_per_action as u64 {
                 incomplete_ranking_actions += 1;
             }
         }
@@ -681,6 +685,17 @@ fn aggregate_v1(
             confirmed_mean_delta_at_least_0p05,
             intrinsic_signal_pass,
         },
+    )
+}
+
+fn aggregate_v1(
+    roots: &[NativeRolloutTeacherRootV1],
+    source_episodes_examined: usize,
+) -> (NativeRolloutTeacherAggregateV1, NativeRolloutTeacherGatesV1) {
+    aggregate_with_ranking_samples_v1(
+        roots,
+        source_episodes_examined,
+        RANKING_ROLLOUTS_PER_ACTION_V1,
     )
 }
 
@@ -934,9 +949,17 @@ pub const NATIVE_ROLLOUT_TEACHER_INFORMATION_SET_SCHEMA_V1: &str =
     "mtg-kernel-native-rollout-teacher-information-set/v1";
 pub const NATIVE_ROLLOUT_TEACHER_INFORMATION_SET_ENVELOPE_SCHEMA_V1: &str =
     "mtg-kernel-native-rollout-teacher-information-set-envelope/v1";
+pub const NATIVE_ROLLOUT_TEACHER_INFORMATION_SET_RANK16_SCHEMA_V1: &str =
+    "mtg-kernel-native-rollout-teacher-information-set-rank16/v1";
+pub const NATIVE_ROLLOUT_TEACHER_INFORMATION_SET_RANK16_ENVELOPE_SCHEMA_V1: &str =
+    "mtg-kernel-native-rollout-teacher-information-set-rank16-envelope/v1";
 
 const RANKING_REDETERMINIZATION_DOMAIN_V1: u64 = 0x7261_6e6b_7265_6431;
 const CONFIRM_REDETERMINIZATION_DOMAIN_V1: u64 = 0x636f_6e66_7265_6431;
+const RANK16_RANKING_REDETERMINIZATION_DOMAIN_V1: u64 = 0x7231_3672_7265_6431;
+const RANK16_CONFIRM_REDETERMINIZATION_DOMAIN_V1: u64 = 0x7231_3663_7265_6431;
+const RANK16_SEED_DOMAIN_SET_V1: &str =
+    "rank16-held-out-domains:r16rred1,r16rpol1,r16cred1,r16cpol1;sample-first-shared-information-set-and-paired-policy-crns/v1";
 
 #[derive(Clone, Debug, Serialize)]
 pub struct NativeRolloutTeacherInformationSetSampleV1 {
@@ -1006,6 +1029,29 @@ pub struct NativeRolloutTeacherInformationSetEnvelopeV1 {
     pub runtime_under_ten_minutes: bool,
     pub disposition: &'static str,
     pub report: NativeRolloutTeacherInformationSetReportV1,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeRolloutTeacherInformationSetRank16ReportV1 {
+    pub schema: &'static str,
+    pub publication_encoding: &'static str,
+    pub source: NativeRolloutTeacherSourceV1,
+    pub config: NativeRolloutTeacherConfigV1,
+    pub seed_domain_set: &'static str,
+    pub roots: Vec<NativeRolloutTeacherInformationSetRootV1>,
+    pub aggregate: NativeRolloutTeacherInformationSetAggregateV1,
+    pub gates: NativeRolloutTeacherInformationSetGatesV1,
+    pub interpretation: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeRolloutTeacherInformationSetRank16EnvelopeV1 {
+    pub schema: &'static str,
+    pub deterministic_report_sha256: String,
+    pub elapsed_milliseconds: u64,
+    pub runtime_under_ten_minutes: bool,
+    pub disposition: &'static str,
+    pub report: NativeRolloutTeacherInformationSetRank16ReportV1,
 }
 
 fn redeterminization_seed_v1(domain: u64, root_ordinal: usize, rollout_ordinal: usize) -> u64 {
@@ -1112,13 +1158,18 @@ fn unique_sample_hash_count_v1(samples: impl Iterator<Item = u64>) -> usize {
     samples.collect::<std::collections::BTreeSet<_>>().len()
 }
 
-fn evaluate_information_set_root_v1(
+fn evaluate_information_set_root_with_ranking_samples_v1(
     inference: &NativeXmageCp7OutcomeInferenceV1,
     session: &FastActorSessionV1,
     scored: ScoredCurrentDecisionV1,
     root_ordinal: usize,
     source_episode_ordinal: usize,
     environment_seed: u64,
+    ranking_rollouts_per_action: usize,
+    ranking_redeterminization_domain: u64,
+    ranking_policy_domain: u64,
+    confirmation_redeterminization_domain: u64,
+    confirmation_policy_domain: u64,
 ) -> Result<NativeRolloutTeacherInformationSetRootV1, io::Error> {
     let expected = scored.expected;
     let root_actor = expected.acting_player;
@@ -1134,11 +1185,11 @@ fn evaluate_information_set_root_v1(
         scored.logits.iter().map(|value| value.to_bits()).collect();
 
     let mut ranking_outcomes = vec![NativeRolloutOutcomeCountsV1::default(); scored.logits.len()];
-    let mut ranking_samples = Vec::with_capacity(RANKING_ROLLOUTS_PER_ACTION_V1);
-    let mut ranking_sample_hashes = Vec::with_capacity(RANKING_ROLLOUTS_PER_ACTION_V1);
-    for rollout_ordinal in 0..RANKING_ROLLOUTS_PER_ACTION_V1 {
+    let mut ranking_samples = Vec::with_capacity(ranking_rollouts_per_action);
+    let mut ranking_sample_hashes = Vec::with_capacity(ranking_rollouts_per_action);
+    for rollout_ordinal in 0..ranking_rollouts_per_action {
         let redeterminization_seed = redeterminization_seed_v1(
-            RANKING_REDETERMINIZATION_DOMAIN_V1,
+            ranking_redeterminization_domain,
             root_ordinal,
             rollout_ordinal,
         );
@@ -1159,7 +1210,7 @@ fn evaluate_information_set_root_v1(
                 inference,
                 root_actor,
                 action_index as u32,
-                RANKING_POLICY_DOMAIN_V1,
+                ranking_policy_domain,
                 root_ordinal,
                 rollout_ordinal,
             );
@@ -1201,7 +1252,7 @@ fn evaluate_information_set_root_v1(
     let mut confirmation_sample_hashes = Vec::with_capacity(CONFIRMATION_ROLLOUTS_PER_ACTION_V1);
     for rollout_ordinal in 0..CONFIRMATION_ROLLOUTS_PER_ACTION_V1 {
         let redeterminization_seed = redeterminization_seed_v1(
-            CONFIRM_REDETERMINIZATION_DOMAIN_V1,
+            confirmation_redeterminization_domain,
             root_ordinal,
             rollout_ordinal,
         );
@@ -1220,7 +1271,7 @@ fn evaluate_information_set_root_v1(
             inference,
             root_actor,
             teacher_index,
-            CONFIRM_POLICY_DOMAIN_V1,
+            confirmation_policy_domain,
             root_ordinal,
             rollout_ordinal,
         );
@@ -1231,7 +1282,7 @@ fn evaluate_information_set_root_v1(
             inference,
             root_actor,
             parent_argmax,
-            CONFIRM_POLICY_DOMAIN_V1,
+            confirmation_policy_domain,
             root_ordinal,
             rollout_ordinal,
         );
@@ -1320,25 +1371,83 @@ fn evaluate_information_set_root_v1(
     })
 }
 
-fn aggregate_information_set_v1(
+fn evaluate_information_set_root_v1(
+    inference: &NativeXmageCp7OutcomeInferenceV1,
+    session: &FastActorSessionV1,
+    scored: ScoredCurrentDecisionV1,
+    root_ordinal: usize,
+    source_episode_ordinal: usize,
+    environment_seed: u64,
+) -> Result<NativeRolloutTeacherInformationSetRootV1, io::Error> {
+    evaluate_information_set_root_with_ranking_samples_v1(
+        inference,
+        session,
+        scored,
+        root_ordinal,
+        source_episode_ordinal,
+        environment_seed,
+        RANKING_ROLLOUTS_PER_ACTION_V1,
+        RANKING_REDETERMINIZATION_DOMAIN_V1,
+        RANKING_POLICY_DOMAIN_V1,
+        CONFIRM_REDETERMINIZATION_DOMAIN_V1,
+        CONFIRM_POLICY_DOMAIN_V1,
+    )
+}
+
+fn evaluate_information_set_rank16_root_v1(
+    inference: &NativeXmageCp7OutcomeInferenceV1,
+    session: &FastActorSessionV1,
+    scored: ScoredCurrentDecisionV1,
+    root_ordinal: usize,
+    source_episode_ordinal: usize,
+    environment_seed: u64,
+) -> Result<NativeRolloutTeacherInformationSetRootV1, io::Error> {
+    evaluate_information_set_root_with_ranking_samples_v1(
+        inference,
+        session,
+        scored,
+        root_ordinal,
+        source_episode_ordinal,
+        environment_seed,
+        RANKING_ROLLOUTS_PER_ACTION_RANK16_V1,
+        RANK16_RANKING_REDETERMINIZATION_DOMAIN_V1,
+        RANK16_RANKING_POLICY_DOMAIN_V1,
+        RANK16_CONFIRM_REDETERMINIZATION_DOMAIN_V1,
+        RANK16_CONFIRM_POLICY_DOMAIN_V1,
+    )
+}
+
+fn aggregate_information_set_with_ranking_samples_v1(
     roots: &[NativeRolloutTeacherInformationSetRootV1],
     source_episodes_examined: usize,
+    ranking_rollouts_per_action: usize,
 ) -> (
     NativeRolloutTeacherInformationSetAggregateV1,
     NativeRolloutTeacherInformationSetGatesV1,
 ) {
     let rollout_roots: Vec<_> = roots.iter().map(|root| root.rollout.clone()).collect();
-    let (rollout_aggregate, rollout_gates) = aggregate_v1(&rollout_roots, source_episodes_examined);
+    let (rollout_aggregate, rollout_gates) = aggregate_with_ranking_samples_v1(
+        &rollout_roots,
+        source_episodes_examined,
+        ranking_rollouts_per_action,
+    );
     let mut samples_attempted = 0_u64;
     let mut ranking_branch_starts_checked = 0_u64;
     let mut confirmation_branch_starts_checked = 0_u64;
     let mut shared_sample_branch_start_mismatches = 0_u64;
     let mut every_ranking_sample_shared_by_all_actions = true;
     let mut every_confirmation_sample_shared_by_both_branches = true;
+    let mut every_root_has_exact_sample_counts = true;
     let mut roots_with_multiple_distinct_samples = 0usize;
     let mut minimum_unique_samples_at_any_root = usize::MAX;
 
     for root in roots {
+        if root.information_set_sampling.ranking_samples.len() != ranking_rollouts_per_action
+            || root.information_set_sampling.confirmation_samples.len()
+                != CONFIRMATION_ROLLOUTS_PER_ACTION_V1
+        {
+            every_root_has_exact_sample_counts = false;
+        }
         samples_attempted += (root.information_set_sampling.ranking_samples.len()
             + root.information_set_sampling.confirmation_samples.len())
             as u64;
@@ -1388,10 +1497,10 @@ fn aggregate_information_set_v1(
     if roots.is_empty() {
         minimum_unique_samples_at_any_root = 0;
     }
-    let samples_expected = (roots.len()
-        * (RANKING_ROLLOUTS_PER_ACTION_V1 + CONFIRMATION_ROLLOUTS_PER_ACTION_V1))
-        as u64;
-    let zero_redeterminization_failures = samples_attempted == samples_expected;
+    let samples_expected =
+        (roots.len() * (ranking_rollouts_per_action + CONFIRMATION_ROLLOUTS_PER_ACTION_V1)) as u64;
+    let zero_redeterminization_failures =
+        every_root_has_exact_sample_counts && samples_attempted == samples_expected;
     let zero_shared_sample_branch_start_mismatches = shared_sample_branch_start_mismatches == 0;
     let every_root_has_multiple_distinct_information_set_samples =
         !roots.is_empty() && roots_with_multiple_distinct_samples == roots.len();
@@ -1422,6 +1531,34 @@ fn aggregate_information_set_v1(
             every_root_has_multiple_distinct_information_set_samples,
             information_set_signal_pass,
         },
+    )
+}
+
+fn aggregate_information_set_v1(
+    roots: &[NativeRolloutTeacherInformationSetRootV1],
+    source_episodes_examined: usize,
+) -> (
+    NativeRolloutTeacherInformationSetAggregateV1,
+    NativeRolloutTeacherInformationSetGatesV1,
+) {
+    aggregate_information_set_with_ranking_samples_v1(
+        roots,
+        source_episodes_examined,
+        RANKING_ROLLOUTS_PER_ACTION_V1,
+    )
+}
+
+fn aggregate_information_set_rank16_v1(
+    roots: &[NativeRolloutTeacherInformationSetRootV1],
+    source_episodes_examined: usize,
+) -> (
+    NativeRolloutTeacherInformationSetAggregateV1,
+    NativeRolloutTeacherInformationSetGatesV1,
+) {
+    aggregate_information_set_with_ranking_samples_v1(
+        roots,
+        source_episodes_examined,
+        RANKING_ROLLOUTS_PER_ACTION_RANK16_V1,
     )
 }
 
@@ -1569,6 +1706,150 @@ pub fn run_native_rollout_teacher_information_set_v1(
     })
 }
 
+/// Exact deterministic rank-16 information-set report bytes written by its
+/// CLI and covered by its reported SHA-256. Runtime timing is absent.
+pub fn native_rollout_teacher_information_set_rank16_report_bytes_v1(
+    report: &NativeRolloutTeacherInformationSetRank16ReportV1,
+) -> Result<Vec<u8>, serde_json::Error> {
+    let mut bytes = serde_json::to_vec_pretty(report)?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn information_set_rank16_report_sha256_v1(
+    report: &NativeRolloutTeacherInformationSetRank16ReportV1,
+) -> Result<String, serde_json::Error> {
+    let bytes = native_rollout_teacher_information_set_rank16_report_bytes_v1(report)?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+/// Runs the bounded rank-16 acting-player information-set sibling. Ranking
+/// uses sixteen shared hidden-card samples per legal action. Confirmation
+/// remains thirty-two fresh shared samples for teacher versus parent.
+pub fn run_native_rollout_teacher_information_set_rank16_v1(
+    source_outcome_root: impl AsRef<Path>,
+) -> Result<NativeRolloutTeacherInformationSetRank16EnvelopeV1, Box<dyn Error>> {
+    let started = Instant::now();
+    let inference = load_xmage_cp7_outcome_inference_v1(source_outcome_root.as_ref())?;
+    if lower_hex_raw32_v1(inference.manifest_sha256_v1()) != RETAINED_MANIFEST_SHA256_V1
+        || lower_hex_raw32_v1(inference.payload_sha256_v1()) != RETAINED_PAYLOAD_SHA256_V1
+        || lower_hex_raw32_v1(inference.native_state_sha256_v1()) != RETAINED_NATIVE_STATE_SHA256_V1
+        || lower_hex_raw32_v1(inference.model_parameter_sha256_v1())
+            != RETAINED_MODEL_PARAMETER_SHA256_V1
+        || inference.adam_step_v1() != RETAINED_ADAM_STEP_V1
+    {
+        return Err(invalid_data_v1("source is not the exact retained 706b checkpoint").into());
+    }
+    let source = NativeRolloutTeacherSourceV1 {
+        outcome_manifest_sha256: lower_hex_raw32_v1(inference.manifest_sha256_v1()),
+        outcome_payload_sha256: lower_hex_raw32_v1(inference.payload_sha256_v1()),
+        native_state_sha256: lower_hex_raw32_v1(inference.native_state_sha256_v1()),
+        model_parameter_sha256: lower_hex_raw32_v1(inference.model_parameter_sha256_v1()),
+        corpus_sha256: lower_hex_raw32_v1(inference.corpus_sha256_v1()),
+        adam_step: inference.adam_step_v1(),
+    };
+    let config = NativeRolloutTeacherConfigV1 {
+        base_seed_u64_hex: format!("{PROBE_BASE_SEED_V1:016x}"),
+        root_count: ROOT_COUNT_V1,
+        max_source_episodes: MAX_SOURCE_EPISODES_V1,
+        roots_per_episode: 1,
+        root_eligibility:
+            "surface, substep_count=1, physical_decision_id>=10, legal_action_count=2..8",
+        ranking_rollouts_per_action: RANKING_ROLLOUTS_PER_ACTION_RANK16_V1,
+        confirmation_rollouts_per_action: CONFIRMATION_ROLLOUTS_PER_ACTION_V1,
+        max_branch_policy_steps_including_forced_root: MAX_BRANCH_POLICY_STEPS_V1,
+        continuation_policy: "retained-checkpoint-temperature-1-self-play",
+        continuation_sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+        continuation_sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+        branch_randomness: RANK16_SEED_DOMAIN_SET_V1,
+        information_scope:
+            "acting-player-information-set-deterministic-modulo-fisher-yates-redeterminization/v1",
+        training_admissibility:
+            "rank16-diagnostic-only-no-training-authorization-even-after-reproducible-rerun",
+    };
+
+    let mut roots = Vec::with_capacity(ROOT_COUNT_V1);
+    let mut source_episodes_examined = 0usize;
+    for episode_ordinal in 0..MAX_SOURCE_EPISODES_V1 {
+        if roots.len() == ROOT_COUNT_V1 {
+            break;
+        }
+        source_episodes_examined += 1;
+        let episode_id = ROOT_EPISODE_ID_BASE_V1 + episode_ordinal as u64;
+        let environment_seed = environment_seed_v1(episode_ordinal);
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            episode_id,
+            environment_seed,
+            SESSION_MAX_PHYSICAL_DECISIONS_V1,
+            SESSION_MAX_POLICY_STEPS_V1,
+            ["Rally".to_owned(), "Rally".to_owned()],
+        )
+        .map_err(|_| invalid_data_v1("Rally source session reset failed"))?;
+
+        for _ in 0..MAX_SOURCE_POLICY_STEPS_V1 {
+            let FastActorResponseV1::Decision(_) = session.current_response() else {
+                break;
+            };
+            let scored = score_current_decision_v1(&inference, &session)
+                .map_err(|_| invalid_data_v1("source policy scoring failed"))?;
+            if eligible_root_v1(scored.expected) {
+                let root = evaluate_information_set_rank16_root_v1(
+                    &inference,
+                    &session,
+                    scored,
+                    roots.len(),
+                    episode_ordinal,
+                    environment_seed,
+                )?;
+                roots.push(root);
+                break;
+            }
+            let selected = sample_policy_v1(
+                &scored.logits,
+                main_policy_seed_v1(episode_ordinal, scored.expected.step),
+            )
+            .map_err(|_| invalid_data_v1("source policy sampling failed"))?;
+            consume_scored_v1(&mut session, scored, selected)
+                .map_err(|_| invalid_data_v1("source policy consume failed"))?;
+        }
+    }
+
+    let (aggregate, gates) = aggregate_information_set_rank16_v1(&roots, source_episodes_examined);
+    let report = NativeRolloutTeacherInformationSetRank16ReportV1 {
+        schema: NATIVE_ROLLOUT_TEACHER_INFORMATION_SET_RANK16_SCHEMA_V1,
+        publication_encoding: "serde-json-pretty-utf8-trailing-lf/v1",
+        source,
+        config,
+        seed_domain_set: RANK16_SEED_DOMAIN_SET_V1,
+        roots,
+        aggregate,
+        gates,
+        interpretation: "Acting-player information-set rank-16 diagnostic. Ranking uses exactly sixteen sample-first hidden-card assignments shared across all legal actions; confirmation uses exactly thirty-two fresh assignments shared by teacher and parent. All four rank-16 redeterminization and continuation-policy seed domains are held out from the rank-4 diagnostic. The frozen sampler is not a Bayesian posterior. This diagnostic does not authorize training.",
+    };
+    let deterministic_report_sha256 = information_set_rank16_report_sha256_v1(&report)?;
+    let elapsed_milliseconds = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let runtime_under_ten_minutes = elapsed_milliseconds < 600_000;
+    let disposition = if report.gates.information_set_signal_pass && runtime_under_ten_minutes {
+        "provisional-rank16-pass-requires-identical-rerun-diagnostic-only-no-training"
+    } else {
+        "reject-rank16-information-set-signal-diagnostic-only-no-training"
+    };
+    Ok(NativeRolloutTeacherInformationSetRank16EnvelopeV1 {
+        schema: NATIVE_ROLLOUT_TEACHER_INFORMATION_SET_RANK16_ENVELOPE_SCHEMA_V1,
+        deterministic_report_sha256,
+        elapsed_milliseconds,
+        runtime_under_ten_minutes,
+        disposition,
+        report,
+    })
+}
+
 #[cfg(test)]
 mod information_set_tests {
     use super::*;
@@ -1629,6 +1910,231 @@ mod information_set_tests {
             verified_branch_start_hash_v1(7, 7, ContinuationOutcomeV1::Failure),
             None
         );
+    }
+
+    fn rank16_root_v1(root_ordinal: usize) -> NativeRolloutTeacherInformationSetRootV1 {
+        let ranking = (0..2)
+            .map(|action_index| NativeRolloutTeacherActionRankingV1 {
+                action_index,
+                parent_logit_f32_bits: (action_index as f32).to_bits(),
+                outcomes: NativeRolloutOutcomeCountsV1 {
+                    attempted: RANKING_ROLLOUTS_PER_ACTION_RANK16_V1 as u64,
+                    natural: RANKING_ROLLOUTS_PER_ACTION_RANK16_V1 as u64,
+                    natural_reward_sum: 0,
+                    ..Default::default()
+                },
+            })
+            .collect();
+        let ranking_samples: Vec<_> = (0..RANKING_ROLLOUTS_PER_ACTION_RANK16_V1)
+            .map(|rollout_ordinal| {
+                let hash = format!("{:016x}", 1 + rollout_ordinal % 2);
+                NativeRolloutTeacherInformationSetSampleV1 {
+                    rollout_ordinal,
+                    redeterminization_seed_u64_hex: format!(
+                        "{:016x}",
+                        redeterminization_seed_v1(
+                            RANK16_RANKING_REDETERMINIZATION_DOMAIN_V1,
+                            root_ordinal,
+                            rollout_ordinal,
+                        )
+                    ),
+                    sampled_privileged_state_hash_u64_hex: hash.clone(),
+                    checked_branch_start_hashes_u64_hex: vec![hash; 2],
+                }
+            })
+            .collect();
+        let confirmation_samples: Vec<_> = (0..CONFIRMATION_ROLLOUTS_PER_ACTION_V1)
+            .map(|rollout_ordinal| {
+                let hash = format!("{:016x}", 3 + rollout_ordinal % 2);
+                NativeRolloutTeacherInformationSetSampleV1 {
+                    rollout_ordinal,
+                    redeterminization_seed_u64_hex: format!(
+                        "{:016x}",
+                        redeterminization_seed_v1(
+                            RANK16_CONFIRM_REDETERMINIZATION_DOMAIN_V1,
+                            root_ordinal,
+                            rollout_ordinal,
+                        )
+                    ),
+                    sampled_privileged_state_hash_u64_hex: hash.clone(),
+                    checked_branch_start_hashes_u64_hex: vec![hash; 2],
+                }
+            })
+            .collect();
+        NativeRolloutTeacherInformationSetRootV1 {
+            rollout: NativeRolloutTeacherRootV1 {
+                root_ordinal,
+                source_episode_ordinal: root_ordinal,
+                episode_id: ROOT_EPISODE_ID_BASE_V1 + root_ordinal as u64,
+                environment_seed_u64_hex: "0000000000000000".to_owned(),
+                step: 10,
+                physical_decision_id: 10,
+                acting_player: PlayerSeatV1::P0,
+                legal_action_count: 2,
+                privileged_state_hash_u64_hex: "0000000000000000".to_owned(),
+                action_semantics: Vec::new(),
+                parent_logits_f32_bits: vec![0.0_f32.to_bits(), 1.0_f32.to_bits()],
+                parent_argmax_index: 1,
+                teacher_index: 1,
+                teacher_differs_from_parent: false,
+                ranking,
+                confirmation: NativeRolloutTeacherConfirmationV1 {
+                    teacher_outcomes: NativeRolloutOutcomeCountsV1 {
+                        attempted: CONFIRMATION_ROLLOUTS_PER_ACTION_V1 as u64,
+                        natural: CONFIRMATION_ROLLOUTS_PER_ACTION_V1 as u64,
+                        ..Default::default()
+                    },
+                    parent_argmax_outcomes: NativeRolloutOutcomeCountsV1 {
+                        attempted: CONFIRMATION_ROLLOUTS_PER_ACTION_V1 as u64,
+                        natural: CONFIRMATION_ROLLOUTS_PER_ACTION_V1 as u64,
+                        ..Default::default()
+                    },
+                    paired_teacher_better: 0,
+                    paired_parent_better: 0,
+                    paired_equal: CONFIRMATION_ROLLOUTS_PER_ACTION_V1 as u32,
+                    paired_incomplete: 0,
+                    paired_complete: CONFIRMATION_ROLLOUTS_PER_ACTION_V1 as u32,
+                    same_action_pair_mismatches: 0,
+                    teacher_minus_parent_reward_sum: 0,
+                },
+            },
+            information_set_sampling: NativeRolloutTeacherInformationSetSamplingV1 {
+                method: "test-rank16",
+                distribution_claim: "test-only",
+                ranking_samples,
+                confirmation_samples,
+                ranking_unique_sampled_state_hashes: 2,
+                confirmation_unique_sampled_state_hashes: 2,
+                combined_unique_sampled_state_hashes: 4,
+            },
+        }
+    }
+
+    #[test]
+    fn rank16_aggregate_uses_exact_ranking_and_confirmation_counts_v1() {
+        let mut roots: Vec<_> = (0..ROOT_COUNT_V1).map(rank16_root_v1).collect();
+        let (aggregate, gates) = aggregate_information_set_rank16_v1(&roots, ROOT_COUNT_V1);
+        assert_eq!(
+            aggregate.redeterminization_samples_required_for_collected_roots,
+            (ROOT_COUNT_V1
+                * (RANKING_ROLLOUTS_PER_ACTION_RANK16_V1 + CONFIRMATION_ROLLOUTS_PER_ACTION_V1))
+                as u64
+        );
+        assert_eq!(
+            aggregate.redeterminization_samples_recorded_successfully,
+            1_536
+        );
+        assert_eq!(aggregate.ranking_branch_starts_checked, 1_024);
+        assert_eq!(aggregate.confirmation_branch_starts_checked, 2_048);
+        assert_eq!(aggregate.rollout.all_outcomes.attempted, 3_072);
+        assert_eq!(aggregate.rollout.all_outcomes.natural, 3_072);
+        assert_eq!(aggregate.rollout.incomplete_ranking_actions, 0);
+        assert!(gates.rollout.all_ranking_rollouts_natural);
+        assert!(gates.rollout.all_confirmation_pairs_complete);
+        assert!(gates.zero_redeterminization_failures);
+        assert!(gates.every_ranking_sample_shared_by_all_actions);
+        assert!(gates.every_confirmation_sample_shared_by_both_branches);
+        assert!(gates.zero_shared_sample_branch_start_mismatches);
+
+        let moved = roots[0]
+            .information_set_sampling
+            .ranking_samples
+            .pop()
+            .unwrap();
+        roots[1]
+            .information_set_sampling
+            .ranking_samples
+            .push(moved);
+        let (_, malformed_gates) = aggregate_information_set_rank16_v1(&roots, ROOT_COUNT_V1);
+        assert!(!malformed_gates.zero_redeterminization_failures);
+    }
+
+    #[test]
+    fn rank16_seed_schedules_are_action_independent_v1() {
+        let schedule = || {
+            (0..RANKING_ROLLOUTS_PER_ACTION_RANK16_V1)
+                .map(|rollout_ordinal| {
+                    (
+                        redeterminization_seed_v1(
+                            RANK16_RANKING_REDETERMINIZATION_DOMAIN_V1,
+                            7,
+                            rollout_ordinal,
+                        ),
+                        continuation_policy_seed_v1(
+                            RANK16_RANKING_POLICY_DOMAIN_V1,
+                            7,
+                            rollout_ordinal,
+                            PlayerSeatV1::P0,
+                            3,
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let schedules_for_all_legal_actions: Vec<_> = (0..MAX_ROOT_ACTIONS_V1)
+            .map(|_action_index| schedule())
+            .collect();
+        assert_eq!(schedules_for_all_legal_actions.len(), 8);
+        assert_eq!(schedules_for_all_legal_actions[0].len(), 16);
+        assert!(schedules_for_all_legal_actions
+            .windows(2)
+            .all(|pair| pair[0] == pair[1]));
+        for rollout_ordinal in 0..RANKING_ROLLOUTS_PER_ACTION_RANK16_V1 {
+            assert_ne!(
+                redeterminization_seed_v1(
+                    RANK16_RANKING_REDETERMINIZATION_DOMAIN_V1,
+                    7,
+                    rollout_ordinal,
+                ),
+                redeterminization_seed_v1(
+                    RANK16_CONFIRM_REDETERMINIZATION_DOMAIN_V1,
+                    7,
+                    rollout_ordinal,
+                )
+            );
+        }
+        for rollout_ordinal in 0..RANKING_ROLLOUTS_PER_ACTION_V1 {
+            assert_ne!(
+                schedules_for_all_legal_actions[0][rollout_ordinal].0,
+                redeterminization_seed_v1(RANKING_REDETERMINIZATION_DOMAIN_V1, 7, rollout_ordinal,)
+            );
+            assert_ne!(
+                schedules_for_all_legal_actions[0][rollout_ordinal].1,
+                continuation_policy_seed_v1(
+                    RANKING_POLICY_DOMAIN_V1,
+                    7,
+                    rollout_ordinal,
+                    PlayerSeatV1::P0,
+                    3,
+                )
+            );
+        }
+        for rollout_ordinal in 0..CONFIRMATION_ROLLOUTS_PER_ACTION_V1 {
+            assert_ne!(
+                redeterminization_seed_v1(
+                    RANK16_CONFIRM_REDETERMINIZATION_DOMAIN_V1,
+                    7,
+                    rollout_ordinal,
+                ),
+                redeterminization_seed_v1(CONFIRM_REDETERMINIZATION_DOMAIN_V1, 7, rollout_ordinal,)
+            );
+            assert_ne!(
+                continuation_policy_seed_v1(
+                    RANK16_CONFIRM_POLICY_DOMAIN_V1,
+                    7,
+                    rollout_ordinal,
+                    PlayerSeatV1::P1,
+                    5,
+                ),
+                continuation_policy_seed_v1(
+                    CONFIRM_POLICY_DOMAIN_V1,
+                    7,
+                    rollout_ordinal,
+                    PlayerSeatV1::P1,
+                    5,
+                )
+            );
+        }
     }
 
     #[test]
