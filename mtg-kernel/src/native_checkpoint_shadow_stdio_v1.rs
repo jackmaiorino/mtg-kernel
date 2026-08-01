@@ -13,6 +13,9 @@ use crate::fast_sampler::{
     FAST_CATEGORICAL_SAMPLER_VERSION,
 };
 use crate::flat_policy_v2::{FlatDecisionBindingV2, FlatScoringDecisionViewV2};
+use crate::native_bilinear_policy_residual_v1::{
+    load_native_rank1_policy_residual_inference_v1, NativeRank1PolicyResidualInferenceV1,
+};
 use crate::native_checkpoint_inference_v1::{
     NativeCheckpointInferenceOutputV1, NativeCheckpointInferenceV1,
 };
@@ -476,7 +479,21 @@ struct XmageCp7OutcomeShadowModelScorerV1 {
     inference: NativeXmageCp7OutcomeInferenceV1,
 }
 
+struct NativeRank1PolicyResidualShadowModelScorerV1 {
+    inference: NativeRank1PolicyResidualInferenceV1,
+}
+
 impl ShadowModelScorerV1 for XmageCp7OutcomeShadowModelScorerV1 {
+    fn score_v1(&self, decision: FlatScoringDecisionViewV2<'_>) -> Result<ShadowModelOutputV1, ()> {
+        let output = self.inference.score_decision_v1(decision)?;
+        Ok(ShadowModelOutputV1 {
+            logits: output.logits_v1().to_vec(),
+            value: output.value_v1(),
+        })
+    }
+}
+
+impl ShadowModelScorerV1 for NativeRank1PolicyResidualShadowModelScorerV1 {
     fn score_v1(&self, decision: FlatScoringDecisionViewV2<'_>) -> Result<ShadowModelOutputV1, ()> {
         let output = self.inference.score_decision_v1(decision)?;
         Ok(ShadowModelOutputV1 {
@@ -1447,6 +1464,52 @@ impl ShadowScorerServiceV1 {
             });
         }
         if let ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root } = &authority {
+            let rank1_candidate = root.join("candidate.json").try_exists().map_err(|_| {
+                ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
+            })?;
+            if rank1_candidate {
+                let inference =
+                    load_native_rank1_policy_residual_inference_v1(root).map_err(|_| {
+                        ShadowScorerStartupErrorV1::new(
+                            ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                        )
+                    })?;
+                let identity = ShadowCheckpointIdentityV1 {
+                    // Reuse the existing Java outcome-root transport. The
+                    // four loaded hashes below identify the stricter residual
+                    // bundle and are supplied explicitly by the harness.
+                    authority_kind: "xmage-cp7-outcome-reinforce-derivative-v1".to_owned(),
+                    source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                    source_generation: SOURCE_GENERATION_V1,
+                    source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+                    source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+                    source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+                    source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+                    loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                    loaded_generation: inference.parent_adam_step_v1(),
+                    loaded_checkpoint_sha256: lower_hex_raw32_v1(
+                        inference.candidate_json_sha256_v1(),
+                    ),
+                    loaded_payload_sha256: lower_hex_raw32_v1(inference.weights_sha256_v1()),
+                    loaded_train_state_sha256: lower_hex_raw32_v1(inference.report_sha256_v1()),
+                    model_parameter_sha256: lower_hex_raw32_v1(
+                        inference.composite_model_parameter_sha256_v1(),
+                    ),
+                    environment_trajectory_contract: SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
+                    sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+                    sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+                };
+                return Ok(Self {
+                    model: Box::new(NativeRank1PolicyResidualShadowModelScorerV1 { inference }),
+                    identity,
+                    max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
+                    max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
+                    active: None,
+                    teacher_export: None,
+                    outcome_export: None,
+                    export_poisoned: false,
+                });
+            }
             let inference = load_xmage_cp7_outcome_inference_v1(root).map_err(|_| {
                 ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
             })?;
