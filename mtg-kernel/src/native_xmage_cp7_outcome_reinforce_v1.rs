@@ -4844,8 +4844,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires exact scorer-head, parent, and ordinary-full-child roots"]
+    #[ignore = "requires exact scorer-head, parent, ordinary-full-child, and corpus paths"]
     fn external_scorer_head_candidate_is_exact_parent_child_splice_v1() {
+        let corpus_path = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL")
+                .expect("MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL is set"),
+        );
         let scorer_root = PathBuf::from(
             std::env::var_os("MTG_KERNEL_XMAGE_CP7_SCORER_HEAD_ROOT")
                 .expect("MTG_KERNEL_XMAGE_CP7_SCORER_HEAD_ROOT is set"),
@@ -4952,6 +4956,34 @@ mod tests {
         }
         assert!(active_change_seen);
         assert!(frozen_full_child_change_seen);
+
+        let dataset = load_outcome_dataset_v1(&corpus_path).unwrap();
+        assert!(corpus_matches_training_source_v1(
+            &dataset,
+            scorer_manifest.parent.as_ref()
+        ));
+        let prepared = prepare_dataset_advantages_v1(&dataset, 2.0, true).unwrap();
+        let movement = prepare_ppo_epoch_v1(
+            scorer_state.model_v1(),
+            &dataset.groups,
+            &prepared.terms,
+            0.2,
+            0.05,
+        )
+        .unwrap()
+        .ratio_metrics;
+        eprintln!(
+            "formal scorer-head movement: groups={} rows={} mean_tv={} p90_tv={} mean_kl={} max_abs_joint_log_ratio={} clipped_groups={}",
+            movement.physical_group_count,
+            movement.observed_row_count,
+            movement.mean_action_total_variation,
+            movement.p90_action_total_variation_nearest_rank,
+            movement.mean_old_to_current_forward_kl,
+            movement.maximum_absolute_joint_log_likelihood_ratio,
+            movement.clipped_group_count,
+        );
+        assert_eq!(movement.physical_group_count, dataset.groups.len());
+        assert_eq!(movement.observed_row_count, dataset.decision_row_count);
     }
 
     #[test]
