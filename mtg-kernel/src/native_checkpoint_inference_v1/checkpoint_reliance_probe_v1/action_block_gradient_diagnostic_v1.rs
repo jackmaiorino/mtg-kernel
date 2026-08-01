@@ -149,6 +149,12 @@ pub(super) const VALUE_COEFFICIENT_SCREEN_DESIGN_SHA256_V1: &str =
 pub(super) const VALUE_COEFFICIENT_SCREEN_DESIGN_BYTE_COUNT_V1: u64 = 2_885;
 pub(super) const VALUE_COEFFICIENT_SCREEN_DESIGN_LINE_COUNT_V1: u64 = 68;
 
+/// The repaired-FULL learning-rate screen's predeclared design bytes.
+pub(super) const LEARNING_RATE_SCREEN_DESIGN_SHA256_V1: &str =
+    "ef2b72d5af781d8f0907334f03aa2abe0cb617f6b136d2aec06676cf2f721806";
+pub(super) const LEARNING_RATE_SCREEN_DESIGN_BYTE_COUNT_V1: u64 = 3_834;
+pub(super) const LEARNING_RATE_SCREEN_DESIGN_LINE_COUNT_V1: u64 = 84;
+
 /// Pool3 opponent contract document, copied and rehashed, never retyped.
 pub(super) const POOL3_DOCUMENT_SHA256_V1: &str =
     "6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71";
@@ -194,6 +200,9 @@ const FORMAL_LIVE_TEST_NAME_SUFFIX_V1: &str = "::action_block_gradient_formal_si
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 const VALUE_COEFFICIENT_SCREEN_LIVE_TEST_NAME_SUFFIX_V1: &str =
     "::value_coefficient_screen_three_unit_gpu1_v1";
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+const LEARNING_RATE_SCREEN_LIVE_TEST_NAME_SUFFIX_V1: &str =
+    "::learning_rate_screen_three_unit_gpu1_v1";
 const PREFLIGHT_UPDATE_PAIR_SCHEMA_V1: &str =
     "mtg_kernel_action_block_gradient_preflight_update_pair/v1";
 const FORMAL_UNIT_TAPE_SCHEMA_V1: &str = "action-block-gradient-formal-unit-tape/v1";
@@ -201,6 +210,9 @@ const FORMAL_MANIFEST_SCHEMA_V1: &str = "action-block-gradient-formal-manifest/v
 const VALUE_COEFFICIENT_SCREEN_UNIT_TAPE_SCHEMA_V1: &str = "value-coefficient-screen-unit-tape/v1";
 const VALUE_COEFFICIENT_SCREEN_SUMMARY_SCHEMA_V1: &str = "value-coefficient-screen-summary/v1";
 const VALUE_COEFFICIENT_SCREEN_MANIFEST_SCHEMA_V1: &str = "value-coefficient-screen-manifest/v1";
+const LEARNING_RATE_SCREEN_UNIT_TAPE_SCHEMA_V1: &str = "learning-rate-screen-unit-tape/v1";
+const LEARNING_RATE_SCREEN_SUMMARY_SCHEMA_V1: &str = "learning-rate-screen-summary/v1";
+const LEARNING_RATE_SCREEN_MANIFEST_SCHEMA_V1: &str = "learning-rate-screen-manifest/v1";
 
 // These values must be supplied while compiling the one live-preflight test
 // binary. `option_env!` embeds them without making ordinary feature builds
@@ -241,6 +253,7 @@ pub(super) const ACTION_ENCODER_COLUMNS_V1: usize = 259;
 pub(super) const VALUE_COEFFICIENT_BITS_V1: u32 = 0x3f00_0000;
 pub(super) const LOW_VALUE_COEFFICIENT_BITS_V1: u32 = 0x3d80_0000; // 0.0625f32
 pub(super) const LEARNING_RATE_BITS_V1: u32 = 0x3a83_126f;
+pub(super) const HALF_LEARNING_RATE_BITS_V1: u32 = 0x3a03_126f;
 pub(super) const ADAM_BETA1_BITS_V1: u32 = 0x3f66_6666;
 pub(super) const ADAM_BETA2_BITS_V1: u32 = 0x3f7f_be77;
 pub(super) const ADAM_EPSILON_BITS_V1: u32 = 0x322b_cc77;
@@ -263,6 +276,29 @@ impl ValueCoefficientAuthorityV1 {
         match self {
             Self::Baseline => VALUE_COEFFICIENT_BITS_V1,
             Self::Low => LOW_VALUE_COEFFICIENT_BITS_V1,
+        }
+    }
+
+    pub(super) const fn value_v1(self) -> f32 {
+        f32::from_bits(self.bits_v1())
+    }
+}
+
+/// Sealed exact authority for the only learning rates this diagnostic may
+/// send to CUDA or bind into update evidence. The LR-screen's `Half` arm is
+/// unrelated to [`ActualTreatmentV1::Half`]: both LR arms use repaired FULL
+/// action tensors and differ only after backward, inside Adam.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LearningRateAuthorityV1 {
+    Production,
+    Half,
+}
+
+impl LearningRateAuthorityV1 {
+    pub(super) const fn bits_v1(self) -> u32 {
+        match self {
+            Self::Production => LEARNING_RATE_BITS_V1,
+            Self::Half => HALF_LEARNING_RATE_BITS_V1,
         }
     }
 
@@ -328,6 +364,20 @@ pub(super) const VALUE_COEFFICIENT_SCREEN_TRAINING_COUNTS_V1: [[u32; 4];
 pub(super) const VALUE_COEFFICIENT_SCREEN_VALIDATION_COUNTS_V1: [[u32; 4];
     VALUE_COEFFICIENT_SCREEN_UNIT_COUNT_V1] =
     [[24, 16, 12, 12], [32, 10, 12, 10], [22, 15, 11, 16]];
+
+/// The exploratory repaired-FULL learning-rate screen has three paired units
+/// and no bootstrap claim.
+pub(super) const LEARNING_RATE_SCREEN_UNIT_COUNT_V1: usize = 3;
+pub(super) const LEARNING_RATE_SCREEN_REQUIRED_JOINT_UNITS_V1: usize = 2;
+pub(super) const LEARNING_RATE_SCREEN_ARTIFACT_COUNT_V1: usize = 11;
+pub(super) const LEARNING_RATE_SCREEN_TRAINING_SEEDS_V1: [u64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1] =
+    [954_001, 954_002, 954_003];
+pub(super) const LEARNING_RATE_SCREEN_VALIDATION_SEEDS_V1: [u64;
+    LEARNING_RATE_SCREEN_UNIT_COUNT_V1] = [955_001, 955_002, 955_003];
+pub(super) const LEARNING_RATE_SCREEN_TRAINING_COUNTS_V1: [[u32; 4];
+    LEARNING_RATE_SCREEN_UNIT_COUNT_V1] = [[27, 6, 9, 22], [17, 18, 14, 15], [27, 12, 13, 12]];
+pub(super) const LEARNING_RATE_SCREEN_VALIDATION_COUNTS_V1: [[u32; 4];
+    LEARNING_RATE_SCREEN_UNIT_COUNT_V1] = [[29, 9, 9, 17], [29, 12, 14, 9], [21, 12, 13, 18]];
 
 // ---------------------------------------------------------------------------
 // Opponent strata and pure schedule counts.
@@ -1214,6 +1264,66 @@ impl DiagnosticTapeAuthorityV1 for ValueCoefficientScreenSeedAuthorityV1 {
 
     fn allows_update_v1(&self) -> bool {
         self.role == ValueCoefficientScreenTapeRoleV1::Training
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LearningRateScreenTapeRoleV1 {
+    Training,
+    Validation,
+}
+
+/// Private seed/count authority for the three-unit learning-rate screen. A
+/// validation authority can never reach the updater.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LearningRateScreenSeedAuthorityV1 {
+    unit_index: usize,
+    role: LearningRateScreenTapeRoleV1,
+}
+
+impl LearningRateScreenSeedAuthorityV1 {
+    fn training_v1(unit_index: usize) -> Self {
+        assert!(unit_index < LEARNING_RATE_SCREEN_UNIT_COUNT_V1);
+        Self {
+            unit_index,
+            role: LearningRateScreenTapeRoleV1::Training,
+        }
+    }
+
+    fn validation_v1(unit_index: usize) -> Self {
+        assert!(unit_index < LEARNING_RATE_SCREEN_UNIT_COUNT_V1);
+        Self {
+            unit_index,
+            role: LearningRateScreenTapeRoleV1::Validation,
+        }
+    }
+}
+
+impl DiagnosticTapeAuthorityV1 for LearningRateScreenSeedAuthorityV1 {
+    fn seed_v1(&self) -> u64 {
+        match self.role {
+            LearningRateScreenTapeRoleV1::Training => {
+                LEARNING_RATE_SCREEN_TRAINING_SEEDS_V1[self.unit_index]
+            }
+            LearningRateScreenTapeRoleV1::Validation => {
+                LEARNING_RATE_SCREEN_VALIDATION_SEEDS_V1[self.unit_index]
+            }
+        }
+    }
+
+    fn expected_counts_v1(&self) -> [u32; 4] {
+        match self.role {
+            LearningRateScreenTapeRoleV1::Training => {
+                LEARNING_RATE_SCREEN_TRAINING_COUNTS_V1[self.unit_index]
+            }
+            LearningRateScreenTapeRoleV1::Validation => {
+                LEARNING_RATE_SCREEN_VALIDATION_COUNTS_V1[self.unit_index]
+            }
+        }
+    }
+
+    fn allows_update_v1(&self) -> bool {
+        self.role == LearningRateScreenTapeRoleV1::Training
     }
 }
 
@@ -3590,6 +3700,7 @@ fn matches_native_manifest_v1(stream: &[NativeNamedParameterV1]) -> bool {
 pub(super) fn frame_update_v1(
     treatment: &str,
     value_coefficient: ValueCoefficientAuthorityV1,
+    learning_rate: LearningRateAuthorityV1,
     named_gradients: &[NativeNamedParameterV1],
     parameters_before: &[NativeNamedParameterV1],
     parameters_after: &[NativeNamedParameterV1],
@@ -3670,7 +3781,7 @@ pub(super) fn frame_update_v1(
         "adam_authority_bits",
         &[
             value_coefficient.bits_v1(),
-            LEARNING_RATE_BITS_V1,
+            learning_rate.bits_v1(),
             ADAM_BETA1_BITS_V1,
             ADAM_BETA2_BITS_V1,
             ADAM_EPSILON_BITS_V1,
@@ -3807,6 +3918,7 @@ struct Promoted2Generation384GenesisSealV1(());
 struct ValidatedActualArmV1 {
     treatment: ActualTreatmentV1,
     value_coefficient: ValueCoefficientAuthorityV1,
+    learning_rate: LearningRateAuthorityV1,
     state: NativePolicyValueTrainStateV1,
     before: NativePolicyValueTrainSnapshotV1,
 }
@@ -3818,6 +3930,7 @@ struct ValidatedActualArmV1 {
 struct ActualUpdateEvidenceV1 {
     treatment: ActualTreatmentV1,
     value_coefficient: ValueCoefficientAuthorityV1,
+    learning_rate: LearningRateAuthorityV1,
     result: NativePolicyTrainStepResultV1,
     before: NativePolicyValueTrainSnapshotV1,
     after: NativePolicyValueTrainSnapshotV1,
@@ -3855,6 +3968,18 @@ struct ActualValueCoefficientPairedUpdateV1 {
     low_state: NativePolicyValueTrainStateV1,
     baseline: ActualUpdateEvidenceV1,
     low: ActualUpdateEvidenceV1,
+    tape_frame: FramedWriterV1,
+}
+
+/// A learning-rate screen pair starts both arms from exact bit-identical FULL
+/// genesis snapshots. The learning rate reaches only Adam, so complete CUDA
+/// results/gradients and step-one moments must remain bit-identical.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+struct ActualLearningRatePairedUpdateV1 {
+    production_state: NativePolicyValueTrainStateV1,
+    half_rate_state: NativePolicyValueTrainStateV1,
+    production: ActualUpdateEvidenceV1,
+    half_rate: ActualUpdateEvidenceV1,
     tape_frame: FramedWriterV1,
 }
 
@@ -4172,8 +4297,9 @@ fn actual_result_matches_tape_v1(
     true
 }
 
-/// Independent scalar replay of the frozen production Adam association.
-/// This does not call the optimizer implementation or the CUDA mapper.
+/// Independent scalar replay of the frozen Adam association under one of the
+/// sealed learning-rate authorities. This does not call the optimizer
+/// implementation or the CUDA mapper.
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 struct IndependentAdamStepV1 {
     beta1: f32,
@@ -4185,15 +4311,14 @@ struct IndependentAdamStepV1 {
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 impl IndependentAdamStepV1 {
-    fn new_v1(step: u64) -> Option<Self> {
+    fn new_v1(step: u64, learning_rate: LearningRateAuthorityV1) -> Option<Self> {
         let exponent = i32::try_from(step).ok()?;
         let beta1 = f32::from_bits(ADAM_BETA1_BITS_V1);
         let beta2 = f32::from_bits(ADAM_BETA2_BITS_V1);
         let epsilon = f32::from_bits(ADAM_EPSILON_BITS_V1);
-        let learning_rate = f32::from_bits(LEARNING_RATE_BITS_V1);
         let bias_correction1 = 1.0f64 - f64::from(beta1).powi(exponent);
         let bias_correction2 = 1.0f64 - f64::from(beta2).powi(exponent);
-        let step_size = (f64::from(learning_rate) / bias_correction1) as f32;
+        let step_size = (f64::from(learning_rate.value_v1()) / bias_correction1) as f32;
         let bias_correction2_sqrt = bias_correction2.sqrt() as f32;
         (step_size.is_finite() && bias_correction2_sqrt.is_finite()).then_some(Self {
             beta1,
@@ -4271,7 +4396,9 @@ fn actual_update_matches_independent_adam_v1(evidence: &ActualUpdateEvidenceV1) 
     {
         return false;
     }
-    let Some(adam) = IndependentAdamStepV1::new_v1(evidence.after.adam_step) else {
+    let Some(adam) =
+        IndependentAdamStepV1::new_v1(evidence.after.adam_step, evidence.learning_rate)
+    else {
         return false;
     };
     let scorer_name = CANONICAL_GAUGE_PARAMETERS_V1[0];
@@ -4396,6 +4523,8 @@ fn actual_updates_cross_arm_valid_v1(
         || half.treatment != ActualTreatmentV1::Half
         || full.value_coefficient != ValueCoefficientAuthorityV1::Baseline
         || half.value_coefficient != ValueCoefficientAuthorityV1::Baseline
+        || full.learning_rate != LearningRateAuthorityV1::Production
+        || half.learning_rate != LearningRateAuthorityV1::Production
         || full.result.gradients.len() != NAMED_TENSOR_COUNT_V1
         || half.result.gradients.len() != NAMED_TENSOR_COUNT_V1
         || full.before.parameters.len() != NAMED_TENSOR_COUNT_V1
@@ -4456,6 +4585,124 @@ fn actual_updates_cross_arm_valid_v1(
     true
 }
 
+/// Bit identity for every CUDA result field observed before Adam commits a
+/// learning-rate-dependent parameter update. Ordinary `PartialEq` is too weak
+/// here because it equates positive and negative zero.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn train_step_results_bit_equal_v1(
+    left: &NativePolicyTrainStepResultV1,
+    right: &NativePolicyTrainStepResultV1,
+) -> bool {
+    left.policy_sum.to_bits() == right.policy_sum.to_bits()
+        && left.value_sum.to_bits() == right.value_sum.to_bits()
+        && left.loss.to_bits() == right.loss.to_bits()
+        && left.adam_step == right.adam_step
+        && left.selected_outputs.len() == right.selected_outputs.len()
+        && left
+            .selected_outputs
+            .iter()
+            .zip(&right.selected_outputs)
+            .all(|(left, right)| {
+                left.group_index == right.group_index
+                    && left.substep_index == right.substep_index
+                    && left.selected_action_index == right.selected_action_index
+                    && left.selected_logit.to_bits() == right.selected_logit.to_bits()
+                    && left.value.to_bits() == right.value.to_bits()
+                    && left.selected_log_probability.to_bits()
+                        == right.selected_log_probability.to_bits()
+            })
+        && left.physical_terms.len() == right.physical_terms.len()
+        && left
+            .physical_terms
+            .iter()
+            .zip(&right.physical_terms)
+            .all(|(left, right)| {
+                left.joint_log_probability.to_bits() == right.joint_log_probability.to_bits()
+                    && left.value.to_bits() == right.value.to_bits()
+                    && left.terminal_return == right.terminal_return
+                    && left.substep_count == right.substep_count
+            })
+        && named_streams_bit_equal_v1(&left.gradients, &right.gradients)
+        && left.scorer_bias_gauge.parameter_name == right.scorer_bias_gauge.parameter_name
+        && left.scorer_bias_gauge.substep_count == right.scorer_bias_gauge.substep_count
+        && left.scorer_bias_gauge.total_action_count == right.scorer_bias_gauge.total_action_count
+        && left.scorer_bias_gauge.max_action_count == right.scorer_bias_gauge.max_action_count
+        && left.scorer_bias_gauge.sum_abs_policy_coefficients.to_bits()
+            == right
+                .scorer_bias_gauge
+                .sum_abs_policy_coefficients
+                .to_bits()
+        && left.scorer_bias_gauge.substep_bounds.len()
+            == right.scorer_bias_gauge.substep_bounds.len()
+        && left
+            .scorer_bias_gauge
+            .substep_bounds
+            .iter()
+            .zip(&right.scorer_bias_gauge.substep_bounds)
+            .all(|(left, right)| {
+                left.action_count == right.action_count
+                    && left.abs_policy_coefficient.to_bits()
+                        == right.abs_policy_coefficient.to_bits()
+                    && left.gamma_operation_count == right.gamma_operation_count
+                    && left.gamma.to_bits() == right.gamma.to_bits()
+                    && left.bound_component.to_bits() == right.bound_component.to_bits()
+            })
+        && left.scorer_bias_gauge.per_substep_bound_sum.to_bits()
+            == right.scorer_bias_gauge.per_substep_bound_sum.to_bits()
+        && left.scorer_bias_gauge.cross_substep_bound.to_bits()
+            == right.scorer_bias_gauge.cross_substep_bound.to_bits()
+        && left.scorer_bias_gauge.raw_gradient_residual.to_bits()
+            == right.scorer_bias_gauge.raw_gradient_residual.to_bits()
+        && left.scorer_bias_gauge.derived_absolute_bound.to_bits()
+            == right.scorer_bias_gauge.derived_absolute_bound.to_bits()
+        && left.scorer_bias_gauge.high_precision_residual.to_bits()
+            == right.scorer_bias_gauge.high_precision_residual.to_bits()
+        && left.scorer_bias_gauge.canonical_gradient.to_bits()
+            == right.scorer_bias_gauge.canonical_gradient.to_bits()
+        && left.scorer_bias_gauge.parameter_before_bits
+            == right.scorer_bias_gauge.parameter_before_bits
+        && left.scorer_bias_gauge.parameter_after_bits
+            == right.scorer_bias_gauge.parameter_after_bits
+}
+
+/// The LR screen's cross-arm identity proof. Both arms are repaired FULL and
+/// use the same loss, so learning rate may change only parameters/deltas;
+/// pre-Adam results and the moments produced from their gradients stay exact.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn learning_rate_pair_identity_valid_v1(
+    production: &ActualUpdateEvidenceV1,
+    half_rate: &ActualUpdateEvidenceV1,
+) -> bool {
+    production.treatment == ActualTreatmentV1::Full
+        && half_rate.treatment == ActualTreatmentV1::Full
+        && production.value_coefficient == ValueCoefficientAuthorityV1::Baseline
+        && half_rate.value_coefficient == ValueCoefficientAuthorityV1::Baseline
+        && production.learning_rate == LearningRateAuthorityV1::Production
+        && half_rate.learning_rate == LearningRateAuthorityV1::Half
+        && production.before.adam_step == half_rate.before.adam_step
+        && production.before.scorer_bias_anchor_bits == half_rate.before.scorer_bias_anchor_bits
+        && named_streams_bit_equal_v1(&production.before.parameters, &half_rate.before.parameters)
+        && named_streams_bit_equal_v1(
+            &production.before.first_moments,
+            &half_rate.before.first_moments,
+        )
+        && named_streams_bit_equal_v1(
+            &production.before.second_moments,
+            &half_rate.before.second_moments,
+        )
+        && train_step_results_bit_equal_v1(&production.result, &half_rate.result)
+        && production.after.adam_step == half_rate.after.adam_step
+        && production.after.scorer_bias_anchor_bits == half_rate.after.scorer_bias_anchor_bits
+        && named_streams_bit_equal_v1(
+            &production.after.first_moments,
+            &half_rate.after.first_moments,
+        )
+        && named_streams_bit_equal_v1(
+            &production.after.second_moments,
+            &half_rate.after.second_moments,
+        )
+}
+
 /// Executes one production grouped loss/backward/Adam step through the
 /// diagnostic-only named-gradient capture wrapper. Both inputs are private
 /// validated capabilities. The state is consumed; any error drops the
@@ -4467,6 +4714,7 @@ fn execute_validated_actual_arm_v1(
 ) -> Result<(NativePolicyValueTrainStateV1, ActualUpdateEvidenceV1), ActualUpdateErrorV1> {
     let treatment = arm.treatment;
     let value_coefficient = arm.value_coefficient;
+    let learning_rate = arm.learning_rate;
     let before = arm.before;
     let mut substep_groups: Vec<Vec<NativePolicySubstepV1<'_>>> = Vec::new();
     let mut terminal_returns: Vec<i8> = Vec::new();
@@ -4504,7 +4752,7 @@ fn execute_validated_actual_arm_v1(
         &mut arm.state,
         &groups,
         value_coefficient.value_v1(),
-        f32::from_bits(LEARNING_RATE_BITS_V1),
+        learning_rate.value_v1(),
     )
     .map_err(|_| ActualUpdateErrorV1::CudaUpdate)?;
     drop(groups);
@@ -4524,6 +4772,7 @@ fn execute_validated_actual_arm_v1(
     let frame = frame_update_v1(
         treatment.label_v1(),
         value_coefficient,
+        learning_rate,
         &result.gradients,
         &before.parameters,
         &after.parameters,
@@ -4535,6 +4784,7 @@ fn execute_validated_actual_arm_v1(
     let evidence = ActualUpdateEvidenceV1 {
         treatment,
         value_coefficient,
+        learning_rate,
         result,
         before,
         after,
@@ -4582,6 +4832,7 @@ fn execute_actual_paired_update_v1(
         ValidatedActualArmV1 {
             treatment: ActualTreatmentV1::Full,
             value_coefficient: ValueCoefficientAuthorityV1::Baseline,
+            learning_rate: LearningRateAuthorityV1::Production,
             state: full_state,
             before: full_before,
         },
@@ -4594,6 +4845,7 @@ fn execute_actual_paired_update_v1(
         ValidatedActualArmV1 {
             treatment: ActualTreatmentV1::Half,
             value_coefficient: ValueCoefficientAuthorityV1::Baseline,
+            learning_rate: LearningRateAuthorityV1::Production,
             state: half_state,
             before: half_before,
         },
@@ -4658,6 +4910,7 @@ fn execute_actual_value_coefficient_paired_update_v1(
         ValidatedActualArmV1 {
             treatment: ActualTreatmentV1::Full,
             value_coefficient: ValueCoefficientAuthorityV1::Baseline,
+            learning_rate: LearningRateAuthorityV1::Production,
             state: baseline_state,
             before: baseline_before,
         },
@@ -4670,6 +4923,7 @@ fn execute_actual_value_coefficient_paired_update_v1(
         ValidatedActualArmV1 {
             treatment: ActualTreatmentV1::Full,
             value_coefficient: ValueCoefficientAuthorityV1::Low,
+            learning_rate: LearningRateAuthorityV1::Production,
             state: low_state,
             before: low_before,
         },
@@ -4683,6 +4937,79 @@ fn execute_actual_value_coefficient_paired_update_v1(
         low_state,
         baseline,
         low,
+        tape_frame: validated_tape.frame,
+    })
+}
+
+/// Runs the learning-rate screen from two exact repaired-FULL genesis twins.
+/// Learning rate is admitted only through the sealed arm capability and may
+/// affect only the Adam parameter update. The complete pre-Adam result and
+/// both step-one moment streams must remain bit-identical across arms.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn execute_actual_learning_rate_paired_update_v1(
+    authority: &impl DiagnosticTapeAuthorityV1,
+    genesis: &Promoted2Generation384GenesisV1,
+    expected_deck_ids: &SessionDeckIdsV1,
+    expected_deck_hashes: SessionDeckHashesV1,
+    tape: &JoinedTapeV1,
+    production_state: NativePolicyValueTrainStateV1,
+    half_rate_state: NativePolicyValueTrainStateV1,
+) -> Result<ActualLearningRatePairedUpdateV1, ActualUpdateErrorV1> {
+    let validated_tape = ValidatedJoinedTapeForUpdateV1::new_v1(
+        authority,
+        expected_deck_ids,
+        expected_deck_hashes,
+        tape,
+    )?;
+    let production_before = production_state
+        .snapshot_v1()
+        .map_err(|_| ActualUpdateErrorV1::SnapshotBefore)?;
+    let half_rate_before = half_rate_state
+        .snapshot_v1()
+        .map_err(|_| ActualUpdateErrorV1::SnapshotBefore)?;
+    if !snapshot_is_genesis_v1(&production_before) || !snapshot_is_genesis_v1(&half_rate_before) {
+        return Err(ActualUpdateErrorV1::NonGenesisState);
+    }
+    if !full_genesis_twins_match_authority_v1(&production_before, &half_rate_before, genesis) {
+        return Err(ActualUpdateErrorV1::GenesisParameterRelation);
+    }
+    state_matches_joined_tape_v1(&production_state, &validated_tape, ActualTreatmentV1::Full)?;
+    state_matches_joined_tape_v1(&half_rate_state, &validated_tape, ActualTreatmentV1::Full)?;
+
+    let (production_state, production) = execute_validated_actual_arm_v1(
+        ValidatedActualArmV1 {
+            treatment: ActualTreatmentV1::Full,
+            value_coefficient: ValueCoefficientAuthorityV1::Baseline,
+            learning_rate: LearningRateAuthorityV1::Production,
+            state: production_state,
+            before: production_before,
+        },
+        &validated_tape,
+    )?;
+    if !actual_update_matches_independent_adam_v1(&production) {
+        return Err(ActualUpdateErrorV1::AdamReplayMismatch);
+    }
+    let (half_rate_state, half_rate) = execute_validated_actual_arm_v1(
+        ValidatedActualArmV1 {
+            treatment: ActualTreatmentV1::Full,
+            value_coefficient: ValueCoefficientAuthorityV1::Baseline,
+            learning_rate: LearningRateAuthorityV1::Half,
+            state: half_rate_state,
+            before: half_rate_before,
+        },
+        &validated_tape,
+    )?;
+    if !actual_update_matches_independent_adam_v1(&half_rate) {
+        return Err(ActualUpdateErrorV1::AdamReplayMismatch);
+    }
+    if !learning_rate_pair_identity_valid_v1(&production, &half_rate) {
+        return Err(ActualUpdateErrorV1::CrossArmMismatch);
+    }
+    Ok(ActualLearningRatePairedUpdateV1 {
+        production_state,
+        half_rate_state,
+        production,
+        half_rate,
         tape_frame: validated_tape.frame,
     })
 }
@@ -5466,6 +5793,48 @@ fn frame_value_coefficient_screen_unit_tape_v1(
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn frame_learning_rate_screen_unit_tape_v1(
+    training_authority: &LearningRateScreenSeedAuthorityV1,
+    validation_authority: &LearningRateScreenSeedAuthorityV1,
+    expected_deck_ids: &SessionDeckIdsV1,
+    expected_deck_hashes: SessionDeckHashesV1,
+    training: &JoinedTapeV1,
+    validation: &JoinedTapeV1,
+) -> Result<FramedWriterV1, TapeFramingErrorV1> {
+    if training_authority.role != LearningRateScreenTapeRoleV1::Training
+        || validation_authority.role != LearningRateScreenTapeRoleV1::Validation
+        || training_authority.unit_index != validation_authority.unit_index
+    {
+        return Err(TapeFramingErrorV1::CountsDisagreeWithSchedule);
+    }
+    validate_joined_tape_side_v1(
+        training_authority,
+        expected_deck_ids,
+        expected_deck_hashes,
+        training,
+    )?;
+    validate_joined_tape_side_v1(
+        validation_authority,
+        expected_deck_ids,
+        expected_deck_hashes,
+        validation,
+    )?;
+    if validation
+        .groups_per_stratum_v1()
+        .iter()
+        .any(|count| *count == 0)
+    {
+        return Err(TapeFramingErrorV1::EmptyStratumGroup);
+    }
+    let mut writer = FramedWriterV1::new_v1(LEARNING_RATE_SCREEN_UNIT_TAPE_SCHEMA_V1);
+    writer.u64_v1("unit_index", training_authority.unit_index as u64);
+    writer.u64_v1("episodes_per_tape", EPISODES_PER_TAPE_V1);
+    frame_joined_tape_side_v1(&mut writer, "training", training)?;
+    frame_joined_tape_side_v1(&mut writer, "validation", validation)?;
+    Ok(writer)
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn run_seed949999_preflight_repeat_v1(
     gpu: &ValidatedPreflightGpuV1,
     authorities: &PreflightLiveAuthoritiesV1,
@@ -5544,6 +5913,15 @@ struct ValueCoefficientScreenUnitArtifactsV1 {
     tape_frame: FramedWriterV1,
     production_update_frame: FramedWriterV1,
     low_update_frame: FramedWriterV1,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+struct LearningRateScreenUnitArtifactsV1 {
+    unit_index: usize,
+    summary_input: LearningRateScreenSummaryUnitInputV1,
+    tape_frame: FramedWriterV1,
+    production_update_frame: FramedWriterV1,
+    half_rate_update_frame: FramedWriterV1,
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -5685,12 +6063,13 @@ fn run_formal_unit_v1(
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-fn value_coefficient_update_authority_payload_v1(
+fn update_authority_payload_v1(
     value_coefficient: ValueCoefficientAuthorityV1,
+    learning_rate: LearningRateAuthorityV1,
 ) -> Vec<u8> {
     let authorities = [
         value_coefficient.bits_v1(),
-        LEARNING_RATE_BITS_V1,
+        learning_rate.bits_v1(),
         ADAM_BETA1_BITS_V1,
         ADAM_BETA2_BITS_V1,
         ADAM_EPSILON_BITS_V1,
@@ -5848,7 +6227,7 @@ fn run_value_coefficient_screen_unit_v1(
             ),
             1
         );
-        let payload = value_coefficient_update_authority_payload_v1(coefficient);
+        let payload = update_authority_payload_v1(coefficient, LearningRateAuthorityV1::Production);
         assert_eq!(
             exact_framed_atom_occurrences_v1(frame.bytes_v1(), "adam_authority_bits", &payload,),
             1
@@ -5870,6 +6249,192 @@ fn run_value_coefficient_screen_unit_v1(
         tape_frame,
         production_update_frame: paired.baseline.frame,
         low_update_frame: paired.low.frame,
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn run_learning_rate_screen_unit_v1(
+    unit_index: usize,
+    gpu: &ValidatedPreflightGpuV1,
+    authorities: &PreflightLiveAuthoritiesV1,
+) -> LearningRateScreenUnitArtifactsV1 {
+    require_bridge_gpu_binding_v1(gpu);
+    let training_authority = LearningRateScreenSeedAuthorityV1::training_v1(unit_index);
+    let validation_authority = LearningRateScreenSeedAuthorityV1::validation_v1(unit_index);
+    let production_state = fresh_state_from_parameters_v1(&authorities.genesis.full_parameters);
+    let half_rate_state = fresh_state_from_parameters_v1(&authorities.genesis.full_parameters);
+    // The established neutral scorer proves the repaired FULL/HALF lineage.
+    // This H state is immutable tape-generation evidence and never updates.
+    let tape_half_state = fresh_state_from_parameters_v1(&authorities.genesis.half_parameters);
+
+    // Both tapes are fixed at the common genesis before either optimizer arm
+    // updates. The half-rate arm is a bit-identical repaired-FULL twin.
+    let training_tape = run_neutral_tape_v1(
+        &training_authority,
+        authorities,
+        &production_state,
+        &tape_half_state,
+    );
+    let validation_tape = run_neutral_tape_v1(
+        &validation_authority,
+        authorities,
+        &production_state,
+        &tape_half_state,
+    );
+    let tape_frame = frame_learning_rate_screen_unit_tape_v1(
+        &training_authority,
+        &validation_authority,
+        &authorities.deck_ids,
+        authorities.deck_hashes,
+        &training_tape,
+        &validation_tape,
+    )
+    .expect("learning-rate training and validation tapes must bind as one unit");
+
+    let production_before = evaluate_held_out_loss_v1(
+        &production_state,
+        ActualTreatmentV1::Full,
+        &validation_tape,
+        true,
+    )
+    .expect("production-rate genesis held-out loss must evaluate");
+    let half_rate_before = evaluate_held_out_loss_v1(
+        &half_rate_state,
+        ActualTreatmentV1::Full,
+        &validation_tape,
+        true,
+    )
+    .expect("half-rate genesis held-out loss must evaluate");
+    assert!(stratum_means_bit_equal_v1(
+        production_before.means,
+        half_rate_before.means
+    ));
+    assert_eq!(
+        production_before.combined.to_bits(),
+        half_rate_before.combined.to_bits()
+    );
+
+    require_bridge_gpu_binding_v1(gpu);
+    let paired = execute_actual_learning_rate_paired_update_v1(
+        &training_authority,
+        &authorities.genesis,
+        &authorities.deck_ids,
+        authorities.deck_hashes,
+        &training_tape,
+        production_state,
+        half_rate_state,
+    )
+    .expect("learning-rate paired update and every identity/numerical gate must pass");
+    assert_eq!(paired.production.treatment, ActualTreatmentV1::Full);
+    assert_eq!(paired.half_rate.treatment, ActualTreatmentV1::Full);
+    assert_eq!(
+        paired.production.value_coefficient,
+        ValueCoefficientAuthorityV1::Baseline
+    );
+    assert_eq!(
+        paired.half_rate.value_coefficient,
+        ValueCoefficientAuthorityV1::Baseline
+    );
+    assert_eq!(
+        paired.production.learning_rate,
+        LearningRateAuthorityV1::Production
+    );
+    assert_eq!(
+        paired.half_rate.learning_rate,
+        LearningRateAuthorityV1::Half
+    );
+    assert!(learning_rate_pair_identity_valid_v1(
+        &paired.production,
+        &paired.half_rate
+    ));
+    assert!(frame_has_schema_prefix_v1(
+        paired.tape_frame.bytes_v1(),
+        JOINED_TAPE_SCHEMA_V1
+    ));
+
+    let production_after = evaluate_held_out_loss_v1(
+        &paired.production_state,
+        ActualTreatmentV1::Full,
+        &validation_tape,
+        false,
+    )
+    .expect("production-rate post-update held-out loss must evaluate");
+    let half_rate_after = evaluate_held_out_loss_v1(
+        &paired.half_rate_state,
+        ActualTreatmentV1::Full,
+        &validation_tape,
+        false,
+    )
+    .expect("half-rate post-update held-out loss must evaluate");
+
+    let summary_input = LearningRateScreenSummaryUnitInputV1 {
+        unit_index,
+        training_seed: training_authority.seed_v1(),
+        validation_seed: validation_authority.seed_v1(),
+        production_loss_before_bits: production_before.combined.to_bits(),
+        production_loss_after_bits: production_after.combined.to_bits(),
+        half_rate_loss_before_bits: half_rate_before.combined.to_bits(),
+        half_rate_loss_after_bits: half_rate_after.combined.to_bits(),
+        promoted2_half_rate_loss_before_bits: half_rate_before.promoted2_v1().to_bits(),
+        promoted2_half_rate_loss_after_bits: half_rate_after.promoted2_v1().to_bits(),
+        tape_sha256: tape_frame.sha256_v1(),
+        production_update_sha256: paired.production.sha256_v1(),
+        half_rate_update_sha256: paired.half_rate.sha256_v1(),
+    };
+    for value in [
+        summary_input.production_improvement_v1(),
+        summary_input.half_rate_improvement_v1(),
+        summary_input.paired_difference_v1(),
+        summary_input.promoted2_half_rate_improvement_v1(),
+    ] {
+        assert!(value.is_finite());
+    }
+    assert!(frame_has_schema_prefix_v1(
+        tape_frame.bytes_v1(),
+        LEARNING_RATE_SCREEN_UNIT_TAPE_SCHEMA_V1
+    ));
+    for (frame, learning_rate) in [
+        (
+            &paired.production.frame,
+            LearningRateAuthorityV1::Production,
+        ),
+        (&paired.half_rate.frame, LearningRateAuthorityV1::Half),
+    ] {
+        assert!(frame_has_schema_prefix_v1(
+            frame.bytes_v1(),
+            UPDATE_SCHEMA_V1
+        ));
+        assert_eq!(
+            exact_framed_atom_occurrences_v1(
+                frame.bytes_v1(),
+                "treatment",
+                TREATMENT_FULL_V1.as_bytes(),
+            ),
+            1
+        );
+        let payload =
+            update_authority_payload_v1(ValueCoefficientAuthorityV1::Baseline, learning_rate);
+        assert_eq!(
+            exact_framed_atom_occurrences_v1(frame.bytes_v1(), "adam_authority_bits", &payload,),
+            1
+        );
+    }
+    eprintln!(
+        "learning-rate screen unit {}: train_seed={} validation_seed={} I_P_bits={:016x} I_R_bits={:016x} d_bits={:016x} p2_R_bits={:016x}",
+        unit_index + 1,
+        training_authority.seed_v1(),
+        validation_authority.seed_v1(),
+        summary_input.production_improvement_v1().to_bits(),
+        summary_input.half_rate_improvement_v1().to_bits(),
+        summary_input.paired_difference_v1().to_bits(),
+        summary_input.promoted2_half_rate_improvement_v1().to_bits(),
+    );
+    LearningRateScreenUnitArtifactsV1 {
+        unit_index,
+        summary_input,
+        tape_frame,
+        production_update_frame: paired.production.frame,
+        half_rate_update_frame: paired.half_rate.frame,
     }
 }
 
@@ -7251,6 +7816,405 @@ pub(super) fn frame_value_coefficient_screen_summary_v1(
     Ok(writer)
 }
 
+// ---------------------------------------------------------------------------
+// Three-unit repaired-FULL learning-rate screen arithmetic and summary.
+// This remains an exploratory local screen with no bootstrap claim.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct LearningRateScreenSummaryUnitInputV1 {
+    pub(super) unit_index: usize,
+    pub(super) training_seed: u64,
+    pub(super) validation_seed: u64,
+    pub(super) production_loss_before_bits: u64,
+    pub(super) production_loss_after_bits: u64,
+    pub(super) half_rate_loss_before_bits: u64,
+    pub(super) half_rate_loss_after_bits: u64,
+    pub(super) promoted2_half_rate_loss_before_bits: u64,
+    pub(super) promoted2_half_rate_loss_after_bits: u64,
+    pub(super) tape_sha256: String,
+    pub(super) production_update_sha256: String,
+    pub(super) half_rate_update_sha256: String,
+}
+
+impl LearningRateScreenSummaryUnitInputV1 {
+    pub(super) fn production_improvement_v1(&self) -> f64 {
+        improvement_v1(
+            f64::from_bits(self.production_loss_before_bits),
+            f64::from_bits(self.production_loss_after_bits),
+        )
+    }
+
+    pub(super) fn half_rate_improvement_v1(&self) -> f64 {
+        improvement_v1(
+            f64::from_bits(self.half_rate_loss_before_bits),
+            f64::from_bits(self.half_rate_loss_after_bits),
+        )
+    }
+
+    pub(super) fn paired_difference_v1(&self) -> f64 {
+        paired_difference_v1(
+            self.half_rate_improvement_v1(),
+            self.production_improvement_v1(),
+        )
+    }
+
+    pub(super) fn promoted2_half_rate_improvement_v1(&self) -> f64 {
+        improvement_v1(
+            f64::from_bits(self.promoted2_half_rate_loss_before_bits),
+            f64::from_bits(self.promoted2_half_rate_loss_after_bits),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LearningRateScreenDispositionV1 {
+    Advance0p0005,
+    DoNotAdvance,
+    Invalid,
+}
+
+impl LearningRateScreenDispositionV1 {
+    pub(super) const fn name_v1(self) -> &'static str {
+        match self {
+            Self::Advance0p0005 => "ADVANCE-0P0005",
+            Self::DoNotAdvance => "DO-NOT-ADVANCE",
+            Self::Invalid => "INVALID",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct LearningRateScreenGateEvidenceV1 {
+    pub(super) identity_and_numerical_gates_pass: bool,
+    pub(super) finite_inputs_and_means: bool,
+    pub(super) joint_positive_units_gate: bool,
+    pub(super) mean_paired_difference_gate: bool,
+    pub(super) mean_half_rate_improvement_gate: bool,
+    pub(super) mean_promoted2_half_rate_improvement_gate: bool,
+}
+
+impl LearningRateScreenGateEvidenceV1 {
+    const fn all_pass_v1(self) -> bool {
+        self.identity_and_numerical_gates_pass
+            && self.finite_inputs_and_means
+            && self.joint_positive_units_gate
+            && self.mean_paired_difference_gate
+            && self.mean_half_rate_improvement_gate
+            && self.mean_promoted2_half_rate_improvement_gate
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct LearningRateScreenResultV1 {
+    pub(super) disposition: LearningRateScreenDispositionV1,
+    pub(super) production_improvements: [f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1],
+    pub(super) half_rate_improvements: [f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1],
+    pub(super) paired_differences: [f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1],
+    pub(super) promoted2_half_rate_improvements: [f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1],
+    pub(super) joint_positive_unit_count: usize,
+    pub(super) mean_paired_difference: Option<f64>,
+    pub(super) mean_half_rate_improvement: Option<f64>,
+    pub(super) mean_promoted2_half_rate_improvement: Option<f64>,
+    pub(super) gates: LearningRateScreenGateEvidenceV1,
+}
+
+/// Positive-zero f64 accumulation in unit order, followed by one division.
+fn learning_rate_screen_mean_v1(values: &[f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1]) -> Option<f64> {
+    if values.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
+    let mut sum = 0.0f64;
+    for value in values {
+        sum += *value;
+        if !sum.is_finite() {
+            return None;
+        }
+    }
+    let mean = sum / LEARNING_RATE_SCREEN_UNIT_COUNT_V1 as f64;
+    mean.is_finite().then_some(mean)
+}
+
+pub(super) fn classify_learning_rate_screen_v1(
+    production_improvements: &[f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1],
+    half_rate_improvements: &[f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1],
+    promoted2_half_rate_improvements: &[f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1],
+    identity_and_numerical_gates_pass: bool,
+) -> LearningRateScreenResultV1 {
+    let mut paired_differences = [0.0f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1];
+    for index in 0..LEARNING_RATE_SCREEN_UNIT_COUNT_V1 {
+        paired_differences[index] = paired_difference_v1(
+            half_rate_improvements[index],
+            production_improvements[index],
+        );
+    }
+    let mean_paired_difference = learning_rate_screen_mean_v1(&paired_differences);
+    let mean_half_rate_improvement = learning_rate_screen_mean_v1(half_rate_improvements);
+    let mean_promoted2_half_rate_improvement =
+        learning_rate_screen_mean_v1(promoted2_half_rate_improvements);
+    let finite_inputs_and_means = production_improvements
+        .iter()
+        .chain(half_rate_improvements)
+        .chain(promoted2_half_rate_improvements)
+        .chain(&paired_differences)
+        .all(|value| value.is_finite())
+        && mean_paired_difference.is_some()
+        && mean_half_rate_improvement.is_some()
+        && mean_promoted2_half_rate_improvement.is_some();
+    let joint_positive_unit_count = paired_differences
+        .iter()
+        .zip(promoted2_half_rate_improvements)
+        .filter(|(difference, promoted2)| **difference > 0.0 && **promoted2 > 0.0)
+        .count();
+    let gates = LearningRateScreenGateEvidenceV1 {
+        identity_and_numerical_gates_pass,
+        finite_inputs_and_means,
+        joint_positive_units_gate: joint_positive_unit_count
+            >= LEARNING_RATE_SCREEN_REQUIRED_JOINT_UNITS_V1,
+        mean_paired_difference_gate: mean_paired_difference.is_some_and(|value| value > 0.0),
+        mean_half_rate_improvement_gate: mean_half_rate_improvement
+            .is_some_and(|value| value > 0.0),
+        mean_promoted2_half_rate_improvement_gate: mean_promoted2_half_rate_improvement
+            .is_some_and(|value| value > 0.0),
+    };
+    let disposition = if !identity_and_numerical_gates_pass || !finite_inputs_and_means {
+        LearningRateScreenDispositionV1::Invalid
+    } else if gates.all_pass_v1() {
+        LearningRateScreenDispositionV1::Advance0p0005
+    } else {
+        LearningRateScreenDispositionV1::DoNotAdvance
+    };
+    LearningRateScreenResultV1 {
+        disposition,
+        production_improvements: *production_improvements,
+        half_rate_improvements: *half_rate_improvements,
+        paired_differences,
+        promoted2_half_rate_improvements: *promoted2_half_rate_improvements,
+        joint_positive_unit_count,
+        mean_paired_difference,
+        mean_half_rate_improvement,
+        mean_promoted2_half_rate_improvement,
+        gates,
+    }
+}
+
+pub(super) fn verify_learning_rate_screen_result_v1(
+    published: &LearningRateScreenResultV1,
+) -> bool {
+    let recomputed = classify_learning_rate_screen_v1(
+        &published.production_improvements,
+        &published.half_rate_improvements,
+        &published.promoted2_half_rate_improvements,
+        published.gates.identity_and_numerical_gates_pass,
+    );
+    recomputed.disposition == published.disposition
+        && recomputed.joint_positive_unit_count == published.joint_positive_unit_count
+        && recomputed.gates == published.gates
+        && f64_arrays_bit_equal_v1(
+            &recomputed.production_improvements,
+            &published.production_improvements,
+        )
+        && f64_arrays_bit_equal_v1(
+            &recomputed.half_rate_improvements,
+            &published.half_rate_improvements,
+        )
+        && f64_arrays_bit_equal_v1(
+            &recomputed.paired_differences,
+            &published.paired_differences,
+        )
+        && f64_arrays_bit_equal_v1(
+            &recomputed.promoted2_half_rate_improvements,
+            &published.promoted2_half_rate_improvements,
+        )
+        && optional_f64_bits_equal_v1(
+            recomputed.mean_paired_difference,
+            published.mean_paired_difference,
+        )
+        && optional_f64_bits_equal_v1(
+            recomputed.mean_half_rate_improvement,
+            published.mean_half_rate_improvement,
+        )
+        && optional_f64_bits_equal_v1(
+            recomputed.mean_promoted2_half_rate_improvement,
+            published.mean_promoted2_half_rate_improvement,
+        )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LearningRateScreenSummaryErrorV1 {
+    MalformedUnits,
+    RawInputsDisagreeWithUnits,
+    ForgedResult,
+}
+
+fn derive_learning_rate_screen_inputs_v1(
+    units: &[LearningRateScreenSummaryUnitInputV1],
+) -> Option<(
+    [f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1],
+    [f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1],
+    [f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1],
+    bool,
+)> {
+    if units.len() != LEARNING_RATE_SCREEN_UNIT_COUNT_V1 {
+        return None;
+    }
+    let mut production = [0.0f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1];
+    let mut half_rate = [0.0f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1];
+    let mut promoted2_half_rate = [0.0f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1];
+    let mut initial_losses_bit_identical = true;
+    for (index, unit) in units.iter().enumerate() {
+        if unit.unit_index != index
+            || unit.training_seed != LEARNING_RATE_SCREEN_TRAINING_SEEDS_V1[index]
+            || unit.validation_seed != LEARNING_RATE_SCREEN_VALIDATION_SEEDS_V1[index]
+            || !lowercase_sha256_v1(&unit.tape_sha256)
+            || !lowercase_sha256_v1(&unit.production_update_sha256)
+            || !lowercase_sha256_v1(&unit.half_rate_update_sha256)
+        {
+            return None;
+        }
+        initial_losses_bit_identical &=
+            unit.production_loss_before_bits == unit.half_rate_loss_before_bits;
+        production[index] = unit.production_improvement_v1();
+        half_rate[index] = unit.half_rate_improvement_v1();
+        promoted2_half_rate[index] = unit.promoted2_half_rate_improvement_v1();
+    }
+    Some((
+        production,
+        half_rate,
+        promoted2_half_rate,
+        initial_losses_bit_identical,
+    ))
+}
+
+pub(super) fn frame_learning_rate_screen_summary_v1(
+    units: &[LearningRateScreenSummaryUnitInputV1],
+    result: &LearningRateScreenResultV1,
+) -> Result<FramedWriterV1, LearningRateScreenSummaryErrorV1> {
+    let (production, half_rate, promoted2_half_rate, initial_losses_bit_identical) =
+        derive_learning_rate_screen_inputs_v1(units)
+            .ok_or(LearningRateScreenSummaryErrorV1::MalformedUnits)?;
+    if !f64_arrays_bit_equal_v1(&production, &result.production_improvements)
+        || !f64_arrays_bit_equal_v1(&half_rate, &result.half_rate_improvements)
+        || !f64_arrays_bit_equal_v1(
+            &promoted2_half_rate,
+            &result.promoted2_half_rate_improvements,
+        )
+        || (result.gates.identity_and_numerical_gates_pass && !initial_losses_bit_identical)
+    {
+        return Err(LearningRateScreenSummaryErrorV1::RawInputsDisagreeWithUnits);
+    }
+    if !verify_learning_rate_screen_result_v1(result) {
+        return Err(LearningRateScreenSummaryErrorV1::ForgedResult);
+    }
+    let mut writer = FramedWriterV1::new_v1(LEARNING_RATE_SCREEN_SUMMARY_SCHEMA_V1);
+    writer.u64_v1("unit_count", units.len() as u64);
+    writer.u32_array_v1("value_coefficient_bits", &[VALUE_COEFFICIENT_BITS_V1]);
+    writer.u32_array_v1(
+        "learning_rate_bits",
+        &[LEARNING_RATE_BITS_V1, HALF_LEARNING_RATE_BITS_V1],
+    );
+    for unit in units {
+        let label = format!("unit[{}]", unit.unit_index);
+        writer.u64_v1(&format!("{label}.training_seed"), unit.training_seed);
+        writer.u64_v1(&format!("{label}.validation_seed"), unit.validation_seed);
+        for (field, bits) in [
+            (
+                "production_loss_before_bits",
+                unit.production_loss_before_bits,
+            ),
+            (
+                "production_loss_after_bits",
+                unit.production_loss_after_bits,
+            ),
+            (
+                "half_rate_loss_before_bits",
+                unit.half_rate_loss_before_bits,
+            ),
+            ("half_rate_loss_after_bits", unit.half_rate_loss_after_bits),
+            (
+                "promoted2_half_rate_loss_before_bits",
+                unit.promoted2_half_rate_loss_before_bits,
+            ),
+            (
+                "promoted2_half_rate_loss_after_bits",
+                unit.promoted2_half_rate_loss_after_bits,
+            ),
+        ] {
+            writer.u64_v1(&format!("{label}.{field}"), bits);
+        }
+        writer.text_v1(&format!("{label}.tape_sha256"), &unit.tape_sha256);
+        writer.text_v1(
+            &format!("{label}.production_update_sha256"),
+            &unit.production_update_sha256,
+        );
+        writer.text_v1(
+            &format!("{label}.half_rate_update_sha256"),
+            &unit.half_rate_update_sha256,
+        );
+    }
+    writer.text_v1("disposition", result.disposition.name_v1());
+    writer.f64_bits_array_v1("production_improvements", &result.production_improvements);
+    writer.f64_bits_array_v1("half_rate_improvements", &result.half_rate_improvements);
+    writer.f64_bits_array_v1("paired_differences", &result.paired_differences);
+    writer.f64_bits_array_v1(
+        "promoted2_half_rate_improvements",
+        &result.promoted2_half_rate_improvements,
+    );
+    writer.u64_v1(
+        "joint_positive_unit_count",
+        result.joint_positive_unit_count as u64,
+    );
+    writer.u64_v1(
+        "required_joint_positive_units",
+        LEARNING_RATE_SCREEN_REQUIRED_JOINT_UNITS_V1 as u64,
+    );
+    for (label, value) in [
+        ("mean_paired_difference", result.mean_paired_difference),
+        (
+            "mean_half_rate_improvement",
+            result.mean_half_rate_improvement,
+        ),
+        (
+            "mean_promoted2_half_rate_improvement",
+            result.mean_promoted2_half_rate_improvement,
+        ),
+    ] {
+        match value {
+            Some(value) => writer.f64_bits_array_v1(label, &[value]),
+            None => writer.atom_v1(label, b""),
+        }
+    }
+    for (label, outcome) in [
+        (
+            "gate.identity_and_numerical",
+            result.gates.identity_and_numerical_gates_pass,
+        ),
+        (
+            "gate.finite_inputs_and_means",
+            result.gates.finite_inputs_and_means,
+        ),
+        (
+            "gate.joint_positive_units",
+            result.gates.joint_positive_units_gate,
+        ),
+        (
+            "gate.mean_paired_difference",
+            result.gates.mean_paired_difference_gate,
+        ),
+        (
+            "gate.mean_half_rate_improvement",
+            result.gates.mean_half_rate_improvement_gate,
+        ),
+        (
+            "gate.mean_promoted2_half_rate_improvement",
+            result.gates.mean_promoted2_half_rate_improvement_gate,
+        ),
+    ] {
+        writer.u64_v1(label, u64::from(outcome));
+    }
+    Ok(writer)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ManifestFramingErrorV1 {
     GitObject,
@@ -7629,6 +8593,139 @@ fn frame_value_coefficient_screen_manifest_v1(
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LearningRateScreenPublishedUnitV1 {
+    unit_index: usize,
+    training_seed: u64,
+    validation_seed: u64,
+    tape: FormalArtifactIdentityV1,
+    production_update: FormalArtifactIdentityV1,
+    half_rate_update: FormalArtifactIdentityV1,
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn frame_learning_rate_screen_manifest_v1(
+    provenance: &ValidatedPreflightProvenanceV1,
+    gpu: &ValidatedPreflightGpuV1,
+    units: &[LearningRateScreenPublishedUnitV1],
+    summary: &FormalArtifactIdentityV1,
+    result: &LearningRateScreenResultV1,
+) -> FramedWriterV1 {
+    assert_eq!(units.len(), LEARNING_RATE_SCREEN_UNIT_COUNT_V1);
+    assert!(verify_learning_rate_screen_result_v1(result));
+    assert_eq!(gpu.ordinal, PREFLIGHT_GPU_ORDINAL_U64_V1);
+    assert_eq!(gpu.name, PREFLIGHT_GPU_NAME_V1);
+    assert_eq!(gpu.uuid, PREFLIGHT_GPU_UUID_V1);
+    let mut writer = FramedWriterV1::new_v1(LEARNING_RATE_SCREEN_MANIFEST_SCHEMA_V1);
+    writer.text_v1("design_sha256", LEARNING_RATE_SCREEN_DESIGN_SHA256_V1);
+    writer.u64_v1("design_bytes", LEARNING_RATE_SCREEN_DESIGN_BYTE_COUNT_V1);
+    writer.u64_v1("design_lines", LEARNING_RATE_SCREEN_DESIGN_LINE_COUNT_V1);
+    writer.text_v1("git_commit", provenance.git_commit);
+    writer.text_v1("git_tree", provenance.git_tree);
+    writer.text_v1("tracked_tree_sha256", provenance.tracked_tree_sha256);
+    writer.text_v1("tracked_tree_contract", provenance.tracked_tree_contract);
+    writer.text_v1("toolchain", &provenance.toolchain);
+    writer.text_v1(
+        "rustc_executable_sha256",
+        &provenance.rustc_executable_sha256,
+    );
+    writer.text_v1("linker_path", &provenance.linker_path);
+    writer.text_v1(
+        "linker_executable_sha256",
+        &provenance.linker_executable_sha256,
+    );
+    writer.text_v1("nvidia_smi_path", &provenance.nvidia_smi_path);
+    writer.text_v1("nvidia_smi_sha256", &provenance.nvidia_smi_sha256);
+    writer.text_v1("test_executable_sha256", &provenance.test_executable_sha256);
+    writer.u64_v1(
+        "test_executable_byte_len",
+        provenance.test_executable_byte_len,
+    );
+    writer.text_v1("target", "x86_64-pc-windows-msvc");
+    writer.text_v1("backend_identity", DIAGNOSTIC_BACKEND_IDENTITY_V1);
+    writer.text_v1("vendored_tree_object", VENDORED_SIMPLEUNIT_TREE_OBJECT_V1);
+    writer.text_v1("pool3_sha256", POOL3_DOCUMENT_SHA256_V1);
+    writer.text_v1("source_run_sha256", SOURCE_RUN_SHA256_V1);
+    writer.text_v1("source_checkpoint_sha256", SOURCE_CHECKPOINT_SHA256_V1);
+    writer.text_v1("source_sidecar_sha256", SOURCE_SIDECAR_SHA256_V1);
+    writer.text_v1("source_payload_sha256", SOURCE_PAYLOAD_SHA256_V1);
+    writer.text_v1(
+        "source_model_parameter_sha256",
+        SOURCE_MODEL_PARAMETER_SHA256_V1,
+    );
+    writer.u64_v1("source_base_seed", SOURCE_BASE_SEED_V1);
+    writer.u64_v1("source_generation", SOURCE_GENERATION_V1);
+    writer.u64_v1("episode_count_per_tape", EPISODES_PER_TAPE_V1);
+    writer.u32_array_v1("value_coefficient_bits", &[VALUE_COEFFICIENT_BITS_V1]);
+    writer.u32_array_v1(
+        "learning_rate_bits",
+        &[LEARNING_RATE_BITS_V1, HALF_LEARNING_RATE_BITS_V1],
+    );
+    writer.u64_v1("gpu_ordinal", gpu.ordinal);
+    writer.text_v1("gpu_name", &gpu.name);
+    writer.text_v1("gpu_uuid", &gpu.uuid);
+    writer.u64_v1(
+        "artifact_count",
+        LEARNING_RATE_SCREEN_ARTIFACT_COUNT_V1 as u64,
+    );
+    writer.u64_v1("unit_count", units.len() as u64);
+    for (index, unit) in units.iter().enumerate() {
+        assert_eq!(unit.unit_index, index);
+        assert_eq!(
+            unit.training_seed,
+            LEARNING_RATE_SCREEN_TRAINING_SEEDS_V1[index]
+        );
+        assert_eq!(
+            unit.validation_seed,
+            LEARNING_RATE_SCREEN_VALIDATION_SEEDS_V1[index]
+        );
+        let unit_number = index + 1;
+        assert_eq!(
+            unit.tape.basename,
+            format!("unit-{unit_number:02}-tape.frame")
+        );
+        assert_eq!(
+            unit.production_update.basename,
+            format!("unit-{unit_number:02}-production-update.frame")
+        );
+        assert_eq!(
+            unit.half_rate_update.basename,
+            format!("unit-{unit_number:02}-half-rate-update.frame")
+        );
+        let label = format!("unit[{index}]");
+        writer.u64_v1(&format!("{label}.training_seed"), unit.training_seed);
+        writer.u64_v1(&format!("{label}.validation_seed"), unit.validation_seed);
+        writer.u32_array_v1(
+            &format!("{label}.training_counts"),
+            &LEARNING_RATE_SCREEN_TRAINING_COUNTS_V1[index],
+        );
+        writer.u32_array_v1(
+            &format!("{label}.validation_counts"),
+            &LEARNING_RATE_SCREEN_VALIDATION_COUNTS_V1[index],
+        );
+        for (role, artifact) in [
+            ("tape", &unit.tape),
+            ("production_update", &unit.production_update),
+            ("half_rate_update", &unit.half_rate_update),
+        ] {
+            assert!(exact_lower_hex_v1(&artifact.sha256, 64));
+            assert!(artifact.exact_length > 0);
+            writer.text_v1(&format!("{label}.{role}.basename"), &artifact.basename);
+            writer.u64_v1(&format!("{label}.{role}.byte_len"), artifact.exact_length);
+            writer.text_v1(&format!("{label}.{role}.sha256"), &artifact.sha256);
+        }
+    }
+    assert_eq!(summary.basename, "summary.frame");
+    assert!(exact_lower_hex_v1(&summary.sha256, 64));
+    assert!(summary.exact_length > 0);
+    writer.text_v1("summary.basename", &summary.basename);
+    writer.u64_v1("summary.byte_len", summary.exact_length);
+    writer.text_v1("summary.sha256", &summary.sha256);
+    writer.text_v1("disposition", result.disposition.name_v1());
+    writer
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 struct FormalStagingPublicationV1 {
     outer_parent: crate::durable_publication_v1::ValidatedPublicationParentV1,
     staging_parent: crate::durable_publication_v1::ValidatedPublicationParentV1,
@@ -7654,6 +8751,14 @@ impl FormalStagingPublicationV1 {
                 .expect("an explicit new value-coefficient screen output directory is required"),
         );
         Self::begin_requested_v1(requested, VALUE_COEFFICIENT_SCREEN_ARTIFACT_COUNT_V1)
+    }
+
+    fn begin_learning_rate_screen_v1() -> Self {
+        let requested = PathBuf::from(
+            std::env::var("MTG_KERNEL_LEARNING_RATE_SCREEN_OUTPUT_DIR_V1")
+                .expect("an explicit new learning-rate screen output directory is required"),
+        );
+        Self::begin_requested_v1(requested, LEARNING_RATE_SCREEN_ARTIFACT_COUNT_V1)
     }
 
     fn begin_requested_v1(requested: PathBuf, expected_artifact_count: usize) -> Self {
@@ -8004,6 +9109,127 @@ fn value_coefficient_screen_three_unit_gpu1_v1() {
         result
             .mean_promoted2_low_improvement
             .expect("valid screen mean promoted(2) I(L)")
+            .to_bits(),
+        summary.sha256,
+        manifest.sha256,
+        final_dir.display(),
+    );
+    drop(gpu);
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[test]
+#[ignore = "authorized single-shot three-unit learning-rate screen; native Windows/MSVC, dedicated process, and explicit invocation required"]
+fn learning_rate_screen_three_unit_gpu1_v1() {
+    assert!(
+        cfg!(all(
+            target_arch = "x86_64",
+            target_os = "windows",
+            target_env = "msvc"
+        )),
+        "the learning-rate screen is native Windows/MSVC only"
+    );
+    let provenance = PreflightProvenanceGuardV1::begin_v1();
+    let gpu = require_fresh_physical_gpu1_v1(LEARNING_RATE_SCREEN_LIVE_TEST_NAME_SUFFIX_V1);
+    let exclusivity = BoundedGpu1ExclusivityMonitorV1::start_v1();
+    let authorities = load_preflight_live_authorities_v1();
+    let mut publication = FormalStagingPublicationV1::begin_learning_rate_screen_v1();
+    let mut summary_inputs = Vec::with_capacity(LEARNING_RATE_SCREEN_UNIT_COUNT_V1);
+    let mut published_units = Vec::with_capacity(LEARNING_RATE_SCREEN_UNIT_COUNT_V1);
+
+    for unit_index in 0..LEARNING_RATE_SCREEN_UNIT_COUNT_V1 {
+        let artifacts = run_learning_rate_screen_unit_v1(unit_index, &gpu, &authorities);
+        assert_eq!(artifacts.unit_index, unit_index);
+        let unit_number = unit_index + 1;
+        let tape = publication.publish_frame_v1(
+            format!("unit-{unit_number:02}-tape.frame"),
+            artifacts.tape_frame,
+        );
+        let production_update = publication.publish_frame_v1(
+            format!("unit-{unit_number:02}-production-update.frame"),
+            artifacts.production_update_frame,
+        );
+        let half_rate_update = publication.publish_frame_v1(
+            format!("unit-{unit_number:02}-half-rate-update.frame"),
+            artifacts.half_rate_update_frame,
+        );
+        assert_eq!(tape.sha256, artifacts.summary_input.tape_sha256);
+        assert_eq!(
+            production_update.sha256,
+            artifacts.summary_input.production_update_sha256
+        );
+        assert_eq!(
+            half_rate_update.sha256,
+            artifacts.summary_input.half_rate_update_sha256
+        );
+        published_units.push(LearningRateScreenPublishedUnitV1 {
+            unit_index,
+            training_seed: artifacts.summary_input.training_seed,
+            validation_seed: artifacts.summary_input.validation_seed,
+            tape,
+            production_update,
+            half_rate_update,
+        });
+        summary_inputs.push(artifacts.summary_input);
+    }
+
+    let (production, half_rate, promoted2_half_rate, initial_losses_bit_identical) =
+        derive_learning_rate_screen_inputs_v1(&summary_inputs)
+            .expect("three ordered learning-rate units must derive classifier inputs");
+    assert!(initial_losses_bit_identical);
+    let result =
+        classify_learning_rate_screen_v1(&production, &half_rate, &promoted2_half_rate, true);
+    assert!(verify_learning_rate_screen_result_v1(&result));
+    assert_ne!(result.disposition, LearningRateScreenDispositionV1::Invalid);
+    let summary_frame = frame_learning_rate_screen_summary_v1(&summary_inputs, &result)
+        .expect("learning-rate summary must bind its authoritative unit inputs");
+    let summary = publication.publish_frame_v1("summary.frame".to_owned(), summary_frame);
+
+    exclusivity.finish_v1(&gpu);
+    let provenance = provenance.finish_v1();
+    let manifest_frame = frame_learning_rate_screen_manifest_v1(
+        &provenance,
+        &gpu,
+        &published_units,
+        &summary,
+        &result,
+    );
+    let manifest = publication.publish_frame_v1("manifest.frame".to_owned(), manifest_frame);
+    let (final_dir, inventory) = publication.finish_v1();
+    assert_eq!(inventory.len(), LEARNING_RATE_SCREEN_ARTIFACT_COUNT_V1);
+    let expected_basenames = (0..LEARNING_RATE_SCREEN_UNIT_COUNT_V1)
+        .flat_map(|index| {
+            let unit_number = index + 1;
+            [
+                format!("unit-{unit_number:02}-tape.frame"),
+                format!("unit-{unit_number:02}-production-update.frame"),
+                format!("unit-{unit_number:02}-half-rate-update.frame"),
+            ]
+        })
+        .chain(["summary.frame".to_owned(), "manifest.frame".to_owned()])
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inventory
+            .iter()
+            .map(|artifact| artifact.basename.clone())
+            .collect::<Vec<_>>(),
+        expected_basenames
+    );
+    eprintln!(
+        "learning-rate screen result: disposition={} joint_positive={}/3 mean_d_bits={:016x} mean_I_R_bits={:016x} mean_p2_R_bits={:016x} summary={} manifest={} dir={}",
+        result.disposition.name_v1(),
+        result.joint_positive_unit_count,
+        result
+            .mean_paired_difference
+            .expect("valid screen mean d")
+            .to_bits(),
+        result
+            .mean_half_rate_improvement
+            .expect("valid screen mean I(R)")
+            .to_bits(),
+        result
+            .mean_promoted2_half_rate_improvement
+            .expect("valid screen mean promoted(2) I(R)")
             .to_bits(),
         summary.sha256,
         manifest.sha256,
@@ -9324,6 +10550,70 @@ fn value_coefficient_screen_seed_authorities_reproduce_and_are_disjoint_v1() {
     assert_eq!(VALUE_COEFFICIENT_SCREEN_DESIGN_LINE_COUNT_V1, 68);
 }
 
+#[test]
+fn learning_rate_screen_seed_authorities_reproduce_and_are_disjoint_v1() {
+    let mut observed = std::collections::HashSet::new();
+    for unit in 0..LEARNING_RATE_SCREEN_UNIT_COUNT_V1 {
+        let training = LearningRateScreenSeedAuthorityV1::training_v1(unit);
+        let validation = LearningRateScreenSeedAuthorityV1::validation_v1(unit);
+        assert_eq!(
+            training.seed_v1(),
+            LEARNING_RATE_SCREEN_TRAINING_SEEDS_V1[unit]
+        );
+        assert_eq!(
+            validation.seed_v1(),
+            LEARNING_RATE_SCREEN_VALIDATION_SEEDS_V1[unit]
+        );
+        assert_eq!(
+            training.expected_counts_v1(),
+            LEARNING_RATE_SCREEN_TRAINING_COUNTS_V1[unit]
+        );
+        assert_eq!(
+            validation.expected_counts_v1(),
+            LEARNING_RATE_SCREEN_VALIDATION_COUNTS_V1[unit]
+        );
+        assert!(training.allows_update_v1());
+        assert!(!validation.allows_update_v1());
+        assert!(observed.insert(training.seed_v1()));
+        assert!(observed.insert(validation.seed_v1()));
+
+        let reproduced_training = pool_choice_counts_v1(training.seed_v1(), EPISODES_PER_TAPE_V1);
+        let reproduced_validation =
+            pool_choice_counts_v1(validation.seed_v1(), EPISODES_PER_TAPE_V1);
+        assert_eq!(
+            reproduced_training.as_array_v1(),
+            LEARNING_RATE_SCREEN_TRAINING_COUNTS_V1[unit]
+        );
+        assert_eq!(
+            reproduced_validation.as_array_v1(),
+            LEARNING_RATE_SCREEN_VALIDATION_COUNTS_V1[unit]
+        );
+        assert_eq!(reproduced_training.total_v1(), EPISODES_PER_TAPE_V1 as u32);
+        assert_eq!(
+            reproduced_validation.total_v1(),
+            EPISODES_PER_TAPE_V1 as u32
+        );
+        assert!(reproduced_validation
+            .as_array_v1()
+            .iter()
+            .all(|count| *count > 0));
+    }
+    assert_eq!(observed.len(), LEARNING_RATE_SCREEN_UNIT_COUNT_V1 * 2);
+    assert!(!observed.contains(&PREFLIGHT_BASE_SEED_V1));
+    for seed in FORMAL_TRAINING_SEEDS_V1
+        .iter()
+        .chain(FORMAL_VALIDATION_SEEDS_V1.iter())
+        .chain(VALUE_COEFFICIENT_SCREEN_TRAINING_SEEDS_V1.iter())
+        .chain(VALUE_COEFFICIENT_SCREEN_VALIDATION_SEEDS_V1.iter())
+    {
+        assert!(!observed.contains(seed));
+    }
+    assert_eq!(LEARNING_RATE_SCREEN_ARTIFACT_COUNT_V1, 11);
+    assert_eq!(LEARNING_RATE_SCREEN_DESIGN_SHA256_V1.len(), 64);
+    assert_eq!(LEARNING_RATE_SCREEN_DESIGN_BYTE_COUNT_V1, 3_834);
+    assert_eq!(LEARNING_RATE_SCREEN_DESIGN_LINE_COUNT_V1, 84);
+}
+
 /// Every validation stratum must contain at least one learner physical
 /// decision group, so no stratum mean is taken over an empty set.
 #[test]
@@ -9354,6 +10644,24 @@ fn frozen_scale_and_authority_bits_decode_exactly_v1() {
     assert_eq!(
         ValueCoefficientAuthorityV1::Low.bits_v1(),
         LOW_VALUE_COEFFICIENT_BITS_V1
+    );
+    assert_eq!(f32::from_bits(LEARNING_RATE_BITS_V1), 0.001f32);
+    assert_eq!(f32::from_bits(HALF_LEARNING_RATE_BITS_V1), 0.0005f32);
+    assert_eq!(
+        LearningRateAuthorityV1::Production.bits_v1(),
+        LEARNING_RATE_BITS_V1
+    );
+    assert_eq!(
+        LearningRateAuthorityV1::Half.bits_v1(),
+        HALF_LEARNING_RATE_BITS_V1
+    );
+    assert_eq!(
+        (LearningRateAuthorityV1::Production.value_v1() * 0.5f32).to_bits(),
+        HALF_LEARNING_RATE_BITS_V1
+    );
+    assert_eq!(
+        (LearningRateAuthorityV1::Half.value_v1() * 2.0f32).to_bits(),
+        LEARNING_RATE_BITS_V1
     );
     assert_eq!(f32::from_bits(ADAM_WEIGHT_DECAY_BITS_V1), 0.0f32);
     assert!(!ADAM_AMSGRAD_V1);
@@ -11076,7 +12384,7 @@ fn coefficient_screen_requires_two_exact_authoritative_full_genesis_twins_v1() {
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 #[test]
 fn independent_adam_scalar_and_canonical_scorer_bias_have_bit_goldens_v1() {
-    let adam = IndependentAdamStepV1::new_v1(1).unwrap();
+    let adam = IndependentAdamStepV1::new_v1(1, LearningRateAuthorityV1::Production).unwrap();
     let (parameter, first, second) = adam.coordinate_v1(0.25, 0.5, 0.0, 0.0).unwrap();
     assert_eq!(parameter.to_bits(), 0x3e7e_f9db);
     assert_eq!(first.to_bits(), 0x3d4c_ccd0);
@@ -11086,9 +12394,15 @@ fn independent_adam_scalar_and_canonical_scorer_bias_have_bit_goldens_v1() {
         [zero.0.to_bits(), zero.1.to_bits(), zero.2.to_bits()],
         [0.25f32.to_bits(), 0, 0,]
     );
+    let half_rate_adam = IndependentAdamStepV1::new_v1(1, LearningRateAuthorityV1::Half).unwrap();
+    let (half_rate_parameter, half_rate_first, half_rate_second) =
+        half_rate_adam.coordinate_v1(0.25, 0.5, 0.0, 0.0).unwrap();
+    assert_eq!(half_rate_parameter.to_bits(), 0x3e7f_7cee);
+    assert_eq!(half_rate_first.to_bits(), first.to_bits());
+    assert_eq!(half_rate_second.to_bits(), second.to_bits());
     assert!(adam.coordinate_v1(f32::NAN, 0.0, 0.0, 0.0).is_none());
-    assert!(IndependentAdamStepV1::new_v1(0).is_none());
-    assert!(IndependentAdamStepV1::new_v1(u64::MAX).is_none());
+    assert!(IndependentAdamStepV1::new_v1(0, LearningRateAuthorityV1::Production).is_none());
+    assert!(IndependentAdamStepV1::new_v1(u64::MAX, LearningRateAuthorityV1::Production).is_none());
 
     let anchor = 0.25f32.to_bits();
     assert!(canonical_scorer_bias_coordinate_valid_v1(
@@ -11445,6 +12759,7 @@ fn independent_adam_full_stream_rejects_parameter_moment_and_shape_mutations_v1(
     let evidence = ActualUpdateEvidenceV1 {
         treatment: ActualTreatmentV1::Full,
         value_coefficient: ValueCoefficientAuthorityV1::Baseline,
+        learning_rate: LearningRateAuthorityV1::Production,
         deltas: derived_deltas_v1(&before.parameters, &after.parameters),
         frame: FramedWriterV1::new_v1(UPDATE_SCHEMA_V1),
         result,
@@ -11458,6 +12773,7 @@ fn independent_adam_full_stream_rejects_parameter_moment_and_shape_mutations_v1(
     let mut candidate = ActualUpdateEvidenceV1 {
         treatment: evidence.treatment,
         value_coefficient: evidence.value_coefficient,
+        learning_rate: evidence.learning_rate,
         result: evidence.result.clone(),
         before: evidence.before.clone(),
         after: wrong_parameter,
@@ -11489,6 +12805,115 @@ fn independent_adam_full_stream_rejects_parameter_moment_and_shape_mutations_v1(
     candidate.result = evidence.result.clone();
     candidate.after.first_moments[scorer_index].values[0] = -0.0;
     assert!(!actual_update_matches_independent_adam_v1(&candidate));
+
+    // A nonzero coordinate proves that replay consumes the evidence's sealed
+    // LR rather than merely accepting either authority for a zero update.
+    let mut half_rate_result = evidence.result.clone();
+    half_rate_result.gradients[0].values[0] = 0.5;
+    let mut half_rate_after = evidence.after.clone();
+    let half_rate_adam = IndependentAdamStepV1::new_v1(1, LearningRateAuthorityV1::Half).unwrap();
+    let (parameter, first, second) = half_rate_adam
+        .coordinate_v1(
+            evidence.before.parameters[0].values[0],
+            half_rate_result.gradients[0].values[0],
+            evidence.before.first_moments[0].values[0],
+            evidence.before.second_moments[0].values[0],
+        )
+        .unwrap();
+    half_rate_after.parameters[0].values[0] = parameter;
+    half_rate_after.first_moments[0].values[0] = first;
+    half_rate_after.second_moments[0].values[0] = second;
+    let mut half_rate_evidence = ActualUpdateEvidenceV1 {
+        treatment: ActualTreatmentV1::Full,
+        value_coefficient: ValueCoefficientAuthorityV1::Baseline,
+        learning_rate: LearningRateAuthorityV1::Half,
+        deltas: derived_deltas_v1(&evidence.before.parameters, &half_rate_after.parameters),
+        frame: FramedWriterV1::new_v1(UPDATE_SCHEMA_V1),
+        result: half_rate_result,
+        before: evidence.before.clone(),
+        after: half_rate_after,
+    };
+    assert!(actual_update_matches_independent_adam_v1(
+        &half_rate_evidence
+    ));
+    half_rate_evidence.learning_rate = LearningRateAuthorityV1::Production;
+    assert!(!actual_update_matches_independent_adam_v1(
+        &half_rate_evidence
+    ));
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[test]
+fn learning_rate_pair_identity_rejects_authority_result_gradient_and_moment_mutations_v1() {
+    let (_, _, _, tape) = joined_fixture_v1();
+    let (before, after, result) =
+        result_lattice_fixture_v1(&tape, ValueCoefficientAuthorityV1::Baseline);
+    let production = ActualUpdateEvidenceV1 {
+        treatment: ActualTreatmentV1::Full,
+        value_coefficient: ValueCoefficientAuthorityV1::Baseline,
+        learning_rate: LearningRateAuthorityV1::Production,
+        deltas: derived_deltas_v1(&before.parameters, &after.parameters),
+        frame: FramedWriterV1::new_v1(UPDATE_SCHEMA_V1),
+        result: result.clone(),
+        before: before.clone(),
+        after: after.clone(),
+    };
+    let mut half_rate = ActualUpdateEvidenceV1 {
+        treatment: ActualTreatmentV1::Full,
+        value_coefficient: ValueCoefficientAuthorityV1::Baseline,
+        learning_rate: LearningRateAuthorityV1::Half,
+        deltas: derived_deltas_v1(&before.parameters, &after.parameters),
+        frame: FramedWriterV1::new_v1(UPDATE_SCHEMA_V1),
+        result,
+        before,
+        after,
+    };
+    assert!(learning_rate_pair_identity_valid_v1(
+        &production,
+        &half_rate
+    ));
+
+    // Parameter updates are the intended cross-arm difference.
+    half_rate.after.parameters[0].values[0] =
+        f32::from_bits(half_rate.after.parameters[0].values[0].to_bits() ^ 1);
+    assert!(learning_rate_pair_identity_valid_v1(
+        &production,
+        &half_rate
+    ));
+    half_rate.after.parameters = production.after.parameters.clone();
+
+    half_rate.learning_rate = LearningRateAuthorityV1::Production;
+    assert!(!learning_rate_pair_identity_valid_v1(
+        &production,
+        &half_rate
+    ));
+    half_rate.learning_rate = LearningRateAuthorityV1::Half;
+
+    half_rate.result.loss = f32::from_bits(half_rate.result.loss.to_bits() ^ 1);
+    assert!(!learning_rate_pair_identity_valid_v1(
+        &production,
+        &half_rate
+    ));
+    half_rate.result = production.result.clone();
+
+    half_rate.result.gradients[0].values[0] = -0.0;
+    assert!(!learning_rate_pair_identity_valid_v1(
+        &production,
+        &half_rate
+    ));
+    half_rate.result = production.result.clone();
+
+    half_rate.after.first_moments[0].values[0] = -0.0;
+    assert!(!learning_rate_pair_identity_valid_v1(
+        &production,
+        &half_rate
+    ));
+    half_rate.after.first_moments = production.after.first_moments.clone();
+    half_rate.after.second_moments[0].values[0] = -0.0;
+    assert!(!learning_rate_pair_identity_valid_v1(
+        &production,
+        &half_rate
+    ));
 }
 
 /// Thirty-three copies of one tensor: right cardinality, wrong manifest.
@@ -11535,6 +12960,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     let frame = frame_update_v1(
         TREATMENT_HALF_V1,
         ValueCoefficientAuthorityV1::Baseline,
+        LearningRateAuthorityV1::Production,
         &gradients,
         &before,
         &after,
@@ -11552,6 +12978,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     let low_frame = frame_update_v1(
         TREATMENT_HALF_V1,
         ValueCoefficientAuthorityV1::Low,
+        LearningRateAuthorityV1::Production,
         &gradients,
         &before,
         &after,
@@ -11570,6 +12997,25 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         coefficient_byte_differences,
         vec![(0x00, 0x80), (0x3f, 0x3d)]
     );
+    let half_rate_frame = frame_update_v1(
+        TREATMENT_HALF_V1,
+        ValueCoefficientAuthorityV1::Baseline,
+        LearningRateAuthorityV1::Half,
+        &gradients,
+        &before,
+        &after,
+        &moments,
+        &moments,
+        &deltas,
+    )
+    .unwrap();
+    let learning_rate_byte_differences = frame
+        .bytes_v1()
+        .iter()
+        .zip(half_rate_frame.bytes_v1())
+        .filter_map(|(production, half)| (production != half).then_some((*production, *half)))
+        .collect::<Vec<_>>();
+    assert_eq!(learning_rate_byte_differences, vec![(0x83, 0x03)]);
     assert_eq!(NAMED_TENSOR_COUNT_V1, 33);
     assert_eq!(native_train_state_parameter_layout_v1().len(), 33);
 
@@ -11577,6 +13023,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
     assert!(frame_update_v1(
         TREATMENT_FULL_V1,
         ValueCoefficientAuthorityV1::Baseline,
+        LearningRateAuthorityV1::Production,
         &gradients,
         &before,
         &after,
@@ -11589,6 +13036,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         frame_update_v1(
             "SOMETHING-ELSE",
             ValueCoefficientAuthorityV1::Baseline,
+            LearningRateAuthorityV1::Production,
             &gradients,
             &before,
             &after,
@@ -11604,6 +13052,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         frame_update_v1(
             TREATMENT_HALF_V1,
             ValueCoefficientAuthorityV1::Baseline,
+            LearningRateAuthorityV1::Production,
             &gradients[..32],
             &before,
             &after,
@@ -11622,6 +13071,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         frame_update_v1(
             TREATMENT_HALF_V1,
             ValueCoefficientAuthorityV1::Baseline,
+            LearningRateAuthorityV1::Production,
             &dummies,
             &before,
             &after,
@@ -11639,6 +13089,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         frame_update_v1(
             TREATMENT_HALF_V1,
             ValueCoefficientAuthorityV1::Baseline,
+            LearningRateAuthorityV1::Production,
             &gradients,
             &wrong_shape,
             &after,
@@ -11656,6 +13107,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         frame_update_v1(
             TREATMENT_HALF_V1,
             ValueCoefficientAuthorityV1::Baseline,
+            LearningRateAuthorityV1::Production,
             &gradients,
             &nonfinite,
             &after,
@@ -11671,6 +13123,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         frame_update_v1(
             TREATMENT_HALF_V1,
             ValueCoefficientAuthorityV1::Baseline,
+            LearningRateAuthorityV1::Production,
             &gradients,
             &before,
             &after,
@@ -11686,6 +13139,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         frame_update_v1(
             TREATMENT_HALF_V1,
             ValueCoefficientAuthorityV1::Baseline,
+            LearningRateAuthorityV1::Production,
             &gradients,
             &before,
             &after,
@@ -11704,6 +13158,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         frame_update_v1(
             TREATMENT_HALF_V1,
             ValueCoefficientAuthorityV1::Baseline,
+            LearningRateAuthorityV1::Production,
             &gradients,
             &before,
             &after,
@@ -11720,6 +13175,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         frame_update_v1(
             TREATMENT_HALF_V1,
             ValueCoefficientAuthorityV1::Baseline,
+            LearningRateAuthorityV1::Production,
             &gradients,
             &before,
             &oversized_after,
@@ -11735,6 +13191,7 @@ fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() 
         frame_update_v1(
             TREATMENT_FULL_V1,
             ValueCoefficientAuthorityV1::Baseline,
+            LearningRateAuthorityV1::Production,
             &gradients,
             &before,
             &after,
@@ -12116,6 +13573,236 @@ fn value_coefficient_screen_summary_binds_raw_units_and_rejects_forgery_v1() {
     assert_eq!(
         frame_value_coefficient_screen_summary_v1(&units, &self_consistent_replacement),
         Err(ValueCoefficientScreenSummaryErrorV1::RawInputsDisagreeWithUnits)
+    );
+}
+
+#[test]
+fn learning_rate_screen_classifier_enforces_every_strict_gate_v1() {
+    let production = [0.0f64; LEARNING_RATE_SCREEN_UNIT_COUNT_V1];
+    let advance_half_rate = [1.0, 1.0, -0.25];
+    let advance_promoted2 = [1.0, 1.0, -0.25];
+    let advance =
+        classify_learning_rate_screen_v1(&production, &advance_half_rate, &advance_promoted2, true);
+    assert_eq!(
+        advance.disposition,
+        LearningRateScreenDispositionV1::Advance0p0005
+    );
+    assert_eq!(advance.joint_positive_unit_count, 2);
+    assert!(advance.gates.all_pass_v1());
+    assert!(verify_learning_rate_screen_result_v1(&advance));
+
+    let joint_only =
+        classify_learning_rate_screen_v1(&production, &[1.0, 1.0, 1.0], &[1.0, -0.25, -0.25], true);
+    assert_eq!(
+        joint_only.disposition,
+        LearningRateScreenDispositionV1::DoNotAdvance
+    );
+    assert_eq!(joint_only.joint_positive_unit_count, 1);
+    assert!(!joint_only.gates.joint_positive_units_gate);
+    assert!(joint_only.gates.mean_paired_difference_gate);
+    assert!(joint_only.gates.mean_half_rate_improvement_gate);
+    assert!(joint_only.gates.mean_promoted2_half_rate_improvement_gate);
+
+    let mean_difference_only = classify_learning_rate_screen_v1(
+        &[0.0, 0.0, 4.0],
+        &[1.0, 1.0, 1.0],
+        &[1.0, 1.0, 1.0],
+        true,
+    );
+    assert_eq!(mean_difference_only.joint_positive_unit_count, 2);
+    assert!(!mean_difference_only.gates.mean_paired_difference_gate);
+    assert!(mean_difference_only.gates.joint_positive_units_gate);
+    assert!(mean_difference_only.gates.mean_half_rate_improvement_gate);
+    assert!(
+        mean_difference_only
+            .gates
+            .mean_promoted2_half_rate_improvement_gate
+    );
+
+    let mean_half_rate_only = classify_learning_rate_screen_v1(
+        &[-2.0, -2.0, -2.0],
+        &[-1.0, -1.0, -1.0],
+        &[1.0, 1.0, 1.0],
+        true,
+    );
+    assert!(mean_half_rate_only.gates.joint_positive_units_gate);
+    assert!(mean_half_rate_only.gates.mean_paired_difference_gate);
+    assert!(!mean_half_rate_only.gates.mean_half_rate_improvement_gate);
+    assert!(
+        mean_half_rate_only
+            .gates
+            .mean_promoted2_half_rate_improvement_gate
+    );
+
+    let mean_promoted2_only =
+        classify_learning_rate_screen_v1(&production, &[1.0, 1.0, 1.0], &[1.0, 1.0, -3.0], true);
+    assert_eq!(mean_promoted2_only.joint_positive_unit_count, 2);
+    assert!(mean_promoted2_only.gates.joint_positive_units_gate);
+    assert!(mean_promoted2_only.gates.mean_paired_difference_gate);
+    assert!(mean_promoted2_only.gates.mean_half_rate_improvement_gate);
+    assert!(
+        !mean_promoted2_only
+            .gates
+            .mean_promoted2_half_rate_improvement_gate
+    );
+
+    for result in [
+        classify_learning_rate_screen_v1(
+            &production,
+            &advance_half_rate,
+            &advance_promoted2,
+            false,
+        ),
+        classify_learning_rate_screen_v1(
+            &[f64::NAN, 0.0, 0.0],
+            &advance_half_rate,
+            &advance_promoted2,
+            true,
+        ),
+        classify_learning_rate_screen_v1(
+            &production,
+            &[f64::INFINITY, 1.0, 1.0],
+            &advance_promoted2,
+            true,
+        ),
+        classify_learning_rate_screen_v1(
+            &production,
+            &[f64::MAX, f64::MAX, -f64::MAX],
+            &advance_promoted2,
+            true,
+        ),
+    ] {
+        assert_eq!(result.disposition, LearningRateScreenDispositionV1::Invalid);
+        assert!(verify_learning_rate_screen_result_v1(&result));
+    }
+
+    let ordered = learning_rate_screen_mean_v1(&[1.0e16, -1.0e16, 1.0]).unwrap();
+    let reassociated = learning_rate_screen_mean_v1(&[1.0e16, 1.0, -1.0e16]).unwrap();
+    assert_eq!(ordered.to_bits(), (1.0f64 / 3.0).to_bits());
+    assert_eq!(reassociated.to_bits(), 0.0f64.to_bits());
+}
+
+fn learning_rate_screen_summary_unit_fixture_v1(
+    index: usize,
+    production_after: f64,
+    half_rate_after: f64,
+    promoted2_half_rate_after: f64,
+) -> LearningRateScreenSummaryUnitInputV1 {
+    LearningRateScreenSummaryUnitInputV1 {
+        unit_index: index,
+        training_seed: LEARNING_RATE_SCREEN_TRAINING_SEEDS_V1[index],
+        validation_seed: LEARNING_RATE_SCREEN_VALIDATION_SEEDS_V1[index],
+        production_loss_before_bits: 1.0f64.to_bits(),
+        production_loss_after_bits: production_after.to_bits(),
+        half_rate_loss_before_bits: 1.0f64.to_bits(),
+        half_rate_loss_after_bits: half_rate_after.to_bits(),
+        promoted2_half_rate_loss_before_bits: 1.0f64.to_bits(),
+        promoted2_half_rate_loss_after_bits: promoted2_half_rate_after.to_bits(),
+        tape_sha256: "d".repeat(64),
+        production_update_sha256: "e".repeat(64),
+        half_rate_update_sha256: "f".repeat(64),
+    }
+}
+
+fn learning_rate_screen_summary_units_fixture_v1() -> Vec<LearningRateScreenSummaryUnitInputV1> {
+    (0..LEARNING_RATE_SCREEN_UNIT_COUNT_V1)
+        .map(|index| {
+            let jitter = index as f64 * 0.01;
+            learning_rate_screen_summary_unit_fixture_v1(
+                index,
+                0.90 + jitter,
+                0.80 + jitter,
+                0.70 + jitter,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn learning_rate_screen_summary_binds_raw_units_authorities_and_rejects_forgery_v1() {
+    let units = learning_rate_screen_summary_units_fixture_v1();
+    let (production, half_rate, promoted2_half_rate, initial_identical) =
+        derive_learning_rate_screen_inputs_v1(&units).unwrap();
+    assert!(initial_identical);
+    for index in 0..LEARNING_RATE_SCREEN_UNIT_COUNT_V1 {
+        assert_eq!(
+            production[index].to_bits(),
+            units[index].production_improvement_v1().to_bits()
+        );
+        assert_eq!(
+            half_rate[index].to_bits(),
+            units[index].half_rate_improvement_v1().to_bits()
+        );
+        assert_eq!(
+            (half_rate[index] - production[index]).to_bits(),
+            units[index].paired_difference_v1().to_bits()
+        );
+        assert_eq!(
+            promoted2_half_rate[index].to_bits(),
+            units[index].promoted2_half_rate_improvement_v1().to_bits()
+        );
+    }
+    let result =
+        classify_learning_rate_screen_v1(&production, &half_rate, &promoted2_half_rate, true);
+    assert_eq!(
+        result.disposition,
+        LearningRateScreenDispositionV1::Advance0p0005
+    );
+    let frame = frame_learning_rate_screen_summary_v1(&units, &result).unwrap();
+    assert!(frame
+        .bytes_v1()
+        .starts_with(FramedWriterV1::new_v1(LEARNING_RATE_SCREEN_SUMMARY_SCHEMA_V1).bytes_v1()));
+    for bits in [
+        VALUE_COEFFICIENT_BITS_V1,
+        LEARNING_RATE_BITS_V1,
+        HALF_LEARNING_RATE_BITS_V1,
+    ] {
+        assert!(frame
+            .bytes_v1()
+            .windows(4)
+            .any(|window| window == bits.to_le_bytes()));
+    }
+
+    let mut initial_mismatch = units.clone();
+    initial_mismatch[0].half_rate_loss_before_bits = 0.99f64.to_bits();
+    let (production, half_rate, promoted2_half_rate, initial_identical) =
+        derive_learning_rate_screen_inputs_v1(&initial_mismatch).unwrap();
+    assert!(!initial_identical);
+    let mismatch_result =
+        classify_learning_rate_screen_v1(&production, &half_rate, &promoted2_half_rate, true);
+    assert_eq!(
+        frame_learning_rate_screen_summary_v1(&initial_mismatch, &mismatch_result),
+        Err(LearningRateScreenSummaryErrorV1::RawInputsDisagreeWithUnits)
+    );
+
+    let mut wrong_seed = units.clone();
+    wrong_seed[0].training_seed += 1;
+    assert!(derive_learning_rate_screen_inputs_v1(&wrong_seed).is_none());
+    let mut wrong_order = units.clone();
+    wrong_order.swap(0, 1);
+    assert!(derive_learning_rate_screen_inputs_v1(&wrong_order).is_none());
+    let mut wrong_digest = units.clone();
+    wrong_digest[0].half_rate_update_sha256 = "F".repeat(64);
+    assert!(derive_learning_rate_screen_inputs_v1(&wrong_digest).is_none());
+
+    let mut forged = result.clone();
+    forged.joint_positive_unit_count += 1;
+    assert_eq!(
+        frame_learning_rate_screen_summary_v1(&units, &forged),
+        Err(LearningRateScreenSummaryErrorV1::ForgedResult)
+    );
+    let self_consistent_replacement = classify_learning_rate_screen_v1(
+        &[production[0] + 0.5, production[1], production[2]],
+        &half_rate,
+        &promoted2_half_rate,
+        true,
+    );
+    assert!(verify_learning_rate_screen_result_v1(
+        &self_consistent_replacement
+    ));
+    assert_eq!(
+        frame_learning_rate_screen_summary_v1(&units, &self_consistent_replacement),
+        Err(LearningRateScreenSummaryErrorV1::RawInputsDisagreeWithUnits)
     );
 }
 
