@@ -76,6 +76,9 @@ pub mod native_checkpoint_inference_v1;
 // Strict JSONL bridge from one exact checkpoint inference authority to the
 // production FastActor/FlatScoredFamilyV2 decision path.
 pub mod native_checkpoint_shadow_stdio_v1;
+// Offline-only perfect-information rollout-teacher ceiling diagnostic. It
+// publishes no model and its labels are not admissible for training.
+pub mod native_rollout_teacher_v1;
 // Narrow CP7 teacher JSONL to native policy cross-entropy derivative path.
 pub mod native_cp7_behavior_clone_v1;
 // Strict candidate-policy XMage-versus-CP7 outcome corpus to offline
