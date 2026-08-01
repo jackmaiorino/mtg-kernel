@@ -20,7 +20,8 @@ use crate::native_flat_tensorizer_v2::{
 use crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_ref_v1;
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyFrozenObjectiveTermV1, NativePolicyPhysicalDecisionV1,
-    NativePolicySubstepV1, NativePolicyValueTrainStateV1, TRAINER_ALGORITHM_V1,
+    NativePolicySubstepV1, NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+    TRAINER_ALGORITHM_V1,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativePolicyValueModelConfigV1,
@@ -77,6 +78,18 @@ const STANDARDIZED_EPISODE_BALANCED_CLI_V1: &str = "standardized-episode-balance
 const PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_CLI_V1: &str =
     "ppo-clip-standardized-episode-balanced";
 const RAW_ADVANTAGE_CLI_V1: &str = "raw";
+const FULL_PARAMETER_SCOPE_CLI_V1: &str = "full";
+const SCORER_HEAD_ONLY_PARAMETER_SCOPE_CLI_V1: &str = "scorer-head-only";
+const SCORER_HEAD_ONLY_PARAMETER_SCOPE_IMPLEMENTATION_V1: &str =
+    "ordinary-simultaneous-update-then-restore-frozen-snapshot/v1";
+const SCORER_HEAD_ONLY_ACTIVE_PARAMETER_NAMES_V1: [&str; 3] =
+    ["scorer.0.weight", "scorer.0.bias", "scorer.2.weight"];
+const SCORER_HEAD_ONLY_ACTIVE_PARAMETER_TENSOR_COUNT_V1: usize = 3;
+const SCORER_HEAD_ONLY_ACTIVE_SCALAR_PARAMETER_COUNT_V1: usize = 8_320;
+const SCORER_HEAD_ONLY_FROZEN_PARAMETER_TENSOR_COUNT_V1: usize = 30;
+const SCORER_HEAD_ONLY_GAUGE_PARAMETER_NAME_V1: &str = "scorer.2.bias";
+const SCORER_HEAD_ONLY_GAUGE_HANDLING_V1: &str =
+    "restore-pre-update-parameter-and-zero-moments-preserve-anchor";
 const ADVANTAGE_STANDARD_DEVIATION_FLOOR_V1: f64 = 1.0e-6;
 
 const SOURCE_RUN_SHA256_V1: &str =
@@ -1173,6 +1186,27 @@ impl AdvantageModeV1 {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ParameterScopeV1 {
+    Full,
+    ScorerHeadOnly,
+}
+
+impl Default for ParameterScopeV1 {
+    fn default() -> Self {
+        Self::Full
+    }
+}
+
+impl ParameterScopeV1 {
+    fn cli_v1(self) -> &'static str {
+        match self {
+            Self::Full => FULL_PARAMETER_SCOPE_CLI_V1,
+            Self::ScorerHeadOnly => SCORER_HEAD_ONLY_PARAMETER_SCOPE_CLI_V1,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct AdvantageObservationV1 {
     episode_id: u64,
@@ -1919,6 +1953,111 @@ fn train_frozen_batch_v1(
     Ok(())
 }
 
+fn scorer_head_parameter_is_active_v1(name: &str) -> bool {
+    SCORER_HEAD_ONLY_ACTIVE_PARAMETER_NAMES_V1.contains(&name)
+}
+
+/// Retains the active scorer tensors from an already completed ordinary Adam
+/// update while restoring every other parameter and optimizer moment from the
+/// exact pre-update snapshot. The global Adam step remains the ordinary
+/// child's step. The canonical scorer bias is checked and restored explicitly
+/// even though the ordinary trainer already holds it at its fixed gauge.
+fn retain_scorer_head_only_update_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    pre_update: &NativePolicyValueTrainSnapshotV1,
+) -> DynResultV1<()> {
+    let mut ordinary_child = state.snapshot_v1()?;
+    if ordinary_child.adam_step
+        != pre_update
+            .adam_step
+            .checked_add(1)
+            .ok_or_else(|| invalid_data_v1("scorer-head-only pre-update Adam step overflow"))?
+        || ordinary_child.scorer_bias_anchor_bits != pre_update.scorer_bias_anchor_bits
+        || ordinary_child.parameters.len() != pre_update.parameters.len()
+        || ordinary_child.first_moments.len() != pre_update.first_moments.len()
+        || ordinary_child.second_moments.len() != pre_update.second_moments.len()
+    {
+        return Err(invalid_data_v1("invalid scorer-head-only ordinary child snapshot").into());
+    }
+
+    let ordinary_child_witness = ordinary_child.clone();
+    let mut active_tensor_count = 0_usize;
+    let mut active_scalar_count = 0_usize;
+    let mut gauge_seen = false;
+    for ordinal in 0..ordinary_child.parameters.len() {
+        let child_parameter = &ordinary_child.parameters[ordinal];
+        let parent_parameter = &pre_update.parameters[ordinal];
+        let child_first = &ordinary_child.first_moments[ordinal];
+        let parent_first = &pre_update.first_moments[ordinal];
+        let child_second = &ordinary_child.second_moments[ordinal];
+        let parent_second = &pre_update.second_moments[ordinal];
+        if child_parameter.name != parent_parameter.name
+            || child_parameter.shape != parent_parameter.shape
+            || child_first.name != parent_first.name
+            || child_first.shape != parent_first.shape
+            || child_second.name != parent_second.name
+            || child_second.shape != parent_second.shape
+        {
+            return Err(invalid_data_v1("scorer-head-only snapshot layout mismatch").into());
+        }
+        if scorer_head_parameter_is_active_v1(child_parameter.name) {
+            active_tensor_count += 1;
+            active_scalar_count = active_scalar_count
+                .checked_add(child_parameter.values.len())
+                .ok_or_else(|| invalid_data_v1("scorer-head-only active scalar overflow"))?;
+            continue;
+        }
+        if child_parameter.name == SCORER_HEAD_ONLY_GAUGE_PARAMETER_NAME_V1 {
+            gauge_seen = true;
+            if child_parameter != parent_parameter
+                || child_first != parent_first
+                || child_second != parent_second
+                || child_parameter.values.len() != 1
+                || child_parameter.values[0].to_bits() != pre_update.scorer_bias_anchor_bits
+                || child_first.values[0].to_bits() != 0
+                || child_second.values[0].to_bits() != 0
+            {
+                return Err(invalid_data_v1(
+                    "ordinary child violated the canonical scorer-bias gauge",
+                )
+                .into());
+            }
+        }
+        ordinary_child.parameters[ordinal] = parent_parameter.clone();
+        ordinary_child.first_moments[ordinal] = parent_first.clone();
+        ordinary_child.second_moments[ordinal] = parent_second.clone();
+    }
+    if active_tensor_count != SCORER_HEAD_ONLY_ACTIVE_PARAMETER_TENSOR_COUNT_V1
+        || active_scalar_count != SCORER_HEAD_ONLY_ACTIVE_SCALAR_PARAMETER_COUNT_V1
+        || !gauge_seen
+    {
+        return Err(invalid_data_v1("scorer-head-only active inventory mismatch").into());
+    }
+
+    state.replace_snapshot_v1(&ordinary_child)?;
+    let retained_child = state.snapshot_v1()?;
+    for ordinal in 0..retained_child.parameters.len() {
+        let expected =
+            if scorer_head_parameter_is_active_v1(retained_child.parameters[ordinal].name) {
+                &ordinary_child_witness
+            } else {
+                pre_update
+            };
+        if retained_child.parameters[ordinal] != expected.parameters[ordinal]
+            || retained_child.first_moments[ordinal] != expected.first_moments[ordinal]
+            || retained_child.second_moments[ordinal] != expected.second_moments[ordinal]
+        {
+            return Err(invalid_data_v1("scorer-head-only atomic restore mismatch").into());
+        }
+    }
+    if retained_child.adam_step != ordinary_child_witness.adam_step
+        || retained_child.scorer_bias_anchor_bits != pre_update.scorer_bias_anchor_bits
+    {
+        return Err(invalid_data_v1("scorer-head-only state metadata mismatch").into());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BatchGroupsV1 {
     All,
@@ -1959,6 +2098,7 @@ struct TrainConfigV1 {
     advantage_mode: AdvantageModeV1,
     policy_scale: f32,
     ppo_clip_epsilon: Option<f32>,
+    parameter_scope: ParameterScopeV1,
     epochs: u32,
     batch_groups: BatchGroupsV1,
 }
@@ -1976,6 +2116,7 @@ impl Default for TrainConfigV1 {
             advantage_mode: AdvantageModeV1::Raw,
             policy_scale: 1.0,
             ppo_clip_epsilon: None,
+            parameter_scope: ParameterScopeV1::Full,
             epochs: 0,
             batch_groups: BatchGroupsV1::All,
         }
@@ -2077,6 +2218,48 @@ struct PpoClipManifestV1 {
     epochs: Vec<PpoClipEpochManifestV1>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ParameterScopeManifestV1 {
+    scope: String,
+    implementation: String,
+    active_parameter_names: Vec<String>,
+    active_parameter_tensor_count: usize,
+    active_scalar_parameter_count: usize,
+    frozen_parameter_tensor_count: usize,
+    canonical_gauge_parameter_name: String,
+    canonical_gauge_handling: String,
+}
+
+fn scorer_head_only_parameter_scope_manifest_v1() -> ParameterScopeManifestV1 {
+    ParameterScopeManifestV1 {
+        scope: SCORER_HEAD_ONLY_PARAMETER_SCOPE_CLI_V1.to_owned(),
+        implementation: SCORER_HEAD_ONLY_PARAMETER_SCOPE_IMPLEMENTATION_V1.to_owned(),
+        active_parameter_names: SCORER_HEAD_ONLY_ACTIVE_PARAMETER_NAMES_V1
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        active_parameter_tensor_count: SCORER_HEAD_ONLY_ACTIVE_PARAMETER_TENSOR_COUNT_V1,
+        active_scalar_parameter_count: SCORER_HEAD_ONLY_ACTIVE_SCALAR_PARAMETER_COUNT_V1,
+        frozen_parameter_tensor_count: SCORER_HEAD_ONLY_FROZEN_PARAMETER_TENSOR_COUNT_V1,
+        canonical_gauge_parameter_name: SCORER_HEAD_ONLY_GAUGE_PARAMETER_NAME_V1.to_owned(),
+        canonical_gauge_handling: SCORER_HEAD_ONLY_GAUGE_HANDLING_V1.to_owned(),
+    }
+}
+
+fn validate_parameter_scope_manifest_v1(scope: &ParameterScopeManifestV1) -> bool {
+    scope == &scorer_head_only_parameter_scope_manifest_v1()
+        && scope.active_parameter_tensor_count == scope.active_parameter_names.len()
+        && scope
+            .active_parameter_tensor_count
+            .checked_add(scope.frozen_parameter_tensor_count)
+            == Some(33)
+        && !scope
+            .active_parameter_names
+            .iter()
+            .any(|name| name == &scope.canonical_gauge_parameter_name)
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TrainingManifestV1 {
@@ -2087,6 +2270,8 @@ struct TrainingManifestV1 {
     ppo_clip: Option<PpoClipManifestV1>,
     optimizer: String,
     optimizer_reset: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parameter_scope: Option<ParameterScopeManifestV1>,
     training_order: String,
     learning_rate: f32,
     learning_rate_f32_bits: u32,
@@ -2295,6 +2480,12 @@ fn publish_derivative_v1(
             ppo_clip,
             optimizer: OPTIMIZER_V1.to_owned(),
             optimizer_reset: parent.is_none(),
+            parameter_scope: match config.parameter_scope {
+                ParameterScopeV1::Full => None,
+                ParameterScopeV1::ScorerHeadOnly => {
+                    Some(scorer_head_only_parameter_scope_manifest_v1())
+                }
+            },
             training_order: TRAINING_ORDER_V1.to_owned(),
             learning_rate: config.learning_rate,
             learning_rate_f32_bits: config.learning_rate.to_bits(),
@@ -2747,6 +2938,17 @@ fn load_derivative_bundle_v1(
         && training.requested_batch_groups == "all"
         && training.effective_batch_groups == corpus.physical_group_count
         && training.adam_update_count == u64::from(training.epochs);
+    let parameter_scope_valid = match training.parameter_scope.as_ref() {
+        None => true,
+        Some(scope) => {
+            validate_parameter_scope_manifest_v1(scope)
+                && training.objective == STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1
+                && training.epochs == 1
+                && training.requested_batch_groups == "all"
+                && training.effective_batch_groups == corpus.physical_group_count
+                && training.adam_update_count == 1
+        }
+    };
     let source_schedule_valid = match parent {
         None => {
             training.optimizer_reset
@@ -2766,6 +2968,7 @@ fn load_derivative_bundle_v1(
     };
     let training_valid = objective_valid
         && training.optimizer == OPTIMIZER_V1
+        && parameter_scope_valid
         && source_schedule_valid
         && training.training_order == TRAINING_ORDER_V1
         && training.learning_rate.to_bits() == training.learning_rate_f32_bits
@@ -3318,6 +3521,12 @@ pub struct XmageCp7OutcomeCheckpointSummaryV1 {
     pub epochs: u32,
     pub effective_batch_groups: usize,
     pub optimizer_reset: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameter_scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_parameter_names: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_scalar_parameter_count: Option<usize>,
     pub on_policy_g384_single_update: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_manifest_sha256: Option<String>,
@@ -3361,6 +3570,21 @@ pub fn verify_xmage_cp7_outcome_checkpoint_v1(
         epochs: manifest.training.epochs,
         effective_batch_groups: manifest.training.effective_batch_groups,
         optimizer_reset: manifest.training.optimizer_reset,
+        parameter_scope: manifest
+            .training
+            .parameter_scope
+            .as_ref()
+            .map(|scope| scope.scope.clone()),
+        active_parameter_names: manifest
+            .training
+            .parameter_scope
+            .as_ref()
+            .map(|scope| scope.active_parameter_names.clone()),
+        active_scalar_parameter_count: manifest
+            .training
+            .parameter_scope
+            .as_ref()
+            .map(|scope| scope.active_scalar_parameter_count),
         on_policy_g384_single_update: manifest.training.on_policy_g384_single_update,
         parent_manifest_sha256: manifest
             .parent
@@ -3402,6 +3626,14 @@ fn parse_advantage_mode_v1(value: &str) -> DynResultV1<AdvantageModeV1> {
             "--advantage-mode must be raw, standardized-episode-balanced, or ppo-clip-standardized-episode-balanced",
         )
         .into()),
+    }
+}
+
+fn parse_parameter_scope_v1(value: &str) -> DynResultV1<ParameterScopeV1> {
+    match value {
+        FULL_PARAMETER_SCOPE_CLI_V1 => Ok(ParameterScopeV1::Full),
+        SCORER_HEAD_ONLY_PARAMETER_SCOPE_CLI_V1 => Ok(ParameterScopeV1::ScorerHeadOnly),
+        _ => Err(invalid_data_v1("--parameter-scope must be full or scorer-head-only").into()),
     }
 }
 
@@ -3467,6 +3699,13 @@ where
                         .parse()?,
                 );
             }
+            "--parameter-scope" => {
+                config.parameter_scope = parse_parameter_scope_v1(
+                    next_arg_v1(&mut iterator, flag)?
+                        .to_str()
+                        .ok_or_else(|| invalid_data_v1("parameter scope is not UTF-8"))?,
+                )?;
+            }
             "--epochs" => {
                 config.epochs = next_arg_v1(&mut iterator, flag)?
                     .to_str()
@@ -3482,7 +3721,7 @@ where
             }
             "--help" | "-h" => {
                 return Err(invalid_data_v1(
-                    "usage: xmage_cp7_outcome_reinforce_v1 train --outcome-jsonl PATH --outcome-jsonl-sha256 HEX64 (--source-store-root PATH | --source-outcome-root PATH) --output-dir NEW_PATH --learning-rate FLOAT --value-coefficient FLOAT --epochs U32 [--batch-groups all|N] [--advantage-mode raw|standardized-episode-balanced|ppo-clip-standardized-episode-balanced] [--policy-scale FLOAT] [--ppo-clip-epsilon FLOAT]",
+                    "usage: xmage_cp7_outcome_reinforce_v1 train --outcome-jsonl PATH --outcome-jsonl-sha256 HEX64 (--source-store-root PATH | --source-outcome-root PATH) --output-dir NEW_PATH --learning-rate FLOAT --value-coefficient FLOAT --epochs U32 [--batch-groups all|N] [--advantage-mode raw|standardized-episode-balanced|ppo-clip-standardized-episode-balanced] [--policy-scale FLOAT] [--ppo-clip-epsilon FLOAT] [--parameter-scope full|scorer-head-only]",
                 )
                 .into())
             }
@@ -3564,6 +3803,14 @@ where
         }
         _ => {}
     }
+    if config.parameter_scope == ParameterScopeV1::ScorerHeadOnly
+        && config.advantage_mode != AdvantageModeV1::StandardizedEpisodeBalanced
+    {
+        return Err(invalid_data_v1(
+            "scorer-head-only parameter scope requires standardized-episode-balanced",
+        )
+        .into());
+    }
     if config.source_outcome_root.is_some()
         && config.advantage_mode != AdvantageModeV1::PpoClipStandardizedEpisodeBalanced
         && (config.epochs != 1 || config.batch_groups != BatchGroupsV1::All)
@@ -3603,7 +3850,7 @@ fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpoi
     };
     let effective_batch_groups = config.batch_groups.effective_v1(dataset.groups.len());
     eprintln!(
-        "loaded XMage CP7 outcomes rows={} episodes={} pairs={} physical_groups={} batch_groups={} epochs={} advantage_mode={} policy_scale={} ppo_clip_epsilon={}",
+        "loaded XMage CP7 outcomes rows={} episodes={} pairs={} physical_groups={} batch_groups={} epochs={} advantage_mode={} parameter_scope={} policy_scale={} ppo_clip_epsilon={}",
         dataset.decision_row_count,
         dataset.episode_count,
         dataset.pair_indices.len(),
@@ -3611,6 +3858,7 @@ fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpoi
         effective_batch_groups,
         config.epochs,
         config.advantage_mode.cli_v1(),
+        config.parameter_scope.cli_v1(),
         config.policy_scale,
         config
             .ppo_clip_epsilon
@@ -3645,6 +3893,10 @@ fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpoi
                 &prepared.terms,
                 config.value_coefficient,
             )?;
+            let pre_update = match config.parameter_scope {
+                ParameterScopeV1::Full => None,
+                ParameterScopeV1::ScorerHeadOnly => Some(state.snapshot_v1()?),
+            };
             train_frozen_batch_v1(
                 &mut state,
                 &dataset.groups,
@@ -3652,6 +3904,9 @@ fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpoi
                 config.learning_rate,
                 config.value_coefficient,
             )?;
+            if let Some(pre_update) = pre_update.as_ref() {
+                retain_scorer_head_only_update_v1(&mut state, pre_update)?;
+            }
             let final_metrics = evaluate_frozen_objective_v1(
                 state.model_v1(),
                 &dataset.groups,
@@ -3866,6 +4121,78 @@ mod tests {
         arguments
     }
 
+    fn scorer_scope_test_tensor_v1() -> OwnedDecisionTensorV1 {
+        let config = NativePolicyValueModelConfigV1::contract_v1();
+        let state = (0..config.state_dim)
+            .map(|index| (index as f32 % 23.0 - 11.0) / 16.0)
+            .collect();
+        let object_features = (0..config.object_feature_dim)
+            .map(|index| (index as f32 % 17.0 - 8.0) / 12.0)
+            .collect();
+        let action_features = (0..2 * config.action_feature_dim)
+            .map(|index| {
+                let action = index / config.action_feature_dim;
+                let column = index % config.action_feature_dim;
+                ((column as f32 % 29.0 - 14.0) / 20.0) * if action == 0 { 1.0 } else { -0.75 }
+            })
+            .collect();
+        OwnedDecisionTensorV1 {
+            state,
+            object_features,
+            object_card_ids: vec![1],
+            object_groups: vec![0],
+            object_node_ids: vec![0],
+            edge_features: Vec::new(),
+            edge_source_indices: Vec::new(),
+            edge_target_indices: Vec::new(),
+            action_features,
+            action_ref_features: Vec::new(),
+            action_ref_card_ids: Vec::new(),
+            action_ref_action_indices: Vec::new(),
+            action_ref_node_indices: Vec::new(),
+        }
+    }
+
+    fn scorer_scope_test_groups_v1() -> Vec<OutcomePhysicalDecisionV1> {
+        [
+            (0_u64, PlayerSeatV1::P0, 1_i8, 0_usize),
+            (1_u64, PlayerSeatV1::P1, -1_i8, 1_usize),
+        ]
+        .into_iter()
+        .map(
+            |(episode_id, candidate_seat, terminal_return, selected_index)| {
+                let example = OutcomeExampleV1 {
+                    record_ordinal: episode_id,
+                    outcome_decision_ordinal: episode_id,
+                    pair_index: 0,
+                    episode_id,
+                    step: 0,
+                    environment_revision: 0,
+                    physical_decision_id: episode_id,
+                    actor_physical_decision_ordinal: 0,
+                    substep_index: 0,
+                    substep_count: 1,
+                    decision_kind: "scorer-scope-test".to_owned(),
+                    legal_action_count: 2,
+                    selected_index,
+                    old_policy_logits_f32_bits: vec![0; 2],
+                    old_value_f32_bits: 0,
+                    tensor: scorer_scope_test_tensor_v1(),
+                };
+                OutcomePhysicalDecisionV1 {
+                    first_record_ordinal: episode_id,
+                    pair_index: 0,
+                    episode_id,
+                    candidate_seat,
+                    terminal_return,
+                    decision_kind: "scorer-scope-test".to_owned(),
+                    examples: vec![example],
+                }
+            },
+        )
+        .collect()
+    }
+
     #[test]
     fn first_screen_defaults_to_one_full_corpus_batch_v1() {
         let config = parse_train_config_v1(complete_train_args_v1()).unwrap();
@@ -3873,6 +4200,167 @@ mod tests {
         assert_eq!(config.batch_groups.effective_v1(1_234), 1_234);
         assert_eq!(config.epochs, 1);
         assert_eq!(config.learning_rate.to_bits(), 1.0e-6_f32.to_bits());
+        assert_eq!(config.parameter_scope, ParameterScopeV1::Full);
+    }
+
+    #[test]
+    fn scorer_head_scope_splices_one_ordinary_update_at_bit_precision_v1() {
+        let groups = scorer_scope_test_groups_v1();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut parent_state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let warmup_terms = [
+            NativePolicyFrozenObjectiveTermV1 {
+                policy_advantage: 0.75,
+                value_target: 0.5,
+                value_weight: 0.8,
+            },
+            NativePolicyFrozenObjectiveTermV1 {
+                policy_advantage: -0.5,
+                value_target: -0.75,
+                value_weight: 1.2,
+            },
+        ];
+        train_frozen_batch_v1(&mut parent_state, &groups, &warmup_terms, 1.0e-4, 0.05).unwrap();
+        let parent = parent_state.snapshot_v1().unwrap();
+        assert!(parent
+            .first_moments
+            .iter()
+            .filter(|tensor| !scorer_head_parameter_is_active_v1(tensor.name))
+            .flat_map(|tensor| &tensor.values)
+            .any(|value| value.to_bits() != 0));
+        assert!(parent
+            .second_moments
+            .iter()
+            .filter(|tensor| !scorer_head_parameter_is_active_v1(tensor.name))
+            .flat_map(|tensor| &tensor.values)
+            .any(|value| value.to_bits() != 0));
+
+        let source_value = parent_state
+            .model_v1()
+            .forward_v1(groups[0].examples[0].tensor.view_v1())
+            .unwrap()
+            .value;
+        let observations = [
+            AdvantageObservationV1 {
+                episode_id: 0,
+                terminal_return: 1,
+                source_value,
+            },
+            AdvantageObservationV1 {
+                episode_id: 1,
+                terminal_return: -1,
+                source_value,
+            },
+        ];
+        let prepared = prepare_standardized_episode_balanced_advantages_v1(
+            &observations,
+            2,
+            2.0,
+            "scorer-scope-test-parent-value",
+        )
+        .unwrap();
+
+        let mut ordinary_full_child = parent_state.clone();
+        train_frozen_batch_v1(
+            &mut ordinary_full_child,
+            &groups,
+            &prepared.terms,
+            1.0e-3,
+            0.05,
+        )
+        .unwrap();
+        let ordinary = ordinary_full_child.snapshot_v1().unwrap();
+
+        let mut scorer_only_child = parent_state;
+        train_frozen_batch_v1(
+            &mut scorer_only_child,
+            &groups,
+            &prepared.terms,
+            1.0e-3,
+            0.05,
+        )
+        .unwrap();
+        retain_scorer_head_only_update_v1(&mut scorer_only_child, &parent).unwrap();
+        let scorer_only = scorer_only_child.snapshot_v1().unwrap();
+
+        assert_eq!(ordinary.adam_step, parent.adam_step + 1);
+        assert_eq!(scorer_only.adam_step, ordinary.adam_step);
+        assert_eq!(
+            scorer_only.scorer_bias_anchor_bits,
+            parent.scorer_bias_anchor_bits
+        );
+        let mut active_tensor_count = 0_usize;
+        let mut active_scalar_count = 0_usize;
+        let mut active_change_seen = false;
+        let mut ordinary_frozen_change_seen = false;
+        for ordinal in 0..parent.parameters.len() {
+            let name = parent.parameters[ordinal].name;
+            if scorer_head_parameter_is_active_v1(name) {
+                active_tensor_count += 1;
+                active_scalar_count += parent.parameters[ordinal].values.len();
+                assert_eq!(
+                    scorer_only.parameters[ordinal],
+                    ordinary.parameters[ordinal]
+                );
+                assert_eq!(
+                    scorer_only.first_moments[ordinal],
+                    ordinary.first_moments[ordinal]
+                );
+                assert_eq!(
+                    scorer_only.second_moments[ordinal],
+                    ordinary.second_moments[ordinal]
+                );
+                active_change_seen |= ordinary.parameters[ordinal] != parent.parameters[ordinal];
+            } else {
+                assert_eq!(scorer_only.parameters[ordinal], parent.parameters[ordinal]);
+                assert_eq!(
+                    scorer_only.first_moments[ordinal],
+                    parent.first_moments[ordinal]
+                );
+                assert_eq!(
+                    scorer_only.second_moments[ordinal],
+                    parent.second_moments[ordinal]
+                );
+                ordinary_frozen_change_seen |= ordinary.parameters[ordinal]
+                    != parent.parameters[ordinal]
+                    || ordinary.first_moments[ordinal] != parent.first_moments[ordinal]
+                    || ordinary.second_moments[ordinal] != parent.second_moments[ordinal];
+            }
+        }
+        assert_eq!(
+            active_tensor_count,
+            SCORER_HEAD_ONLY_ACTIVE_PARAMETER_TENSOR_COUNT_V1
+        );
+        assert_eq!(
+            active_scalar_count,
+            SCORER_HEAD_ONLY_ACTIVE_SCALAR_PARAMETER_COUNT_V1
+        );
+        assert!(active_change_seen);
+        assert!(ordinary_frozen_change_seen);
+
+        let gauge_ordinal = parent
+            .parameters
+            .iter()
+            .position(|tensor| tensor.name == SCORER_HEAD_ONLY_GAUGE_PARAMETER_NAME_V1)
+            .unwrap();
+        assert_eq!(
+            scorer_only.parameters[gauge_ordinal],
+            parent.parameters[gauge_ordinal]
+        );
+        assert_eq!(
+            scorer_only.parameters[gauge_ordinal].values[0].to_bits(),
+            parent.scorer_bias_anchor_bits
+        );
+        assert_eq!(
+            scorer_only.first_moments[gauge_ordinal].values[0].to_bits(),
+            0
+        );
+        assert_eq!(
+            scorer_only.second_moments[gauge_ordinal].values[0].to_bits(),
+            0
+        );
     }
 
     #[test]
@@ -3916,6 +4404,31 @@ mod tests {
         );
         assert_eq!(config.policy_scale.to_bits(), 2.5_f32.to_bits());
 
+        let mut scorer_head_only = complete_train_args_v1();
+        scorer_head_only.extend([
+            "--advantage-mode".into(),
+            STANDARDIZED_EPISODE_BALANCED_CLI_V1.into(),
+            "--parameter-scope".into(),
+            SCORER_HEAD_ONLY_PARAMETER_SCOPE_CLI_V1.into(),
+        ]);
+        assert_eq!(
+            parse_train_config_v1(scorer_head_only)
+                .unwrap()
+                .parameter_scope,
+            ParameterScopeV1::ScorerHeadOnly
+        );
+
+        let mut scorer_head_raw = complete_train_args_v1();
+        scorer_head_raw.extend([
+            "--parameter-scope".into(),
+            SCORER_HEAD_ONLY_PARAMETER_SCOPE_CLI_V1.into(),
+        ]);
+        assert!(parse_train_config_v1(scorer_head_raw).is_err());
+
+        let mut malformed_scope = complete_train_args_v1();
+        malformed_scope.extend(["--parameter-scope".into(), "scorer".into()]);
+        assert!(parse_train_config_v1(malformed_scope).is_err());
+
         let mut standardized_minibatch = complete_train_args_v1();
         standardized_minibatch.extend([
             "--advantage-mode".into(),
@@ -3949,6 +4462,62 @@ mod tests {
         parent_minibatch[source_flag] = "--source-outcome-root".into();
         parent_minibatch.extend(["--batch-groups".into(), "64".into()]);
         assert!(parse_train_config_v1(parent_minibatch).is_err());
+    }
+
+    #[test]
+    fn scorer_scope_manifest_inventory_is_exact_and_full_scope_remains_absent_v1() {
+        let exact = scorer_head_only_parameter_scope_manifest_v1();
+        assert!(validate_parameter_scope_manifest_v1(&exact));
+        assert_eq!(
+            exact.active_parameter_names,
+            SCORER_HEAD_ONLY_ACTIVE_PARAMETER_NAMES_V1.map(str::to_owned)
+        );
+        assert_eq!(exact.active_parameter_tensor_count, 3);
+        assert_eq!(exact.active_scalar_parameter_count, 8_320);
+        assert_eq!(exact.frozen_parameter_tensor_count, 30);
+        assert_eq!(
+            exact.canonical_gauge_parameter_name,
+            SCORER_HEAD_ONLY_GAUGE_PARAMETER_NAME_V1
+        );
+
+        let mut wrong_name = exact.clone();
+        wrong_name.active_parameter_names[2] = "scorer.2.bias".to_owned();
+        assert!(!validate_parameter_scope_manifest_v1(&wrong_name));
+        let mut wrong_count = exact.clone();
+        wrong_count.active_parameter_tensor_count = 4;
+        assert!(!validate_parameter_scope_manifest_v1(&wrong_count));
+        let mut wrong_scalar_count = exact.clone();
+        wrong_scalar_count.active_scalar_parameter_count -= 1;
+        assert!(!validate_parameter_scope_manifest_v1(&wrong_scalar_count));
+        let mut wrong_gauge = exact;
+        wrong_gauge.canonical_gauge_parameter_name = "value_head.2.bias".to_owned();
+        assert!(!validate_parameter_scope_manifest_v1(&wrong_gauge));
+
+        let full_training = TrainingManifestV1 {
+            objective: TRAINER_ALGORITHM_V1.to_owned(),
+            advantage_transform: None,
+            ppo_clip: None,
+            optimizer: OPTIMIZER_V1.to_owned(),
+            optimizer_reset: true,
+            parameter_scope: None,
+            training_order: TRAINING_ORDER_V1.to_owned(),
+            learning_rate: 1.0e-6,
+            learning_rate_f32_bits: 1.0e-6_f32.to_bits(),
+            value_coefficient: 0.5,
+            value_coefficient_f32_bits: 0.5_f32.to_bits(),
+            epochs: 1,
+            requested_batch_groups: "all".to_owned(),
+            effective_batch_groups: 1,
+            adam_update_count: 1,
+            on_policy_g384_single_update: true,
+            starting_adam_step: None,
+            ending_adam_step: None,
+            on_policy_parent_single_update: None,
+        };
+        let legacy_value = serde_json::to_value(&full_training).unwrap();
+        assert!(legacy_value.get("parameter_scope").is_none());
+        let round_trip: TrainingManifestV1 = serde_json::from_value(legacy_value).unwrap();
+        assert!(round_trip.parameter_scope.is_none());
     }
 
     #[test]
@@ -4272,6 +4841,117 @@ mod tests {
             .iter()
             .flat_map(|parameter| &parameter.values)
             .any(|value| value.to_bits() != 0));
+    }
+
+    #[test]
+    #[ignore = "requires exact scorer-head, parent, and ordinary-full-child roots"]
+    fn external_scorer_head_candidate_is_exact_parent_child_splice_v1() {
+        let scorer_root = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_XMAGE_CP7_SCORER_HEAD_ROOT")
+                .expect("MTG_KERNEL_XMAGE_CP7_SCORER_HEAD_ROOT is set"),
+        );
+        let parent_root = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_XMAGE_CP7_OUTCOME_PARENT_ROOT")
+                .expect("MTG_KERNEL_XMAGE_CP7_OUTCOME_PARENT_ROOT is set"),
+        );
+        let full_child_root = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_XMAGE_CP7_FULL_CHILD_ROOT")
+                .expect("MTG_KERNEL_XMAGE_CP7_FULL_CHILD_ROOT is set"),
+        );
+        let (scorer_state, scorer_manifest, _) = load_derivative_bundle_v1(&scorer_root).unwrap();
+        let (parent_state, parent_manifest, parent_manifest_sha256) =
+            load_derivative_bundle_v1(&parent_root).unwrap();
+        let (full_child_state, full_child_manifest, _) =
+            load_derivative_bundle_v1(&full_child_root).unwrap();
+
+        assert_eq!(
+            scorer_manifest.training.parameter_scope,
+            Some(scorer_head_only_parameter_scope_manifest_v1())
+        );
+        assert_eq!(
+            scorer_manifest.parent.as_ref().unwrap().manifest_sha256,
+            lower_hex_raw32_v1(parent_manifest_sha256)
+        );
+        assert_eq!(scorer_manifest.parent, full_child_manifest.parent);
+        assert_eq!(
+            scorer_manifest.corpus.jsonl_sha256,
+            full_child_manifest.corpus.jsonl_sha256
+        );
+        assert_eq!(
+            scorer_manifest.training.objective,
+            full_child_manifest.training.objective
+        );
+        assert_eq!(
+            scorer_manifest.training.learning_rate_f32_bits,
+            full_child_manifest.training.learning_rate_f32_bits
+        );
+        assert_eq!(
+            scorer_manifest.training.value_coefficient_f32_bits,
+            full_child_manifest.training.value_coefficient_f32_bits
+        );
+        assert_eq!(
+            scorer_manifest
+                .training
+                .advantage_transform
+                .as_ref()
+                .unwrap()
+                .policy_scale_f32_bits,
+            full_child_manifest
+                .training
+                .advantage_transform
+                .as_ref()
+                .unwrap()
+                .policy_scale_f32_bits
+        );
+
+        let scorer = scorer_state.snapshot_v1().unwrap();
+        let parent = parent_state.snapshot_v1().unwrap();
+        let full_child = full_child_state.snapshot_v1().unwrap();
+        assert_eq!(parent.adam_step, parent_manifest.payload.adam_step);
+        assert_eq!(scorer.adam_step, parent.adam_step + 1);
+        assert_eq!(scorer.adam_step, full_child.adam_step);
+        assert_eq!(
+            scorer.scorer_bias_anchor_bits,
+            parent.scorer_bias_anchor_bits
+        );
+        assert_eq!(scorer.parameters.len(), parent.parameters.len());
+        assert_eq!(scorer.parameters.len(), full_child.parameters.len());
+
+        let mut active_change_seen = false;
+        let mut frozen_full_child_change_seen = false;
+        for ordinal in 0..scorer.parameters.len() {
+            assert_eq!(
+                scorer.parameters[ordinal].name,
+                parent.parameters[ordinal].name
+            );
+            if scorer_head_parameter_is_active_v1(scorer.parameters[ordinal].name) {
+                assert_eq!(scorer.parameters[ordinal], full_child.parameters[ordinal]);
+                assert_eq!(
+                    scorer.first_moments[ordinal],
+                    full_child.first_moments[ordinal]
+                );
+                assert_eq!(
+                    scorer.second_moments[ordinal],
+                    full_child.second_moments[ordinal]
+                );
+                active_change_seen |= scorer.parameters[ordinal] != parent.parameters[ordinal]
+                    || scorer.first_moments[ordinal] != parent.first_moments[ordinal]
+                    || scorer.second_moments[ordinal] != parent.second_moments[ordinal];
+            } else {
+                assert_eq!(scorer.parameters[ordinal], parent.parameters[ordinal]);
+                assert_eq!(scorer.first_moments[ordinal], parent.first_moments[ordinal]);
+                assert_eq!(
+                    scorer.second_moments[ordinal],
+                    parent.second_moments[ordinal]
+                );
+                frozen_full_child_change_seen |= full_child.parameters[ordinal]
+                    != parent.parameters[ordinal]
+                    || full_child.first_moments[ordinal] != parent.first_moments[ordinal]
+                    || full_child.second_moments[ordinal] != parent.second_moments[ordinal];
+            }
+        }
+        assert!(active_change_seen);
+        assert!(frozen_full_child_change_seen);
     }
 
     #[test]
