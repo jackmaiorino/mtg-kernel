@@ -884,7 +884,7 @@ fn train_step_cuda_burn_dense_inner_v1(
     let loss = match entropy_coefficient {
         // Literal legacy evidence bits for beta zero.
         EntropyCoefficientAuthorityV1::Zero => production_loss,
-        EntropyCoefficientAuthorityV1::Beta0p1 => {
+        EntropyCoefficientAuthorityV1::Beta0p01 => {
             let entropy_sum =
                 stable_legal_entropy_sum_f64_v1(&logit_outputs, &global_action_offsets)?;
             let objective = f64::from(production_loss)

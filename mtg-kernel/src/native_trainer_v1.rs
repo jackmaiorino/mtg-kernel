@@ -1794,7 +1794,7 @@ pub(crate) struct NativeTrainerUpdateConfigV2 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EntropyCoefficientAuthorityV1 {
     Zero,
-    Beta0p1,
+    Beta0p01,
 }
 
 #[cfg(test)]
@@ -1802,7 +1802,7 @@ impl EntropyCoefficientAuthorityV1 {
     pub(crate) const fn bits_v1(self) -> u32 {
         match self {
             Self::Zero => 0x0000_0000,
-            Self::Beta0p1 => 0x3dcc_cccd,
+            Self::Beta0p01 => 0x3c23_d70a,
         }
     }
 
@@ -3632,7 +3632,7 @@ fn train_grouped_candidate_v1(
                         execution.value_coefficient,
                         execution.learning_rate,
                     ),
-                    EntropyCoefficientAuthorityV1::Beta0p1 => crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_entropy_smoke_v1(
+                    EntropyCoefficientAuthorityV1::Beta0p01 => crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_entropy_smoke_v1(
                         candidate,
                         &borrowed_groups,
                         execution.value_coefficient,
@@ -4050,12 +4050,12 @@ mod tests {
             0x0000_0000
         );
         assert_eq!(
-            EntropyCoefficientAuthorityV1::Beta0p1.bits_v1(),
-            0x3dcc_cccd
+            EntropyCoefficientAuthorityV1::Beta0p01.bits_v1(),
+            0x3c23_d70a
         );
         assert_eq!(
-            EntropyCoefficientAuthorityV1::Beta0p1.value_v1().to_bits(),
-            0x3dcc_cccd
+            EntropyCoefficientAuthorityV1::Beta0p01.value_v1().to_bits(),
+            0x3c23_d70a
         );
     }
 
@@ -4140,7 +4140,7 @@ mod tests {
             trainer.run_even_batch_update_entropy_smoke_v1(
                 &config,
                 NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
-                EntropyCoefficientAuthorityV1::Beta0p1,
+                EntropyCoefficientAuthorityV1::Beta0p01,
             ),
             Err(NativeTrainerErrorV1::InvalidUpdateConfig(
                 "entropy_coefficient_requires_frozen_cuda"

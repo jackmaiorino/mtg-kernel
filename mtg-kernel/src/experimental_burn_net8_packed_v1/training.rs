@@ -691,7 +691,7 @@ impl ExperimentalDeviceTrainStateV1 {
                 value_coefficient,
                 normalization_group_count,
             )?,
-            EntropyCoefficientAuthorityV1::Beta0p1 => dense_group_loss_with_entropy_v1(
+            EntropyCoefficientAuthorityV1::Beta0p01 => dense_group_loss_with_entropy_v1(
                 logits,
                 values,
                 plan,
@@ -1661,7 +1661,7 @@ pub(crate) fn build_dense_group_loss_plan_v1(
     #[cfg(test)]
     let mut legal_action_mask = match entropy_coefficient {
         EntropyCoefficientAuthorityV1::Zero => None,
-        EntropyCoefficientAuthorityV1::Beta0p1 => Some(Vec::with_capacity(substeps * max_actions)),
+        EntropyCoefficientAuthorityV1::Beta0p01 => Some(Vec::with_capacity(substeps * max_actions)),
     };
     let mut selected_gather = Vec::with_capacity(substeps);
     let mut group_scatter = Vec::with_capacity(substeps);
@@ -1827,7 +1827,7 @@ fn dense_group_loss_with_entropy_v1(
         || value_coefficient <= 0.0
         || !normalization_group_count.is_finite()
         || normalization_group_count < plan.group_count as f32
-        || entropy_coefficient.to_bits() != EntropyCoefficientAuthorityV1::Beta0p1.bits_v1()
+        || entropy_coefficient.to_bits() != EntropyCoefficientAuthorityV1::Beta0p01.bits_v1()
     {
         return Err(training_error(
             "dense entropy group loss shape/parameter mismatch",
@@ -3778,7 +3778,7 @@ mod tests {
         let production_loss = 0.75_f32;
         let group_count = 2.0_f32;
         let candidate = (f64::from(production_loss)
-            - f64::from(EntropyCoefficientAuthorityV1::Beta0p1.value_v1()) * entropy_sum
+            - f64::from(EntropyCoefficientAuthorityV1::Beta0p01.value_v1()) * entropy_sum
                 / f64::from(group_count)) as f32;
         assert!(candidate.is_finite());
         assert!(candidate < production_loss);
@@ -3792,7 +3792,7 @@ mod tests {
         let logits = [2.0_f32, -1.0_f32];
         let gradients = entropy_loss_logit_gradient_reference_v1(
             &logits,
-            f64::from(EntropyCoefficientAuthorityV1::Beta0p1.value_v1()),
+            f64::from(EntropyCoefficientAuthorityV1::Beta0p01.value_v1()),
         );
         assert!(gradients[0] > 0.0);
         assert!(gradients[1] < 0.0);
@@ -3827,7 +3827,7 @@ mod tests {
     #[ignore = "requires a CUDA device, run explicitly"]
     fn burn_entropy_gradient_padding_singleton_and_whole_group_normalization() {
         let device = burn_cuda::CudaDevice::new(1);
-        let beta = EntropyCoefficientAuthorityV1::Beta0p1;
+        let beta = EntropyCoefficientAuthorityV1::Beta0p01;
 
         let mut two_action_host = HostPackingWorkspace::default();
         two_action_host.action_offsets = vec![0, 2];
@@ -4468,7 +4468,7 @@ mod tests {
                 &groups,
                 VALUE_COEFFICIENT_V1,
                 BENCHMARK_LEARNING_RATE_V1,
-                EntropyCoefficientAuthorityV1::Beta0p1,
+                EntropyCoefficientAuthorityV1::Beta0p01,
             )
             .unwrap();
         let production_objective =

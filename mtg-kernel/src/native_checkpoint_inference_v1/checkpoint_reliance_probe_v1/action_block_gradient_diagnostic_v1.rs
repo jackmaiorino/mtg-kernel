@@ -161,11 +161,11 @@ pub(super) const LEARNING_RATE_SCREEN_DESIGN_SHA256_V1: &str =
 pub(super) const LEARNING_RATE_SCREEN_DESIGN_BYTE_COUNT_V1: u64 = 3_834;
 pub(super) const LEARNING_RATE_SCREEN_DESIGN_LINE_COUNT_V1: u64 = 84;
 
-/// The rapid entropy-trajectory smoke's frozen design bytes.
+/// The beta-0.01 follow-up smoke's frozen design bytes.
 pub(super) const ENTROPY_TRAJECTORY_SMOKE_DESIGN_SHA256_V1: &str =
-    "3cd50463ad67e3845ed9aad98adc54526d6b3606191de0ee0af99e61507ec2df";
-pub(super) const ENTROPY_TRAJECTORY_SMOKE_DESIGN_BYTE_COUNT_V1: u64 = 6_227;
-pub(super) const ENTROPY_TRAJECTORY_SMOKE_DESIGN_LINE_COUNT_V1: u64 = 83;
+    "50d59de34f36b883d0660e52fc6c915ead025bea8852980a612573e011812869";
+pub(super) const ENTROPY_TRAJECTORY_SMOKE_DESIGN_BYTE_COUNT_V1: u64 = 3_330;
+pub(super) const ENTROPY_TRAJECTORY_SMOKE_DESIGN_LINE_COUNT_V1: u64 = 85;
 
 /// Pool3 opponent contract document, copied and rehashed, never retyped.
 pub(super) const POOL3_DOCUMENT_SHA256_V1: &str =
@@ -397,9 +397,9 @@ pub(super) const LEARNING_RATE_SCREEN_VALIDATION_COUNTS_V1: [[u32; 4];
     LEARNING_RATE_SCREEN_UNIT_COUNT_V1] = [[29, 9, 9, 17], [29, 12, 14, 9], [21, 12, 13, 18]];
 
 /// One-seed, 32-update rapid entropy-trajectory smoke authorities.
-pub(super) const ENTROPY_SMOKE_TRAINING_SEED_V1: u64 = 956_001;
-pub(super) const ENTROPY_SMOKE_VALIDATION_SEED_V1: u64 = 957_001;
-pub(super) const ENTROPY_SMOKE_BOOTSTRAP_SEED_V1: u64 = 959_001;
+pub(super) const ENTROPY_SMOKE_TRAINING_SEED_V1: u64 = 960_001;
+pub(super) const ENTROPY_SMOKE_VALIDATION_SEED_V1: u64 = 961_001;
+pub(super) const ENTROPY_SMOKE_BOOTSTRAP_SEED_V1: u64 = 962_001;
 pub(super) const ENTROPY_SMOKE_EPISODES_PER_UPDATE_V1: u64 = 64;
 pub(super) const ENTROPY_SMOKE_UPDATE_COUNT_V1: u64 = 32;
 pub(super) const ENTROPY_SMOKE_TRAINING_EPISODE_COUNT_V1: u64 = 2_048;
@@ -409,20 +409,20 @@ pub(super) const ENTROPY_SMOKE_SAFETY_CLUSTER_COUNT_V1: usize = 512;
 pub(super) const ENTROPY_SMOKE_BOOTSTRAP_RESAMPLE_COUNT_V1: usize = 10_000;
 pub(super) const ENTROPY_SMOKE_BOOTSTRAP_UPPER_INDEX_V1: usize = 9_499;
 pub(super) const ENTROPY_SMOKE_CHECKPOINT_UPDATES_V1: [u64; 5] = [0, 8, 16, 24, 32];
-pub(super) const ENTROPY_SMOKE_TRAINING_COUNTS_V1: [u32; 4] = [784, 423, 431, 410];
+pub(super) const ENTROPY_SMOKE_TRAINING_COUNTS_V1: [u32; 4] = [776, 429, 400, 443];
 pub(super) const ENTROPY_SMOKE_CUMULATIVE_COUNTS_V1: [[u32; 4]; 4] = [
-    [203, 99, 100, 110],
-    [392, 213, 217, 202],
-    [595, 321, 310, 310],
-    [784, 423, 431, 410],
+    [190, 116, 104, 102],
+    [374, 229, 210, 211],
+    [567, 326, 307, 336],
+    [776, 429, 400, 443],
 ];
-pub(super) const ENTROPY_SMOKE_VALIDATION_COUNTS_V1: [u32; 4] = [25, 10, 10, 19];
+pub(super) const ENTROPY_SMOKE_VALIDATION_COUNTS_V1: [u32; 4] = [31, 10, 8, 15];
 pub(super) const ENTROPY_SMOKE_TRAINING_SCHEDULE_SHA256_V1: &str =
-    "29db2caec9de96f35d89fc6202c7ac3aa3a795335191d304b5bf76e15f38a914";
+    "ffa20c9141dfe598626e4ea65793da34a8636ee47c8ecadb1d47f89513554050";
 pub(super) const ENTROPY_SMOKE_VALIDATION_SCHEDULE_SHA256_V1: &str =
-    "e65d0ba2c7cdf25b1280f3b8de77885765b78d564a501e0635e823efea0e8251";
+    "b30698632067be85786094880800a746d136cfb2fc340330a652efd20f6a74e9";
 pub(super) const ENTROPY_SMOKE_CONTROL_BETA_BITS_V1: u32 = 0x0000_0000;
-pub(super) const ENTROPY_SMOKE_CANDIDATE_BETA_BITS_V1: u32 = 0x3dcc_cccd;
+pub(super) const ENTROPY_SMOKE_CANDIDATE_BETA_BITS_V1: u32 = 0x3c23_d70a;
 pub(super) const ENTROPY_SMOKE_ENDPOINT_H_DELTA_MIN_BITS_V1: u64 = 0.01f64.to_bits();
 pub(super) const ENTROPY_SMOKE_ENDPOINT_PMAX_DELTA_MAX_BITS_V1: u64 = (-0.005f64).to_bits();
 pub(super) const ENTROPY_SMOKE_SAFETY_CATASTROPHE_BITS_V1: u64 = (-0.05f64).to_bits();
@@ -9815,7 +9815,7 @@ fn frame_entropy_smoke_summary_v1(
     );
     writer.text_v1(
         "bootstrap_algorithm",
-        "SplitMix64 state=959001; advance/mix once per draw; mixed_u64%512; 512 draws/resample; sort total_cmp; read index 9499",
+        "SplitMix64 state=962001; advance/mix once per draw; mixed_u64%512; 512 draws/resample; sort total_cmp; read index 9499",
     );
     writer.f64_bits_array_v1(
         "safety_control_candidate_delta_upper95",
@@ -9980,7 +9980,7 @@ fn entropy_trajectory_smoke_gpu1_v1() {
         &mut candidate_trainer,
         &config,
         &fixed_corpus,
-        EntropyCoefficientAuthorityV1::Beta0p1,
+        EntropyCoefficientAuthorityV1::Beta0p01,
     );
     assert_eq!(control.genesis_state_sha256, candidate.genesis_state_sha256);
     assert!(control.checkpoints[0].bit_equal_v1(&candidate.checkpoints[0]));
@@ -14961,10 +14961,10 @@ fn entropy_smoke_schedule_counts_and_raw_ordinal_hashes_match_the_frozen_design_
 #[test]
 fn entropy_smoke_splitmix64_stream_is_exact_v1() {
     let mut state = ENTROPY_SMOKE_BOOTSTRAP_SEED_V1;
-    assert_eq!(splitmix64_next_v1(&mut state), 0x1e47_328f_7a79_ba2c);
-    assert_eq!(splitmix64_next_v1(&mut state), 0xd1b6_940a_d035_549e);
-    assert_eq!(splitmix64_next_v1(&mut state), 0x6f4d_4963_4a8a_a7b7);
-    assert_eq!(splitmix64_next_v1(&mut state), 0x49b4_dd08_2d76_4f01);
+    assert_eq!(splitmix64_next_v1(&mut state), 0x73a2_ec38_fde7_b5c2);
+    assert_eq!(splitmix64_next_v1(&mut state), 0xe8d9_4f65_e23d_9dcb);
+    assert_eq!(splitmix64_next_v1(&mut state), 0x9b5c_c682_f32b_3142);
+    assert_eq!(splitmix64_next_v1(&mut state), 0xe32f_626c_3994_c2d9);
 }
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
