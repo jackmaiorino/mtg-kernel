@@ -1,11 +1,13 @@
 //! Offline terminal REINFORCE/value updates over strict XMage-versus-CP7
 //! candidate-policy outcome exports.
 //!
-//! This is deliberately a narrow derivative path. It pins promoted g384 as
-//! its only source, accepts one whole-file-SHA-bound JSONL contract, resets
-//! Adam, applies the canonical grouped `terminal_reinforce_value/v3` update,
-//! and publishes a create-new raw train-state bundle that this module can
-//! independently reload and verify.
+//! This is deliberately a narrow derivative path. It accepts either promoted
+//! g384 or an exactly bound outcome derivative as its source, consumes one
+//! whole-file-SHA-bound JSONL contract, and publishes a create-new raw
+//! train-state bundle that this module can independently reload and verify.
+//! Legacy terminal-REINFORCE contracts remain intact; the iterative path also
+//! supports frozen standardized one-update training and parent-only,
+//! full-batch PPO clipping over joint physical-decision likelihood ratios.
 
 use crate::fast_sampler::{
     FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
@@ -62,9 +64,18 @@ const TRAINING_ORDER_V1: &str = "jsonl-record-order-epoch-major-contiguous-batch
 const OPTIMIZER_V1: &str = "native-adam-canonical-scorer-bias-gauge-v1";
 const STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1: &str =
     "terminal_reinforce_frozen_source_value_standardized_episode_balanced/v1";
+const PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1: &str =
+    "ppo_clip_frozen_source_value_standardized_episode_balanced/v1";
 const STANDARDIZED_EPISODE_BALANCED_TRANSFORM_V1: &str =
     "frozen-source-value-population-standardization-equal-episode-mass/v1";
+const PPO_CLIP_TRANSFORM_V1: &str = "selected-joint-physical-group-likelihood-ratio-clipping/v1";
+const PPO_OLD_POLICY_SOURCE_V1: &str = "corpus_old_policy_logits_f32_bits";
+const PPO_LIKELIHOOD_RATIO_SCOPE_V1: &str = "joint_selected_autoregressive_physical_group";
+const PPO_CLIPPING_SCOPE_V1: &str = "once_per_physical_group_after_joint_log_probability_sum";
+const PPO_INITIAL_MAX_ABSOLUTE_JOINT_LOG_RATIO_V1: f64 = 2.0e-4;
 const STANDARDIZED_EPISODE_BALANCED_CLI_V1: &str = "standardized-episode-balanced";
+const PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_CLI_V1: &str =
+    "ppo-clip-standardized-episode-balanced";
 const RAW_ADVANTAGE_CLI_V1: &str = "raw";
 const ADVANTAGE_STANDARD_DEVIATION_FLOOR_V1: f64 = 1.0e-6;
 
@@ -1139,6 +1150,7 @@ fn audit_source_transport_v1(
 enum AdvantageModeV1 {
     Raw,
     StandardizedEpisodeBalanced,
+    PpoClipStandardizedEpisodeBalanced,
 }
 
 impl Default for AdvantageModeV1 {
@@ -1152,6 +1164,9 @@ impl AdvantageModeV1 {
         match self {
             Self::Raw => RAW_ADVANTAGE_CLI_V1,
             Self::StandardizedEpisodeBalanced => STANDARDIZED_EPISODE_BALANCED_CLI_V1,
+            Self::PpoClipStandardizedEpisodeBalanced => {
+                PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_CLI_V1
+            }
         }
     }
 }
@@ -1386,6 +1401,86 @@ fn selected_log_probability_and_top1_v1(
     Ok((log_probability, top1 == selected))
 }
 
+fn stable_log_probabilities_f64_v1(logits: &[f32]) -> DynResultV1<Vec<f64>> {
+    if logits.is_empty() || logits.iter().any(|value| !value.is_finite()) {
+        return Err(invalid_data_v1("invalid logits for stable log softmax").into());
+    }
+    let maximum = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let shifted = logits
+        .iter()
+        .map(|value| f64::from(*value) - f64::from(maximum))
+        .collect::<Vec<_>>();
+    let log_normalizer = shifted.iter().map(|value| value.exp()).sum::<f64>().ln();
+    let log_probabilities = shifted
+        .into_iter()
+        .map(|value| value - log_normalizer)
+        .collect::<Vec<_>>();
+    if !log_normalizer.is_finite() || log_probabilities.iter().any(|value| !value.is_finite()) {
+        return Err(invalid_data_v1("nonfinite stable log softmax").into());
+    }
+    Ok(log_probabilities)
+}
+
+fn ppo_joint_likelihood_ratio_v1(
+    current_selected_log_probabilities: &[f64],
+    old_selected_log_probabilities: &[f64],
+) -> DynResultV1<(f64, f64)> {
+    if current_selected_log_probabilities.is_empty()
+        || current_selected_log_probabilities.len() != old_selected_log_probabilities.len()
+        || current_selected_log_probabilities
+            .iter()
+            .chain(old_selected_log_probabilities)
+            .any(|value| !value.is_finite())
+    {
+        return Err(invalid_data_v1("invalid PPO selected log-probability sequence").into());
+    }
+    let joint_log_likelihood_ratio = current_selected_log_probabilities
+        .iter()
+        .zip(old_selected_log_probabilities)
+        .map(|(current, old)| current - old)
+        .sum::<f64>();
+    let likelihood_ratio = joint_log_likelihood_ratio.exp();
+    if !joint_log_likelihood_ratio.is_finite()
+        || !likelihood_ratio.is_finite()
+        || likelihood_ratio <= 0.0
+    {
+        return Err(invalid_data_v1("nonfinite PPO joint likelihood ratio").into());
+    }
+    Ok((joint_log_likelihood_ratio, likelihood_ratio))
+}
+
+fn ppo_clipped_surrogate_and_coefficient_v1(
+    base_policy_advantage: f32,
+    likelihood_ratio: f64,
+    clip_epsilon: f32,
+) -> DynResultV1<(f64, f32, bool)> {
+    if !base_policy_advantage.is_finite()
+        || !likelihood_ratio.is_finite()
+        || likelihood_ratio <= 0.0
+        || !clip_epsilon.is_finite()
+        || clip_epsilon <= 0.0
+        || clip_epsilon >= 1.0
+    {
+        return Err(invalid_data_v1("invalid PPO clipping input").into());
+    }
+    let lower = 1.0 - f64::from(clip_epsilon);
+    let upper = 1.0 + f64::from(clip_epsilon);
+    let advantage = f64::from(base_policy_advantage);
+    let clipped_ratio = likelihood_ratio.clamp(lower, upper);
+    let surrogate = (likelihood_ratio * advantage).min(clipped_ratio * advantage);
+    let clipped = (base_policy_advantage > 0.0 && likelihood_ratio > upper)
+        || (base_policy_advantage < 0.0 && likelihood_ratio < lower);
+    let effective_coefficient = if clipped {
+        0.0
+    } else {
+        (likelihood_ratio * advantage) as f32
+    };
+    if !surrogate.is_finite() || !effective_coefficient.is_finite() {
+        return Err(invalid_data_v1("nonfinite PPO clipped surrogate").into());
+    }
+    Ok((surrogate, effective_coefficient, clipped))
+}
+
 fn evaluate_objective_v1(
     model: &NativePolicyValueNetV1,
     groups: &[OutcomePhysicalDecisionV1],
@@ -1508,6 +1603,180 @@ fn evaluate_frozen_objective_v1(
         physical_top1_accuracy: physical_correct as f64 / group_count,
         mean_absolute_value_error: value_absolute_sum / group_count,
         mean_terminal_return: terminal_return_sum as f64 / group_count,
+    })
+}
+
+#[derive(Clone, Debug)]
+struct PreparedPpoEpochV1 {
+    terms: Vec<NativePolicyFrozenObjectiveTermV1>,
+    objective_metrics: ObjectiveMetricsV1,
+    ratio_metrics: PpoRatioMetricsManifestV1,
+}
+
+fn prepare_ppo_epoch_v1(
+    model: &NativePolicyValueNetV1,
+    groups: &[OutcomePhysicalDecisionV1],
+    base_terms: &[NativePolicyFrozenObjectiveTermV1],
+    clip_epsilon: f32,
+    value_coefficient: f32,
+) -> DynResultV1<PreparedPpoEpochV1> {
+    if groups.is_empty() || groups.len() != base_terms.len() {
+        return Err(invalid_data_v1("PPO outcome metric cardinality mismatch").into());
+    }
+    let mut terms = Vec::with_capacity(groups.len());
+    let mut policy_sum = 0.0_f64;
+    let mut value_sum = 0.0_f64;
+    let mut nll_sum = 0.0_f64;
+    let mut value_absolute_sum = 0.0_f64;
+    let mut terminal_return_sum = 0_i64;
+    let mut substep_count = 0_u64;
+    let mut substep_correct = 0_u64;
+    let mut physical_correct = 0_u64;
+    let mut clipped_group_count = 0_usize;
+    let mut minimum_likelihood_ratio = f64::INFINITY;
+    let mut maximum_likelihood_ratio = 0.0_f64;
+    let mut likelihood_ratio_sum = 0.0_f64;
+    let mut absolute_log_likelihood_ratio_sum = 0.0_f64;
+    let mut maximum_absolute_joint_log_likelihood_ratio = 0.0_f64;
+    let mut old_to_current_forward_kl_sum = 0.0_f64;
+    let mut action_total_variations = Vec::new();
+    for (group, base_term) in groups.iter().zip(base_terms) {
+        let mut current_selected_log_probabilities = Vec::with_capacity(group.examples.len());
+        let mut old_selected_log_probabilities = Vec::with_capacity(group.examples.len());
+        let mut group_top1 = true;
+        let mut value = None;
+        for example in &group.examples {
+            let output = model.forward_v1(example.tensor.view_v1())?;
+            if output.logits.len() != example.legal_action_count
+                || example.old_policy_logits_f32_bits.len() != example.legal_action_count
+            {
+                return Err(invalid_data_v1("PPO outcome metric action width mismatch").into());
+            }
+            let (_, correct) =
+                selected_log_probability_and_top1_v1(&output.logits, example.selected_index)?;
+            let current_log_probabilities = stable_log_probabilities_f64_v1(&output.logits)?;
+            let old_logits = example
+                .old_policy_logits_f32_bits
+                .iter()
+                .copied()
+                .map(f32::from_bits)
+                .collect::<Vec<_>>();
+            let old_log_probabilities = stable_log_probabilities_f64_v1(&old_logits)?;
+            let current_selected_log_probability = current_log_probabilities
+                .get(example.selected_index)
+                .copied()
+                .ok_or_else(|| invalid_data_v1("PPO selected current action is out of range"))?;
+            let old_selected_log_probability = old_log_probabilities
+                .get(example.selected_index)
+                .copied()
+                .ok_or_else(|| invalid_data_v1("PPO selected old action is out of range"))?;
+            let mut row_forward_kl = 0.0_f64;
+            let mut row_total_variation = 0.0_f64;
+            for (old_log_probability, current_log_probability) in
+                old_log_probabilities.iter().zip(&current_log_probabilities)
+            {
+                let old_probability = old_log_probability.exp();
+                let current_probability = current_log_probability.exp();
+                row_forward_kl += old_probability * (old_log_probability - current_log_probability);
+                row_total_variation += (old_probability - current_probability).abs();
+            }
+            row_total_variation *= 0.5;
+            if !row_forward_kl.is_finite()
+                || row_forward_kl < -1.0e-12
+                || !row_total_variation.is_finite()
+                || !(0.0..=1.0 + 1.0e-12).contains(&row_total_variation)
+            {
+                return Err(invalid_data_v1("invalid PPO row distribution metric").into());
+            }
+            old_to_current_forward_kl_sum += row_forward_kl.max(0.0);
+            action_total_variations.push(row_total_variation.min(1.0));
+            current_selected_log_probabilities.push(current_selected_log_probability);
+            old_selected_log_probabilities.push(old_selected_log_probability);
+            group_top1 &= correct;
+            substep_correct += u64::from(correct);
+            substep_count += 1;
+            if value.is_none() {
+                value = Some(f64::from(output.value));
+            }
+        }
+        let current_joint_log_probability = current_selected_log_probabilities.iter().sum::<f64>();
+        let (joint_log_likelihood_ratio, likelihood_ratio) = ppo_joint_likelihood_ratio_v1(
+            &current_selected_log_probabilities,
+            &old_selected_log_probabilities,
+        )?;
+        let (surrogate, effective_coefficient, clipped) = ppo_clipped_surrogate_and_coefficient_v1(
+            base_term.policy_advantage,
+            likelihood_ratio,
+            clip_epsilon,
+        )?;
+        terms.push(NativePolicyFrozenObjectiveTermV1 {
+            policy_advantage: effective_coefficient,
+            value_target: base_term.value_target,
+            value_weight: base_term.value_weight,
+        });
+        let value = value.ok_or_else(|| invalid_data_v1("empty PPO outcome physical group"))?;
+        let target = f64::from(base_term.value_target);
+        let value_weight = f64::from(base_term.value_weight);
+        policy_sum += -surrogate;
+        value_sum += value_weight * (value - target) * (value - target);
+        nll_sum += -current_joint_log_probability;
+        value_absolute_sum += value_weight * (value - target).abs();
+        terminal_return_sum += i64::from(group.terminal_return);
+        physical_correct += u64::from(group_top1);
+        clipped_group_count += usize::from(clipped);
+        minimum_likelihood_ratio = minimum_likelihood_ratio.min(likelihood_ratio);
+        maximum_likelihood_ratio = maximum_likelihood_ratio.max(likelihood_ratio);
+        likelihood_ratio_sum += likelihood_ratio;
+        absolute_log_likelihood_ratio_sum += joint_log_likelihood_ratio.abs();
+        maximum_absolute_joint_log_likelihood_ratio =
+            maximum_absolute_joint_log_likelihood_ratio.max(joint_log_likelihood_ratio.abs());
+    }
+    let group_count = groups.len() as f64;
+    action_total_variations.sort_by(f64::total_cmp);
+    let observed_row_count = action_total_variations.len();
+    if observed_row_count == 0 || observed_row_count != usize::try_from(substep_count)? {
+        return Err(invalid_data_v1("PPO row metric cardinality mismatch").into());
+    }
+    let p90_rank = observed_row_count
+        .checked_mul(9)
+        .and_then(|value| value.checked_add(9))
+        .ok_or_else(|| invalid_data_v1("PPO p90 rank overflow"))?
+        / 10;
+    let p90_action_total_variation_nearest_rank = action_total_variations[p90_rank - 1];
+    let mean_action_total_variation =
+        action_total_variations.iter().sum::<f64>() / observed_row_count as f64;
+    let mean_policy = policy_sum / group_count;
+    let mean_value = value_sum / group_count;
+    let objective_metrics = ObjectiveMetricsV1 {
+        physical_group_count: u64::try_from(groups.len())?,
+        substep_count,
+        mean_policy_surrogate: mean_policy,
+        mean_value_squared_error: mean_value,
+        mean_total_objective: mean_policy + f64::from(value_coefficient) * mean_value,
+        mean_selected_nll_per_physical_group: nll_sum / group_count,
+        substep_top1_accuracy: substep_correct as f64 / substep_count as f64,
+        physical_top1_accuracy: physical_correct as f64 / group_count,
+        mean_absolute_value_error: value_absolute_sum / group_count,
+        mean_terminal_return: terminal_return_sum as f64 / group_count,
+    };
+    let ratio_metrics = PpoRatioMetricsManifestV1 {
+        physical_group_count: groups.len(),
+        observed_row_count,
+        clipped_group_count,
+        minimum_likelihood_ratio,
+        maximum_likelihood_ratio,
+        mean_likelihood_ratio: likelihood_ratio_sum / group_count,
+        mean_absolute_log_likelihood_ratio: absolute_log_likelihood_ratio_sum / group_count,
+        maximum_absolute_joint_log_likelihood_ratio,
+        mean_old_to_current_forward_kl: old_to_current_forward_kl_sum / observed_row_count as f64,
+        mean_action_total_variation,
+        p90_action_total_variation_nearest_rank,
+        mean_policy_surrogate: mean_policy,
+    };
+    Ok(PreparedPpoEpochV1 {
+        terms,
+        objective_metrics,
+        ratio_metrics,
     })
 }
 
@@ -1687,6 +1956,7 @@ struct TrainConfigV1 {
     value_coefficient: f32,
     advantage_mode: AdvantageModeV1,
     policy_scale: f32,
+    ppo_clip_epsilon: Option<f32>,
     epochs: u32,
     batch_groups: BatchGroupsV1,
 }
@@ -1703,6 +1973,7 @@ impl Default for TrainConfigV1 {
             value_coefficient: f32::NAN,
             advantage_mode: AdvantageModeV1::Raw,
             policy_scale: 1.0,
+            ppo_clip_epsilon: None,
             epochs: 0,
             batch_groups: BatchGroupsV1::All,
         }
@@ -1763,12 +2034,55 @@ struct PhysicalGroupDimensionManifestV1 {
     decision_row_count: usize,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PpoRatioMetricsManifestV1 {
+    physical_group_count: usize,
+    observed_row_count: usize,
+    clipped_group_count: usize,
+    minimum_likelihood_ratio: f64,
+    maximum_likelihood_ratio: f64,
+    mean_likelihood_ratio: f64,
+    mean_absolute_log_likelihood_ratio: f64,
+    maximum_absolute_joint_log_likelihood_ratio: f64,
+    mean_old_to_current_forward_kl: f64,
+    mean_action_total_variation: f64,
+    p90_action_total_variation_nearest_rank: f64,
+    mean_policy_surrogate: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PpoClipEpochManifestV1 {
+    epoch_index: u32,
+    adam_step_before: u64,
+    adam_step_after: u64,
+    before_update: PpoRatioMetricsManifestV1,
+    after_update: PpoRatioMetricsManifestV1,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PpoClipManifestV1 {
+    identity: String,
+    old_policy_source: String,
+    likelihood_ratio_scope: String,
+    clipping_scope: String,
+    clip_epsilon: f32,
+    clip_epsilon_f32_bits: u32,
+    initial_maximum_absolute_joint_log_likelihood_ratio_limit: f64,
+    initial_maximum_absolute_joint_log_likelihood_ratio_limit_f64_bits: u64,
+    epochs: Vec<PpoClipEpochManifestV1>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TrainingManifestV1 {
     objective: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     advantage_transform: Option<AdvantageTransformManifestV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ppo_clip: Option<PpoClipManifestV1>,
     optimizer: String,
     optimizer_reset: bool,
     training_order: String,
@@ -1900,6 +2214,7 @@ fn publish_derivative_v1(
     parent: Option<ParentBindingManifestV1>,
     starting_adam_step: u64,
     advantage_transform: Option<AdvantageTransformManifestV1>,
+    ppo_clip: Option<PpoClipManifestV1>,
     source_transport_audit: TransportAuditV1,
     initial_objective_metrics: ObjectiveMetricsV1,
     final_objective_metrics: ObjectiveMetricsV1,
@@ -1970,8 +2285,12 @@ fn publish_derivative_v1(
                 AdvantageModeV1::StandardizedEpisodeBalanced => {
                     STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1.to_owned()
                 }
+                AdvantageModeV1::PpoClipStandardizedEpisodeBalanced => {
+                    PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1.to_owned()
+                }
             },
             advantage_transform,
+            ppo_clip,
             optimizer: OPTIMIZER_V1.to_owned(),
             optimizer_reset: parent.is_none(),
             training_order: TRAINING_ORDER_V1.to_owned(),
@@ -2023,7 +2342,11 @@ fn expected_payload_digests_v1(
     })
 }
 
-fn validate_metric_v1(metric: &ObjectiveMetricsV1, corpus: &CorpusBindingManifestV1) -> bool {
+fn validate_metric_v1(
+    metric: &ObjectiveMetricsV1,
+    corpus: &CorpusBindingManifestV1,
+    value_coefficient: f32,
+) -> bool {
     metric.physical_group_count == corpus.physical_group_count as u64
         && metric.substep_count == corpus.decision_row_count as u64
         && metric.physical_group_count > 0
@@ -2046,6 +2369,10 @@ fn validate_metric_v1(metric: &ObjectiveMetricsV1, corpus: &CorpusBindingManifes
         && metric.mean_selected_nll_per_physical_group >= 0.0
         && metric.mean_absolute_value_error >= 0.0
         && (-1.0..=1.0).contains(&metric.mean_terminal_return)
+        && metric.mean_total_objective.to_bits()
+            == (metric.mean_policy_surrogate
+                + f64::from(value_coefficient) * metric.mean_value_squared_error)
+                .to_bits()
 }
 
 fn validate_group_dimensions_v1(corpus: &CorpusBindingManifestV1) -> bool {
@@ -2154,6 +2481,107 @@ fn validate_advantage_transform_v1(
             <= value_weight_tolerance
         && transform.uniform_core_policy_advantage_sum.is_finite()
         && transform.uniform_core_policy_advantage_sum.abs() <= policy_sum_tolerance
+}
+
+fn validate_ppo_ratio_metrics_v1(
+    metrics: &PpoRatioMetricsManifestV1,
+    corpus: &CorpusBindingManifestV1,
+) -> bool {
+    let maximum_ratio_from_log = metrics.maximum_absolute_joint_log_likelihood_ratio.exp();
+    let minimum_ratio_from_log = (-metrics.maximum_absolute_joint_log_likelihood_ratio).exp();
+    let ratio_tolerance = 1.0e-12;
+    metrics.physical_group_count == corpus.physical_group_count
+        && metrics.observed_row_count == corpus.decision_row_count
+        && metrics.clipped_group_count <= metrics.physical_group_count
+        && metrics.minimum_likelihood_ratio.is_finite()
+        && metrics.maximum_likelihood_ratio.is_finite()
+        && metrics.mean_likelihood_ratio.is_finite()
+        && metrics.mean_absolute_log_likelihood_ratio.is_finite()
+        && metrics
+            .maximum_absolute_joint_log_likelihood_ratio
+            .is_finite()
+        && metrics.mean_old_to_current_forward_kl.is_finite()
+        && metrics.mean_action_total_variation.is_finite()
+        && metrics.p90_action_total_variation_nearest_rank.is_finite()
+        && metrics.mean_policy_surrogate.is_finite()
+        && metrics.minimum_likelihood_ratio > 0.0
+        && metrics.minimum_likelihood_ratio <= metrics.mean_likelihood_ratio
+        && metrics.mean_likelihood_ratio <= metrics.maximum_likelihood_ratio
+        && metrics.mean_absolute_log_likelihood_ratio >= 0.0
+        && metrics.mean_absolute_log_likelihood_ratio
+            <= metrics.maximum_absolute_joint_log_likelihood_ratio
+        && metrics.maximum_absolute_joint_log_likelihood_ratio >= 0.0
+        && maximum_ratio_from_log.is_finite()
+        && minimum_ratio_from_log.is_finite()
+        && metrics.minimum_likelihood_ratio >= minimum_ratio_from_log * (1.0 - ratio_tolerance)
+        && metrics.maximum_likelihood_ratio <= maximum_ratio_from_log * (1.0 + ratio_tolerance)
+        && metrics.mean_old_to_current_forward_kl >= 0.0
+        && (0.0..=1.0).contains(&metrics.mean_action_total_variation)
+        && (0.0..=1.0).contains(&metrics.p90_action_total_variation_nearest_rank)
+}
+
+fn validate_ppo_clip_manifest_v1(
+    ppo: &PpoClipManifestV1,
+    corpus: &CorpusBindingManifestV1,
+    training: &TrainingManifestV1,
+    initial_objective_metrics: &ObjectiveMetricsV1,
+    final_objective_metrics: &ObjectiveMetricsV1,
+    parent_adam_step: u64,
+) -> bool {
+    if ppo.identity != PPO_CLIP_TRANSFORM_V1
+        || ppo.old_policy_source != PPO_OLD_POLICY_SOURCE_V1
+        || ppo.likelihood_ratio_scope != PPO_LIKELIHOOD_RATIO_SCOPE_V1
+        || ppo.clipping_scope != PPO_CLIPPING_SCOPE_V1
+        || ppo.clip_epsilon.to_bits() != ppo.clip_epsilon_f32_bits
+        || !ppo.clip_epsilon.is_finite()
+        || ppo.clip_epsilon <= 0.0
+        || ppo.clip_epsilon >= 1.0
+        || ppo
+            .initial_maximum_absolute_joint_log_likelihood_ratio_limit
+            .to_bits()
+            != ppo.initial_maximum_absolute_joint_log_likelihood_ratio_limit_f64_bits
+        || ppo
+            .initial_maximum_absolute_joint_log_likelihood_ratio_limit
+            .to_bits()
+            != PPO_INITIAL_MAX_ABSOLUTE_JOINT_LOG_RATIO_V1.to_bits()
+        || ppo.epochs.len() != training.epochs as usize
+        || ppo.epochs.is_empty()
+    {
+        return false;
+    }
+    let mut expected_adam_step = parent_adam_step;
+    let mut previous_after = None::<&PpoRatioMetricsManifestV1>;
+    for (index, epoch) in ppo.epochs.iter().enumerate() {
+        let Some(expected_after) = expected_adam_step.checked_add(1) else {
+            return false;
+        };
+        if epoch.epoch_index != u32::try_from(index + 1).unwrap_or(u32::MAX)
+            || epoch.adam_step_before != expected_adam_step
+            || epoch.adam_step_after != expected_after
+            || !validate_ppo_ratio_metrics_v1(&epoch.before_update, corpus)
+            || !validate_ppo_ratio_metrics_v1(&epoch.after_update, corpus)
+            || previous_after.is_some_and(|previous| previous != &epoch.before_update)
+        {
+            return false;
+        }
+        previous_after = Some(&epoch.after_update);
+        expected_adam_step = expected_after;
+    }
+    let Some(first) = ppo.epochs.first() else {
+        return false;
+    };
+    let Some(last) = ppo.epochs.last() else {
+        return false;
+    };
+    Some(expected_adam_step) == training.ending_adam_step
+        && first
+            .before_update
+            .maximum_absolute_joint_log_likelihood_ratio
+            <= ppo.initial_maximum_absolute_joint_log_likelihood_ratio_limit
+        && first.before_update.mean_policy_surrogate.to_bits()
+            == initial_objective_metrics.mean_policy_surrogate.to_bits()
+        && last.after_update.mean_policy_surrogate.to_bits()
+            == final_objective_metrics.mean_policy_surrogate.to_bits()
 }
 
 fn validate_parent_binding_v1(parent: &ParentBindingManifestV1) -> bool {
@@ -2282,17 +2710,41 @@ fn load_derivative_bundle_v1(
     let objective_valid = match (
         training.objective.as_str(),
         training.advantage_transform.as_ref(),
+        training.ppo_clip.as_ref(),
     ) {
-        (TRAINER_ALGORITHM_V1, None) => true,
-        (STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1, Some(transform)) => {
+        (TRAINER_ALGORITHM_V1, None, None) => true,
+        (STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1, Some(transform), None) => {
             training.epochs == 1
                 && training.requested_batch_groups == "all"
                 && training.effective_batch_groups == corpus.physical_group_count
                 && training.adam_update_count == 1
                 && validate_advantage_transform_v1(transform, corpus, parent.is_some())
         }
+        (PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1, Some(transform), Some(ppo)) => {
+            parent.is_some()
+                && training.epochs >= 2
+                && training.requested_batch_groups == "all"
+                && training.effective_batch_groups == corpus.physical_group_count
+                && training.adam_update_count == u64::from(training.epochs)
+                && transform.policy_scale.to_bits() == 1.0_f32.to_bits()
+                && validate_advantage_transform_v1(transform, corpus, true)
+                && validate_ppo_clip_manifest_v1(
+                    ppo,
+                    corpus,
+                    training,
+                    &manifest.initial_objective_metrics,
+                    &manifest.final_objective_metrics,
+                    starting_adam_step,
+                )
+        }
         _ => false,
     };
+    let ppo_parent_multi_update = training.objective
+        == PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1
+        && training.epochs >= 2
+        && training.requested_batch_groups == "all"
+        && training.effective_batch_groups == corpus.physical_group_count
+        && training.adam_update_count == u64::from(training.epochs);
     let source_schedule_valid = match parent {
         None => {
             training.optimizer_reset
@@ -2302,7 +2754,7 @@ fn load_derivative_bundle_v1(
                 && training.on_policy_g384_single_update == single_update
         }
         Some(binding) => {
-            single_update
+            (single_update || ppo_parent_multi_update)
                 && !training.optimizer_reset
                 && training.starting_adam_step == Some(binding.adam_step)
                 && training.ending_adam_step == expected_ending_adam_step
@@ -2362,8 +2814,16 @@ fn load_derivative_bundle_v1(
         || !transport_valid
         || !payload_valid
         || !validate_group_dimensions_v1(corpus)
-        || !validate_metric_v1(&manifest.initial_objective_metrics, corpus)
-        || !validate_metric_v1(&manifest.final_objective_metrics, corpus)
+        || !validate_metric_v1(
+            &manifest.initial_objective_metrics,
+            corpus,
+            training.value_coefficient,
+        )
+        || !validate_metric_v1(
+            &manifest.final_objective_metrics,
+            corpus,
+            training.value_coefficient,
+        )
     {
         return Err(invalid_data_v1("invalid outcome derivative manifest binding").into());
     }
@@ -2589,6 +3049,8 @@ pub struct XmageCp7OutcomeCheckpointSummaryV1 {
     pub value_coefficient: f32,
     pub advantage_mode: String,
     pub policy_scale: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ppo_clip_epsilon: Option<f32>,
     pub epochs: u32,
     pub effective_batch_groups: usize,
     pub optimizer_reset: bool,
@@ -2615,7 +3077,9 @@ pub fn verify_xmage_cp7_outcome_checkpoint_v1(
         adam_step: state.adam_step_v1(),
         learning_rate: manifest.training.learning_rate,
         value_coefficient: manifest.training.value_coefficient,
-        advantage_mode: if manifest.training.advantage_transform.is_some() {
+        advantage_mode: if manifest.training.ppo_clip.is_some() {
+            PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_CLI_V1.to_owned()
+        } else if manifest.training.advantage_transform.is_some() {
             STANDARDIZED_EPISODE_BALANCED_CLI_V1.to_owned()
         } else {
             RAW_ADVANTAGE_CLI_V1.to_owned()
@@ -2625,6 +3089,11 @@ pub fn verify_xmage_cp7_outcome_checkpoint_v1(
             .advantage_transform
             .as_ref()
             .map_or(1.0, |transform| transform.policy_scale),
+        ppo_clip_epsilon: manifest
+            .training
+            .ppo_clip
+            .as_ref()
+            .map(|ppo| ppo.clip_epsilon),
         epochs: manifest.training.epochs,
         effective_batch_groups: manifest.training.effective_batch_groups,
         optimizer_reset: manifest.training.optimizer_reset,
@@ -2662,9 +3131,13 @@ fn parse_advantage_mode_v1(value: &str) -> DynResultV1<AdvantageModeV1> {
     match value {
         RAW_ADVANTAGE_CLI_V1 => Ok(AdvantageModeV1::Raw),
         STANDARDIZED_EPISODE_BALANCED_CLI_V1 => Ok(AdvantageModeV1::StandardizedEpisodeBalanced),
-        _ => Err(
-            invalid_data_v1("--advantage-mode must be raw or standardized-episode-balanced").into(),
-        ),
+        PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_CLI_V1 => {
+            Ok(AdvantageModeV1::PpoClipStandardizedEpisodeBalanced)
+        }
+        _ => Err(invalid_data_v1(
+            "--advantage-mode must be raw, standardized-episode-balanced, or ppo-clip-standardized-episode-balanced",
+        )
+        .into()),
     }
 }
 
@@ -2722,6 +3195,14 @@ where
                     .ok_or_else(|| invalid_data_v1("policy scale is not UTF-8"))?
                     .parse()?;
             }
+            "--ppo-clip-epsilon" => {
+                config.ppo_clip_epsilon = Some(
+                    next_arg_v1(&mut iterator, flag)?
+                        .to_str()
+                        .ok_or_else(|| invalid_data_v1("PPO clip epsilon is not UTF-8"))?
+                        .parse()?,
+                );
+            }
             "--epochs" => {
                 config.epochs = next_arg_v1(&mut iterator, flag)?
                     .to_str()
@@ -2737,7 +3218,7 @@ where
             }
             "--help" | "-h" => {
                 return Err(invalid_data_v1(
-                    "usage: xmage_cp7_outcome_reinforce_v1 train --outcome-jsonl PATH --outcome-jsonl-sha256 HEX64 (--source-store-root PATH | --source-outcome-root PATH) --output-dir NEW_PATH --learning-rate FLOAT --value-coefficient FLOAT --epochs U32 [--batch-groups all|N] [--advantage-mode raw|standardized-episode-balanced] [--policy-scale FLOAT]",
+                    "usage: xmage_cp7_outcome_reinforce_v1 train --outcome-jsonl PATH --outcome-jsonl-sha256 HEX64 (--source-store-root PATH | --source-outcome-root PATH) --output-dir NEW_PATH --learning-rate FLOAT --value-coefficient FLOAT --epochs U32 [--batch-groups all|N] [--advantage-mode raw|standardized-episode-balanced|ppo-clip-standardized-episode-balanced] [--policy-scale FLOAT] [--ppo-clip-epsilon FLOAT]",
                 )
                 .into())
             }
@@ -2780,20 +3261,47 @@ where
         .into());
     }
     match config.advantage_mode {
-        AdvantageModeV1::Raw if config.policy_scale.to_bits() != 1.0_f32.to_bits() => {
-            return Err(invalid_data_v1("raw advantage mode requires --policy-scale 1").into())
-        }
-        AdvantageModeV1::StandardizedEpisodeBalanced
-            if config.epochs != 1 || config.batch_groups != BatchGroupsV1::All =>
+        AdvantageModeV1::Raw
+            if config.policy_scale.to_bits() != 1.0_f32.to_bits()
+                || config.ppo_clip_epsilon.is_some() =>
         {
             return Err(invalid_data_v1(
-                "standardized-episode-balanced requires --epochs 1 and --batch-groups all",
+                "raw advantage mode requires --policy-scale 1 and no PPO clip epsilon",
             )
             .into())
+        }
+        AdvantageModeV1::StandardizedEpisodeBalanced
+            if config.epochs != 1
+                || config.batch_groups != BatchGroupsV1::All
+                || config.ppo_clip_epsilon.is_some() =>
+        {
+            return Err(invalid_data_v1(
+                "standardized-episode-balanced requires --epochs 1, --batch-groups all, and no PPO clip epsilon",
+            )
+            .into())
+        }
+        AdvantageModeV1::PpoClipStandardizedEpisodeBalanced => {
+            let Some(clip_epsilon) = config.ppo_clip_epsilon else {
+                return Err(invalid_data_v1("PPO clip mode requires --ppo-clip-epsilon").into());
+            };
+            if config.source_outcome_root.is_none()
+                || config.epochs < 2
+                || config.batch_groups != BatchGroupsV1::All
+                || config.policy_scale.to_bits() != 1.0_f32.to_bits()
+                || !clip_epsilon.is_finite()
+                || clip_epsilon <= 0.0
+                || clip_epsilon >= 1.0
+            {
+                return Err(invalid_data_v1(
+                    "PPO clip mode requires an outcome parent, --epochs >= 2, --batch-groups all, --policy-scale 1, and 0 < --ppo-clip-epsilon < 1",
+                )
+                .into());
+            }
         }
         _ => {}
     }
     if config.source_outcome_root.is_some()
+        && config.advantage_mode != AdvantageModeV1::PpoClipStandardizedEpisodeBalanced
         && (config.epochs != 1 || config.batch_groups != BatchGroupsV1::All)
     {
         return Err(invalid_data_v1(
@@ -2824,24 +3332,14 @@ fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpoi
         audit_source_transport_v1(state.model_v1(), &dataset.groups, parent_source)?;
     let prepared_advantages = match config.advantage_mode {
         AdvantageModeV1::Raw => None,
-        AdvantageModeV1::StandardizedEpisodeBalanced => Some(prepare_dataset_advantages_v1(
-            &dataset,
-            config.policy_scale,
-            parent_source,
-        )?),
-    };
-    let initial_objective_metrics = match prepared_advantages.as_ref() {
-        Some(prepared) => evaluate_frozen_objective_v1(
-            state.model_v1(),
-            &dataset.groups,
-            &prepared.terms,
-            config.value_coefficient,
-        )?,
-        None => evaluate_objective_v1(state.model_v1(), &dataset.groups, config.value_coefficient)?,
+        AdvantageModeV1::StandardizedEpisodeBalanced
+        | AdvantageModeV1::PpoClipStandardizedEpisodeBalanced => Some(
+            prepare_dataset_advantages_v1(&dataset, config.policy_scale, parent_source)?,
+        ),
     };
     let effective_batch_groups = config.batch_groups.effective_v1(dataset.groups.len());
     eprintln!(
-        "loaded XMage CP7 outcomes rows={} episodes={} pairs={} physical_groups={} batch_groups={} epochs={} advantage_mode={} policy_scale={}",
+        "loaded XMage CP7 outcomes rows={} episodes={} pairs={} physical_groups={} batch_groups={} epochs={} advantage_mode={} policy_scale={} ppo_clip_epsilon={}",
         dataset.decision_row_count,
         dataset.episode_count,
         dataset.pair_indices.len(),
@@ -2850,16 +3348,15 @@ fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpoi
         config.epochs,
         config.advantage_mode.cli_v1(),
         config.policy_scale,
+        config
+            .ppo_clip_epsilon
+            .map_or_else(|| "none".to_owned(), |value| value.to_string()),
     );
-    match prepared_advantages.as_ref() {
-        Some(prepared) => train_frozen_batch_v1(
-            &mut state,
-            &dataset.groups,
-            &prepared.terms,
-            config.learning_rate,
-            config.value_coefficient,
-        )?,
-        None => {
+    let (initial_objective_metrics, final_objective_metrics, ppo_clip) = match config.advantage_mode
+    {
+        AdvantageModeV1::Raw => {
+            let initial =
+                evaluate_objective_v1(state.model_v1(), &dataset.groups, config.value_coefficient)?;
             for _ in 0..config.epochs {
                 for batch in dataset.groups.chunks(effective_batch_groups) {
                     train_batch_v1(
@@ -2870,16 +3367,114 @@ fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpoi
                     )?;
                 }
             }
+            let final_metrics =
+                evaluate_objective_v1(state.model_v1(), &dataset.groups, config.value_coefficient)?;
+            (initial, final_metrics, None)
         }
-    }
-    let final_objective_metrics = match prepared_advantages.as_ref() {
-        Some(prepared) => evaluate_frozen_objective_v1(
-            state.model_v1(),
-            &dataset.groups,
-            &prepared.terms,
-            config.value_coefficient,
-        )?,
-        None => evaluate_objective_v1(state.model_v1(), &dataset.groups, config.value_coefficient)?,
+        AdvantageModeV1::StandardizedEpisodeBalanced => {
+            let prepared = prepared_advantages
+                .as_ref()
+                .expect("standardized advantages were prepared");
+            let initial = evaluate_frozen_objective_v1(
+                state.model_v1(),
+                &dataset.groups,
+                &prepared.terms,
+                config.value_coefficient,
+            )?;
+            train_frozen_batch_v1(
+                &mut state,
+                &dataset.groups,
+                &prepared.terms,
+                config.learning_rate,
+                config.value_coefficient,
+            )?;
+            let final_metrics = evaluate_frozen_objective_v1(
+                state.model_v1(),
+                &dataset.groups,
+                &prepared.terms,
+                config.value_coefficient,
+            )?;
+            (initial, final_metrics, None)
+        }
+        AdvantageModeV1::PpoClipStandardizedEpisodeBalanced => {
+            let prepared = prepared_advantages
+                .as_ref()
+                .expect("PPO advantages were prepared");
+            let clip_epsilon = config
+                .ppo_clip_epsilon
+                .ok_or_else(|| invalid_data_v1("PPO clip epsilon was not configured"))?;
+            let mut current = prepare_ppo_epoch_v1(
+                state.model_v1(),
+                &dataset.groups,
+                &prepared.terms,
+                clip_epsilon,
+                config.value_coefficient,
+            )?;
+            if current
+                .ratio_metrics
+                .maximum_absolute_joint_log_likelihood_ratio
+                > PPO_INITIAL_MAX_ABSOLUTE_JOINT_LOG_RATIO_V1
+            {
+                return Err(invalid_data_v1(
+                    "PPO initial joint likelihood ratio exceeds the transport gate",
+                )
+                .into());
+            }
+            let initial = current.objective_metrics.clone();
+            let mut epoch_metrics = Vec::with_capacity(config.epochs as usize);
+            for epoch_index in 1..=config.epochs {
+                let adam_step_before = state.adam_step_v1();
+                let before_update = current.ratio_metrics.clone();
+                train_frozen_batch_v1(
+                    &mut state,
+                    &dataset.groups,
+                    &current.terms,
+                    config.learning_rate,
+                    config.value_coefficient,
+                )?;
+                let adam_step_after = adam_step_before
+                    .checked_add(1)
+                    .ok_or_else(|| invalid_data_v1("PPO Adam step overflow"))?;
+                if state.adam_step_v1() != adam_step_after {
+                    return Err(
+                        invalid_data_v1("PPO Adam step did not advance exactly once").into(),
+                    );
+                }
+                let next = prepare_ppo_epoch_v1(
+                    state.model_v1(),
+                    &dataset.groups,
+                    &prepared.terms,
+                    clip_epsilon,
+                    config.value_coefficient,
+                )?;
+                epoch_metrics.push(PpoClipEpochManifestV1 {
+                    epoch_index,
+                    adam_step_before,
+                    adam_step_after,
+                    before_update,
+                    after_update: next.ratio_metrics.clone(),
+                });
+                current = next;
+            }
+            let final_metrics = current.objective_metrics;
+            (
+                initial,
+                final_metrics,
+                Some(PpoClipManifestV1 {
+                    identity: PPO_CLIP_TRANSFORM_V1.to_owned(),
+                    old_policy_source: PPO_OLD_POLICY_SOURCE_V1.to_owned(),
+                    likelihood_ratio_scope: PPO_LIKELIHOOD_RATIO_SCOPE_V1.to_owned(),
+                    clipping_scope: PPO_CLIPPING_SCOPE_V1.to_owned(),
+                    clip_epsilon,
+                    clip_epsilon_f32_bits: clip_epsilon.to_bits(),
+                    initial_maximum_absolute_joint_log_likelihood_ratio_limit:
+                        PPO_INITIAL_MAX_ABSOLUTE_JOINT_LOG_RATIO_V1,
+                    initial_maximum_absolute_joint_log_likelihood_ratio_limit_f64_bits:
+                        PPO_INITIAL_MAX_ABSOLUTE_JOINT_LOG_RATIO_V1.to_bits(),
+                    epochs: epoch_metrics,
+                }),
+            )
+        }
     };
     publish_derivative_v1(
         &config,
@@ -2888,6 +3483,7 @@ fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpoi
         parent,
         starting_adam_step,
         prepared_advantages.map(|prepared| prepared.manifest),
+        ppo_clip,
         source_transport_audit,
         initial_objective_metrics,
         final_objective_metrics,
@@ -2985,6 +3581,27 @@ mod tests {
         ]
     }
 
+    fn complete_ppo_train_args_v1() -> Vec<OsString> {
+        let mut arguments = complete_train_args_v1();
+        let source_flag = arguments
+            .iter()
+            .position(|value| value == "--source-store-root")
+            .unwrap();
+        arguments[source_flag] = "--source-outcome-root".into();
+        let epochs = arguments
+            .iter()
+            .position(|value| value == "--epochs")
+            .unwrap();
+        arguments[epochs + 1] = "4".into();
+        arguments.extend([
+            "--advantage-mode".into(),
+            PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_CLI_V1.into(),
+            "--ppo-clip-epsilon".into(),
+            "0.2".into(),
+        ]);
+        arguments
+    }
+
     #[test]
     fn first_screen_defaults_to_one_full_corpus_batch_v1() {
         let config = parse_train_config_v1(complete_train_args_v1()).unwrap();
@@ -3068,6 +3685,139 @@ mod tests {
         parent_minibatch[source_flag] = "--source-outcome-root".into();
         parent_minibatch.extend(["--batch-groups".into(), "64".into()]);
         assert!(parse_train_config_v1(parent_minibatch).is_err());
+    }
+
+    #[test]
+    fn ppo_cli_requires_exact_parent_full_batches_multiple_epochs_and_clip_v1() {
+        let config = parse_train_config_v1(complete_ppo_train_args_v1()).unwrap();
+        assert_eq!(
+            config.advantage_mode,
+            AdvantageModeV1::PpoClipStandardizedEpisodeBalanced
+        );
+        assert_eq!(config.epochs, 4);
+        assert_eq!(config.batch_groups, BatchGroupsV1::All);
+        assert_eq!(config.policy_scale.to_bits(), 1.0_f32.to_bits());
+        assert_eq!(
+            config.ppo_clip_epsilon.unwrap().to_bits(),
+            0.2_f32.to_bits()
+        );
+        assert!(config.source_store_root.is_none());
+        assert!(config.source_outcome_root.is_some());
+
+        let mut missing_clip = complete_ppo_train_args_v1();
+        let clip_flag = missing_clip
+            .iter()
+            .position(|value| value == "--ppo-clip-epsilon")
+            .unwrap();
+        missing_clip.drain(clip_flag..=clip_flag + 1);
+        assert!(parse_train_config_v1(missing_clip).is_err());
+
+        let mut original_store = complete_ppo_train_args_v1();
+        let source_flag = original_store
+            .iter()
+            .position(|value| value == "--source-outcome-root")
+            .unwrap();
+        original_store[source_flag] = "--source-store-root".into();
+        assert!(parse_train_config_v1(original_store).is_err());
+
+        let mut one_epoch = complete_ppo_train_args_v1();
+        let epochs = one_epoch
+            .iter()
+            .position(|value| value == "--epochs")
+            .unwrap();
+        one_epoch[epochs + 1] = "1".into();
+        assert!(parse_train_config_v1(one_epoch).is_err());
+
+        let mut minibatch = complete_ppo_train_args_v1();
+        minibatch.extend(["--batch-groups".into(), "64".into()]);
+        assert!(parse_train_config_v1(minibatch).is_err());
+
+        let mut non_ppo_parent_multi_epoch = complete_train_args_v1();
+        let source_flag = non_ppo_parent_multi_epoch
+            .iter()
+            .position(|value| value == "--source-store-root")
+            .unwrap();
+        non_ppo_parent_multi_epoch[source_flag] = "--source-outcome-root".into();
+        let epochs = non_ppo_parent_multi_epoch
+            .iter()
+            .position(|value| value == "--epochs")
+            .unwrap();
+        non_ppo_parent_multi_epoch[epochs + 1] = "4".into();
+        assert!(parse_train_config_v1(non_ppo_parent_multi_epoch).is_err());
+    }
+
+    #[test]
+    fn ppo_joint_ratio_multiplies_substeps_then_clips_once_v1() {
+        let current = [0.4_f64.ln(), 0.3_f64.ln()];
+        let old = [0.2_f64.ln(), 0.6_f64.ln()];
+        let (joint_log_ratio, joint_ratio) = ppo_joint_likelihood_ratio_v1(&current, &old).unwrap();
+        assert!(joint_log_ratio.abs() <= 1.0e-15);
+        assert!((joint_ratio - 1.0).abs() <= 1.0e-15);
+        assert!(((current[0] - old[0]).exp() - 2.0).abs() <= 1.0e-15);
+        assert!(((current[1] - old[1]).exp() - 0.5).abs() <= 1.0e-15);
+
+        let (surrogate, coefficient, clipped) =
+            ppo_clipped_surrogate_and_coefficient_v1(1.0, joint_ratio, 0.2).unwrap();
+        assert!(!clipped);
+        assert!((surrogate - 1.0).abs() <= 1.0e-15);
+        assert_eq!(coefficient.to_bits(), 1.0_f32.to_bits());
+    }
+
+    #[test]
+    fn ppo_clipping_has_exact_positive_and_negative_gradient_branches_v1() {
+        let (surrogate, coefficient, clipped) =
+            ppo_clipped_surrogate_and_coefficient_v1(2.0, 1.3, 0.2).unwrap();
+        assert!(clipped);
+        assert!((surrogate - 2.4).abs() <= 1.0e-7);
+        assert_eq!(coefficient.to_bits(), 0.0_f32.to_bits());
+
+        let (surrogate, coefficient, clipped) =
+            ppo_clipped_surrogate_and_coefficient_v1(2.0, 0.7, 0.2).unwrap();
+        assert!(!clipped);
+        assert!((surrogate - 1.4).abs() <= 1.0e-7);
+        assert!((coefficient - 1.4).abs() <= 1.0e-6);
+
+        let (surrogate, coefficient, clipped) =
+            ppo_clipped_surrogate_and_coefficient_v1(-2.0, 0.7, 0.2).unwrap();
+        assert!(clipped);
+        assert!((surrogate + 1.6).abs() <= 1.0e-7);
+        assert_eq!(coefficient.to_bits(), 0.0_f32.to_bits());
+
+        let (surrogate, coefficient, clipped) =
+            ppo_clipped_surrogate_and_coefficient_v1(-2.0, 1.3, 0.2).unwrap();
+        assert!(!clipped);
+        assert!((surrogate + 2.6).abs() <= 1.0e-7);
+        assert!((coefficient + 2.6).abs() <= 1.0e-6);
+    }
+
+    #[test]
+    fn ppo_effective_coefficient_matches_local_clipped_surrogate_gradient_v1() {
+        fn policy_loss(log_ratio: f64, advantage: f32, epsilon: f32) -> f64 {
+            let (surrogate, _, _) =
+                ppo_clipped_surrogate_and_coefficient_v1(advantage, log_ratio.exp(), epsilon)
+                    .unwrap();
+            -surrogate
+        }
+
+        let log_ratio = 0.9_f64.ln();
+        let (_, coefficient, clipped) =
+            ppo_clipped_surrogate_and_coefficient_v1(1.75, log_ratio.exp(), 0.2).unwrap();
+        assert!(!clipped);
+        let delta = 1.0e-6;
+        let numerical = (policy_loss(log_ratio + delta, 1.75, 0.2)
+            - policy_loss(log_ratio - delta, 1.75, 0.2))
+            / (2.0 * delta);
+        assert!((numerical + f64::from(coefficient)).abs() <= 1.0e-7);
+
+        let clipped_log_ratio = 1.3_f64.ln();
+        let (_, coefficient, clipped) =
+            ppo_clipped_surrogate_and_coefficient_v1(1.75, clipped_log_ratio.exp(), 0.2).unwrap();
+        assert!(clipped);
+        assert_eq!(coefficient.to_bits(), 0.0_f32.to_bits());
+        let numerical = (policy_loss(clipped_log_ratio + delta, 1.75, 0.2)
+            - policy_loss(clipped_log_ratio - delta, 1.75, 0.2))
+            / (2.0 * delta);
+        assert!(numerical.abs() <= 1.0e-9);
     }
 
     #[test]
@@ -3258,5 +4008,53 @@ mod tests {
             .iter()
             .flat_map(|parameter| &parameter.values)
             .any(|value| value.to_bits() != 0));
+    }
+
+    #[test]
+    #[ignore = "requires MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL and MTG_KERNEL_XMAGE_CP7_OUTCOME_PARENT_ROOT"]
+    fn external_ppo_parent_corpus_passes_initial_transport_gate_v1() {
+        let corpus_path = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL")
+                .expect("MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL is set"),
+        );
+        let parent_root = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_XMAGE_CP7_OUTCOME_PARENT_ROOT")
+                .expect("MTG_KERNEL_XMAGE_CP7_OUTCOME_PARENT_ROOT is set"),
+        );
+        let dataset = load_outcome_dataset_v1(&corpus_path).unwrap();
+        let mut config = TrainConfigV1::default();
+        config.source_outcome_root = Some(parent_root);
+        let loaded = load_training_source_v1(&config).unwrap();
+        assert!(corpus_matches_training_source_v1(
+            &dataset,
+            loaded.parent.as_ref()
+        ));
+        audit_source_transport_v1(loaded.state.model_v1(), &dataset.groups, true).unwrap();
+        let prepared = prepare_dataset_advantages_v1(&dataset, 1.0, true).unwrap();
+        let ppo = prepare_ppo_epoch_v1(
+            loaded.state.model_v1(),
+            &dataset.groups,
+            &prepared.terms,
+            0.2,
+            0.05,
+        )
+        .unwrap();
+        eprintln!(
+            "initial PPO transport: groups={} rows={} max_abs_joint_log_ratio={} mean_kl={} mean_tv={} p90_tv={}",
+            ppo.ratio_metrics.physical_group_count,
+            ppo.ratio_metrics.observed_row_count,
+            ppo.ratio_metrics
+                .maximum_absolute_joint_log_likelihood_ratio,
+            ppo.ratio_metrics.mean_old_to_current_forward_kl,
+            ppo.ratio_metrics.mean_action_total_variation,
+            ppo.ratio_metrics
+                .p90_action_total_variation_nearest_rank,
+        );
+        assert!(
+            ppo.ratio_metrics
+                .maximum_absolute_joint_log_likelihood_ratio
+                <= PPO_INITIAL_MAX_ABSOLUTE_JOINT_LOG_RATIO_V1
+        );
+        assert_eq!(ppo.ratio_metrics.clipped_group_count, 0);
     }
 }
