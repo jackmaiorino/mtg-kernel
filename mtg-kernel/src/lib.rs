@@ -84,6 +84,10 @@ pub mod native_cp7_behavior_clone_v1;
 // Strict candidate-policy XMage-versus-CP7 outcome corpus to offline
 // terminal REINFORCE/value derivative path.
 pub mod native_xmage_cp7_outcome_reinforce_v1;
+// Offline-only low-data interaction residual over a frozen outcome parent.
+// The fixed holdout screen must pass before any runtime candidate is emitted.
+#[allow(dead_code)]
+pub mod native_bilinear_policy_residual_v1;
 // Trainer-schedule-compatible in-memory checkpoint runner. It derives the
 // engine/topology contract from a validated run and publishes no artifacts.
 pub mod native_checkpoint_runner_v1;
