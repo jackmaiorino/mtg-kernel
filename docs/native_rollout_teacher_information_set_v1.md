@@ -26,3 +26,31 @@ Redeterminization, snapshot restoration, decision-observation preservation, and 
 This is an information-set-consistent diagnostic, not an XMage or CP7 strength evaluation. Its first successful report is not training authorization. Training admissibility remains `diagnostic-corpus-gate-only` until a second run produces byte-identical deterministic report bytes under the runtime gate.
 
 The frozen sampler uses modulo-Fisher-Yates over hidden-card assignments allowed by represented knowledge. Its modulo bias is negligible but nonzero. It does not model a Bayesian posterior, opponent deck-selection uncertainty, or strategic card correlations.
+
+## Formal v1 evidence
+
+The implementation lineage is:
+
+- `24d9caa` adds Rally information-set redeterminization.
+- `52d09c9` adds the information-set rollout-teacher probe.
+- `2456bc1` corrects handling of non-reentrant rollout-root decisions.
+
+An initial attempt stopped fail-closed without producing a report because its post-redeterminization safety probe tried to re-surface an already-published, intentionally non-reentrant combat-priority decision. That attempt was diagnostic only. The formal result below starts after the correction in `2456bc1` and does not count the stopped attempt as evidence.
+
+The two formal runs used executable SHA-256 `67562ad88fb2b903bf826f23a50aaa287f05469a581942ea9928d12782fa5f8c`. Each report was 591,742 bytes and had SHA-256 `e5fd54cbd9587cfef46b15bacc714690e108e47dea7aa16d7da948b6f9243460`, establishing byte-identical reproducibility. Their runtimes were 101,734 ms and 97,235 ms, both below the ten-minute gate.
+
+All integrity, sampling, and natural-completion gates passed:
+
+- All 32 required roots were collected.
+- All 1,152 required redeterminization samples were recorded successfully.
+- All 2,792 branch outcomes completed naturally, with no branch failure, horizon exhaustion, or incomplete confirmation pair.
+- Every ranking sample was shared by all compared actions, every confirmation sample was shared by both branches, and there were zero shared-sample branch-start mismatches.
+- Every root had multiple distinct information-set samples.
+
+The teacher changed the retained action at 6 roots: 4 had positive confirmed delta, 1 had negative confirmed delta, and 1 had zero delta. The aggregate confirmed teacher-minus-parent reward delta was `12 / 1024 = +0.01171875`.
+
+The only failed gate was the declared mean-delta requirement of at least `+0.05`. Therefore the information-set signal gate failed. The v1 disposition is **reject and do not train**: this result does not justify producing a candidate or spending a CP7 evaluation block.
+
+## Next bounded test
+
+Increase ranking evidence from 4 to 16 samples per legal action while keeping confirmation fixed at 32 fresh paired samples per root. Keep the information-set sampler, roots, horizon, integrity checks, and signal gate unchanged. This tests whether ranking noise hid a stable correction without weakening the acceptance criterion.
