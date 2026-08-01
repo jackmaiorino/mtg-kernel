@@ -1027,7 +1027,18 @@ fn prepare_information_set_sample_v1(
     let live_hash_before = session.privileged_core_environment_hash();
     let snapshot = session
         .snapshot_current_actor_information_set_v1(seed)
-        .map_err(|_| invalid_data_v1("acting-player information-set redeterminization failed"))?;
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "acting-player information-set redeterminization failed: episode={} step={} physical_decision={} actor={:?} seed={seed:016x} error={error:?}",
+                    expected_root.episode_id,
+                    expected_root.step,
+                    expected_root.physical_decision_id,
+                    expected_root.acting_player,
+                ),
+            )
+        })?;
     if session.privileged_core_environment_hash() != live_hash_before {
         return Err(invalid_data_v1(
             "information-set redeterminization mutated the live session",
@@ -1618,5 +1629,42 @@ mod information_set_tests {
             verified_branch_start_hash_v1(7, 7, ContinuationOutcomeV1::Failure),
             None
         );
+    }
+
+    #[test]
+    #[ignore = "manual external retained-checkpoint root diagnostic"]
+    fn diagnose_formal_episode_1470023_information_set_snapshot_v1() {
+        let source = std::env::var("MTG_KERNEL_RETAINED_OUTCOME_ROOT")
+            .expect("set MTG_KERNEL_RETAINED_OUTCOME_ROOT");
+        let inference = load_xmage_cp7_outcome_inference_v1(Path::new(&source)).unwrap();
+        let episode_ordinal = 23usize;
+        let episode_id = ROOT_EPISODE_ID_BASE_V1 + episode_ordinal as u64;
+        let environment_seed = environment_seed_v1(episode_ordinal);
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            episode_id,
+            environment_seed,
+            SESSION_MAX_PHYSICAL_DECISIONS_V1,
+            SESSION_MAX_POLICY_STEPS_V1,
+            ["Rally".to_owned(), "Rally".to_owned()],
+        )
+        .unwrap();
+        for _ in 0..MAX_SOURCE_POLICY_STEPS_V1 {
+            let scored = score_current_decision_v1(&inference, &session).unwrap();
+            if eligible_root_v1(scored.expected) {
+                assert_eq!(scored.expected.step, 11);
+                assert_eq!(scored.expected.physical_decision_id, 10);
+                session
+                    .snapshot_current_actor_information_set_v1(0xfcf6_ec8e_05a5_a2ee)
+                    .unwrap();
+                return;
+            }
+            let selected = sample_policy_v1(
+                &scored.logits,
+                main_policy_seed_v1(episode_ordinal, scored.expected.step),
+            )
+            .unwrap();
+            consume_scored_v1(&mut session, scored, selected).unwrap();
+        }
+        panic!("formal episode did not reach the expected eligible root");
     }
 }

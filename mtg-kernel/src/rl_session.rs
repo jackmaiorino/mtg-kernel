@@ -3721,7 +3721,6 @@ pub(crate) enum FastActorInformationSetSnapshotErrorV1 {
     State(crate::state::RallyInformationSetRedeterminizationErrorV1),
     ObservationDrift,
     CurrentDecisionDrift,
-    DecisionRegenerationDrift,
     LegalActionDrift,
     FlatActionBindingDrift,
 }
@@ -5158,9 +5157,11 @@ impl FastActorSessionV1 {
     ///
     /// The live session is never mutated. Redeterminization is admitted only
     /// at the first substep of a physical decision. Before returning, this
-    /// method independently re-surfaces the current engine decision on a
-    /// throwaway clone and requires exact actor observation, canonical legal
-    /// actions, and complete private flat-action cache equality.
+    /// method rebuilds the retained origin decision's legal candidates against
+    /// the redetermined state and requires exact actor observation, action
+    /// semantics, and complete private flat-action cache equality. Published
+    /// decisions are not re-surfaced because some surface scans are
+    /// intentionally non-reentrant after publication.
     pub(crate) fn snapshot_current_actor_information_set_v1(
         &self,
         seed: u64,
@@ -5213,41 +5214,12 @@ impl FastActorSessionV1 {
             return Err(FastActorInformationSetSnapshotErrorV1::CurrentDecisionDrift);
         }
 
-        let candidate_harness_context = candidate.surface.harness_public_context();
-        let candidate_policy_context = candidate
-            .surface
-            .privileged_scan_context()
-            .map_err(|_| FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift)?;
-        let mut regeneration_probe = candidate.clone();
-        regeneration_probe.advance_to_decision_or_terminal();
-        let regenerated_policy_context = regeneration_probe
-            .surface
-            .privileged_scan_context()
-            .map_err(|_| FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift)?;
-        let regenerated_current = regeneration_probe
-            .current
-            .as_ref()
-            .ok_or(FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift)?;
-        if regeneration_probe.terminal.is_some()
-            || regeneration_probe.state != candidate.state
-            || regeneration_probe.environment_revision != candidate.environment_revision
-            || regeneration_probe.policy_step_count != candidate.policy_step_count
-            || regeneration_probe.physical_decision_count != candidate.physical_decision_count
-            || regeneration_probe.surface.harness_public_context() != candidate_harness_context
-            || regenerated_policy_context != candidate_policy_context
-            || regenerated_current != current
-        {
-            return Err(FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift);
-        }
-
-        let rebuilt_candidates = core_policy_action_candidates_v5(
-            &regenerated_current.origin_decision,
-            &regeneration_probe.state,
-        )
-        .map_err(|_| FastActorInformationSetSnapshotErrorV1::LegalActionDrift)?;
+        let rebuilt_candidates =
+            core_policy_action_candidates_v5(&candidate_current.origin_decision, &candidate.state)
+                .map_err(|_| FastActorInformationSetSnapshotErrorV1::LegalActionDrift)?;
         if rebuilt_candidates != before_candidates
             || candidate_current.candidates != before_candidates
-            || regeneration_probe.diagnostic_current_action_semantics() != before_semantics
+            || candidate.diagnostic_current_action_semantics() != before_semantics
         {
             return Err(FastActorInformationSetSnapshotErrorV1::LegalActionDrift);
         }
@@ -5257,30 +5229,12 @@ impl FastActorSessionV1 {
         if expected_after != expected_before {
             return Err(FastActorInformationSetSnapshotErrorV1::CurrentDecisionDrift);
         }
-        let FastActorResponseV1::Decision(regenerated_expected) =
-            regeneration_probe.current_response()
-        else {
-            return Err(FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift);
-        };
-        if regenerated_expected != expected_before {
-            return Err(FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift);
-        }
         let after_observation = match candidate.flat_action_contract_mode {
             FlatActionContractModeV1::V1 => candidate.flat_policy_observation_v1(expected_after),
             FlatActionContractModeV1::V2 => candidate.flat_policy_observation_v2(expected_after),
         }
         .map_err(|_| FastActorInformationSetSnapshotErrorV1::ObservationDrift)?;
-        let regenerated_observation = match regeneration_probe.flat_action_contract_mode {
-            FlatActionContractModeV1::V1 => {
-                regeneration_probe.flat_policy_observation_v1(regenerated_expected)
-            }
-            FlatActionContractModeV1::V2 => {
-                regeneration_probe.flat_policy_observation_v2(regenerated_expected)
-            }
-        }
-        .map_err(|_| FastActorInformationSetSnapshotErrorV1::ObservationDrift)?;
-        if after_observation != before_observation || regenerated_observation != before_observation
-        {
+        if after_observation != before_observation {
             return Err(FastActorInformationSetSnapshotErrorV1::ObservationDrift);
         }
 
