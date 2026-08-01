@@ -55,4 +55,49 @@ A pooled pass is evidence to collect a larger fresh training corpus for a proper
 
 ## Result
 
-Pending implementation, exact splice verification, and the fresh qualification block.
+Implemented and rejected at the first fresh qualification gate.
+
+The formal scorer-head package is
+`/mnt/d/mtg-kernel-xmage-cp7-outcome-base1040001-std-epbal-lr1e-3-vc0p05-ps2-scorer-head-v1` with these identities:
+
+- Manifest: `8438f7eeb9466d12fb0a5681989886571f40870f0d71c85a0e2289afffaa9b54`.
+- Payload: `88a9c91650b20ccbb5a2820fcb5c7ec315db4a1658aefa56ffd840092aa98579`.
+- Native train state: `b251538890b7136b7324511967fa1f9fd4f0442723cf7c59b15e8e1f5aec0d20`.
+- Model parameters: `3984203b86237034f054be7d5fef6630d2eace405f456ba0e125c38a43690f6f`.
+- Adam step: `2`.
+
+The external three-way audit passed. All three active parameter tensors and their
+first and second moments bit-match the full policy-scale-2 child. All frozen
+parameters and moments bit-match the retained parent, including inherited nonzero
+moments. The gauge-fixed `scorer.2.bias` remained frozen.
+
+On all 2,541 physical decision groups in the exact training corpus, candidate versus
+parent policy movement was:
+
+- Mean total variation: `0.0008456223682571215`.
+- P90 total variation: `0.001779408768610935`.
+- Mean KL divergence: `0.00002742591287472332`.
+- Maximum absolute joint log ratio: `0.14769850630178105`.
+- Clipped groups: `0`.
+
+The Windows scorer used for live qualification had SHA-256
+`6325132093a2e90f5a209dd344ebcf146fe2c4a5633493772d6f197b5e8f036d`.
+
+At fresh base seed `1150001`, both candidate and retained control completed all 32
+games at `15-17` against CP7. The paired result was `G/L/T = 0/0/32`, with seat
+nets `0` for candidate P0 and `0` for candidate P1. Episode number, candidate seat,
+and environment seed matched for all 32 rows. Both blocks had zero priority
+projections and no fallback, alignment, protocol, or identity failure. Episodes 21
+and 30 had different trajectories, but neither changed the terminal result.
+
+The qualification requirement was `G >= L + 2`; the observed result was `0 >= 2`,
+which is false. The scorer-head ablation is retired. Base seed `1160001` was not run,
+and no scorer-head learning-rate, policy-scale, or scope sweep is authorized from
+this result.
+
+Raw live logs:
+
+- Candidate: `/mnt/d/mtg-kernel-scorer-head-cp7-base1150001-candidate.log`, SHA-256
+  `5c19939f97a2ea40e6ddbbbf3de9367a24c9000be6fbee6a55819985bce20e0c`.
+- Control: `/mnt/d/mtg-kernel-scorer-head-cp7-base1150001-control.log`, SHA-256
+  `8d2fde43b014c822f97357334f3a6ea50ce0020bb89472ae72bbd63396ef9370`.
