@@ -9,10 +9,10 @@
 
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
 use crate::native_xmage_cp7_outcome_reinforce_v1::{
-    NativeXmageCp7OutcomeBilinearDatasetV1, NativeXmageCp7OutcomeInferenceV1,
     load_xmage_cp7_outcome_bilinear_dataset_v1, load_xmage_cp7_outcome_inference_v1,
+    NativeXmageCp7OutcomeBilinearDatasetV1, NativeXmageCp7OutcomeInferenceV1,
 };
-use crate::rl::{PlayerSeatV1, parse_strict_json_value};
+use crate::rl::{parse_strict_json_value, PlayerSeatV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -66,6 +66,27 @@ const RANK1_RESIDUAL_FORMULA_V1: &str =
     "parent_logit_plus_state_hidden_transpose_weights_action_hidden/v1";
 const RANK1_COMPOSITE_MODEL_DOMAIN_V1: &[u8] =
     b"mtg-kernel-native-rank1-policy-residual-composite-model/v1";
+const RANK1_RELATIVE_RIGHT_RESIDUAL_MAX_V1: f64 = 1.0e-8;
+const FIXED_OUTCOME_EXPORT_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-outcome-jsonl/v2";
+const FIXED_OUTCOME_SCHEMA_VERSION_V1: u32 = 2;
+const FIXED_OUTCOME_DECISION_ROW_COUNT_V1: usize = 2_995;
+const FIXED_OUTCOME_TERMINAL_ROW_COUNT_V1: usize = 64;
+const FIXED_PHYSICAL_GROUP_COUNT_V1: usize = 2_541;
+const FIXED_TERMINAL_RETURN_COUNTS_V1: [u64; 3] = [37, 0, 27];
+const RANK1_OBJECTIVE_V1: &str =
+    "one-zero-point-analytic-policy-gradient-standardized-episode-balanced/v1";
+const RANK1_ARCHITECTURE_V1: &str =
+    "frozen-net8-logit-plus-deterministic-top-singular-rank1-bilinear/v1";
+const RANK1_PAIR_USE_V1: &str = "all-32-pairs-no-heldout-reuse/v1";
+const RANK1_ADVANTAGE_IDENTITY_V1: &str =
+    "all-data-frozen-value-standardized-equal-episode-mass/v1";
+const RANK1_PROJECTION_IDENTITY_V1: &str =
+    "fixed-128-iteration-two-start-top-singular-projection/v1";
+const RANK1_INITIALIZATION_V1: &str =
+    "two-domain-separated-normalized-signed-affine-index-vectors/v1";
+const RANK1_CALIBRATION_IDENTITY_V1: &str = "mean-tv-0p01-then-movement-only-safety-cap/v1";
+const RANK1_DISPOSITION_V1: &str = "publish-one-fresh-cp7-candidate";
+const RANK1_INTERPRETATION_V1: &str = "The exact 32-pair corpus estimates one deterministic rank-one projection. Outcome data chooses the two rank-one factors only; policy movement chooses magnitude and may only shrink it. Passing safety gates publishes a candidate for fresh CP7 evaluation, not a strength claim.";
 
 #[derive(Clone, Debug)]
 pub(crate) struct NativeBilinearSubstepV1 {
@@ -1146,6 +1167,7 @@ struct NativeRank1ProjectionV1 {
     gradient_frobenius_norm: f64,
     top_singular_value: f64,
     captured_gradient_energy_fraction: f64,
+    relative_right_residual: f64,
     expanded_direction_l2: f64,
     left_singular_vector_f32_bits: Vec<u32>,
     right_singular_vector_f32_bits: Vec<u32>,
@@ -1325,32 +1347,38 @@ fn normalize_f64_v1(values: &mut [f64]) -> Result<f64, NativeBilinearErrorV1> {
     Ok(norm)
 }
 
-fn top_singular_projection_v1(
+fn deterministic_singular_start_v1(domain: usize) -> Result<Vec<f64>, NativeBilinearErrorV1> {
+    let mut values = match domain {
+        0 => (0..BILINEAR_HIDDEN_DIM_V1)
+            .map(|index| {
+                let magnitude = ((index * 37 + 11) % 127 + 1) as f64;
+                if index.is_multiple_of(2) {
+                    magnitude
+                } else {
+                    -magnitude
+                }
+            })
+            .collect::<Vec<_>>(),
+        1 => (0..BILINEAR_HIDDEN_DIM_V1)
+            .map(|index| {
+                let magnitude = ((index * 53 + 29) % 131 + 1) as f64;
+                if (index + index / 3).is_multiple_of(2) {
+                    magnitude
+                } else {
+                    -magnitude
+                }
+            })
+            .collect::<Vec<_>>(),
+        _ => return Err(NativeBilinearErrorV1::RankOneProjectionFailed),
+    };
+    normalize_f64_v1(&mut values)?;
+    Ok(values)
+}
+
+fn singular_candidate_v1(
     gradient: &[f64],
-) -> Result<(Vec<f32>, Vec<f32>, f64, f64, f64), NativeBilinearErrorV1> {
-    if gradient.len() != BILINEAR_WEIGHT_COUNT_V1 || gradient.iter().any(|value| !value.is_finite())
-    {
-        return Err(NativeBilinearErrorV1::RankOneProjectionFailed);
-    }
-    let frobenius_norm = gradient
-        .iter()
-        .map(|value| value * value)
-        .sum::<f64>()
-        .sqrt();
-    if !frobenius_norm.is_finite() || frobenius_norm <= 0.0 {
-        return Err(NativeBilinearErrorV1::RankOneProjectionFailed);
-    }
-    let mut right = (0..BILINEAR_HIDDEN_DIM_V1)
-        .map(|index| {
-            let magnitude = ((index * 37 + 11) % 127 + 1) as f64;
-            if index.is_multiple_of(2) {
-                magnitude
-            } else {
-                -magnitude
-            }
-        })
-        .collect::<Vec<_>>();
-    normalize_f64_v1(&mut right)?;
+    mut right: Vec<f64>,
+) -> Result<(Vec<f64>, Vec<f64>, f64, f64), NativeBilinearErrorV1> {
     let mut left = vec![0.0_f64; BILINEAR_HIDDEN_DIM_V1];
     for _ in 0..RANK1_POWER_ITERATIONS_V1 {
         left.fill(0.0);
@@ -1377,6 +1405,44 @@ fn top_singular_projection_v1(
         }
     }
     let singular_value = normalize_f64_v1(&mut left)?;
+    let mut residual_squared = 0.0_f64;
+    for column in 0..BILINEAR_HIDDEN_DIM_V1 {
+        let mut projected = 0.0_f64;
+        for row in 0..BILINEAR_HIDDEN_DIM_V1 {
+            projected += gradient[row * BILINEAR_HIDDEN_DIM_V1 + column] * left[row];
+        }
+        let residual = projected - singular_value * right[column];
+        residual_squared += residual * residual;
+    }
+    let relative_right_residual = residual_squared.sqrt() / singular_value;
+    if !relative_right_residual.is_finite() {
+        return Err(NativeBilinearErrorV1::RankOneProjectionFailed);
+    }
+    Ok((left, right, singular_value, relative_right_residual))
+}
+
+fn top_singular_projection_v1(
+    gradient: &[f64],
+) -> Result<(Vec<f32>, Vec<f32>, f64, f64, f64, f64), NativeBilinearErrorV1> {
+    if gradient.len() != BILINEAR_WEIGHT_COUNT_V1 || gradient.iter().any(|value| !value.is_finite())
+    {
+        return Err(NativeBilinearErrorV1::RankOneProjectionFailed);
+    }
+    let frobenius_norm = gradient
+        .iter()
+        .map(|value| value * value)
+        .sum::<f64>()
+        .sqrt();
+    if !frobenius_norm.is_finite() || frobenius_norm <= 0.0 {
+        return Err(NativeBilinearErrorV1::RankOneProjectionFailed);
+    }
+    let first = singular_candidate_v1(gradient, deterministic_singular_start_v1(0)?)?;
+    let second = singular_candidate_v1(gradient, deterministic_singular_start_v1(1)?)?;
+    let (mut left, mut right, singular_value, relative_right_residual) =
+        if second.2 > first.2 { second } else { first };
+    if relative_right_residual > RANK1_RELATIVE_RIGHT_RESIDUAL_MAX_V1 {
+        return Err(NativeBilinearErrorV1::RankOneProjectionFailed);
+    }
     let sign_anchor = left
         .iter()
         .enumerate()
@@ -1416,6 +1482,7 @@ fn top_singular_projection_v1(
         frobenius_norm,
         singular_value,
         captured_fraction.min(1.0),
+        relative_right_residual,
     ))
 }
 
@@ -1502,7 +1569,7 @@ fn train_native_rank1_policy_residual_v1(
     let advantage = fit_advantage_stats_v1(dataset, &indices)?;
     let coefficients = coefficients_v1(dataset, &indices, &advantage)?;
     let gradient = analytic_gradient_matrix_v1(dataset, &coefficients)?;
-    let (left, right, gradient_norm, singular_value, captured_fraction) =
+    let (left, right, gradient_norm, singular_value, captured_fraction, relative_right_residual) =
         top_singular_projection_v1(&gradient)?;
     let direction = expanded_rank1_direction_v1(&left, &right)?;
     let expanded_direction_l2 = direction
@@ -1550,7 +1617,8 @@ fn train_native_rank1_policy_residual_v1(
     let rank_one_projection_valid = left.len() == BILINEAR_HIDDEN_DIM_V1
         && right.len() == BILINEAR_HIDDEN_DIM_V1
         && captured_fraction > 0.0
-        && captured_fraction <= 1.0;
+        && captured_fraction <= 1.0
+        && relative_right_residual <= RANK1_RELATIVE_RIGHT_RESIDUAL_MAX_V1;
     let mean_total_variation_at_most_0p01 =
         mean_tv <= RANK1_TARGET_MEAN_TV_V1 + CALIBRATION_TOLERANCE_V1;
     let mean_parent_to_candidate_kl_at_most_0p005 =
@@ -1571,11 +1639,9 @@ fn train_native_rank1_policy_residual_v1(
         publication_encoding: RANK1_PUBLICATION_ENCODING_V1.to_owned(),
         source,
         training: NativeRank1TrainingV1 {
-            objective: "one-zero-point-analytic-policy-gradient-standardized-episode-balanced/v1"
-                .to_owned(),
-            architecture:
-                "frozen-net8-logit-plus-deterministic-top-singular-rank1-bilinear/v1".to_owned(),
-            pair_use: "all-32-pairs-no-heldout-reuse/v1".to_owned(),
+            objective: RANK1_OBJECTIVE_V1.to_owned(),
+            architecture: RANK1_ARCHITECTURE_V1.to_owned(),
+            pair_use: RANK1_PAIR_USE_V1.to_owned(),
             parent_parameters_frozen: true,
             value_head_frozen: true,
             outcome_independent_scale_selection: true,
@@ -1585,7 +1651,7 @@ fn train_native_rank1_policy_residual_v1(
             substep_count: dataset.substep_count,
             expanded_parameter_count: BILINEAR_WEIGHT_COUNT_V1,
             advantage: NativeRank1AdvantageStatsV1 {
-                identity: "all-data-frozen-value-standardized-equal-episode-mass/v1".to_owned(),
+                identity: RANK1_ADVANTAGE_IDENTITY_V1.to_owned(),
                 physical_group_count: advantage.fit_group_count,
                 episode_count: advantage.fit_episode_count,
                 weighted_mean: advantage.weighted_mean,
@@ -1594,25 +1660,21 @@ fn train_native_rank1_policy_residual_v1(
                 normalization_denominator: advantage.normalization_denominator,
             },
             projection: NativeRank1ProjectionV1 {
-                identity: "fixed-128-iteration-two-sided-power-top-singular-projection/v1"
-                    .to_owned(),
+                identity: RANK1_PROJECTION_IDENTITY_V1.to_owned(),
                 rank: 1,
                 effective_degrees_of_freedom: RANK1_EFFECTIVE_DEGREES_OF_FREEDOM_V1,
                 power_iteration_count: RANK1_POWER_ITERATIONS_V1,
-                initialization:
-                    "normalized-alternating-signed-affine-index-vector-37-11-127/v1".to_owned(),
+                initialization: RANK1_INITIALIZATION_V1.to_owned(),
                 gradient_frobenius_norm: gradient_norm,
                 top_singular_value: singular_value,
                 captured_gradient_energy_fraction: captured_fraction,
+                relative_right_residual,
                 expanded_direction_l2,
                 left_singular_vector_f32_bits: left.iter().map(|value| value.to_bits()).collect(),
-                right_singular_vector_f32_bits: right
-                    .iter()
-                    .map(|value| value.to_bits())
-                    .collect(),
+                right_singular_vector_f32_bits: right.iter().map(|value| value.to_bits()).collect(),
             },
             calibration: NativeRank1CalibrationV1 {
-                identity: "mean-tv-0p01-then-movement-only-safety-cap/v1".to_owned(),
+                identity: RANK1_CALIBRATION_IDENTITY_V1.to_owned(),
                 target_mean_total_variation: RANK1_TARGET_MEAN_TV_V1,
                 target_calibrated_scale: target_calibration.calibrated_scale,
                 final_scale,
@@ -1631,7 +1693,7 @@ fn train_native_rank1_policy_residual_v1(
                 p90_total_variation_at_most_0p04,
                 publish_candidate,
             },
-            disposition: "publish-one-fresh-cp7-candidate".to_owned(),
+            disposition: RANK1_DISPOSITION_V1.to_owned(),
         },
         weights: NativeRank1WeightsReportV1 {
             filename: RANK1_WEIGHTS_FILENAME_V1.to_owned(),
@@ -1640,8 +1702,7 @@ fn train_native_rank1_policy_residual_v1(
             byte_count: BILINEAR_WEIGHT_COUNT_V1 * size_of::<f32>(),
             sha256: weights_sha256,
         },
-        interpretation: "The exact 32-pair corpus estimates one deterministic rank-one projection. Outcome data chooses the two rank-one factors only; policy movement chooses magnitude and may only shrink it. Passing safety gates publishes a candidate for fresh CP7 evaluation, not a strength claim."
-            .to_owned(),
+        interpretation: RANK1_INTERPRETATION_V1.to_owned(),
     };
     drop(target_weights);
     Ok(NativeRank1TrainingResultV1 { report, weights })
@@ -1915,6 +1976,269 @@ fn decode_rank1_weights_v1(bytes: &[u8]) -> Result<NativeBilinearWeightsV1, Box<
     Ok(NativeBilinearWeightsV1::from_values_v1(values)?)
 }
 
+fn validate_exact_parent_inventory_v1(parent: &Path) -> Result<(), Box<dyn Error>> {
+    let mut inventory = BTreeSet::new();
+    for entry in fs::read_dir(parent)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "rank1 parent inventory contains a non-file entry",
+            )
+            .into());
+        }
+        inventory.insert(entry.file_name().into_string().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "non-UTF8 rank1 parent inventory",
+            )
+        })?);
+    }
+    if inventory
+        != BTreeSet::from([
+            RANK1_PARENT_MANIFEST_FILENAME_V1.to_owned(),
+            RANK1_PARENT_STATE_FILENAME_V1.to_owned(),
+        ])
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "rank1 parent inventory is not exact",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_rank1_report_semantics_v1(
+    report: &NativeRank1ReportV1,
+    weights: &NativeBilinearWeightsV1,
+    weights_bytes: &[u8],
+    weights_sha256: [u8; 32],
+) -> Result<(), Box<dyn Error>> {
+    let training = &report.training;
+    let projection = &training.projection;
+    let calibration = &training.calibration;
+    let movement = &training.movement;
+    let gates = &training.safety_gates;
+    let advantage = &training.advantage;
+    let weights_sha256_hex = lower_hex_v1(weights_sha256);
+    if report.schema != RANK1_REPORT_SCHEMA_V1
+        || report.publication_encoding != RANK1_PUBLICATION_ENCODING_V1
+        || report.source.parent_manifest_sha256 != RETAINED_MANIFEST_SHA256_V1
+        || report.source.parent_payload_sha256 != RETAINED_PAYLOAD_SHA256_V1
+        || report.source.parent_native_state_sha256 != RETAINED_NATIVE_STATE_SHA256_V1
+        || report.source.parent_model_parameter_sha256 != RETAINED_MODEL_PARAMETER_SHA256_V1
+        || report.source.parent_training_corpus_sha256 != RETAINED_PARENT_TRAINING_CORPUS_SHA256_V1
+        || report.source.parent_adam_step != RETAINED_ADAM_STEP_V1
+        || report.source.training_corpus_sha256 != FIXED_CORPUS_SHA256_V1
+        || report.source.outcome_export_contract != FIXED_OUTCOME_EXPORT_CONTRACT_V1
+        || report.source.outcome_schema_version != FIXED_OUTCOME_SCHEMA_VERSION_V1
+        || report.source.outcome_decision_row_count != FIXED_OUTCOME_DECISION_ROW_COUNT_V1
+        || report.source.outcome_terminal_row_count != FIXED_OUTCOME_TERMINAL_ROW_COUNT_V1
+        || report
+            .source
+            .outcome_terminal_return_counts_minus_one_zero_plus_one
+            != FIXED_TERMINAL_RETURN_COUNTS_V1
+        || training.objective != RANK1_OBJECTIVE_V1
+        || training.architecture != RANK1_ARCHITECTURE_V1
+        || training.pair_use != RANK1_PAIR_USE_V1
+        || !training.parent_parameters_frozen
+        || !training.value_head_frozen
+        || !training.outcome_independent_scale_selection
+        || training.pair_count != 32
+        || training.episode_count != 64
+        || training.physical_group_count != FIXED_PHYSICAL_GROUP_COUNT_V1
+        || training.substep_count != FIXED_OUTCOME_DECISION_ROW_COUNT_V1
+        || training.expanded_parameter_count != BILINEAR_WEIGHT_COUNT_V1
+        || advantage.identity != RANK1_ADVANTAGE_IDENTITY_V1
+        || advantage.physical_group_count != FIXED_PHYSICAL_GROUP_COUNT_V1
+        || advantage.episode_count != 64
+        || projection.identity != RANK1_PROJECTION_IDENTITY_V1
+        || projection.rank != 1
+        || projection.effective_degrees_of_freedom != RANK1_EFFECTIVE_DEGREES_OF_FREEDOM_V1
+        || projection.power_iteration_count != RANK1_POWER_ITERATIONS_V1
+        || projection.initialization != RANK1_INITIALIZATION_V1
+        || calibration.identity != RANK1_CALIBRATION_IDENTITY_V1
+        || calibration.target_mean_total_variation.to_bits() != RANK1_TARGET_MEAN_TV_V1.to_bits()
+        || training.disposition != RANK1_DISPOSITION_V1
+        || report.interpretation != RANK1_INTERPRETATION_V1
+        || report.weights.filename != RANK1_WEIGHTS_FILENAME_V1
+        || report.weights.encoding != RANK1_WEIGHTS_ENCODING_V1
+        || report.weights.count != BILINEAR_WEIGHT_COUNT_V1
+        || report.weights.byte_count != BILINEAR_WEIGHT_COUNT_V1 * size_of::<f32>()
+        || report.weights.byte_count != weights_bytes.len()
+        || report.weights.sha256 != weights_sha256_hex
+        || calibration.weights_sha256 != weights_sha256_hex
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "rank1 report fixed semantic mismatch",
+        )
+        .into());
+    }
+    let finite_scalars = [
+        advantage.weighted_mean,
+        advantage.weighted_population_standard_deviation,
+        advantage.normalization_denominator,
+        projection.gradient_frobenius_norm,
+        projection.top_singular_value,
+        projection.captured_gradient_energy_fraction,
+        projection.relative_right_residual,
+        projection.expanded_direction_l2,
+        calibration.target_calibrated_scale,
+        calibration.final_scale,
+        calibration.achieved_mean_total_variation,
+        calibration.weights_l2,
+        movement.mean_total_variation,
+        movement.p90_total_variation,
+        movement.mean_parent_to_candidate_kl,
+        movement.training_policy_surrogate_improvement,
+        movement.p0_training_policy_surrogate_improvement,
+        movement.p1_training_policy_surrogate_improvement,
+    ];
+    if finite_scalars.into_iter().any(|value| !value.is_finite())
+        || advantage.weighted_population_standard_deviation < 0.0
+        || advantage.normalization_denominator.to_bits()
+            != advantage
+                .weighted_population_standard_deviation
+                .max(STANDARD_DEVIATION_FLOOR_V1)
+                .to_bits()
+        || projection.gradient_frobenius_norm <= 0.0
+        || projection.top_singular_value <= 0.0
+        || !(0.0..=1.0).contains(&projection.captured_gradient_energy_fraction)
+        || projection.captured_gradient_energy_fraction <= 0.0
+        || projection.relative_right_residual < 0.0
+        || projection.relative_right_residual > RANK1_RELATIVE_RIGHT_RESIDUAL_MAX_V1
+        || projection.expanded_direction_l2 <= 0.0
+        || calibration.target_calibrated_scale <= 0.0
+        || calibration.final_scale <= 0.0
+        || calibration.final_scale > calibration.target_calibrated_scale
+        || calibration.achieved_mean_total_variation < 0.0
+        || calibration.achieved_mean_total_variation > 1.0
+        || calibration.weights_l2 <= 0.0
+        || movement.physical_group_count != FIXED_PHYSICAL_GROUP_COUNT_V1
+        || movement.substep_count != FIXED_OUTCOME_DECISION_ROW_COUNT_V1
+        || !(0.0..=1.0).contains(&movement.mean_total_variation)
+        || !(0.0..=1.0).contains(&movement.p90_total_variation)
+        || movement.mean_parent_to_candidate_kl < 0.0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "rank1 report scalar semantic mismatch",
+        )
+        .into());
+    }
+    let captured =
+        projection.top_singular_value.powi(2) / projection.gradient_frobenius_norm.powi(2);
+    if (captured - projection.captured_gradient_energy_fraction).abs()
+        > 1.0e-12 * captured.abs().max(1.0)
+        || calibration.achieved_mean_total_variation.to_bits()
+            != movement.mean_total_variation.to_bits()
+        || calibration.safety_cap_applied
+            != (calibration.final_scale.to_bits() != calibration.target_calibrated_scale.to_bits())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "rank1 report derived scalar mismatch",
+        )
+        .into());
+    }
+    let left = projection
+        .left_singular_vector_f32_bits
+        .iter()
+        .copied()
+        .map(f32::from_bits)
+        .collect::<Vec<_>>();
+    let right = projection
+        .right_singular_vector_f32_bits
+        .iter()
+        .copied()
+        .map(f32::from_bits)
+        .collect::<Vec<_>>();
+    if left.len() != BILINEAR_HIDDEN_DIM_V1
+        || right.len() != BILINEAR_HIDDEN_DIM_V1
+        || left.iter().chain(&right).any(|value| !value.is_finite())
+    {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid rank1 factors").into());
+    }
+    let left_norm = left
+        .iter()
+        .map(|value| f64::from(*value).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    let right_norm = right
+        .iter()
+        .map(|value| f64::from(*value).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    if (left_norm - 1.0).abs() > 1.0e-6 || (right_norm - 1.0).abs() > 1.0e-6 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "nonunit rank1 factors").into());
+    }
+    let direction = expanded_rank1_direction_v1(&left, &right)?;
+    let direction_l2 = direction
+        .iter()
+        .map(|value| f64::from(*value).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    let expected_weights = scaled_weights_v1(&direction, calibration.final_scale)?;
+    let weights_l2 = weights
+        .values_v1()
+        .iter()
+        .map(|value| f64::from(*value).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    if direction_l2.to_bits() != projection.expanded_direction_l2.to_bits()
+        || weights_l2.to_bits() != calibration.weights_l2.to_bits()
+        || expected_weights.f32le_bytes_v1() != weights_bytes
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "rank1 factor or weight derivation mismatch",
+        )
+        .into());
+    }
+    let expected_finite = weights.values_v1().iter().all(|value| value.is_finite())
+        && [
+            movement.mean_total_variation,
+            movement.p90_total_variation,
+            movement.mean_parent_to_candidate_kl,
+            movement.training_policy_surrogate_improvement,
+            movement.p0_training_policy_surrogate_improvement,
+            movement.p1_training_policy_surrogate_improvement,
+        ]
+        .into_iter()
+        .all(f64::is_finite);
+    let expected_rank_valid = projection.captured_gradient_energy_fraction > 0.0
+        && projection.captured_gradient_energy_fraction <= 1.0
+        && projection.relative_right_residual <= RANK1_RELATIVE_RIGHT_RESIDUAL_MAX_V1;
+    let expected_mean_tv =
+        movement.mean_total_variation <= RANK1_TARGET_MEAN_TV_V1 + CALIBRATION_TOLERANCE_V1;
+    let expected_mean_kl = movement.mean_parent_to_candidate_kl <= RANK1_MAX_MEAN_KL_V1;
+    let expected_p90_tv = movement.p90_total_variation <= RANK1_MAX_P90_TV_V1;
+    let expected_publish = gates.exact_parent_at_zero
+        && expected_finite
+        && expected_rank_valid
+        && expected_mean_tv
+        && expected_mean_kl
+        && expected_p90_tv;
+    if !gates.exact_parent_at_zero
+        || gates.finite_outputs != expected_finite
+        || gates.rank_one_projection_valid != expected_rank_valid
+        || gates.mean_total_variation_at_most_0p01 != expected_mean_tv
+        || gates.mean_parent_to_candidate_kl_at_most_0p005 != expected_mean_kl
+        || gates.p90_total_variation_at_most_0p04 != expected_p90_tv
+        || gates.publish_candidate != expected_publish
+        || !gates.publish_candidate
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "rank1 report safety gate mismatch",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 pub(crate) fn load_native_rank1_policy_residual_inference_v1(
     root: &Path,
 ) -> Result<NativeRank1PolicyResidualInferenceV1, Box<dyn Error>> {
@@ -1975,6 +2299,7 @@ pub(crate) fn load_native_rank1_policy_residual_inference_v1(
         || candidate.weights.filename != RANK1_WEIGHTS_FILENAME_V1
         || candidate.weights.encoding != RANK1_WEIGHTS_ENCODING_V1
         || candidate.weights.count != BILINEAR_WEIGHT_COUNT_V1
+        || candidate.weights.byte_count != BILINEAR_WEIGHT_COUNT_V1 * size_of::<f32>()
         || candidate.weights.byte_count != weights_bytes.len()
         || candidate.weights.sha256 != lower_hex_v1(weights_sha256)
         || candidate.report.filename != RANK1_REPORT_FILENAME_V1
@@ -1987,60 +2312,10 @@ pub(crate) fn load_native_rank1_policy_residual_inference_v1(
         )
         .into());
     }
-    if report.schema != RANK1_REPORT_SCHEMA_V1
-        || report.publication_encoding != RANK1_PUBLICATION_ENCODING_V1
-        || report.source.parent_manifest_sha256 != RETAINED_MANIFEST_SHA256_V1
-        || report.source.parent_payload_sha256 != RETAINED_PAYLOAD_SHA256_V1
-        || report.source.parent_native_state_sha256 != RETAINED_NATIVE_STATE_SHA256_V1
-        || report.source.parent_model_parameter_sha256 != RETAINED_MODEL_PARAMETER_SHA256_V1
-        || report.source.parent_training_corpus_sha256 != RETAINED_PARENT_TRAINING_CORPUS_SHA256_V1
-        || report.source.parent_adam_step != RETAINED_ADAM_STEP_V1
-        || report.source.training_corpus_sha256 != FIXED_CORPUS_SHA256_V1
-        || report.training.pair_use != "all-32-pairs-no-heldout-reuse/v1"
-        || report.training.projection.rank != 1
-        || report.training.projection.effective_degrees_of_freedom
-            != RANK1_EFFECTIVE_DEGREES_OF_FREEDOM_V1
-        || report.training.projection.power_iteration_count != RANK1_POWER_ITERATIONS_V1
-        || !report.training.safety_gates.publish_candidate
-        || report.weights.filename != RANK1_WEIGHTS_FILENAME_V1
-        || report.weights.encoding != RANK1_WEIGHTS_ENCODING_V1
-        || report.weights.count != BILINEAR_WEIGHT_COUNT_V1
-        || report.weights.byte_count != weights_bytes.len()
-        || report.weights.sha256 != lower_hex_v1(weights_sha256)
-        || report.training.calibration.weights_sha256 != lower_hex_v1(weights_sha256)
-    {
-        return Err(
-            io::Error::new(io::ErrorKind::InvalidData, "rank1 report binding mismatch").into(),
-        );
-    }
-    let left = report
-        .training
-        .projection
-        .left_singular_vector_f32_bits
-        .iter()
-        .copied()
-        .map(f32::from_bits)
-        .collect::<Vec<_>>();
-    let right = report
-        .training
-        .projection
-        .right_singular_vector_f32_bits
-        .iter()
-        .copied()
-        .map(f32::from_bits)
-        .collect::<Vec<_>>();
-    let expected_direction = expanded_rank1_direction_v1(&left, &right)?;
-    let expected_weights =
-        scaled_weights_v1(&expected_direction, report.training.calibration.final_scale)?;
-    if expected_weights.f32le_bytes_v1() != weights_bytes {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "rank1 factor expansion mismatch",
-        )
-        .into());
-    }
     let weights = decode_rank1_weights_v1(&weights_bytes)?;
+    validate_rank1_report_semantics_v1(&report, &weights, &weights_bytes, weights_sha256)?;
     let parent_directory = root.join(RANK1_PARENT_DIRECTORY_V1);
+    validate_exact_parent_inventory_v1(&parent_directory)?;
     let parent_manifest_bytes = fs::read(parent_directory.join(RANK1_PARENT_MANIFEST_FILENAME_V1))?;
     let parent_state_bytes = fs::read(parent_directory.join(RANK1_PARENT_STATE_FILENAME_V1))?;
     if lower_hex_v1(raw_sha256_v1(&parent_manifest_bytes)) != RETAINED_MANIFEST_SHA256_V1
@@ -2250,6 +2525,36 @@ mod tests {
         assert!((first.2 - 29.0_f64.sqrt()).abs() <= 1.0e-12);
         assert!((first.3 - 5.0).abs() <= 1.0e-12);
         assert!((first.4 - 25.0 / 29.0).abs() <= 1.0e-12);
+        assert!(first.5 <= RANK1_RELATIVE_RIGHT_RESIDUAL_MAX_V1);
+    }
+
+    #[test]
+    fn second_start_recovers_top_mode_orthogonal_to_first_start_v1() {
+        let first_start = deterministic_singular_start_v1(0).unwrap();
+        let mut top_right = vec![0.0_f64; BILINEAR_HIDDEN_DIM_V1];
+        top_right[0] = first_start[1];
+        top_right[1] = -first_start[0];
+        let top_singular_value = 8.0
+            * top_right
+                .iter()
+                .map(|value| value * value)
+                .sum::<f64>()
+                .sqrt();
+        assert!(top_singular_value > 0.1);
+        let mut gradient = vec![0.0_f64; BILINEAR_WEIGHT_COUNT_V1];
+        for column in 0..BILINEAR_HIDDEN_DIM_V1 {
+            gradient[column] = 8.0 * top_right[column];
+            gradient[BILINEAR_HIDDEN_DIM_V1 + column] = 0.1 * first_start[column];
+        }
+        let first_start_overlap = top_right
+            .iter()
+            .zip(&first_start)
+            .map(|(left, right)| left * right)
+            .sum::<f64>();
+        assert!(first_start_overlap.abs() <= f64::EPSILON);
+        let recovered = top_singular_projection_v1(&gradient).unwrap();
+        assert!((recovered.3 - top_singular_value).abs() <= 1.0e-12);
+        assert!(recovered.5 <= RANK1_RELATIVE_RIGHT_RESIDUAL_MAX_V1);
     }
 
     #[test]
