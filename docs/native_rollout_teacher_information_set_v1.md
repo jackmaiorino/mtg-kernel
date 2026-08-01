@@ -54,3 +54,25 @@ The only failed gate was the declared mean-delta requirement of at least `+0.05`
 ## Next bounded test
 
 Increase ranking evidence from 4 to 16 samples per legal action while keeping confirmation fixed at 32 fresh paired samples per root. Keep the information-set sampler, roots, horizon, integrity checks, and signal gate unchanged. This tests whether ranking noise hid a stable correction without weakening the acceptance criterion.
+
+## Held-out rank-16 result
+
+Commit `2a6fc45` implemented the final bounded rank-16 diagnostic under a separate schema. It kept the same 32 source roots and acceptance gates, but used four new seed domains held out from v1: ranking redeterminization, ranking continuation policy, confirmation redeterminization, and confirmation continuation policy. The frozen pass rule required all integrity gates, at least 6 changed roots, more positive than negative changed roots, and a confirmed reward delta of at least `52 / 1024`, the smallest attainable numerator meeting `+0.05`. Failure meant retirement without rank 32 or post-hoc root filtering.
+
+The formal run used executable SHA-256 `a4bdab61c557d26a1347c1d9144a6772f484bc807e651ef3f98809da8b4994d0`. Its 770,015-byte report has SHA-256 `24a0506b93d9d16cf1670a2490b5cf45f70ae278649d365f353544b1a518e298`. Runtime was 174,034 ms, below the ten-minute cap.
+
+All structural evidence passed:
+
+- All 32 roots were collected.
+- All 1,536 required redeterminization samples were recorded successfully.
+- All 5,024 branch outcomes completed naturally, with no failure, horizon exhaustion, incomplete ranking action, or incomplete confirmation pair.
+- All ranking samples were shared across legal actions, all confirmation samples were shared across teacher and parent, and there were zero branch-start mismatches.
+- Every root had 48 distinct sampled hidden states across ranking and confirmation.
+
+The rank-16 teacher changed 14 roots: 7 positive, 5 negative, and 2 neutral. Its held-out confirmed reward delta was `20 / 1024 = +0.01953125`. This remained well below the required `52 / 1024`, so the signal gate failed and the disposition was reject.
+
+The perfect-information ceiling produced `+204 / 1024 = +0.19921875`, while information-set rank 4 produced `+12 / 1024 = +0.01171875` and held-out rank 16 produced `+20 / 1024 = +0.01953125`. The large perfect-information gain therefore did not survive removal of hidden-card clairvoyance. The residual visible-information signal is weak and does not justify teacher labels, a trained candidate, or a CP7 evaluation block.
+
+## Final disposition
+
+Retire this full-terminal rollout-teacher path. Do not run rank 32, filter roots after seeing confirmation, generate training labels from either information-set report, train a candidate, or spend CP7 games on this branch. The next work should target representation and learning architecture rather than additional rollout-budget search.
