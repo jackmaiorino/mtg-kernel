@@ -3710,6 +3710,22 @@ pub struct FastActorSessionV1 {
 #[derive(Clone)]
 pub struct FastActorSessionSnapshotV1(FastActorSessionV1);
 
+/// Narrow native-only failure vocabulary for acting-player information-set
+/// snapshots. This is separate from the JSONL session error contract because
+/// redeterminization is not a game action or wire operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FastActorInformationSetSnapshotErrorV1 {
+    UnsupportedDeckPair,
+    TerminalSession,
+    NonInitialPhysicalSubstep,
+    State(crate::state::RallyInformationSetRedeterminizationErrorV1),
+    ObservationDrift,
+    CurrentDecisionDrift,
+    DecisionRegenerationDrift,
+    LegalActionDrift,
+    FlatActionBindingDrift,
+}
+
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FastActorSemanticBindingAuditV2 {
@@ -5135,6 +5151,167 @@ impl FastActorSessionV1 {
 
     pub fn snapshot_v1(&self) -> FastActorSessionSnapshotV1 {
         FastActorSessionSnapshotV1(self.clone())
+    }
+
+    /// Returns a Rally/Rally snapshot sampled from the exact current actor's
+    /// represented information set.
+    ///
+    /// The live session is never mutated. Redeterminization is admitted only
+    /// at the first substep of a physical decision. Before returning, this
+    /// method independently re-surfaces the current engine decision on a
+    /// throwaway clone and requires exact actor observation, canonical legal
+    /// actions, and complete private flat-action cache equality.
+    pub(crate) fn snapshot_current_actor_information_set_v1(
+        &self,
+        seed: u64,
+    ) -> Result<FastActorSessionSnapshotV1, FastActorInformationSetSnapshotErrorV1> {
+        if self.deck_ids[0] != CANONICAL_RALLY_DECK_ID
+            || self.deck_ids[1] != CANONICAL_RALLY_DECK_ID
+        {
+            return Err(FastActorInformationSetSnapshotErrorV1::UnsupportedDeckPair);
+        }
+        if self.terminal.is_some() {
+            return Err(FastActorInformationSetSnapshotErrorV1::TerminalSession);
+        }
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FastActorInformationSetSnapshotErrorV1::TerminalSession)?;
+        if current.substep_index != 0 {
+            return Err(FastActorInformationSetSnapshotErrorV1::NonInitialPhysicalSubstep);
+        }
+
+        let FastActorResponseV1::Decision(expected_before) = self.current_response() else {
+            return Err(FastActorInformationSetSnapshotErrorV1::TerminalSession);
+        };
+        let before_observation = match self.flat_action_contract_mode {
+            FlatActionContractModeV1::V1 => self.flat_policy_observation_v1(expected_before),
+            FlatActionContractModeV1::V2 => self.flat_policy_observation_v2(expected_before),
+        }
+        .map_err(|_| FastActorInformationSetSnapshotErrorV1::ObservationDrift)?;
+        let before_candidates = current.candidates.clone();
+        let before_semantics = self.diagnostic_current_action_semantics();
+        let before_v1_binding = current
+            .flat_action_cache
+            .as_ref()
+            .map(|cache| cache.binding);
+        let before_v2_binding = current
+            .flat_action_cache_v2
+            .as_ref()
+            .map(|cache| cache.binding);
+
+        let mut candidate = self.clone();
+        candidate
+            .state
+            .redeterminize_rally_information_set_v1(current.actor, seed)
+            .map_err(FastActorInformationSetSnapshotErrorV1::State)?;
+        let candidate_current = candidate
+            .current
+            .as_ref()
+            .ok_or(FastActorInformationSetSnapshotErrorV1::TerminalSession)?;
+        if candidate_current != current {
+            return Err(FastActorInformationSetSnapshotErrorV1::CurrentDecisionDrift);
+        }
+
+        let candidate_harness_context = candidate.surface.harness_public_context();
+        let candidate_policy_context = candidate
+            .surface
+            .privileged_scan_context()
+            .map_err(|_| FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift)?;
+        let mut regeneration_probe = candidate.clone();
+        regeneration_probe.advance_to_decision_or_terminal();
+        let regenerated_policy_context = regeneration_probe
+            .surface
+            .privileged_scan_context()
+            .map_err(|_| FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift)?;
+        let regenerated_current = regeneration_probe
+            .current
+            .as_ref()
+            .ok_or(FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift)?;
+        if regeneration_probe.terminal.is_some()
+            || regeneration_probe.state != candidate.state
+            || regeneration_probe.environment_revision != candidate.environment_revision
+            || regeneration_probe.policy_step_count != candidate.policy_step_count
+            || regeneration_probe.physical_decision_count != candidate.physical_decision_count
+            || regeneration_probe.surface.harness_public_context() != candidate_harness_context
+            || regenerated_policy_context != candidate_policy_context
+            || regenerated_current != current
+        {
+            return Err(FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift);
+        }
+
+        let rebuilt_candidates = core_policy_action_candidates_v5(
+            &regenerated_current.origin_decision,
+            &regeneration_probe.state,
+        )
+        .map_err(|_| FastActorInformationSetSnapshotErrorV1::LegalActionDrift)?;
+        if rebuilt_candidates != before_candidates
+            || candidate_current.candidates != before_candidates
+            || regeneration_probe.diagnostic_current_action_semantics() != before_semantics
+        {
+            return Err(FastActorInformationSetSnapshotErrorV1::LegalActionDrift);
+        }
+        let FastActorResponseV1::Decision(expected_after) = candidate.current_response() else {
+            return Err(FastActorInformationSetSnapshotErrorV1::TerminalSession);
+        };
+        if expected_after != expected_before {
+            return Err(FastActorInformationSetSnapshotErrorV1::CurrentDecisionDrift);
+        }
+        let FastActorResponseV1::Decision(regenerated_expected) =
+            regeneration_probe.current_response()
+        else {
+            return Err(FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift);
+        };
+        if regenerated_expected != expected_before {
+            return Err(FastActorInformationSetSnapshotErrorV1::DecisionRegenerationDrift);
+        }
+        let after_observation = match candidate.flat_action_contract_mode {
+            FlatActionContractModeV1::V1 => candidate.flat_policy_observation_v1(expected_after),
+            FlatActionContractModeV1::V2 => candidate.flat_policy_observation_v2(expected_after),
+        }
+        .map_err(|_| FastActorInformationSetSnapshotErrorV1::ObservationDrift)?;
+        let regenerated_observation = match regeneration_probe.flat_action_contract_mode {
+            FlatActionContractModeV1::V1 => {
+                regeneration_probe.flat_policy_observation_v1(regenerated_expected)
+            }
+            FlatActionContractModeV1::V2 => {
+                regeneration_probe.flat_policy_observation_v2(regenerated_expected)
+            }
+        }
+        .map_err(|_| FastActorInformationSetSnapshotErrorV1::ObservationDrift)?;
+        if after_observation != before_observation || regenerated_observation != before_observation
+        {
+            return Err(FastActorInformationSetSnapshotErrorV1::ObservationDrift);
+        }
+
+        match candidate.flat_action_contract_mode {
+            FlatActionContractModeV1::V1 => {
+                let cache = candidate_current
+                    .flat_action_cache
+                    .as_ref()
+                    .ok_or(FastActorInformationSetSnapshotErrorV1::FlatActionBindingDrift)?;
+                if before_v1_binding != Some(cache.binding)
+                    || before_v2_binding.is_some()
+                    || flat_validate_action_cache_v1(&candidate, candidate_current, cache).is_err()
+                {
+                    return Err(FastActorInformationSetSnapshotErrorV1::FlatActionBindingDrift);
+                }
+            }
+            FlatActionContractModeV1::V2 => {
+                let cache = candidate_current
+                    .flat_action_cache_v2
+                    .as_ref()
+                    .ok_or(FastActorInformationSetSnapshotErrorV1::FlatActionBindingDrift)?;
+                if before_v2_binding != Some(cache.binding)
+                    || before_v1_binding.is_some()
+                    || flat_validate_action_cache_v2(&candidate, candidate_current, cache).is_err()
+                {
+                    return Err(FastActorInformationSetSnapshotErrorV1::FlatActionBindingDrift);
+                }
+            }
+        }
+
+        Ok(FastActorSessionSnapshotV1(candidate))
     }
 
     pub fn restore_v1(&mut self, snapshot: &FastActorSessionSnapshotV1) {
@@ -7358,6 +7535,142 @@ mod tests {
         assert_eq!(fast_actor_audit_bytes(&final_commit), audit_before);
         final_commit.restore_v1(&final_snapshot);
         assert!(final_commit.step(23, 0, 1).is_ok());
+    }
+
+    #[test]
+    fn rally_information_set_snapshot_preserves_contract_and_consumes() {
+        let deck_ids = [
+            CANONICAL_RALLY_DECK_ID.to_string(),
+            CANONICAL_RALLY_DECK_ID.to_string(),
+        ];
+        let session =
+            FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+                88_101, 0x88_101, 256, 32_768, deck_ids,
+            )
+            .unwrap();
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("Rally reset must produce a decision");
+        };
+        let observation_before = session.flat_policy_observation_v2(expected).unwrap();
+        let semantics_before = session.diagnostic_current_action_semantics();
+        let binding_before = session
+            .native_full_trajectory_current_binding_v2(expected)
+            .unwrap();
+        let response_before = session.current_response();
+        let state_hash_before = session.diagnostic_state_hash();
+        let environment_hash_before = session.privileged_core_environment_hash();
+        let randomness_before = session
+            .state
+            .environment_randomization_v2()
+            .cloned()
+            .unwrap();
+
+        let snapshot = session
+            .snapshot_current_actor_information_set_v1(0x15_551_001)
+            .unwrap();
+        assert_eq!(session.current_response(), response_before);
+        assert_eq!(session.diagnostic_state_hash(), state_hash_before);
+        assert_eq!(
+            session.privileged_core_environment_hash(),
+            environment_hash_before
+        );
+
+        let mut redetermined = session.clone();
+        redetermined.restore_v1(&snapshot);
+        assert_eq!(redetermined.current, session.current);
+        assert_eq!(redetermined.current_response(), response_before);
+        assert_eq!(
+            redetermined.flat_policy_observation_v2(expected).unwrap(),
+            observation_before
+        );
+        assert_eq!(
+            redetermined.diagnostic_current_action_semantics(),
+            semantics_before
+        );
+        assert_eq!(
+            redetermined
+                .native_full_trajectory_current_binding_v2(expected)
+                .unwrap(),
+            binding_before
+        );
+        assert_eq!(
+            redetermined.state.environment_randomization_v2().unwrap(),
+            &randomness_before
+        );
+        assert_ne!(redetermined.diagnostic_state_hash(), state_hash_before);
+
+        let same_seed = session
+            .snapshot_current_actor_information_set_v1(0x15_551_001)
+            .unwrap();
+        let mut same_seed_session = session.clone();
+        same_seed_session.restore_v1(&same_seed);
+        assert_eq!(
+            same_seed_session.diagnostic_state_hash(),
+            redetermined.diagnostic_state_hash()
+        );
+        let different_seed = session
+            .snapshot_current_actor_information_set_v1(0x15_551_002)
+            .unwrap();
+        let mut different_seed_session = session.clone();
+        different_seed_session.restore_v1(&different_seed);
+        assert_ne!(
+            different_seed_session.diagnostic_state_hash(),
+            redetermined.diagnostic_state_hash()
+        );
+
+        redetermined
+            .consume_current_flat_action_slice_v2(binding_before, 0)
+            .expect("redetermined current binding must remain consumable");
+    }
+
+    #[test]
+    fn rally_information_set_snapshot_scope_gates_fail_closed() {
+        let burn = FastActorSessionV1::reset_with_limits(88_102, 1, 64, 8_192);
+        let burn_hash = burn.diagnostic_state_hash();
+        assert!(matches!(
+            burn.snapshot_current_actor_information_set_v1(1),
+            Err(FastActorInformationSetSnapshotErrorV1::UnsupportedDeckPair)
+        ));
+        assert_eq!(burn.diagnostic_state_hash(), burn_hash);
+
+        let rally_decks = [
+            CANONICAL_RALLY_DECK_ID.to_string(),
+            CANONICAL_RALLY_DECK_ID.to_string(),
+        ];
+        let terminal = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            88_103,
+            2,
+            0,
+            1,
+            rally_decks.clone(),
+        )
+        .unwrap();
+        assert!(matches!(
+            terminal.current_response(),
+            FastActorResponseV1::Terminal(_)
+        ));
+        assert!(matches!(
+            terminal.snapshot_current_actor_information_set_v1(1),
+            Err(FastActorInformationSetSnapshotErrorV1::TerminalSession)
+        ));
+
+        let mut noninitial = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            88_104,
+            3,
+            64,
+            8_192,
+            rally_decks,
+        )
+        .unwrap();
+        let current = noninitial.current.as_mut().unwrap();
+        current.substep_index = 1;
+        current.substep_count = 2;
+        let hash_before = noninitial.diagnostic_state_hash();
+        assert!(matches!(
+            noninitial.snapshot_current_actor_information_set_v1(1),
+            Err(FastActorInformationSetSnapshotErrorV1::NonInitialPhysicalSubstep)
+        ));
+        assert_eq!(noninitial.diagnostic_state_hash(), hash_before);
     }
 
     #[test]

@@ -735,6 +735,26 @@ pub struct HandKnowledgeEntry {
     pub zone_change_count: u32,
 }
 
+/// Narrow failure vocabulary for Rally information-set redeterminization.
+///
+/// This is crate-private because the operation is an implementation tool for
+/// native rollout search, not part of the game or wire protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RallyInformationSetRedeterminizationErrorV1 {
+    InvalidObserver,
+    InvalidHiddenZoneState,
+    InvalidKnowledgeState,
+    UnsupportedHiddenObjectState,
+    RandomnessChanged,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RallyInformationSetRedeterminizationAuditV1 {
+    pub(crate) hidden_slot_counts: [usize; 2],
+    pub(crate) locked_hand_counts: [usize; 2],
+    pub(crate) locked_library_counts: [usize; 2],
+}
+
 /// Counter-based, seedable, serializable PRNG (SplitMix64). Deterministic:
 /// same seed and same call sequence always produce the same stream. The wire
 /// shape is strict: exactly the one `state` member, unknown members rejected.
@@ -962,6 +982,327 @@ impl PaidCostRefV4 {
 }
 
 impl GameState {
+    /// Transactionally resamples hidden Rally card identities from one
+    /// observer's information set.
+    ///
+    /// The caller owns the Rally/Rally deck-scope gate. This state-level
+    /// helper knows only zones and perspective-scoped knowledge. It preserves
+    /// every object id, zone list, public count, known card, incarnation, and
+    /// environment-randomness byte. Only the card-definition-dependent
+    /// payload of admitted hidden hand/library objects may change.
+    pub(crate) fn redeterminize_rally_information_set_v1(
+        &mut self,
+        observer: PlayerId,
+        seed: u64,
+    ) -> Result<
+        RallyInformationSetRedeterminizationAuditV1,
+        RallyInformationSetRedeterminizationErrorV1,
+    > {
+        if observer != PlayerId::P0 && observer != PlayerId::P1 {
+            return Err(RallyInformationSetRedeterminizationErrorV1::InvalidObserver);
+        }
+
+        let mut candidate = self.clone();
+        let randomness_before = candidate.randomness.clone();
+        candidate.validate_redeterminization_zone_and_knowledge_state_v1()?;
+        let audit = candidate.apply_rally_information_set_redeterminization_v1(observer, seed)?;
+        candidate.validate_redeterminization_zone_and_knowledge_state_v1()?;
+        if candidate.randomness != randomness_before {
+            return Err(RallyInformationSetRedeterminizationErrorV1::RandomnessChanged);
+        }
+
+        *self = candidate;
+        Ok(audit)
+    }
+
+    fn validate_redeterminization_zone_and_knowledge_state_v1(
+        &self,
+    ) -> Result<(), RallyInformationSetRedeterminizationErrorV1> {
+        let rally_card_definitions = crate::runtime_decks::runtime_deck_by_id("Rally")
+            .ok_or(RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState)?
+            .card_ids;
+        let mut indexed_hidden_zone_objects = Vec::new();
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            for (expected_zone, ids) in [
+                (Zone::Hand, &self.players[owner.index()].hand),
+                (Zone::Library, &self.players[owner.index()].library),
+            ] {
+                for &object_id in ids {
+                    if indexed_hidden_zone_objects.contains(&object_id) {
+                        return Err(
+                            RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState,
+                        );
+                    }
+                    indexed_hidden_zone_objects.push(object_id);
+                    let object = self.objects.try_get(object_id).ok_or(
+                        RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState,
+                    )?;
+                    let definition = crate::card_def::CARD_DEFS
+                        .get(object.card_def as usize)
+                        .ok_or(
+                            RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState,
+                        )?;
+                    if object.owner != owner
+                        || object.zone != expected_zone
+                        || !rally_card_definitions.contains(&object.card_def)
+                        || definition.is_token
+                    {
+                        return Err(
+                            RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState,
+                        );
+                    }
+
+                    let mut zone_index_occurrences = 0usize;
+                    for player in &self.players {
+                        zone_index_occurrences += player
+                            .library
+                            .iter()
+                            .filter(|&&indexed| indexed == object_id)
+                            .count();
+                        zone_index_occurrences += player
+                            .hand
+                            .iter()
+                            .filter(|&&indexed| indexed == object_id)
+                            .count();
+                        zone_index_occurrences += player
+                            .battlefield
+                            .iter()
+                            .filter(|&&indexed| indexed == object_id)
+                            .count();
+                        zone_index_occurrences += player
+                            .graveyard
+                            .iter()
+                            .filter(|&&indexed| indexed == object_id)
+                            .count();
+                    }
+                    zone_index_occurrences += self
+                        .exile
+                        .iter()
+                        .filter(|&&indexed| indexed == object_id)
+                        .count();
+                    zone_index_occurrences += self
+                        .command
+                        .iter()
+                        .filter(|&&indexed| indexed == object_id)
+                        .count();
+                    zone_index_occurrences += self
+                        .stack
+                        .iter()
+                        .filter(|item| item.source == object_id)
+                        .count();
+                    if zone_index_occurrences != 1 {
+                        return Err(
+                            RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState,
+                        );
+                    }
+                }
+            }
+        }
+        for (object_id, object) in self.objects.iter() {
+            let indexed = match object.zone {
+                Zone::Hand if object.owner == PlayerId::P0 || object.owner == PlayerId::P1 => {
+                    self.players[object.owner.index()].hand.contains(&object_id)
+                }
+                Zone::Library if object.owner == PlayerId::P0 || object.owner == PlayerId::P1 => {
+                    self.players[object.owner.index()]
+                        .library
+                        .contains(&object_id)
+                }
+                Zone::Hand | Zone::Library => false,
+                _ => true,
+            };
+            if !indexed {
+                return Err(RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState);
+            }
+        }
+
+        for knowledge_observer in [PlayerId::P0, PlayerId::P1] {
+            for owner in [PlayerId::P0, PlayerId::P1] {
+                let library_entries =
+                    &self.library_knowledge[knowledge_observer.index()][owner.index()];
+                let mut previous_position = None;
+                let mut seen_library_objects = Vec::new();
+                for entry in library_entries {
+                    if previous_position.is_some_and(|position| position >= entry.position)
+                        || seen_library_objects.contains(&entry.object)
+                    {
+                        return Err(
+                            RallyInformationSetRedeterminizationErrorV1::InvalidKnowledgeState,
+                        );
+                    }
+                    previous_position = Some(entry.position);
+                    seen_library_objects.push(entry.object);
+                    let live = self.players[owner.index()]
+                        .library
+                        .get(entry.position as usize)
+                        .copied()
+                        .ok_or(
+                            RallyInformationSetRedeterminizationErrorV1::InvalidKnowledgeState,
+                        )?;
+                    let object = self.objects.try_get(entry.object).ok_or(
+                        RallyInformationSetRedeterminizationErrorV1::InvalidKnowledgeState,
+                    )?;
+                    if live != entry.object
+                        || object.owner != owner
+                        || object.zone != Zone::Library
+                        || object.zone_change_count != entry.zone_change_count
+                    {
+                        return Err(
+                            RallyInformationSetRedeterminizationErrorV1::InvalidKnowledgeState,
+                        );
+                    }
+                }
+
+                let hand_entries = &self.hand_knowledge[knowledge_observer.index()][owner.index()];
+                if knowledge_observer == owner && !hand_entries.is_empty() {
+                    return Err(RallyInformationSetRedeterminizationErrorV1::InvalidKnowledgeState);
+                }
+                let mut previous_object = None;
+                for entry in hand_entries {
+                    if previous_object.is_some_and(|object| object >= entry.object) {
+                        return Err(
+                            RallyInformationSetRedeterminizationErrorV1::InvalidKnowledgeState,
+                        );
+                    }
+                    previous_object = Some(entry.object);
+                    let object = self.objects.try_get(entry.object).ok_or(
+                        RallyInformationSetRedeterminizationErrorV1::InvalidKnowledgeState,
+                    )?;
+                    if object.owner != owner
+                        || object.zone != Zone::Hand
+                        || object.zone_change_count != entry.zone_change_count
+                        || !self.players[owner.index()].hand.contains(&entry.object)
+                    {
+                        return Err(
+                            RallyInformationSetRedeterminizationErrorV1::InvalidKnowledgeState,
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_rally_information_set_redeterminization_v1(
+        &mut self,
+        observer: PlayerId,
+        seed: u64,
+    ) -> Result<
+        RallyInformationSetRedeterminizationAuditV1,
+        RallyInformationSetRedeterminizationErrorV1,
+    > {
+        const DOMAIN_V1: u64 = 0x5241_4c4c_595f_4953;
+        const P0_DOMAIN_V1: u64 = 0x5030_5f48_4944_444e;
+        const P1_DOMAIN_V1: u64 = 0x5031_5f48_4944_444e;
+        const OBSERVER_P1_DOMAIN_V1: u64 = 0x4f42_535f_5031_5f31;
+
+        let mut audit = RallyInformationSetRedeterminizationAuditV1 {
+            hidden_slot_counts: [0; 2],
+            locked_hand_counts: [0; 2],
+            locked_library_counts: [0; 2],
+        };
+
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            let known_hand_objects: Vec<ObjectId> = if owner == observer {
+                self.players[owner.index()].hand.clone()
+            } else {
+                self.hand_knowledge[observer.index()][owner.index()]
+                    .iter()
+                    .map(|entry| entry.object)
+                    .collect()
+            };
+            let known_library_objects: Vec<ObjectId> = self.library_knowledge[observer.index()]
+                [owner.index()]
+            .iter()
+            .map(|entry| entry.object)
+            .collect();
+            audit.locked_hand_counts[owner.index()] = known_hand_objects.len();
+            audit.locked_library_counts[owner.index()] = known_library_objects.len();
+
+            let mut hidden_slots = Vec::new();
+            if owner != observer {
+                hidden_slots.extend(
+                    self.players[owner.index()]
+                        .hand
+                        .iter()
+                        .copied()
+                        .filter(|object| !known_hand_objects.contains(object)),
+                );
+            }
+            hidden_slots.extend(
+                self.players[owner.index()]
+                    .library
+                    .iter()
+                    .copied()
+                    .filter(|object| !known_library_objects.contains(object)),
+            );
+            audit.hidden_slot_counts[owner.index()] = hidden_slots.len();
+
+            let mut card_definitions = Vec::with_capacity(hidden_slots.len());
+            let rally_card_definitions = crate::runtime_decks::runtime_deck_by_id("Rally")
+                .ok_or(RallyInformationSetRedeterminizationErrorV1::UnsupportedHiddenObjectState)?
+                .card_ids;
+            for &object_id in &hidden_slots {
+                let object = self
+                    .objects
+                    .try_get(object_id)
+                    .ok_or(RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState)?;
+                let base = crate::card_def::CARD_DEFS
+                    .get(object.card_def as usize)
+                    .ok_or(
+                        RallyInformationSetRedeterminizationErrorV1::UnsupportedHiddenObjectState,
+                    )?;
+                if !rally_card_definitions.contains(&object.card_def)
+                    || base.is_token
+                    || object.controller != owner
+                    || object.tapped
+                    || object.summoning_sick
+                    || object.damage != 0
+                    || object.counters != Counters::default()
+                    || !object.attachments.is_empty()
+                    || object.v4 != ObjectStateV4::from_card_def(object.card_def)
+                    || object.spell_copy_origin.is_some()
+                    || object.plotted_turn.is_some()
+                    || object.name != base.name
+                {
+                    return Err(
+                        RallyInformationSetRedeterminizationErrorV1::UnsupportedHiddenObjectState,
+                    );
+                }
+                card_definitions.push(object.card_def);
+            }
+
+            // Canonicalizing before shuffling removes any dependence on the
+            // source state's privileged hidden arrangement.
+            card_definitions.sort_unstable();
+            let owner_domain = if owner == PlayerId::P0 {
+                P0_DOMAIN_V1
+            } else {
+                P1_DOMAIN_V1
+            };
+            let observer_domain = if observer == PlayerId::P0 {
+                0
+            } else {
+                OBSERVER_P1_DOMAIN_V1
+            };
+            let mut rng = SplitMix64::seed(seed ^ DOMAIN_V1 ^ owner_domain ^ observer_domain);
+            for index in (1..card_definitions.len()).rev() {
+                let selected = (rng.next_u64() % (index as u64 + 1)) as usize;
+                card_definitions.swap(index, selected);
+            }
+
+            for (&object_id, &card_def) in hidden_slots.iter().zip(&card_definitions) {
+                let object = self.objects.get_mut(object_id);
+                object.card_def = card_def;
+                object.name = crate::card_def::CARD_DEFS[card_def as usize]
+                    .name
+                    .to_string();
+                object.v4 = ObjectStateV4::from_card_def(card_def);
+            }
+        }
+        Ok(audit)
+    }
+
     /// Builds a fresh pre-game state from two post-shuffle library orders
     /// (index 0 = top, matching `GoldenTrace::opening_library`). Arena ids
     /// are assigned contiguously in library order, player 0 first, so the
@@ -1779,6 +2120,40 @@ mod tests {
         format!("card-{card_def}")
     }
 
+    fn rally_mirror_state(seed: u64) -> GameState {
+        let rally = crate::rl::rally_deck_ids();
+        crate::rl::build_deck_pair_state(seed, &rally, &rally)
+            .expect("the cataloged Rally deck is supported")
+    }
+
+    fn owner_card_multiset(state: &GameState, owner: PlayerId) -> Vec<u16> {
+        let mut card_definitions = state
+            .objects
+            .iter()
+            .filter(|(_, object)| object.owner == owner)
+            .map(|(_, object)| object.card_def)
+            .collect::<Vec<_>>();
+        card_definitions.sort_unstable();
+        card_definitions
+    }
+
+    fn swap_hidden_identity_payload(state: &mut GameState, left: ObjectId, right: ObjectId) {
+        let left_object = state.objects.get(left).clone();
+        let right_object = state.objects.get(right).clone();
+        {
+            let target = state.objects.get_mut(left);
+            target.card_def = right_object.card_def;
+            target.name = right_object.name;
+            target.v4 = right_object.v4;
+        }
+        {
+            let target = state.objects.get_mut(right);
+            target.card_def = left_object.card_def;
+            target.name = left_object.name;
+            target.v4 = left_object.v4;
+        }
+    }
+
     #[test]
     fn new_from_libraries_assigns_ids_p0_first() {
         let (lib0, lib1) = two_card_libraries();
@@ -1892,6 +2267,217 @@ mod tests {
             .reorder_library_top(PlayerId::P0, &[ObjectId(0), ObjectId(0)], &[PlayerId::P0])
             .is_err());
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn rally_information_set_redeterminization_is_canonical_and_knowledge_safe() {
+        let observer = PlayerId::P0;
+        let opponent = observer.opponent();
+        let mut source = rally_mirror_state(72_001);
+        let known_hand = source.players[opponent.index()].hand[0];
+        source
+            .reveal_hand_card(observer, opponent, known_hand)
+            .unwrap();
+        source.reveal_library_position(observer, observer, 0);
+        source.reveal_library_position(observer, opponent, 1);
+
+        let known_self_library = source.players[observer.index()].library[0];
+        let known_opponent_library = source.players[opponent.index()].library[1];
+        let locked_objects = [known_hand, known_self_library, known_opponent_library]
+            .map(|object| (object, source.objects.get(object).clone()));
+        let actor_hand_before = source.players[observer.index()]
+            .hand
+            .iter()
+            .map(|&object| (object, source.objects.get(object).clone()))
+            .collect::<Vec<_>>();
+        let hands_before = source.players.clone().map(|player| player.hand);
+        let libraries_before = source.players.clone().map(|player| player.library);
+        let randomness_before = source.randomness.clone();
+        let multisets_before = [
+            owner_card_multiset(&source, PlayerId::P0),
+            owner_card_multiset(&source, PlayerId::P1),
+        ];
+
+        let actor_known_hand = &source.hand_knowledge[observer.index()][opponent.index()];
+        let actor_known_library = &source.library_knowledge[observer.index()][opponent.index()];
+        let unknown_slots = source.players[opponent.index()]
+            .hand
+            .iter()
+            .chain(&source.players[opponent.index()].library)
+            .copied()
+            .filter(|object| {
+                !actor_known_hand.iter().any(|entry| entry.object == *object)
+                    && !actor_known_library
+                        .iter()
+                        .any(|entry| entry.object == *object)
+            })
+            .collect::<Vec<_>>();
+        let (left, right) = unknown_slots
+            .iter()
+            .enumerate()
+            .find_map(|(left_index, &left)| {
+                unknown_slots[left_index + 1..]
+                    .iter()
+                    .copied()
+                    .find(|&right| {
+                        source.objects.get(left).card_def != source.objects.get(right).card_def
+                    })
+                    .map(|right| (left, right))
+            })
+            .expect("Rally hidden pool contains distinct card definitions");
+
+        let mut alternate_omniscient_source = source.clone();
+        swap_hidden_identity_payload(&mut alternate_omniscient_source, left, right);
+        assert_ne!(source, alternate_omniscient_source);
+
+        let mut redetermined = source.clone();
+        let audit = redetermined
+            .redeterminize_rally_information_set_v1(observer, 0x71_551_001)
+            .unwrap();
+        let mut redetermined_from_alternate = alternate_omniscient_source;
+        let alternate_audit = redetermined_from_alternate
+            .redeterminize_rally_information_set_v1(observer, 0x71_551_001)
+            .unwrap();
+
+        assert_eq!(audit, alternate_audit);
+        assert!(audit.hidden_slot_counts.iter().all(|&count| count > 0));
+        assert_eq!(redetermined, redetermined_from_alternate);
+        assert_eq!(redetermined.randomness, randomness_before);
+        assert_eq!(
+            redetermined.players.clone().map(|player| player.hand),
+            hands_before
+        );
+        assert_eq!(
+            redetermined.players.clone().map(|player| player.library),
+            libraries_before
+        );
+        for (object, expected) in locked_objects {
+            assert_eq!(redetermined.objects.get(object), &expected);
+        }
+        for (object, expected) in actor_hand_before {
+            assert_eq!(redetermined.objects.get(object), &expected);
+        }
+        assert_eq!(
+            [
+                owner_card_multiset(&redetermined, PlayerId::P0),
+                owner_card_multiset(&redetermined, PlayerId::P1),
+            ],
+            multisets_before
+        );
+
+        let mut another_seed = source;
+        another_seed
+            .redeterminize_rally_information_set_v1(observer, 0x71_551_002)
+            .unwrap();
+        assert_ne!(redetermined, another_seed);
+    }
+
+    #[test]
+    fn rally_information_set_redeterminization_rejects_without_mutation() {
+        let observer = PlayerId::P0;
+        let opponent = observer.opponent();
+
+        let mut unsupported = rally_mirror_state(72_002);
+        let hidden = unsupported.players[opponent.index()].library[0];
+        unsupported.objects.get_mut(hidden).tapped = true;
+        let unsupported_before = unsupported.clone();
+        assert_eq!(
+            unsupported.redeterminize_rally_information_set_v1(observer, 1),
+            Err(RallyInformationSetRedeterminizationErrorV1::UnsupportedHiddenObjectState)
+        );
+        assert_eq!(unsupported, unsupported_before);
+
+        let mut stray = rally_mirror_state(72_003);
+        stray.players[opponent.index()].library.pop().unwrap();
+        let stray_before = stray.clone();
+        assert_eq!(
+            stray.redeterminize_rally_information_set_v1(observer, 1),
+            Err(RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState)
+        );
+        assert_eq!(stray, stray_before);
+
+        let mut non_rally = rally_mirror_state(72_004);
+        let hidden = non_rally.players[opponent.index()].library[0];
+        let rally_card_definitions = crate::rl::rally_deck_ids();
+        let foreign_card_definition = crate::rl::burn_deck_ids()
+            .into_iter()
+            .find(|card_def| !rally_card_definitions.contains(card_def))
+            .expect("Burn contains a card outside Rally");
+        non_rally.objects.get_mut(hidden).card_def = foreign_card_definition;
+        let non_rally_before = non_rally.clone();
+        assert_eq!(
+            non_rally.redeterminize_rally_information_set_v1(observer, 1),
+            Err(RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState)
+        );
+        assert_eq!(non_rally, non_rally_before);
+
+        let mut token = rally_mirror_state(72_005);
+        let hidden = token.players[opponent.index()].library[0];
+        let token_card_definition = crate::card_def::CARD_DEFS
+            .iter()
+            .position(|definition| definition.is_token)
+            .expect("the card catalog contains tokens") as u16;
+        token.objects.get_mut(hidden).card_def = token_card_definition;
+        let token_before = token.clone();
+        assert_eq!(
+            token.redeterminize_rally_information_set_v1(observer, 1),
+            Err(RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState)
+        );
+        assert_eq!(token, token_before);
+    }
+
+    #[test]
+    fn rally_information_set_redeterminization_rejects_cross_zone_aliases_transactionally() {
+        let observer = PlayerId::P0;
+        let opponent = observer.opponent();
+        let clean = rally_mirror_state(72_006);
+        let hidden = clean.players[opponent.index()].library[0];
+        let mut aliased_states = Vec::new();
+
+        let mut battlefield = clean.clone();
+        battlefield.players[opponent.index()]
+            .battlefield
+            .push(hidden);
+        aliased_states.push(("battlefield", battlefield));
+
+        let mut graveyard = clean.clone();
+        graveyard.players[opponent.index()].graveyard.push(hidden);
+        aliased_states.push(("graveyard", graveyard));
+
+        let mut exile = clean.clone();
+        exile.exile.push(hidden);
+        aliased_states.push(("exile", exile));
+
+        let mut command = clean.clone();
+        command.command.push(hidden);
+        aliased_states.push(("command", command));
+
+        let mut stack = clean;
+        stack.stack.push(StackItem {
+            kind: StackItemKind::ActivatedAbility,
+            source: hidden,
+            controller: opponent,
+            targets: Vec::new(),
+            is_copy: false,
+            inline_effect: None,
+            discarded: Vec::new(),
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            v4: StackStateV4::default(),
+        });
+        aliased_states.push(("stack", stack));
+
+        for (zone, mut aliased) in aliased_states {
+            let before = aliased.clone();
+            assert_eq!(
+                aliased.redeterminize_rally_information_set_v1(observer, 1),
+                Err(RallyInformationSetRedeterminizationErrorV1::InvalidHiddenZoneState),
+                "hidden library object also indexed in {zone}"
+            );
+            assert_eq!(aliased, before, "{zone} rejection must be transactional");
+        }
     }
 
     #[test]
