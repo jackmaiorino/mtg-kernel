@@ -31,6 +31,9 @@ use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
 use crate::native_training_store_run_v2::{
     NativeRunEnvironmentTrajectoryContractV1, OpponentLadderCheckpointRefV1, ValidatedTrainRunV2,
 };
+use crate::native_xmage_cp7_outcome_reinforce_v1::{
+    load_xmage_cp7_outcome_inference_v1, NativeXmageCp7OutcomeInferenceV1,
+};
 use crate::rl::{
     parse_strict_json_value, rally_deck_ids, shuffled, ActionSemanticV1, PlayerSeatV1,
 };
@@ -54,8 +57,11 @@ pub const CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1: &str =
 pub const CHECKPOINT_SHADOW_MAX_REQUEST_BYTES_V1: usize = 1_048_576;
 pub const XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-teacher-jsonl/v1";
 pub const XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1: u32 = 1;
+pub const XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-outcome-jsonl/v1";
+pub const XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1: u32 = 1;
 
 const XMAGE_CP7_TEACHER_SELECTION_SOURCE_V1: &str = "xmage_rally_cp7_mapper";
+const XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1: &str = "candidate_checkpoint_policy";
 
 const SOURCE_RUN_SHA256_V1: &str =
     "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae";
@@ -104,6 +110,9 @@ pub enum ShadowCheckpointAuthorityV1 {
     /// A raw, fully verified policy-CE derivative produced by the narrow CP7
     /// behavior-clone trainer. Existing Store authorities remain unchanged.
     Cp7BehaviorCloneDerivative { root: PathBuf },
+    /// A fully verified terminal-return derivative trained from candidate
+    /// decisions observed in actual XMage-versus-CP7 games.
+    XmageCp7OutcomeDerivative { root: PathBuf },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -218,7 +227,8 @@ fn checkpoint_ref_v1(
             PORTABLE_SIDECAR_SHA256_V1,
             PORTABLE_PAYLOAD_SHA256_V1,
         )),
-        ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. } => Err(
+        ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. }
+        | ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { .. } => Err(
             ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointIdentity),
         ),
     }
@@ -229,7 +239,8 @@ fn authority_root_v1(authority: &ShadowCheckpointAuthorityV1) -> &Path {
         ShadowCheckpointAuthorityV1::OriginalPromoted2Generation384Store { root }
         | ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration { root, .. }
         | ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { root }
-        | ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { root } => root,
+        | ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { root }
+        | ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root } => root,
     }
 }
 
@@ -300,6 +311,7 @@ fn load_checkpoint_v1(
     if matches!(
         &requested,
         ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. }
+            | ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { .. }
     ) {
         return Err(ShadowScorerStartupErrorV1::new(
             ShadowScorerStartupErrorKindV1::CheckpointIdentity,
@@ -339,7 +351,8 @@ fn load_checkpoint_v1(
                 Some(SOURCE_MODEL_PARAMETER_SHA256_V1),
             )
         }
-        ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. } => unreachable!(),
+        ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. }
+        | ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { .. } => unreachable!(),
     };
     // Dynamic identity expectations come from the already chain-validated
     // manifest, while the two legacy authorities retain their additional
@@ -399,7 +412,8 @@ fn load_checkpoint_v1(
             checkpoint_ref.state_sha256.clone(),
             expected_train_state.clone(),
         ),
-        ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. } => unreachable!(),
+        ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { .. }
+        | ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { .. } => unreachable!(),
     };
     let identity = ShadowCheckpointIdentityV1 {
         authority_kind: authority_kind.to_owned(),
@@ -454,6 +468,20 @@ impl ShadowModelScorerV1 for NativeShadowModelScorerV1 {
 
 struct Cp7BehaviorCloneShadowModelScorerV1 {
     inference: NativeCp7BehaviorCloneInferenceV1,
+}
+
+struct XmageCp7OutcomeShadowModelScorerV1 {
+    inference: NativeXmageCp7OutcomeInferenceV1,
+}
+
+impl ShadowModelScorerV1 for XmageCp7OutcomeShadowModelScorerV1 {
+    fn score_v1(&self, decision: FlatScoringDecisionViewV2<'_>) -> Result<ShadowModelOutputV1, ()> {
+        let output = self.inference.score_decision_v1(decision)?;
+        Ok(ShadowModelOutputV1 {
+            logits: output.logits_v1().to_vec(),
+            value: output.value_v1(),
+        })
+    }
 }
 
 impl ShadowModelScorerV1 for Cp7BehaviorCloneShadowModelScorerV1 {
@@ -738,6 +766,300 @@ impl XmageCp7TeacherJsonlWriterV1 {
     }
 
     fn write_v1(&mut self, record: &XmageCp7TeacherRecordV1) -> io::Result<()> {
+        serde_json::to_writer(&mut self.writer, record)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "record_type", rename_all = "snake_case")]
+enum XmageCp7OutcomeRecordV1 {
+    Header {
+        schema_version: u32,
+        record_ordinal: u64,
+        export_contract: &'static str,
+        selection_source: &'static str,
+        tensorizer_identity: &'static str,
+        tensorizer_features_source_sha256: &'static str,
+        model_input_commitment: &'static str,
+        checkpoint: ShadowCheckpointIdentityV1,
+    },
+    Decision {
+        schema_version: u32,
+        record_ordinal: u64,
+        outcome_decision_ordinal: u64,
+        selection_source: &'static str,
+        deck_ids: SessionDeckIdsV1,
+        randomization_identity: &'static str,
+        base_seed_u64_hex: String,
+        pair_index: u64,
+        pair_environment_seed_u64_hex: String,
+        episode_id: u64,
+        step: u64,
+        environment_revision: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        acting_player: PlayerSeatV1,
+        decision_kind: &'static str,
+        candidate_seat: PlayerSeatV1,
+        actor_physical_decision_ordinal: u64,
+        legal_action_count: u32,
+        candidate_order_commitment_128_hex: String,
+        model_input_sha256: String,
+        old_policy_logits_f32_bits: Vec<u32>,
+        old_value_f32_bits: u32,
+        action_semantics: Vec<ActionSemanticV1>,
+        selected_index: u32,
+        selected_semantic: ActionSemanticV1,
+        tensor: XmageCp7TeacherTensorV1,
+    },
+    Terminal {
+        schema_version: u32,
+        record_ordinal: u64,
+        deck_ids: SessionDeckIdsV1,
+        randomization_identity: &'static str,
+        base_seed_u64_hex: String,
+        pair_index: u64,
+        pair_environment_seed_u64_hex: String,
+        episode_id: u64,
+        candidate_seat: PlayerSeatV1,
+        first_outcome_decision_ordinal: Option<u64>,
+        outcome_decision_count: u64,
+        candidate_terminal_reward: i8,
+        terminal: RlSessionTerminalV1,
+        diagnostic_state_hash_u64_hex: String,
+        core_environment_hash_u64_hex: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct XmageCp7OutcomeEpisodeV1 {
+    pair_index: u64,
+    episode_id: u64,
+    candidate_seat: PlayerSeatV1,
+    first_outcome_decision_ordinal: Option<u64>,
+    outcome_decision_count: u64,
+}
+
+struct XmageCp7OutcomeJsonlWriterV1 {
+    writer: Box<dyn Write>,
+    next_record_ordinal: u64,
+    next_outcome_decision_ordinal: u64,
+    active_episode: Option<XmageCp7OutcomeEpisodeV1>,
+}
+
+impl XmageCp7OutcomeJsonlWriterV1 {
+    fn create_v1(
+        path: &Path,
+        checkpoint: &ShadowCheckpointIdentityV1,
+    ) -> Result<Self, Box<dyn Error>> {
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        Self::from_writer_v1(Box::new(BufWriter::new(file)), checkpoint)
+            .map_err(|error| Box::new(error) as Box<dyn Error>)
+    }
+
+    fn from_writer_v1(
+        writer: Box<dyn Write>,
+        checkpoint: &ShadowCheckpointIdentityV1,
+    ) -> io::Result<Self> {
+        let mut export = Self {
+            writer,
+            next_record_ordinal: 0,
+            next_outcome_decision_ordinal: 0,
+            active_episode: None,
+        };
+        export.write_v1(&XmageCp7OutcomeRecordV1::Header {
+            schema_version: XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1,
+            record_ordinal: 0,
+            export_contract: XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1,
+            selection_source: XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1,
+            tensorizer_identity: NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+            tensorizer_features_source_sha256: NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
+            model_input_commitment: CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1,
+            checkpoint: checkpoint.clone(),
+        })?;
+        export.next_record_ordinal = 1;
+        Ok(export)
+    }
+
+    fn has_open_episode_v1(&self) -> bool {
+        self.active_episode.is_some()
+    }
+
+    fn begin_episode_v1(&mut self, active: &ActiveShadowSessionV1) -> Result<(), ()> {
+        if self.active_episode.is_some() {
+            return Err(());
+        }
+        let episode_id = match active.session.current_response() {
+            FastActorResponseV1::Decision(decision) => decision.episode_id,
+            FastActorResponseV1::Terminal(terminal) => terminal.episode_id,
+        };
+        self.active_episode = Some(XmageCp7OutcomeEpisodeV1 {
+            pair_index: active.pair_index,
+            episode_id,
+            candidate_seat: active.candidate_seat,
+            first_outcome_decision_ordinal: None,
+            outcome_decision_count: 0,
+        });
+        Ok(())
+    }
+
+    fn episode_matches_v1(
+        episode: XmageCp7OutcomeEpisodeV1,
+        active: &ActiveShadowSessionV1,
+    ) -> bool {
+        let episode_id = match active.session.current_response() {
+            FastActorResponseV1::Decision(decision) => decision.episode_id,
+            FastActorResponseV1::Terminal(terminal) => terminal.episode_id,
+        };
+        episode.pair_index == active.pair_index
+            && episode.episode_id == episode_id
+            && episode.candidate_seat == active.candidate_seat
+    }
+
+    fn decision_record_v1(
+        &self,
+        active: &ActiveShadowSessionV1,
+        scored: &ScoredCurrentDecisionV1,
+        selected_index: u32,
+    ) -> Result<XmageCp7OutcomeRecordV1, ()> {
+        let episode = self.active_episode.ok_or(())?;
+        if !Self::episode_matches_v1(episode, active)
+            || scored.expected.acting_player != active.candidate_seat
+        {
+            return Err(());
+        }
+        let selected = usize::try_from(selected_index).map_err(|_| ())?;
+        let selected_semantic = scored.action_semantics.get(selected).ok_or(())?.clone();
+        Ok(XmageCp7OutcomeRecordV1::Decision {
+            schema_version: XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1,
+            record_ordinal: self.next_record_ordinal,
+            outcome_decision_ordinal: self.next_outcome_decision_ordinal,
+            selection_source: XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1,
+            deck_ids: active.deck_ids.clone(),
+            randomization_identity: SHADOW_RANDOMIZATION_IDENTITY_V1,
+            base_seed_u64_hex: u64_hex_v1(active.base_seed),
+            pair_index: active.pair_index,
+            pair_environment_seed_u64_hex: u64_hex_v1(active.pair_environment_seed),
+            episode_id: scored.expected.episode_id,
+            step: scored.expected.step,
+            environment_revision: scored.expected.environment_revision,
+            physical_decision_id: scored.expected.physical_decision_id,
+            substep_index: scored.expected.substep_index,
+            substep_count: scored.expected.substep_count,
+            acting_player: scored.expected.acting_player,
+            decision_kind: decision_kind_v1(scored.expected.decision_kind),
+            candidate_seat: active.candidate_seat,
+            actor_physical_decision_ordinal: scored.actor_physical_decision_ordinal,
+            legal_action_count: scored.expected.legal_action_count,
+            candidate_order_commitment_128_hex: lower_hex_bytes_v1(
+                &scored.binding.action_binding.candidate_order_commitment,
+            ),
+            model_input_sha256: scored.model_input_sha256.clone(),
+            old_policy_logits_f32_bits: scored.logits_f32_bits.clone(),
+            old_value_f32_bits: scored.value_f32_bits,
+            action_semantics: scored.action_semantics.clone(),
+            selected_index,
+            selected_semantic,
+            tensor: XmageCp7TeacherTensorV1::from_native_v1(&scored.tensor),
+        })
+    }
+
+    fn terminal_record_v1(
+        &self,
+        active: &ActiveShadowSessionV1,
+        terminal: RlSessionTerminalV1,
+    ) -> Result<XmageCp7OutcomeRecordV1, ()> {
+        let episode = self.active_episode.ok_or(())?;
+        if !Self::episode_matches_v1(episode, active) || terminal.episode_id != episode.episode_id {
+            return Err(());
+        }
+        let reward = match active.candidate_seat {
+            PlayerSeatV1::P0 => terminal.terminal_reward[0],
+            PlayerSeatV1::P1 => terminal.terminal_reward[1],
+        };
+        let candidate_terminal_reward = i8::try_from(reward).map_err(|_| ())?;
+        if !matches!(candidate_terminal_reward, -1..=1) {
+            return Err(());
+        }
+        Ok(XmageCp7OutcomeRecordV1::Terminal {
+            schema_version: XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1,
+            record_ordinal: self.next_record_ordinal,
+            deck_ids: active.deck_ids.clone(),
+            randomization_identity: SHADOW_RANDOMIZATION_IDENTITY_V1,
+            base_seed_u64_hex: u64_hex_v1(active.base_seed),
+            pair_index: active.pair_index,
+            pair_environment_seed_u64_hex: u64_hex_v1(active.pair_environment_seed),
+            episode_id: terminal.episode_id,
+            candidate_seat: active.candidate_seat,
+            first_outcome_decision_ordinal: episode.first_outcome_decision_ordinal,
+            outcome_decision_count: episode.outcome_decision_count,
+            candidate_terminal_reward,
+            terminal,
+            diagnostic_state_hash_u64_hex: u64_hex_v1(active.session.diagnostic_state_hash()),
+            core_environment_hash_u64_hex: u64_hex_v1(
+                active.session.privileged_core_environment_hash(),
+            ),
+        })
+    }
+
+    fn write_decision_v1(&mut self, record: &XmageCp7OutcomeRecordV1) -> io::Result<()> {
+        if !matches!(record, XmageCp7OutcomeRecordV1::Decision { .. }) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CP7 outcome decision writer received a non-decision row",
+            ));
+        }
+        self.write_v1(record)?;
+        let episode = self.active_episode.as_mut().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "CP7 outcome episode is not open",
+            )
+        })?;
+        if episode.first_outcome_decision_ordinal.is_none() {
+            episode.first_outcome_decision_ordinal = Some(self.next_outcome_decision_ordinal);
+        }
+        episode.outcome_decision_count =
+            episode
+                .outcome_decision_count
+                .checked_add(1)
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::Other, "episode decision count exhausted")
+                })?;
+        self.next_record_ordinal = self
+            .next_record_ordinal
+            .checked_add(1)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "record ordinal exhausted"))?;
+        self.next_outcome_decision_ordinal = self
+            .next_outcome_decision_ordinal
+            .checked_add(1)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::Other, "outcome decision ordinal exhausted")
+            })?;
+        Ok(())
+    }
+
+    fn write_terminal_v1(&mut self, record: &XmageCp7OutcomeRecordV1) -> io::Result<()> {
+        if !matches!(record, XmageCp7OutcomeRecordV1::Terminal { .. }) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CP7 outcome terminal writer received a non-terminal row",
+            ));
+        }
+        self.write_v1(record)?;
+        self.next_record_ordinal = self
+            .next_record_ordinal
+            .checked_add(1)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "record ordinal exhausted"))?;
+        self.active_episode = None;
+        Ok(())
+    }
+
+    fn write_v1(&mut self, record: &XmageCp7OutcomeRecordV1) -> io::Result<()> {
         serde_json::to_writer(&mut self.writer, record)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         self.writer.write_all(b"\n")?;
@@ -1033,6 +1355,7 @@ struct ShadowScorerServiceV1 {
     max_policy_steps: u64,
     active: Option<ActiveShadowSessionV1>,
     teacher_export: Option<XmageCp7TeacherJsonlWriterV1>,
+    outcome_export: Option<XmageCp7OutcomeJsonlWriterV1>,
 }
 
 impl ShadowScorerServiceV1 {
@@ -1066,6 +1389,39 @@ impl ShadowScorerServiceV1 {
                 max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
                 active: None,
                 teacher_export: None,
+                outcome_export: None,
+            });
+        }
+        if let ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root } = &authority {
+            let inference = load_xmage_cp7_outcome_inference_v1(root).map_err(|_| {
+                ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
+            })?;
+            let identity = ShadowCheckpointIdentityV1 {
+                authority_kind: "xmage-cp7-outcome-reinforce-derivative-v1".to_owned(),
+                source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                source_generation: SOURCE_GENERATION_V1,
+                source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+                source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+                source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+                source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+                loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                loaded_generation: inference.adam_step_v1(),
+                loaded_checkpoint_sha256: lower_hex_raw32_v1(inference.manifest_sha256_v1()),
+                loaded_payload_sha256: lower_hex_raw32_v1(inference.payload_sha256_v1()),
+                loaded_train_state_sha256: lower_hex_raw32_v1(inference.native_state_sha256_v1()),
+                model_parameter_sha256: lower_hex_raw32_v1(inference.model_parameter_sha256_v1()),
+                environment_trajectory_contract: SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
+                sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+                sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+            };
+            return Ok(Self {
+                model: Box::new(XmageCp7OutcomeShadowModelScorerV1 { inference }),
+                identity,
+                max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
+                max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
+                active: None,
+                teacher_export: None,
+                outcome_export: None,
             });
         }
         let loaded = load_checkpoint_v1(authority)?;
@@ -1078,6 +1434,7 @@ impl ShadowScorerServiceV1 {
             max_policy_steps: loaded.max_policy_steps,
             active: None,
             teacher_export: None,
+            outcome_export: None,
         })
     }
 
@@ -1107,6 +1464,7 @@ impl ShadowScorerServiceV1 {
             max_policy_steps: 16_384,
             active: None,
             teacher_export: None,
+            outcome_export: None,
         }
     }
 
@@ -1114,10 +1472,21 @@ impl ShadowScorerServiceV1 {
         &mut self,
         writer: XmageCp7TeacherJsonlWriterV1,
     ) -> Result<(), ()> {
-        if self.active.is_some() || self.teacher_export.is_some() {
+        if self.active.is_some() || self.teacher_export.is_some() || self.outcome_export.is_some() {
             return Err(());
         }
         self.teacher_export = Some(writer);
+        Ok(())
+    }
+
+    fn install_outcome_export_v1(
+        &mut self,
+        writer: XmageCp7OutcomeJsonlWriterV1,
+    ) -> Result<(), ()> {
+        if self.active.is_some() || self.teacher_export.is_some() || self.outcome_export.is_some() {
+            return Err(());
+        }
+        self.outcome_export = Some(writer);
         Ok(())
     }
 
@@ -1296,6 +1665,20 @@ impl ShadowScorerServiceV1 {
         episode_id: u64,
         base_seed: u64,
     ) -> ShadowScorerResponseV1 {
+        if self
+            .outcome_export
+            .as_ref()
+            .is_some_and(XmageCp7OutcomeJsonlWriterV1::has_open_episode_v1)
+        {
+            return response_v1(
+                Some(request_id),
+                &self.identity,
+                error_body_v1(
+                    "outcome_export_episode_incomplete",
+                    "the previous outcome-export episode has no terminal",
+                ),
+            );
+        }
         let episode_schedule = match native_trainer_episode_schedule_v1(base_seed, episode_id) {
             Ok(schedule) => schedule,
             Err(_) => {
@@ -1362,6 +1745,27 @@ impl ShadowScorerServiceV1 {
             initial_library_card_definition_ids,
             current,
         };
+        if let Some(export) = self.outcome_export.as_mut() {
+            let write_result = export.begin_episode_v1(&active).and_then(|()| {
+                match active.session.current_response() {
+                    FastActorResponseV1::Decision(_) => Ok(()),
+                    FastActorResponseV1::Terminal(terminal) => export
+                        .terminal_record_v1(&active, terminal)
+                        .map_err(|()| ())
+                        .and_then(|record| export.write_terminal_v1(&record).map_err(|_| ())),
+                }
+            });
+            if write_result.is_err() {
+                return response_v1(
+                    Some(request_id),
+                    &self.identity,
+                    error_body_v1(
+                        "outcome_export_write_failed",
+                        "the outcome episode could not be opened or persisted",
+                    ),
+                );
+            }
+        }
         let body = match active.session.current_response() {
             FastActorResponseV1::Decision(_) => match Self::decision_body_v1(&active, true) {
                 Ok(decision) => ShadowScorerResponseBodyV1::Decision {
@@ -1528,6 +1932,24 @@ impl ShadowScorerServiceV1 {
             }
             _ => None,
         };
+        let outcome_decision_record = match self.outcome_export.as_ref() {
+            Some(export) if scored.expected.acting_player == active.candidate_seat => {
+                match export.decision_record_v1(active, scored, selected_index) {
+                    Ok(record) => Some(record),
+                    Err(()) => {
+                        return response_v1(
+                            Some(request_id),
+                            &self.identity,
+                            error_body_v1(
+                                "outcome_export_record_invalid",
+                                "the accepted candidate outcome row could not be constructed",
+                            ),
+                        )
+                    }
+                }
+            }
+            _ => None,
+        };
         let session_before = active.session.snapshot_v1();
         let schedule_before = active.schedule;
         let expected = scored.expected;
@@ -1635,6 +2057,36 @@ impl ShadowScorerServiceV1 {
                 );
             }
         }
+        if let Some(export) = self.outcome_export.as_mut() {
+            let write_result = outcome_decision_record
+                .as_ref()
+                .map(|record| export.write_decision_v1(record))
+                .transpose()
+                .and_then(|_| match &next {
+                    FastActorResponseV1::Terminal(terminal) => export
+                        .terminal_record_v1(active, terminal.clone())
+                        .map_err(|()| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "CP7 outcome terminal record is invalid",
+                            )
+                        })
+                        .and_then(|record| export.write_terminal_v1(&record)),
+                    FastActorResponseV1::Decision(_) => Ok(()),
+                });
+            if write_result.is_err() {
+                active.session.restore_v1(&session_before);
+                active.schedule = schedule_before;
+                return response_v1(
+                    Some(request_id),
+                    &self.identity,
+                    error_body_v1(
+                        "outcome_export_write_failed",
+                        "the accepted candidate outcome row could not be persisted",
+                    ),
+                );
+            }
+        }
         active.current = next_scored;
         let body = match next {
             FastActorResponseV1::Decision(_) => match Self::decision_body_v1(active, false) {
@@ -1722,7 +2174,7 @@ fn serialize_response_v1(response: &ShadowScorerResponseV1) -> String {
 pub fn run_checkpoint_shadow_stdio_v1(
     authority: ShadowCheckpointAuthorityV1,
 ) -> Result<(), Box<dyn Error>> {
-    run_checkpoint_shadow_stdio_configured_v1(authority, None)
+    run_checkpoint_shadow_stdio_configured_v1(authority, None, None)
 }
 
 /// Opt-in XMage CP7 teacher export. The destination is created exclusively;
@@ -1731,13 +2183,31 @@ pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_teacher_jsonl_v1(
     authority: ShadowCheckpointAuthorityV1,
     teacher_jsonl: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
-    run_checkpoint_shadow_stdio_configured_v1(authority, Some(teacher_jsonl))
+    run_checkpoint_shadow_stdio_configured_v1(authority, Some(teacher_jsonl), None)
+}
+
+/// Opt-in candidate trajectory export for offline terminal-return updates.
+/// The destination is created exclusively and records only decisions owned by
+/// the candidate seat plus the natural terminal that supplies their return.
+pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_outcome_jsonl_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    outcome_jsonl: PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    run_checkpoint_shadow_stdio_configured_v1(authority, None, Some(outcome_jsonl))
 }
 
 fn run_checkpoint_shadow_stdio_configured_v1(
     authority: ShadowCheckpointAuthorityV1,
     teacher_jsonl: Option<PathBuf>,
+    outcome_jsonl: Option<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
+    if teacher_jsonl.is_some() && outcome_jsonl.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "CP7 teacher and outcome exports are mutually exclusive",
+        )
+        .into());
+    }
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
     if let Some(path) = teacher_jsonl {
         let export = XmageCp7TeacherJsonlWriterV1::create_v1(&path, &service.identity)?;
@@ -1745,6 +2215,15 @@ fn run_checkpoint_shadow_stdio_configured_v1(
             io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "CP7 teacher export must be installed before reset",
+            )
+        })?;
+    }
+    if let Some(path) = outcome_jsonl {
+        let export = XmageCp7OutcomeJsonlWriterV1::create_v1(&path, &service.identity)?;
+        service.install_outcome_export_v1(export).map_err(|()| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CP7 outcome export must be installed before reset",
             )
         })?;
     }
@@ -1849,6 +2328,29 @@ mod tests {
     }
 
     fn teacher_rows_v1(bytes: &SharedBytesV1) -> Vec<serde_json::Value> {
+        let bytes = bytes.0.lock().unwrap().clone();
+        String::from_utf8(bytes)
+            .unwrap()
+            .lines()
+            .map(value_v1)
+            .collect()
+    }
+
+    fn service_with_outcome_export_v1(
+        model: Box<dyn ShadowModelScorerV1>,
+    ) -> (ShadowScorerServiceV1, SharedBytesV1) {
+        let mut service = ShadowScorerServiceV1::with_test_model_v1(model);
+        let bytes = SharedBytesV1::default();
+        let export = XmageCp7OutcomeJsonlWriterV1::from_writer_v1(
+            Box::new(bytes.clone()),
+            &service.identity,
+        )
+        .unwrap();
+        service.install_outcome_export_v1(export).unwrap();
+        (service, bytes)
+    }
+
+    fn outcome_rows_v1(bytes: &SharedBytesV1) -> Vec<serde_json::Value> {
         let bytes = bytes.0.lock().unwrap().clone();
         String::from_utf8(bytes)
             .unwrap()
@@ -2146,6 +2648,174 @@ mod tests {
     }
 
     #[test]
+    fn outcome_export_records_only_accepted_candidate_tensor_action_v1() {
+        let (mut service, bytes) =
+            service_with_outcome_export_v1(Box::new(DeterministicTestModelV1));
+        let before = value_v1(&service.handle_line_v1(&reset_line_v1("outcome-reset")));
+        assert_eq!(before["decision"]["candidate_controls_current_actor"], true);
+        let selected = before["decision"]["selected_action_index"]
+            .as_u64()
+            .expect("candidate selection");
+        let accepted = value_v1(&service.handle_line_v1(&format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"outcome-candidate\",\"episode_id\":2,\"expected_step\":0,\"selected_index\":{selected}}}"
+        )));
+        assert_ne!(accepted["response_type"], "error");
+
+        let rows = outcome_rows_v1(&bytes);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["record_type"], "header");
+        assert_eq!(
+            rows[0]["export_contract"],
+            XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1
+        );
+        assert_eq!(rows[0]["selection_source"], "candidate_checkpoint_policy");
+        assert_eq!(
+            rows[0]["model_input_commitment"],
+            CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1
+        );
+
+        let row = &rows[1];
+        assert_eq!(row["record_type"], "decision");
+        assert_eq!(row["record_ordinal"], 1);
+        assert_eq!(row["outcome_decision_ordinal"], 0);
+        assert_eq!(row["acting_player"], row["candidate_seat"]);
+        assert_eq!(row["selected_index"], selected);
+        assert_eq!(
+            row["selected_semantic"],
+            before["decision"]["action_semantics"][selected as usize]
+        );
+        assert_eq!(
+            row["old_policy_logits_f32_bits"],
+            before["decision"]["logits_f32_bits"]
+        );
+        assert_eq!(
+            row["old_policy_logits_f32_bits"][selected as usize],
+            before["decision"]["logits_f32_bits"][selected as usize]
+        );
+        assert_eq!(
+            row["old_value_f32_bits"],
+            before["decision"]["value_f32_bits"]
+        );
+        assert_eq!(
+            row["model_input_sha256"],
+            before["decision"]["model_input_sha256"]
+        );
+        for field in [
+            "state_f32_bits",
+            "object_features_f32_bits",
+            "object_card_ids",
+            "object_groups",
+            "object_node_ids",
+            "edge_features_f32_bits",
+            "edge_source_indices",
+            "edge_target_indices",
+            "action_features_f32_bits",
+            "action_ref_features_f32_bits",
+            "action_ref_card_ids",
+            "action_ref_action_indices",
+            "action_ref_node_indices",
+        ] {
+            assert!(
+                row["tensor"][field].is_array(),
+                "missing tensor field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn outcome_terminal_binds_reward_and_contiguous_candidate_decisions_v1() {
+        let (mut service, bytes) = service_with_outcome_export_v1(Box::new(FirstActionTestModelV1));
+        service.max_physical_decisions = 4_096;
+        service.max_policy_steps = 8_192;
+        let mut response = value_v1(&service.handle_line_v1(&reset_line_v1("outcome-terminal")));
+        let mut accepted_candidate_decisions = 0_u64;
+        let mut terminal_was_reached_by_opponent = false;
+        for ordinal in 0..8_192_u64 {
+            assert_eq!(response["response_type"], "decision");
+            let candidate_controls = response["decision"]["candidate_controls_current_actor"]
+                .as_bool()
+                .expect("candidate control bit");
+            let step = response["decision"]["step"].as_u64().expect("step");
+            let selected = response["decision"]["selected_action_index"]
+                .as_u64()
+                .unwrap_or(0);
+            response = value_v1(&service.handle_line_v1(&format!(
+                "{{\"request_type\":\"step\",\"request_id\":\"outcome-terminal-{ordinal}\",\"episode_id\":2,\"expected_step\":{step},\"selected_index\":{selected}}}"
+            )));
+            assert_ne!(response["response_type"], "error");
+            accepted_candidate_decisions += u64::from(candidate_controls);
+            if response["response_type"] == "terminal" {
+                terminal_was_reached_by_opponent = !candidate_controls;
+                break;
+            }
+        }
+        assert_eq!(response["response_type"], "terminal");
+        assert!(terminal_was_reached_by_opponent);
+
+        let rows = outcome_rows_v1(&bytes);
+        assert_eq!(rows.len() as u64, accepted_candidate_decisions + 2);
+        for (record_ordinal, row) in rows.iter().enumerate() {
+            assert_eq!(row["record_ordinal"], record_ordinal as u64);
+        }
+        let decisions = &rows[1..rows.len() - 1];
+        for (outcome_ordinal, row) in decisions.iter().enumerate() {
+            assert_eq!(row["record_type"], "decision");
+            assert_eq!(row["outcome_decision_ordinal"], outcome_ordinal as u64);
+            assert_eq!(row["acting_player"], row["candidate_seat"]);
+        }
+        let terminal = rows.last().expect("terminal row");
+        assert_eq!(terminal["record_type"], "terminal");
+        assert_eq!(terminal["first_outcome_decision_ordinal"], 0);
+        assert_eq!(
+            terminal["outcome_decision_count"],
+            accepted_candidate_decisions
+        );
+        assert_eq!(terminal["terminal"]["terminal_classification"], "natural");
+        assert_eq!(terminal["terminal"]["terminal_code"], "natural_game_over");
+        let reward_index = if terminal["candidate_seat"] == "p0" {
+            0
+        } else {
+            1
+        };
+        assert_eq!(
+            terminal["candidate_terminal_reward"],
+            terminal["terminal"]["terminal_reward"][reward_index]
+        );
+    }
+
+    #[test]
+    fn outcome_export_rejects_reset_while_episode_is_open_v1() {
+        let (mut service, bytes) =
+            service_with_outcome_export_v1(Box::new(DeterministicTestModelV1));
+        let first = value_v1(&service.handle_line_v1(&reset_line_v1("outcome-first")));
+        assert_eq!(first["response_type"], "decision");
+        let second = value_v1(&service.handle_line_v1(&reset_line_v1("outcome-second")));
+        assert_eq!(second["error_code"], "outcome_export_episode_incomplete");
+        let rows = outcome_rows_v1(&bytes);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["record_type"], "header");
+    }
+
+    #[test]
+    fn rejected_terminal_transition_does_not_export_outcome_rows_v1() {
+        let (mut service, bytes) =
+            service_with_outcome_export_v1(Box::new(DeterministicTestModelV1));
+        service.max_physical_decisions = 1;
+        service.max_policy_steps = 128;
+        let before = value_v1(&service.handle_line_v1(&reset_line_v1("outcome-cap")));
+        let selected = before["decision"]["selected_action_index"]
+            .as_u64()
+            .expect("candidate selection");
+        let rejected = value_v1(&service.handle_line_v1(&format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"outcome-cap-step\",\"episode_id\":2,\"expected_step\":0,\"selected_index\":{selected}}}"
+        )));
+        assert_eq!(rejected["error_code"], "native_terminal_validation_failed");
+        let rows = outcome_rows_v1(&bytes);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["record_type"], "header");
+    }
+
+    #[test]
     fn rejected_terminal_transition_does_not_export_teacher_rows_v1() {
         let (mut service, bytes) =
             service_with_teacher_export_v1(Box::new(DeterministicTestModelV1));
@@ -2287,6 +2957,47 @@ mod tests {
         assert_eq!(
             response["checkpoint"]["model_parameter_sha256"],
             "3f4da9d761771cf0d7cfe2da19b52dd93dd0bc59466d92318cc11fc850d8c4dc"
+        );
+    }
+
+    #[test]
+    #[ignore = "reads the external XMage CP7 outcome derivative"]
+    fn real_xmage_cp7_outcome_derivative_loads_scores_and_reports_identity_v1() {
+        let root = std::env::var_os("MTG_KERNEL_XMAGE_CP7_OUTCOME_ROOT_V1")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                if cfg!(windows) {
+                    PathBuf::from(r"D:\mtg-kernel-xmage-cp7-outcome-base1010001-lr1e-4-vc0p5-v1")
+                } else {
+                    PathBuf::from("/mnt/d/mtg-kernel-xmage-cp7-outcome-base1010001-lr1e-4-vc0p5-v1")
+                }
+            });
+        let mut service = ShadowScorerServiceV1::load_v1(
+            ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root },
+        )
+        .unwrap();
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("xmage-cp7-outcome")));
+        assert_eq!(response["response_type"], "decision");
+        assert_eq!(
+            response["checkpoint"]["authority_kind"],
+            "xmage-cp7-outcome-reinforce-derivative-v1"
+        );
+        assert_eq!(response["checkpoint"]["loaded_generation"], 1);
+        assert_eq!(
+            response["checkpoint"]["loaded_checkpoint_sha256"],
+            "b02c16c403fa09bd435b46b3763a819635644dc61a02330ccd12861ebb5244e0"
+        );
+        assert_eq!(
+            response["checkpoint"]["loaded_payload_sha256"],
+            "a61084a0e505a4aecdf84123dff6dfc8d1ba2296eb54c71f4b3fedb5f25c9b7b"
+        );
+        assert_eq!(
+            response["checkpoint"]["loaded_train_state_sha256"],
+            "06a8bdc8f3a3173d9ff0aaf2e1bb42c2d44571b3093be08b3419c68d0c627170"
+        );
+        assert_eq!(
+            response["checkpoint"]["model_parameter_sha256"],
+            "aeeb6f6e51131e983743814f59494b799e43898c5e06da339f4d6649e72f5b74"
         );
     }
 
