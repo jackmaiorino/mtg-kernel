@@ -76,8 +76,16 @@ function Get-ReleaseTestExecutable {
     $stderrPath = Join-Path $EvidenceRoot 'cargo-release-build.stderr.log'
     Push-Location $RepoRoot
     try {
-        $jsonLines = @(& cargo test -p mtg-kernel --release --features experimental-burn-net8-packed-cuda-v1 --no-run --message-format=json 2> $stderrPath)
-        if ($LASTEXITCODE -ne 0) {
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $jsonLines = @(& cargo test -p mtg-kernel --release --features experimental-burn-net8-packed-cuda-v1 --no-run --message-format=json 2> $stderrPath)
+            $cargoExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
+        if ($cargoExitCode -ne 0) {
             throw "release build failed; see $stderrPath"
         }
     }
