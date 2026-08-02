@@ -918,31 +918,38 @@ def _attach_complete_action_history(
                     card_histogram,
                 )
             )
-        for example in rows:
-            prior = [entry for entry in completed if entry[0] < example["physical_group"]]
-            history_rows: list[Tensor] = []
-            for _, actor, action, card_histogram in prior[-maximum_length:]:
-                role = torch.tensor(
-                    [
-                        1.0 if actor == example["acting_seat"] else 0.0,
-                        1.0 if actor != example["acting_seat"] else 0.0,
-                    ],
-                    dtype=torch.float32,
-                )
-                history_rows.append(torch.cat((action, role, card_histogram)))
-            example["history_features"] = (
-                torch.stack(history_rows)
-                if history_rows
-                else torch.zeros(
-                    (
-                        0,
-                        ACTION_EXPLICIT_DIM
-                        + COMPLETE_HISTORY_ROLE_DIM
-                        + card_vocab,
-                    ),
-                    dtype=torch.float32,
-                )
+        histories_by_target_actor: dict[int, Tensor] = {}
+        for target_actor in (0, 1):
+            histories_by_target_actor[target_actor] = torch.stack(
+                [
+                    torch.cat(
+                        (
+                            action,
+                            torch.tensor(
+                                [
+                                    1.0 if actor == target_actor else 0.0,
+                                    1.0 if actor != target_actor else 0.0,
+                                ],
+                                dtype=torch.float32,
+                            ),
+                            card_histogram,
+                        )
+                    )
+                    for _, actor, action, card_histogram in completed
+                ]
             )
+        group_positions = {
+            physical_group: position
+            for position, (physical_group, _, _, _) in enumerate(completed)
+        }
+        for physical_group, group_rows in groups.items():
+            position = group_positions[physical_group]
+            actor = group_rows[0]["acting_seat"]
+            history = histories_by_target_actor[actor][
+                max(0, position - maximum_length) : position
+            ]
+            for example in group_rows:
+                example["history_features"] = history
 
 
 class StructuredAdapter(nn.Module):
