@@ -131,6 +131,15 @@ def _decode_int(raw: Any, name: str, expected_length: int | None = None) -> np.n
     return result
 
 
+def _decode_f32_bits(raw: Any, name: str, width: int | None = None) -> np.ndarray:
+    array = _decode_float({"f32_bits": raw}, name).reshape(-1)
+    if width is None:
+        return array
+    if array.size % width != 0:
+        _fail(f"{name} length {array.size} is not divisible by {width}")
+    return array.reshape((-1, width))
+
+
 def _lookup(row: dict[str, Any], *names: str, default: Any = None) -> Any:
     containers: list[dict[str, Any]] = [row]
     for key in ("tensors", "observation", "features", "data", "terminal", "provenance"):
@@ -248,49 +257,130 @@ def _rows(path: Path) -> Iterable[dict[str, Any]]:
 
 
 def _parse_example(row: dict[str, Any], is_outcome: bool) -> dict[str, Any]:
-    state = _decode_float(_lookup(row, "state", "state_features"), "state", (STATE_DIM,))
-    objects = _decode_float(_lookup(row, "object_features"), "object_features")
+    tensor = row.get("tensor")
+    if not isinstance(tensor, dict):
+        tensor = {}
+    if "state_f32_bits" in tensor:
+        state = _decode_f32_bits(tensor["state_f32_bits"], "state_f32_bits")
+        if state.shape != (STATE_DIM,):
+            _fail(f"state_f32_bits shape {state.shape} expected [{STATE_DIM}]")
+    else:
+        state = _decode_float(_lookup(row, "state", "state_features"), "state", (STATE_DIM,))
+    if "object_features_f32_bits" in tensor:
+        objects = _decode_f32_bits(
+            tensor["object_features_f32_bits"], "object_features_f32_bits", OBJECT_DIM
+        )
+    else:
+        objects = _decode_float(_lookup(row, "object_features"), "object_features")
     if objects.ndim != 2 or objects.shape[1] != OBJECT_DIM:
         _fail(f"object_features shape {objects.shape} expected [N,{OBJECT_DIM}]")
     n_objects = int(objects.shape[0])
-    card_ids = _decode_int(_lookup(row, "object_card_ids"), "object_card_ids", n_objects)
-    groups = _decode_int(_lookup(row, "object_groups"), "object_groups", n_objects)
-    edges = _decode_float(_lookup(row, "edge_features"), "edge_features")
+    card_ids = _decode_int(
+        tensor.get("object_card_ids", _lookup(row, "object_card_ids")),
+        "object_card_ids",
+        n_objects,
+    )
+    groups = _decode_int(
+        tensor.get("object_groups", _lookup(row, "object_groups")),
+        "object_groups",
+        n_objects,
+    )
+    if "edge_features_f32_bits" in tensor:
+        edges = _decode_f32_bits(
+            tensor["edge_features_f32_bits"], "edge_features_f32_bits", EDGE_DIM
+        )
+    else:
+        edges = _decode_float(_lookup(row, "edge_features"), "edge_features")
     if edges.size == 0:
         edges = np.zeros((0, EDGE_DIM), dtype=np.float32)
     if edges.ndim != 2 or edges.shape[1] != EDGE_DIM:
         _fail(f"edge_features shape {edges.shape} expected [E,{EDGE_DIM}]")
-    edge_src = _decode_int(_lookup(row, "edge_src", "edge_source_indices", "edge_src_indices"), "edge_src", len(edges))
-    edge_tgt = _decode_int(_lookup(row, "edge_tgt", "edge_target_indices", "edge_tgt_indices"), "edge_tgt", len(edges))
+    edge_src = _decode_int(
+        tensor.get(
+            "edge_source_indices",
+            _lookup(row, "edge_src", "edge_source_indices", "edge_src_indices"),
+        ),
+        "edge_src",
+        len(edges),
+    )
+    edge_tgt = _decode_int(
+        tensor.get(
+            "edge_target_indices",
+            _lookup(row, "edge_tgt", "edge_target_indices", "edge_tgt_indices"),
+        ),
+        "edge_tgt",
+        len(edges),
+    )
     if np.any(edge_src >= n_objects) or np.any(edge_tgt >= n_objects):
         _fail("edge endpoint is outside object range")
-    actions = _decode_float(_lookup(row, "action_features", "legal_action_features"), "action_features")
+    if "action_features_f32_bits" in tensor:
+        actions = _decode_f32_bits(
+            tensor["action_features_f32_bits"], "action_features_f32_bits", ACTION_DIM
+        )
+    else:
+        actions = _decode_float(
+            _lookup(row, "action_features", "legal_action_features"), "action_features"
+        )
     if actions.ndim != 2 or actions.shape[1] != ACTION_DIM or actions.shape[0] == 0:
         _fail(f"action_features shape {actions.shape} expected [A,{ACTION_DIM}] with A > 0")
     n_actions = int(actions.shape[0])
-    refs = _lookup(row, "action_ref_features", "ref_features", default=None)
+    refs = tensor.get(
+        "action_ref_features_f32_bits",
+        _lookup(row, "action_ref_features", "ref_features", default=None),
+    )
     if refs is None:
         ref_features = np.zeros((0, REF_DIM), dtype=np.float32)
     else:
-        ref_features = _decode_float(refs, "action_ref_features")
+        ref_features = (
+            _decode_f32_bits(refs, "action_ref_features_f32_bits", REF_DIM)
+            if "action_ref_features_f32_bits" in tensor
+            else _decode_float(refs, "action_ref_features")
+        )
         if ref_features.size == 0:
             ref_features = np.zeros((0, REF_DIM), dtype=np.float32)
     if ref_features.ndim != 2 or ref_features.shape[1] != REF_DIM:
         _fail(f"action_ref_features shape {ref_features.shape} expected [R,{REF_DIM}]")
     n_refs = int(ref_features.shape[0])
-    ref_actions_raw = _lookup(row, "action_ref_action_indices", "ref_action_indices", default=[])
-    ref_nodes_raw = _lookup(row, "action_ref_node_indices", "ref_node_indices", default=[])
+    ref_actions_raw = tensor.get(
+        "action_ref_action_indices",
+        _lookup(row, "action_ref_action_indices", "ref_action_indices", default=[]),
+    )
+    ref_nodes_raw = tensor.get(
+        "action_ref_node_indices",
+        _lookup(row, "action_ref_node_indices", "ref_node_indices", default=[]),
+    )
     ref_actions = _decode_int(ref_actions_raw, "action_ref_action_indices", n_refs)
     ref_nodes = _decode_int(ref_nodes_raw, "action_ref_node_indices", n_refs)
     if np.any(ref_actions >= n_actions) or np.any(ref_nodes >= n_objects):
         _fail("action reference endpoint is outside action or object range")
-    old_logits = _decode_float(_lookup(row, "old_logits", "parent_logits", "policy_logits"), "old_logits")
+    if "old_policy_logits_f32_bits" in row:
+        old_logits = _decode_f32_bits(
+            row["old_policy_logits_f32_bits"], "old_policy_logits_f32_bits"
+        )
+    else:
+        old_logits = _decode_float(
+            _lookup(row, "old_logits", "parent_logits", "policy_logits"), "old_logits"
+        )
     if old_logits.ndim != 1 or old_logits.shape[0] != n_actions:
         _fail(f"old_logits shape {old_logits.shape} expected [{n_actions}]")
-    old_value_raw = _lookup(row, "old_value", "parent_value", "value_prediction", "value", default=None)
+    old_value_raw = _lookup(
+        row,
+        "old_value_f32_bits",
+        "old_value",
+        "parent_value",
+        "value_prediction",
+        "value",
+        default=None,
+    )
     if old_value_raw is None:
         _fail("missing old_value")
-    old_value = float(_decode_float(old_value_raw, "old_value").reshape(-1)[0])
+    old_value = float(
+        (
+            _decode_f32_bits([old_value_raw], "old_value_f32_bits")
+            if "old_value_f32_bits" in row
+            else _decode_float(old_value_raw, "old_value")
+        ).reshape(-1)[0]
+    )
     selected_raw = _lookup(row, "selected_index", "selected_index_u32", "selected_action_index", default=None)
     if selected_raw is None:
         _fail("missing selected_index")
@@ -316,14 +406,7 @@ def _parse_example(row: dict[str, Any], is_outcome: bool) -> dict[str, Any]:
     decision_kind = _lookup(row, "decision_kind", "kind", default="unknown")
     if not isinstance(decision_kind, str):
         decision_kind = str(decision_kind)
-    if is_outcome:
-        terminal_classification = _lookup(row, "terminal_classification", "classification", default=None)
-        terminal_code = _lookup(row, "terminal_code", default=None)
-        if terminal_classification != "natural" or terminal_code not in (None, "natural-game-over"):
-            _fail("outcome row does not have a natural terminal")
-        if _lookup(row, "candidate_terminal_reward", default=None) is None:
-            _fail("outcome row is missing candidate_terminal_reward")
-    target = _terminal_target(row, candidate) if is_outcome else None
+    target = None
     return {
         "state": torch.from_numpy(state.copy()),
         "object_features": torch.from_numpy(objects.copy()),
@@ -359,22 +442,166 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _validate_teacher_groups(policy: list[dict[str, Any]]) -> None:
-    groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
-    for example in policy:
+def _validate_physical_groups(examples: list[dict[str, Any]], label: str) -> None:
+    groups: dict[tuple[int, str, int, int], list[dict[str, Any]]] = {}
+    for example in examples:
         physical_group = example["physical_group"]
         if physical_group is None:
-            _fail("teacher physical group is missing")
-        groups.setdefault((example["episode"], physical_group), []).append(example)
+            _fail(f"{label} physical group is missing")
+        key = (
+            example["pair_index"],
+            example["episode"],
+            example["candidate_seat"],
+            physical_group,
+        )
+        groups.setdefault(key, []).append(example)
     for key, rows in groups.items():
         counts = {row["substep_count"] for row in rows}
         seats = {row["acting_seat"] for row in rows}
         indexes = [row["substep_index"] for row in rows]
         if len(counts) != 1 or len(seats) != 1:
-            _fail(f"teacher physical group {key} has inconsistent metadata")
+            _fail(f"{label} physical group {key} has inconsistent metadata")
         count = next(iter(counts))
         if len(rows) != count or sorted(indexes) != list(range(count)):
-            _fail(f"teacher physical group {key} is incomplete")
+            _fail(f"{label} physical group {key} is incomplete")
+
+
+def _terminal_key(row: dict[str, Any]) -> tuple[int, str, int]:
+    pair = _int_like(_lookup(row, "pair_index"), "terminal pair_index")
+    if pair is None or pair < 0:
+        _fail("terminal row has invalid pair_index")
+    episode = _episode_id(_lookup(row, "episode_id"), "terminal episode_id")
+    candidate = _seat(_lookup(row, "candidate_seat"), "terminal candidate_seat")
+    return pair, episode, candidate
+
+
+def _validate_natural_terminal(row: dict[str, Any], require_reward: bool) -> float | None:
+    terminal = row.get("terminal")
+    if not isinstance(terminal, dict):
+        _fail("terminal row has no terminal object")
+    classification = terminal.get("terminal_classification")
+    code = terminal.get("terminal_code")
+    outcome = terminal.get("terminal_outcome")
+    if (
+        classification != "natural"
+        or code != "natural_game_over"
+        or outcome not in ("p0_win", "p1_win", "draw")
+        or terminal.get("terminal_reason") != "game_over"
+    ):
+        _fail("terminal row is not a natural game result")
+    key = _terminal_key(row)
+    if str(terminal.get("episode_id")) != key[1]:
+        _fail("terminal inner episode_id mismatch")
+    if not require_reward:
+        return None
+    if "candidate_terminal_reward" not in row:
+        _fail("outcome terminal lacks candidate_terminal_reward")
+    reward = float(row["candidate_terminal_reward"])
+    if reward not in (-1.0, 0.0, 1.0):
+        _fail("candidate_terminal_reward must be exactly -1, 0, or 1")
+    seat_rewards = terminal.get("terminal_reward")
+    if not isinstance(seat_rewards, list) or len(seat_rewards) != 2:
+        _fail("terminal_reward must contain both physical seats")
+    if float(seat_rewards[key[2]]) != reward:
+        _fail("candidate terminal reward disagrees with physical-seat reward")
+    return reward
+
+
+def _load_teacher(path: Path) -> list[dict[str, Any]]:
+    examples: list[dict[str, Any]] = []
+    terminals: set[tuple[int, str, int]] = set()
+    saw_header = False
+    for row in _rows(path):
+        record_type = row.get("record_type")
+        if record_type == "header":
+            if saw_header or examples or terminals:
+                _fail("teacher header is not the unique first record")
+            if row.get("export_contract") != "mtg-kernel-xmage-cp7-teacher-jsonl/v1":
+                _fail("teacher export contract mismatch")
+            saw_header = True
+        elif record_type == "decision":
+            if not saw_header:
+                _fail("teacher decision precedes header")
+            example = _parse_example(row, False)
+            example["episode_key"] = (
+                example["pair_index"],
+                example["episode"],
+                example["candidate_seat"],
+            )
+            examples.append(example)
+        elif record_type == "terminal":
+            if not saw_header:
+                _fail("teacher terminal precedes header")
+            _validate_natural_terminal(row, False)
+            key = _terminal_key(row)
+            if key in terminals:
+                _fail(f"duplicate teacher terminal {key}")
+            terminals.add(key)
+        else:
+            _fail(f"unknown teacher record_type {record_type!r}")
+    if not saw_header:
+        _fail("teacher header is missing")
+    for example in examples:
+        if example["episode_key"] not in terminals:
+            _fail(f"teacher decision lacks natural terminal {example['episode_key']}")
+    _validate_physical_groups(examples, "teacher")
+    return examples
+
+
+def _load_outcome(path: Path) -> list[dict[str, Any]]:
+    examples: list[dict[str, Any]] = []
+    terminals: dict[tuple[int, str, int], tuple[float, int]] = {}
+    saw_header = False
+    for row in _rows(path):
+        record_type = row.get("record_type")
+        if record_type == "header":
+            if saw_header or examples or terminals:
+                _fail("outcome header is not the unique first record")
+            if row.get("export_contract") != "mtg-kernel-xmage-cp7-outcome-jsonl/v1":
+                _fail("outcome export contract mismatch")
+            saw_header = True
+        elif record_type == "decision":
+            if not saw_header:
+                _fail("outcome decision precedes header")
+            example = _parse_example(row, True)
+            example["episode_key"] = (
+                example["pair_index"],
+                example["episode"],
+                example["candidate_seat"],
+            )
+            examples.append(example)
+        elif record_type == "terminal":
+            if not saw_header:
+                _fail("outcome terminal precedes header")
+            reward = _validate_natural_terminal(row, True)
+            key = _terminal_key(row)
+            if key in terminals:
+                _fail(f"duplicate outcome terminal {key}")
+            declared_count = _int_like(
+                row.get("outcome_decision_count"), "outcome_decision_count"
+            )
+            if declared_count is None or declared_count < 0:
+                _fail("outcome terminal has invalid decision count")
+            terminals[key] = (float(reward), declared_count)
+        else:
+            _fail(f"unknown outcome record_type {record_type!r}")
+    if not saw_header:
+        _fail("outcome header is missing")
+    observed_counts: dict[tuple[int, str, int], int] = {}
+    for example in examples:
+        key = example["episode_key"]
+        if key not in terminals:
+            _fail(f"outcome decision lacks natural terminal {key}")
+        example["terminal_reward"] = terminals[key][0]
+        observed_counts[key] = observed_counts.get(key, 0) + 1
+    for key, (_, declared_count) in terminals.items():
+        if observed_counts.get(key, 0) != declared_count:
+            _fail(
+                f"outcome decision count mismatch for {key}: "
+                f"observed {observed_counts.get(key, 0)} declared {declared_count}"
+            )
+    _validate_physical_groups(examples, "outcome")
+    return examples
 
 
 def prepare_cache(teacher_path: Path, outcome_path: Path, cache_path: Path, teacher_sha_prefix: str, outcome_sha_prefix: str) -> dict[str, Any]:
@@ -384,11 +611,10 @@ def prepare_cache(teacher_path: Path, outcome_path: Path, cache_path: Path, teac
         _fail(f"teacher SHA-256 {teacher_sha} does not start with required {teacher_sha_prefix}")
     if outcome_sha_prefix and not outcome_sha.startswith(outcome_sha_prefix.lower()):
         _fail(f"outcome SHA-256 {outcome_sha} does not start with required {outcome_sha_prefix}")
-    policy = [_parse_example(row, False) for row in _rows(teacher_path)]
-    value = [_parse_example(row, True) for row in _rows(outcome_path)]
+    policy = _load_teacher(teacher_path)
+    value = _load_outcome(outcome_path)
     if not policy or not value:
         _fail("teacher and outcome streams must both contain examples")
-    _validate_teacher_groups(policy)
     card_max = max(int(example["object_card_ids"].max().item()) for example in policy + value)
     group_max = max(int(example["object_groups"].max().item()) for example in policy + value)
     payload = {
@@ -512,11 +738,20 @@ def _policy_weight(example: dict[str, Any]) -> float:
     return 1.0 / float(example["substep_count"])
 
 
-def _episode_weights(examples: list[dict[str, Any]]) -> dict[str, float]:
-    counts: dict[str, int] = {}
+def _episode_weights(
+    examples: list[dict[str, Any]],
+) -> dict[tuple[int, str, int], float]:
+    counts: dict[tuple[int, str, int], int] = {}
     for example in examples:
-        counts[example["episode"]] = counts.get(example["episode"], 0) + 1
+        key = example["episode_key"]
+        counts[key] = counts.get(key, 0) + 1
     return {episode: 1.0 / count for episode, count in counts.items()}
+
+
+def _assign_episode_weights(examples: list[dict[str, Any]]) -> None:
+    weights = _episode_weights(examples)
+    for example in examples:
+        example["episode_weight"] = weights[example["episode_key"]]
 
 
 def _weighted_mean(values: list[float], weights: list[float]) -> float:
@@ -537,7 +772,7 @@ def _losses(model: StructuredAdapter, policy: list[dict[str, Any]], value: list[
     for example in value:
         _, prediction = model(example)
         value_terms.append((prediction - example["terminal_reward"]) ** 2)
-        value_weights.append(value_episode_weights[example["episode"]])
+        value_weights.append(value_episode_weights[example["episode_key"]])
     policy_loss = torch.stack(policy_terms).mul(torch.tensor(policy_weights)).sum() / sum(policy_weights)
     value_loss = torch.stack(value_terms).mul(torch.tensor(value_weights)).sum() / sum(value_weights)
     return policy_loss, value_loss
@@ -554,13 +789,12 @@ def _batch_loss(model: StructuredAdapter, policy: list[dict[str, Any]], value: l
         policy_loss = torch.stack(policy_terms).mul(torch.tensor(policy_weights)).sum() / sum(policy_weights)
     else:
         policy_loss = torch.zeros((), requires_grad=True)
-    value_episode_weights = _episode_weights(value) if value else {}
     value_terms: list[Tensor] = []
     value_weights: list[float] = []
     for example in value:
         _, prediction = model(example)
         value_terms.append((prediction - example["terminal_reward"]) ** 2)
-        value_weights.append(value_episode_weights[example["episode"]])
+        value_weights.append(float(example.get("episode_weight", 1.0)))
     if value_terms:
         value_loss = torch.stack(value_terms).mul(torch.tensor(value_weights)).sum() / sum(value_weights)
     else:
@@ -588,7 +822,7 @@ def _metric_sums(model: StructuredAdapter, examples: list[dict[str, Any]], kind:
             _, candidate = model(example)
             parent = example["old_value"]
             target = example["terminal_reward"]
-            records.append((example["candidate_seat"], float((parent - target) ** 2), float((candidate - target) ** 2), episode_weights[example["episode"]]))
+            records.append((example["candidate_seat"], float((parent - target) ** 2), float((candidate - target) ** 2), episode_weights[example["episode_key"]]))
     return {"records": records}
 
 
@@ -729,6 +963,7 @@ def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Name
     value_test = [example for example in value if example["pair_index"] % FOLDS == fold]
     if not policy_train or not policy_test or not value_train or not value_test:
         _fail(f"fold {fold} lacks train or heldout examples")
+    _assign_episode_weights(value_train)
     _configure(args.seed + fold, args.threads)
     model = StructuredAdapter(card_vocab, group_vocab, args.dim)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -876,6 +1111,7 @@ def _self_example(index: int, rng: np.random.Generator) -> dict[str, Any]:
         "acting_seat": index % 2,
         "candidate_seat": (index + 1) % 2,
         "episode": str(index),
+        "episode_key": (index, str(index), (index + 1) % 2),
         "substep_count": 1 + index % 3,
         "substep_index": index % (1 + index % 3),
         "physical_group": index,
