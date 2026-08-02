@@ -21,7 +21,7 @@ def _fail(message: str) -> None:
     raise ValueError(message)
 
 
-def repeat(evidence_root: Path) -> dict[str, Any]:
+def repeat(evidence_root: Path, task_first_pair: int | None) -> dict[str, Any]:
     report_path = evidence_root / "repeat" / "repeat-report.json"
     if report_path.exists():
         _fail("refusing to overwrite an existing repeat report")
@@ -35,7 +35,17 @@ def repeat(evidence_root: Path) -> dict[str, Any]:
     )
     if not successful:
         _fail("collection has no successful task to repeat")
-    original = successful[0]
+    if task_first_pair is None:
+        original = successful[0]
+    else:
+        matches = [
+            result
+            for result in successful
+            if result["task"]["first_pair"] == task_first_pair
+        ]
+        if len(matches) != 1:
+            _fail(f"expected one successful task at pair {task_first_pair}")
+        original = matches[0]
     original_task = collector._task_from_dict(original["task"])
     task = collector.Task(
         original_task.first_pair,
@@ -96,8 +106,9 @@ def repeat(evidence_root: Path) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-root", type=Path, required=True)
+    parser.add_argument("--task-first-pair", type=int)
     args = parser.parse_args()
-    result = repeat(args.evidence_root)
+    result = repeat(args.evidence_root, args.task_first_pair)
     print(json.dumps(result, sort_keys=True, allow_nan=False))
     return 0 if result["pass"] else 2
 
