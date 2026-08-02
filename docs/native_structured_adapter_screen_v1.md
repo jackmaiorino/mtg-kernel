@@ -10,7 +10,7 @@ This is a development screen. The corpora have already informed prior experiment
 
 - Parent policy outputs: the exact old logits and values exported with each row.
 - Policy corpus: the 32-pair CP7 teacher export at base seed `970001`.
-- Value corpus: the 64-pair candidate-versus-CP7 outcome export at base seed `1070001`.
+- Value corpus: the 32-pair generation-384-versus-CP7 outcome export at base seed `1010001`.
 - Split: four folds by whole pair, with `pair_index mod 4` selecting the held-out fold.
 - Reward: terminal win, loss, or draw only. No shaped target is introduced.
 - Execution: deterministic PyTorch CPU prototype. Four folds may run concurrently after one shared cache build.
