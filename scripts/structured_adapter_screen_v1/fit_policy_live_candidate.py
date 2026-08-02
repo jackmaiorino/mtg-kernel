@@ -336,7 +336,6 @@ def _fit(args: argparse.Namespace) -> dict[str, Any]:
         "policy_metrics": metrics,
         "weights_sha256": weights_sha,
         "composite_model_parameter_sha256": composite,
-        "runtime_seconds": time.perf_counter() - started,
         "non_claims": [
             "development teacher corpus reused",
             "no value improvement claim",

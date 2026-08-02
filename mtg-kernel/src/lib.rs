@@ -88,6 +88,9 @@ pub mod native_xmage_cp7_outcome_reinforce_v1;
 // The fixed holdout screen must pass before any runtime candidate is emitted.
 #[allow(dead_code)]
 pub mod native_bilinear_policy_residual_v1;
+// Strict live runtime for the fixed policy-only structured residual package.
+#[allow(dead_code)]
+pub(crate) mod native_structured_policy_residual_v1;
 // Trainer-schedule-compatible in-memory checkpoint runner. It derives the
 // engine/topology contract from a validated run and publishes no artifacts.
 pub mod native_checkpoint_runner_v1;
