@@ -79,7 +79,7 @@ function Get-ReleaseTestExecutable {
         $previousErrorAction = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            $jsonLines = @(& cargo test -p mtg-kernel --release --features experimental-burn-net8-packed-cuda-v1 --no-run --message-format=json 2> $stderrPath)
+            $jsonLines = @(& cargo test -p mtg-kernel --release --features experimental-burn-net8-packed-cuda-v1 --lib --no-run --message-format=json 2> $stderrPath)
             $cargoExitCode = $LASTEXITCODE
         }
         finally {
@@ -165,9 +165,16 @@ function Invoke-MacroTrainingRun {
     $env:MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2 = '1'
     $env:MTG_KERNEL_PILOT_CUDA_ORDINAL = '1'
     try {
-        & $Executable $script:RunnerTest --ignored --exact --nocapture --test-threads=1 2>&1 |
-            Tee-Object -FilePath $LogPath
-        $exitCode = $LASTEXITCODE
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $Executable $script:RunnerTest --ignored --exact --nocapture --test-threads=1 2>&1 |
+                Tee-Object -FilePath $LogPath
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
     }
     finally {
         @(
@@ -213,9 +220,16 @@ function Invoke-MacroH2hEvaluation {
     $env:H2H_EVAL_SEED = [string]$EvaluationSeed
     $env:H2H_ENVIRONMENT_RANDOMIZATION_V2 = '1'
     try {
-        & $Executable $script:H2hTest --ignored --exact --nocapture --test-threads=1 2>&1 |
-            Tee-Object -FilePath $LogPath
-        $exitCode = $LASTEXITCODE
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $Executable $script:H2hTest --ignored --exact --nocapture --test-threads=1 2>&1 |
+                Tee-Object -FilePath $LogPath
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
     }
     finally {
         @(
