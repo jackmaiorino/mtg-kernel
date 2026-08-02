@@ -86,3 +86,11 @@ Aggregate report:
 `D:\mtg-kernel-structured-value-bootstrap-v1\development-aggregate.json`,
 SHA-256
 `bf6d6415259df8f5d16fabc0a48442928ab5149ff2fd30cc93df6bd2ef283de1`.
+
+The fixed fold-2 rerun matched every scientific JSON field after removing only
+runtime and model-state paths. Every learned tensor was bit-identical; the
+canonical tensor stream SHA-256 is
+`02b52f110c20f6d0dbea29ab0550023efb7bbfd6a003213c70be8ee7497cbd0a`.
+The completed manifest is
+`D:\mtg-kernel-structured-value-bootstrap-v1\manifest.json`, SHA-256
+`f9a387bd9a3e5540a75b0ae563077c0e868ef4853ad926375423c5ebf8444c32`.
