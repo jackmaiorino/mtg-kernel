@@ -251,7 +251,8 @@ function Invoke-MacroH2hEvaluation {
         $ErrorActionPreference = 'Continue'
         try {
             & $Executable $script:H2hTest --ignored --exact --nocapture --test-threads=1 2>&1 |
-                Tee-Object -FilePath $LogPath
+                Tee-Object -FilePath $LogPath |
+                Out-Host
             $exitCode = $LASTEXITCODE
         }
         finally {
