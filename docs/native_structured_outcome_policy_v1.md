@@ -84,3 +84,57 @@ does not authorize promotion or establish pro-level play.
 This test does not establish that structured representation alone is better,
 that PPO generally works, that CP7 is a professional reference, or that the
 candidate generalizes beyond the Rally mirror.
+
+## Completed result
+
+The amended collection completed 256 seat-swapped pairs, pairs `1..256`, with
+512 natural terminals, 23,182 policy substeps, and 19,569 complete physical
+decisions. Pair `0` was excluded because its second leg reproducibly reached
+an unsupported CP7 mapper state. Pair `256`, which has the same fold assignment,
+was selected as the replacement before its outcome was inspected. The merged
+JSONL SHA-256 is
+`317148bc19c6b33214181ed807d672b1a6f135cb6cbee1b5f9139667382fa9b0`.
+
+All four folds ran concurrently with six PyTorch threads each. Total CPU use
+held at approximately 100 percent during optimization. Held-out policy
+surrogates were:
+
+| Fold | Overall | Candidate P0 | Candidate P1 | Max joint log ratio |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 0.00032994 | 0.00079114 | -0.00013127 | 0.57464 |
+| 1 | 0.00032858 | -0.00024638 | 0.00090353 | 0.39770 |
+| 2 | -0.00042583 | -0.00054408 | -0.00030758 | 0.75142 |
+| 3 | -0.00054040 | 0.00051459 | -0.00159539 | 0.43759 |
+
+The aggregate surrogate was `-0.0000769290`. Candidate P0 was positive at
+`0.0001288175`, but candidate P1 was negative at `-0.0002826755`. Only two of
+four folds were positive. The maximum absolute physical-decision joint log
+ratio was `0.751425`, above the `0.50` cap.
+
+Movement and representation checks passed. Aggregate mean total variation was
+`0.0126463`, weighted p90 total variation was `0.0455104`, object-permutation
+delta was at most `9.54e-7`, and all 1,024 sampled reference-bearing decisions
+changed by more than `1e-4` when references were removed. No fold required
+head downscaling.
+
+The aggregate, both-seat, three-of-four-fold, and maximum-joint-ratio gates
+failed. The movement, permutation, and reference-use gates passed. Therefore
+the fixed development objective is rejected. Do not run the full-data fit or
+the fresh base-seed `1300001` strength gate.
+
+This result says the fixed parent-data terminal PPO update did not learn a
+stable held-out improvement direction. It does not reject structured models,
+terminal-only reward, PPO in other data regimes, or outcome learning in
+general.
+
+Primary artifacts:
+
+- Aggregate report:
+  `D:\mtg-kernel-structured-outcome-policy-v1\development-aggregate.json`,
+  SHA-256
+  `f4def90e574a232570148afaf55066197c2c85e3840ba2c2ccded1c4d4ababdf`.
+- Combine report:
+  `D:\mtg-kernel-structured-outcome-policy-v1\combine-report.json`, SHA-256
+  `a7ee4d4662115b531bc4f048e00c38941e1ae67b72a190de58733db9a96f7efe`.
+- Collection retry log:
+  `D:\mtg-kernel-structured-outcome-policy-v1\collection-preflight-retries.log`.
