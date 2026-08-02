@@ -138,3 +138,10 @@ Primary artifacts:
   `a7ee4d4662115b531bc4f048e00c38941e1ae67b72a190de58733db9a96f7efe`.
 - Collection retry log:
   `D:\mtg-kernel-structured-outcome-policy-v1\collection-preflight-retries.log`.
+- Lightweight manifest:
+  `D:\mtg-kernel-structured-outcome-policy-v1\manifest.json`, SHA-256
+  `87f98e1c34dc156a0ef28c5574f6869f9ea4faf03e2f561b2c0e6fb5af58f86d`.
+- Fold-0 deterministic repeat:
+  `D:\mtg-kernel-structured-outcome-policy-v1\deterministic-repeat.json`,
+  SHA-256
+  `4bf448af8c3ab27e603bd2a03687325a857da3ec6058f4588455df4923458467`.
