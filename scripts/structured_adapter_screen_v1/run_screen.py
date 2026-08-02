@@ -677,8 +677,17 @@ def _load_outcome(
         if record_type == "header":
             if saw_header or examples or terminals:
                 _fail("outcome header is not the unique first record")
-            if row.get("export_contract") != "mtg-kernel-xmage-cp7-outcome-jsonl/v1":
+            contract = row.get("export_contract")
+            schema_version = row.get("schema_version")
+            if contract not in (
+                "mtg-kernel-xmage-cp7-outcome-jsonl/v1",
+                "mtg-kernel-xmage-cp7-outcome-jsonl/v2",
+            ):
                 _fail("outcome export contract mismatch")
+            if contract.endswith("/v2") and schema_version != 2:
+                _fail("outcome v2 export has the wrong schema_version")
+            if contract.endswith("/v1") and schema_version not in (None, 1):
+                _fail("outcome v1 export has the wrong schema_version")
             saw_header = True
         elif record_type == "decision":
             if not saw_header:

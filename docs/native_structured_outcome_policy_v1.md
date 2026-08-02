@@ -16,10 +16,14 @@ remains the only reward.
   `706b3aa80ec7a3c067d458fef06bb2237320543f202fb2349c5cb885975fdbbb`
   at Adam step 1.
 - Opponent: deterministic XMage CP7 skill 7 in the Mono Red Rally mirror.
-- Training block: 256 seat-swapped pairs at base seed `1200001`, episodes
-  `0..511`.
-- Throughput: eight independent 32-pair shards with first episodes `0`, `64`,
-  `128`, `192`, `256`, `320`, `384`, and `448`. Shards may run concurrently.
+- Training block: 256 seat-swapped pairs at base seed `1200001`. Pair `0`
+  deterministically hits an XMage CP7 mapper coverage error in its second leg,
+  so the complete block is pairs `1..256`, episodes `2..513`. This replacement
+  was selected by pair index before inspecting any replacement outcome.
+- Throughput: seven independent 32-pair shards with first episodes `64`,
+  `128`, `192`, `256`, `320`, `384`, and `448`, plus concurrent replacement
+  shards for first episode `2` with 31 pairs and first episode `512` with one
+  pair.
 - Every row must bind the exact parent identity, end in a natural terminal, and
   pass the existing strict typed-tensor and physical-substep loader.
 
