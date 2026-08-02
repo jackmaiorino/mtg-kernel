@@ -608,6 +608,8 @@ def _publish_full_candidate(
     group_vocab: int,
     report: dict[str, Any],
 ) -> dict[str, Any]:
+    if card_vocab != 136 or group_vocab != 7:
+        _fail("existing native structured runtime requires card_vocab=136 and group_vocab=7")
     output_root: Path = args.output_root
     if output_root.exists():
         _fail(f"refusing to overwrite {output_root}")
