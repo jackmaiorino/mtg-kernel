@@ -37,7 +37,9 @@ These 512 games are training data. Their raw win rate is not a strength result.
 - Split: four folds by whole pair, with `pair_index mod 4` held out.
 - Advantage: terminal reward minus the frozen parent value. Center and scale
   advantages within each fit split and candidate seat using equal episode
-  mass. No intermediate reward or hand-coded evaluation enters the target.
+  mass. For a multi-substep physical decision, use the parent value at its
+  first substep and one joint-ratio advantage for the complete decision. No
+  intermediate reward or hand-coded evaluation enters the target.
 - Objective: physical-decision joint-ratio PPO with clip `0.10`, equal episode
   mass, 10 epochs, batch size 32 physical decisions, AdamW learning rate
   `3e-4`, weight decay `1e-4`, gradient norm cap 5, seed `20260802`.
