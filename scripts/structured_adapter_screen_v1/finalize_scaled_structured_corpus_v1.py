@@ -14,6 +14,7 @@ from typing import Any, TextIO
 
 COLLECTOR_SCHEMA = "mtg-kernel-scaled-structured-corpus-collector/v1"
 REPORT_SCHEMA = "mtg-kernel-scaled-structured-corpus/v1"
+REPEAT_SCHEMA = "mtg-kernel-scaled-structured-corpus-repeat/v1"
 PRIMARY_PAIRS = 2_048
 PARENT_MANIFEST_SHA256 = "706b3aa80ec7a3c067d458fef06bb2237320543f202fb2349c5cb885975fdbbb"
 PARENT_PAYLOAD_SHA256 = "eb83be33bcb7418b6f85ec9687da4b7ca5620a1df64721a1942d2793588bbd3c"
@@ -159,6 +160,30 @@ def _successful_tasks(state: dict[str, Any]) -> tuple[list[dict[str, Any]], set[
     return sorted(successful, key=lambda value: min(_task_pairs(value))), pairs
 
 
+def _validate_repeat(evidence_root: Path, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    path = evidence_root / "repeat" / "repeat-report.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if report.get("schema") != REPEAT_SCHEMA or report.get("pass") is not True:
+        _fail("scaled collection repeat is not passing")
+    task = report.get("task")
+    if not any(result.get("task") == task for result in tasks):
+        _fail("repeat task is not a successful collection task")
+    for kind in ("teacher", "outcome"):
+        comparison = report.get("comparisons", {}).get(kind, {})
+        original = Path(comparison.get("original_path", ""))
+        repeated = Path(comparison.get("repeat_path", ""))
+        if (
+            comparison.get("byte_identical") is not True
+            or comparison.get("original_sha256") != comparison.get("repeat_sha256")
+            or not original.is_file()
+            or not repeated.is_file()
+            or _sha256(original) != comparison.get("original_sha256")
+            or _sha256(repeated) != comparison.get("repeat_sha256")
+        ):
+            _fail(f"{kind} repeat bytes are not exact")
+    return {"path": str(path), "sha256": _sha256(path), "pass": True}
+
+
 def _merge_kind(
     kind: str,
     tasks: list[dict[str, Any]],
@@ -298,6 +323,7 @@ def finalize(evidence_root: Path, report_path: Path) -> dict[str, Any]:
     ):
         _fail("collection state is not a complete passing corpus")
     tasks, pairs = _successful_tasks(state)
+    repeat = _validate_repeat(evidence_root, tasks)
     corpus_root = evidence_root / "corpus"
     teacher_path = corpus_root / "teacher-combined.jsonl"
     outcome_path = corpus_root / "outcome-combined.jsonl"
@@ -325,6 +351,7 @@ def finalize(evidence_root: Path, report_path: Path) -> dict[str, Any]:
         "schema": REPORT_SCHEMA,
         "pass": True,
         "state": {"path": str(state_path), "sha256": _sha256(state_path)},
+        "repeat": repeat,
         "pair_count": len(pairs),
         "game_count": len(pairs) * 2,
         "fold_pair_counts": state["fold_pair_counts"],
