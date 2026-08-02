@@ -1032,6 +1032,32 @@ def aggregate(paths: list[Path], output_path: Path) -> dict[str, Any]:
     candidate_top1 = sum(float(result["heldout"]["policy"]["candidate_top1"]) * float(result["heldout"]["policy"]["weight"]) for result in results) / policy_weight
     parent_value = sum(float(result["heldout"]["value"]["parent_mse"]) * float(result["heldout"]["value"]["weight"]) for result in results) / value_weight
     candidate_value = sum(float(result["heldout"]["value"]["candidate_mse"]) * float(result["heldout"]["value"]["weight"]) for result in results) / value_weight
+    no_digest_policy_weight = sum(
+        float(result["no_digest_ablation"]["policy"]["weight"]) for result in results
+    )
+    no_digest_value_weight = sum(
+        float(result["no_digest_ablation"]["value"]["weight"]) for result in results
+    )
+    no_digest_parent_policy = sum(
+        float(result["no_digest_ablation"]["policy"]["parent_nll"])
+        * float(result["no_digest_ablation"]["policy"]["weight"])
+        for result in results
+    ) / no_digest_policy_weight
+    no_digest_candidate_policy = sum(
+        float(result["no_digest_ablation"]["policy"]["candidate_nll"])
+        * float(result["no_digest_ablation"]["policy"]["weight"])
+        for result in results
+    ) / no_digest_policy_weight
+    no_digest_parent_value = sum(
+        float(result["no_digest_ablation"]["value"]["parent_mse"])
+        * float(result["no_digest_ablation"]["value"]["weight"])
+        for result in results
+    ) / no_digest_value_weight
+    no_digest_candidate_value = sum(
+        float(result["no_digest_ablation"]["value"]["candidate_mse"])
+        * float(result["no_digest_ablation"]["value"]["weight"])
+        for result in results
+    ) / no_digest_value_weight
     policy_by_seat: dict[str, Any] = {}
     value_by_seat: dict[str, Any] = {}
     policy_by_kind: dict[str, Any] = {}
@@ -1072,6 +1098,27 @@ def aggregate(paths: list[Path], output_path: Path) -> dict[str, Any]:
         "fold_files": [str(path) for path in paths],
         "heldout": {"policy": {"parent_nll": parent_policy, "candidate_nll": candidate_policy, "relative_improvement": policy_improvement, "parent_top1": parent_top1, "candidate_top1": candidate_top1, "top1_delta": candidate_top1 - parent_top1, "by_acting_seat": policy_by_seat, "by_decision_kind": policy_by_kind, "weight": policy_weight}, "value": {"parent_mse": parent_value, "candidate_mse": candidate_value, "relative_improvement": value_improvement, "by_candidate_seat": value_by_seat, "weight": value_weight}},
         "diagnostics": {"permutation_max_delta": perm_delta, "ref_removal_eligible": eligible, "ref_removal_affected": affected, "ref_removal_affected_rate": ref_rate},
+        "no_digest_ablation": {
+            "acceptance_gate": False,
+            "policy": {
+                "parent_nll": no_digest_parent_policy,
+                "candidate_nll": no_digest_candidate_policy,
+                "relative_improvement": (
+                    no_digest_parent_policy - no_digest_candidate_policy
+                )
+                / max(no_digest_parent_policy, 1e-12),
+                "weight": no_digest_policy_weight,
+            },
+            "value": {
+                "parent_mse": no_digest_parent_value,
+                "candidate_mse": no_digest_candidate_value,
+                "relative_improvement": (
+                    no_digest_parent_value - no_digest_candidate_value
+                )
+                / max(no_digest_parent_value, 1e-12),
+                "weight": no_digest_value_weight,
+            },
+        },
         "gates": gates,
         "pass": all(gates.values()),
     }
