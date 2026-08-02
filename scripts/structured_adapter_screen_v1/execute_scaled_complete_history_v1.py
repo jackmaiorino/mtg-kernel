@@ -183,12 +183,23 @@ def execute(root: Path) -> dict[str, Any]:
         screen_root = root / "screen"
         cache = screen_root / "complete-history-cache.pt"
         cache_report = screen_root / "cache-report.json"
-        parallel_cache.prepare(
-            root / "collection-state.json",
-            combine_report,
-            cache,
-            cache_report,
-        )
+        if cache.exists() or cache_report.exists():
+            if not cache.is_file() or not cache_report.is_file():
+                _fail("scaled cache resume artifacts are incomplete")
+            cached = json.loads(cache_report.read_text(encoding="utf-8"))
+            if (
+                cached.get("schema") != parallel_cache.SCHEMA
+                or cached.get("pass") is not True
+                or cached.get("cache_sha256") != _sha256(cache)
+            ):
+                _fail("existing scaled cache does not pass resume validation")
+        else:
+            parallel_cache.prepare(
+                root / "collection-state.json",
+                combine_report,
+                cache,
+                cache_report,
+            )
         _save(
             pipeline_path,
             state,
