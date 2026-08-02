@@ -1592,11 +1592,7 @@ impl ShadowScorerServiceV1 {
         &mut self,
         writer: XmageCp7TeacherJsonlWriterV1,
     ) -> Result<(), ()> {
-        if self.export_poisoned
-            || self.active.is_some()
-            || self.teacher_export.is_some()
-            || self.outcome_export.is_some()
-        {
+        if self.export_poisoned || self.active.is_some() || self.teacher_export.is_some() {
             return Err(());
         }
         self.teacher_export = Some(writer);
@@ -1607,11 +1603,7 @@ impl ShadowScorerServiceV1 {
         &mut self,
         writer: XmageCp7OutcomeJsonlWriterV1,
     ) -> Result<(), ()> {
-        if self.export_poisoned
-            || self.active.is_some()
-            || self.teacher_export.is_some()
-            || self.outcome_export.is_some()
-        {
+        if self.export_poisoned || self.active.is_some() || self.outcome_export.is_some() {
             return Err(());
         }
         self.outcome_export = Some(writer);
@@ -2336,18 +2328,21 @@ pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_outcome_jsonl_v1(
     run_checkpoint_shadow_stdio_configured_v1(authority, None, Some(outcome_jsonl))
 }
 
+/// Opt-in matched CP7 teacher and candidate outcome exports from one trajectory.
+/// Both destinations are created exclusively before the first reset.
+pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_exports_jsonl_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    teacher_jsonl: PathBuf,
+    outcome_jsonl: PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    run_checkpoint_shadow_stdio_configured_v1(authority, Some(teacher_jsonl), Some(outcome_jsonl))
+}
+
 fn run_checkpoint_shadow_stdio_configured_v1(
     authority: ShadowCheckpointAuthorityV1,
     teacher_jsonl: Option<PathBuf>,
     outcome_jsonl: Option<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
-    if teacher_jsonl.is_some() && outcome_jsonl.is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "CP7 teacher and outcome exports are mutually exclusive",
-        )
-        .into());
-    }
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
     if let Some(path) = teacher_jsonl {
         let export = XmageCp7TeacherJsonlWriterV1::create_v1(&path, &service.identity)?;

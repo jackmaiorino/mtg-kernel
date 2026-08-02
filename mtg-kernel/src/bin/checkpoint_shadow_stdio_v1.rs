@@ -1,5 +1,6 @@
 use mtg_kernel::native_checkpoint_shadow_stdio_v1::{
-    run_checkpoint_shadow_stdio_v1, run_checkpoint_shadow_stdio_with_xmage_cp7_outcome_jsonl_v1,
+    run_checkpoint_shadow_stdio_v1, run_checkpoint_shadow_stdio_with_xmage_cp7_exports_jsonl_v1,
+    run_checkpoint_shadow_stdio_with_xmage_cp7_outcome_jsonl_v1,
     run_checkpoint_shadow_stdio_with_xmage_cp7_teacher_jsonl_v1, ShadowCheckpointAuthorityV1,
 };
 use std::ffi::OsString;
@@ -7,7 +8,7 @@ use std::path::PathBuf;
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: checkpoint_shadow_stdio_v1 (--original-store-root PATH [--generation N] | --portable-derivative-root PATH | --cp7-behavior-clone-root PATH | --xmage-cp7-outcome-root PATH) [--xmage-cp7-teacher-jsonl PATH | --xmage-cp7-outcome-jsonl PATH]"
+        "usage: checkpoint_shadow_stdio_v1 (--original-store-root PATH [--generation N] | --portable-derivative-root PATH | --cp7-behavior-clone-root PATH | --xmage-cp7-outcome-root PATH) [--xmage-cp7-teacher-jsonl PATH] [--xmage-cp7-outcome-jsonl PATH]"
     );
     std::process::exit(2);
 }
@@ -29,7 +30,7 @@ fn parse_args_v1(
     ),
     (),
 > {
-    if raw.len() != 2 && raw.len() != 4 && raw.len() != 6 {
+    if raw.len() < 2 || raw.len() > 8 || raw.len() % 2 != 0 {
         return Err(());
     }
     let mut authority_root = None;
@@ -77,9 +78,6 @@ fn parse_args_v1(
         | (Some(AuthorityRootV1::XmageCp7Outcome(_)), Some(_))
         | (None, _) => return Err(()),
     };
-    if teacher_jsonl.is_some() && outcome_jsonl.is_some() {
-        return Err(());
-    }
     Ok((authority, teacher_jsonl, outcome_jsonl))
 }
 
@@ -95,7 +93,9 @@ fn main() {
             run_checkpoint_shadow_stdio_with_xmage_cp7_outcome_jsonl_v1(authority, path)
         }
         (None, None) => run_checkpoint_shadow_stdio_v1(authority),
-        (Some(_), Some(_)) => unreachable!("parser rejects simultaneous exports"),
+        (Some(teacher), Some(outcome)) => {
+            run_checkpoint_shadow_stdio_with_xmage_cp7_exports_jsonl_v1(authority, teacher, outcome)
+        }
     };
     if let Err(error) = result {
         eprintln!("checkpoint shadow scorer failed: {error}");
@@ -131,7 +131,7 @@ mod tests {
             "b".into(),
         ])
         .is_err());
-        assert!(parse_args_v1(vec![
+        let (_, teacher_export, outcome_export) = parse_args_v1(vec![
             "--original-store-root".into(),
             "store".into(),
             "--xmage-cp7-teacher-jsonl".into(),
@@ -139,7 +139,9 @@ mod tests {
             "--xmage-cp7-outcome-jsonl".into(),
             "outcome.jsonl".into(),
         ])
-        .is_err());
+        .unwrap();
+        assert_eq!(teacher_export, Some(PathBuf::from("teacher.jsonl")));
+        assert_eq!(outcome_export, Some(PathBuf::from("outcome.jsonl")));
 
         let (_, teacher_export, outcome_export) = parse_args_v1(vec![
             "--xmage-cp7-outcome-jsonl".into(),

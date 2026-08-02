@@ -25,15 +25,83 @@ OBJECT_DIM = 98
 EDGE_DIM = 41
 ACTION_DIM = 195
 ACTION_EXPLICIT_DIM = 99
+COMPLETE_HISTORY_ROLE_DIM = 2
 REF_DIM = 25
 FOLDS = 4
 SCRIPT_VERSION = "structured_adapter_screen_v1"
 TEACHER_SHA256_PREFIX = "24211c"
 OUTCOME_SHA256_PREFIX = "ee4224"
+SELECTED_SEMANTIC_KEYS = {
+    "activate_ability": frozenset({"ability_index", "action_kind", "actor", "source"}),
+    "activate_mana_ability": frozenset({"action_kind", "actor", "mana_choice", "source"}),
+    "cast_spell": frozenset({"action_kind", "actor", "source"}),
+    "choose_attacker_inclusion": frozenset({"action_kind", "actor", "attacker", "include"}),
+    "choose_blocker_inclusion": frozenset({"action_kind", "actor", "attacker", "blocker", "include"}),
+    "choose_kicker": frozenset({"action_kind", "actor", "pay", "source"}),
+    "choose_spell_copy_payment": frozenset({"action_kind", "actor", "pay", "source"}),
+    "choose_spell_copy_retarget": frozenset({"action_kind", "actor", "change_target", "source"}),
+    "choose_target": frozenset({"action_kind", "actor", "remaining", "source", "target"}),
+    "discard": frozenset({"action_kind", "actor", "cards"}),
+    "order_triggers": frozenset({"action_kind", "actor", "order", "pending_sources"}),
+    "pass": frozenset({"action_kind", "actor"}),
+    "play_land": frozenset({"action_kind", "actor", "source"}),
+}
+PUBLIC_CARD_ZONES = frozenset({"Battlefield", "Stack", "Graveyard", "Exile"})
+REVEALED_FROM_PRIVATE_ZONES = {
+    "cast_spell": frozenset({"Hand", "Exile"}),
+    "discard": frozenset({"Hand"}),
+    "play_land": frozenset({"Hand", "Exile"}),
+}
 
 
 def _fail(message: str) -> None:
     raise ValueError(message)
+
+
+def _selected_public_card_ids(
+    selected_semantic: dict[str, Any], selected_ref_card_ids: np.ndarray
+) -> np.ndarray:
+    action_kind = selected_semantic.get("action_kind")
+    expected_keys = SELECTED_SEMANTIC_KEYS.get(action_kind)
+    if expected_keys is None or frozenset(selected_semantic) != expected_keys:
+        _fail(f"selected semantic schema is not public-history approved for {action_kind!r}")
+
+    descriptors: list[tuple[int, str]] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            if "card_db_id" in value or "zone" in value:
+                required = {
+                    "arena_id",
+                    "card_db_id",
+                    "owner",
+                    "controller",
+                    "zone",
+                    "zone_change_count",
+                }
+                if not required.issubset(value):
+                    _fail("selected semantic card descriptor is incomplete")
+                card_id = _int_like(value.get("card_db_id"), "selected card_db_id")
+                zone = value.get("zone")
+                if card_id is None or card_id < 0 or not isinstance(zone, str):
+                    _fail("selected semantic card descriptor is invalid")
+                descriptors.append((card_id + 1, zone))
+                return
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(selected_semantic)
+    allowed_zones = REVEALED_FROM_PRIVATE_ZONES.get(action_kind, PUBLIC_CARD_ZONES)
+    if any(zone not in allowed_zones for _, zone in descriptors):
+        _fail(f"selected {action_kind!r} card is not public after completion")
+    semantic_card_ids = np.asarray(sorted(card_id for card_id, _ in descriptors), dtype=np.int64)
+    selected_ref_card_ids = np.sort(selected_ref_card_ids.astype(np.int64, copy=False))
+    if not np.array_equal(semantic_card_ids, selected_ref_card_ids):
+        _fail("selected semantic cards do not exactly match selected action references")
+    return semantic_card_ids
 
 
 def _u32(value: Any, name: str) -> int:
@@ -352,6 +420,14 @@ def _parse_example(row: dict[str, Any], is_outcome: bool) -> dict[str, Any]:
     )
     ref_actions = _decode_int(ref_actions_raw, "action_ref_action_indices", n_refs)
     ref_nodes = _decode_int(ref_nodes_raw, "action_ref_node_indices", n_refs)
+    ref_cards = _decode_int(
+        tensor.get(
+            "action_ref_card_ids",
+            _lookup(row, "action_ref_card_ids", "ref_card_ids", default=[]),
+        ),
+        "action_ref_card_ids",
+        n_refs,
+    )
     if np.any(ref_actions >= n_actions) or np.any(ref_nodes >= n_objects):
         _fail("action reference endpoint is outside action or object range")
     if "old_policy_logits_f32_bits" in row:
@@ -388,6 +464,15 @@ def _parse_example(row: dict[str, Any], is_outcome: bool) -> dict[str, Any]:
     selected = int(selected_raw)
     if not 0 <= selected < n_actions:
         _fail("selected_index is outside action range")
+    selected_semantic = row.get("selected_semantic")
+    if not isinstance(selected_semantic, dict):
+        _fail("missing selected_semantic")
+    selected_action_kind = selected_semantic.get("action_kind")
+    if not isinstance(selected_action_kind, str):
+        _fail("selected_semantic has no action_kind")
+    selected_public_card_ids = _selected_public_card_ids(
+        selected_semantic, ref_cards[ref_actions == selected]
+    )
     pair = _int_like(_lookup(row, "pair_index", "pair_index_u64", "pair", default=None), "pair_index")
     if pair is None or pair < 0:
         _fail("missing or invalid pair_index")
@@ -404,6 +489,9 @@ def _parse_example(row: dict[str, Any], is_outcome: bool) -> dict[str, Any]:
     physical_group = _int_like(_lookup(row, "physical_decision_id", "physical_decision_id_u32", "physical_decision_id_u64", "physical_decision_ordinal", "physical_decision_ordinal_u64", "physical_decision_ordinal_u64_hex"), "physical_decision_id")
     if physical_group is None and not is_outcome:
         _fail("teacher row is missing physical_decision_id")
+    step = _int_like(_lookup(row, "step", "policy_step", "policy_step_count"), "step")
+    if step is None or step < 0:
+        _fail("missing or invalid policy step")
     decision_kind = _lookup(row, "decision_kind", "kind", default="unknown")
     if not isinstance(decision_kind, str):
         decision_kind = str(decision_kind)
@@ -420,9 +508,12 @@ def _parse_example(row: dict[str, Any], is_outcome: bool) -> dict[str, Any]:
         "action_ref_features": torch.from_numpy(ref_features.copy()),
         "ref_action_indices": torch.from_numpy(ref_actions.copy()),
         "ref_node_indices": torch.from_numpy(ref_nodes.copy()),
+        "ref_card_ids": torch.from_numpy(ref_cards.copy()),
+        "selected_public_card_ids": torch.from_numpy(selected_public_card_ids.copy()),
         "old_logits": torch.from_numpy(old_logits.copy()),
         "old_value": torch.tensor(old_value, dtype=torch.float32),
         "selected_index": selected,
+        "selected_action_kind": selected_action_kind,
         "pair_index": pair,
         "acting_seat": acting,
         "candidate_seat": candidate,
@@ -430,6 +521,7 @@ def _parse_example(row: dict[str, Any], is_outcome: bool) -> dict[str, Any]:
         "substep_count": substeps_raw,
         "substep_index": substep_index,
         "physical_group": physical_group,
+        "step": step,
         "decision_kind": decision_kind,
         "terminal_reward": target,
     }
@@ -508,9 +600,34 @@ def _validate_natural_terminal(row: dict[str, Any], require_reward: bool) -> flo
     return reward
 
 
-def _load_teacher(path: Path) -> list[dict[str, Any]]:
+def _terminal_join_metadata(row: dict[str, Any]) -> dict[str, Any]:
+    terminal = row.get("terminal")
+    if not isinstance(terminal, dict):
+        _fail("terminal row has no terminal object")
+    policy_steps = _int_like(terminal.get("policy_step_count"), "terminal policy_step_count")
+    physical_decisions = _int_like(
+        terminal.get("physical_decision_count"), "terminal physical_decision_count"
+    )
+    if policy_steps is None or policy_steps < 0 or physical_decisions is None or physical_decisions < 0:
+        _fail("terminal decision counts are invalid")
+    return {
+        "deck_ids": row.get("deck_ids"),
+        "randomization_identity": row.get("randomization_identity"),
+        "base_seed_u64_hex": row.get("base_seed_u64_hex"),
+        "pair_environment_seed_u64_hex": row.get("pair_environment_seed_u64_hex"),
+        "terminal": terminal,
+        "diagnostic_state_hash_u64_hex": row.get("diagnostic_state_hash_u64_hex"),
+        "core_environment_hash_u64_hex": row.get("core_environment_hash_u64_hex"),
+        "policy_step_count": policy_steps,
+        "physical_decision_count": physical_decisions,
+    }
+
+
+def _load_teacher(
+    path: Path,
+) -> tuple[list[dict[str, Any]], dict[tuple[int, str, int], dict[str, Any]]]:
     examples: list[dict[str, Any]] = []
-    terminals: set[tuple[int, str, int]] = set()
+    terminals: dict[tuple[int, str, int], dict[str, Any]] = {}
     saw_header = False
     for row in _rows(path):
         record_type = row.get("record_type")
@@ -537,7 +654,7 @@ def _load_teacher(path: Path) -> list[dict[str, Any]]:
             key = _terminal_key(row)
             if key in terminals:
                 _fail(f"duplicate teacher terminal {key}")
-            terminals.add(key)
+            terminals[key] = _terminal_join_metadata(row)
         else:
             _fail(f"unknown teacher record_type {record_type!r}")
     if not saw_header:
@@ -546,12 +663,14 @@ def _load_teacher(path: Path) -> list[dict[str, Any]]:
         if example["episode_key"] not in terminals:
             _fail(f"teacher decision lacks natural terminal {example['episode_key']}")
     _validate_physical_groups(examples, "teacher")
-    return examples
+    return examples, terminals
 
 
-def _load_outcome(path: Path) -> list[dict[str, Any]]:
+def _load_outcome(
+    path: Path,
+) -> tuple[list[dict[str, Any]], dict[tuple[int, str, int], dict[str, Any]]]:
     examples: list[dict[str, Any]] = []
-    terminals: dict[tuple[int, str, int], tuple[float, int]] = {}
+    terminals: dict[tuple[int, str, int], tuple[float, int, dict[str, Any]]] = {}
     saw_header = False
     for row in _rows(path):
         record_type = row.get("record_type")
@@ -583,7 +702,7 @@ def _load_outcome(path: Path) -> list[dict[str, Any]]:
             )
             if declared_count is None or declared_count < 0:
                 _fail("outcome terminal has invalid decision count")
-            terminals[key] = (float(reward), declared_count)
+            terminals[key] = (float(reward), declared_count, _terminal_join_metadata(row))
         else:
             _fail(f"unknown outcome record_type {record_type!r}")
     if not saw_header:
@@ -595,27 +714,105 @@ def _load_outcome(path: Path) -> list[dict[str, Any]]:
             _fail(f"outcome decision lacks natural terminal {key}")
         example["terminal_reward"] = terminals[key][0]
         observed_counts[key] = observed_counts.get(key, 0) + 1
-    for key, (_, declared_count) in terminals.items():
+    for key, (_, declared_count, _) in terminals.items():
         if observed_counts.get(key, 0) != declared_count:
             _fail(
                 f"outcome decision count mismatch for {key}: "
                 f"observed {observed_counts.get(key, 0)} declared {declared_count}"
             )
     _validate_physical_groups(examples, "outcome")
-    return examples
+    return examples, {key: value[2] for key, value in terminals.items()}
 
 
-def prepare_cache(teacher_path: Path, outcome_path: Path, cache_path: Path, teacher_sha_prefix: str, outcome_sha_prefix: str) -> dict[str, Any]:
+def _validate_complete_history_join(
+    policy: list[dict[str, Any]],
+    value: list[dict[str, Any]],
+    teacher_terminals: dict[tuple[int, str, int], dict[str, Any]],
+    outcome_terminals: dict[tuple[int, str, int], dict[str, Any]],
+) -> dict[str, Any]:
+    if teacher_terminals.keys() != outcome_terminals.keys():
+        _fail("complete-history exports do not cover identical episodes")
+    episodes: dict[tuple[int, str, int], list[tuple[str, dict[str, Any]]]] = {}
+    for source, source_rows in (("teacher", policy), ("outcome", value)):
+        for example in source_rows:
+            episodes.setdefault(example["episode_key"], []).append((source, example))
+    action_kind_counts: dict[str, int] = {}
+    total_policy_steps = 0
+    total_physical_decisions = 0
+    for key, tagged_rows in episodes.items():
+        if teacher_terminals[key] != outcome_terminals[key]:
+            _fail(f"complete-history terminal replay mismatch for {key}")
+        terminal = outcome_terminals[key]
+        policy_rows = [row for source, row in tagged_rows if source == "teacher"]
+        value_rows = [row for source, row in tagged_rows if source == "outcome"]
+        rows = [row for _, row in tagged_rows]
+        if any(row["acting_seat"] == row["candidate_seat"] for row in policy_rows):
+            _fail(f"teacher stream contains a candidate action for {key}")
+        if any(row["acting_seat"] != row["candidate_seat"] for row in value_rows):
+            _fail(f"outcome stream contains an opponent action for {key}")
+        steps = sorted(row["step"] for row in rows)
+        expected_steps = list(range(terminal["policy_step_count"]))
+        if steps != expected_steps:
+            _fail(f"complete-history policy steps are not exact and contiguous for {key}")
+        groups: dict[int, list[tuple[str, dict[str, Any]]]] = {}
+        for source, row in tagged_rows:
+            groups.setdefault(row["physical_group"], []).append((source, row))
+            kind = row["selected_action_kind"]
+            action_kind_counts[kind] = action_kind_counts.get(kind, 0) + 1
+        expected_groups = list(range(terminal["physical_decision_count"]))
+        if sorted(groups) != expected_groups:
+            _fail(f"complete-history physical decisions are not exact and contiguous for {key}")
+        for physical_group, tagged_group_rows in groups.items():
+            sources = {source for source, _ in tagged_group_rows}
+            group_rows = [row for _, row in tagged_group_rows]
+            if len(sources) != 1:
+                _fail(f"complete-history group {key}/{physical_group} mixes exports")
+            actors = {row["acting_seat"] for row in group_rows}
+            if len(actors) != 1:
+                _fail(f"complete-history group {key}/{physical_group} mixes actors")
+            ordered_steps = [row["step"] for row in sorted(group_rows, key=lambda row: row["substep_index"])]
+            if ordered_steps != sorted(ordered_steps):
+                _fail(f"complete-history group {key}/{physical_group} has inconsistent chronology")
+        total_policy_steps += len(steps)
+        total_physical_decisions += len(groups)
+    return {
+        "episode_count": len(episodes),
+        "pair_count": len({key[0] for key in episodes}),
+        "policy_step_count": total_policy_steps,
+        "physical_decision_count": total_physical_decisions,
+        "selected_action_kind_counts": dict(sorted(action_kind_counts.items())),
+        "selected_semantics_public": True,
+        "terminal_replays_exact": True,
+        "complete_policy_steps": True,
+        "complete_physical_decisions": True,
+    }
+
+
+def prepare_cache(
+    teacher_path: Path,
+    outcome_path: Path,
+    cache_path: Path,
+    teacher_sha_prefix: str,
+    outcome_sha_prefix: str,
+    complete_history: bool,
+) -> dict[str, Any]:
     teacher_sha = _sha256(teacher_path)
     outcome_sha = _sha256(outcome_path)
     if teacher_sha_prefix and not teacher_sha.startswith(teacher_sha_prefix.lower()):
         _fail(f"teacher SHA-256 {teacher_sha} does not start with required {teacher_sha_prefix}")
     if outcome_sha_prefix and not outcome_sha.startswith(outcome_sha_prefix.lower()):
         _fail(f"outcome SHA-256 {outcome_sha} does not start with required {outcome_sha_prefix}")
-    policy = _load_teacher(teacher_path)
-    value = _load_outcome(outcome_path)
+    policy, teacher_terminals = _load_teacher(teacher_path)
+    value, outcome_terminals = _load_outcome(outcome_path)
     if not policy or not value:
         _fail("teacher and outcome streams must both contain examples")
+    complete_history_join = (
+        _validate_complete_history_join(
+            policy, value, teacher_terminals, outcome_terminals
+        )
+        if complete_history
+        else None
+    )
     card_max = max(int(example["object_card_ids"].max().item()) for example in policy + value)
     group_max = max(int(example["object_groups"].max().item()) for example in policy + value)
     payload = {
@@ -624,11 +821,12 @@ def prepare_cache(teacher_path: Path, outcome_path: Path, cache_path: Path, teac
         "value": value,
         "card_max": card_max,
         "group_max": group_max,
+        "complete_history_join": complete_history_join,
         "source": {"teacher": str(teacher_path), "outcome": str(outcome_path), "teacher_sha256": teacher_sha, "outcome_sha256": outcome_sha},
     }
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, cache_path)
-    return {"cache": str(cache_path), "policy_examples": len(policy), "value_examples": len(value), "card_max": card_max, "group_max": group_max}
+    return {"cache": str(cache_path), "policy_examples": len(policy), "value_examples": len(value), "card_max": card_max, "group_max": group_max, "complete_history_join": complete_history_join}
 
 
 def _model_vocab(examples: list[dict[str, Any]]) -> tuple[int, int]:
@@ -665,9 +863,87 @@ def _attach_action_history(examples: list[dict[str, Any]], maximum_length: int) 
             )
 
 
+def _attach_complete_action_history(
+    policy: list[dict[str, Any]],
+    value: list[dict[str, Any]],
+    maximum_length: int,
+    card_vocab: int,
+) -> None:
+    episodes: dict[tuple[int, str, int], list[dict[str, Any]]] = {}
+    for example in policy + value:
+        episodes.setdefault(example["episode_key"], []).append(example)
+    for rows in episodes.values():
+        groups: dict[int, list[dict[str, Any]]] = {}
+        for example in rows:
+            groups.setdefault(example["physical_group"], []).append(example)
+        completed: list[tuple[int, int, Tensor, Tensor]] = []
+        for physical_group in sorted(groups):
+            group_rows = sorted(groups[physical_group], key=lambda row: row["step"])
+            actor = group_rows[0]["acting_seat"]
+            if any(row["acting_seat"] != actor for row in group_rows):
+                _fail("complete-history physical group mixes actors")
+            selected_rows = [
+                row["action_features"][row["selected_index"], :ACTION_EXPLICIT_DIM]
+                .detach()
+                .clone()
+                for row in group_rows
+            ]
+            card_histogram = torch.zeros(card_vocab, dtype=torch.float32)
+            selected_card_count = 0
+            for row in group_rows:
+                selected_cards = row["selected_public_card_ids"].long() % card_vocab
+                if selected_cards.numel():
+                    card_histogram.index_add_(
+                        0,
+                        selected_cards,
+                        torch.ones(selected_cards.shape[0], dtype=torch.float32),
+                    )
+                    selected_card_count += selected_cards.shape[0]
+            if selected_card_count:
+                card_histogram /= float(selected_card_count)
+            completed.append(
+                (
+                    physical_group,
+                    actor,
+                    torch.stack(selected_rows).mean(dim=0),
+                    card_histogram,
+                )
+            )
+        for example in rows:
+            prior = [entry for entry in completed if entry[0] < example["physical_group"]]
+            history_rows: list[Tensor] = []
+            for _, actor, action, card_histogram in prior[-maximum_length:]:
+                role = torch.tensor(
+                    [
+                        1.0 if actor == example["acting_seat"] else 0.0,
+                        1.0 if actor != example["acting_seat"] else 0.0,
+                    ],
+                    dtype=torch.float32,
+                )
+                history_rows.append(torch.cat((action, role, card_histogram)))
+            example["history_features"] = (
+                torch.stack(history_rows)
+                if history_rows
+                else torch.zeros(
+                    (
+                        0,
+                        ACTION_EXPLICIT_DIM
+                        + COMPLETE_HISTORY_ROLE_DIM
+                        + card_vocab,
+                    ),
+                    dtype=torch.float32,
+                )
+            )
+
+
 class StructuredAdapter(nn.Module):
     def __init__(
-        self, card_vocab: int, group_vocab: int, dim: int, history_length: int = 0
+        self,
+        card_vocab: int,
+        group_vocab: int,
+        dim: int,
+        history_length: int = 0,
+        history_feature_dim: int = ACTION_EXPLICIT_DIM,
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -675,8 +951,9 @@ class StructuredAdapter(nn.Module):
         group_dim = max(8, dim // 3)
         self.state = nn.Sequential(nn.Linear(STATE_DIM, dim), nn.Tanh(), nn.Linear(dim, dim), nn.Tanh())
         self.history_length = history_length
+        self.history_feature_dim = history_feature_dim
         self.history = (
-            nn.GRU(ACTION_EXPLICIT_DIM, dim, batch_first=True)
+            nn.GRU(history_feature_dim, dim, batch_first=True)
             if history_length > 0
             else None
         )
@@ -1001,11 +1278,18 @@ def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Name
         _fail("cache version mismatch")
     policy = cache["policy"]
     value = cache["value"]
-    if args.history_length > 0:
-        _attach_action_history(policy, args.history_length)
-        _attach_action_history(value, args.history_length)
     all_examples = policy + value
     card_vocab, group_vocab = _model_vocab(all_examples)
+    if args.history_length > 0:
+        if args.complete_history:
+            if not cache.get("complete_history_join"):
+                _fail("complete-history fold requires a validated complete-history cache")
+            _attach_complete_action_history(
+                policy, value, args.history_length, card_vocab
+            )
+        else:
+            _attach_action_history(policy, args.history_length)
+            _attach_action_history(value, args.history_length)
     policy_train = [example for example in policy if example["pair_index"] % FOLDS != fold]
     policy_test = [example for example in policy if example["pair_index"] % FOLDS == fold]
     value_train = [example for example in value if example["pair_index"] % FOLDS != fold]
@@ -1014,7 +1298,18 @@ def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Name
         _fail(f"fold {fold} lacks train or heldout examples")
     _assign_episode_weights(value_train)
     _configure(args.seed + fold, args.threads)
-    model = StructuredAdapter(card_vocab, group_vocab, args.dim, args.history_length)
+    history_feature_dim = (
+        ACTION_EXPLICIT_DIM + COMPLETE_HISTORY_ROLE_DIM + card_vocab
+        if args.complete_history
+        else ACTION_EXPLICIT_DIM
+    )
+    model = StructuredAdapter(
+        card_vocab,
+        group_vocab,
+        args.dim,
+        args.history_length,
+        history_feature_dim,
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     rng = random.Random(args.seed + fold)
     steps_per_epoch = max(math.ceil(len(policy_train) / args.batch_size), math.ceil(len(value_train) / args.batch_size))
@@ -1046,7 +1341,7 @@ def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Name
     result = {
         "schema": SCRIPT_VERSION,
         "fold": fold,
-        "config": {"dim": args.dim, "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr, "weight_decay": args.weight_decay, "value_coefficient": args.value_coefficient, "seed": args.seed, "threads": args.threads, "history_length": args.history_length, "history_feature_dim": ACTION_EXPLICIT_DIM if args.history_length > 0 else 0},
+        "config": {"dim": args.dim, "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr, "weight_decay": args.weight_decay, "value_coefficient": args.value_coefficient, "seed": args.seed, "threads": args.threads, "history_length": args.history_length, "complete_history": args.complete_history, "history_feature_dim": history_feature_dim if args.history_length > 0 else 0},
         "counts": {"policy_train": len(policy_train), "policy_heldout": len(policy_test), "value_train": len(value_train), "value_heldout": len(value_test), "train_pairs": sorted({e["pair_index"] for e in policy_train}), "heldout_pairs": sorted({e["pair_index"] for e in policy_test})},
         "train_metrics": {"final": train_history[-1], "history": train_history},
         "heldout": {"policy": policy_metrics, "value": value_metrics},
@@ -1188,6 +1483,7 @@ def _self_example(index: int, rng: np.random.Generator) -> dict[str, Any]:
     refs = rng.normal(size=(n_refs, REF_DIM)).astype(np.float32)
     ref_actions = np.asarray([i % n_actions for i in range(n_refs)], dtype=np.int64)
     ref_nodes = np.asarray([i % n_objects for i in range(n_refs)], dtype=np.int64)
+    ref_cards = np.asarray([1 + i % n_objects for i in range(n_refs)], dtype=np.int64)
     return {
         "state": torch.from_numpy(rng.normal(size=STATE_DIM).astype(np.float32)),
         "object_features": torch.from_numpy(objects),
@@ -1200,9 +1496,12 @@ def _self_example(index: int, rng: np.random.Generator) -> dict[str, Any]:
         "action_ref_features": torch.from_numpy(refs),
         "ref_action_indices": torch.from_numpy(ref_actions),
         "ref_node_indices": torch.from_numpy(ref_nodes),
+        "ref_card_ids": torch.from_numpy(ref_cards),
+        "selected_public_card_ids": torch.tensor([1 + index % n_objects], dtype=torch.int64),
         "old_logits": torch.from_numpy(rng.normal(size=n_actions).astype(np.float32)),
         "old_value": torch.tensor(float(index) / 4.0, dtype=torch.float32),
         "selected_index": index % n_actions,
+        "selected_action_kind": "pass",
         "pair_index": index,
         "acting_seat": index % 2,
         "candidate_seat": (index + 1) % 2,
@@ -1211,6 +1510,7 @@ def _self_example(index: int, rng: np.random.Generator) -> dict[str, Any]:
         "substep_count": 1 + index % 3,
         "substep_index": index % (1 + index % 3),
         "physical_group": index,
+        "step": index,
         "decision_kind": "synthetic",
         "terminal_reward": float(-1 if index % 3 == 0 else 1),
     }
@@ -1229,17 +1529,44 @@ def self_test(args: argparse.Namespace) -> dict[str, Any]:
             examples[index]["candidate_seat"] = 0
             examples[index]["episode_key"] = (0, "shared-history-self-test", 0)
             examples[index]["physical_group"] = index
-        _attach_action_history(examples, args.history_length)
+            examples[index]["step"] = index
+        if args.complete_history:
+            _attach_complete_action_history(
+                examples[:3], examples[3:], args.history_length, 32
+            )
+        else:
+            _attach_action_history(examples, args.history_length)
         expected_first = examples[0]["action_features"][
             examples[0]["selected_index"], :ACTION_EXPLICIT_DIM
         ]
+        if args.complete_history:
+            expected_card_histogram = torch.zeros(32, dtype=torch.float32)
+            expected_card_histogram[
+                examples[0]["selected_public_card_ids"].long()
+            ] = 1.0
+            expected_first = torch.cat(
+                (
+                    expected_first,
+                    torch.tensor([0.0, 1.0], dtype=torch.float32),
+                    expected_card_histogram,
+                )
+            )
+        expected_lengths = [min(index, args.history_length) for index in range(3)]
         history_check = (
-            examples[0]["history_features"].shape[0] == 0
-            and examples[1]["history_features"].shape[0] == 1
-            and examples[2]["history_features"].shape[0] == 2
+            all(
+                examples[index]["history_features"].shape[0] == expected_lengths[index]
+                for index in range(3)
+            )
             and torch.equal(examples[1]["history_features"][0], expected_first)
         )
-    model = StructuredAdapter(32, 8, args.dim, args.history_length)
+    history_feature_dim = (
+        ACTION_EXPLICIT_DIM + COMPLETE_HISTORY_ROLE_DIM + 32
+        if args.complete_history
+        else ACTION_EXPLICIT_DIM
+    )
+    model = StructuredAdapter(
+        32, 8, args.dim, args.history_length, history_feature_dim
+    )
     model.force_nonzero_residual(args.seed)
     with torch.no_grad():
         individual = [model(example) for example in examples]
@@ -1254,7 +1581,7 @@ def self_test(args: argparse.Namespace) -> dict[str, Any]:
     optimizer.step()
     parameter_delta = max(float((after.detach() - before[index]).abs().max()) for index, after in enumerate(model.parameters()))
     checks = {"variable_sizes": True, "history_excludes_current_decision": history_check, "batching_max_delta_le_1e-6": batching_delta <= 1e-6, "permutation_max_delta_le_1e-5": permutation["permutation_max_delta"] <= 1e-5, "ref_removal_meaningful": permutation["ref_removal_affected_rate"] >= 0.20, "optimizer_step_changed_parameter": parameter_delta > 0.0}
-    result = {"schema": SCRIPT_VERSION + ".self_test", "pass": all(checks.values()), "checks": checks, "batching_max_delta": batching_delta, "diagnostics": permutation, "optimizer_parameter_max_delta": parameter_delta, "runtime_seconds": time.perf_counter() - started, "config": {"dim": args.dim, "seed": args.seed, "threads": args.threads, "history_length": args.history_length}}
+    result = {"schema": SCRIPT_VERSION + ".self_test", "pass": all(checks.values()), "checks": checks, "batching_max_delta": batching_delta, "diagnostics": permutation, "optimizer_parameter_max_delta": parameter_delta, "runtime_seconds": time.perf_counter() - started, "config": {"dim": args.dim, "seed": args.seed, "threads": args.threads, "history_length": args.history_length, "complete_history": args.complete_history, "history_feature_dim": history_feature_dim if args.history_length > 0 else 0}}
     if not result["pass"]:
         _fail("self-test failed: " + json.dumps(checks, sort_keys=True))
     return result
@@ -1281,6 +1608,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=20260802)
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--history-length", type=int, default=0)
+    parser.add_argument("--complete-history", action="store_true")
     parser.add_argument("--teacher-sha256-prefix", default=TEACHER_SHA256_PREFIX)
     parser.add_argument("--outcome-sha256-prefix", default=OUTCOME_SHA256_PREFIX)
     return parser
@@ -1290,10 +1618,12 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.dim < 8 or args.epochs < 1 or args.batch_size < 1 or args.lr <= 0 or args.threads < 1 or args.history_length < 0:
         _fail("invalid training configuration")
+    if args.complete_history and args.history_length < 1 and not args.prepare_cache:
+        _fail("--complete-history requires --history-length for self-test and fold modes")
     if args.prepare_cache:
         if args.teacher_jsonl is None or args.outcome_jsonl is None:
             _fail("--prepare-cache requires --teacher-jsonl and --outcome-jsonl")
-        result = prepare_cache(args.teacher_jsonl, args.outcome_jsonl, args.cache, args.teacher_sha256_prefix, args.outcome_sha256_prefix)
+        result = prepare_cache(args.teacher_jsonl, args.outcome_jsonl, args.cache, args.teacher_sha256_prefix, args.outcome_sha256_prefix, args.complete_history)
     elif args.self_test:
         result = self_test(args)
     elif args.fold is not None:
