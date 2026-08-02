@@ -14,7 +14,7 @@ from typing import Any, TextIO
 
 COLLECTOR_SCHEMA = "mtg-kernel-scaled-structured-corpus-collector/v1"
 REPORT_SCHEMA = "mtg-kernel-scaled-structured-corpus/v1"
-REPEAT_SCHEMA = "mtg-kernel-scaled-structured-corpus-repeat/v1"
+REPEAT_SCHEMA = "mtg-kernel-scaled-structured-corpus-repeat-equivalence/v1"
 PRIMARY_PAIRS = 2_048
 PARENT_MANIFEST_SHA256 = "706b3aa80ec7a3c067d458fef06bb2237320543f202fb2349c5cb885975fdbbb"
 PARENT_PAYLOAD_SHA256 = "eb83be33bcb7418b6f85ec9687da4b7ca5620a1df64721a1942d2793588bbd3c"
@@ -168,19 +168,34 @@ def _validate_repeat(evidence_root: Path, tasks: list[dict[str, Any]]) -> dict[s
     task = report.get("task")
     if not any(result.get("task") == task for result in tasks):
         _fail("repeat task is not a successful collection task")
+    if (
+        report.get("exact_pair_count", 0) < 1
+        or report.get("model_inputs_and_parent_outputs_exact") is not True
+        or report.get("terminal_outcomes_and_counts_exact") is not True
+        or report.get("remaining_differences")
+        != "interchangeable_duplicate_card_arena_ids_only"
+    ):
+        _fail("repeat equivalence invariants are not exact")
+    raw = report.get("raw_repeat_report", {})
+    raw_path = Path(raw.get("path", ""))
+    if not raw_path.is_file() or _sha256(raw_path) != raw.get("sha256"):
+        _fail("raw repeat report identity mismatch")
     for kind in ("teacher", "outcome"):
-        comparison = report.get("comparisons", {}).get(kind, {})
+        comparison = report.get(kind, {})
         original = Path(comparison.get("original_path", ""))
         repeated = Path(comparison.get("repeat_path", ""))
         if (
-            comparison.get("byte_identical") is not True
-            or comparison.get("original_sha256") != comparison.get("repeat_sha256")
-            or not original.is_file()
+            not original.is_file()
             or not repeated.is_file()
             or _sha256(original) != comparison.get("original_sha256")
             or _sha256(repeated) != comparison.get("repeat_sha256")
         ):
-            _fail(f"{kind} repeat bytes are not exact")
+            _fail(f"{kind} repeat source identity mismatch")
+    exact_pair = str(report["exact_pairs"][0])
+    for kind in ("teacher", "outcome"):
+        digests = report[kind]["pair_digests"].get(exact_pair, {})
+        if digests.get("original") != digests.get("repeat"):
+            _fail(f"{kind} exact repeated pair digest differs")
     return {"path": str(path), "sha256": _sha256(path), "pass": True}
 
 

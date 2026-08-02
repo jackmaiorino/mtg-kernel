@@ -42,7 +42,14 @@ Publish a corpus only if all conditions hold:
    exports, complete physical substeps, and exact parent identity.
 3. There are no candidate projections, scorer fallbacks, alignment failures,
    duplicate episodes, or pair overlap.
-4. A repeated successful task produces identical teacher and outcome bytes.
+4. A repeated task contains at least one byte-identical complete seat-swapped
+   pair. Across the full task, model inputs, parent outputs, terminal outcomes,
+   and decision counts must be exact. The only permitted remaining difference
+   is which arena ID represents interchangeable duplicate copies of the same
+   card. This amendment follows two repeats that each changed only duplicate
+   discard identities while preserving every terminal result and count; it
+   does not permit a different card definition, tensor, parent output, game
+   result, or trajectory length.
 
 ## Downstream screen
 
