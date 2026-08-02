@@ -51,6 +51,7 @@ def _parse_shard(job: dict[str, Any]) -> dict[str, Any]:
         job["outcome_sha256"],
         True,
     )
+    gc.collect()
     return {
         "task": job["task"],
         "teacher_sha256": job["teacher_sha256"],
@@ -115,9 +116,7 @@ def prepare(
             }
         )
     shard_reports: list[dict[str, Any]] = []
-    with concurrent.futures.ProcessPoolExecutor(
-        max_workers=WORKERS, max_tasks_per_child=2
-    ) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=WORKERS) as executor:
         futures = [executor.submit(_parse_shard, job) for job in jobs]
         for future in concurrent.futures.as_completed(futures):
             shard_reports.append(future.result())
