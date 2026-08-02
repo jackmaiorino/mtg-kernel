@@ -3245,20 +3245,12 @@ pub(crate) struct NativeXmageCp7OutcomeInferenceV1 {
 }
 
 impl NativeXmageCp7OutcomeInferenceV1 {
-    pub(crate) fn score_decision_v1(
+    pub(crate) fn score_encoded_decision_v1(
         &self,
-        decision: FlatScoringDecisionViewV2<'_>,
+        decision: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativeXmageCp7OutcomeInferenceOutputV1, ()> {
-        let mut tensorizer = NativeFlatTensorizerV2::new();
-        let mut tensor = NativeFlatDecisionTensorV2::default();
-        tensorizer.fill(decision, &mut tensor).map_err(|_| ())?;
-        let output = self
-            .state
-            .model_v1()
-            .forward_v1(flat_tensor_view_v1(&tensor))
-            .map_err(|_| ())?;
-        if output.logits.len() != decision.actions().len()
-            || output.logits.is_empty()
+        let output = self.state.model_v1().forward_v1(decision).map_err(|_| ())?;
+        if output.logits.is_empty()
             || output.logits.iter().any(|value| !value.is_finite())
             || !output.value.is_finite()
         {
@@ -3268,6 +3260,20 @@ impl NativeXmageCp7OutcomeInferenceV1 {
             logits: output.logits,
             value: output.value,
         })
+    }
+
+    pub(crate) fn score_decision_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+    ) -> Result<NativeXmageCp7OutcomeInferenceOutputV1, ()> {
+        let mut tensorizer = NativeFlatTensorizerV2::new();
+        let mut tensor = NativeFlatDecisionTensorV2::default();
+        tensorizer.fill(decision, &mut tensor).map_err(|_| ())?;
+        let output = self.score_encoded_decision_v1(flat_tensor_view_v1(&tensor))?;
+        if output.logits.len() != decision.actions().len() {
+            return Err(());
+        }
+        Ok(output)
     }
 
     pub(crate) fn score_decision_with_latents_v1(

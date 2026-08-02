@@ -26,6 +26,7 @@ use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1,
 };
 use crate::native_training_store_layout_v2::NativeTrainingStoreFinalNameV2;
+use crate::native_xmage_cp7_outcome_reinforce_v1::load_xmage_cp7_outcome_inference_v1;
 use crate::rl::{parse_strict_json_value, ActionSemanticV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -378,6 +379,96 @@ struct TeacherDatasetV1 {
     terminal_row_count: usize,
     pair_indices: Vec<u64>,
     groups: Vec<TeacherPhysicalDecisionV1>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StructuredParentLogitRowV1 {
+    teacher_decision_ordinal: u64,
+    record_ordinal: u64,
+    legal_action_count: u32,
+    exported_g384_logits_f32_bits: Vec<u32>,
+    retained_parent_logits_f32_bits: Vec<u32>,
+    retained_parent_value_f32_bits: u32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StructuredParentLogitReportV1 {
+    schema: &'static str,
+    teacher_jsonl_sha256: String,
+    retained_parent_manifest_sha256: String,
+    retained_parent_payload_sha256: String,
+    retained_parent_native_state_sha256: String,
+    retained_parent_model_parameter_sha256: String,
+    retained_parent_adam_step: u64,
+    rows: Vec<StructuredParentLogitRowV1>,
+}
+
+/// Recomputes the strict CP7 teacher tensor rows under the retained outcome
+/// parent so a structured residual is fit and deployed over the same logits.
+pub fn write_structured_parent_logits_v1(
+    parent_outcome_root: impl AsRef<Path>,
+    teacher_jsonl: impl AsRef<Path>,
+    output_json: impl AsRef<Path>,
+) -> Result<(), Box<dyn Error>> {
+    let dataset = load_teacher_dataset_v1(teacher_jsonl.as_ref())?;
+    let parent = load_xmage_cp7_outcome_inference_v1(parent_outcome_root.as_ref())?;
+    let mut examples: Vec<_> = dataset
+        .groups
+        .iter()
+        .flat_map(|group| group.examples.iter())
+        .collect();
+    examples.sort_by_key(|example| example.teacher_decision_ordinal);
+    if examples.len() != dataset.decision_row_count
+        || examples
+            .iter()
+            .enumerate()
+            .any(|(index, example)| example.teacher_decision_ordinal != index as u64)
+    {
+        return Err(invalid_data_v1("teacher decision ordinals are not exact").into());
+    }
+    let mut rows = Vec::with_capacity(examples.len());
+    for example in examples {
+        let output = parent
+            .score_encoded_decision_v1(example.tensor.view_v1())
+            .map_err(|_| invalid_data_v1("retained parent teacher-row scoring failed"))?;
+        if output.logits_v1().len() != example.legal_action_count as usize {
+            return Err(invalid_data_v1("retained parent logit width mismatch").into());
+        }
+        rows.push(StructuredParentLogitRowV1 {
+            teacher_decision_ordinal: example.teacher_decision_ordinal,
+            record_ordinal: example.record_ordinal,
+            legal_action_count: example.legal_action_count,
+            exported_g384_logits_f32_bits: example.old_policy_logits_f32_bits.clone(),
+            retained_parent_logits_f32_bits: output
+                .logits_v1()
+                .iter()
+                .map(|value| value.to_bits())
+                .collect(),
+            retained_parent_value_f32_bits: output.value_v1().to_bits(),
+        });
+    }
+    let report = StructuredParentLogitReportV1 {
+        schema: "mtg-kernel-structured-residual-retained-parent-logits/v1",
+        teacher_jsonl_sha256: dataset.teacher_jsonl_sha256,
+        retained_parent_manifest_sha256: lower_hex_raw32_v1(parent.manifest_sha256_v1()),
+        retained_parent_payload_sha256: lower_hex_raw32_v1(parent.payload_sha256_v1()),
+        retained_parent_native_state_sha256: lower_hex_raw32_v1(parent.native_state_sha256_v1()),
+        retained_parent_model_parameter_sha256: lower_hex_raw32_v1(
+            parent.model_parameter_sha256_v1(),
+        ),
+        retained_parent_adam_step: parent.adam_step_v1(),
+        rows,
+    };
+    let mut bytes = serde_json::to_vec_pretty(&report)?;
+    bytes.push(b'\n');
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output_json.as_ref())?;
+    let mut writer = BufWriter::new(file);
+    writer.write_all(&bytes)?;
+    writer.flush()?;
+    Ok(())
 }
 
 fn validate_header_v1(header: &TeacherHeaderV1) -> DynResultV1<()> {
