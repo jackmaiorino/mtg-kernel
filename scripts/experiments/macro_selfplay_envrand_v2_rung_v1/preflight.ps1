@@ -22,9 +22,9 @@ $executableHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $executable).Hash
 
 $parentA = Join-Path $preflightRoot 'repeat-a'
 $parentB = Join-Path $preflightRoot 'repeat-b'
-Invoke-MacroTrainingRun -Executable $executable -Seed 969999 -Updates 1 -StoreParent $parentA -LogPath (Join-Path $preflightRoot 'repeat-a.log')
+Invoke-MacroTrainingRun -Executable $executable -Seed 969999 -Updates 4 -StoreParent $parentA -LogPath (Join-Path $preflightRoot 'repeat-a.log')
 Assert-Gpu1Idle | Out-Null
-Invoke-MacroTrainingRun -Executable $executable -Seed 969999 -Updates 1 -StoreParent $parentB -LogPath (Join-Path $preflightRoot 'repeat-b.log')
+Invoke-MacroTrainingRun -Executable $executable -Seed 969999 -Updates 4 -StoreParent $parentB -LogPath (Join-Path $preflightRoot 'repeat-b.log')
 
 $storeA = Join-Path $parentA 'run-0\store'
 $storeB = Join-Path $parentB 'run-0\store'
@@ -40,8 +40,8 @@ $summary = [ordered]@{
     gpu = $gpu
     pool_json_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $script:PoolJson).Hash.ToLowerInvariant()
     seed = 969999
-    updates = 1
-    episodes_per_repeat = 64
+    updates = 4
+    episodes_per_repeat = 256
     store_tree_sha256_a = $hashA
     store_tree_sha256_b = $hashB
     toolchain = Get-ToolchainRecord
