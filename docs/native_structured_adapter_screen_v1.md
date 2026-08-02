@@ -15,6 +15,8 @@ This is a development screen. The corpora have already informed prior experiment
 - Reward: terminal win, loss, or draw only. No shaped target is introduced.
 - Execution: deterministic PyTorch CPU prototype. Four folds may run concurrently after one shared cache build.
 
+The loader rechecks that every teacher physical decision has all declared autoregressive substeps and that every outcome episode ends naturally with a terminal return in `-1, 0, 1`. It consumes only the committed typed tensors. XMage diagnostic fields outside that contract are not inputs.
+
 ## Candidate representation
 
 The parent logit and value are immutable inputs. The adapter emits residuals whose final layers are initialized to zero, so initialization is exactly the parent.
@@ -46,6 +48,8 @@ Aggregate the four held-out folds. Pass only if every condition holds:
 7. Removing valid action references changes at least 20 percent of eligible held-out decisions by more than `1e-4`, demonstrating that the new structured path is used.
 
 The policy and value gates are necessary but not sufficient. Prior behavior cloning improved offline CP7 agreement and reduced live strength, so an offline pass cannot produce a live candidate directly.
+
+The report also breaks policy NLL down by decision kind and evaluates the trained residual after zeroing the 96-feature state digest tail and 96-feature action digest tail. These are diagnostics, not additional acceptance gates.
 
 ## Disposition
 
