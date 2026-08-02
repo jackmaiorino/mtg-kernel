@@ -15,6 +15,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collect_scaled_structured_corpus_v1 as collector  # noqa: E402
 import finalize_scaled_structured_corpus_v1 as finalizer  # noqa: E402
+import prepare_scaled_cache_parallel_v1 as parallel_cache  # noqa: E402
 import run_scaled_complete_history_v1 as scaled  # noqa: E402
 
 
@@ -165,9 +166,14 @@ def execute(root: Path) -> dict[str, Any]:
     _save(pipeline_path, state, "starting")
     try:
         _wait_for_collection(root, pipeline_path, state)
-        _save(pipeline_path, state, "finalizing-corpus")
         combine_report = root / "corpus" / "combine-report.json"
-        finalizer.finalize(root, combine_report)
+        if combine_report.exists():
+            combined = json.loads(combine_report.read_text(encoding="utf-8"))
+            if combined.get("pass") is not True or combined.get("pair_count") != 2_048:
+                _fail("existing combine report is not a passing scaled corpus")
+        else:
+            _save(pipeline_path, state, "finalizing-corpus")
+            finalizer.finalize(root, combine_report)
         _save(
             pipeline_path,
             state,
@@ -177,7 +183,12 @@ def execute(root: Path) -> dict[str, Any]:
         screen_root = root / "screen"
         cache = screen_root / "complete-history-cache.pt"
         cache_report = screen_root / "cache-report.json"
-        scaled.prepare(combine_report, cache, cache_report)
+        parallel_cache.prepare(
+            root / "collection-state.json",
+            combine_report,
+            cache,
+            cache_report,
+        )
         _save(
             pipeline_path,
             state,
