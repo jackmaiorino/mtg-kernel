@@ -24,6 +24,7 @@ STATE_DIM = 219
 OBJECT_DIM = 98
 EDGE_DIM = 41
 ACTION_DIM = 195
+ACTION_EXPLICIT_DIM = 99
 REF_DIM = 25
 FOLDS = 4
 SCRIPT_VERSION = "structured_adapter_screen_v1"
@@ -636,13 +637,50 @@ def _model_vocab(examples: list[dict[str, Any]]) -> tuple[int, int]:
     return min(max(card_max + 1, 2), 65536), min(max(group_max + 1, 2), 256)
 
 
+def _attach_action_history(examples: list[dict[str, Any]], maximum_length: int) -> None:
+    episodes: dict[tuple[int, str, int], list[dict[str, Any]]] = {}
+    for example in examples:
+        episodes.setdefault(example["episode_key"], []).append(example)
+    for rows in episodes.values():
+        history: list[Tensor] = []
+        current_group: int | None = None
+        current_selected: list[Tensor] = []
+        for example in rows:
+            physical_group = example["physical_group"]
+            if current_group is None:
+                current_group = physical_group
+            elif physical_group != current_group:
+                history.append(torch.stack(current_selected).mean(dim=0))
+                history = history[-maximum_length:]
+                current_group = physical_group
+                current_selected = []
+            example["history_features"] = (
+                torch.stack(history)
+                if history
+                else torch.zeros((0, ACTION_EXPLICIT_DIM), dtype=torch.float32)
+            )
+            selected = example["selected_index"]
+            current_selected.append(
+                example["action_features"][selected, :ACTION_EXPLICIT_DIM].detach().clone()
+            )
+
+
 class StructuredAdapter(nn.Module):
-    def __init__(self, card_vocab: int, group_vocab: int, dim: int) -> None:
+    def __init__(
+        self, card_vocab: int, group_vocab: int, dim: int, history_length: int = 0
+    ) -> None:
         super().__init__()
         self.dim = dim
         card_dim = max(8, dim // 2)
         group_dim = max(8, dim // 3)
         self.state = nn.Sequential(nn.Linear(STATE_DIM, dim), nn.Tanh(), nn.Linear(dim, dim), nn.Tanh())
+        self.history_length = history_length
+        self.history = (
+            nn.GRU(ACTION_EXPLICIT_DIM, dim, batch_first=True)
+            if history_length > 0
+            else None
+        )
+        self.history_mix = nn.Linear(dim, dim, bias=False) if history_length > 0 else None
         self.object = nn.Sequential(nn.Linear(OBJECT_DIM + card_dim + group_dim, dim), nn.Tanh())
         self.card = nn.Embedding(card_vocab, card_dim)
         self.group = nn.Embedding(group_vocab, group_dim)
@@ -674,6 +712,14 @@ class StructuredAdapter(nn.Module):
         cards = example["object_card_ids"].long() % self.card_vocab
         groups = example["object_groups"].long() % self.group_vocab
         state_h = self.state(state)
+        if self.history is not None and self.history_mix is not None:
+            history = example["history_features"]
+            if history.shape[0]:
+                _, final_history = self.history(history.unsqueeze(0))
+                history_h = final_history[0, 0]
+            else:
+                history_h = torch.zeros(self.dim, dtype=state_h.dtype)
+            state_h = state_h + self.history_mix(history_h)
         object_h = self.object(torch.cat((objects, self.card(cards), self.group(groups)), dim=1))
         edges = example["edge_features"]
         if edges.shape[0]:
@@ -955,6 +1001,9 @@ def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Name
         _fail("cache version mismatch")
     policy = cache["policy"]
     value = cache["value"]
+    if args.history_length > 0:
+        _attach_action_history(policy, args.history_length)
+        _attach_action_history(value, args.history_length)
     all_examples = policy + value
     card_vocab, group_vocab = _model_vocab(all_examples)
     policy_train = [example for example in policy if example["pair_index"] % FOLDS != fold]
@@ -965,7 +1014,7 @@ def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Name
         _fail(f"fold {fold} lacks train or heldout examples")
     _assign_episode_weights(value_train)
     _configure(args.seed + fold, args.threads)
-    model = StructuredAdapter(card_vocab, group_vocab, args.dim)
+    model = StructuredAdapter(card_vocab, group_vocab, args.dim, args.history_length)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     rng = random.Random(args.seed + fold)
     steps_per_epoch = max(math.ceil(len(policy_train) / args.batch_size), math.ceil(len(value_train) / args.batch_size))
@@ -997,7 +1046,7 @@ def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Name
     result = {
         "schema": SCRIPT_VERSION,
         "fold": fold,
-        "config": {"dim": args.dim, "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr, "weight_decay": args.weight_decay, "value_coefficient": args.value_coefficient, "seed": args.seed, "threads": args.threads},
+        "config": {"dim": args.dim, "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr, "weight_decay": args.weight_decay, "value_coefficient": args.value_coefficient, "seed": args.seed, "threads": args.threads, "history_length": args.history_length, "history_feature_dim": ACTION_EXPLICIT_DIM if args.history_length > 0 else 0},
         "counts": {"policy_train": len(policy_train), "policy_heldout": len(policy_test), "value_train": len(value_train), "value_heldout": len(value_test), "train_pairs": sorted({e["pair_index"] for e in policy_train}), "heldout_pairs": sorted({e["pair_index"] for e in policy_test})},
         "train_metrics": {"final": train_history[-1], "history": train_history},
         "heldout": {"policy": policy_metrics, "value": value_metrics},
@@ -1172,7 +1221,25 @@ def self_test(args: argparse.Namespace) -> dict[str, Any]:
     _configure(args.seed, args.threads)
     rng = np.random.default_rng(args.seed)
     examples = [_self_example(index, rng) for index in range(7)]
-    model = StructuredAdapter(32, 8, args.dim)
+    history_check = True
+    if args.history_length > 0:
+        for index in range(3):
+            examples[index]["pair_index"] = 0
+            examples[index]["episode"] = "shared-history-self-test"
+            examples[index]["candidate_seat"] = 0
+            examples[index]["episode_key"] = (0, "shared-history-self-test", 0)
+            examples[index]["physical_group"] = index
+        _attach_action_history(examples, args.history_length)
+        expected_first = examples[0]["action_features"][
+            examples[0]["selected_index"], :ACTION_EXPLICIT_DIM
+        ]
+        history_check = (
+            examples[0]["history_features"].shape[0] == 0
+            and examples[1]["history_features"].shape[0] == 1
+            and examples[2]["history_features"].shape[0] == 2
+            and torch.equal(examples[1]["history_features"][0], expected_first)
+        )
+    model = StructuredAdapter(32, 8, args.dim, args.history_length)
     model.force_nonzero_residual(args.seed)
     with torch.no_grad():
         individual = [model(example) for example in examples]
@@ -1186,8 +1253,8 @@ def self_test(args: argparse.Namespace) -> dict[str, Any]:
     (policy_loss + value_loss).backward()
     optimizer.step()
     parameter_delta = max(float((after.detach() - before[index]).abs().max()) for index, after in enumerate(model.parameters()))
-    checks = {"variable_sizes": True, "batching_max_delta_le_1e-6": batching_delta <= 1e-6, "permutation_max_delta_le_1e-5": permutation["permutation_max_delta"] <= 1e-5, "ref_removal_meaningful": permutation["ref_removal_affected_rate"] >= 0.20, "optimizer_step_changed_parameter": parameter_delta > 0.0}
-    result = {"schema": SCRIPT_VERSION + ".self_test", "pass": all(checks.values()), "checks": checks, "batching_max_delta": batching_delta, "diagnostics": permutation, "optimizer_parameter_max_delta": parameter_delta, "runtime_seconds": time.perf_counter() - started, "config": {"dim": args.dim, "seed": args.seed, "threads": args.threads}}
+    checks = {"variable_sizes": True, "history_excludes_current_decision": history_check, "batching_max_delta_le_1e-6": batching_delta <= 1e-6, "permutation_max_delta_le_1e-5": permutation["permutation_max_delta"] <= 1e-5, "ref_removal_meaningful": permutation["ref_removal_affected_rate"] >= 0.20, "optimizer_step_changed_parameter": parameter_delta > 0.0}
+    result = {"schema": SCRIPT_VERSION + ".self_test", "pass": all(checks.values()), "checks": checks, "batching_max_delta": batching_delta, "diagnostics": permutation, "optimizer_parameter_max_delta": parameter_delta, "runtime_seconds": time.perf_counter() - started, "config": {"dim": args.dim, "seed": args.seed, "threads": args.threads, "history_length": args.history_length}}
     if not result["pass"]:
         _fail("self-test failed: " + json.dumps(checks, sort_keys=True))
     return result
@@ -1213,6 +1280,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--value-coefficient", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=20260802)
     parser.add_argument("--threads", type=int, default=1)
+    parser.add_argument("--history-length", type=int, default=0)
     parser.add_argument("--teacher-sha256-prefix", default=TEACHER_SHA256_PREFIX)
     parser.add_argument("--outcome-sha256-prefix", default=OUTCOME_SHA256_PREFIX)
     return parser
@@ -1220,7 +1288,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.dim < 8 or args.epochs < 1 or args.batch_size < 1 or args.lr <= 0 or args.threads < 1:
+    if args.dim < 8 or args.epochs < 1 or args.batch_size < 1 or args.lr <= 0 or args.threads < 1 or args.history_length < 0:
         _fail("invalid training configuration")
     if args.prepare_cache:
         if args.teacher_jsonl is None or args.outcome_jsonl is None:

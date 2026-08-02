@@ -57,3 +57,27 @@ The report also breaks policy NLL down by decision kind and evaluates the traine
 - Fail: do not tune thresholds or hidden width against these folds. Add explicit public action history to the observation contract and test whether history supplies held-out signal before revisiting model capacity.
 
 No XMage games or GPU training are part of this screen.
+
+## Result
+
+The four deterministic folds completed concurrently in 466.2 seconds. The strict cache contained 4,952 policy rows and 2,629 value rows. Measurement used source commit `66b02207804a445cb707a60888d9b4ee89eab253` and script SHA-256 `d8cf3d4e2e62bd43981be05b8da694256f40d8df92686b40e85a53982f0a0b7f`.
+
+| Held-out metric | Parent | Adapter | Change |
+| --- | ---: | ---: | ---: |
+| Policy NLL | 2.272464 | 0.523379 | 76.97% better |
+| Policy top-1 | 73.95% | 80.17% | +6.22 pp |
+| Value MSE | 0.712730 | 0.637915 | 10.50% better |
+| P0 value MSE | 0.832062 | 0.603295 | 27.49% better |
+| P1 value MSE | 0.593399 | 0.672535 | 13.34% worse |
+
+Policy NLL improved for both acting seats and for surface, attacker-inclusion, and blocker-inclusion decisions. Object permutation changed an output by at most `3.8147e-6`, and removing references affected all 7,581 eligible held-out decisions. With both 96-feature digest tails zeroed only for adapter evaluation, policy NLL still improved by 31.04% and value MSE by 14.07%. The structured path therefore learned semantic signal rather than relying only on the digest.
+
+Six of seven gates passed. The exact package failed because P1 value MSE regressed by 13.34%, beyond the 2% floor. P1 regressed in three of four folds, so this is not one anomalous partition.
+
+## Result disposition
+
+Reject the exact combined policy-plus-value adapter. Do not integrate it or spend live XMage games on it. The strong policy-label result is representation evidence, not strength evidence; the earlier behavior-cloning campaign already showed that much better offline CP7 agreement can reduce live win rate.
+
+The next bounded test is the declared public-action-history falsifier. Keep the parent and structured object/action path fixed, add only a compact actor-visible public action sequence, and ask whether history removes the repeated P1 value regression on held-out pairs. Do not sweep width, epochs, thresholds, or digest use against these revealed folds.
+
+Primary result: `D:\mtg-kernel-structured-adapter-screen-v1\aggregate.json`.
