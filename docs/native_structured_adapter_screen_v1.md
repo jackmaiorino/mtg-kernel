@@ -74,6 +74,8 @@ Policy NLL improved for both acting seats and for surface, attacker-inclusion, a
 
 Six of seven gates passed. The exact package failed because P1 value MSE regressed by 13.34%, beyond the 2% floor. P1 regressed in three of four folds, so this is not one anomalous partition.
 
+A complete fold-0 rerun reproduced counts, training history, held-out metrics, diagnostics, digest ablation, and raw weights exactly. The canonical scientific-field SHA-256 was `032553bd88968d0ae34e656bffaaa14817983d930fac6afdd929c865769fb5cf` for both runs. Runtime was excluded from that comparison.
+
 ## Result disposition
 
 Reject the exact combined policy-plus-value adapter. Do not integrate it or spend live XMage games on it. The strong policy-label result is representation evidence, not strength evidence; the earlier behavior-cloning campaign already showed that much better offline CP7 agreement can reduce live win rate.
