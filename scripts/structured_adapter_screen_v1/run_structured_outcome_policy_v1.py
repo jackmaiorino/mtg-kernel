@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import random
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -600,6 +601,187 @@ def aggregate(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def _publish_full_candidate(
+    args: argparse.Namespace,
+    model: screen.StructuredAdapter,
+    card_vocab: int,
+    group_vocab: int,
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    output_root: Path = args.output_root
+    if output_root.exists():
+        _fail(f"refusing to overwrite {output_root}")
+    output_root.mkdir(parents=True)
+    parent_output = output_root / "parent"
+    parent_output.mkdir()
+    parent_manifest = args.parent_outcome_root / "checkpoint.json"
+    parent_payload = args.parent_outcome_root / "checkpoint.state.f32le"
+    if (
+        _sha256(parent_manifest) != live.PARENT_MANIFEST_SHA256
+        or _sha256(parent_payload) != live.PARENT_PAYLOAD_SHA256
+    ):
+        _fail("parent root is not the exact retained checkpoint")
+    shutil.copyfile(parent_manifest, parent_output / parent_manifest.name)
+    shutil.copyfile(parent_payload, parent_output / parent_payload.name)
+
+    state = model.state_dict()
+    payload = bytearray()
+    parameters: list[dict[str, Any]] = []
+    offset = 0
+    for name in live.PARAMETER_NAMES:
+        tensor = state[name].detach().cpu().contiguous().float()
+        raw = tensor.numpy().astype("<f4", copy=False).tobytes(order="C")
+        count = tensor.numel()
+        parameters.append(
+            {
+                "name": name,
+                "shape": list(tensor.shape),
+                "offset_f32": offset,
+                "count_f32": count,
+            }
+        )
+        payload.extend(raw)
+        offset += count
+    weights_path = output_root / "weights.f32le"
+    weights_path.write_bytes(payload)
+    weights_sha = _sha256(weights_path)
+    composite = hashlib.sha256(
+        live.COMPOSITE_DOMAIN
+        + bytes.fromhex(live.PARENT_MODEL_PARAMETER_SHA256)
+        + bytes(payload)
+    ).hexdigest()
+    report["weights_sha256"] = weights_sha
+    report["composite_model_parameter_sha256"] = composite
+    report_path = output_root / "report.json"
+    _write_new_json(report_path, report)
+    report_sha = _sha256(report_path)
+    candidate = {
+        "schema": live.SCHEMA,
+        "publication_encoding": "json-pretty-sorted-utf8-trailing-lf/v1",
+        "parent": {
+            "directory": "parent",
+            "manifest_sha256": live.PARENT_MANIFEST_SHA256,
+            "payload_sha256": live.PARENT_PAYLOAD_SHA256,
+            "native_state_sha256": live.PARENT_NATIVE_STATE_SHA256,
+            "model_parameter_sha256": live.PARENT_MODEL_PARAMETER_SHA256,
+            "adam_step": live.PARENT_ADAM_STEP,
+        },
+        "architecture": {
+            "identity": "stateless-structured-object-action-attention-policy-residual/v1",
+            "state_dim": screen.STATE_DIM,
+            "object_dim": screen.OBJECT_DIM,
+            "edge_dim": screen.EDGE_DIM,
+            "action_dim": screen.ACTION_DIM,
+            "ref_dim": screen.REF_DIM,
+            "hidden_dim": args.dim,
+            "card_vocab": card_vocab,
+            "card_embedding_dim": max(8, args.dim // 2),
+            "group_vocab": group_vocab,
+            "group_embedding_dim": max(8, args.dim // 3),
+            "value_model": "exact-parent-unchanged",
+        },
+        "weights": {
+            "filename": weights_path.name,
+            "encoding": "ordered-row-major-finite-f32-little-endian/v1",
+            "sha256": weights_sha,
+            "byte_count": len(payload),
+            "parameter_count": offset,
+            "parameters": parameters,
+        },
+        "report": {"filename": report_path.name, "sha256": report_sha},
+        "composite_model_parameter_sha256": composite,
+    }
+    candidate_path = output_root / "structured_candidate.json"
+    _write_new_json(candidate_path, candidate)
+    return {
+        "candidate_root": str(output_root),
+        "candidate_json_sha256": _sha256(candidate_path),
+        "weights_sha256": weights_sha,
+        "report_sha256": report_sha,
+        "composite_model_parameter_sha256": composite,
+    }
+
+
+def run_full(args: argparse.Namespace) -> dict[str, Any]:
+    started = time.perf_counter()
+    examples, terminals = screen._load_outcome(args.outcome_jsonl)
+    decisions = _physical_decisions(examples)
+    episodes = {group.episode_key for group in decisions}
+    pairs = {group.pair_index for group in decisions}
+    if len(terminals) != 512 or len(episodes) != 512 or pairs != set(range(1, 257)):
+        _fail("full fit does not cover the fixed pairs 1 through 256")
+    statistics = _advantage_statistics(decisions)
+    _install_standardized_advantages(decisions, statistics)
+    card_vocab, group_vocab = screen._model_vocab(examples)
+    screen._configure(args.seed, args.threads)
+    model = screen.StructuredAdapter(card_vocab, group_vocab, args.dim)
+    history = _fit_model(model, decisions, args)
+    parents, residuals, weights = _row_movement_inputs(model, decisions)
+    uncalibrated = live._movement(parents, residuals, weights, 1.0)
+    scale, _ = live._calibrate(parents, residuals, weights, args.target_mean_tv)
+    with torch.no_grad():
+        model.policy_head.weight.mul_(scale)
+        model.policy_head.bias.mul_(scale)
+    movement = _movement(model, decisions)
+    movement.pop("tv_weighted_samples")
+    surrogate = _surrogate(model, decisions)
+    diagnostics = _diagnostics(
+        model, decisions, args.seed + 10, args.diagnostic_sample_size
+    )
+    report = {
+        "schema": "mtg-kernel-structured-outcome-policy-full-fit/v1",
+        "source": {
+            "source_commit": args.source_commit,
+            "outcome_jsonl": str(args.outcome_jsonl),
+            "outcome_jsonl_sha256": _sha256(args.outcome_jsonl),
+            "decision_row_count": len(examples),
+            "physical_decision_count": len(decisions),
+            "terminal_count": len(terminals),
+            "pair_range": [1, 256],
+        },
+        "config": {
+            "architecture": "stateless-structured-object-action-attention-policy-residual/v1",
+            "dim": args.dim,
+            "card_vocab": card_vocab,
+            "group_vocab": group_vocab,
+            "epochs": args.epochs,
+            "batch_size_physical_decisions": args.batch_size,
+            "learning_rate": args.lr,
+            "weight_decay": args.weight_decay,
+            "ppo_clip": args.clip,
+            "gradient_norm_cap": args.grad_cap,
+            "seed": args.seed,
+            "threads": args.threads,
+            "target_fit_mean_total_variation": args.target_mean_tv,
+            "value_model": "exact-retained-parent-unchanged",
+        },
+        "advantage_statistics_by_candidate_seat": {
+            str(key): value for key, value in statistics.items()
+        },
+        "training_history": history,
+        "calibration": {
+            "scale": scale,
+            "uncalibrated_fit_movement": uncalibrated,
+            "calibrated_fit_movement": movement,
+        },
+        "in_sample_surrogate": surrogate,
+        "diagnostics": diagnostics,
+        "non_claims": [
+            "full-data fit after a separate development gate",
+            "in-sample surrogate is not acceptance evidence",
+            "no live strength, promotion, cross-deck, or pro-level claim",
+        ],
+    }
+    publication = _publish_full_candidate(
+        args, model, card_vocab, group_vocab, report
+    )
+    publication["runtime_seconds"] = time.perf_counter() - started
+    publication["calibration_scale"] = scale
+    publication["movement"] = movement
+    publication["in_sample_surrogate"] = surrogate
+    return publication
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -623,8 +805,24 @@ def main() -> int:
         "--fold-result", action="append", type=Path, required=True
     )
     aggregate_parser.add_argument("--output", type=Path, required=True)
+    full = subparsers.add_parser("full")
+    full.add_argument("--outcome-jsonl", type=Path, required=True)
+    full.add_argument("--parent-outcome-root", type=Path, required=True)
+    full.add_argument("--source-commit", required=True)
+    full.add_argument("--output-root", type=Path, required=True)
+    full.add_argument("--dim", type=int, default=48)
+    full.add_argument("--epochs", type=int, default=10)
+    full.add_argument("--batch-size", type=int, default=32)
+    full.add_argument("--lr", type=float, default=3e-4)
+    full.add_argument("--weight-decay", type=float, default=1e-4)
+    full.add_argument("--clip", type=float, default=0.10)
+    full.add_argument("--grad-cap", type=float, default=5.0)
+    full.add_argument("--seed", type=int, default=20260802)
+    full.add_argument("--threads", type=int, default=12)
+    full.add_argument("--target-mean-tv", type=float, default=0.03)
+    full.add_argument("--diagnostic-sample-size", type=int, default=256)
     args = parser.parse_args()
-    if args.command == "fold":
+    if args.command in ("fold", "full"):
         if (
             args.dim != 48
             or args.epochs != 10
@@ -639,9 +837,11 @@ def main() -> int:
             or args.diagnostic_sample_size != 256
         ):
             _fail("fold configuration differs from the fixed development screen")
-        result = run_fold(args)
-    else:
+        result = run_fold(args) if args.command == "fold" else run_full(args)
+    elif args.command == "aggregate":
         result = aggregate(args)
+    else:
+        _fail(f"unknown command {args.command}")
     print(json.dumps(result, sort_keys=True, allow_nan=False))
     return 0
 
