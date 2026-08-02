@@ -259,6 +259,22 @@ fn main_policy_seed_v1(episode_ordinal: usize, policy_step: u64) -> u64 {
     )
 }
 
+fn selective_search_environment_seed_v1(episode_ordinal: usize) -> u64 {
+    splitmix64_first_v1(
+        SELECTIVE_SEARCH_PROBE_BASE_SEED_V1
+            ^ (episode_ordinal as u64).wrapping_mul(0xd6e8_feb8_6659_fd93),
+    )
+}
+
+fn selective_search_main_policy_seed_v1(episode_ordinal: usize, policy_step: u64) -> u64 {
+    splitmix64_first_v1(
+        SELECTIVE_SEARCH_PROBE_BASE_SEED_V1
+            ^ SELECTIVE_SEARCH_MAIN_POLICY_DOMAIN_V1
+            ^ (episode_ordinal as u64).wrapping_mul(0xa076_1d64_78bd_642f)
+            ^ policy_step.wrapping_mul(0xe703_7ed1_a0b4_28db),
+    )
+}
+
 fn continuation_policy_seed_v1(
     domain: u64,
     root_ordinal: usize,
@@ -343,6 +359,14 @@ fn eligible_root_v1(decision: FastActorDecisionV1) -> bool {
         && decision.substep_index == 0
         && decision.substep_count == 1
         && decision.physical_decision_id >= MIN_ROOT_PHYSICAL_DECISION_ID_V1
+        && (MIN_ROOT_ACTIONS_V1..=MAX_ROOT_ACTIONS_V1).contains(&decision.legal_action_count)
+}
+
+fn eligible_selective_search_root_v1(decision: FastActorDecisionV1) -> bool {
+    decision.decision_kind == FastActorDecisionKindV1::Surface
+        && decision.substep_index == 0
+        && decision.substep_count == 1
+        && decision.physical_decision_id >= SELECTIVE_SEARCH_MIN_PHYSICAL_DECISION_ID_V1
         && (MIN_ROOT_ACTIONS_V1..=MAX_ROOT_ACTIONS_V1).contains(&decision.legal_action_count)
 }
 
@@ -453,6 +477,29 @@ fn teacher_index_v1(ranking: &[NativeRolloutTeacherActionRankingV1]) -> u32 {
         }
     }
     ranking[best].action_index
+}
+
+fn conservative_teacher_index_v1(
+    ranking: &[NativeRolloutTeacherActionRankingV1],
+    parent_index: u32,
+    minimum_reward_margin: i64,
+) -> u32 {
+    let best_index = teacher_index_v1(ranking);
+    if best_index == parent_index {
+        return parent_index;
+    }
+    let best_reward = ranking
+        .iter()
+        .find(|row| row.action_index == best_index)
+        .map(|row| row.outcomes.natural_reward_sum);
+    let parent_reward = ranking
+        .iter()
+        .find(|row| row.action_index == parent_index)
+        .map(|row| row.outcomes.natural_reward_sum);
+    match (best_reward, parent_reward) {
+        (Some(best), Some(parent)) if best - parent >= minimum_reward_margin => best_index,
+        _ => parent_index,
+    }
 }
 
 fn evaluate_root_v1(
@@ -871,6 +918,18 @@ mod tests {
     }
 
     #[test]
+    fn conservative_teacher_requires_declared_reward_margin_v1() {
+        let below_margin = [ranking_v1(0, 0, 10.0), ranking_v1(1, 5, -10.0)];
+        assert_eq!(conservative_teacher_index_v1(&below_margin, 0, 6), 0);
+
+        let at_margin = [ranking_v1(0, 0, 10.0), ranking_v1(1, 6, -10.0)];
+        assert_eq!(conservative_teacher_index_v1(&at_margin, 0, 6), 1);
+
+        let parent_is_best = [ranking_v1(0, 7, 10.0), ranking_v1(1, 6, -10.0)];
+        assert_eq!(conservative_teacher_index_v1(&parent_is_best, 0, 6), 0);
+    }
+
+    #[test]
     fn continuation_seed_is_action_independent_and_domain_separated_v1() {
         let a = continuation_policy_seed_v1(RANKING_POLICY_DOMAIN_V1, 3, 7, PlayerSeatV1::P1, 11);
         let b = continuation_policy_seed_v1(RANKING_POLICY_DOMAIN_V1, 3, 7, PlayerSeatV1::P1, 11);
@@ -960,6 +1019,21 @@ const RANK16_RANKING_REDETERMINIZATION_DOMAIN_V1: u64 = 0x7231_3672_7265_6431;
 const RANK16_CONFIRM_REDETERMINIZATION_DOMAIN_V1: u64 = 0x7231_3663_7265_6431;
 const RANK16_SEED_DOMAIN_SET_V1: &str =
     "rank16-held-out-domains:r16rred1,r16rpol1,r16cred1,r16cpol1;sample-first-shared-information-set-and-paired-policy-crns/v1";
+const SELECTIVE_SEARCH_SCHEMA_V1: &str =
+    "mtg-kernel-native-conservative-selective-search-signal/v1";
+const SELECTIVE_SEARCH_ENVELOPE_SCHEMA_V1: &str =
+    "mtg-kernel-native-conservative-selective-search-signal-envelope/v1";
+const SELECTIVE_SEARCH_PROBE_BASE_SEED_V1: u64 = 0x7365_6c73_7263_6831;
+const SELECTIVE_SEARCH_MAIN_POLICY_DOMAIN_V1: u64 = 0x7365_6c6d_706f_6c31;
+const SELECTIVE_SEARCH_RANKING_REDETERMINIZATION_DOMAIN_V1: u64 = 0x7365_6c72_7265_6431;
+const SELECTIVE_SEARCH_RANKING_POLICY_DOMAIN_V1: u64 = 0x7365_6c72_706f_6c31;
+const SELECTIVE_SEARCH_CONFIRM_REDETERMINIZATION_DOMAIN_V1: u64 = 0x7365_6c63_7265_6431;
+const SELECTIVE_SEARCH_CONFIRM_POLICY_DOMAIN_V1: u64 = 0x7365_6c63_706f_6c31;
+const SELECTIVE_SEARCH_ROOT_EPISODE_ID_BASE_V1: u64 = 1_570_000;
+const SELECTIVE_SEARCH_MIN_PHYSICAL_DECISION_ID_V1: u64 = 20;
+const SELECTIVE_SEARCH_MIN_RANKING_REWARD_MARGIN_V1: i64 = 6;
+const SELECTIVE_SEARCH_SEED_DOMAIN_SET_V1: &str =
+    "fresh-selective-search-signal-v1:selsrch1,selmpol1,selrred1,selrpol1,selcred1,selcpol1";
 
 #[derive(Clone, Debug, Serialize)]
 pub struct NativeRolloutTeacherInformationSetSampleV1 {
@@ -1052,6 +1126,36 @@ pub struct NativeRolloutTeacherInformationSetRank16EnvelopeV1 {
     pub runtime_under_ten_minutes: bool,
     pub disposition: &'static str,
     pub report: NativeRolloutTeacherInformationSetRank16ReportV1,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeSelectiveSearchConfigV1 {
+    pub rollout: NativeRolloutTeacherConfigV1,
+    pub minimum_ranking_reward_sum_margin: i64,
+    pub fallback: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeSelectiveSearchReportV1 {
+    pub schema: &'static str,
+    pub publication_encoding: &'static str,
+    pub source: NativeRolloutTeacherSourceV1,
+    pub config: NativeSelectiveSearchConfigV1,
+    pub seed_domain_set: &'static str,
+    pub roots: Vec<NativeRolloutTeacherInformationSetRootV1>,
+    pub aggregate: NativeRolloutTeacherInformationSetAggregateV1,
+    pub gates: NativeRolloutTeacherInformationSetGatesV1,
+    pub interpretation: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeSelectiveSearchEnvelopeV1 {
+    pub schema: &'static str,
+    pub deterministic_report_sha256: String,
+    pub elapsed_milliseconds: u64,
+    pub runtime_under_ten_minutes: bool,
+    pub disposition: &'static str,
+    pub report: NativeSelectiveSearchReportV1,
 }
 
 fn redeterminization_seed_v1(domain: u64, root_ordinal: usize, rollout_ordinal: usize) -> u64 {
@@ -1170,6 +1274,7 @@ fn evaluate_information_set_root_with_ranking_samples_v1(
     ranking_policy_domain: u64,
     confirmation_redeterminization_domain: u64,
     confirmation_policy_domain: u64,
+    minimum_ranking_reward_margin: i64,
 ) -> Result<NativeRolloutTeacherInformationSetRootV1, io::Error> {
     let expected = scored.expected;
     let root_actor = expected.acting_player;
@@ -1237,7 +1342,8 @@ fn evaluate_information_set_root_with_ranking_samples_v1(
             },
         )
         .collect();
-    let teacher_index = teacher_index_v1(&ranking);
+    let teacher_index =
+        conservative_teacher_index_v1(&ranking, parent_argmax, minimum_ranking_reward_margin);
 
     let mut teacher_outcomes = NativeRolloutOutcomeCountsV1::default();
     let mut parent_outcomes = NativeRolloutOutcomeCountsV1::default();
@@ -1391,6 +1497,7 @@ fn evaluate_information_set_root_v1(
         RANKING_POLICY_DOMAIN_V1,
         CONFIRM_REDETERMINIZATION_DOMAIN_V1,
         CONFIRM_POLICY_DOMAIN_V1,
+        0,
     )
 }
 
@@ -1414,6 +1521,31 @@ fn evaluate_information_set_rank16_root_v1(
         RANK16_RANKING_POLICY_DOMAIN_V1,
         RANK16_CONFIRM_REDETERMINIZATION_DOMAIN_V1,
         RANK16_CONFIRM_POLICY_DOMAIN_V1,
+        0,
+    )
+}
+
+fn evaluate_selective_search_root_v1(
+    inference: &NativeXmageCp7OutcomeInferenceV1,
+    session: &FastActorSessionV1,
+    scored: ScoredCurrentDecisionV1,
+    root_ordinal: usize,
+    source_episode_ordinal: usize,
+    environment_seed: u64,
+) -> Result<NativeRolloutTeacherInformationSetRootV1, io::Error> {
+    evaluate_information_set_root_with_ranking_samples_v1(
+        inference,
+        session,
+        scored,
+        root_ordinal,
+        source_episode_ordinal,
+        environment_seed,
+        RANKING_ROLLOUTS_PER_ACTION_RANK16_V1,
+        SELECTIVE_SEARCH_RANKING_REDETERMINIZATION_DOMAIN_V1,
+        SELECTIVE_SEARCH_RANKING_POLICY_DOMAIN_V1,
+        SELECTIVE_SEARCH_CONFIRM_REDETERMINIZATION_DOMAIN_V1,
+        SELECTIVE_SEARCH_CONFIRM_POLICY_DOMAIN_V1,
+        SELECTIVE_SEARCH_MIN_RANKING_REWARD_MARGIN_V1,
     )
 }
 
@@ -1842,6 +1974,155 @@ pub fn run_native_rollout_teacher_information_set_rank16_v1(
     };
     Ok(NativeRolloutTeacherInformationSetRank16EnvelopeV1 {
         schema: NATIVE_ROLLOUT_TEACHER_INFORMATION_SET_RANK16_ENVELOPE_SCHEMA_V1,
+        deterministic_report_sha256,
+        elapsed_milliseconds,
+        runtime_under_ten_minutes,
+        disposition,
+        report,
+    })
+}
+
+/// Exact deterministic conservative selective-search report bytes written by
+/// its CLI and covered by its reported SHA-256. Runtime timing is absent.
+pub fn native_selective_search_report_bytes_v1(
+    report: &NativeSelectiveSearchReportV1,
+) -> Result<Vec<u8>, serde_json::Error> {
+    let mut bytes = serde_json::to_vec_pretty(report)?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn selective_search_report_sha256_v1(
+    report: &NativeSelectiveSearchReportV1,
+) -> Result<String, serde_json::Error> {
+    let bytes = native_selective_search_report_bytes_v1(report)?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+/// Runs the fresh conservative selective-search signal screen. Search keeps
+/// the retained-policy argmax unless rank-16 terminal reward exceeds it by
+/// the fixed margin, then confirms the selected action on fresh paired draws.
+pub fn run_native_selective_search_signal_v1(
+    source_outcome_root: impl AsRef<Path>,
+) -> Result<NativeSelectiveSearchEnvelopeV1, Box<dyn Error>> {
+    let started = Instant::now();
+    let inference = load_xmage_cp7_outcome_inference_v1(source_outcome_root.as_ref())?;
+    if lower_hex_raw32_v1(inference.manifest_sha256_v1()) != RETAINED_MANIFEST_SHA256_V1
+        || lower_hex_raw32_v1(inference.payload_sha256_v1()) != RETAINED_PAYLOAD_SHA256_V1
+        || lower_hex_raw32_v1(inference.native_state_sha256_v1()) != RETAINED_NATIVE_STATE_SHA256_V1
+        || lower_hex_raw32_v1(inference.model_parameter_sha256_v1())
+            != RETAINED_MODEL_PARAMETER_SHA256_V1
+        || inference.adam_step_v1() != RETAINED_ADAM_STEP_V1
+    {
+        return Err(invalid_data_v1("source is not the exact retained 706b checkpoint").into());
+    }
+    let source = NativeRolloutTeacherSourceV1 {
+        outcome_manifest_sha256: lower_hex_raw32_v1(inference.manifest_sha256_v1()),
+        outcome_payload_sha256: lower_hex_raw32_v1(inference.payload_sha256_v1()),
+        native_state_sha256: lower_hex_raw32_v1(inference.native_state_sha256_v1()),
+        model_parameter_sha256: lower_hex_raw32_v1(inference.model_parameter_sha256_v1()),
+        corpus_sha256: lower_hex_raw32_v1(inference.corpus_sha256_v1()),
+        adam_step: inference.adam_step_v1(),
+    };
+    let rollout = NativeRolloutTeacherConfigV1 {
+        base_seed_u64_hex: format!("{SELECTIVE_SEARCH_PROBE_BASE_SEED_V1:016x}"),
+        root_count: ROOT_COUNT_V1,
+        max_source_episodes: MAX_SOURCE_EPISODES_V1,
+        roots_per_episode: 1,
+        root_eligibility:
+            "surface, substep_count=1, physical_decision_id>=20, legal_action_count=2..8",
+        ranking_rollouts_per_action: RANKING_ROLLOUTS_PER_ACTION_RANK16_V1,
+        confirmation_rollouts_per_action: CONFIRMATION_ROLLOUTS_PER_ACTION_V1,
+        max_branch_policy_steps_including_forced_root: MAX_BRANCH_POLICY_STEPS_V1,
+        continuation_policy: "retained-checkpoint-temperature-1-self-play",
+        continuation_sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+        continuation_sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+        branch_randomness: SELECTIVE_SEARCH_SEED_DOMAIN_SET_V1,
+        information_scope:
+            "acting-player-information-set-deterministic-modulo-fisher-yates-redeterminization/v1",
+        training_admissibility:
+            "selective-search-signal-only-no-training-or-live-evaluation-authorization",
+    };
+    let config = NativeSelectiveSearchConfigV1 {
+        rollout,
+        minimum_ranking_reward_sum_margin: SELECTIVE_SEARCH_MIN_RANKING_REWARD_MARGIN_V1,
+        fallback: "retained-policy-argmax",
+    };
+
+    let mut roots = Vec::with_capacity(ROOT_COUNT_V1);
+    let mut source_episodes_examined = 0usize;
+    for episode_ordinal in 0..MAX_SOURCE_EPISODES_V1 {
+        if roots.len() == ROOT_COUNT_V1 {
+            break;
+        }
+        source_episodes_examined += 1;
+        let episode_id = SELECTIVE_SEARCH_ROOT_EPISODE_ID_BASE_V1 + episode_ordinal as u64;
+        let environment_seed = selective_search_environment_seed_v1(episode_ordinal);
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            episode_id,
+            environment_seed,
+            SESSION_MAX_PHYSICAL_DECISIONS_V1,
+            SESSION_MAX_POLICY_STEPS_V1,
+            ["Rally".to_owned(), "Rally".to_owned()],
+        )
+        .map_err(|_| invalid_data_v1("Rally source session reset failed"))?;
+
+        for _ in 0..MAX_SOURCE_POLICY_STEPS_V1 {
+            let FastActorResponseV1::Decision(_) = session.current_response() else {
+                break;
+            };
+            let scored = score_current_decision_v1(&inference, &session)
+                .map_err(|_| invalid_data_v1("source policy scoring failed"))?;
+            if eligible_selective_search_root_v1(scored.expected) {
+                let root = evaluate_selective_search_root_v1(
+                    &inference,
+                    &session,
+                    scored,
+                    roots.len(),
+                    episode_ordinal,
+                    environment_seed,
+                )?;
+                roots.push(root);
+                break;
+            }
+            let selected = sample_policy_v1(
+                &scored.logits,
+                selective_search_main_policy_seed_v1(episode_ordinal, scored.expected.step),
+            )
+            .map_err(|_| invalid_data_v1("source policy sampling failed"))?;
+            consume_scored_v1(&mut session, scored, selected)
+                .map_err(|_| invalid_data_v1("source policy consume failed"))?;
+        }
+    }
+
+    let (aggregate, gates) = aggregate_information_set_rank16_v1(&roots, source_episodes_examined);
+    let report = NativeSelectiveSearchReportV1 {
+        schema: SELECTIVE_SEARCH_SCHEMA_V1,
+        publication_encoding: "serde-json-pretty-utf8-trailing-lf/v1",
+        source,
+        config,
+        seed_domain_set: SELECTIVE_SEARCH_SEED_DOMAIN_SET_V1,
+        roots,
+        aggregate,
+        gates,
+        interpretation: "Fresh later-game acting-player information-set selective-search screen. Ranking uses exactly sixteen sample-first hidden-card assignments shared across legal actions. The retained-policy argmax is preserved unless the best alternative exceeds its terminal reward sum by at least six. Confirmation uses exactly thirty-two fresh assignments shared by search and parent. All source, ranking, confirmation, and continuation domains are held out from prior diagnostics. The sampler is not a Bayesian posterior. This report does not authorize training or live evaluation.",
+    };
+    let deterministic_report_sha256 = selective_search_report_sha256_v1(&report)?;
+    let elapsed_milliseconds = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let runtime_under_ten_minutes = elapsed_milliseconds < 600_000;
+    let disposition = if report.gates.information_set_signal_pass && runtime_under_ten_minutes {
+        "pass-selective-search-signal-proceed-to-exact-g384-live-screen"
+    } else {
+        "reject-full-terminal-retained-policy-rollout-search"
+    };
+    Ok(NativeSelectiveSearchEnvelopeV1 {
+        schema: SELECTIVE_SEARCH_ENVELOPE_SCHEMA_V1,
         deterministic_report_sha256,
         elapsed_milliseconds,
         runtime_under_ten_minutes,
