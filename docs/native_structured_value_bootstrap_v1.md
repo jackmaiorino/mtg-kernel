@@ -49,3 +49,40 @@ Advance only if all conditions hold:
 
 This is reused development data. It produces no live policy, strength result,
 promotion evidence, or pro-level claim.
+
+## Completed result
+
+All four folds completed concurrently in 521 through 528 seconds while total
+CPU utilization remained approximately 100 percent.
+
+| Fold | Overall MSE change | Candidate P0 | Candidate P1 |
+| ---: | ---: | ---: | ---: |
+| 0 | 11.97% worse | 10.75% worse | 13.13% worse |
+| 1 | 6.39% worse | 4.36% worse | 7.93% worse |
+| 2 | 5.24% better | 12.18% better | 3.58% worse |
+| 3 | 3.61% worse | 3.40% worse | 3.88% worse |
+
+Aggregate parent MSE was `0.647926`; candidate MSE was `0.675949`, a
+`4.33%` regression. P0 regressed `1.19%` and P1 regressed `7.52%`. Only one
+of four folds improved. Mean absolute value residual was `0.345178`, weighted
+p90 was `0.712791`, and maximum absolute prediction was `2.25466`, so all
+three movement gates failed as well.
+
+The representation checks passed. Maximum object-permutation value delta was
+`2.38e-7`, and 1,021 of 1,024 sampled reference-bearing held-out decisions
+changed by more than `1e-4` when references were removed.
+
+The aggregate-MSE, seat, fold-count, and all residual-size gates failed. The
+fixed structured value bootstrap is rejected. Do not fit a full-data value
+package or implement its short-horizon search screen.
+
+This closes only the fixed 48-wide value residual trained on 256 pairs. The
+consistent fit activity plus held-out regression is evidence of overfitting,
+not a lack of structured feature use. The next useful test should increase
+data scale substantially rather than tune this model against the revealed
+folds.
+
+Aggregate report:
+`D:\mtg-kernel-structured-value-bootstrap-v1\development-aggregate.json`,
+SHA-256
+`bf6d6415259df8f5d16fabc0a48442928ab5149ff2fd30cc93df6bd2ef283de1`.
