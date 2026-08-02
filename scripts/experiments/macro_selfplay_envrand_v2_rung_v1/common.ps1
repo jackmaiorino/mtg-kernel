@@ -198,6 +198,33 @@ function Invoke-MacroTrainingRun {
     }
 }
 
+function Read-MacroH2hEvaluationLog {
+    param(
+        [Parameter(Mandatory = $true)][string]$LogPath,
+        [Parameter(Mandatory = $true)][uint64]$CandidateSeed
+    )
+
+    $text = Get-Content -LiteralPath $LogPath -Raw
+    if ($text -notmatch 'H2H opponent_resolved_gen=384 pinned=true') {
+        throw 'the opponent did not resolve to pinned generation 384'
+    }
+    if ($text -notmatch 'H2H envrand_v2=true') {
+        throw 'the evaluator did not report envrand-v2'
+    }
+    $match = [regex]::Match($text, 'H2H candidate_gen=512(?: wide=(?:true|false))? W/L/D (\d+)/(\d+)/(\d+) of 2048')
+    if (-not $match.Success) {
+        throw 'the 2,048-game result marker is absent'
+    }
+    return [ordered]@{
+        seed = $CandidateSeed
+        wins = [uint64]$match.Groups[1].Value
+        losses = [uint64]$match.Groups[2].Value
+        draws = [uint64]$match.Groups[3].Value
+        passes_55_percent = ([uint64]$match.Groups[1].Value -ge 1127)
+        log = $LogPath
+    }
+}
+
 function Invoke-MacroH2hEvaluation {
     param(
         [Parameter(Mandatory = $true)][string]$Executable,
@@ -243,23 +270,5 @@ function Invoke-MacroH2hEvaluation {
     if ($exitCode -ne 0) {
         throw "head-to-head evaluator failed with exit code $exitCode; see $LogPath"
     }
-    $text = Get-Content -LiteralPath $LogPath -Raw
-    if ($text -notmatch 'H2H opponent_resolved_gen=384 pinned=true') {
-        throw 'the opponent did not resolve to pinned generation 384'
-    }
-    if ($text -notmatch 'H2H envrand_v2=true') {
-        throw 'the evaluator did not report envrand-v2'
-    }
-    $match = [regex]::Match($text, 'H2H candidate_gen=512 W/L/D (\d+)/(\d+)/(\d+) of 2048')
-    if (-not $match.Success) {
-        throw 'the 2,048-game result marker is absent'
-    }
-    return [ordered]@{
-        seed = $CandidateSeed
-        wins = [uint64]$match.Groups[1].Value
-        losses = [uint64]$match.Groups[2].Value
-        draws = [uint64]$match.Groups[3].Value
-        passes_55_percent = ([uint64]$match.Groups[1].Value -ge 1127)
-        log = $LogPath
-    }
+    return Read-MacroH2hEvaluationLog -LogPath $LogPath -CandidateSeed $CandidateSeed
 }

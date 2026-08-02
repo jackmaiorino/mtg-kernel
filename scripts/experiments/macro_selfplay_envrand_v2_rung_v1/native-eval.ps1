@@ -15,16 +15,18 @@ if (-not $formal.valid_training) {
     throw 'formal training is not valid'
 }
 $evaluationRoot = Join-Path $EvidenceRoot 'native-eval'
-if (Test-Path -LiteralPath $evaluationRoot) {
-    throw "refusing to overwrite existing native evaluation: $evaluationRoot"
-}
 New-Item -ItemType Directory -Force -Path $evaluationRoot | Out-Null
 
 $results = @()
 foreach ($seed in @(970001, 970002, 970003)) {
     $store = Join-Path $EvidenceRoot "runs\seed-$seed\run-0\store"
     $log = Join-Path $evaluationRoot "seed-$seed-vs-promoted2-g384.log"
-    $result = Invoke-MacroH2hEvaluation -Executable $preflight.executable -CandidateStore $store -CandidateSeed $seed -EvaluationSeed 977001 -LogPath $log
+    if (Test-Path -LiteralPath $log) {
+        $result = Read-MacroH2hEvaluationLog -LogPath $log -CandidateSeed $seed
+    }
+    else {
+        $result = Invoke-MacroH2hEvaluation -Executable $preflight.executable -CandidateStore $store -CandidateSeed $seed -EvaluationSeed 977001 -LogPath $log
+    }
     $results += $result
 }
 $passCount = @($results | Where-Object { $_.passes_55_percent }).Count
