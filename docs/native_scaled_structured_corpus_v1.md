@@ -70,3 +70,29 @@ outcome decisions. The preflight teacher SHA-256 is
 `a52376ae74cfc36ce6be6ef3ddab6110ab3557eec26c02a3bfc9f3e7bbbbbff8`;
 the outcome SHA-256 is
 `4ada2a0e7011f00f033f57892d2c3e6fc6c1824ec78b90841bcf91675e4eedff`.
+
+## Completed collection
+
+The collection passed with 2,048 pairs, 4,096 natural games, and exactly 512
+pairs per fold. Pair 850 reproducibly hit the CP7 play-land mapper gap. It was
+the sole exclusion and was replaced by same-fold pair 2050.
+
+The merged teacher corpus contains 264,141 decisions and has SHA-256
+`b817f2077079c807dc96844b67fb50166206d21c2044e8afa0641e08f6b32c7e`.
+The merged outcome corpus contains 184,713 decisions and has SHA-256
+`ab1e9a1a3ec354c72f5587b8c2b3cc81df307598a7e845e182e79956e7214d37`.
+Together they cover 448,854 policy steps and 366,924 physical decisions. The
+combine report SHA-256 is
+`930bc202c702b6f7107614066e716dc5dfd918b7b3617bd9241d5db764e6ac18`.
+
+The repeat-equivalence report passed with 30 of 32 pairs byte-identical. All
+model inputs, parent outputs, terminal outcomes, and decision counts matched;
+the two remaining pairs differed only by interchangeable duplicate-card arena
+IDs. Its SHA-256 is
+`6f412cbe453acd2be56e52cf16bb812076e50a3bfc1dd201cc389be401becf32`.
+
+Eight parallel parsers built the 9.61 GB complete-history tensor cache. Cache
+SHA-256 is
+`721aeeb8389464676edf1190b4e90d74ced286104cc0fb30deb46d36ffbc8090`.
+The four fixed held-out folds are the next stage; none of these collection or
+cache results is strength evidence.
