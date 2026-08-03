@@ -41,6 +41,12 @@ POOL_ROOT = Path(r"D:\mtg-kernel-ladder-pilot-20260725\pool3")
 SCORER = Path(
     r"C:\Users\Jack\IdeaProjects\mtg-kernel-structured-successor-screen-v1-codex\target\release\native_population_corpus_stdio_v1.exe"
 )
+FORMAL_SCORER_SHA256 = (
+    "72cff781b3f0666414b5d81490686fbc3f28fd6e8fa24b4956805b9b8266f57b"
+)
+POOL_CONTRACT_SHA256 = (
+    "6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71"
+)
 HEX64 = re.compile(r"[0-9a-f]{16}")
 TEACHER_CONTRACT = "mtg-kernel-native-population-opponent-jsonl/v1"
 TEACHER_SELECTION_SOURCE = "native_pool3_ladder_40_20_20_20"
@@ -456,6 +462,10 @@ def run(args: argparse.Namespace) -> int:
     for path in (args.scorer, args.candidate_root, args.parent_root, args.pool_root):
         if not path.exists():
             raise RuntimeError(f"required path does not exist: {path}")
+    if _sha256(args.pool_root / "pool.json") != POOL_CONTRACT_SHA256:
+        raise RuntimeError("Pool3 contract SHA-256 mismatch")
+    if args.formal and _sha256(args.scorer) != FORMAL_SCORER_SHA256:
+        raise RuntimeError("formal native scorer SHA-256 mismatch")
     args.candidate_identity = _candidate_identity(args.candidate_root)
     args.parent_identity = _validate_parent_root(args.parent_root)
     arm_results = _run_arms(args)

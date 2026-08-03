@@ -104,6 +104,8 @@ class MatchedGateTest(unittest.TestCase):
         self.assertEqual(
             str(subject.POOL_ROOT), r"D:\mtg-kernel-ladder-pilot-20260725\pool3"
         )
+        self.assertEqual(len(subject.FORMAL_SCORER_SHA256), 64)
+        self.assertEqual(len(subject.POOL_CONTRACT_SHA256), 64)
         with self.assertRaises(SystemExit):
             subject._arguments(
                 [
