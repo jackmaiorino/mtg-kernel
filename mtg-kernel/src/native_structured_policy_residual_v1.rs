@@ -59,13 +59,14 @@ const HIDDEN_DIM_V1: usize = 48;
 pub(crate) const CARD_VOCAB_V1: usize = 136;
 const CARD_EMBEDDING_DIM_V1: usize = 24;
 const GROUP_VOCAB_V1: usize = 7;
+const HISTORY_GROUP_VOCAB_V1: usize = 12;
 const GROUP_EMBEDDING_DIM_V1: usize = 16;
 const PARAMETER_COUNT_V1: usize = 63_521;
 pub(crate) const HISTORY_LENGTH_V1: usize = 16;
 const HISTORY_ROLE_DIM_V1: usize = 2;
 const HISTORY_FEATURE_DIM_V1: usize =
     NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2 + HISTORY_ROLE_DIM_V1 + CARD_VOCAB_V1;
-const HISTORY_PARAMETER_COUNT_V1: usize = 107_298;
+const HISTORY_PARAMETER_COUNT_V1: usize = 107_378;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -197,6 +198,7 @@ pub(crate) struct NativeStructuredPolicyResidualInferenceV1 {
     report_sha256: [u8; 32],
     composite_model_parameter_sha256: [u8; 32],
     history_aware: bool,
+    group_vocab: usize,
 }
 
 impl NativeStructuredPolicyResidualInferenceV1 {
@@ -275,6 +277,7 @@ impl NativeStructuredPolicyResidualInferenceV1 {
             &self.parameters,
             &tensor,
             self.history_aware.then_some((history, acting_player)),
+            self.group_vocab,
         )?;
         if residual.logits.len() != action_count {
             return Err(());
@@ -321,7 +324,7 @@ fn expected_parameters_v1() -> Vec<(&'static str, Vec<usize>)> {
         ("object.0.weight", vec![48, 138]),
         ("object.0.bias", vec![48]),
         ("card.weight", vec![136, 24]),
-        ("group.weight", vec![7, 16]),
+        ("group.weight", vec![GROUP_VOCAB_V1, 16]),
         ("edge.0.weight", vec![48, 89]),
         ("edge.0.bias", vec![48]),
         ("edge.2.weight", vec![48, 48]),
@@ -356,7 +359,7 @@ fn expected_history_parameters_v1() -> Vec<(&'static str, Vec<usize>)> {
         ("object.0.weight", vec![48, 138]),
         ("object.0.bias", vec![48]),
         ("card.weight", vec![136, 24]),
-        ("group.weight", vec![7, 16]),
+        ("group.weight", vec![HISTORY_GROUP_VOCAB_V1, 16]),
         ("edge.0.weight", vec![48, 89]),
         ("edge.0.bias", vec![48]),
         ("edge.2.weight", vec![48, 48]),
@@ -519,6 +522,7 @@ fn structured_residual_v1(
     parameters: &BTreeMap<String, TensorV1>,
     tensor: &NativeFlatDecisionTensorV2,
     history: Option<(&[NativeStructuredHistoryEntryV1], u8)>,
+    group_vocab: usize,
 ) -> Result<StructuredResidualV1, ()> {
     if tensor.state.len() != NATIVE_FLAT_STATE_FEATURE_DIM_V2
         || tensor.object_card_ids.is_empty()
@@ -576,7 +580,7 @@ fn structured_residual_v1(
     let mut object_h = Vec::with_capacity(object_count);
     let mut groups = Vec::with_capacity(object_count);
     for index in 0..object_count {
-        let group = nonnegative_modulo_v1(tensor.object_groups[index], GROUP_VOCAB_V1)?;
+        let group = nonnegative_modulo_v1(tensor.object_groups[index], group_vocab)?;
         let card = nonnegative_modulo_v1(tensor.object_card_ids[index], CARD_VOCAB_V1)?;
         groups.push(group);
         let start = index * NATIVE_FLAT_OBJECT_FEATURE_DIM_V2;
@@ -623,15 +627,15 @@ fn structured_residual_v1(
         }
     }
 
-    let mut pooled = vec![vec![0.0f32; HIDDEN_DIM_V1]; GROUP_VOCAB_V1];
-    let mut group_counts = [0usize; GROUP_VOCAB_V1];
+    let mut pooled = vec![vec![0.0f32; HIDDEN_DIM_V1]; group_vocab];
+    let mut group_counts = vec![0usize; group_vocab];
     for (hidden, group) in object_h.iter().zip(&groups) {
         for (sum, value) in pooled[*group].iter_mut().zip(hidden) {
             *sum += value;
         }
         group_counts[*group] += 1;
     }
-    for group in 0..GROUP_VOCAB_V1 {
+    for group in 0..group_vocab {
         let denominator = group_counts[group].max(1) as f32;
         for value in &mut pooled[group] {
             *value /= denominator;
@@ -769,7 +773,7 @@ fn structured_residual_v1(
             }
         }
         for value in &mut group_mean {
-            *value /= GROUP_VOCAB_V1 as f32;
+            *value /= group_vocab as f32;
         }
         let mut action_mean = vec![0.0f32; HIDDEN_DIM_V1];
         for joint in &joints {
@@ -888,9 +892,14 @@ fn validate_report_v1(
         .get("mean_total_variation")
         .and_then(Value::as_f64)
         .unwrap_or(f64::NAN);
+    let expected_group_vocab = if history_aware {
+        HISTORY_GROUP_VOCAB_V1
+    } else {
+        GROUP_VOCAB_V1
+    };
     let common_invalid = !exact_number("dim", HIDDEN_DIM_V1 as u64)
         || !exact_number("card_vocab", CARD_VOCAB_V1 as u64)
-        || !exact_number("group_vocab", GROUP_VOCAB_V1 as u64)
+        || !exact_number("group_vocab", expected_group_vocab as u64)
         || !exact_number("seed", 20_260_802)
         || !exact_float("learning_rate", 3.0e-4)
         || !exact_float("weight_decay", 1.0e-4)
@@ -1039,6 +1048,11 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
     } else {
         PARAMETER_COUNT_V1
     };
+    let expected_group_vocab = if history_aware {
+        HISTORY_GROUP_VOCAB_V1
+    } else {
+        GROUP_VOCAB_V1
+    };
     let history_binding_invalid = if history_aware {
         candidate.architecture.history_length != Some(HISTORY_LENGTH_V1)
             || candidate.architecture.history_feature_dim != Some(HISTORY_FEATURE_DIM_V1)
@@ -1065,7 +1079,7 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
         || candidate.architecture.hidden_dim != HIDDEN_DIM_V1
         || candidate.architecture.card_vocab != CARD_VOCAB_V1
         || candidate.architecture.card_embedding_dim != CARD_EMBEDDING_DIM_V1
-        || candidate.architecture.group_vocab != GROUP_VOCAB_V1
+        || candidate.architecture.group_vocab != expected_group_vocab
         || candidate.architecture.group_embedding_dim != GROUP_EMBEDDING_DIM_V1
         || candidate.architecture.value_model != expected_value_model
         || history_binding_invalid
@@ -1177,6 +1191,7 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
         report_sha256,
         composite_model_parameter_sha256: composite_sha256,
         history_aware,
+        group_vocab: expected_group_vocab,
     })
 }
 
@@ -1391,6 +1406,7 @@ mod tests {
                 &inference.parameters,
                 &example.tensor.into_native_v1(),
                 Some((&history, example.acting_player)),
+                inference.group_vocab,
             )
             .unwrap();
             assert_eq!(

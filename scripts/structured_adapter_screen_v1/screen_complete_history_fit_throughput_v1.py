@@ -107,6 +107,9 @@ def main() -> int:
     cache = torch.load(args.cache, map_location="cpu", weights_only=False)
     all_policy = cache["policy"]
     all_value = cache["value"]
+    card_vocab, group_vocab = screen._model_vocab(all_policy + all_value)
+    if card_vocab != fit.CARD_VOCAB or group_vocab != fit.GROUP_VOCAB:
+        raise ValueError("fixed model vocabulary mismatch")
     screen._attach_complete_action_history(
         all_policy, all_value, fit.HISTORY_LENGTH, fit.CARD_VOCAB
     )
