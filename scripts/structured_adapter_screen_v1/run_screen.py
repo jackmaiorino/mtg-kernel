@@ -636,8 +636,17 @@ def _load_teacher(
         if record_type == "header":
             if saw_header or examples or terminals:
                 _fail("teacher header is not the unique first record")
-            if row.get("export_contract") != "mtg-kernel-xmage-cp7-teacher-jsonl/v1":
+            contract = row.get("export_contract")
+            if contract not in (
+                "mtg-kernel-xmage-cp7-teacher-jsonl/v1",
+                "mtg-kernel-native-population-opponent-jsonl/v1",
+            ):
                 _fail("teacher export contract mismatch")
+            if (
+                contract == "mtg-kernel-native-population-opponent-jsonl/v1"
+                and row.get("selection_source") != "native_pool3_ladder_40_20_20_20"
+            ):
+                _fail("native population teacher selection source mismatch")
             saw_header = True
         elif record_type == "decision":
             if not saw_header:
@@ -684,6 +693,7 @@ def _load_outcome(
             if contract not in (
                 "mtg-kernel-xmage-cp7-outcome-jsonl/v1",
                 "mtg-kernel-xmage-cp7-outcome-jsonl/v2",
+                "mtg-kernel-native-population-outcome-jsonl/v1",
             ):
                 _fail("outcome export contract mismatch")
             if contract.endswith("/v2") and schema_version != 2:

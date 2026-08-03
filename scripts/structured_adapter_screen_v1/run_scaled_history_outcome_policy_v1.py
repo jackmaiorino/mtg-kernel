@@ -56,11 +56,14 @@ def _write_new(path: Path, value: Any) -> None:
 
 
 def _load_decisions(
-    cache_path: Path, pair_limit: int | None
+    cache_path: Path,
+    pair_limit: int | None,
+    expected_cache_sha256: str,
+    expected_pairs: int,
 ) -> tuple[list[outcome.PhysicalDecision], dict[str, Any], dict[str, float]]:
     started = time.perf_counter()
     cache_sha256 = outcome._sha256(cache_path)
-    if cache_sha256 != EXPECTED_CACHE_SHA256:
+    if cache_sha256 != expected_cache_sha256:
         _fail("complete-history cache SHA-256 mismatch")
     cache = torch.load(cache_path, map_location="cpu", weights_only=False)
     loaded = time.perf_counter()
@@ -73,11 +76,11 @@ def _load_decisions(
     if not isinstance(examples, list) or not examples:
         _fail("cache has no outcome examples")
     pair_indices = sorted({int(row["pair_index"]) for row in examples})
-    if len(pair_indices) != 2_048:
-        _fail("cache does not contain 2,048 pairs")
+    if len(pair_indices) != expected_pairs:
+        _fail(f"cache does not contain {expected_pairs} pairs")
     if pair_limit is not None:
         if pair_limit < 8 or pair_limit > len(pair_indices):
-            _fail("pair limit must be between 8 and 2,048")
+            _fail(f"pair limit must be between 8 and {expected_pairs}")
         selected = set(pair_indices[:pair_limit])
         examples = [row for row in examples if int(row["pair_index"]) in selected]
         pair_indices = pair_indices[:pair_limit]
@@ -126,7 +129,12 @@ def _sample_decisions(
 
 def run_fold(args: argparse.Namespace) -> dict[str, Any]:
     started = time.perf_counter()
-    decisions, source, timings = _load_decisions(args.cache, args.pair_limit)
+    decisions, source, timings = _load_decisions(
+        args.cache,
+        args.pair_limit,
+        args.expected_cache_sha256,
+        args.expected_pairs,
+    )
     fit = [group for group in decisions if group.pair_index % 4 != args.fold]
     heldout = [group for group in decisions if group.pair_index % 4 == args.fold]
     fit_episodes = {group.episode_key for group in fit}
@@ -248,8 +256,13 @@ def aggregate(args: argparse.Namespace) -> dict[str, Any]:
     ):
         _fail("aggregate requires four non-profile fold results")
     cache_hashes = {result["source"]["cache_sha256"] for result in results}
+    pair_counts = {result["source"]["pair_count"] for result in results}
     configs = {json.dumps(result["config"], sort_keys=True) for result in results}
-    if cache_hashes != {EXPECTED_CACHE_SHA256} or len(configs) != 1:
+    if (
+        cache_hashes != {args.expected_cache_sha256}
+        or pair_counts != {args.expected_pairs}
+        or len(configs) != 1
+    ):
         _fail("fold source or configuration mismatch")
     overall = outcome._combine_weighted_metric(results, None)
     by_seat = {
@@ -297,11 +310,15 @@ def aggregate(args: argparse.Namespace) -> dict[str, Any]:
             by_seat[seat]["surrogate"] > 0.0 for seat in ("0", "1")
         ),
         "at_least_three_of_four_folds_positive": positive_folds >= 3,
-        "mean_total_variation_le_0_03": movement["mean_total_variation"] <= 0.03,
-        "p90_total_variation_le_0_10": movement["p90_total_variation"] <= 0.10,
-        "max_absolute_joint_log_ratio_le_0_50": movement[
+        "mean_total_variation_ge_min": movement["mean_total_variation"]
+        >= args.min_mean_tv,
+        "mean_total_variation_le_max": movement["mean_total_variation"]
+        <= args.max_mean_tv,
+        "p90_total_variation_le_max": movement["p90_total_variation"]
+        <= args.max_p90_tv,
+        "max_absolute_joint_log_ratio_le_max": movement[
             "max_absolute_physical_decision_joint_log_ratio"
-        ] <= 0.50,
+        ] <= args.max_joint_log_ratio,
         "permutation_max_delta_le_1e_5": diagnostics[
             "permutation_max_logit_delta"
         ] <= 1e-5,
@@ -315,7 +332,7 @@ def aggregate(args: argparse.Namespace) -> dict[str, Any]:
             {"path": str(path), "sha256": outcome._sha256(path)}
             for path in args.fold_result
         ],
-        "source_cache_sha256": EXPECTED_CACHE_SHA256,
+        "source_cache_sha256": args.expected_cache_sha256,
         "config": results[0]["config"],
         "heldout_surrogate": {"overall": overall, "by_candidate_seat": by_seat},
         "positive_fold_count": positive_folds,
@@ -325,6 +342,12 @@ def aggregate(args: argparse.Namespace) -> dict[str, Any]:
         },
         "heldout_movement": movement,
         "diagnostics": diagnostics,
+        "gate_config": {
+            "min_mean_total_variation": args.min_mean_tv,
+            "max_mean_total_variation": args.max_mean_tv,
+            "max_p90_total_variation": args.max_p90_tv,
+            "max_absolute_joint_log_ratio": args.max_joint_log_ratio,
+        },
         "gates": gates,
         "pass": all(gates.values()),
         "non_claims": [
@@ -348,11 +371,25 @@ def main() -> int:
     fold.add_argument("--epochs", type=int, default=EPOCHS)
     fold.add_argument("--pair-limit", type=int)
     fold.add_argument("--profile-only", action="store_true")
+    fold.add_argument(
+        "--expected-cache-sha256", default=EXPECTED_CACHE_SHA256
+    )
+    fold.add_argument("--expected-pairs", type=int, default=2_048)
     agg = subparsers.add_parser("aggregate")
     agg.add_argument("--fold-result", action="append", type=Path, required=True)
     agg.add_argument("--output", type=Path, required=True)
+    agg.add_argument(
+        "--expected-cache-sha256", default=EXPECTED_CACHE_SHA256
+    )
+    agg.add_argument("--expected-pairs", type=int, default=2_048)
+    agg.add_argument("--min-mean-tv", type=float, default=0.0)
+    agg.add_argument("--max-mean-tv", type=float, default=0.03)
+    agg.add_argument("--max-p90-tv", type=float, default=0.10)
+    agg.add_argument("--max-joint-log-ratio", type=float, default=0.50)
     args = parser.parse_args()
     if args.command == "fold":
+        if len(args.expected_cache_sha256) != 64 or args.expected_pairs < 8:
+            _fail("expected cache SHA-256 or pair count is invalid")
         if args.threads < 1 or args.threads > 24:
             _fail("threads must be between 1 and 24")
         if args.profile_only:
@@ -362,8 +399,16 @@ def main() -> int:
             _fail("formal folds require all pairs and five epochs")
         result = run_fold(args)
     else:
+        if len(args.expected_cache_sha256) != 64 or args.expected_pairs < 8:
+            _fail("expected cache SHA-256 or pair count is invalid")
         if len(args.fold_result) != 4:
             _fail("aggregate requires exactly four fold results")
+        if not (
+            0.0 <= args.min_mean_tv <= args.max_mean_tv
+            and args.max_p90_tv > 0.0
+            and args.max_joint_log_ratio > 0.0
+        ):
+            _fail("aggregate movement gates are invalid")
         result = aggregate(args)
     print(json.dumps(result, sort_keys=True, allow_nan=False))
     return 0

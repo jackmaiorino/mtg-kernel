@@ -27,17 +27,20 @@ use crate::native_flat_tensorizer_v2::{
     NATIVE_FLAT_ACTION_FEATURE_DIM_V2, NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
     NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
 };
+use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_ladder_pool_resolution_v1::{
-    resolve_ladder_checkpoint_authority_v1, stage_ladder_checkpoint_ref_v1,
+    resolve_ladder_checkpoint_authority_v1, resolve_ladder_pool_v1, stage_ladder_checkpoint_ref_v1,
 };
 use crate::native_structured_policy_residual_v1::{
     load_native_structured_policy_residual_inference_v1, NativeStructuredHistoryEntryV1,
     NativeStructuredPolicyResidualInferenceV1, CARD_VOCAB_V1, HISTORY_LENGTH_V1,
 };
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
+use crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2;
 use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
 use crate::native_training_store_run_v2::{
-    NativeRunEnvironmentTrajectoryContractV1, OpponentLadderCheckpointRefV1, ValidatedTrainRunV2,
+    NativeRunEnvironmentTrajectoryContractV1, OpponentLadderCheckpointRefV1,
+    OpponentLadderPoolContractV1, ValidatedTrainRunV2,
 };
 use crate::native_xmage_cp7_outcome_reinforce_v1::{
     load_xmage_cp7_outcome_inference_v1, NativeXmageCp7OutcomeInferenceV1,
@@ -54,7 +57,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
@@ -88,9 +91,14 @@ pub const XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-outc
 pub const XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1: u32 = 1;
 pub const XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2: &str = "mtg-kernel-xmage-cp7-outcome-jsonl/v2";
 pub const XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V2: u32 = 2;
+pub const NATIVE_POPULATION_TEACHER_JSONL_CONTRACT_V1: &str =
+    "mtg-kernel-native-population-opponent-jsonl/v1";
+pub const NATIVE_POPULATION_OUTCOME_JSONL_CONTRACT_V1: &str =
+    "mtg-kernel-native-population-outcome-jsonl/v1";
 
 const XMAGE_CP7_TEACHER_SELECTION_SOURCE_V1: &str = "xmage_rally_cp7_mapper";
 const XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1: &str = "candidate_checkpoint_policy";
+const NATIVE_POPULATION_TEACHER_SELECTION_SOURCE_V1: &str = "native_pool3_ladder_40_20_20_20";
 
 const SOURCE_RUN_SHA256_V1: &str =
     "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae";
@@ -723,6 +731,7 @@ struct ActiveShadowSessionV1 {
     session: FastActorSessionV1,
     schedule: NativeLaneScheduleStateV1,
     candidate_seat: PlayerSeatV1,
+    population_opponent_member: Option<OpponentLadderPoolMemberV2>,
     deck_ids: SessionDeckIdsV1,
     base_seed: u64,
     pair_index: u64,
@@ -834,6 +843,8 @@ enum XmageCp7TeacherRecordV1 {
 
 struct XmageCp7TeacherJsonlWriterV1 {
     writer: Box<dyn Write>,
+    schema_version: u32,
+    selection_source: &'static str,
     next_record_ordinal: u64,
     next_teacher_decision_ordinal: u64,
 }
@@ -844,24 +855,50 @@ impl XmageCp7TeacherJsonlWriterV1 {
         checkpoint: &ShadowCheckpointIdentityV1,
     ) -> Result<Self, Box<dyn Error>> {
         let file = OpenOptions::new().write(true).create_new(true).open(path)?;
-        Self::from_writer_v1(Box::new(BufWriter::new(file)), checkpoint)
-            .map_err(|error| Box::new(error) as Box<dyn Error>)
+        Self::from_writer_v1(
+            Box::new(BufWriter::new(file)),
+            checkpoint,
+            XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1,
+            XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1,
+            XMAGE_CP7_TEACHER_SELECTION_SOURCE_V1,
+        )
+        .map_err(|error| Box::new(error) as Box<dyn Error>)
+    }
+
+    fn create_native_population_v1(
+        path: &Path,
+        checkpoint: &ShadowCheckpointIdentityV1,
+    ) -> Result<Self, Box<dyn Error>> {
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        Self::from_writer_v1(
+            Box::new(BufWriter::new(file)),
+            checkpoint,
+            1,
+            NATIVE_POPULATION_TEACHER_JSONL_CONTRACT_V1,
+            NATIVE_POPULATION_TEACHER_SELECTION_SOURCE_V1,
+        )
+        .map_err(|error| Box::new(error) as Box<dyn Error>)
     }
 
     fn from_writer_v1(
         writer: Box<dyn Write>,
         checkpoint: &ShadowCheckpointIdentityV1,
+        schema_version: u32,
+        export_contract: &'static str,
+        selection_source: &'static str,
     ) -> io::Result<Self> {
         let mut export = Self {
             writer,
+            schema_version,
+            selection_source,
             next_record_ordinal: 0,
             next_teacher_decision_ordinal: 0,
         };
         export.write_v1(&XmageCp7TeacherRecordV1::Header {
-            schema_version: XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1,
+            schema_version,
             record_ordinal: 0,
-            export_contract: XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1,
-            selection_source: XMAGE_CP7_TEACHER_SELECTION_SOURCE_V1,
+            export_contract,
+            selection_source,
             tensorizer_identity: NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
             tensorizer_features_source_sha256: NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
             model_input_commitment: CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1,
@@ -883,10 +920,10 @@ impl XmageCp7TeacherJsonlWriterV1 {
         let selected = usize::try_from(selected_index).map_err(|_| ())?;
         let selected_semantic = scored.action_semantics.get(selected).ok_or(())?.clone();
         Ok(XmageCp7TeacherRecordV1::Decision {
-            schema_version: XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1,
+            schema_version: self.schema_version,
             record_ordinal: self.next_record_ordinal,
             teacher_decision_ordinal: self.next_teacher_decision_ordinal,
-            selection_source: XMAGE_CP7_TEACHER_SELECTION_SOURCE_V1,
+            selection_source: self.selection_source,
             deck_ids: active.deck_ids.clone(),
             randomization_identity: SHADOW_RANDOMIZATION_IDENTITY_V1,
             base_seed_u64_hex: u64_hex_v1(active.base_seed),
@@ -922,7 +959,7 @@ impl XmageCp7TeacherJsonlWriterV1 {
         terminal: RlSessionTerminalV1,
     ) -> XmageCp7TeacherRecordV1 {
         XmageCp7TeacherRecordV1::Terminal {
-            schema_version: XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1,
+            schema_version: self.schema_version,
             record_ordinal: self.next_record_ordinal,
             deck_ids: active.deck_ids.clone(),
             randomization_identity: SHADOW_RANDOMIZATION_IDENTITY_V1,
@@ -1061,6 +1098,7 @@ struct XmageCp7OutcomeEpisodeV1 {
 struct XmageCp7OutcomeJsonlWriterV1 {
     writer: Box<dyn Write>,
     schema_version: u32,
+    selection_source: &'static str,
     row_checkpoint: Option<ShadowCheckpointIdentityV1>,
     next_record_ordinal: u64,
     next_outcome_decision_ordinal: u64,
@@ -1075,6 +1113,22 @@ impl XmageCp7OutcomeJsonlWriterV1 {
         let file = OpenOptions::new().write(true).create_new(true).open(path)?;
         Self::from_writer_v1(Box::new(BufWriter::new(file)), checkpoint)
             .map_err(|error| Box::new(error) as Box<dyn Error>)
+    }
+
+    fn create_native_population_v1(
+        path: &Path,
+        checkpoint: &ShadowCheckpointIdentityV1,
+    ) -> Result<Self, Box<dyn Error>> {
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        Self::from_writer_configured_v1(
+            Box::new(BufWriter::new(file)),
+            checkpoint,
+            1,
+            NATIVE_POPULATION_OUTCOME_JSONL_CONTRACT_V1,
+            XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1,
+            Some(checkpoint.clone()),
+        )
+        .map_err(|error| Box::new(error) as Box<dyn Error>)
     }
 
     fn from_writer_v1(
@@ -1121,9 +1175,28 @@ impl XmageCp7OutcomeJsonlWriterV1 {
                 "CP7 outcome export requires exact g384 or a verified outcome parent",
             ));
         };
+        Self::from_writer_configured_v1(
+            writer,
+            checkpoint,
+            schema_version,
+            export_contract,
+            XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1,
+            row_checkpoint,
+        )
+    }
+
+    fn from_writer_configured_v1(
+        writer: Box<dyn Write>,
+        checkpoint: &ShadowCheckpointIdentityV1,
+        schema_version: u32,
+        export_contract: &'static str,
+        selection_source: &'static str,
+        row_checkpoint: Option<ShadowCheckpointIdentityV1>,
+    ) -> io::Result<Self> {
         let mut export = Self {
             writer,
             schema_version,
+            selection_source,
             row_checkpoint,
             next_record_ordinal: 0,
             next_outcome_decision_ordinal: 0,
@@ -1133,7 +1206,7 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             schema_version,
             record_ordinal: 0,
             export_contract,
-            selection_source: XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1,
+            selection_source,
             tensorizer_identity: NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
             tensorizer_features_source_sha256: NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
             model_input_commitment: CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1,
@@ -1197,7 +1270,7 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             record_ordinal: self.next_record_ordinal,
             outcome_decision_ordinal: self.next_outcome_decision_ordinal,
             checkpoint: self.row_checkpoint.clone(),
-            selection_source: XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1,
+            selection_source: self.selection_source,
             deck_ids: active.deck_ids.clone(),
             randomization_identity: SHADOW_RANDOMIZATION_IDENTITY_V1,
             base_seed_u64_hex: u64_hex_v1(active.base_seed),
@@ -1611,6 +1684,7 @@ fn rl_error_code_v1(code: RlSessionErrorCode) -> &'static str {
 struct ShadowScorerServiceV1 {
     model: Box<dyn ShadowModelScorerV1>,
     opponent_model: Option<Box<dyn ShadowModelScorerV1>>,
+    population_opponent: Option<LadderOpponentEngineV1>,
     identity: ShadowCheckpointIdentityV1,
     candidate_selector: ShadowCandidateSelectorV1,
     max_physical_decisions: u64,
@@ -1648,6 +1722,7 @@ impl ShadowScorerServiceV1 {
             return Ok(Self {
                 model: Box::new(Cp7BehaviorCloneShadowModelScorerV1 { inference }),
                 opponent_model: None,
+                population_opponent: None,
                 identity,
                 candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                 max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
@@ -1709,6 +1784,7 @@ impl ShadowScorerServiceV1 {
                         inference,
                     }),
                     opponent_model: None,
+                    population_opponent: None,
                     identity,
                     candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                     max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
@@ -1757,6 +1833,7 @@ impl ShadowScorerServiceV1 {
                 return Ok(Self {
                     model: Box::new(NativeRank1PolicyResidualShadowModelScorerV1 { inference }),
                     opponent_model: None,
+                    population_opponent: None,
                     identity,
                     candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                     max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
@@ -1791,6 +1868,7 @@ impl ShadowScorerServiceV1 {
             return Ok(Self {
                 model: Box::new(XmageCp7OutcomeShadowModelScorerV1 { inference }),
                 opponent_model: None,
+                population_opponent: None,
                 identity,
                 candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                 max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
@@ -1807,6 +1885,7 @@ impl ShadowScorerServiceV1 {
                 inference: loaded.inference,
             }),
             opponent_model: None,
+            population_opponent: None,
             identity: loaded.identity,
             candidate_selector: ShadowCandidateSelectorV1::PolicySample,
             max_physical_decisions: loaded.max_physical_decisions,
@@ -1823,6 +1902,7 @@ impl ShadowScorerServiceV1 {
         Self {
             model,
             opponent_model: None,
+            population_opponent: None,
             identity: ShadowCheckpointIdentityV1 {
                 authority_kind: "test-only".to_owned(),
                 source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
@@ -2343,9 +2423,12 @@ impl ShadowScorerServiceV1 {
     fn score_session_v1(
         model: &dyn ShadowModelScorerV1,
         opponent_model: Option<&dyn ShadowModelScorerV1>,
+        population_opponent: Option<&LadderOpponentEngineV1>,
+        population_opponent_member: Option<OpponentLadderPoolMemberV2>,
         candidate_selector: ShadowCandidateSelectorV1,
         max_physical_decisions: u64,
         max_policy_steps: u64,
+        base_seed: u64,
         session: &FastActorSessionV1,
         schedule: &mut NativeLaneScheduleStateV1,
         candidate_seat: PlayerSeatV1,
@@ -2408,6 +2491,25 @@ impl ShadowScorerServiceV1 {
                     Some(u64_hex_v1(preflight.action_seed)),
                     Some(u32::try_from(selected).map_err(|_| "selected_index_invalid")?),
                 )
+            } else if let (Some(engine), Some(member)) =
+                (population_opponent, population_opponent_member)
+            {
+                let selected = match member {
+                    OpponentLadderPoolMemberV2::UniformFloor => {
+                        LadderOpponentEngineV1::select_floor_action_v1(
+                            base_seed,
+                            expected.episode_id,
+                            preflight.actor_physical_decision_ordinal,
+                            expected.substep_index,
+                            expected.legal_action_count,
+                        )
+                    }
+                    policy_member => {
+                        engine.select_policy_action_v1(policy_member, view, preflight.action_seed)
+                    }
+                }
+                .map_err(|_| "population_opponent_sampling_failed")?;
+                (None, Some(selected))
             } else {
                 (None, None)
             };
@@ -2622,15 +2724,38 @@ impl ShadowScorerServiceV1 {
                 )
             }
         };
-        let mut schedule =
-            NativeLaneScheduleStateV1::new(base_seed, episode_id, candidate_seat, None);
+        let population_opponent_member = match self.population_opponent.as_ref() {
+            Some(engine) => match engine.pool_member_for_episode_v1(base_seed, episode_id) {
+                Ok(member) => Some(member),
+                Err(_) => {
+                    return response_v1(
+                        Some(request_id),
+                        &self.identity,
+                        error_body_v1(
+                            "population_opponent_schedule_invalid",
+                            "the native population opponent could not be selected",
+                        ),
+                    )
+                }
+            },
+            None => None,
+        };
+        let mut schedule = NativeLaneScheduleStateV1::new(
+            base_seed,
+            episode_id,
+            candidate_seat,
+            population_opponent_member,
+        );
         let structured_history = StructuredHistoryStateV1::default();
         let current = match Self::score_session_v1(
             self.model.as_ref(),
             self.opponent_model.as_deref(),
+            self.population_opponent.as_ref(),
+            population_opponent_member,
             self.candidate_selector,
             self.max_physical_decisions,
             self.max_policy_steps,
+            base_seed,
             &session,
             &mut schedule,
             candidate_seat,
@@ -2649,6 +2774,7 @@ impl ShadowScorerServiceV1 {
             session,
             schedule,
             candidate_seat,
+            population_opponent_member,
             deck_ids,
             base_seed,
             pair_index: episode_schedule.pair_index,
@@ -2930,9 +3056,12 @@ impl ShadowScorerServiceV1 {
             FastActorResponseV1::Decision(_) => match Self::score_session_v1(
                 self.model.as_ref(),
                 self.opponent_model.as_deref(),
+                self.population_opponent.as_ref(),
+                active.population_opponent_member,
                 self.candidate_selector,
                 self.max_physical_decisions,
                 self.max_policy_steps,
+                active.base_seed,
                 &active.session,
                 &mut active.schedule,
                 active.candidate_seat,
@@ -3212,6 +3341,55 @@ pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_exports_jsonl_v1(
         Some(teacher_jsonl),
         Some(outcome_jsonl),
     )
+}
+
+/// Opt-in native on-policy corpus generation against the frozen Pool3 ladder.
+/// Candidate and opponent decisions are exported separately so the existing
+/// complete-public-history cache builder can reconstruct every physical
+/// decision. Only the candidate stream receives the natural terminal return.
+pub fn run_checkpoint_shadow_stdio_with_native_population_exports_jsonl_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    pool_root: PathBuf,
+    teacher_jsonl: PathBuf,
+    outcome_jsonl: PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    let mut service = ShadowScorerServiceV1::load_v1(authority)?;
+    let pool_bytes = fs::read(pool_root.join("pool.json"))?;
+    let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)?;
+    let (primary, predecessor_a, predecessor_b) = resolve_ladder_pool_v1(
+        &pool,
+        &pool_root.join("primary"),
+        &pool_root.join("pred-a"),
+        &pool_root.join("pred-b"),
+    )?;
+    let engine = LadderOpponentEngineV1::new_v1(pool, primary, predecessor_a, predecessor_b)?;
+    let teacher = XmageCp7TeacherJsonlWriterV1::create_native_population_v1(
+        &teacher_jsonl,
+        &service.identity,
+    )?;
+    let outcome = XmageCp7OutcomeJsonlWriterV1::create_native_population_v1(
+        &outcome_jsonl,
+        &service.identity,
+    )?;
+    service.install_teacher_export_v1(teacher).map_err(|()| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "native population opponent export must be installed before reset",
+        )
+    })?;
+    service.install_outcome_export_v1(outcome).map_err(|()| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "native population outcome export must be installed before reset",
+        )
+    })?;
+    service.population_opponent = Some(engine);
+    eprintln!(
+        "NATIVE_POPULATION_CORPUS pool_root={} weights=40,20,20,20",
+        pool_root.display()
+    );
+    run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
+    Ok(())
 }
 
 fn run_checkpoint_shadow_stdio_configured_v1(
@@ -3501,6 +3679,9 @@ mod tests {
         let export = XmageCp7TeacherJsonlWriterV1::from_writer_v1(
             Box::new(bytes.clone()),
             &service.identity,
+            XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1,
+            XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1,
+            XMAGE_CP7_TEACHER_SELECTION_SOURCE_V1,
         )
         .unwrap();
         service.install_teacher_export_v1(export).unwrap();
