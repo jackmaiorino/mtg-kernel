@@ -81,6 +81,62 @@ def _model() -> screen.StructuredAdapter:
     )
 
 
+def _load_decisions(
+    cache_path: Path,
+    pair_limit: int | None,
+) -> tuple[list[Any], dict[str, Any], dict[str, float]]:
+    started = time.perf_counter()
+    cache_sha256 = scaled.outcome._sha256(cache_path)
+    if cache_sha256 != EXPECTED_CACHE_SHA256:
+        _fail("complete-history cache SHA-256 mismatch")
+    cache = torch.load(cache_path, map_location="cpu", weights_only=False)
+    loaded = time.perf_counter()
+    if (
+        cache.get("version") != screen.SCRIPT_VERSION
+        or not cache.get("complete_history_join")
+    ):
+        _fail("cache is not the validated complete-history corpus")
+    policy = cache.get("policy")
+    value = cache.get("value")
+    if not isinstance(policy, list) or not policy or not isinstance(value, list) or not value:
+        _fail("cache must contain both public-action lanes")
+    policy_pairs = sorted({int(row["pair_index"]) for row in policy})
+    value_pairs = sorted({int(row["pair_index"]) for row in value})
+    if policy_pairs != list(range(EXPECTED_PAIRS)) or value_pairs != policy_pairs:
+        _fail("cache lanes do not contain the exact 2,048-pair panel")
+    selected_pairs = policy_pairs
+    if pair_limit is not None:
+        if pair_limit < 8 or pair_limit > EXPECTED_PAIRS:
+            _fail("pair limit must be between 8 and 2,048")
+        selected_pairs = policy_pairs[:pair_limit]
+        selected = set(selected_pairs)
+        policy = [row for row in policy if int(row["pair_index"]) in selected]
+        value = [row for row in value if int(row["pair_index"]) in selected]
+    screen._attach_complete_action_history(
+        policy, value, HISTORY_LENGTH, CARD_VOCAB
+    )
+    history_ready = time.perf_counter()
+    decisions = scaled.outcome._physical_decisions(value)
+    grouped = time.perf_counter()
+    metadata = {
+        "cache": str(cache_path),
+        "cache_sha256": cache_sha256,
+        "teacher_jsonl_sha256": cache["source"]["teacher_sha256"],
+        "outcome_jsonl_sha256": cache["source"]["outcome_sha256"],
+        "history_sources": "candidate_and_population_public_actions",
+        "pair_count": len(selected_pairs),
+        "episode_count": len({group.episode_key for group in decisions}),
+        "row_count": len(value),
+        "physical_decision_count": len(decisions),
+    }
+    timings = {
+        "hash_and_load_seconds": loaded - started,
+        "attach_history_seconds": history_ready - loaded,
+        "group_decisions_seconds": grouped - history_ready,
+    }
+    return decisions, metadata, timings
+
+
 def _fit_args(args: argparse.Namespace) -> SimpleNamespace:
     return SimpleNamespace(
         epochs=args.epochs,
@@ -103,7 +159,6 @@ def _fit_model(
         model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY
     )
     rng = random.Random(args.seed)
-    normalized_mass = float(len(decisions))
     history: list[dict[str, float | int]] = []
     for epoch in range(args.epochs):
         order = list(range(len(decisions)))
@@ -136,19 +191,21 @@ def _fit_model(
                             reduction="sum",
                         )
                     )
-                    policy_weights.append(row_mass * normalized_mass)
+                    policy_weights.append(row_mass)
                     if row_index == 0:
                         value_losses.append(
                             torch.nn.functional.mse_loss(
                                 student_value.float(), row["old_value"].float()
                             )
                         )
-                        value_weights.append(decision_mass * normalized_mass)
+                        value_weights.append(decision_mass)
             policy_weight_tensor = torch.tensor(policy_weights, dtype=torch.float32)
             value_weight_tensor = torch.tensor(value_weights, dtype=torch.float32)
             policy_loss = (torch.stack(policy_losses) * policy_weight_tensor).sum()
+            policy_loss = policy_loss / policy_weight_tensor.sum()
             value_loss = (torch.stack(value_losses) * value_weight_tensor).sum()
-            loss = (policy_loss + value_loss) / normalized_mass
+            value_loss = value_loss / value_weight_tensor.sum()
+            loss = policy_loss + value_loss
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             gradient_norm = torch.nn.utils.clip_grad_norm_(
@@ -157,8 +214,8 @@ def _fit_model(
             if not torch.isfinite(gradient_norm):
                 _fail("non-finite training gradient")
             optimizer.step()
-            policy_total += float(policy_loss.detach()) / normalized_mass
-            value_total += float(value_loss.detach()) / normalized_mass
+            policy_total += float(policy_loss.detach())
+            value_total += float(value_loss.detach())
             steps += 1
         history.append(
             {
@@ -347,12 +404,7 @@ def run_fold(args: argparse.Namespace) -> dict[str, Any]:
         _fail(f"refusing to overwrite {args.output}")
     if not args.profile_only and args.output.with_suffix(".state.pt").exists():
         _fail(f"refusing to overwrite {args.output.with_suffix('.state.pt')}")
-    decisions, source, load_timings = scaled._load_decisions(
-        args.cache,
-        args.pair_limit,
-        args.expected_cache_sha256,
-        args.expected_pairs,
-    )
+    decisions, source, load_timings = _load_decisions(args.cache, args.pair_limit)
     fit = [decision for decision in decisions if decision.pair_index % FOLDS != args.fold]
     heldout = [decision for decision in decisions if decision.pair_index % FOLDS == args.fold]
     if not fit or not heldout:
@@ -369,6 +421,9 @@ def run_fold(args: argparse.Namespace) -> dict[str, Any]:
         "source": source,
         "split": {
             "rule": "pair_index_mod_4",
+            "fit_pair_count": len({d.pair_index for d in fit}),
+            "heldout_pair_count": len({d.pair_index for d in heldout}),
+            "heldout_pair_indices": sorted({d.pair_index for d in heldout}),
             "fit_physical_decision_count": len(fit),
             "heldout_physical_decision_count": len(heldout),
             "fit_episode_count": len({d.episode_key for d in fit}),
@@ -437,6 +492,26 @@ def aggregate(args: argparse.Namespace) -> dict[str, Any]:
         _fail("aggregate requires four non-profile fold results")
     for result in results:
         _validate_source(result.get("source", {}), args.expected_cache_sha256, args.expected_pairs)
+    heldout_sets: list[set[int]] = []
+    for result in results:
+        split = result.get("split", {})
+        fold = int(result["fold"])
+        heldout = split.get("heldout_pair_indices")
+        if (
+            split.get("rule") != "pair_index_mod_4"
+            or not isinstance(heldout, list)
+            or heldout != sorted(set(heldout))
+            or any(not isinstance(pair, int) or pair % FOLDS != fold for pair in heldout)
+            or split.get("heldout_pair_count") != len(heldout)
+            or split.get("fit_pair_count") != EXPECTED_PAIRS - len(heldout)
+        ):
+            _fail("fold split provenance mismatch")
+        heldout_sets.append(set(heldout))
+    if (
+        set.union(*heldout_sets) != set(range(EXPECTED_PAIRS))
+        or sum(len(values) for values in heldout_sets) != EXPECTED_PAIRS
+    ):
+        _fail("heldout fold panels are not an exact disjoint partition")
     configs = {json.dumps(result["config"], sort_keys=True) for result in results}
     if len(configs) != 1:
         _fail("fold configuration mismatch")
@@ -523,13 +598,23 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if len(args.expected_cache_sha256) != 64 or args.expected_pairs != EXPECTED_PAIRS:
-        _fail("expected cache SHA-256 or pair count is invalid")
+    if (
+        args.expected_cache_sha256 != EXPECTED_CACHE_SHA256
+        or args.expected_pairs != EXPECTED_PAIRS
+    ):
+        _fail("source cache identity and pair count are frozen")
     if args.command == "fold":
-        if args.threads < 1 or args.threads > 24 or args.epochs < 1:
+        if (
+            args.threads < 1
+            or args.threads > 24
+            or args.epochs < 1
+            or args.seed != SEED
+        ):
             _fail("invalid fold training configuration")
         if args.profile_only and args.pair_limit is None:
             _fail("profile-only fold requires --pair-limit")
+        if not args.profile_only and args.threads != 6:
+            _fail("formal folds require the frozen six-thread topology")
         if not args.profile_only and (args.pair_limit is not None or args.epochs != EPOCHS):
             _fail("formal folds require all pairs and five epochs")
         result = run_fold(args)

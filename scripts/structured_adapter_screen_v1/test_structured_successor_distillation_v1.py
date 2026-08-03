@@ -9,6 +9,7 @@ import unittest
 import copy
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import torch
 
@@ -106,6 +107,80 @@ class DistillationTests(unittest.TestCase):
             path.write_text("{}\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 distill._write_new(path, {"x": 1})
+        with self.assertRaisesRegex(ValueError, "source cache identity"):
+            distill.main(
+                [
+                    "fold",
+                    "--cache",
+                    "cache.pt",
+                    "--output",
+                    "output.json",
+                    "--fold",
+                    "0",
+                    "--profile-only",
+                    "--pair-limit",
+                    "8",
+                    "--expected-cache-sha256",
+                    "0" * 64,
+                ]
+            )
+        with self.assertRaisesRegex(ValueError, "invalid fold training configuration"):
+            distill.main(
+                [
+                    "fold",
+                    "--cache",
+                    "cache.pt",
+                    "--output",
+                    "output.json",
+                    "--fold",
+                    "0",
+                    "--profile-only",
+                    "--pair-limit",
+                    "8",
+                    "--seed",
+                    "1",
+                ]
+            )
+
+    def test_loader_attaches_both_public_action_lanes(self):
+        policy = [{"pair_index": pair} for pair in range(distill.EXPECTED_PAIRS)]
+        value = [{"pair_index": pair} for pair in range(distill.EXPECTED_PAIRS)]
+        cache = {
+            "version": distill.screen.SCRIPT_VERSION,
+            "complete_history_join": True,
+            "policy": policy,
+            "value": value,
+            "source": {"teacher_sha256": "a" * 64, "outcome_sha256": "b" * 64},
+        }
+        observed = {}
+
+        def attach(policy_rows, value_rows, history_length, card_vocab):
+            observed["policy"] = len(policy_rows)
+            observed["value"] = len(value_rows)
+            observed["history_length"] = history_length
+            observed["card_vocab"] = card_vocab
+
+        with (
+            mock.patch.object(
+                distill.scaled.outcome,
+                "_sha256",
+                return_value=distill.EXPECTED_CACHE_SHA256,
+            ),
+            mock.patch.object(distill.torch, "load", return_value=cache),
+            mock.patch.object(distill.screen, "_attach_complete_action_history", side_effect=attach),
+            mock.patch.object(
+                distill.scaled.outcome, "_physical_decisions", return_value=[]
+            ),
+        ):
+            decisions, source, _ = distill._load_decisions(Path("cache.pt"), 8)
+        self.assertEqual(decisions, [])
+        self.assertEqual(observed["policy"], 8)
+        self.assertEqual(observed["value"], 8)
+        self.assertEqual(observed["history_length"], distill.HISTORY_LENGTH)
+        self.assertEqual(observed["card_vocab"], distill.CARD_VOCAB)
+        self.assertEqual(
+            source["history_sources"], "candidate_and_population_public_actions"
+        )
 
     def test_aggregate_gate_rejects_non_profile_and_wrong_source(self):
         result = {
@@ -162,6 +237,13 @@ class DistillationTests(unittest.TestCase):
             for fold in range(4):
                 value = copy.deepcopy(fold_template)
                 value["fold"] = fold
+                heldout = list(range(fold, distill.EXPECTED_PAIRS, distill.FOLDS))
+                value["split"] = {
+                    "rule": "pair_index_mod_4",
+                    "fit_pair_count": distill.EXPECTED_PAIRS - len(heldout),
+                    "heldout_pair_count": len(heldout),
+                    "heldout_pair_indices": heldout,
+                }
                 path = Path(directory) / f"fold-{fold}.json"
                 path.write_text(json.dumps(value), encoding="utf-8")
                 paths.append(path)
@@ -177,6 +259,13 @@ class DistillationTests(unittest.TestCase):
 
             failing_value = copy.deepcopy(fold_template)
             failing_value["fold"] = 0
+            heldout = list(range(0, distill.EXPECTED_PAIRS, distill.FOLDS))
+            failing_value["split"] = {
+                "rule": "pair_index_mod_4",
+                "fit_pair_count": distill.EXPECTED_PAIRS - len(heldout),
+                "heldout_pair_count": len(heldout),
+                "heldout_pair_indices": heldout,
+            }
             failing_metric = copy.deepcopy(metric)
             failing_metric["tv_weighted_samples"] = [(0.06, 1.0)]
             failing_metric["_sums"]["tv_numerator"] = 0.06
