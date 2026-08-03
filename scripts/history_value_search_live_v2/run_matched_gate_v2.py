@@ -281,8 +281,17 @@ def _adjudicate(
 
 
 def _run(args: argparse.Namespace) -> int:
-    if args.evidence_root.exists() and any(args.evidence_root.iterdir()):
-        raise RuntimeError("evidence root must be absent or empty")
+    if args.evidence_root.exists():
+        unexpected = [
+            path.name
+            for path in args.evidence_root.iterdir()
+            if path.name != "manifest.json"
+        ]
+        if unexpected:
+            raise RuntimeError(
+                "evidence root may initially contain only manifest.json: "
+                + ",".join(sorted(unexpected))
+            )
     args.evidence_root.mkdir(parents=True, exist_ok=True)
     (args.evidence_root / "tasks").mkdir()
     for path in (
