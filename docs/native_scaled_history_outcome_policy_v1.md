@@ -36,7 +36,24 @@ and 0.10, maximum physical-decision joint log ratio is at most 0.50, object
 permutation delta is at most `1e-5`, and at least 20 percent of sampled
 reference-bearing decisions respond to reference removal.
 
-A pass authorizes one full-data fit and a fresh rapid matched live gate. A
+A pass authorizes one full-data fit and a fresh rapid matched live gate. Fit
+all 2,048 pairs once with the fixed configuration and calibrate on a fixed
+8,192-decision sample. The live gate uses base seed `1260001`, the lowest 16
+pair indices where both candidate and parent complete, and outcome-blind
+mapper exclusions. Pass only if `G >= L + 3`, candidate-minus-parent win count
+is at least `-2` separately at P0 and P1, and all transport checks pass. A
 failure retires this exact scaled terminal-PPO package without tuning it on the
 revealed folds.
+
+## Completed development result
+
+All four folds completed concurrently in 51.5 minutes with no stderr. Overall
+held-out surrogate was `+0.000131120`; candidate P0 was `+0.000158234` and P1
+was `+0.000104006`. All four folds were positive. Mean total variation was
+`0.00423422`, p90 total variation was `0.0149421`, and maximum physical-
+decision joint log ratio was `0.393274`. All representation checks passed.
+
+The aggregate passed every gate and authorizes the fixed full-data fit and
+fresh live gate above. Aggregate SHA-256 is
+`9e3f78918f93c78fc999acb8e5524709f89d3244804d64cedbf4d030cc1b9c9c`.
 
