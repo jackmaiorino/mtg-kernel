@@ -42,6 +42,7 @@ WEIGHT_DECAY = 1.0e-4
 SEED = 20_260_802
 METRIC_SAMPLE_SIZE = 8_192
 EXPECTED_PARAMETER_COUNT = 107_298
+PARITY_SCHEMA = "mtg-kernel-structured-history-residual-parity-fixture/v1"
 
 
 def _sha256(path: Path) -> str:
@@ -50,6 +51,75 @@ def _sha256(path: Path) -> str:
 
 def _json_bytes(value: Any) -> bytes:
     return live._json_bytes(value)
+
+
+def _parity_fixture(
+    model: screen.StructuredAdapter,
+    policy: list[dict[str, Any]],
+    value: list[dict[str, Any]],
+) -> dict[str, Any]:
+    buckets: dict[int, tuple[str, dict[str, Any]]] = {}
+    for lane, examples in (("policy", policy), ("value", value)):
+        for example in examples:
+            length = int(example["history_features"].shape[0])
+            bucket = 0 if length == 0 else 1 if length <= 3 else 4 if length <= 7 else 8 if length <= 15 else 16
+            buckets.setdefault(bucket, (lane, example))
+            if len(buckets) == 5:
+                break
+        if len(buckets) == 5:
+            break
+    if set(buckets) != {0, 1, 4, 8, 16}:
+        raise ValueError("parity fixture lacks required history-length coverage")
+    rows: list[dict[str, Any]] = []
+    model.eval()
+    with torch.no_grad():
+        for bucket in sorted(buckets):
+            lane, example = buckets[bucket]
+            residual_logits, residual_value = model._one(example)
+            history = example["history_features"]
+            history_rows = []
+            for row in history:
+                self_role = float(row[screen.ACTION_EXPLICIT_DIM])
+                opponent_role = float(row[screen.ACTION_EXPLICIT_DIM + 1])
+                if (self_role, opponent_role) not in ((1.0, 0.0), (0.0, 1.0)):
+                    raise ValueError("parity history role is not one-hot")
+                history_rows.append(
+                    {
+                        "acting_player": 0 if self_role == 1.0 else 1,
+                        "action_explicit_features": row[
+                            : screen.ACTION_EXPLICIT_DIM
+                        ].tolist(),
+                        "public_card_histogram": row[
+                            screen.ACTION_EXPLICIT_DIM + 2 :
+                        ].tolist(),
+                    }
+                )
+            rows.append(
+                {
+                    "lane": lane,
+                    "history_length_bucket": bucket,
+                    "acting_player": 0,
+                    "tensor": {
+                        "state": example["state"].tolist(),
+                        "object_features": example["object_features"].tolist(),
+                        "object_card_ids": example["object_card_ids"].tolist(),
+                        "object_groups": example["object_groups"].tolist(),
+                        "object_node_ids": [],
+                        "edge_features": example["edge_features"].tolist(),
+                        "edge_source_indices": example["edge_src"].tolist(),
+                        "edge_target_indices": example["edge_tgt"].tolist(),
+                        "action_features": example["action_features"].tolist(),
+                        "action_ref_features": example["action_ref_features"].tolist(),
+                        "action_ref_card_ids": example["ref_card_ids"].tolist(),
+                        "action_ref_action_indices": example["ref_action_indices"].tolist(),
+                        "action_ref_node_indices": example["ref_node_indices"].tolist(),
+                    },
+                    "history": history_rows,
+                    "expected_residual_logits": residual_logits.tolist(),
+                    "expected_residual_value": float(residual_value),
+                }
+            )
+    return {"schema": PARITY_SCHEMA, "acting_player_convention": "fixture-current-actor-is-zero/v1", "examples": rows}
 
 
 def _fit(args: argparse.Namespace) -> dict[str, Any]:
@@ -150,6 +220,11 @@ def _fit(args: argparse.Namespace) -> dict[str, Any]:
         state_path,
     )
     state_sha256 = _sha256(state_path)
+    parity_path = Path(str(args.output_root) + ".parity.json")
+    if parity_path.exists():
+        raise ValueError("parity fixture output already exists")
+    parity_path.write_bytes(_json_bytes(_parity_fixture(model, policy, value)))
+    parity_sha256 = _sha256(parity_path)
     checkpointed = time.perf_counter()
 
     policy_sample = screen._deterministic_sample(
@@ -228,6 +303,7 @@ def _fit(args: argparse.Namespace) -> dict[str, Any]:
             "policy_examples": len(policy),
             "value_examples": len(value),
             "model_state": {"path": str(state_path), "sha256": state_sha256},
+            "parity_fixture": {"path": str(parity_path), "sha256": parity_sha256},
         },
         "config": {
             "architecture": ARCHITECTURE,
@@ -318,6 +394,7 @@ def _fit(args: argparse.Namespace) -> dict[str, Any]:
         "report_sha256": report_sha256,
         "composite_model_parameter_sha256": composite_sha256,
         "model_state_sha256": state_sha256,
+        "parity_fixture_sha256": parity_sha256,
         "movement": movement,
         "policy_metrics": policy_metrics,
         "value_metrics": value_metrics,

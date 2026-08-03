@@ -1184,6 +1184,72 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
 mod tests {
     use super::*;
 
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct HistoryParityFixtureV1 {
+        schema: String,
+        acting_player_convention: String,
+        examples: Vec<HistoryParityExampleV1>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct HistoryParityExampleV1 {
+        lane: String,
+        history_length_bucket: usize,
+        acting_player: u8,
+        tensor: HistoryParityTensorV1,
+        history: Vec<HistoryParityEntryV1>,
+        expected_residual_logits: Vec<f32>,
+        expected_residual_value: f32,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct HistoryParityEntryV1 {
+        acting_player: u8,
+        action_explicit_features: Vec<f32>,
+        public_card_histogram: Vec<f32>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct HistoryParityTensorV1 {
+        state: Vec<f32>,
+        object_features: Vec<Vec<f32>>,
+        object_card_ids: Vec<i64>,
+        object_groups: Vec<i64>,
+        object_node_ids: Vec<i64>,
+        edge_features: Vec<Vec<f32>>,
+        edge_source_indices: Vec<i64>,
+        edge_target_indices: Vec<i64>,
+        action_features: Vec<Vec<f32>>,
+        action_ref_features: Vec<Vec<f32>>,
+        action_ref_card_ids: Vec<i64>,
+        action_ref_action_indices: Vec<i64>,
+        action_ref_node_indices: Vec<i64>,
+    }
+
+    impl HistoryParityTensorV1 {
+        fn into_native_v1(self) -> NativeFlatDecisionTensorV2 {
+            NativeFlatDecisionTensorV2 {
+                state: self.state,
+                object_features: self.object_features.into_iter().flatten().collect(),
+                object_card_ids: self.object_card_ids,
+                object_groups: self.object_groups,
+                object_node_ids: self.object_node_ids,
+                edge_features: self.edge_features.into_iter().flatten().collect(),
+                edge_source_indices: self.edge_source_indices,
+                edge_target_indices: self.edge_target_indices,
+                action_features: self.action_features.into_iter().flatten().collect(),
+                action_ref_features: self.action_ref_features.into_iter().flatten().collect(),
+                action_ref_card_ids: self.action_ref_card_ids,
+                action_ref_action_indices: self.action_ref_action_indices,
+                action_ref_node_indices: self.action_ref_node_indices,
+            }
+        }
+    }
+
     #[test]
     fn parameter_layout_is_exact_v1() {
         let mut offset = 0usize;
@@ -1272,6 +1338,76 @@ mod tests {
         assert!(observed
             .iter()
             .all(|value| (*value - expected).abs() <= 1.0e-7));
+    }
+
+    #[test]
+    #[ignore = "requires MTG_KERNEL_STRUCTURED_HISTORY_RESIDUAL_ROOT and fixture"]
+    fn external_history_candidate_matches_python_residual_fixture_v1() {
+        let root = std::env::var_os("MTG_KERNEL_STRUCTURED_HISTORY_RESIDUAL_ROOT")
+            .expect("MTG_KERNEL_STRUCTURED_HISTORY_RESIDUAL_ROOT is set");
+        let fixture_path = std::env::var_os("MTG_KERNEL_STRUCTURED_HISTORY_PARITY_FIXTURE")
+            .expect("MTG_KERNEL_STRUCTURED_HISTORY_PARITY_FIXTURE is set");
+        let inference =
+            load_native_structured_policy_residual_inference_v1(Path::new(&root)).unwrap();
+        assert!(inference.is_history_aware_v1());
+        let fixture: HistoryParityFixtureV1 =
+            serde_json::from_slice(&fs::read(fixture_path).unwrap()).unwrap();
+        assert_eq!(
+            fixture.schema,
+            "mtg-kernel-structured-history-residual-parity-fixture/v1"
+        );
+        assert_eq!(
+            fixture.acting_player_convention,
+            "fixture-current-actor-is-zero/v1"
+        );
+        assert_eq!(fixture.examples.len(), 5);
+        let mut observed_buckets = BTreeSet::new();
+        let mut maximum_delta = 0.0f32;
+        for example in fixture.examples {
+            assert!(matches!(example.lane.as_str(), "policy" | "value"));
+            observed_buckets.insert(example.history_length_bucket);
+            let derived_bucket = match example.history.len() {
+                0 => 0,
+                1..=3 => 1,
+                4..=7 => 4,
+                8..=15 => 8,
+                16 => 16,
+                _ => panic!("history fixture exceeds the fixed window"),
+            };
+            assert_eq!(derived_bucket, example.history_length_bucket);
+            let history = example
+                .history
+                .into_iter()
+                .map(|entry| {
+                    NativeStructuredHistoryEntryV1::new_v1(
+                        entry.acting_player,
+                        entry.action_explicit_features.try_into().unwrap(),
+                        entry.public_card_histogram.try_into().unwrap(),
+                    )
+                    .unwrap()
+                })
+                .collect::<Vec<_>>();
+            let observed = structured_residual_v1(
+                &inference.parameters,
+                &example.tensor.into_native_v1(),
+                Some((&history, example.acting_player)),
+            )
+            .unwrap();
+            assert_eq!(
+                observed.logits.len(),
+                example.expected_residual_logits.len()
+            );
+            for (actual, expected) in observed.logits.iter().zip(example.expected_residual_logits) {
+                maximum_delta = maximum_delta.max((actual - expected).abs());
+            }
+            maximum_delta = maximum_delta
+                .max((observed.value.unwrap() - example.expected_residual_value).abs());
+        }
+        assert_eq!(observed_buckets, BTreeSet::from([0, 1, 4, 8, 16]));
+        assert!(
+            maximum_delta <= 2.0e-4,
+            "maximum parity delta {maximum_delta}"
+        );
     }
 
     #[test]
