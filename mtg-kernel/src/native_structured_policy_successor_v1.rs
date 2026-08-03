@@ -827,5 +827,6 @@ mod tests {
             maximum_delta <= 3.0e-5,
             "maximum parity delta {maximum_delta}"
         );
+        eprintln!("maximum_absolute_logit_error={maximum_delta:.9}");
     }
 }
