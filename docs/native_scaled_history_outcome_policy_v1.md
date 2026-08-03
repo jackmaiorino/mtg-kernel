@@ -57,3 +57,29 @@ The aggregate passed every gate and authorizes the fixed full-data fit and
 fresh live gate above. Aggregate SHA-256 is
 `9e3f78918f93c78fc999acb8e5524709f89d3244804d64cedbf4d030cc1b9c9c`.
 
+## Full fit and fresh live result
+
+The fixed full-data fit completed in 76.5 minutes with no stderr. Calibration
+kept the residual at scale `1.0`. On the fixed sample, mean total variation was
+`0.00901341`, p90 total variation was `0.0286003`, and maximum joint log ratio
+was `0.348895`. The descriptive in-sample terminal surrogate was
+`+0.00131769` overall, `+0.00113577` at P0, and `+0.00149779` at P1. These are
+fit diagnostics, not strength measurements. Candidate JSON SHA-256 is
+`9fa571f809e55470277a0d0e750d8ea5849a27420a54d0fe4e39c18bca05e00d`.
+
+The strict Python/Rust parity fixture passed. The release scorer SHA-256 was
+`ebc2faa853c6edef499fe1f3c24c2591b3017dd4f520089ccd96b453cb6fae7a`.
+
+The fresh base-`1260001` live gate accepted pair indices `0..15` without an
+exclusion. Candidate and parent each scored 13 wins in 32 games. Every matched
+terminal result was identical, giving `G/L/T = 0/0/32` and candidate-minus-
+parent seat nets of `0` at P0 and `0` at P1. The paired-gain gate failed. The
+report SHA-256 is
+`a546e3f56e4fccb1cb80da2926e3e441d1ee60b40a7451342c86f4b5776561ff`.
+
+This rejects the exact width-48, last-16-history, scaled terminal-PPO package.
+It does not reject terminal win/loss learning generally. Do not tune its scale,
+clip, epochs, or live threshold on these revealed results, and do not run the
+authorized-on-pass extension. The next pro-level branch is genuine population
+pressure with an explicit opponent mixture and an independently trained
+response oracle, rather than another residual fit to the same CP7 corpus.
