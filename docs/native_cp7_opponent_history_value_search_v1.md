@@ -1,6 +1,6 @@
 # Native CP7-opponent history-value search v1
 
-Status: development screen, not run
+Status: complete, failed fresh gate
 
 ## Question
 
@@ -39,3 +39,22 @@ If these checks fail, retire this exact opponent model without spending fresh se
 - Batch size: 4 pairs.
 
 Pass only if gains are at least losses plus 2, both seat nets are at least -1, both seats contain an override, and all information-set and opponent-policy diagnostics are valid. A pass authorizes a 16-pair extension at base seed 1430001. A fail retires this exact CP7-clone opponent continuation mechanism.
+
+## Result
+
+The revealed base-1400001 development replay completed all eight pairs in 133.25 seconds. It changed the final action at 12 of 74 exact roots shared with the self-model depth-8 run, a 16.2 percent divergence rate. Exploratory gains and losses were 1 and 1, both seats had overrides, and all diagnostic checks passed. An exact pair-0 repeat matched both normalized trajectory logs and all 31 selector diagnostics.
+
+The fresh base-1420001 gate completed all eight matched pairs without exclusions in 168.88 seconds:
+
+- search wins: 6 of 16;
+- parent wins: 9 of 16;
+- paired gains, losses, ties: 1, 4, 11;
+- search-minus-parent seat net: P0 -2, P1 -1;
+- eligible roots: P0 220, P1 244;
+- overrides: P0 12, P1 16;
+- sample-distinctness violations: 0;
+- opponent-policy and continuation-contract violations: 0.
+
+The paired-gain and P0 seat-floor gates failed. The pass-only extension is unauthorized. This retires the exact CP7 behavior-clone sampling continuation. It is evidence that a moderately accurate imitation model is not sufficient to repair this value-bootstrap search, not a general rejection of opponent modeling.
+
+Evidence root: `D:\mtg-kernel-cp7-opponent-history-value-search-v1`.
