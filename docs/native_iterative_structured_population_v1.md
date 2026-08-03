@@ -64,3 +64,30 @@ This is a Rally-only native development ladder. A pass is evidence that the
 iterative learner improves against its explicit native population. It is not
 an XMage, CP7, human, cross-deck, promotion, or pro-level claim. An independent
 exploiter joins the opponent population only after the first fresh native gain.
+
+## Round 1 result
+
+Round 1 rejected before publication or native strength evaluation. Collection
+completed 2,048 pairs and 4,096 natural games in 504.88 seconds. The exact
+complete-history cache contained 332,265 policy steps and 277,573 physical
+decisions. Four concurrent folds completed in 45.7 minutes with about 21
+effective CPU cores and zero stderr.
+
+The aggregate held-out terminal surrogate was `-0.0000666872`. P0 was
+`+0.0000744416`, P1 was `-0.000207816`, and two of four folds were positive.
+Mean total variation was `0.00348273`, p90 total variation was `0.0114342`, and
+the maximum absolute physical-decision joint log ratio was `0.277150`. All
+movement, permutation, reference-response, and numerical-envelope checks
+passed. Aggregate sign, both-seat sign, and three-of-four fold consistency
+failed.
+
+No stage was packaged and the base-`1520001` strength gate was not run. This
+retires the exact additive four-member first-stage recipe without tuning on
+revealed seeds. Evidence root is
+`D:\mtg-kernel-iterative-structured-population-v1\round-1`; aggregate SHA-256
+is `3c96d93a695af72e83b6de1d818bdefbf4b3c11f49e0545faee8c566fc877da6`;
+manifest SHA-256 is
+`d9202b4cb1d652ab8ddf92b25881e90fdabe1c5d1fbfd3adf4713f9a9bc68c93`.
+
+The strict additive native stack runtime and publisher were completed and
+tested at commit `f42e151`, but remain unused by this rejected run.
