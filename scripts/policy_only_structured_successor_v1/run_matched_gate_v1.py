@@ -42,6 +42,8 @@ SCORER = Path(
     r"C:\Users\Jack\IdeaProjects\mtg-kernel-structured-successor-screen-v1-codex\target\release\native_population_corpus_stdio_v1.exe"
 )
 HEX64 = re.compile(r"[0-9a-f]{16}")
+TEACHER_CONTRACT = "mtg-kernel-native-population-opponent-jsonl/v1"
+TEACHER_SELECTION_SOURCE = "native_pool3_ladder_40_20_20_20"
 
 
 def _sha256(path: Path) -> str:
@@ -272,7 +274,49 @@ def _load_panel(
         environment_seed = row.get("pair_environment_seed_u64_hex")
         if not isinstance(environment_seed, str) or not HEX64.fullmatch(environment_seed):
             raise RuntimeError(f"{path} has an invalid pair environment seed")
+    for pair_index in range(expected_pairs):
+        expected = {
+            (pair_index, pair_index * 2, "p0"),
+            (pair_index, pair_index * 2 + 1, "p1"),
+        }
+        observed = {key for key in terminals if key[0] == pair_index}
+        if observed != expected:
+            raise RuntimeError(f"{path} pair {pair_index} violates the seat-swap schedule")
     return header, terminals
+
+
+def _load_teacher_header(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        line = handle.readline()
+    if not line:
+        raise RuntimeError(f"{path} has no teacher header")
+    header = json.loads(line)
+    if (
+        header.get("record_type") != "header"
+        or header.get("export_contract") != TEACHER_CONTRACT
+        or header.get("selection_source") != TEACHER_SELECTION_SOURCE
+    ):
+        raise RuntimeError(f"{path} has an invalid Pool3 teacher header")
+    return header
+
+
+def _validate_checkpoint_header(
+    checkpoint: Any,
+    identity: dict[str, Any],
+    authority_kind: str,
+) -> None:
+    expected = {
+        "authority_kind": authority_kind,
+        "loaded_generation": 1,
+        "loaded_checkpoint_sha256": identity["manifest"],
+        "loaded_payload_sha256": identity["payload"],
+        "loaded_train_state_sha256": identity["train_state"],
+        "model_parameter_sha256": identity["model"],
+    }
+    if not isinstance(checkpoint, dict) or any(
+        checkpoint.get(field) != value for field, value in expected.items()
+    ):
+        raise RuntimeError("collection checkpoint identity mismatch")
 
 
 def _adjudicate(
@@ -288,6 +332,26 @@ def _adjudicate(
     parent_header, parent = _load_panel(
         parent_path, args.base_seed, args.target_pairs
     )
+    candidate_teacher_header = _load_teacher_header(
+        Path(candidate_result["paths"]["teacher_jsonl"])
+    )
+    parent_teacher_header = _load_teacher_header(
+        Path(parent_result["paths"]["teacher_jsonl"])
+    )
+    _validate_checkpoint_header(
+        candidate_header.get("checkpoint"),
+        args.candidate_identity,
+        "xmage-cp7-outcome-structured-policy-successor-v1",
+    )
+    _validate_checkpoint_header(
+        parent_header.get("checkpoint"),
+        PARENT_IDENTITY,
+        "xmage-cp7-outcome-reinforce-derivative-v1",
+    )
+    if candidate_teacher_header.get("checkpoint") != candidate_header.get("checkpoint"):
+        raise RuntimeError("candidate teacher and outcome checkpoint headers differ")
+    if parent_teacher_header.get("checkpoint") != parent_header.get("checkpoint"):
+        raise RuntimeError("parent teacher and outcome checkpoint headers differ")
     if set(candidate) != set(parent):
         raise RuntimeError("candidate and parent terminal keys differ")
     gains = losses = ties = 0

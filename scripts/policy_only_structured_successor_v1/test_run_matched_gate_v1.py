@@ -14,12 +14,23 @@ from unittest import mock
 import run_matched_gate_v1 as subject
 
 
-def _header() -> dict[str, str]:
+def _checkpoint(identity: dict[str, str], authority_kind: str) -> dict[str, object]:
+    return {
+        "authority_kind": authority_kind,
+        "loaded_generation": 1,
+        "loaded_checkpoint_sha256": identity["manifest"],
+        "loaded_payload_sha256": identity["payload"],
+        "loaded_train_state_sha256": identity["train_state"],
+        "model_parameter_sha256": identity["model"],
+    }
+
+
+def _header(checkpoint: dict[str, object]) -> dict[str, object]:
     return {
         "record_type": "header",
         "export_contract": subject.strength.OUTCOME_CONTRACT,
         "selection_source": "candidate_checkpoint_policy",
-        "checkpoint": "fixture",
+        "checkpoint": checkpoint,
     }
 
 
@@ -38,9 +49,14 @@ def _outcome_row(
     }
 
 
-def _write_outcome(path: Path, rewards: tuple[int, int], seed: str) -> None:
+def _write_outcome(
+    path: Path,
+    rewards: tuple[int, int],
+    seed: str,
+    checkpoint: dict[str, object],
+) -> None:
     rows = [
-        _header(),
+        _header(checkpoint),
         _outcome_row(
             pair_index=0,
             episode_id=0,
@@ -58,6 +74,22 @@ def _write_outcome(path: Path, rewards: tuple[int, int], seed: str) -> None:
     ]
     path.write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def _write_teacher(path: Path, checkpoint: dict[str, object]) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "record_type": "header",
+                "export_contract": subject.TEACHER_CONTRACT,
+                "selection_source": subject.TEACHER_SELECTION_SOURCE,
+                "checkpoint": checkpoint,
+            },
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -191,8 +223,30 @@ class MatchedGateTest(unittest.TestCase):
             root = Path(temporary)
             candidate_path = root / "candidate.outcome.jsonl"
             parent_path = root / "parent.outcome.jsonl"
-            _write_outcome(candidate_path, (1, 1), "0000000000000001")
-            _write_outcome(parent_path, (-1, -1), "0000000000000001")
+            candidate_identity = {
+                "manifest": "a" * 64,
+                "payload": "b" * 64,
+                "train_state": "c" * 64,
+                "model": "d" * 64,
+            }
+            candidate_checkpoint = _checkpoint(
+                candidate_identity,
+                "xmage-cp7-outcome-structured-policy-successor-v1",
+            )
+            parent_checkpoint = _checkpoint(
+                subject.PARENT_IDENTITY,
+                "xmage-cp7-outcome-reinforce-derivative-v1",
+            )
+            _write_outcome(
+                candidate_path, (1, 1), "0000000000000001", candidate_checkpoint
+            )
+            _write_outcome(
+                parent_path, (-1, -1), "0000000000000001", parent_checkpoint
+            )
+            candidate_teacher = root / "candidate.teacher.jsonl"
+            parent_teacher = root / "parent.teacher.jsonl"
+            _write_teacher(candidate_teacher, candidate_checkpoint)
+            _write_teacher(parent_teacher, parent_checkpoint)
             args = subject._arguments(
                 [
                     "--profile-pairs",
@@ -207,18 +261,18 @@ class MatchedGateTest(unittest.TestCase):
                     str(root),
                 ]
             )
-            args.candidate_identity = {"candidate_json_sha256": "a" * 64}
+            args.candidate_identity = candidate_identity
             candidate_result = {
                 "paths": {
                     "outcome_jsonl": str(candidate_path),
-                    "teacher_jsonl": str(root / "candidate.teacher.jsonl"),
+                    "teacher_jsonl": str(candidate_teacher),
                 },
                 "report": {"teacher_sha256": "b" * 64},
             }
             parent_result = {
                 "paths": {
                     "outcome_jsonl": str(parent_path),
-                    "teacher_jsonl": str(root / "parent.teacher.jsonl"),
+                    "teacher_jsonl": str(parent_teacher),
                 },
                 "report": {"teacher_sha256": "c" * 64},
             }
@@ -232,8 +286,24 @@ class MatchedGateTest(unittest.TestCase):
             root = Path(temporary)
             candidate_path = root / "candidate.outcome.jsonl"
             parent_path = root / "parent.outcome.jsonl"
-            _write_outcome(candidate_path, (1, 1), "0000000000000001")
-            _write_outcome(parent_path, (1, 1), "0000000000000002")
+            candidate_checkpoint = _checkpoint(
+                subject.PARENT_IDENTITY,
+                "xmage-cp7-outcome-structured-policy-successor-v1",
+            )
+            parent_checkpoint = _checkpoint(
+                subject.PARENT_IDENTITY,
+                "xmage-cp7-outcome-reinforce-derivative-v1",
+            )
+            _write_outcome(
+                candidate_path, (1, 1), "0000000000000001", candidate_checkpoint
+            )
+            _write_outcome(
+                parent_path, (1, 1), "0000000000000002", parent_checkpoint
+            )
+            candidate_teacher = root / "candidate.teacher.jsonl"
+            parent_teacher = root / "parent.teacher.jsonl"
+            _write_teacher(candidate_teacher, candidate_checkpoint)
+            _write_teacher(parent_teacher, parent_checkpoint)
             args = subject._arguments(
                 [
                     "--profile-pairs",
@@ -248,12 +318,22 @@ class MatchedGateTest(unittest.TestCase):
                     str(root),
                 ]
             )
-            args.candidate_identity = {}
-            with self.assertRaises(RuntimeError):
+            args.candidate_identity = subject.PARENT_IDENTITY.copy()
+            with self.assertRaisesRegex(RuntimeError, "matched terminal field differs"):
                 subject._adjudicate(
                     args,
-                    {"paths": {"outcome_jsonl": str(candidate_path)}},
-                    {"paths": {"outcome_jsonl": str(parent_path)}},
+                    {
+                        "paths": {
+                            "outcome_jsonl": str(candidate_path),
+                            "teacher_jsonl": str(candidate_teacher),
+                        }
+                    },
+                    {
+                        "paths": {
+                            "outcome_jsonl": str(parent_path),
+                            "teacher_jsonl": str(parent_teacher),
+                        }
+                    },
                 )
 
 
