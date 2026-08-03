@@ -62,3 +62,27 @@ A pass establishes a Rally-only native Pool3 improvement and authorizes a
 separate external-opponent and broader-deck evaluation. A failure retires this
 exact one-batch update without tuning on the revealed seed panel. Neither
 outcome is a human or pro-level claim.
+
+## Result
+
+The formal rung collected all 2,048 seat-swapped pairs and 4,096 natural
+games in 204.33 seconds using four persistent scorers. Complete-history cache
+preparation covered 279,210 physical decisions. The five-epoch fit completed
+in 2,966.62 seconds, including 2,721.07 seconds of optimization and 133.73
+seconds of exhaustive policy-movement measurement.
+
+The fit was rejected before publication or strength evaluation. Overall mean
+policy TV was `0.0268089` and p90 TV was `0.0730005`; P0 was `0.0261695` and
+`0.0687795`, while P1 was `0.0274483` and `0.0764305`. All six overall and
+seat-specific TV gates passed. Maximum absolute physical-decision joint log
+ratio was `5.97932`, exceeding the frozen `0.50` maximum. The initializer
+alignment check passed at `0.000003815` maximum absolute behavior-logit error.
+
+Publication was withheld and the reserved base-`1670001` strength gate was
+not authorized. This retires the exact five-epoch terminal-only PPO update
+without tuning on the revealed corpus. It does not reject terminal reward,
+the structured representation, or policies with an explicitly constrained
+update geometry. Evidence root is
+`D:\mtg-kernel-policy-only-structured-terminal-rung-v1\formal`; fit report
+SHA-256 is
+`355c1b179ccd5de5d16f0aeb39dc101ae97a876208a2315358f98b06dcc30a81`.
