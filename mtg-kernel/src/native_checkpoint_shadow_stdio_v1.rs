@@ -1809,7 +1809,7 @@ impl ShadowScorerServiceV1 {
                         )
                     })?;
                 let identity = ShadowCheckpointIdentityV1 {
-                    authority_kind: "xmage-cp7-outcome-structured-policy-successor-v1".to_owned(),
+                    authority_kind: inference.authority_kind_v1().to_owned(),
                     source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
                     source_generation: SOURCE_GENERATION_V1,
                     source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
