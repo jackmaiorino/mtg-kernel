@@ -34,3 +34,24 @@ A supported result authorizes confirmation on a fresh independent 512-pair
 corpus with the same frozen analysis gates. It does not authorize a live
 strength test, promotion, or a pro-level claim. A failed result retires this
 seat-head variant and sends the project to a deeper iterative architecture.
+
+## Result
+
+The 128-pair profile completed in 47.86 seconds, including 24.90 seconds to
+hash and load the cache and 21.16 seconds for 101 optimizer steps. The four
+full folds then ran concurrently for 11.3 minutes at about 22 effective CPU
+cores, used about 8.1 GiB of memory, and produced no stderr. GPU 1 remained
+idle as declared.
+
+The diagnostic failed. Overall held-out terminal surrogate was
+`-0.0000791183`. P0 was `-0.000265506` and P1 was `+0.000107270`. Folds 0, 1,
+and 2 were positive, while fold 3 was `-0.000752408`. Held-out mean total
+variation was `0.00750823`, below the required `0.01`; p90 was `0.0267591`,
+and maximum absolute physical-decision joint log ratio was `0.339450`.
+Representation diagnostics passed.
+
+This result rejects the seat-conditioned-head mechanism. It did not resolve
+the shared-head screen's P0 weakness and made the aggregate surrogate
+negative. No fresh-corpus confirmation or live strength gate is authorized.
+Aggregate SHA-256 was
+`6a4562a194ab17a72488c3a4d74412c5794fd8e060f0f103a967dc9bf6556960`.
