@@ -47,3 +47,27 @@ and each seat delta is at least `-4`.
 A pass establishes a Rally-only response gain and authorizes adding the policy
 to an empirical payoff matrix. A failure retires this exact 48-channel direct
 response oracle. Neither result is professional-level evidence.
+
+## Result
+
+The bounded preflight passed. Its exact zero-policy replay was bit-identical,
+both maximum-bound probes changed normalized game trajectories, and 128 games
+completed in `141.06` seconds.
+
+The formal search completed all six generations and both untouched selector
+panels in `3161.38` seconds. Generation-best development fitness values were
+`56`, `120`, `98`, `112`, `90`, and `76`. These values use different common
+random-number panels by generation and are not an optimization curve.
+
+The selector chose index 0, the exact zero delta. It scored fitness `144` and
+`172` on the two fresh panels, for a worst-panel score of `144` and sum of
+`316`. Generation means 1 through 3 tied those selector scores but lost the
+lower-L2 tie-break; means 4 through 6 summed to `312`. Some learned means
+changed normalized trajectories, but none improved terminal outcome fitness
+on either selector panel.
+
+No candidate was published and the reserved base-`1790001` strength gate was
+not run because the selected policy is byte-identical to the initializer.
+This retires the exact 48-parameter final-head response oracle. Search report
+SHA-256 is
+`a43047930740ffa671ab274646abd89b4e92b4a937d4fc260a4f4d91c5f4d104`.
