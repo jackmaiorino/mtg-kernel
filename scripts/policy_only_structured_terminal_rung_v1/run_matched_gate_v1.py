@@ -17,6 +17,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 sys.path.insert(0, str(QUALIFICATION_DIR))
 
 import run_matched_gate_v1 as qualification  # noqa: E402
+import project_trust_region_v1 as projection  # noqa: E402
 import run_pipeline_v1 as pipeline  # noqa: E402
 
 
@@ -26,7 +27,7 @@ FORMAL_PAIRS = 1_024
 PROFILE_MAX_PAIRS = 64
 TOPOLOGIES = ("sequential", "parallel")
 FORMAL_SCORER_SHA256 = (
-    "b3161bf6df8eccdc0afb8d8870eeb81b7620add347fd531b8e5f8869d8205d81"
+    "dd37668190d8bda5354d12c5684009e805175f3e65511cd05e3127adda2ecf56"
 )
 
 
@@ -40,9 +41,23 @@ def _candidate_identity(root: Path) -> dict[str, Any]:
     weights_path = root / "weights.f32le"
     candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    if candidate.get("schema") != pipeline.CANDIDATE_SCHEMA:
+    contracts = {
+        pipeline.CANDIDATE_SCHEMA: (
+            pipeline.REPORT_SCHEMA,
+            pipeline.COMPOSITE_DOMAIN,
+            "xmage-cp7-outcome-structured-policy-successor-v2",
+        ),
+        projection.CANDIDATE_SCHEMA: (
+            projection.REPORT_SCHEMA,
+            projection.COMPOSITE_DOMAIN,
+            "xmage-cp7-outcome-structured-policy-successor-v3",
+        ),
+    }
+    contract = contracts.get(candidate.get("schema"))
+    if contract is None:
         raise RuntimeError("terminal-rung candidate schema mismatch")
-    if report.get("schema") != pipeline.REPORT_SCHEMA:
+    report_schema, composite_domain, authority_kind = contract
+    if report.get("schema") != report_schema:
         raise RuntimeError("terminal-rung report schema mismatch")
     if candidate.get("report") != {
         "filename": "report.json",
@@ -67,7 +82,7 @@ def _candidate_identity(root: Path) -> dict[str, Any]:
     if parent != expected_parent:
         raise RuntimeError("terminal-rung retained-parent binding mismatch")
     expected_composite = hashlib.sha256(
-        pipeline.COMPOSITE_DOMAIN
+        composite_domain
         + bytes.fromhex(parent["model_parameter_sha256"])
         + weights_path.read_bytes()
     ).hexdigest()
@@ -97,6 +112,7 @@ def _candidate_identity(root: Path) -> dict[str, Any]:
         "weights_sha256": weights_sha256,
         "composite_model_parameter_sha256": expected_composite,
         "parent": parent,
+        "authority_kind": authority_kind,
     }
 
 
@@ -122,7 +138,7 @@ def _adjudicate(
     qualification._validate_checkpoint_header(
         candidate_header.get("checkpoint"),
         args.candidate_identity,
-        "xmage-cp7-outcome-structured-policy-successor-v2",
+        args.candidate_identity["authority_kind"],
     )
     qualification._validate_checkpoint_header(
         baseline_header.get("checkpoint"),

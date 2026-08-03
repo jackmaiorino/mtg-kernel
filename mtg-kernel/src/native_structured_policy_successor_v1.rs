@@ -44,17 +44,24 @@ pub(crate) const CANDIDATE_SCHEMA_V1: &str = "mtg-kernel-structured-policy-succe
 pub(crate) const REPORT_SCHEMA_V1: &str = "mtg-kernel-structured-policy-successor-fit/v1";
 pub(crate) const CANDIDATE_SCHEMA_V2: &str = "mtg-kernel-structured-policy-successor-candidate/v2";
 pub(crate) const REPORT_SCHEMA_V2: &str = "mtg-kernel-structured-policy-terminal-rung-report/v1";
+pub(crate) const CANDIDATE_SCHEMA_V3: &str = "mtg-kernel-structured-policy-successor-candidate/v3";
+pub(crate) const REPORT_SCHEMA_V3: &str =
+    "mtg-kernel-structured-policy-terminal-trust-projection-report/v1";
 pub(crate) const PUBLICATION_ENCODING_V1: &str = "json-pretty-sorted-utf8-trailing-lf/v1";
 pub(crate) const WEIGHTS_ENCODING_V1: &str = "ordered-row-major-finite-f32-little-endian/v1";
 pub(crate) const ARCHITECTURE_V1: &str =
     "complete-public-history-structured-policy-successor-frozen-parent-value/v1";
 pub(crate) const ARCHITECTURE_V2: &str =
     "complete-public-history-structured-policy-terminal-rung-frozen-parent-value/v1";
+pub(crate) const ARCHITECTURE_V3: &str =
+    "complete-public-history-structured-policy-terminal-rung-projected-frozen-parent-value/v1";
 pub(crate) const VALUE_MODEL_V1: &str = "exact-retained-parent-frozen/v1";
 pub(crate) const COMPOSITE_DOMAIN_V1: &[u8] =
     b"mtg-kernel-structured-policy-successor-composite-model/v1";
 pub(crate) const COMPOSITE_DOMAIN_V2: &[u8] =
     b"mtg-kernel-structured-policy-terminal-rung-composite-model/v1";
+pub(crate) const COMPOSITE_DOMAIN_V3: &[u8] =
+    b"mtg-kernel-structured-policy-terminal-trust-projection-composite-model/v1";
 const SOURCE_CACHE_SHA256_V1: &str =
     "280e34cd7f685beaf52c1cab3b41c53613a5029c063871942f48c063b6f5996f";
 const SOURCE_PAIR_COUNT_V1: u64 = 2_048;
@@ -75,11 +82,17 @@ const TERMINAL_RUNG_BASE_SEED_V1: u64 = 1_660_001;
 const TERMINAL_RUNG_FIT_SEED_V1: u64 = 20_260_805;
 const AUTHORITY_KIND_V1: &str = "xmage-cp7-outcome-structured-policy-successor-v1";
 const AUTHORITY_KIND_V2: &str = "xmage-cp7-outcome-structured-policy-successor-v2";
+const AUTHORITY_KIND_V3: &str = "xmage-cp7-outcome-structured-policy-successor-v3";
+const TERMINAL_TRUST_SOURCE_FIT_REPORT_SHA256_V1: &str =
+    "355c1b179ccd5de5d16f0aeb39dc101ae97a876208a2315358f98b06dcc30a81";
+const TERMINAL_TRUST_SOURCE_MODEL_STATE_SHA256_V1: &str =
+    "4d1e9853d3472eb8817c10051c5ff779258bc1fc26130e956492ad598c877fe9";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SuccessorVersionV1 {
     DistilledV1,
     TerminalRungV2,
+    TerminalTrustProjectionV3,
 }
 
 #[derive(Deserialize)]
@@ -280,6 +293,52 @@ struct ReportMovementMetricV2 {
     policy_mass: f64,
     policy_rows: u64,
     physical_decisions: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportV3 {
+    schema: String,
+    initializer: ReportInitializerV2,
+    source: ReportSourceV3,
+    config: ReportConfigV3,
+    movement: ReportMovementV2,
+    transport: ReportTransportV1,
+    weights_sha256: String,
+    composite_model_parameter_sha256: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportSourceV3 {
+    cache_sha256: String,
+    pair_count: u64,
+    base_seed: u64,
+    pool_json_sha256: String,
+    source_commit: String,
+    rejected_fit_report_sha256: String,
+    rejected_model_state_sha256: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportConfigV3 {
+    architecture: String,
+    value_model: String,
+    seed: u64,
+    epochs: u64,
+    batch_size_physical_decisions: u64,
+    learning_rate: f64,
+    weight_decay: f64,
+    gradient_norm_cap: f64,
+    ppo_clip: f64,
+    history_length: u64,
+    history_feature_dim: u64,
+    weighting: String,
+    advantage: String,
+    objective: String,
+    projection_method: String,
+    projection_scale: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -686,6 +745,74 @@ fn validate_report_v2(
     Ok(())
 }
 
+fn validate_report_v3(
+    report: ReportV3,
+    weights_sha256: [u8; 32],
+    composite_sha256: [u8; 32],
+) -> Result<(), Box<dyn Error>> {
+    let config = &report.config;
+    let exact_float = |actual: f64, expected: f64| actual.to_bits() == expected.to_bits();
+    let movement = &report.movement;
+    let seat_0 = movement.by_candidate_seat.get("0");
+    let seat_1 = movement.by_candidate_seat.get("1");
+    let seats_exact = movement.by_candidate_seat.len() == 2 && seat_0.is_some() && seat_1.is_some();
+    let all_metrics = [Some(&movement.overall), seat_0, seat_1]
+        .into_iter()
+        .flatten()
+        .all(finite_movement_metric_v2);
+    let movement_gates_pass = [Some(&movement.overall), seat_0, seat_1]
+        .into_iter()
+        .flatten()
+        .all(|metric| metric.mean_total_variation <= 0.030 && metric.p90_total_variation <= 0.100)
+        && movement.overall.maximum_absolute_joint_log_ratio <= 0.50;
+    if report.schema != REPORT_SCHEMA_V3
+        || report.initializer.candidate_json_sha256 != TERMINAL_RUNG_INITIALIZER_CANDIDATE_SHA256_V1
+        || report.initializer.report_sha256 != TERMINAL_RUNG_INITIALIZER_REPORT_SHA256_V1
+        || report.initializer.weights_sha256 != TERMINAL_RUNG_INITIALIZER_WEIGHTS_SHA256_V1
+        || report.initializer.composite_model_parameter_sha256
+            != TERMINAL_RUNG_INITIALIZER_COMPOSITE_SHA256_V1
+        || report.initializer.model_state_sha256 != TERMINAL_RUNG_INITIALIZER_MODEL_STATE_SHA256_V1
+        || parse_lower_hex32_v1(&report.source.cache_sha256).is_err()
+        || report.source.pair_count != 2_048
+        || report.source.base_seed != TERMINAL_RUNG_BASE_SEED_V1
+        || report.source.pool_json_sha256 != TERMINAL_RUNG_POOL_SHA256_V1
+        || !lower_hex_commit_v1(&report.source.source_commit)
+        || report.source.rejected_fit_report_sha256 != TERMINAL_TRUST_SOURCE_FIT_REPORT_SHA256_V1
+        || report.source.rejected_model_state_sha256 != TERMINAL_TRUST_SOURCE_MODEL_STATE_SHA256_V1
+        || config.architecture != ARCHITECTURE_V3
+        || config.value_model != VALUE_MODEL_V1
+        || config.seed != TERMINAL_RUNG_FIT_SEED_V1
+        || config.epochs != 5
+        || config.batch_size_physical_decisions != 64
+        || !exact_float(config.learning_rate, 3.0e-4)
+        || !exact_float(config.weight_decay, 0.0)
+        || !exact_float(config.gradient_norm_cap, 5.0)
+        || !exact_float(config.ppo_clip, 0.10)
+        || config.history_length != HISTORY_LENGTH_V1 as u64
+        || config.history_feature_dim != HISTORY_FEATURE_DIM_V1 as u64
+        || config.weighting != "equal-episode-equal-physical-decision-joint-substep-ratio/v1"
+        || config.advantage != "terminal-reward-minus-frozen-parent-value-seat-standardized/v1"
+        || config.objective != "terminal-candidate-reward-only-clipped-ppo-trust-projection/v1"
+        || config.projection_method != "linear-parameter-displacement-from-qualified-initializer/v1"
+        || !exact_float(config.projection_scale, 1.0 / 16.0)
+        || !seats_exact
+        || !all_metrics
+        || !movement_gates_pass
+        || !report.transport.maximum_absolute_logit_error.is_finite()
+        || report.transport.maximum_absolute_logit_error > 3.0e-5
+        || !report.transport.parent_value_bit_exact
+        || report.weights_sha256 != lower_hex_v1(weights_sha256)
+        || report.composite_model_parameter_sha256 != lower_hex_v1(composite_sha256)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "terminal trust-projection successor report semantic mismatch",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 pub(crate) fn successor_parameter_layout_sha256_v1() -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"mtg-kernel-structured-policy-successor-parameter-layout/v1");
@@ -740,6 +867,7 @@ fn load_native_structured_policy_successor_inference_inner_v1(
     let version = match candidate.schema.as_str() {
         CANDIDATE_SCHEMA_V1 => SuccessorVersionV1::DistilledV1,
         CANDIDATE_SCHEMA_V2 => SuccessorVersionV1::TerminalRungV2,
+        CANDIDATE_SCHEMA_V3 => SuccessorVersionV1::TerminalTrustProjectionV3,
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -754,6 +882,9 @@ fn load_native_structured_policy_successor_inference_inner_v1(
         }
         SuccessorVersionV1::TerminalRungV2 => {
             (ARCHITECTURE_V2, COMPOSITE_DOMAIN_V2, AUTHORITY_KIND_V2)
+        }
+        SuccessorVersionV1::TerminalTrustProjectionV3 => {
+            (ARCHITECTURE_V3, COMPOSITE_DOMAIN_V3, AUTHORITY_KIND_V3)
         }
     };
     let report_bytes = fs::read(root.join(REPORT_FILENAME_V1))?;
@@ -812,6 +943,10 @@ fn load_native_structured_policy_successor_inference_inner_v1(
             SuccessorVersionV1::TerminalRungV2 => {
                 let report: ReportV2 = serde_json::from_value(report_value)?;
                 validate_report_v2(report, weights_sha256, composite_sha256)?;
+            }
+            SuccessorVersionV1::TerminalTrustProjectionV3 => {
+                let report: ReportV3 = serde_json::from_value(report_value)?;
+                validate_report_v3(report, weights_sha256, composite_sha256)?;
             }
         }
     }
@@ -957,6 +1092,14 @@ mod tests {
     }
 
     #[test]
+    fn terminal_trust_projection_report_denies_unknown_fields_v1() {
+        let value = br#"{"schema":"x","initializer":{},"source":{},"config":{},"movement":{},"transport":{},"weights_sha256":"x","composite_model_parameter_sha256":"x","unexpected":true}
+"#;
+        let parsed = strict_json_value_v1(value).unwrap();
+        assert!(serde_json::from_value::<ReportV3>(parsed).is_err());
+    }
+
+    #[test]
     fn successor_composite_hash_is_domain_bound_v1() {
         let parent = [7u8; 32];
         assert_ne!(
@@ -973,6 +1116,10 @@ mod tests {
         assert_ne!(
             composite_hash_v1(COMPOSITE_DOMAIN_V1, parent, b"a"),
             composite_hash_v1(COMPOSITE_DOMAIN_V2, parent, b"a")
+        );
+        assert_ne!(
+            composite_hash_v1(COMPOSITE_DOMAIN_V2, parent, b"a"),
+            composite_hash_v1(COMPOSITE_DOMAIN_V3, parent, b"a")
         );
     }
 
@@ -992,6 +1139,7 @@ mod tests {
             fixture.schema.as_str(),
             "mtg-kernel-structured-policy-successor-parity-fixture/v1"
                 | "mtg-kernel-structured-policy-terminal-rung-parity-fixture/v1"
+                | "mtg-kernel-structured-policy-terminal-trust-projection-parity-fixture/v1"
         ));
         assert_eq!(
             fixture.output_semantics,

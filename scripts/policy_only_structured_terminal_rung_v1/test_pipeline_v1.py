@@ -10,7 +10,9 @@ import tempfile
 import unittest
 
 import finalize_transport_v1 as finalizer
+import project_trust_region_v1 as projection
 import run_pipeline_v1 as pipeline
+import torch
 
 
 def _metric(mean: float = 0.01, p90: float = 0.02, joint: float = 0.1) -> dict:
@@ -27,6 +29,26 @@ def _metric(mean: float = 0.01, p90: float = 0.02, joint: float = 0.1) -> dict:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_trust_projection_is_fixed_one_sixteenth_displacement(self) -> None:
+        initial = {
+            "weight": torch.tensor([0.0, 16.0], dtype=torch.float32),
+            "counter": torch.tensor([3], dtype=torch.int64),
+        }
+        trained = {
+            "weight": torch.tensor([16.0, 0.0], dtype=torch.float32),
+            "counter": torch.tensor([3], dtype=torch.int64),
+        }
+        projected = projection._interpolate_state(initial, trained)
+        self.assertTrue(torch.equal(projected["weight"], torch.tensor([1.0, 15.0])))
+        self.assertTrue(torch.equal(projected["counter"], initial["counter"]))
+
+    def test_trust_projection_rejects_changed_nonfloating_state(self) -> None:
+        with self.assertRaises(ValueError):
+            projection._interpolate_state(
+                {"counter": torch.tensor([3], dtype=torch.int64)},
+                {"counter": torch.tensor([4], dtype=torch.int64)},
+            )
+
     def test_formal_pair_count_exceeds_profile_limit_by_design(self) -> None:
         self.assertEqual(pipeline.FORMAL_PAIRS, 2_048)
         self.assertGreater(pipeline.FORMAL_PAIRS, 64)
