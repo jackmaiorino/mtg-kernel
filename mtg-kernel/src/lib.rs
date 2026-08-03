@@ -91,6 +91,9 @@ pub mod native_bilinear_policy_residual_v1;
 // Strict live runtime for the fixed policy-only structured residual package.
 #[allow(dead_code)]
 pub(crate) mod native_structured_policy_residual_v1;
+// Strict live runtime for the policy-only complete-history structured successor.
+#[allow(dead_code)]
+pub(crate) mod native_structured_policy_successor_v1;
 // Trainer-schedule-compatible in-memory checkpoint runner. It derives the
 // engine/topology contract from a validated run and publishes no artifacts.
 pub mod native_checkpoint_runner_v1;

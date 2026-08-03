@@ -39,6 +39,11 @@ use crate::native_structured_policy_residual_v1::{
     NativeStructuredPolicyResidualInferenceV1, CARD_VOCAB_V1, HISTORY_LENGTH_V1,
     PARENT_NATIVE_STATE_SHA256_V1,
 };
+use crate::native_structured_policy_successor_v1::{
+    load_native_structured_policy_successor_inference_v1,
+    NativeStructuredPolicySuccessorInferenceV1,
+    CANDIDATE_FILENAME_V1 as STRUCTURED_POLICY_SUCCESSOR_CANDIDATE_FILENAME_V1,
+};
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2;
 use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
@@ -537,6 +542,10 @@ struct NativeStructuredPolicyResidualShadowModelScorerV1 {
     inference: NativeStructuredPolicyResidualInferenceV1,
 }
 
+struct NativeStructuredPolicySuccessorShadowModelScorerV1 {
+    inference: NativeStructuredPolicySuccessorInferenceV1,
+}
+
 struct NativeStructuredHistoryStackShadowModelScorerV1 {
     inference: NativeStructuredHistoryStackInferenceV1,
 }
@@ -574,6 +583,27 @@ impl ShadowModelScorerV1 for NativeRank1PolicyResidualShadowModelScorerV1 {
 impl ShadowModelScorerV1 for NativeStructuredPolicyResidualShadowModelScorerV1 {
     fn uses_structured_history_v1(&self) -> bool {
         self.inference.is_history_aware_v1()
+    }
+
+    fn score_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        history: &[NativeStructuredHistoryEntryV1],
+        acting_player: u8,
+    ) -> Result<ShadowModelOutputV1, ()> {
+        let output =
+            self.inference
+                .score_decision_with_history_v1(decision, history, acting_player)?;
+        Ok(ShadowModelOutputV1 {
+            logits: output.logits_v1().to_vec(),
+            value: output.value_v1(),
+        })
+    }
+}
+
+impl ShadowModelScorerV1 for NativeStructuredPolicySuccessorShadowModelScorerV1 {
+    fn uses_structured_history_v1(&self) -> bool {
+        true
     }
 
     fn score_v1(
@@ -1763,6 +1793,59 @@ impl ShadowScorerServiceV1 {
             });
         }
         if let ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root } = &authority {
+            let structured_policy_successor = root
+                .join(STRUCTURED_POLICY_SUCCESSOR_CANDIDATE_FILENAME_V1)
+                .try_exists()
+                .map_err(|_| {
+                    ShadowScorerStartupErrorV1::new(
+                        ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                    )
+                })?;
+            if structured_policy_successor {
+                let inference = load_native_structured_policy_successor_inference_v1(root)
+                    .map_err(|_| {
+                        ShadowScorerStartupErrorV1::new(
+                            ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                        )
+                    })?;
+                let identity = ShadowCheckpointIdentityV1 {
+                    authority_kind: "xmage-cp7-outcome-structured-policy-successor-v1".to_owned(),
+                    source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                    source_generation: SOURCE_GENERATION_V1,
+                    source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+                    source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+                    source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+                    source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+                    loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                    loaded_generation: inference.parent_adam_step_v1(),
+                    loaded_checkpoint_sha256: lower_hex_raw32_v1(
+                        inference.candidate_json_sha256_v1(),
+                    ),
+                    loaded_payload_sha256: lower_hex_raw32_v1(inference.weights_sha256_v1()),
+                    loaded_train_state_sha256: lower_hex_raw32_v1(inference.report_sha256_v1()),
+                    model_parameter_sha256: lower_hex_raw32_v1(
+                        inference.composite_model_parameter_sha256_v1(),
+                    ),
+                    environment_trajectory_contract: SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
+                    sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+                    sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+                };
+                return Ok(Self {
+                    model: Box::new(NativeStructuredPolicySuccessorShadowModelScorerV1 {
+                        inference,
+                    }),
+                    opponent_model: None,
+                    population_opponent: None,
+                    identity,
+                    candidate_selector: ShadowCandidateSelectorV1::PolicySample,
+                    max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
+                    max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
+                    active: None,
+                    teacher_export: None,
+                    outcome_export: None,
+                    export_poisoned: false,
+                });
+            }
             let structured_history_stack = root
                 .join("structured_history_stack.json")
                 .try_exists()
