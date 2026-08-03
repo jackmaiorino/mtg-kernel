@@ -313,6 +313,66 @@ def _panel_metrics(outcome_path: Path, base_seed: int, pairs: int) -> dict[str, 
     }
 
 
+def _trajectory_sha256(outcome_path: Path) -> str:
+    """Hash game choices and terminal states while excluding model identity fields."""
+    decision_fields = (
+        "record_type",
+        "base_seed_u64_hex",
+        "pair_index",
+        "pair_environment_seed_u64_hex",
+        "episode_id",
+        "step",
+        "environment_revision",
+        "physical_decision_id",
+        "substep_index",
+        "substep_count",
+        "acting_player",
+        "decision_kind",
+        "candidate_seat",
+        "actor_physical_decision_ordinal",
+        "legal_action_count",
+        "candidate_order_commitment_128_hex",
+        "model_input_sha256",
+        "selected_index",
+        "selected_semantic",
+    )
+    terminal_fields = (
+        "record_type",
+        "base_seed_u64_hex",
+        "pair_index",
+        "pair_environment_seed_u64_hex",
+        "episode_id",
+        "candidate_seat",
+        "first_outcome_decision_ordinal",
+        "outcome_decision_count",
+        "candidate_terminal_reward",
+        "diagnostic_state_hash_u64_hex",
+        "core_environment_hash_u64_hex",
+    )
+    digest = hashlib.sha256()
+    with outcome_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            row = json.loads(line)
+            record_type = row.get("record_type")
+            if record_type == "decision":
+                fields = decision_fields
+            elif record_type == "terminal":
+                fields = terminal_fields
+            else:
+                continue
+            normalized = {field: row.get(field) for field in fields}
+            digest.update(
+                json.dumps(
+                    normalized,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            )
+            digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def _evaluate_one(
     evidence_root: Path,
     label: str,
@@ -360,6 +420,7 @@ def _evaluate_one(
         "startup_seconds": report["startup_seconds"],
         "outcome_jsonl": str(outcome_path),
         "outcome_sha256": pipeline._sha256(outcome_path),
+        "trajectory_sha256": _trajectory_sha256(outcome_path),
         "teacher_jsonl": str(teacher_path),
         "teacher_sha256": pipeline._sha256(teacher_path),
         "collection_report": str(report_path),
@@ -398,9 +459,10 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
     deltas = [zero, zero, probe, [-value for value in probe]]
     jobs = []
     packages = []
+    zero_root = args.evidence_root / "packages" / "candidate-00"
     for index, delta in enumerate(deltas):
         label = f"candidate-{index:02d}"
-        root = args.evidence_root / "packages" / label
+        root = zero_root if index == 1 else args.evidence_root / "packages" / label
         packages.append(
             _package(root, state_payload, identity, delta, args.source_commit, "development", 0, index)
         )
@@ -408,7 +470,7 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
     evaluations, wall = _evaluate_many(args.evidence_root / "evaluations", jobs)
     zero_repeat = evaluations[0]["outcome_sha256"] == evaluations[1]["outcome_sha256"]
     probe_active = any(
-        evaluation["outcome_sha256"] != evaluations[0]["outcome_sha256"]
+        evaluation["trajectory_sha256"] != evaluations[0]["trajectory_sha256"]
         for evaluation in evaluations[2:]
     )
     result = {
