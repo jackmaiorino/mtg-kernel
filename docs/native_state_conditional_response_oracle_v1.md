@@ -61,3 +61,23 @@ on the same seeds. Simulation throughput was 31.44 games per second and total
 preflight wall time, including Store loading, was 94.45 seconds. Throughput
 report SHA-256 is
 `ebc29c646e01b7b3e5e72bd7ec2148853edf60753adfc1c237b877c9f3dfb240`.
+
+## Completed result
+
+The fixed release run completed cleanly in 1,253.88 seconds. Selector policy 6
+improved the zero parent's two-panel worst fitness from 102 to 148 and summed
+fitness from 294 to 344. That large selector gain did not generalize.
+
+Against untouched Pool3 seeds, the parent scored 326 wins and 186 losses while
+the candidate scored 325 wins and 187 losses. Paired `G/L/T` was `11/12/489`,
+with candidate-minus-parent seat win deltas of `+1/-2`. Against untouched pure
+promoted(2), parent and candidate both scored 252 wins and 260 losses. Paired
+`G/L/T` was `6/6/500`, with seat deltas of `+3/-3`.
+
+Both seat floors passed and both paired-gain gates failed. Formal report
+SHA-256 is
+`cccab92116c08896c1b223e14ef7281c021e91cbca0c3dd886108dfd49d92dd5`.
+The exact 160-parameter state-conditional oracle is retired without tuning on
+revealed seeds. This is direct evidence that its apparent two-panel gain was
+selection-specific rather than robust. The next branch is selective search,
+not another CEM policy residual.
