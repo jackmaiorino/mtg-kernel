@@ -63,3 +63,39 @@ The external XMage baseline remains descriptive: promoted(2) scored `46-66`
 across 112 CP7 games, with the frozen 64-game block at `26-38`. No result in
 this branch establishes CP7 superiority, cross-deck strength, human strength,
 or pro-level play.
+
+## Result
+
+The first launch was stopped during cache loading after a read-only audit found
+that the inherited fold loader reconstructed history from candidate actions
+only. It produced no result or model state. The corrected revision binds both
+candidate and population public-action lanes, pins the formal source and seed
+in code, normalizes each minibatch by its actual episode mass, and records an
+exact disjoint held-out pair partition. Its 128-pair preflight completed in
+125.3 seconds with zero stderr.
+
+The four corrected formal folds then ran concurrently with six threads each.
+They completed in 47.6 to 48.0 minutes of training and 47.6 to 48.0 minutes
+total after the shared start, with zero stderr. Held-out results were:
+
+| Metric | Overall | Candidate P0 | Candidate P1 | Gate |
+| --- | ---: | ---: | ---: | ---: |
+| Mean policy TV | 0.010666 | 0.010189 | 0.011143 | overall <= 0.020; seat <= 0.025 |
+| P90 policy TV | 0.028395 | 0.028037 | 0.028872 | overall <= 0.050 |
+| Top-action agreement | 0.991978 | 0.992334 | 0.991621 | overall >= 0.980; seat >= 0.970 |
+| Value RMSE | 0.115089 | 0.115507 | 0.114669 | overall <= 0.100; seat <= 0.120 |
+
+Every fold's mean policy TV was below `0.01213`. All policy gates, both
+seat-specific value gates, and the complete fold gate passed. The overall
+value RMSE gate failed because `0.115089 <= 0.100` is false.
+
+The exact policy-plus-value successor is therefore rejected. No full-data fit,
+native publication, or fresh strength gate is authorized by this result. The
+strong policy result is retained as mechanism evidence only.
+
+Primary artifacts:
+
+- Aggregate: `D:\mtg-kernel-structured-successor-v1\formal\aggregate.json`,
+  SHA-256 `484643f2527f75ea1baea2e82f5257680e7448101aa9a2907ffd4f7a5715a4e3`.
+- Final manifest: `D:\mtg-kernel-structured-successor-v1\formal\manifest.json`,
+  SHA-256 `2af12c8b15606bcafd5af6834fd2e7b0acac582234a566583836c46c2a2cf01f`.
