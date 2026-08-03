@@ -1,6 +1,6 @@
 # Native history-value depth-8 search v1
 
-Status: predeclared, not run
+Status: complete, failed fresh gate
 
 ## Question
 
@@ -52,3 +52,22 @@ Pass only if all are true:
 - every accepted diagnostic reports exactly eight continuation decisions.
 
 On pass, run a fresh 16-pair extension at base seed 1410001 before promotion. On fail, retire this exact depth-8 selector. A failure does not reject other search depths, learned search policies, or better belief models.
+
+## Result
+
+The nonfresh base-950001 preflight and exact repeat completed in 54.63 and 54.34 seconds. Their normalized search and parent logs matched exactly after replacing elapsed-time fields, and all 116 selector diagnostics were identical. Each run had four distinct hidden-state samples at every eligible root and 18 overrides across both seats.
+
+The fresh base-1400001 gate completed all eight matched pairs without exclusions in 144.13 seconds:
+
+- search wins: 5 of 16;
+- parent wins: 5 of 16;
+- paired gains, losses, ties: 1, 1, 14;
+- search-minus-parent seat net: P0 0, P1 0;
+- eligible roots: P0 277, P1 238;
+- overrides: P0 58, P1 41;
+- sample-distinctness violations: 0;
+- continuation-contract violations: 0.
+
+The paired-gain gate failed because 1 is not at least 1 plus 2. Every validity, activation, and seat-floor gate passed. The pass-only extension is unauthorized. This retires the exact depth-8 deterministic continuation plus terminal-or-value-bootstrap selector. It does not show that all lookahead is ineffective.
+
+Evidence root: `D:\mtg-kernel-history-value-depth8-search-v1`.
