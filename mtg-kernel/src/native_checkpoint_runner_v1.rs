@@ -16,9 +16,10 @@ use crate::async_flat_scored_rollout_v2::{
     FlatScoredTrajectoryObserverV2, FlatScoringBatchViewV2,
 };
 use crate::async_rollout_v2::AsyncRolloutConfigV2;
-use crate::flat_policy_v2::FlatScorerActionCoreV2;
-#[cfg(test)]
-use crate::flat_policy_v2::FlatScorerActionKindV2;
+use crate::flat_policy_v2::{
+    FlatObjectGroupV2, FlatRelativePlayerV2, FlatScorerActionCoreV2, FlatScorerActionKindV2,
+    FlatScoringDecisionViewV2,
+};
 use crate::native_checkpoint_inference_v1::{
     load_native_checkpoint_inference_v1, load_native_checkpoint_inference_wide_v1,
     NativeCheckpointBatchScorerV1, NativeCheckpointInferenceErrorV1,
@@ -59,6 +60,17 @@ const NATIVE_ACTION_KIND_COUNT_V1: usize = 27;
 const NATIVE_ACTION_KIND_RESIDUAL_ABS_CAP_V1: f32 = 1.5;
 const NATIVE_ACTION_KIND_RESIDUAL_ERROR_CODE_V1: u32 = 0x524f_0001;
 
+pub(crate) const NATIVE_STATE_CONDITIONAL_RESIDUAL_STATE_DIM_V1: usize = 8;
+pub(crate) const NATIVE_STATE_CONDITIONAL_RESIDUAL_ACTION_DIM_V1: usize = 16;
+pub(crate) const NATIVE_STATE_CONDITIONAL_RESIDUAL_CARD_BUCKETS_V1: usize = 16;
+pub(crate) const NATIVE_STATE_CONDITIONAL_RESIDUAL_DIM_V1: usize =
+    NATIVE_STATE_CONDITIONAL_RESIDUAL_STATE_DIM_V1
+        * NATIVE_STATE_CONDITIONAL_RESIDUAL_ACTION_DIM_V1
+        + 2 * NATIVE_STATE_CONDITIONAL_RESIDUAL_CARD_BUCKETS_V1;
+#[cfg(test)]
+const NATIVE_STATE_CONDITIONAL_RESIDUAL_PARAMETER_ABS_CAP_V1: f32 = 0.5;
+const NATIVE_STATE_CONDITIONAL_RESIDUAL_DELTA_ABS_CAP_V1: f32 = 1.5;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NativeActionKindResidualV1 {
     parameters: [f32; NATIVE_ACTION_KIND_RESIDUAL_DIM_V1],
@@ -94,9 +106,179 @@ impl NativeActionKindResidualV1 {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NativeStateConditionalResidualV1 {
+    parameters: [f32; NATIVE_STATE_CONDITIONAL_RESIDUAL_DIM_V1],
+}
+
+impl NativeStateConditionalResidualV1 {
+    #[cfg(test)]
+    pub(crate) fn new_v1(
+        parameters: [f32; NATIVE_STATE_CONDITIONAL_RESIDUAL_DIM_V1],
+    ) -> Option<Self> {
+        parameters
+            .iter()
+            .all(|value| {
+                value.is_finite()
+                    && value.abs() <= NATIVE_STATE_CONDITIONAL_RESIDUAL_PARAMETER_ABS_CAP_V1
+            })
+            .then_some(Self { parameters })
+    }
+
+    fn state_features_v1(decision: FlatScoringDecisionViewV2<'_>) -> [f32; 8] {
+        let globals = decision.globals();
+        let learner = globals.players[0];
+        let opponent = globals.players[1];
+        let mut creature_count = [0_i32; 2];
+        let mut creature_power = [0_i32; 2];
+        let mut graveyard_count = [0_i32; 2];
+        for object in decision.objects() {
+            let side = match object.group {
+                FlatObjectGroupV2::SelfBattlefield | FlatObjectGroupV2::SelfGraveyard => 0,
+                FlatObjectGroupV2::OpponentBattlefield | FlatObjectGroupV2::OpponentGraveyard => 1,
+                _ => continue,
+            };
+            match object.group {
+                FlatObjectGroupV2::SelfBattlefield | FlatObjectGroupV2::OpponentBattlefield
+                    if object.type_flags[1] =>
+                {
+                    creature_count[side] += 1;
+                    creature_power[side] += object.effective_power.unwrap_or(0);
+                }
+                FlatObjectGroupV2::SelfGraveyard | FlatObjectGroupV2::OpponentGraveyard => {
+                    graveyard_count[side] += 1
+                }
+                _ => {}
+            }
+        }
+        let active_player = match globals.active_player {
+            FlatRelativePlayerV2::SelfPlayer => 1.0,
+            FlatRelativePlayerV2::Opponent => -1.0,
+            FlatRelativePlayerV2::None => 0.0,
+        };
+        [
+            1.0,
+            ((learner.life - opponent.life) as f32 / 20.0).clamp(-1.0, 1.0),
+            (learner.life as f32 / 20.0).clamp(-1.0, 1.0),
+            ((learner.hand_count as f32 - opponent.hand_count as f32) / 8.0).clamp(-1.0, 1.0),
+            ((creature_count[0] - creature_count[1]) as f32 / 8.0).clamp(-1.0, 1.0),
+            ((creature_power[0] - creature_power[1]) as f32 / 20.0).clamp(-1.0, 1.0),
+            ((graveyard_count[0] - graveyard_count[1]) as f32 / 16.0).clamp(-1.0, 1.0),
+            active_player,
+        ]
+    }
+
+    const fn base_action_channel_v1(kind: FlatScorerActionKindV2) -> usize {
+        match kind {
+            FlatScorerActionKindV2::Pass => 0,
+            FlatScorerActionKindV2::PlayLand => 1,
+            FlatScorerActionKindV2::CastSpell | FlatScorerActionKindV2::PlotSpell => 2,
+            FlatScorerActionKindV2::ActivateManaAbility => 3,
+            FlatScorerActionKindV2::ActivateAbility => 4,
+            FlatScorerActionKindV2::ChooseTarget
+            | FlatScorerActionKindV2::ChooseCostTarget
+            | FlatScorerActionKindV2::ChooseEffectTarget => 5,
+            FlatScorerActionKindV2::ChooseCastMode
+            | FlatScorerActionKindV2::ChooseKicker
+            | FlatScorerActionKindV2::ChooseSpellMode
+            | FlatScorerActionKindV2::ChooseEffectOption
+            | FlatScorerActionKindV2::ChooseEffectColor
+            | FlatScorerActionKindV2::ChooseEffectNumber => 6,
+            FlatScorerActionKindV2::FinishEffectSelection
+            | FlatScorerActionKindV2::FinishTargetSelection => 7,
+            FlatScorerActionKindV2::Discard => 8,
+            FlatScorerActionKindV2::OrderTriggers => 9,
+            FlatScorerActionKindV2::ChooseOptionalCostUse
+            | FlatScorerActionKindV2::ChooseOptionalCostWhich
+            | FlatScorerActionKindV2::ChooseSpellCopyPayment
+            | FlatScorerActionKindV2::ChooseSpellCopyRetarget
+            | FlatScorerActionKindV2::ChooseMadnessCast
+            | FlatScorerActionKindV2::ChooseEffectBoolean
+            | FlatScorerActionKindV2::ChooseAttackerInclusion
+            | FlatScorerActionKindV2::ChooseBlockerInclusion => 6,
+        }
+    }
+
+    fn dot_channel_v1(&self, channel: usize, features: &[f32; 8]) -> f32 {
+        let begin = channel * NATIVE_STATE_CONDITIONAL_RESIDUAL_STATE_DIM_V1;
+        self.parameters[begin..begin + NATIVE_STATE_CONDITIONAL_RESIDUAL_STATE_DIM_V1]
+            .iter()
+            .zip(features)
+            .map(|(weight, feature)| weight * feature)
+            .sum()
+    }
+
+    fn binary_channel_v1(action: &FlatScorerActionCoreV2) -> Option<(usize, f32)> {
+        let (channel, flag) = match action.kind {
+            FlatScorerActionKindV2::ChooseKicker
+            | FlatScorerActionKindV2::ChooseSpellCopyPayment => (10, FLAT_ACTION_FLAG_PAY_V1),
+            FlatScorerActionKindV2::ChooseOptionalCostUse => (10, FLAT_ACTION_FLAG_USE_COST_V1),
+            FlatScorerActionKindV2::ChooseMadnessCast => (11, FLAT_ACTION_FLAG_CAST_IT_V1),
+            FlatScorerActionKindV2::ChooseEffectBoolean => (12, FLAT_ACTION_FLAG_VALUE_V1),
+            FlatScorerActionKindV2::ChooseSpellCopyRetarget => {
+                (13, FLAT_ACTION_FLAG_CHANGE_TARGET_V1)
+            }
+            FlatScorerActionKindV2::ChooseAttackerInclusion => (14, FLAT_ACTION_FLAG_INCLUDE_V1),
+            FlatScorerActionKindV2::ChooseBlockerInclusion => (15, FLAT_ACTION_FLAG_INCLUDE_V1),
+            _ => return None,
+        };
+        Some((channel, if action.flags & flag != 0 { 1.0 } else { -1.0 }))
+    }
+
+    fn delta_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        action: &FlatScorerActionCoreV2,
+    ) -> f32 {
+        let features = Self::state_features_v1(decision);
+        let mut delta = self.dot_channel_v1(Self::base_action_channel_v1(action.kind), &features);
+        if let Some((channel, sign)) = Self::binary_channel_v1(action) {
+            delta += sign * self.dot_channel_v1(channel, &features);
+        }
+        let ref_begin = action.ref_start as usize;
+        let ref_end = ref_begin.saturating_add(usize::from(action.ref_len));
+        if let Some(reference) = decision
+            .action_refs()
+            .get(ref_begin..ref_end)
+            .and_then(|references| references.last())
+        {
+            let bucket =
+                reference.card_token as usize % NATIVE_STATE_CONDITIONAL_RESIDUAL_CARD_BUCKETS_V1;
+            let begin = NATIVE_STATE_CONDITIONAL_RESIDUAL_ACTION_DIM_V1
+                * NATIVE_STATE_CONDITIONAL_RESIDUAL_STATE_DIM_V1
+                + 2 * bucket;
+            delta += self.parameters[begin] + self.parameters[begin + 1] * features[1];
+        }
+        delta.clamp(
+            -NATIVE_STATE_CONDITIONAL_RESIDUAL_DELTA_ABS_CAP_V1,
+            NATIVE_STATE_CONDITIONAL_RESIDUAL_DELTA_ABS_CAP_V1,
+        )
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+enum NativeEvaluationResidualV1 {
+    ActionKind(NativeActionKindResidualV1),
+    StateConditional(NativeStateConditionalResidualV1),
+}
+
+impl NativeEvaluationResidualV1 {
+    fn delta_v1(
+        self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        action: &FlatScorerActionCoreV2,
+    ) -> f32 {
+        match self {
+            Self::ActionKind(residual) => residual.delta_v1(action),
+            Self::StateConditional(residual) => residual.delta_v1(decision, action),
+        }
+    }
+}
+
 struct NativeActionKindResidualBatchScorerV1<'a> {
     inner: NativeCheckpointBatchScorerV1<'a>,
-    residual: Option<NativeActionKindResidualV1>,
+    residual: Option<NativeEvaluationResidualV1>,
 }
 
 impl FlatBatchScorerV2 for NativeActionKindResidualBatchScorerV1<'_> {
@@ -122,7 +304,7 @@ impl FlatBatchScorerV2 for NativeActionKindResidualBatchScorerV1<'_> {
                 ));
             }
             for (logit, action) in action_logits[begin..end].iter_mut().zip(decision.actions()) {
-                *logit += residual.delta_v1(action);
+                *logit += residual.delta_v1(decision, action);
                 if !logit.is_finite() {
                     return Err(FlatBatchScorerErrorV2::new(
                         NATIVE_ACTION_KIND_RESIDUAL_ERROR_CODE_V1,
@@ -677,7 +859,30 @@ pub(crate) fn run_native_checkpoint_with_ladder_opponent_action_residual_eval_v1
         checkpoint_payload,
         config,
         ladder_opponent,
-        Some(residual),
+        Some(NativeEvaluationResidualV1::ActionKind(residual)),
+    )
+}
+
+/// Development-only state-conditional response-oracle evaluator. The residual
+/// sees only actor-relative typed state, action semantics, and model-visible
+/// card tokens. It cannot observe seeds, hidden opponent cards, or operational
+/// engine identities.
+#[cfg(test)]
+pub(crate) fn run_native_checkpoint_with_ladder_opponent_state_conditional_residual_eval_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    checkpoint_payload: &[u8],
+    config: NativeCheckpointRunnerConfigV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    residual: NativeStateConditionalResidualV1,
+) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    run_native_checkpoint_core_v1(
+        run,
+        checkpoint,
+        checkpoint_payload,
+        config,
+        ladder_opponent,
+        Some(NativeEvaluationResidualV1::StateConditional(residual)),
     )
 }
 
@@ -687,7 +892,7 @@ fn run_native_checkpoint_core_v1(
     checkpoint_payload: &[u8],
     config: NativeCheckpointRunnerConfigV1,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
-    action_residual: Option<NativeActionKindResidualV1>,
+    action_residual: Option<NativeEvaluationResidualV1>,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
     let validated = validate_runner_config_v1(run, config)?;
     let expected_episode_count = usize::try_from(config.episode_count)
@@ -1263,6 +1468,67 @@ mod tests {
     }
 
     #[test]
+    fn state_conditional_binary_channels_follow_typed_action_semantics() {
+        for (kind, flag, expected_channel) in [
+            (
+                FlatScorerActionKindV2::ChooseKicker,
+                FLAT_ACTION_FLAG_PAY_V1,
+                10,
+            ),
+            (
+                FlatScorerActionKindV2::ChooseOptionalCostUse,
+                FLAT_ACTION_FLAG_USE_COST_V1,
+                10,
+            ),
+            (
+                FlatScorerActionKindV2::ChooseMadnessCast,
+                FLAT_ACTION_FLAG_CAST_IT_V1,
+                11,
+            ),
+            (
+                FlatScorerActionKindV2::ChooseEffectBoolean,
+                FLAT_ACTION_FLAG_VALUE_V1,
+                12,
+            ),
+            (
+                FlatScorerActionKindV2::ChooseSpellCopyRetarget,
+                FLAT_ACTION_FLAG_CHANGE_TARGET_V1,
+                13,
+            ),
+            (
+                FlatScorerActionKindV2::ChooseAttackerInclusion,
+                FLAT_ACTION_FLAG_INCLUDE_V1,
+                14,
+            ),
+            (
+                FlatScorerActionKindV2::ChooseBlockerInclusion,
+                FLAT_ACTION_FLAG_INCLUDE_V1,
+                15,
+            ),
+        ] {
+            let false_action = FlatScorerActionCoreV2 {
+                kind,
+                ..FlatScorerActionCoreV2::default()
+            };
+            let true_action = FlatScorerActionCoreV2 {
+                flags: flag,
+                ..false_action
+            };
+            assert_eq!(
+                NativeStateConditionalResidualV1::binary_channel_v1(&false_action),
+                Some((expected_channel, -1.0))
+            );
+            assert_eq!(
+                NativeStateConditionalResidualV1::binary_channel_v1(&true_action),
+                Some((expected_channel, 1.0))
+            );
+        }
+        let mut invalid = [0.0_f32; NATIVE_STATE_CONDITIONAL_RESIDUAL_DIM_V1];
+        invalid[0] = NATIVE_STATE_CONDITIONAL_RESIDUAL_PARAMETER_ABS_CAP_V1 + f32::EPSILON;
+        assert!(NativeStateConditionalResidualV1::new_v1(invalid).is_none());
+    }
+
+    #[test]
     fn zero_action_kind_residual_is_trajectory_identical_to_frozen_runner() {
         let fixture = fixture_v1();
         let (run, checkpoint) = authorities_v1();
@@ -1278,6 +1544,34 @@ mod tests {
             NativeActionKindResidualV1::new_v1([0.0; NATIVE_ACTION_KIND_RESIDUAL_DIM_V1]).unwrap(),
         )
         .unwrap();
+        assert_eq!(residual.rollout().episodes, frozen.rollout().episodes);
+        assert_eq!(residual.episode_bindings(), frozen.episode_bindings());
+        assert_eq!(
+            residual.rollout().metrics.batch_membership_digest,
+            frozen.rollout().metrics.batch_membership_digest
+        );
+    }
+
+    #[test]
+    fn zero_state_conditional_residual_is_trajectory_identical_to_frozen_runner() {
+        let fixture = fixture_v1();
+        let (run, checkpoint) = authorities_v1();
+        let frozen =
+            run_native_checkpoint_v1(&run, &checkpoint, &fixture.payload, runner_config_v1())
+                .unwrap();
+        let residual =
+            run_native_checkpoint_with_ladder_opponent_state_conditional_residual_eval_v1(
+                &run,
+                &checkpoint,
+                &fixture.payload,
+                runner_config_v1(),
+                None,
+                NativeStateConditionalResidualV1::new_v1(
+                    [0.0; NATIVE_STATE_CONDITIONAL_RESIDUAL_DIM_V1],
+                )
+                .unwrap(),
+            )
+            .unwrap();
         assert_eq!(residual.rollout().episodes, frozen.rollout().episodes);
         assert_eq!(residual.episode_bindings(), frozen.episode_bindings());
         assert_eq!(
