@@ -23,52 +23,55 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-const CANDIDATE_FILENAME_V1: &str = "structured_candidate.json";
-const HISTORY_CANDIDATE_FILENAME_V1: &str = "structured_history_candidate.json";
-const REPORT_FILENAME_V1: &str = "report.json";
-const WEIGHTS_FILENAME_V1: &str = "weights.f32le";
-const PARENT_DIRECTORY_V1: &str = "parent";
-const PARENT_MANIFEST_FILENAME_V1: &str = "checkpoint.json";
-const PARENT_STATE_FILENAME_V1: &str = "checkpoint.state.f32le";
-const CANDIDATE_SCHEMA_V1: &str = "mtg-kernel-structured-policy-residual-candidate/v1";
-const HISTORY_CANDIDATE_SCHEMA_V1: &str =
+pub(crate) const CANDIDATE_FILENAME_V1: &str = "structured_candidate.json";
+pub(crate) const HISTORY_CANDIDATE_FILENAME_V1: &str = "structured_history_candidate.json";
+pub(crate) const REPORT_FILENAME_V1: &str = "report.json";
+pub(crate) const WEIGHTS_FILENAME_V1: &str = "weights.f32le";
+pub(crate) const PARENT_DIRECTORY_V1: &str = "parent";
+pub(crate) const PARENT_MANIFEST_FILENAME_V1: &str = "checkpoint.json";
+pub(crate) const PARENT_STATE_FILENAME_V1: &str = "checkpoint.state.f32le";
+pub(crate) const CANDIDATE_SCHEMA_V1: &str = "mtg-kernel-structured-policy-residual-candidate/v1";
+pub(crate) const HISTORY_CANDIDATE_SCHEMA_V1: &str =
     "mtg-kernel-structured-history-policy-value-residual-candidate/v1";
-const REPORT_SCHEMA_V1: &str = "mtg-kernel-structured-policy-residual-fit/v1";
-const HISTORY_REPORT_SCHEMA_V1: &str = "mtg-kernel-structured-history-policy-value-residual-fit/v1";
-const HISTORY_OUTCOME_REPORT_SCHEMA_V1: &str =
+pub(crate) const REPORT_SCHEMA_V1: &str = "mtg-kernel-structured-policy-residual-fit/v1";
+pub(crate) const HISTORY_REPORT_SCHEMA_V1: &str =
+    "mtg-kernel-structured-history-policy-value-residual-fit/v1";
+pub(crate) const HISTORY_OUTCOME_REPORT_SCHEMA_V1: &str =
     "mtg-kernel-scaled-history-outcome-policy-residual-fit/v1";
-const PUBLICATION_ENCODING_V1: &str = "json-pretty-sorted-utf8-trailing-lf/v1";
-const WEIGHTS_ENCODING_V1: &str = "ordered-row-major-finite-f32-little-endian/v1";
-const ARCHITECTURE_V1: &str = "stateless-structured-object-action-attention-policy-residual/v1";
-const HISTORY_ARCHITECTURE_V1: &str =
+pub(crate) const PUBLICATION_ENCODING_V1: &str = "json-pretty-sorted-utf8-trailing-lf/v1";
+pub(crate) const WEIGHTS_ENCODING_V1: &str = "ordered-row-major-finite-f32-little-endian/v1";
+pub(crate) const ARCHITECTURE_V1: &str =
+    "stateless-structured-object-action-attention-policy-residual/v1";
+pub(crate) const HISTORY_ARCHITECTURE_V1: &str =
     "complete-public-history-structured-object-action-attention-policy-value-residual/v1";
-const VALUE_MODEL_V1: &str = "exact-parent-unchanged";
-const REPORT_VALUE_MODEL_V1: &str = "exact-retained-parent-unchanged";
-const HISTORY_VALUE_MODEL_V1: &str = "joint-terminal-residual/v1";
-const COMPOSITE_DOMAIN_V1: &[u8] = b"mtg-kernel-structured-policy-residual-composite-model/v1";
-const HISTORY_COMPOSITE_DOMAIN_V1: &[u8] =
+pub(crate) const VALUE_MODEL_V1: &str = "exact-parent-unchanged";
+pub(crate) const REPORT_VALUE_MODEL_V1: &str = "exact-retained-parent-unchanged";
+pub(crate) const HISTORY_VALUE_MODEL_V1: &str = "joint-terminal-residual/v1";
+pub(crate) const COMPOSITE_DOMAIN_V1: &[u8] =
+    b"mtg-kernel-structured-policy-residual-composite-model/v1";
+pub(crate) const HISTORY_COMPOSITE_DOMAIN_V1: &[u8] =
     b"mtg-kernel-structured-history-policy-value-residual-composite-model/v1";
-const PARENT_MANIFEST_SHA256_V1: &str =
+pub(crate) const PARENT_MANIFEST_SHA256_V1: &str =
     "706b3aa80ec7a3c067d458fef06bb2237320543f202fb2349c5cb885975fdbbb";
-const PARENT_PAYLOAD_SHA256_V1: &str =
+pub(crate) const PARENT_PAYLOAD_SHA256_V1: &str =
     "eb83be33bcb7418b6f85ec9687da4b7ca5620a1df64721a1942d2793588bbd3c";
-const PARENT_NATIVE_STATE_SHA256_V1: &str =
+pub(crate) const PARENT_NATIVE_STATE_SHA256_V1: &str =
     "2c55a13abb3157f3f4ba012af663ffa56599c5d6cb90743c1ba6e024ca47a9c8";
-const PARENT_MODEL_PARAMETER_SHA256_V1: &str =
+pub(crate) const PARENT_MODEL_PARAMETER_SHA256_V1: &str =
     "883e4882d01d9cb55ecd7a4ae00e3c95793b6147baf3df08650ef1fa7f8e9546";
-const PARENT_ADAM_STEP_V1: u64 = 1;
-const HIDDEN_DIM_V1: usize = 48;
+pub(crate) const PARENT_ADAM_STEP_V1: u64 = 1;
+pub(crate) const HIDDEN_DIM_V1: usize = 48;
 pub(crate) const CARD_VOCAB_V1: usize = 136;
-const CARD_EMBEDDING_DIM_V1: usize = 24;
-const GROUP_VOCAB_V1: usize = 7;
-const HISTORY_GROUP_VOCAB_V1: usize = 12;
-const GROUP_EMBEDDING_DIM_V1: usize = 16;
-const PARAMETER_COUNT_V1: usize = 63_521;
+pub(crate) const CARD_EMBEDDING_DIM_V1: usize = 24;
+pub(crate) const GROUP_VOCAB_V1: usize = 7;
+pub(crate) const HISTORY_GROUP_VOCAB_V1: usize = 12;
+pub(crate) const GROUP_EMBEDDING_DIM_V1: usize = 16;
+pub(crate) const PARAMETER_COUNT_V1: usize = 63_521;
 pub(crate) const HISTORY_LENGTH_V1: usize = 16;
-const HISTORY_ROLE_DIM_V1: usize = 2;
-const HISTORY_FEATURE_DIM_V1: usize =
+pub(crate) const HISTORY_ROLE_DIM_V1: usize = 2;
+pub(crate) const HISTORY_FEATURE_DIM_V1: usize =
     NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2 + HISTORY_ROLE_DIM_V1 + CARD_VOCAB_V1;
-const HISTORY_PARAMETER_COUNT_V1: usize = 107_378;
+pub(crate) const HISTORY_PARAMETER_COUNT_V1: usize = 107_378;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -143,9 +146,26 @@ struct ReportBindingV1 {
     sha256: String,
 }
 
-struct TensorV1 {
+#[derive(Debug)]
+pub(crate) struct TensorV1 {
     shape: Vec<usize>,
     values: Vec<f32>,
+}
+
+impl TensorV1 {
+    pub(crate) fn new(shape: Vec<usize>, values: Vec<f32>) -> Self {
+        Self { shape, values }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn shape_v1(&self) -> &[usize] {
+        &self.shape
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn values_v1(&self) -> &[f32] {
+        &self.values
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -177,6 +197,7 @@ impl NativeStructuredHistoryEntryV1 {
     }
 }
 
+#[derive(Clone, Debug)]
 pub(crate) struct NativeStructuredPolicyResidualOutputV1 {
     logits: Vec<f32>,
     value: f32,
@@ -190,6 +211,74 @@ impl NativeStructuredPolicyResidualOutputV1 {
     pub(crate) const fn value_v1(&self) -> f32 {
         self.value
     }
+}
+
+pub(crate) fn structured_policy_residual_output_v1(
+    logits: Vec<f32>,
+    value: f32,
+) -> Result<NativeStructuredPolicyResidualOutputV1, ()> {
+    if logits.is_empty() || logits.iter().any(|value| !value.is_finite()) || !value.is_finite() {
+        return Err(());
+    }
+    Ok(NativeStructuredPolicyResidualOutputV1 { logits, value })
+}
+
+pub(crate) fn average_structured_policy_residual_outputs_v1(
+    outputs: &[NativeStructuredPolicyResidualOutputV1],
+) -> Result<NativeStructuredPolicyResidualOutputV1, ()> {
+    if outputs.len() != 4 || outputs.is_empty() {
+        return Err(());
+    }
+    let action_count = outputs[0].logits_v1().len();
+    let mut logits = vec![0.0f32; action_count];
+    let mut value = 0.0f32;
+    for output in outputs {
+        if output.logits_v1().len() != action_count {
+            return Err(());
+        }
+        for (destination, source) in logits.iter_mut().zip(output.logits_v1()) {
+            *destination += source;
+        }
+        value += output.value_v1();
+    }
+    let denominator = 4.0f32;
+    for logit in &mut logits {
+        *logit /= denominator;
+    }
+    value /= denominator;
+    if logits.iter().any(|value| !value.is_finite()) || !value.is_finite() {
+        return Err(());
+    }
+    Ok(NativeStructuredPolicyResidualOutputV1 { logits, value })
+}
+
+pub(crate) fn average_structured_residuals_v1(
+    outputs: &[StructuredResidualV1],
+) -> Result<NativeStructuredPolicyResidualOutputV1, ()> {
+    if outputs.len() != 4 || outputs.is_empty() {
+        return Err(());
+    }
+    let action_count = outputs[0].logits_v1().len();
+    let mut logits = vec![0.0f32; action_count];
+    let mut value = 0.0f32;
+    for output in outputs {
+        if output.logits_v1().len() != action_count {
+            return Err(());
+        }
+        for (destination, source) in logits.iter_mut().zip(output.logits_v1()) {
+            *destination += source;
+        }
+        value += output.value_v1().unwrap_or(0.0);
+    }
+    let denominator = 4.0f32;
+    for logit in &mut logits {
+        *logit /= denominator;
+    }
+    value /= denominator;
+    if logits.iter().any(|value| !value.is_finite()) || !value.is_finite() {
+        return Err(());
+    }
+    Ok(NativeStructuredPolicyResidualOutputV1 { logits, value })
 }
 
 pub(crate) struct NativeStructuredPolicyResidualInferenceV1 {
@@ -317,7 +406,7 @@ fn tensor_view_v1(tensor: &NativeFlatDecisionTensorV2) -> NativeEncodedDecisionV
     )
 }
 
-fn expected_parameters_v1() -> Vec<(&'static str, Vec<usize>)> {
+pub(crate) fn expected_parameters_v1() -> Vec<(&'static str, Vec<usize>)> {
     vec![
         ("state.0.weight", vec![48, 219]),
         ("state.0.bias", vec![48]),
@@ -347,7 +436,7 @@ fn expected_parameters_v1() -> Vec<(&'static str, Vec<usize>)> {
     ]
 }
 
-fn expected_history_parameters_v1() -> Vec<(&'static str, Vec<usize>)> {
+pub(crate) fn expected_history_parameters_v1() -> Vec<(&'static str, Vec<usize>)> {
     vec![
         ("state.0.weight", vec![48, 219]),
         ("state.0.bias", vec![48]),
@@ -462,9 +551,19 @@ fn checked_index_v1(value: i64, count: usize) -> Result<usize, ()> {
     (value < count).then_some(value).ok_or(())
 }
 
-struct StructuredResidualV1 {
+pub(crate) struct StructuredResidualV1 {
     logits: Vec<f32>,
     value: Option<f32>,
+}
+
+impl StructuredResidualV1 {
+    pub(crate) fn logits_v1(&self) -> &[f32] {
+        &self.logits
+    }
+
+    pub(crate) fn value_v1(&self) -> Option<f32> {
+        self.value
+    }
 }
 
 fn sigmoid_v1(value: f32) -> f32 {
@@ -520,7 +619,7 @@ fn history_hidden_v1(
     Ok(hidden)
 }
 
-fn structured_residual_v1(
+pub(crate) fn structured_residual_v1(
     parameters: &BTreeMap<String, TensorV1>,
     tensor: &NativeFlatDecisionTensorV2,
     history: Option<(&[NativeStructuredHistoryEntryV1], u8)>,
@@ -812,15 +911,15 @@ fn structured_residual_v1(
     })
 }
 
-fn raw_sha256_v1(bytes: &[u8]) -> [u8; 32] {
+pub(crate) fn raw_sha256_v1(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
-fn lower_hex_v1(bytes: [u8; 32]) -> String {
+pub(crate) fn lower_hex_v1(bytes: [u8; 32]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn parse_lower_hex32_v1(value: &str) -> Result<[u8; 32], Box<dyn Error>> {
+pub(crate) fn parse_lower_hex32_v1(value: &str) -> Result<[u8; 32], Box<dyn Error>> {
     if value.len() != 64
         || value
             .as_bytes()
@@ -1038,6 +1137,147 @@ fn validate_inventory_v1(root: &Path, candidate_filename: &str) -> Result<(), Bo
     Ok(())
 }
 
+fn atom_v1(hasher: &mut Sha256, tag: &[u8], payload: &[u8]) {
+    hasher.update((tag.len() as u32).to_be_bytes());
+    hasher.update(tag);
+    hasher.update((payload.len() as u64).to_be_bytes());
+    hasher.update(payload);
+}
+
+pub(crate) fn history_residual_parameter_layout_sha256_v1() -> [u8; 32] {
+    let parameters = expected_history_parameters_v1();
+    let mut hasher = Sha256::new();
+    atom_v1(
+        &mut hasher,
+        b"domain",
+        b"mtg-kernel-structured-history-residual-parameter-layout/v1",
+    );
+    atom_v1(
+        &mut hasher,
+        b"parameter_count",
+        &(parameters.len() as u64).to_be_bytes(),
+    );
+    let mut scalar_count = 0u64;
+    for (ordinal, (name, shape)) in parameters.iter().enumerate() {
+        atom_v1(
+            &mut hasher,
+            b"parameter_ordinal",
+            &(ordinal as u64).to_be_bytes(),
+        );
+        atom_v1(&mut hasher, b"parameter_name", name.as_bytes());
+        atom_v1(
+            &mut hasher,
+            b"parameter_rank",
+            &(shape.len() as u64).to_be_bytes(),
+        );
+        let mut shape_bytes = Vec::with_capacity(shape.len() * 8);
+        for dimension in shape {
+            shape_bytes.extend_from_slice(&(*dimension as u64).to_be_bytes());
+        }
+        atom_v1(&mut hasher, b"parameter_shape_u64be", &shape_bytes);
+        let count = shape
+            .iter()
+            .try_fold(1usize, |product, value| product.checked_mul(*value))
+            .expect("fixed history residual parameter layout overflows");
+        scalar_count += count as u64;
+    }
+    atom_v1(&mut hasher, b"scalar_count", &scalar_count.to_be_bytes());
+    hasher.finalize().into()
+}
+
+pub(crate) fn decode_structured_residual_parameters_v1(
+    bytes: &[u8],
+) -> Result<BTreeMap<String, TensorV1>, Box<dyn Error>> {
+    let expected = expected_history_parameters_v1();
+    let expected_parameter_count = HISTORY_PARAMETER_COUNT_V1;
+    if bytes.len() != expected_parameter_count * size_of::<f32>() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid structured residual byte count",
+        )
+        .into());
+    }
+    let values = bytes
+        .chunks_exact(size_of::<f32>())
+        .map(|chunk| {
+            f32::from_le_bytes(
+                chunk
+                    .try_into()
+                    .expect("four-byte chunk in structured residual payload"),
+            )
+        })
+        .collect::<Vec<_>>();
+    if values.len() != expected_parameter_count || values.iter().any(|value| !value.is_finite()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid structured residual weights",
+        )
+        .into());
+    }
+    let mut offset = 0usize;
+    let mut parameters = BTreeMap::new();
+    for (expected_name, expected_shape) in expected {
+        let count = expected_shape
+            .iter()
+            .try_fold(1usize, |product, value| {
+                product.checked_mul(*value).ok_or(())
+            })
+            .map_err(|()| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "structured residual shape overflow",
+                )
+            })?;
+        let values = values[offset..offset + count].to_vec();
+        parameters.insert(
+            expected_name.to_owned(),
+            TensorV1::new(expected_shape, values),
+        );
+        offset += count;
+    }
+    if offset != expected_parameter_count {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "structured residual parameter count mismatch",
+        )
+        .into());
+    }
+    Ok(parameters)
+}
+
+fn validate_structured_parameter_bindings_v1(
+    bindings: &[ParameterBindingV1],
+    expected: &[(&'static str, Vec<usize>)],
+    expected_parameter_count: usize,
+) -> Result<(), Box<dyn Error>> {
+    if bindings.len() != expected.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "parameter list mismatch").into());
+    }
+    let mut offset = 0usize;
+    for (binding, (expected_name, expected_shape)) in bindings.iter().zip(expected) {
+        let count = expected_shape
+            .iter()
+            .try_fold(1usize, |product, value| {
+                product.checked_mul(*value).ok_or(())
+            })
+            .map_err(|()| io::Error::new(io::ErrorKind::InvalidData, "parameter shape overflow"))?;
+        if binding.name != *expected_name
+            || binding.shape != *expected_shape
+            || binding.offset_f32 != offset
+            || binding.count_f32 != count
+        {
+            return Err(
+                io::Error::new(io::ErrorKind::InvalidData, "parameter binding mismatch").into(),
+            );
+        }
+        offset += count;
+    }
+    if offset != expected_parameter_count {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "parameter count mismatch").into());
+    }
+    Ok(())
+}
+
 pub(crate) fn load_native_structured_policy_residual_inference_v1(
     root: &Path,
 ) -> Result<NativeStructuredPolicyResidualInferenceV1, Box<dyn Error>> {
@@ -1155,47 +1395,44 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
     if candidate.weights.parameters.len() != expected.len() {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "parameter list mismatch").into());
     }
-    let values = weights_bytes
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four-byte chunk")))
-        .collect::<Vec<_>>();
-    if values.len() != expected_parameter_count || values.iter().any(|value| !value.is_finite()) {
-        return Err(
-            io::Error::new(io::ErrorKind::InvalidData, "invalid structured weights").into(),
-        );
-    }
-    let mut offset = 0usize;
-    let mut parameters = BTreeMap::new();
-    for (binding, (expected_name, expected_shape)) in
-        candidate.weights.parameters.iter().zip(expected)
-    {
-        let count = expected_shape
-            .iter()
-            .try_fold(1usize, |product, value| {
-                product.checked_mul(*value).ok_or(())
-            })
-            .map_err(|()| io::Error::new(io::ErrorKind::InvalidData, "parameter shape overflow"))?;
-        if binding.name != expected_name
-            || binding.shape != expected_shape
-            || binding.offset_f32 != offset
-            || binding.count_f32 != count
+    validate_structured_parameter_bindings_v1(
+        &candidate.weights.parameters,
+        &expected,
+        expected_parameter_count,
+    )?;
+    let parameters = if history_aware {
+        decode_structured_residual_parameters_v1(&weights_bytes)?
+    } else {
+        let values = weights_bytes
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four-byte chunk")))
+            .collect::<Vec<_>>();
+        if values.len() != expected_parameter_count || values.iter().any(|value| !value.is_finite())
         {
             return Err(
-                io::Error::new(io::ErrorKind::InvalidData, "parameter binding mismatch").into(),
+                io::Error::new(io::ErrorKind::InvalidData, "invalid structured weights").into(),
             );
         }
-        parameters.insert(
-            binding.name.clone(),
-            TensorV1 {
-                shape: binding.shape.clone(),
-                values: values[offset..offset + count].to_vec(),
-            },
-        );
-        offset += count;
-    }
-    if offset != expected_parameter_count {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "parameter count mismatch").into());
-    }
+        let mut offset = 0usize;
+        let mut parameters = BTreeMap::new();
+        for binding in &candidate.weights.parameters {
+            let count = binding.count_f32;
+            parameters.insert(
+                binding.name.clone(),
+                TensorV1::new(
+                    binding.shape.clone(),
+                    values[offset..offset + count].to_vec(),
+                ),
+            );
+            offset += count;
+        }
+        if offset != expected_parameter_count {
+            return Err(
+                io::Error::new(io::ErrorKind::InvalidData, "parameter count mismatch").into(),
+            );
+        }
+        parameters
+    };
 
     let parent_directory = root.join(PARENT_DIRECTORY_V1);
     let parent_inventory = fs::read_dir(&parent_directory)?
@@ -1327,6 +1564,10 @@ mod tests {
             offset += shape.into_iter().product::<usize>();
         }
         assert_eq!(offset, HISTORY_PARAMETER_COUNT_V1);
+        assert_eq!(
+            lower_hex_v1(history_residual_parameter_layout_sha256_v1()),
+            "a26dcabe7c3fb9144cdc5acec5698f9b988eac00530385a0bcf4e56789e52147"
+        );
     }
 
     #[test]

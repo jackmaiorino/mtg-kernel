@@ -110,6 +110,8 @@ pub(crate) mod native_full_episode_trajectory_v1;
 pub(crate) mod native_full_episode_trajectory_v2;
 #[allow(dead_code)]
 pub mod native_opponent_sampler_v1;
+#[allow(dead_code)]
+pub(crate) mod native_structured_history_stack_v1;
 // Ladder-opponent identities layered on the frozen uniform sampler above
 // (Self-Play Ladder Design Contract S2, Section 2). The V1 identities stay
 // frozen forever; this module owns only the new ladder identity strings.
