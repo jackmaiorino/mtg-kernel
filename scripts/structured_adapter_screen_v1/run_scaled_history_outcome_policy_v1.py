@@ -151,6 +151,7 @@ def run_fold(args: argparse.Namespace) -> dict[str, Any]:
         DIM,
         HISTORY_LENGTH,
         HISTORY_FEATURE_DIM,
+        args.seat_conditioned_policy,
     )
     trained_started = time.perf_counter()
     history = outcome._fit_model(
@@ -171,7 +172,12 @@ def run_fold(args: argparse.Namespace) -> dict[str, Any]:
             "heldout_physical_decision_count": len(heldout),
         },
         "config": {
-            "architecture": "complete-public-history-structured-outcome-policy-residual/v1",
+            "architecture": (
+                "complete-public-history-structured-outcome-policy-seat-heads/v1"
+                if args.seat_conditioned_policy
+                else "complete-public-history-structured-outcome-policy-residual/v1"
+            ),
+            "seat_conditioned_policy": bool(args.seat_conditioned_policy),
             "dim": DIM,
             "card_vocab": CARD_VOCAB,
             "group_vocab": GROUP_VOCAB,
@@ -209,8 +215,14 @@ def run_fold(args: argparse.Namespace) -> dict[str, Any]:
             parents, residuals, weights, TARGET_MEAN_TV
         )
         with torch.no_grad():
-            model.policy_head.weight.mul_(scale)
-            model.policy_head.bias.mul_(scale)
+            policy_heads = (
+                list(model.policy_head)
+                if isinstance(model.policy_head, torch.nn.ModuleList)
+                else [model.policy_head]
+            )
+            for head in policy_heads:
+                head.weight.mul_(scale)
+                head.bias.mul_(scale)
         result.update(
             {
                 "calibration": {
@@ -371,6 +383,7 @@ def main() -> int:
     fold.add_argument("--epochs", type=int, default=EPOCHS)
     fold.add_argument("--pair-limit", type=int)
     fold.add_argument("--profile-only", action="store_true")
+    fold.add_argument("--seat-conditioned-policy", action="store_true")
     fold.add_argument(
         "--expected-cache-sha256", default=EXPECTED_CACHE_SHA256
     )

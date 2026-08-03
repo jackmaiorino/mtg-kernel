@@ -972,6 +972,7 @@ class StructuredAdapter(nn.Module):
         dim: int,
         history_length: int = 0,
         history_feature_dim: int = ACTION_EXPLICIT_DIM,
+        seat_conditioned_policy: bool = False,
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -995,10 +996,21 @@ class StructuredAdapter(nn.Module):
         self.ref = nn.Sequential(nn.Linear(REF_DIM + dim, dim), nn.Tanh())
         self.query = nn.Linear(dim * 2, dim)
         self.combine = nn.Sequential(nn.Linear(dim * 5, dim), nn.Tanh(), nn.Linear(dim, dim), nn.Tanh())
-        self.policy_head = nn.Linear(dim, 1)
+        self.seat_conditioned_policy = seat_conditioned_policy
+        self.policy_head = (
+            nn.ModuleList([nn.Linear(dim, 1), nn.Linear(dim, 1)])
+            if seat_conditioned_policy
+            else nn.Linear(dim, 1)
+        )
         self.value_head = nn.Linear(dim * 3, 1)
-        nn.init.zeros_(self.policy_head.weight)
-        nn.init.zeros_(self.policy_head.bias)
+        policy_heads = (
+            list(self.policy_head)
+            if isinstance(self.policy_head, nn.ModuleList)
+            else [self.policy_head]
+        )
+        for head in policy_heads:
+            nn.init.zeros_(head.weight)
+            nn.init.zeros_(head.bias)
         nn.init.zeros_(self.value_head.weight)
         nn.init.zeros_(self.value_head.bias)
         self.card_vocab = card_vocab
@@ -1007,7 +1019,12 @@ class StructuredAdapter(nn.Module):
     def force_nonzero_residual(self, seed: int = 123) -> None:
         generator = torch.Generator(device="cpu").manual_seed(seed)
         with torch.no_grad():
-            for head in (self.policy_head, self.value_head):
+            policy_heads = (
+                list(self.policy_head)
+                if isinstance(self.policy_head, nn.ModuleList)
+                else [self.policy_head]
+            )
+            for head in (*policy_heads, self.value_head):
                 head.weight.copy_(torch.randn(head.weight.shape, generator=generator) * 0.04)
                 head.bias.copy_(torch.randn(head.bias.shape, generator=generator) * 0.02)
 
@@ -1062,7 +1079,14 @@ class StructuredAdapter(nn.Module):
         attention = torch.softmax(attention_logits, dim=1)
         contexts = attention @ object_h
         joint = self.combine(torch.cat((actions, ref_aggregate, contexts, state_h.expand_as(actions), actions * contexts), dim=1))
-        residual_logits = self.policy_head(joint).squeeze(-1)
+        if isinstance(self.policy_head, nn.ModuleList):
+            candidate_seat = int(example["candidate_seat"])
+            if candidate_seat not in (0, 1):
+                raise ValueError("candidate_seat must be 0 or 1")
+            policy_head = self.policy_head[candidate_seat]
+        else:
+            policy_head = self.policy_head
+        residual_logits = policy_head(joint).squeeze(-1)
         object_mean = object_h.mean(dim=0)
         group_mean = pooled.mean(dim=0)
         action_mean = joint.mean(dim=0)
@@ -1764,7 +1788,12 @@ def self_test(args: argparse.Namespace) -> dict[str, Any]:
         else ACTION_EXPLICIT_DIM
     )
     model = StructuredAdapter(
-        32, 8, args.dim, args.history_length, history_feature_dim
+        32,
+        8,
+        args.dim,
+        args.history_length,
+        history_feature_dim,
+        args.seat_conditioned_policy,
     )
     model.force_nonzero_residual(args.seed)
     with torch.no_grad():
@@ -1788,7 +1817,7 @@ def self_test(args: argparse.Namespace) -> dict[str, Any]:
         checks["float64_permutation_max_delta_le_1e-10"] = (
             permutation["float64"]["permutation_max_delta"] <= 1e-10
         )
-    result = {"schema": SCRIPT_VERSION + ".self_test", "pass": all(checks.values()), "checks": checks, "batching_max_delta": batching_delta, "diagnostics": permutation, "optimizer_parameter_max_delta": parameter_delta, "runtime_seconds": time.perf_counter() - started, "config": {"dim": args.dim, "seed": args.seed, "threads": args.threads, "history_length": args.history_length, "complete_history": args.complete_history, "history_feature_dim": history_feature_dim if args.history_length > 0 else 0}}
+    result = {"schema": SCRIPT_VERSION + ".self_test", "pass": all(checks.values()), "checks": checks, "batching_max_delta": batching_delta, "diagnostics": permutation, "optimizer_parameter_max_delta": parameter_delta, "runtime_seconds": time.perf_counter() - started, "config": {"dim": args.dim, "seed": args.seed, "threads": args.threads, "history_length": args.history_length, "complete_history": args.complete_history, "history_feature_dim": history_feature_dim if args.history_length > 0 else 0, "seat_conditioned_policy": args.seat_conditioned_policy}}
     if not result["pass"]:
         _fail("self-test failed: " + json.dumps(checks, sort_keys=True))
     return result
@@ -1816,6 +1845,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--history-length", type=int, default=0)
     parser.add_argument("--complete-history", action="store_true")
+    parser.add_argument("--seat-conditioned-policy", action="store_true")
     parser.add_argument(
         "--diagnostic-sample-size",
         type=int,
