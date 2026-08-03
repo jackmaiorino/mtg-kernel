@@ -92,8 +92,8 @@ def _worker_database(args: argparse.Namespace, worker: int) -> Path:
     if not database.exists():
         root.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(args.source_database, database)
-    if _sha256(database) != CARD_DB_SHA256:
-        raise RuntimeError(f"worker {worker} card database SHA-256 mismatch")
+        if _sha256(database) != CARD_DB_SHA256:
+            raise RuntimeError(f"worker {worker} card database copy SHA-256 mismatch")
     return root
 
 
