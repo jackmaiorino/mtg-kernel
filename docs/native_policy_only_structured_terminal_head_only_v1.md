@@ -41,3 +41,25 @@ least initializer wins plus 20, and each candidate-seat win delta is at least
 A pass establishes a Rally-only Pool3 gain. A failure retires structured
 terminal PPO in this data regime and moves to direct terminal policy-space
 response-oracle optimization. Neither result is professional-level evidence.
+
+## Result
+
+The 48-weight fit passed every numerical and frozen-state gate. Overall mean
+TV was `0.00100184`, p90 TV was `0.00287721`, and maximum absolute physical-
+decision joint log ratio was `0.217552`. Every non-head tensor remained bit-
+exact. Native maximum absolute logit error was `0.000001907`, and the retained
+parent value was bit-exact.
+
+The fresh base-`1680001` 1,024-pair gate completed in 336.39 seconds. The
+candidate won 1,282 games and the initializer won 1,281. Matched `G/L/T` was
+`2/1/2045`, with candidate-minus-initializer win deltas `0` at P0 and `+1` at
+P1. All validity, transport, exact-pair, natural-terminal, and seat-floor gates
+passed. Both required +20 strength gates failed.
+
+This retires structured terminal PPO in the tested data regime. The full-
+network trust projection and head-only update were both weakly positive but
+changed too few trajectories to establish strength. Do not tune either update
+on its revealed panel. Strength report SHA-256 is
+`e138f56bd00047c4513274151ffca149791f89d42ed45337be97af2a1293c94d`;
+evidence root is
+`D:\mtg-kernel-policy-only-structured-terminal-rung-v1\formal`.
