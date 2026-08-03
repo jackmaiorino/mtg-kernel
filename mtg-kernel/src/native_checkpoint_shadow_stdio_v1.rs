@@ -70,6 +70,7 @@ pub enum ShadowCandidateSelectorV1 {
     PolicySample,
     OneStepHistoryValueBootstrap,
     Depth8HistoryValueBootstrap,
+    Depth8Cp7OpponentHistoryValueBootstrap,
 }
 
 const ONE_STEP_VALUE_MIN_PHYSICAL_DECISION_V1: u64 = 20;
@@ -80,6 +81,7 @@ const ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1: usize = 4;
 const ONE_STEP_VALUE_REDETERMINIZATION_DOMAIN_V1: u64 = 0x6876_616c_7265_6431;
 const DEPTH8_VALUE_CONTINUATION_STEPS_V1: usize = 8;
 const DEPTH8_VALUE_REDETERMINIZATION_DOMAIN_V1: u64 = 0x6876_6465_7074_6838;
+const DEPTH8_CP7_OPPONENT_ACTION_DOMAIN_V1: u64 = 0x6370_376f_7070_7631;
 pub const XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-teacher-jsonl/v1";
 pub const XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1: u32 = 1;
 pub const XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-outcome-jsonl/v1";
@@ -1608,6 +1610,7 @@ fn rl_error_code_v1(code: RlSessionErrorCode) -> &'static str {
 
 struct ShadowScorerServiceV1 {
     model: Box<dyn ShadowModelScorerV1>,
+    opponent_model: Option<Box<dyn ShadowModelScorerV1>>,
     identity: ShadowCheckpointIdentityV1,
     candidate_selector: ShadowCandidateSelectorV1,
     max_physical_decisions: u64,
@@ -1644,6 +1647,7 @@ impl ShadowScorerServiceV1 {
             };
             return Ok(Self {
                 model: Box::new(Cp7BehaviorCloneShadowModelScorerV1 { inference }),
+                opponent_model: None,
                 identity,
                 candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                 max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
@@ -1704,6 +1708,7 @@ impl ShadowScorerServiceV1 {
                     model: Box::new(NativeStructuredPolicyResidualShadowModelScorerV1 {
                         inference,
                     }),
+                    opponent_model: None,
                     identity,
                     candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                     max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
@@ -1751,6 +1756,7 @@ impl ShadowScorerServiceV1 {
                 };
                 return Ok(Self {
                     model: Box::new(NativeRank1PolicyResidualShadowModelScorerV1 { inference }),
+                    opponent_model: None,
                     identity,
                     candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                     max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
@@ -1784,6 +1790,7 @@ impl ShadowScorerServiceV1 {
             };
             return Ok(Self {
                 model: Box::new(XmageCp7OutcomeShadowModelScorerV1 { inference }),
+                opponent_model: None,
                 identity,
                 candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                 max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
@@ -1799,6 +1806,7 @@ impl ShadowScorerServiceV1 {
             model: Box::new(NativeShadowModelScorerV1 {
                 inference: loaded.inference,
             }),
+            opponent_model: None,
             identity: loaded.identity,
             candidate_selector: ShadowCandidateSelectorV1::PolicySample,
             max_physical_decisions: loaded.max_physical_decisions,
@@ -1814,6 +1822,7 @@ impl ShadowScorerServiceV1 {
     fn with_test_model_v1(model: Box<dyn ShadowModelScorerV1>) -> Self {
         Self {
             model,
+            opponent_model: None,
             identity: ShadowCheckpointIdentityV1 {
                 authority_kind: "test-only".to_owned(),
                 source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
@@ -1972,11 +1981,13 @@ impl ShadowScorerServiceV1 {
 
     fn depth8_branch_value_v1(
         model: &dyn ShadowModelScorerV1,
+        opponent_model: Option<&dyn ShadowModelScorerV1>,
         sampled_root: &FastActorSessionV1,
         root_scored: &ScoredCurrentDecisionV1,
         structured_history: &[NativeStructuredHistoryEntryV1],
         candidate_seat: PlayerSeatV1,
         selected: u32,
+        sample_index: usize,
     ) -> Result<f32, &'static str> {
         let candidate_index = usize::from(player_seat_index_v1(candidate_seat));
         let mut branch = sampled_root.clone();
@@ -1990,21 +2001,48 @@ impl ShadowScorerServiceV1 {
         let mut next = branch
             .consume_current_flat_action_slice_v2(root_scored.binding.action_binding, selected)
             .map_err(|_| "depth8_search_branch_consume_failed")?;
-        for _ in 0..DEPTH8_VALUE_CONTINUATION_STEPS_V1 {
-            if let FastActorResponseV1::Terminal(terminal) = next {
-                return Ok(terminal.terminal_reward[candidate_index] as f32);
-            }
-            let (branch_scored, output) =
-                Self::score_branch_current_decision_v1(model, &branch, &branch_history.completed)?;
-            let mut branch_selected = 0usize;
-            for index in 1..output.logits.len() {
-                if output.logits[index]
-                    .total_cmp(&output.logits[branch_selected])
-                    .is_gt()
-                {
-                    branch_selected = index;
+        for continuation_index in 0..DEPTH8_VALUE_CONTINUATION_STEPS_V1 {
+            let expected = match next {
+                FastActorResponseV1::Terminal(terminal) => {
+                    return Ok(terminal.terminal_reward[candidate_index] as f32)
                 }
-            }
+                FastActorResponseV1::Decision(expected) => expected,
+            };
+            let opponent_controls_branch = expected.acting_player != candidate_seat;
+            let branch_model = if opponent_controls_branch {
+                opponent_model.unwrap_or(model)
+            } else {
+                model
+            };
+            let (branch_scored, output) = Self::score_branch_current_decision_v1(
+                branch_model,
+                &branch,
+                &branch_history.completed,
+            )?;
+            let branch_selected = if opponent_controls_branch && opponent_model.is_some() {
+                let action_seed = DEPTH8_CP7_OPPONENT_ACTION_DOMAIN_V1
+                    ^ root_scored
+                        .expected
+                        .episode_id
+                        .wrapping_mul(0x9e37_79b1_85eb_ca87)
+                    ^ root_scored
+                        .expected
+                        .physical_decision_id
+                        .wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
+                    ^ (sample_index as u64).wrapping_mul(0x1656_67b1_9e37_79f9)
+                    ^ (continuation_index as u64).wrapping_mul(0xd6e8_feb8_6659_fd93);
+                FastCategoricalScratch::default()
+                    .sample(&output.logits, action_seed)
+                    .map_err(|_| "depth8_search_opponent_sampling_failed")?
+            } else {
+                let mut best = 0usize;
+                for index in 1..output.logits.len() {
+                    if output.logits[index].total_cmp(&output.logits[best]).is_gt() {
+                        best = index;
+                    }
+                }
+                best
+            };
             let branch_selected =
                 u32::try_from(branch_selected).map_err(|_| "depth8_search_action_index_invalid")?;
             branch_history
@@ -2035,6 +2073,7 @@ impl ShadowScorerServiceV1 {
 
     fn depth8_history_value_selection_v1(
         model: &dyn ShadowModelScorerV1,
+        opponent_model: Option<&dyn ShadowModelScorerV1>,
         session: &FastActorSessionV1,
         scored: &ScoredCurrentDecisionV1,
         structured_history: &[NativeStructuredHistoryEntryV1],
@@ -2094,11 +2133,13 @@ impl ShadowScorerServiceV1 {
                     .map_err(|_| "depth8_search_action_index_invalid")?;
                 let value = Self::depth8_branch_value_v1(
                     model,
+                    opponent_model,
                     &sampled_root,
                     scored,
                     structured_history,
                     candidate_seat,
                     selected,
+                    sample_index,
                 )?;
                 if !value.is_finite() {
                     return Err("depth8_search_nonfinite_successor_value");
@@ -2130,13 +2171,23 @@ impl ShadowScorerServiceV1 {
             .map(|value| format!("{:08x}", value.to_bits()))
             .collect::<Vec<_>>()
             .join(",");
+        let (diagnostic, opponent_policy) = if opponent_model.is_some() {
+            (
+                "NATIVE_DEPTH8_CP7_OPPONENT_HISTORY_VALUE",
+                "cp7_behavior_clone_sample",
+            )
+        } else {
+            ("NATIVE_DEPTH8_HISTORY_VALUE", "candidate_argmax")
+        };
         eprintln!(
-            "NATIVE_DEPTH8_HISTORY_VALUE episode={} step={} physical_decision={} actions={} continuation_steps={} information_set_samples={} sampled_hashes={} fallback={} best={} selected={} margin_bits={:08x} values_f32_bits={} override={}",
+            "{} episode={} step={} physical_decision={} actions={} continuation_steps={} opponent_policy={} information_set_samples={} sampled_hashes={} fallback={} best={} selected={} margin_bits={:08x} values_f32_bits={} override={}",
+            diagnostic,
             expected.episode_id,
             expected.step,
             expected.physical_decision_id,
             action_count,
             DEPTH8_VALUE_CONTINUATION_STEPS_V1,
+            opponent_policy,
             ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1,
             sampled_hashes.join(","),
             fallback,
@@ -2291,6 +2342,7 @@ impl ShadowScorerServiceV1 {
 
     fn score_session_v1(
         model: &dyn ShadowModelScorerV1,
+        opponent_model: Option<&dyn ShadowModelScorerV1>,
         candidate_selector: ShadowCandidateSelectorV1,
         max_physical_decisions: u64,
         max_policy_steps: u64,
@@ -2384,6 +2436,7 @@ impl ShadowScorerServiceV1 {
                 candidate_selector,
                 ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap
                     | ShadowCandidateSelectorV1::Depth8HistoryValueBootstrap
+                    | ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap
             )
         {
             let fallback = scored
@@ -2403,6 +2456,18 @@ impl ShadowScorerServiceV1 {
                 ShadowCandidateSelectorV1::Depth8HistoryValueBootstrap => {
                     Self::depth8_history_value_selection_v1(
                         model,
+                        None,
+                        session,
+                        &scored,
+                        structured_history,
+                        candidate_seat,
+                        fallback,
+                    )?
+                }
+                ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap => {
+                    Self::depth8_history_value_selection_v1(
+                        model,
+                        Some(opponent_model.ok_or("cp7_opponent_model_missing")?),
                         session,
                         &scored,
                         structured_history,
@@ -2562,6 +2627,7 @@ impl ShadowScorerServiceV1 {
         let structured_history = StructuredHistoryStateV1::default();
         let current = match Self::score_session_v1(
             self.model.as_ref(),
+            self.opponent_model.as_deref(),
             self.candidate_selector,
             self.max_physical_decisions,
             self.max_policy_steps,
@@ -2863,6 +2929,7 @@ impl ShadowScorerServiceV1 {
         let next_scored = match next {
             FastActorResponseV1::Decision(_) => match Self::score_session_v1(
                 self.model.as_ref(),
+                self.opponent_model.as_deref(),
                 self.candidate_selector,
                 self.max_physical_decisions,
                 self.max_policy_steps,
@@ -3068,6 +3135,41 @@ pub fn run_checkpoint_shadow_stdio_with_selector_v1(
     run_checkpoint_shadow_stdio_configured_v1(authority, selector, None, None)
 }
 
+/// Experimental depth-8 selector whose opponent branches sample from one
+/// verified CP7 behavior-clone package. The candidate model still supplies
+/// candidate actions and every horizon value.
+pub fn run_checkpoint_shadow_stdio_with_cp7_opponent_selector_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    cp7_opponent_root: PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    let mut service = ShadowScorerServiceV1::load_v1(authority)?;
+    if !service.model.uses_structured_history_v1() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "CP7-opponent history-value selection requires a structured-history candidate",
+        )
+        .into());
+    }
+    let inference = load_cp7_behavior_clone_inference_v1(&cp7_opponent_root).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "CP7 opponent behavior-clone authority failed verification",
+        )
+    })?;
+    eprintln!(
+        "NATIVE_CP7_OPPONENT_MODEL manifest_sha256={} payload_sha256={} native_state_sha256={} model_parameter_sha256={} adam_step={}",
+        lower_hex_raw32_v1(inference.manifest_sha256_v1()),
+        lower_hex_raw32_v1(inference.payload_sha256_v1()),
+        lower_hex_raw32_v1(inference.native_state_sha256_v1()),
+        lower_hex_raw32_v1(inference.model_parameter_sha256_v1()),
+        inference.adam_step_v1(),
+    );
+    service.opponent_model = Some(Box::new(Cp7BehaviorCloneShadowModelScorerV1 { inference }));
+    service.candidate_selector = ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap;
+    run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
+    Ok(())
+}
+
 /// Opt-in XMage CP7 teacher export. The destination is created exclusively;
 /// callers must promote only the file from a fully successful anchor run.
 pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_teacher_jsonl_v1(
@@ -3119,6 +3221,13 @@ fn run_checkpoint_shadow_stdio_configured_v1(
     outcome_jsonl: Option<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
+    if selector == ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "CP7-opponent selector requires an explicit opponent authority",
+        )
+        .into());
+    }
     if matches!(
         selector,
         ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap
@@ -3336,15 +3445,52 @@ mod tests {
         let scored = active.current.as_ref().expect("reset scores the root");
         let value = ShadowScorerServiceV1::depth8_branch_value_v1(
             service.model.as_ref(),
+            None,
             &active.session,
             scored,
             &active.structured_history.completed,
             active.candidate_seat,
             0,
+            0,
         )
         .unwrap();
         assert!(value.is_finite());
         assert_eq!(*calls.lock().unwrap(), 9);
+    }
+
+    #[test]
+    fn depth8_branch_routes_opponent_decisions_to_explicit_model_v1() {
+        let candidate_calls = Arc::new(Mutex::new(0usize));
+        let opponent_calls = Arc::new(Mutex::new(0usize));
+        let mut service = ShadowScorerServiceV1::with_test_model_v1(Box::new(
+            CountingStructuredFirstActionTestModelV1 {
+                calls: Arc::clone(&candidate_calls),
+            },
+        ));
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("opponent-reset")));
+        assert_eq!(response["response_type"], "decision");
+        *candidate_calls.lock().unwrap() = 0;
+        let opponent = CountingStructuredFirstActionTestModelV1 {
+            calls: Arc::clone(&opponent_calls),
+        };
+        let active = service.active.as_ref().expect("reset opens a session");
+        let scored = active.current.as_ref().expect("reset scores the root");
+        let value = ShadowScorerServiceV1::depth8_branch_value_v1(
+            service.model.as_ref(),
+            Some(&opponent),
+            &active.session,
+            scored,
+            &active.structured_history.completed,
+            active.candidate_seat,
+            0,
+            0,
+        )
+        .unwrap();
+        assert!(value.is_finite());
+        let candidate = *candidate_calls.lock().unwrap();
+        let opponent = *opponent_calls.lock().unwrap();
+        assert!(opponent > 0);
+        assert_eq!(candidate + opponent, 9);
     }
 
     fn service_with_teacher_export_v1(

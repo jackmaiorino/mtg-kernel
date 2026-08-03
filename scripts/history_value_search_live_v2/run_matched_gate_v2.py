@@ -36,6 +36,7 @@ PAIR_PREFIX = "XMAGE_RALLY_ANCHOR_PAIR PASS "
 DIAGNOSTIC_PREFIXES = {
     "one-step": "NATIVE_ONE_STEP_HISTORY_VALUE ",
     "depth8": "NATIVE_DEPTH8_HISTORY_VALUE ",
+    "depth8-cp7-opponent": "NATIVE_DEPTH8_CP7_OPPONENT_HISTORY_VALUE ",
 }
 KEY_VALUE = re.compile(r"([a-z_]+)=([^ ]+)")
 
@@ -148,6 +149,8 @@ def _run_task(
             "MAVEN_OPTS": _maven_opts(identity),
         }
     )
+    if args.selector == "depth8-cp7-opponent":
+        environment["MTG_KERNEL_CP7_OPPONENT_ROOT"] = str(args.cp7_opponent_root)
     started = time.time()
     with log.open("x", encoding="utf-8", newline="\n") as output:
         completed = subprocess.run(
@@ -248,7 +251,12 @@ def _adjudicate(
             hashes = row.get("sampled_hashes", "").split(",")
             if row.get("information_set_samples") != "4" or len(hashes) != 4 or len(set(hashes)) != 4:
                 sample_violations += 1
-            if args.selector == "depth8" and row.get("continuation_steps") != "8":
+            if args.selector.startswith("depth8") and row.get("continuation_steps") != "8":
+                diagnostic_contract_violations += 1
+            if (
+                args.selector == "depth8-cp7-opponent"
+                and row.get("opponent_policy") != "cp7_behavior_clone_sample"
+            ):
                 diagnostic_contract_violations += 1
         matched_pairs.append(
             {
@@ -316,6 +324,10 @@ def _run(args: argparse.Namespace) -> int:
     ):
         if not path.exists():
             raise RuntimeError(f"required path does not exist: {path}")
+    if args.selector == "depth8-cp7-opponent" and not args.cp7_opponent_root.exists():
+        raise RuntimeError(
+            f"required CP7 opponent root does not exist: {args.cp7_opponent_root}"
+        )
     if _sha256(args.source_database) != CARD_DB_SHA256:
         raise RuntimeError("source card database SHA-256 mismatch")
     accepted: list[int] = []
@@ -388,6 +400,16 @@ def _self_test() -> int:
     )
     if diagnostic["sampled_hashes"].split(",") != ["a", "b", "c", "d"]:
         raise RuntimeError("diagnostic parser self-test failed")
+    cp7_diagnostic = _fields(
+        "NATIVE_DEPTH8_CP7_OPPONENT_HISTORY_VALUE episode=2 continuation_steps=8 "
+        "opponent_policy=cp7_behavior_clone_sample information_set_samples=4 "
+        "sampled_hashes=a,b,c,d override=true"
+    )
+    if (
+        cp7_diagnostic["continuation_steps"] != "8"
+        or cp7_diagnostic["opponent_policy"] != "cp7_behavior_clone_sample"
+    ):
+        raise RuntimeError("CP7-opponent diagnostic parser self-test failed")
     print("run_matched_gate_v2: SELF-TEST PASS")
     return 0
 
@@ -427,6 +449,11 @@ def _arguments() -> argparse.Namespace:
         "--parent-root",
         type=Path,
         default=Path(r"D:\mtg-kernel-complete-history-live-v1\candidate\parent"),
+    )
+    parser.add_argument(
+        "--cp7-opponent-root",
+        type=Path,
+        default=Path(r"D:\mtg-kernel-cp7-bc-train-base970001-grid-strict-v1"),
     )
     parser.add_argument(
         "--source-database",
