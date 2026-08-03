@@ -28,6 +28,8 @@ ACTION_EXPLICIT_DIM = 99
 COMPLETE_HISTORY_ROLE_DIM = 2
 REF_DIM = 25
 FOLDS = 4
+DEFAULT_DIAGNOSTIC_SAMPLE_SIZE = 4096
+DEFAULT_ABLATION_SAMPLE_SIZE = 4096
 SCRIPT_VERSION = "structured_adapter_screen_v1"
 TEACHER_SHA256_PREFIX = "24211c"
 OUTCOME_SHA256_PREFIX = "ee4224"
@@ -1243,21 +1245,53 @@ def _without_digest(example: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _ablation_metrics(model: StructuredAdapter, policy: list[dict[str, Any]], value: list[dict[str, Any]]) -> dict[str, Any]:
+def _deterministic_sample(
+    examples: list[dict[str, Any]], maximum: int, seed: int
+) -> list[dict[str, Any]]:
+    if maximum < 1 or len(examples) <= maximum:
+        return list(examples)
+    generator = random.Random(seed)
+    indices = sorted(generator.sample(range(len(examples)), maximum))
+    return [examples[index] for index in indices]
+
+
+def _ablation_metrics(
+    model: StructuredAdapter,
+    policy: list[dict[str, Any]],
+    value: list[dict[str, Any]],
+    maximum_per_lane: int = 0,
+    seed: int = 0,
+) -> dict[str, Any]:
+    policy = _deterministic_sample(policy, maximum_per_lane, seed)
+    value = _deterministic_sample(value, maximum_per_lane, seed + 1)
     policy_examples = [_without_digest(example) for example in policy]
     value_examples = [_without_digest(example) for example in value]
     return {
         "policy": _summarize_policy(_metric_sums(model, policy_examples, "policy")["records"]),
         "value": _summarize_value(_metric_sums(model, value_examples, "value")["records"]),
+        "sampling": {
+            "rule": "python-random-sample-sorted-indices/v1",
+            "maximum_per_lane": maximum_per_lane,
+            "seed": seed,
+            "policy_examples": len(policy_examples),
+            "value_examples": len(value_examples),
+        },
         "zeroed_state_slice": [STATE_DIM - 96, STATE_DIM],
         "zeroed_action_slice": [ACTION_DIM - 96, ACTION_DIM],
         "acceptance_gate": False,
     }
 
 
-def _diagnostics(model: StructuredAdapter, examples: list[dict[str, Any]], seed: int) -> dict[str, Any]:
+def _diagnostics(
+    model: StructuredAdapter,
+    examples: list[dict[str, Any]],
+    seed: int,
+    include_reference_ablation: bool = True,
+) -> dict[str, Any]:
     generator = torch.Generator(device="cpu").manual_seed(seed)
     permutation_delta = 0.0
+    permutation_probability_delta = 0.0
+    permutation_argmax_changes = 0
     permutation_count = 0
     ref_eligible = 0
     ref_affected = 0
@@ -1269,8 +1303,22 @@ def _diagnostics(model: StructuredAdapter, examples: list[dict[str, Any]], seed:
             permuted = _permuted(example, generator)
             perm_logits, perm_value = model(permuted)
             permutation_delta = max(permutation_delta, float((candidate_logits - perm_logits).abs().max()), float((candidate_value - perm_value).abs()))
+            permutation_probability_delta = max(
+                permutation_probability_delta,
+                float(
+                    (
+                        torch.softmax(candidate_logits.double(), dim=0)
+                        - torch.softmax(perm_logits.double(), dim=0)
+                    )
+                    .abs()
+                    .max()
+                ),
+            )
+            permutation_argmax_changes += int(
+                int(candidate_logits.argmax()) != int(perm_logits.argmax())
+            )
             permutation_count += 1
-            if example["action_ref_features"].shape[0]:
+            if include_reference_ablation and example["action_ref_features"].shape[0]:
                 ref_eligible += 1
                 no_refs_logits, no_refs_value = model(example, remove_refs=True)
                 delta = max(float((candidate_logits - no_refs_logits).abs().max()), float((candidate_value - no_refs_value).abs()))
@@ -1279,6 +1327,8 @@ def _diagnostics(model: StructuredAdapter, examples: list[dict[str, Any]], seed:
                     ref_affected += 1
     return {
         "permutation_max_delta": permutation_delta,
+        "permutation_probability_max_delta": permutation_probability_delta,
+        "permutation_argmax_changes": permutation_argmax_changes,
         "permutation_examples": permutation_count,
         "ref_removal_eligible": ref_eligible,
         "ref_removal_affected": ref_affected,
@@ -1287,9 +1337,49 @@ def _diagnostics(model: StructuredAdapter, examples: list[dict[str, Any]], seed:
     }
 
 
+def _float64_example(example: dict[str, Any]) -> dict[str, Any]:
+    result = dict(example)
+    for key, value in example.items():
+        if isinstance(value, Tensor) and value.is_floating_point():
+            result[key] = value.double()
+    return result
+
+
+def _float64_permutation_diagnostics(
+    model: StructuredAdapter, examples: list[dict[str, Any]], seed: int
+) -> dict[str, Any]:
+    model64 = copy.deepcopy(model).double()
+    converted = [_float64_example(example) for example in examples]
+    result = _diagnostics(
+        model64,
+        converted,
+        seed,
+        include_reference_ablation=False,
+    )
+    return {
+        "dtype": "float64",
+        "permutation_max_delta": result["permutation_max_delta"],
+        "permutation_probability_max_delta": result[
+            "permutation_probability_max_delta"
+        ],
+        "permutation_argmax_changes": result["permutation_argmax_changes"],
+        "permutation_examples": result["permutation_examples"],
+    }
+
+
+def _atomic_torch_save(value: Any, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    if path.exists() or temporary.exists():
+        _fail(f"refusing to overwrite model state {path}")
+    torch.save(value, temporary)
+    temporary.replace(path)
+
+
 def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Namespace) -> dict[str, Any]:
     started = time.perf_counter()
     cache = torch.load(cache_path, map_location="cpu", weights_only=False)
+    loaded = time.perf_counter()
     if cache.get("version") != SCRIPT_VERSION:
         _fail("cache version mismatch")
     policy = cache["policy"]
@@ -1306,6 +1396,7 @@ def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Name
         else:
             _attach_action_history(policy, args.history_length)
             _attach_action_history(value, args.history_length)
+    history_ready = time.perf_counter()
     policy_train = [example for example in policy if example["pair_index"] % FOLDS != fold]
     policy_test = [example for example in policy if example["pair_index"] % FOLDS == fold]
     value_train = [example for example in value if example["pair_index"] % FOLDS != fold]
@@ -1329,6 +1420,31 @@ def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Name
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     rng = random.Random(args.seed + fold)
     steps_per_epoch = max(math.ceil(len(policy_train) / args.batch_size), math.ceil(len(value_train) / args.batch_size))
+    diagnostic_sample_size = int(
+        getattr(args, "diagnostic_sample_size", DEFAULT_DIAGNOSTIC_SAMPLE_SIZE)
+    )
+    ablation_sample_size = int(
+        getattr(args, "ablation_sample_size", DEFAULT_ABLATION_SAMPLE_SIZE)
+    )
+    save_model_state = bool(getattr(args, "save_model_state", False))
+    float64_permutation = bool(getattr(args, "float64_permutation", False))
+    config = {
+        "dim": args.dim,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+        "weight_decay": args.weight_decay,
+        "value_coefficient": args.value_coefficient,
+        "seed": args.seed,
+        "threads": args.threads,
+        "history_length": args.history_length,
+        "complete_history": args.complete_history,
+        "history_feature_dim": history_feature_dim if args.history_length > 0 else 0,
+        "diagnostic_sample_size": diagnostic_sample_size,
+        "ablation_sample_size": ablation_sample_size,
+        "save_model_state": save_model_state,
+        "float64_permutation": float64_permutation,
+    }
     train_history: list[dict[str, float]] = []
     for epoch in range(args.epochs):
         model.train()
@@ -1350,20 +1466,77 @@ def run_fold(cache_path: Path, output_path: Path, fold: int, args: argparse.Name
             policy_loss_total += float(policy_loss.detach())
             value_loss_total += float(value_loss.detach())
         train_history.append({"epoch": epoch + 1, "policy_nll": policy_loss_total / steps_per_epoch, "value_mse": value_loss_total / steps_per_epoch})
+    trained = time.perf_counter()
+    model_state = None
+    if save_model_state:
+        state_path = output_path.with_suffix(".state.pt")
+        _atomic_torch_save(
+            {
+                "schema": SCRIPT_VERSION + ".model_state",
+                "fold": fold,
+                "cache_sha256": _sha256(cache_path),
+                "config": config,
+                "train_metrics": {"final": train_history[-1], "history": train_history},
+                "model_state_dict": model.state_dict(),
+            },
+            state_path,
+        )
+        model_state = {"path": str(state_path), "sha256": _sha256(state_path)}
+    checkpointed = time.perf_counter()
     policy_metrics = _summarize_policy(_metric_sums(model, policy_test, "policy")["records"])
     value_metrics = _summarize_value(_metric_sums(model, value_test, "value")["records"])
-    diagnostics = _diagnostics(model, policy_test + value_test, args.seed + fold + 1000)
-    no_digest = _ablation_metrics(model, policy_test, value_test)
+    heldout_ready = time.perf_counter()
+    diagnostic_population = policy_test + value_test
+    diagnostic_examples = _deterministic_sample(
+        diagnostic_population,
+        diagnostic_sample_size,
+        args.seed + fold + 1000,
+    )
+    diagnostics = _diagnostics(
+        model, diagnostic_examples, args.seed + fold + 1000
+    )
+    diagnostics["sampling"] = {
+        "rule": "python-random-sample-sorted-indices/v1",
+        "population": len(diagnostic_population),
+        "maximum": diagnostic_sample_size,
+        "sampled": len(diagnostic_examples),
+        "seed": args.seed + fold + 1000,
+    }
+    if float64_permutation:
+        diagnostics["float64"] = _float64_permutation_diagnostics(
+            model,
+            diagnostic_examples,
+            args.seed + fold + 1000,
+        )
+    diagnostics_ready = time.perf_counter()
+    no_digest = _ablation_metrics(
+        model,
+        policy_test,
+        value_test,
+        ablation_sample_size,
+        args.seed + fold + 2000,
+    )
+    ablation_ready = time.perf_counter()
     result = {
         "schema": SCRIPT_VERSION,
         "fold": fold,
-        "config": {"dim": args.dim, "epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr, "weight_decay": args.weight_decay, "value_coefficient": args.value_coefficient, "seed": args.seed, "threads": args.threads, "history_length": args.history_length, "complete_history": args.complete_history, "history_feature_dim": history_feature_dim if args.history_length > 0 else 0},
+        "config": config,
         "counts": {"policy_train": len(policy_train), "policy_heldout": len(policy_test), "value_train": len(value_train), "value_heldout": len(value_test), "train_pairs": sorted({e["pair_index"] for e in policy_train}), "heldout_pairs": sorted({e["pair_index"] for e in policy_test})},
         "train_metrics": {"final": train_history[-1], "history": train_history},
         "heldout": {"policy": policy_metrics, "value": value_metrics},
         "diagnostics": diagnostics,
         "no_digest_ablation": no_digest,
+        "model_state": model_state,
         "runtime_seconds": time.perf_counter() - started,
+        "phase_runtime_seconds": {
+            "load_cache": loaded - started,
+            "attach_history": history_ready - loaded,
+            "train": trained - history_ready,
+            "checkpoint": checkpointed - trained,
+            "heldout_metrics": heldout_ready - checkpointed,
+            "diagnostics": diagnostics_ready - heldout_ready,
+            "no_digest_ablation": ablation_ready - diagnostics_ready,
+        },
         "raw": {"policy_records": policy_metrics["count"], "policy_weight": policy_metrics["weight"], "value_records": value_metrics["count"], "value_weight": value_metrics["weight"]},
     }
     _write_json(output_path, result)
@@ -1589,6 +1762,10 @@ def self_test(args: argparse.Namespace) -> dict[str, Any]:
         batched = model.forward_batch(examples)
     batching_delta = max(float((a[0] - b[0]).abs().max()) + float((a[1] - b[1]).abs()) for a, b in zip(individual, batched))
     permutation = _diagnostics(model, examples, args.seed + 1)
+    if args.float64_permutation:
+        permutation["float64"] = _float64_permutation_diagnostics(
+            model, examples, args.seed + 1
+        )
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     before = [parameter.detach().clone() for parameter in model.parameters()]
     policy_loss, value_loss = _batch_loss(model, examples[:3], examples[3:])
@@ -1597,6 +1774,10 @@ def self_test(args: argparse.Namespace) -> dict[str, Any]:
     optimizer.step()
     parameter_delta = max(float((after.detach() - before[index]).abs().max()) for index, after in enumerate(model.parameters()))
     checks = {"variable_sizes": True, "history_excludes_current_decision": history_check, "batching_max_delta_le_1e-6": batching_delta <= 1e-6, "permutation_max_delta_le_1e-5": permutation["permutation_max_delta"] <= 1e-5, "ref_removal_meaningful": permutation["ref_removal_affected_rate"] >= 0.20, "optimizer_step_changed_parameter": parameter_delta > 0.0}
+    if args.float64_permutation:
+        checks["float64_permutation_max_delta_le_1e-10"] = (
+            permutation["float64"]["permutation_max_delta"] <= 1e-10
+        )
     result = {"schema": SCRIPT_VERSION + ".self_test", "pass": all(checks.values()), "checks": checks, "batching_max_delta": batching_delta, "diagnostics": permutation, "optimizer_parameter_max_delta": parameter_delta, "runtime_seconds": time.perf_counter() - started, "config": {"dim": args.dim, "seed": args.seed, "threads": args.threads, "history_length": args.history_length, "complete_history": args.complete_history, "history_feature_dim": history_feature_dim if args.history_length > 0 else 0}}
     if not result["pass"]:
         _fail("self-test failed: " + json.dumps(checks, sort_keys=True))
@@ -1625,6 +1806,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--history-length", type=int, default=0)
     parser.add_argument("--complete-history", action="store_true")
+    parser.add_argument(
+        "--diagnostic-sample-size",
+        type=int,
+        default=DEFAULT_DIAGNOSTIC_SAMPLE_SIZE,
+    )
+    parser.add_argument(
+        "--ablation-sample-size",
+        type=int,
+        default=DEFAULT_ABLATION_SAMPLE_SIZE,
+    )
+    parser.add_argument("--save-model-state", action="store_true")
+    parser.add_argument("--float64-permutation", action="store_true")
     parser.add_argument("--teacher-sha256-prefix", default=TEACHER_SHA256_PREFIX)
     parser.add_argument("--outcome-sha256-prefix", default=OUTCOME_SHA256_PREFIX)
     return parser
@@ -1632,7 +1825,16 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.dim < 8 or args.epochs < 1 or args.batch_size < 1 or args.lr <= 0 or args.threads < 1 or args.history_length < 0:
+    if (
+        args.dim < 8
+        or args.epochs < 1
+        or args.batch_size < 1
+        or args.lr <= 0
+        or args.threads < 1
+        or args.history_length < 0
+        or args.diagnostic_sample_size < 1
+        or args.ablation_sample_size < 1
+    ):
         _fail("invalid training configuration")
     if args.complete_history and args.history_length < 1 and not args.prepare_cache:
         _fail("--complete-history requires --history-length for self-test and fold modes")

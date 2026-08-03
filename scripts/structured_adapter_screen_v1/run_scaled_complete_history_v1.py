@@ -60,6 +60,10 @@ def _fixed_args() -> Namespace:
         threads=THREADS,
         history_length=HISTORY_LENGTH,
         complete_history=True,
+        diagnostic_sample_size=screen.DEFAULT_DIAGNOSTIC_SAMPLE_SIZE,
+        ablation_sample_size=screen.DEFAULT_ABLATION_SAMPLE_SIZE,
+        save_model_state=True,
+        float64_permutation=True,
     )
 
 
