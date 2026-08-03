@@ -27,6 +27,10 @@ def _metric(mean: float = 0.01, p90: float = 0.02, joint: float = 0.1) -> dict:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_formal_pair_count_exceeds_profile_limit_by_design(self) -> None:
+        self.assertEqual(pipeline.FORMAL_PAIRS, 2_048)
+        self.assertGreater(pipeline.FORMAL_PAIRS, 64)
+
     def test_shard_ranges_are_exact_and_contiguous(self) -> None:
         self.assertEqual(
             pipeline._shard_ranges(64, 4),

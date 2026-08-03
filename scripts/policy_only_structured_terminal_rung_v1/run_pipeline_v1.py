@@ -171,7 +171,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         _fail("collection output already exists")
     formal = args.profile_pairs is None
     pair_count = FORMAL_PAIRS if formal else args.profile_pairs
-    if pair_count is None or pair_count < 2 or pair_count > 64:
+    if not formal and (pair_count is None or pair_count < 2 or pair_count > 64):
         _fail("profile pairs must be between 2 and 64")
     if formal and (
         args.base_seed != FORMAL_BASE_SEED or args.shards != FORMAL_SHARDS
