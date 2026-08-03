@@ -56,3 +56,24 @@ decisions. The repeated run spent 62.77 seconds loading and validating Pool3,
 then completed the four games in 0.63 seconds. One persistent CPU process is
 therefore the practical topology knee. GPU 1 remains unused because all
 inference and training in this screen are CPU implementations.
+
+## Result
+
+The corpus completed in 171.39 seconds. It contained all 512 pairs, 1,024
+natural terminals, 83,949 policy steps, and 70,748 complete physical
+decisions. The candidate behavior policy won 631 games and lost 393 against
+the frozen Pool3 mixture. Cache SHA-256 was
+`82ba196f7ad719c0a51fb3235f2bf7039625a575cc08aad19f55ab84e28f29a9`.
+
+The four folds ran concurrently in 11.5 minutes. Overall held-out terminal
+surrogate was `+0.0000252972`, and three of four folds were positive. Candidate
+P1 was positive at `+0.000128709`, but P0 was negative at `-0.0000781148`.
+Held-out mean total variation was `0.00842156`, below the required `0.01`;
+p90 total variation was `0.0322417`, and maximum absolute physical-decision
+joint log ratio was `0.423733`. Representation diagnostics passed.
+
+This exact one-batch package is rejected because the both-seat surrogate and
+minimum-movement gates failed. No live strength gate is authorized. This does
+not reject seat-conditioned models, iterative policy improvement, other
+population curricula, or other model architectures. Aggregate SHA-256 was
+`4914aa8fd724e257b30425361122e4d59a6da57310c14a24fce7d99412700644`.
