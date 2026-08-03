@@ -39,3 +39,25 @@ initializer wins plus 20, and each candidate-seat win delta is at least `-4`.
 A pass establishes a Rally-only Pool3 gain and authorizes broader evaluation.
 A failure retires this learned direction and moves to a different learning or
 population mechanism. Neither result is evidence of professional-level play.
+
+## Result
+
+The fixed 1/16 projection passed every numerical and transport gate. Overall
+mean TV was `0.00179758`, p90 TV was `0.00447179`, and maximum absolute
+physical-decision joint log ratio was `0.422299`. Both candidate seats passed.
+Native maximum absolute logit error was `0.000002861`, and the retained parent
+value was bit-exact.
+
+The fresh 1,024-pair Pool3 strength gate completed in 337.34 seconds. The
+projection won 1,310 games and the initializer won 1,306. Matched `G/L/T` was
+`5/1/2042`, with projection-minus-initializer win deltas `+3` at P0 and `+1`
+at P1. Identity, transport, natural-terminal, exact-pair, and both seat-floor
+gates passed. The required +20 paired net and +20 total-win gates failed.
+
+The result is directionally favorable but too small to distinguish as a
+strength improvement under the frozen gate. Do not promote it or tune another
+scale on base seed `1670001`. This retires the learned direction and closes the
+terminal-only structured PPO branch tested here. Strength report SHA-256 is
+`ba4374f9a6505a6feeab28b166dc7097d1508658215332719923d65effa889b4`;
+evidence root is
+`D:\mtg-kernel-policy-only-structured-terminal-rung-v1\formal`.
