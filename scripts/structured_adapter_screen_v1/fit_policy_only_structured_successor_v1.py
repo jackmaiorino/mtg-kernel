@@ -40,6 +40,8 @@ GRAD_CAP = 5.0
 MEAN_TV_LIMIT = 0.015
 P90_TV_LIMIT = 0.040
 TOP_ACTION_FLOOR = 0.990
+PROVISIONAL_TRANSPORT_MAX_ERROR = 1.0
+PROVISIONAL_PARENT_VALUE_BIT_EXACT = False
 
 
 def _fail(message: str) -> None:
@@ -378,8 +380,8 @@ def _publish(
         },
         "policy_metrics": _package_metrics(metrics),
         "transport": {
-            "maximum_absolute_logit_error": 0.0,
-            "parent_value_bit_exact": True,
+            "maximum_absolute_logit_error": PROVISIONAL_TRANSPORT_MAX_ERROR,
+            "parent_value_bit_exact": PROVISIONAL_PARENT_VALUE_BIT_EXACT,
         },
         "weights_sha256": weights_sha256,
         "composite_model_parameter_sha256": composite_sha256,

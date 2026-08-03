@@ -69,6 +69,10 @@ class PolicyOnlyStructuredSuccessorTest(unittest.TestCase):
             [0, 1, 1, 4, 4, 8, 8, 16],
         )
 
+    def test_staged_package_is_unqualified_before_native_transport(self) -> None:
+        self.assertGreater(subject.PROVISIONAL_TRANSPORT_MAX_ERROR, 3.0e-5)
+        self.assertFalse(subject.PROVISIONAL_PARENT_VALUE_BIT_EXACT)
+
 
 if __name__ == "__main__":
     unittest.main()
