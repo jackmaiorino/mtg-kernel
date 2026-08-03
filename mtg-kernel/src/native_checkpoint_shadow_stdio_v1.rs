@@ -63,6 +63,20 @@ pub const CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V1: u32 = 1;
 pub const CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1: &str =
     "mtg-kernel-checkpoint-shadow-model-input-framed-sha256/v1";
 pub const CHECKPOINT_SHADOW_MAX_REQUEST_BYTES_V1: usize = 1_048_576;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ShadowCandidateSelectorV1 {
+    #[default]
+    PolicySample,
+    OneStepHistoryValueBootstrap,
+}
+
+const ONE_STEP_VALUE_MIN_PHYSICAL_DECISION_V1: u64 = 20;
+const ONE_STEP_VALUE_MIN_ACTIONS_V1: u32 = 2;
+const ONE_STEP_VALUE_MAX_ACTIONS_V1: u32 = 8;
+const ONE_STEP_VALUE_OVERRIDE_MARGIN_V1: f32 = 0.25;
+const ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1: usize = 4;
+const ONE_STEP_VALUE_REDETERMINIZATION_DOMAIN_V1: u64 = 0x6876_616c_7265_6431;
 pub const XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-teacher-jsonl/v1";
 pub const XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1: u32 = 1;
 pub const XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-outcome-jsonl/v1";
@@ -1592,6 +1606,7 @@ fn rl_error_code_v1(code: RlSessionErrorCode) -> &'static str {
 struct ShadowScorerServiceV1 {
     model: Box<dyn ShadowModelScorerV1>,
     identity: ShadowCheckpointIdentityV1,
+    candidate_selector: ShadowCandidateSelectorV1,
     max_physical_decisions: u64,
     max_policy_steps: u64,
     active: Option<ActiveShadowSessionV1>,
@@ -1627,6 +1642,7 @@ impl ShadowScorerServiceV1 {
             return Ok(Self {
                 model: Box::new(Cp7BehaviorCloneShadowModelScorerV1 { inference }),
                 identity,
+                candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                 max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
                 max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
                 active: None,
@@ -1686,6 +1702,7 @@ impl ShadowScorerServiceV1 {
                         inference,
                     }),
                     identity,
+                    candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                     max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
                     max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
                     active: None,
@@ -1732,6 +1749,7 @@ impl ShadowScorerServiceV1 {
                 return Ok(Self {
                     model: Box::new(NativeRank1PolicyResidualShadowModelScorerV1 { inference }),
                     identity,
+                    candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                     max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
                     max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
                     active: None,
@@ -1764,6 +1782,7 @@ impl ShadowScorerServiceV1 {
             return Ok(Self {
                 model: Box::new(XmageCp7OutcomeShadowModelScorerV1 { inference }),
                 identity,
+                candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                 max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
                 max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
                 active: None,
@@ -1778,6 +1797,7 @@ impl ShadowScorerServiceV1 {
                 inference: loaded.inference,
             }),
             identity: loaded.identity,
+            candidate_selector: ShadowCandidateSelectorV1::PolicySample,
             max_physical_decisions: loaded.max_physical_decisions,
             max_policy_steps: loaded.max_policy_steps,
             active: None,
@@ -1809,6 +1829,7 @@ impl ShadowScorerServiceV1 {
                 sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
                 sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
             },
+            candidate_selector: ShadowCandidateSelectorV1::PolicySample,
             max_physical_decisions: 128,
             max_policy_steps: 16_384,
             active: None,
@@ -1840,8 +1861,189 @@ impl ShadowScorerServiceV1 {
         Ok(())
     }
 
+    fn score_current_model_output_v1(
+        model: &dyn ShadowModelScorerV1,
+        session: &FastActorSessionV1,
+        structured_history: &[NativeStructuredHistoryEntryV1],
+    ) -> Result<(FastActorDecisionV1, ShadowModelOutputV1), &'static str> {
+        let expected = match session.current_response() {
+            FastActorResponseV1::Decision(expected) => expected,
+            FastActorResponseV1::Terminal(_) => return Err("value_search_expected_decision"),
+        };
+        let packet = <FlatScoredFamilyV2 as FlatScoredFamilyCore>::encode_packet(
+            session,
+            expected,
+            &mut Default::default(),
+            OwnedFlatScoringDecisionV2::default(),
+        )
+        .map_err(|_| "value_search_decision_encoding_failed")?;
+        let decision = <FlatScoredFamilyV2 as FlatScoredFamilyCore>::packet_decision(&packet);
+        if !<FlatScoredFamilyV2 as FlatScoredFamilyCore>::expected_matches_binding(
+            expected, decision,
+        ) {
+            return Err("value_search_decision_binding_mismatch");
+        }
+        let view = <FlatScoredFamilyV2 as FlatScoredFamilyCore>::packet_view(&packet);
+        let output = model
+            .score_v1(
+                view,
+                structured_history,
+                player_seat_index_v1(expected.acting_player),
+            )
+            .map_err(|_| "value_search_checkpoint_scoring_failed")?;
+        drop(<FlatScoredFamilyV2 as FlatScoredFamilyCore>::into_owned_packet(packet));
+        if output.logits.len()
+            != usize::try_from(expected.legal_action_count)
+                .map_err(|_| "value_search_score_width_invalid")?
+            || output.logits.iter().any(|value| !value.is_finite())
+            || !output.value.is_finite()
+        {
+            return Err("value_search_checkpoint_score_invalid");
+        }
+        Ok((expected, output))
+    }
+
+    fn one_step_history_value_selection_v1(
+        model: &dyn ShadowModelScorerV1,
+        session: &FastActorSessionV1,
+        scored: &ScoredCurrentDecisionV1,
+        structured_history: &[NativeStructuredHistoryEntryV1],
+        candidate_seat: PlayerSeatV1,
+        fallback_selected_index: u32,
+    ) -> Result<Option<u32>, &'static str> {
+        let expected = scored.expected;
+        if !model.uses_structured_history_v1()
+            || expected.decision_kind != FastActorDecisionKindV1::Surface
+            || expected.substep_index != 0
+            || expected.substep_count != 1
+            || scored.actor_physical_decision_ordinal < ONE_STEP_VALUE_MIN_PHYSICAL_DECISION_V1
+            || expected.legal_action_count < ONE_STEP_VALUE_MIN_ACTIONS_V1
+            || expected.legal_action_count > ONE_STEP_VALUE_MAX_ACTIONS_V1
+        {
+            return Ok(None);
+        }
+        let action_count = usize::try_from(expected.legal_action_count)
+            .map_err(|_| "value_search_action_count_invalid")?;
+        let fallback = usize::try_from(fallback_selected_index)
+            .map_err(|_| "value_search_fallback_index_invalid")?;
+        if fallback >= action_count {
+            return Err("value_search_fallback_index_invalid");
+        }
+        let candidate_index = usize::from(player_seat_index_v1(candidate_seat));
+        let mut value_sums = vec![0.0f64; action_count];
+        let mut sampled_hashes = Vec::with_capacity(ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1);
+        for sample_index in 0..ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1 {
+            let mut seed_rng = SplitMix64::seed(
+                ONE_STEP_VALUE_REDETERMINIZATION_DOMAIN_V1
+                    ^ expected.episode_id.wrapping_mul(0x9e37_79b1_85eb_ca87)
+                    ^ expected
+                        .physical_decision_id
+                        .wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
+                    ^ (sample_index as u64).wrapping_mul(0x1656_67b1_9e37_79f9),
+            );
+            let redeterminization_seed = seed_rng.next_u64();
+            let snapshot = session
+                .snapshot_current_actor_information_set_v1(redeterminization_seed)
+                .map_err(|_| "value_search_redeterminization_failed")?;
+            let mut sampled_root = session.clone();
+            sampled_root.restore_v1(&snapshot);
+            sampled_hashes.push(u64_hex_v1(sampled_root.privileged_core_environment_hash()));
+            let (sampled_expected, sampled_output) =
+                Self::score_current_model_output_v1(model, &sampled_root, structured_history)?;
+            if sampled_expected != expected
+                || sampled_output.value.to_bits() != scored.value_f32_bits
+                || sampled_output
+                    .logits
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .ne(scored.logits_f32_bits.iter().copied())
+            {
+                return Err("value_search_redeterminization_observation_drift");
+            }
+            for (action_index, value_sum) in value_sums.iter_mut().enumerate() {
+                let selected =
+                    u32::try_from(action_index).map_err(|_| "value_search_action_index_invalid")?;
+                let mut branch = sampled_root.clone();
+                let mut branch_history = StructuredHistoryStateV1 {
+                    completed: structured_history.to_vec(),
+                    pending: None,
+                };
+                branch_history
+                    .accept_selected_v1(scored, selected)
+                    .map_err(|_| "value_search_history_update_failed")?;
+                let next = branch
+                    .consume_current_flat_action_slice_v2(scored.binding.action_binding, selected)
+                    .map_err(|_| "value_search_branch_consume_failed")?;
+                let value = match next {
+                    FastActorResponseV1::Terminal(terminal) => {
+                        terminal.terminal_reward[candidate_index] as f32
+                    }
+                    FastActorResponseV1::Decision(_) => {
+                        let (next_expected, output) = Self::score_current_model_output_v1(
+                            model,
+                            &branch,
+                            &branch_history.completed,
+                        )?;
+                        if next_expected.acting_player == candidate_seat {
+                            output.value
+                        } else {
+                            -output.value
+                        }
+                    }
+                };
+                if !value.is_finite() {
+                    return Err("value_search_nonfinite_successor_value");
+                }
+                *value_sum += f64::from(value);
+            }
+        }
+        let values = value_sums
+            .into_iter()
+            .map(|sum| (sum / ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1 as f64) as f32)
+            .collect::<Vec<_>>();
+        let fallback_value = values[fallback];
+        let mut best = fallback;
+        let mut best_value = fallback_value;
+        for (index, value) in values.iter().copied().enumerate() {
+            if value > best_value {
+                best = index;
+                best_value = value;
+            }
+        }
+        let margin = best_value - fallback_value;
+        let selected = if best != fallback && margin >= ONE_STEP_VALUE_OVERRIDE_MARGIN_V1 {
+            best
+        } else {
+            fallback
+        };
+        let value_bits = values
+            .iter()
+            .map(|value| format!("{:08x}", value.to_bits()))
+            .collect::<Vec<_>>()
+            .join(",");
+        eprintln!(
+            "NATIVE_ONE_STEP_HISTORY_VALUE episode={} step={} physical_decision={} actions={} information_set_samples={} sampled_hashes={} fallback={} best={} selected={} margin_bits={:08x} values_f32_bits={} override={}",
+            expected.episode_id,
+            expected.step,
+            expected.physical_decision_id,
+            action_count,
+            ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1,
+            sampled_hashes.join(","),
+            fallback,
+            best,
+            selected,
+            margin.to_bits(),
+            value_bits,
+            selected != fallback,
+        );
+        Ok(Some(
+            u32::try_from(selected).map_err(|_| "value_search_selected_index_invalid")?,
+        ))
+    }
+
     fn score_session_v1(
         model: &dyn ShadowModelScorerV1,
+        candidate_selector: ShadowCandidateSelectorV1,
         max_physical_decisions: u64,
         max_policy_steps: u64,
         session: &FastActorSessionV1,
@@ -1915,7 +2117,7 @@ impl ShadowScorerServiceV1 {
         if action_semantics.len() != output.logits.len() {
             return Err("action_semantics_width_mismatch");
         }
-        let scored = ScoredCurrentDecisionV1 {
+        let mut scored = ScoredCurrentDecisionV1 {
             expected,
             binding,
             tensor,
@@ -1929,6 +2131,23 @@ impl ShadowScorerServiceV1 {
             candidate_action_seed_u64_hex,
             selected_action_index,
         };
+        if candidate_controls_current_actor
+            && candidate_selector == ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap
+        {
+            let fallback = scored
+                .selected_action_index
+                .ok_or("value_search_fallback_selection_missing")?;
+            if let Some(selected) = Self::one_step_history_value_selection_v1(
+                model,
+                session,
+                &scored,
+                structured_history,
+                candidate_seat,
+                fallback,
+            )? {
+                scored.selected_action_index = Some(selected);
+            }
+        }
         drop(<FlatScoredFamilyV2 as FlatScoredFamilyCore>::into_owned_packet(packet));
         Ok(Some(scored))
     }
@@ -2075,6 +2294,7 @@ impl ShadowScorerServiceV1 {
         let structured_history = StructuredHistoryStateV1::default();
         let current = match Self::score_session_v1(
             self.model.as_ref(),
+            self.candidate_selector,
             self.max_physical_decisions,
             self.max_policy_steps,
             &session,
@@ -2375,6 +2595,7 @@ impl ShadowScorerServiceV1 {
         let next_scored = match next {
             FastActorResponseV1::Decision(_) => match Self::score_session_v1(
                 self.model.as_ref(),
+                self.candidate_selector,
                 self.max_physical_decisions,
                 self.max_policy_steps,
                 &active.session,
@@ -2561,7 +2782,22 @@ fn serialize_response_v1(response: &ShadowScorerResponseV1) -> String {
 pub fn run_checkpoint_shadow_stdio_v1(
     authority: ShadowCheckpointAuthorityV1,
 ) -> Result<(), Box<dyn Error>> {
-    run_checkpoint_shadow_stdio_configured_v1(authority, None, None)
+    run_checkpoint_shadow_stdio_configured_v1(
+        authority,
+        ShadowCandidateSelectorV1::PolicySample,
+        None,
+        None,
+    )
+}
+
+/// Experimental live selector for the parity-checked complete-history model.
+/// It is intentionally unavailable with trajectory exports because those
+/// schemas bind selection to direct checkpoint-policy sampling.
+pub fn run_checkpoint_shadow_stdio_with_selector_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    selector: ShadowCandidateSelectorV1,
+) -> Result<(), Box<dyn Error>> {
+    run_checkpoint_shadow_stdio_configured_v1(authority, selector, None, None)
 }
 
 /// Opt-in XMage CP7 teacher export. The destination is created exclusively;
@@ -2570,7 +2806,12 @@ pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_teacher_jsonl_v1(
     authority: ShadowCheckpointAuthorityV1,
     teacher_jsonl: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
-    run_checkpoint_shadow_stdio_configured_v1(authority, Some(teacher_jsonl), None)
+    run_checkpoint_shadow_stdio_configured_v1(
+        authority,
+        ShadowCandidateSelectorV1::PolicySample,
+        Some(teacher_jsonl),
+        None,
+    )
 }
 
 /// Opt-in candidate trajectory export for offline terminal-return updates.
@@ -2580,7 +2821,12 @@ pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_outcome_jsonl_v1(
     authority: ShadowCheckpointAuthorityV1,
     outcome_jsonl: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
-    run_checkpoint_shadow_stdio_configured_v1(authority, None, Some(outcome_jsonl))
+    run_checkpoint_shadow_stdio_configured_v1(
+        authority,
+        ShadowCandidateSelectorV1::PolicySample,
+        None,
+        Some(outcome_jsonl),
+    )
 }
 
 /// Opt-in matched CP7 teacher and candidate outcome exports from one trajectory.
@@ -2590,15 +2836,31 @@ pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_exports_jsonl_v1(
     teacher_jsonl: PathBuf,
     outcome_jsonl: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
-    run_checkpoint_shadow_stdio_configured_v1(authority, Some(teacher_jsonl), Some(outcome_jsonl))
+    run_checkpoint_shadow_stdio_configured_v1(
+        authority,
+        ShadowCandidateSelectorV1::PolicySample,
+        Some(teacher_jsonl),
+        Some(outcome_jsonl),
+    )
 }
 
 fn run_checkpoint_shadow_stdio_configured_v1(
     authority: ShadowCheckpointAuthorityV1,
+    selector: ShadowCandidateSelectorV1,
     teacher_jsonl: Option<PathBuf>,
     outcome_jsonl: Option<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
+    if selector == ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap
+        && !service.model.uses_structured_history_v1()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "one-step history-value selection requires a structured-history candidate",
+        )
+        .into());
+    }
+    service.candidate_selector = selector;
     if let Some(path) = teacher_jsonl {
         let export = XmageCp7TeacherJsonlWriterV1::create_v1(&path, &service.identity)?;
         service.install_teacher_export_v1(export).map_err(|()| {
