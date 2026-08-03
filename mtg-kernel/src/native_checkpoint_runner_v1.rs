@@ -11,13 +11,17 @@
 use crate::async_flat_scored_rollout_v2::{
     run_async_flat_scored_rollout_native_environment_randomization_v2,
     run_async_flat_scored_rollout_native_observed_v2, AsyncFlatScoredObservedRunErrorV2,
-    AsyncFlatScoredRolloutErrorV2, AsyncFlatScoredRolloutResultV2, FlatScoredSelectedEventV2,
-    FlatScoredTerminalEventV2, FlatScoredTrajectoryObserverV2,
+    AsyncFlatScoredRolloutErrorV2, AsyncFlatScoredRolloutResultV2, FlatBatchScorerErrorV2,
+    FlatBatchScorerV2, FlatScoredSelectedEventV2, FlatScoredTerminalEventV2,
+    FlatScoredTrajectoryObserverV2, FlatScoringBatchViewV2,
 };
 use crate::async_rollout_v2::AsyncRolloutConfigV2;
+use crate::flat_policy_v2::FlatScorerActionCoreV2;
+#[cfg(test)]
+use crate::flat_policy_v2::FlatScorerActionKindV2;
 use crate::native_checkpoint_inference_v1::{
     load_native_checkpoint_inference_v1, load_native_checkpoint_inference_wide_v1,
-    NativeCheckpointInferenceErrorV1,
+    NativeCheckpointBatchScorerV1, NativeCheckpointInferenceErrorV1,
 };
 use crate::native_full_episode_trajectory_v2::{
     preflight_native_environment_window_v2, NativeEnvironmentWindowPreflightAuthorityV2,
@@ -30,6 +34,10 @@ use crate::native_training_store_run_v2::{
     NativeRunEnvironmentTrajectoryContractV1, ValidatedTrainRunV2,
 };
 use crate::rl::PlayerSeatV1;
+use crate::rl_session::{
+    FLAT_ACTION_FLAG_CAST_IT_V1, FLAT_ACTION_FLAG_CHANGE_TARGET_V1, FLAT_ACTION_FLAG_INCLUDE_V1,
+    FLAT_ACTION_FLAG_PAY_V1, FLAT_ACTION_FLAG_USE_COST_V1, FLAT_ACTION_FLAG_VALUE_V1,
+};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
@@ -39,6 +47,92 @@ use std::time::{Duration, Instant};
 /// enforcement belongs at the process boundary, not inside this cooperative
 /// scheduler.
 pub const NATIVE_CHECKPOINT_RUNNER_MAX_TIMEOUT_V1: Duration = Duration::from_secs(86_400);
+
+/// Development-only response-oracle policy class. The first 27 parameters
+/// bias the complete typed action-kind vocabulary and the final six bias the
+/// explicit boolean action flags in bit order: pay, change-target, use-cost,
+/// cast-it, value, include. The frozen checkpoint supplies every remaining
+/// logit component.
+pub(crate) const NATIVE_ACTION_KIND_RESIDUAL_DIM_V1: usize = 33;
+const NATIVE_ACTION_KIND_COUNT_V1: usize = 27;
+#[cfg(test)]
+const NATIVE_ACTION_KIND_RESIDUAL_ABS_CAP_V1: f32 = 1.5;
+const NATIVE_ACTION_KIND_RESIDUAL_ERROR_CODE_V1: u32 = 0x524f_0001;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NativeActionKindResidualV1 {
+    parameters: [f32; NATIVE_ACTION_KIND_RESIDUAL_DIM_V1],
+}
+
+impl NativeActionKindResidualV1 {
+    #[cfg(test)]
+    pub(crate) fn new_v1(parameters: [f32; NATIVE_ACTION_KIND_RESIDUAL_DIM_V1]) -> Option<Self> {
+        parameters
+            .iter()
+            .all(|value| value.is_finite() && value.abs() <= NATIVE_ACTION_KIND_RESIDUAL_ABS_CAP_V1)
+            .then_some(Self { parameters })
+    }
+
+    fn delta_v1(&self, action: &FlatScorerActionCoreV2) -> f32 {
+        let mut delta = self.parameters[action.kind as usize];
+        for (offset, flag) in [
+            FLAT_ACTION_FLAG_PAY_V1,
+            FLAT_ACTION_FLAG_CHANGE_TARGET_V1,
+            FLAT_ACTION_FLAG_USE_COST_V1,
+            FLAT_ACTION_FLAG_CAST_IT_V1,
+            FLAT_ACTION_FLAG_VALUE_V1,
+            FLAT_ACTION_FLAG_INCLUDE_V1,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if action.flags & flag != 0 {
+                delta += self.parameters[NATIVE_ACTION_KIND_COUNT_V1 + offset];
+            }
+        }
+        delta
+    }
+}
+
+struct NativeActionKindResidualBatchScorerV1<'a> {
+    inner: NativeCheckpointBatchScorerV1<'a>,
+    residual: Option<NativeActionKindResidualV1>,
+}
+
+impl FlatBatchScorerV2 for NativeActionKindResidualBatchScorerV1<'_> {
+    fn score_batch_v2(
+        &mut self,
+        batch: &FlatScoringBatchViewV2<'_>,
+        action_logits: &mut [f32],
+        values: &mut [f32],
+    ) -> Result<(), FlatBatchScorerErrorV2> {
+        self.inner.score_batch_v2(batch, action_logits, values)?;
+        let Some(residual) = self.residual else {
+            return Ok(());
+        };
+        for decision_index in 0..batch.decision_count() {
+            let decision = batch.decision(decision_index).ok_or_else(|| {
+                FlatBatchScorerErrorV2::new(NATIVE_ACTION_KIND_RESIDUAL_ERROR_CODE_V1)
+            })?;
+            let begin = batch.action_offsets()[decision_index];
+            let end = batch.action_offsets()[decision_index + 1];
+            if end - begin != decision.actions().len() {
+                return Err(FlatBatchScorerErrorV2::new(
+                    NATIVE_ACTION_KIND_RESIDUAL_ERROR_CODE_V1,
+                ));
+            }
+            for (logit, action) in action_logits[begin..end].iter_mut().zip(decision.actions()) {
+                *logit += residual.delta_v1(action);
+                if !logit.is_finite() {
+                    return Err(FlatBatchScorerErrorV2::new(
+                        NATIVE_ACTION_KIND_RESIDUAL_ERROR_CODE_V1,
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Runtime-only evaluation inputs not already frozen by the training run.
 ///
@@ -516,7 +610,7 @@ pub fn run_native_checkpoint_v1(
     checkpoint_payload: &[u8],
     config: NativeCheckpointRunnerConfigV1,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
-    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, None)
+    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, None, None)
 }
 
 /// EVAL-ONLY (Self-Play Ladder Design Contract S2, Deliverable 2 head-to-head
@@ -554,7 +648,37 @@ pub(crate) fn run_native_checkpoint_with_ladder_opponent_eval_v1(
     config: NativeCheckpointRunnerConfigV1,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
-    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, ladder_opponent)
+    run_native_checkpoint_core_v1(
+        run,
+        checkpoint,
+        checkpoint_payload,
+        config,
+        ladder_opponent,
+        None,
+    )
+}
+
+/// Development-only response-oracle evaluator. It preserves the validated
+/// checkpoint and native schedule while adding one bounded typed-action
+/// residual to learner logits. It is unavailable outside test builds and
+/// cannot author a training Store.
+#[cfg(test)]
+pub(crate) fn run_native_checkpoint_with_ladder_opponent_action_residual_eval_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    checkpoint_payload: &[u8],
+    config: NativeCheckpointRunnerConfigV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    residual: NativeActionKindResidualV1,
+) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    run_native_checkpoint_core_v1(
+        run,
+        checkpoint,
+        checkpoint_payload,
+        config,
+        ladder_opponent,
+        Some(residual),
+    )
 }
 
 fn run_native_checkpoint_core_v1(
@@ -563,6 +687,7 @@ fn run_native_checkpoint_core_v1(
     checkpoint_payload: &[u8],
     config: NativeCheckpointRunnerConfigV1,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    action_residual: Option<NativeActionKindResidualV1>,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
     let validated = validate_runner_config_v1(run, config)?;
     let expected_episode_count = usize::try_from(config.episode_count)
@@ -616,7 +741,10 @@ fn run_native_checkpoint_core_v1(
         scheduler_timeout: config.scheduler_timeout,
         measure_broker_service_time: config.measure_broker_service_time,
     };
-    let mut scorer = inference.batch_scorer_v1();
+    let mut scorer = NativeActionKindResidualBatchScorerV1 {
+        inner: inference.batch_scorer_v1(),
+        residual: action_residual,
+    };
     // Exhaustive rollout dispatch by the sealed contract: neither core can
     // default to Legacy, and the V2 arm surrenders the consumed authority
     // minted by the first validator from the evaluation seed.
@@ -1114,6 +1242,48 @@ mod tests {
             scheduler_timeout: Duration::from_secs(60),
             measure_broker_service_time: false,
         }
+    }
+
+    #[test]
+    fn action_kind_residual_maps_kind_and_explicit_flags_only() {
+        let mut parameters = [0.0_f32; NATIVE_ACTION_KIND_RESIDUAL_DIM_V1];
+        parameters[FlatScorerActionKindV2::CastSpell as usize] = 0.25;
+        parameters[NATIVE_ACTION_KIND_COUNT_V1] = 0.5;
+        parameters[NATIVE_ACTION_KIND_COUNT_V1 + 5] = -0.125;
+        let residual = NativeActionKindResidualV1::new_v1(parameters).unwrap();
+        let action = FlatScorerActionCoreV2 {
+            kind: FlatScorerActionKindV2::CastSpell,
+            flags: FLAT_ACTION_FLAG_PAY_V1 | FLAT_ACTION_FLAG_INCLUDE_V1,
+            ..FlatScorerActionCoreV2::default()
+        };
+        assert_eq!(residual.delta_v1(&action).to_bits(), 0.625_f32.to_bits());
+
+        parameters[0] = NATIVE_ACTION_KIND_RESIDUAL_ABS_CAP_V1 + f32::EPSILON;
+        assert!(NativeActionKindResidualV1::new_v1(parameters).is_none());
+    }
+
+    #[test]
+    fn zero_action_kind_residual_is_trajectory_identical_to_frozen_runner() {
+        let fixture = fixture_v1();
+        let (run, checkpoint) = authorities_v1();
+        let frozen =
+            run_native_checkpoint_v1(&run, &checkpoint, &fixture.payload, runner_config_v1())
+                .unwrap();
+        let residual = run_native_checkpoint_with_ladder_opponent_action_residual_eval_v1(
+            &run,
+            &checkpoint,
+            &fixture.payload,
+            runner_config_v1(),
+            None,
+            NativeActionKindResidualV1::new_v1([0.0; NATIVE_ACTION_KIND_RESIDUAL_DIM_V1]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(residual.rollout().episodes, frozen.rollout().episodes);
+        assert_eq!(residual.episode_bindings(), frozen.episode_bindings());
+        assert_eq!(
+            residual.rollout().metrics.batch_membership_digest,
+            frozen.rollout().metrics.batch_membership_digest
+        );
     }
 
     #[test]

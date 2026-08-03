@@ -203,6 +203,8 @@ pub mod native_training_store_bootstrap_v2;
 // exact target, full Store validation, checkpoint-ref boundary loads, runner
 // episodes, and the seat-swapped uniform reward-delta evaluation. It claims
 // no experiment-manifest authority.
+#[cfg(test)]
+mod native_response_oracle_cem_v1;
 pub mod native_science_loop_v1;
 // Store-wide currentness validation and resume orchestration: shared-lock
 // full-chain walk, exclusive-lock recognized-stage cleanup, the exact P=N
