@@ -66,3 +66,28 @@ Distillation targets are initialization supervision, not reward. Natural
 terminal win, draw, or loss remains the only reinforcement-learning reward and
 the only promotion measure. This branch does not establish CP7 superiority,
 cross-deck strength, human strength, or pro-level play.
+
+## Result
+
+The full-data policy fit passed all overall and seat-specific gates. Overall
+mean policy TV was `0.00795230`, p90 TV was `0.0221630`, and top-action
+agreement was `0.996353`. P0 was `0.00788396`, `0.0222869`, and `0.996663`;
+P1 was `0.00802064`, `0.0220484`, and `0.996044`. Native Rust parity passed
+with maximum absolute logit error `0.000002861`, and the retained parent value
+was bit-exact.
+
+The formal Pool3 gate completed 1,024 matched pairs and 2,048 games per arm in
+338.53 seconds using two parallel persistent scorers. The candidate won 1,290
+games versus 1,286 for the parent. Matched `G/L/T` was `22/18/2008`, with
+candidate-minus-parent seat deltas `+5` at P0 and `-1` at P1. All natural
+terminal, identity, transport, exact-pair, total-win, paired-loss, and seat
+gates passed.
+
+This result qualifies the structured policy as a non-regressing initialization
+for one separately frozen terminal-only on-policy rung. The observed four-win
+margin is descriptive and is not evidence that the initialization is stronger.
+Evidence roots are
+`D:\mtg-kernel-policy-only-structured-successor-v1\candidate` and
+`D:\mtg-kernel-policy-only-structured-successor-v1\native-gate`; formal report
+SHA-256 is
+`47f80e33aef13a7930c8df591dbc764eca130386a3ea6b0a08e46cf7df0b614e`.
