@@ -69,6 +69,7 @@ pub enum ShadowCandidateSelectorV1 {
     #[default]
     PolicySample,
     OneStepHistoryValueBootstrap,
+    Depth8HistoryValueBootstrap,
 }
 
 const ONE_STEP_VALUE_MIN_PHYSICAL_DECISION_V1: u64 = 20;
@@ -77,6 +78,8 @@ const ONE_STEP_VALUE_MAX_ACTIONS_V1: u32 = 8;
 const ONE_STEP_VALUE_OVERRIDE_MARGIN_V1: f32 = 0.25;
 const ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1: usize = 4;
 const ONE_STEP_VALUE_REDETERMINIZATION_DOMAIN_V1: u64 = 0x6876_616c_7265_6431;
+const DEPTH8_VALUE_CONTINUATION_STEPS_V1: usize = 8;
+const DEPTH8_VALUE_REDETERMINIZATION_DOMAIN_V1: u64 = 0x6876_6465_7074_6838;
 pub const XMAGE_CP7_TEACHER_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-teacher-jsonl/v1";
 pub const XMAGE_CP7_TEACHER_JSONL_SCHEMA_VERSION_V1: u32 = 1;
 pub const XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1: &str = "mtg-kernel-xmage-cp7-outcome-jsonl/v1";
@@ -1903,6 +1906,251 @@ impl ShadowScorerServiceV1 {
         Ok((expected, output))
     }
 
+    fn score_branch_current_decision_v1(
+        model: &dyn ShadowModelScorerV1,
+        session: &FastActorSessionV1,
+        structured_history: &[NativeStructuredHistoryEntryV1],
+    ) -> Result<(ScoredCurrentDecisionV1, ShadowModelOutputV1), &'static str> {
+        let expected = match session.current_response() {
+            FastActorResponseV1::Decision(expected) => expected,
+            FastActorResponseV1::Terminal(_) => return Err("depth8_search_expected_decision"),
+        };
+        let packet = <FlatScoredFamilyV2 as FlatScoredFamilyCore>::encode_packet(
+            session,
+            expected,
+            &mut Default::default(),
+            OwnedFlatScoringDecisionV2::default(),
+        )
+        .map_err(|_| "depth8_search_decision_encoding_failed")?;
+        let decision = <FlatScoredFamilyV2 as FlatScoredFamilyCore>::packet_decision(&packet);
+        if !<FlatScoredFamilyV2 as FlatScoredFamilyCore>::expected_matches_binding(
+            expected, decision,
+        ) {
+            return Err("depth8_search_decision_binding_mismatch");
+        }
+        let binding = <FlatScoredFamilyV2 as FlatScoredFamilyCore>::packet_binding(&packet);
+        let view = <FlatScoredFamilyV2 as FlatScoredFamilyCore>::packet_view(&packet);
+        let mut tensorizer = NativeFlatTensorizerV2::new();
+        let mut tensor = NativeFlatDecisionTensorV2::default();
+        tensorizer
+            .fill(view, &mut tensor)
+            .map_err(|_| "depth8_search_decision_tensorization_failed")?;
+        let output = model
+            .score_v1(
+                view,
+                structured_history,
+                player_seat_index_v1(expected.acting_player),
+            )
+            .map_err(|_| "depth8_search_checkpoint_scoring_failed")?;
+        if output.logits.len()
+            != usize::try_from(expected.legal_action_count)
+                .map_err(|_| "depth8_search_score_width_invalid")?
+            || output.logits.iter().any(|value| !value.is_finite())
+            || !output.value.is_finite()
+        {
+            return Err("depth8_search_checkpoint_score_invalid");
+        }
+        // Branch decisions are never exported. Only the tensor and action binding
+        // are needed to advance the branch and update its structured history.
+        let scored = ScoredCurrentDecisionV1 {
+            expected,
+            binding,
+            tensor,
+            action_semantics: Vec::new(),
+            logits_f32_bits: output.logits.iter().map(|value| value.to_bits()).collect(),
+            value_f32_bits: output.value.to_bits(),
+            model_input_sha256: String::new(),
+            diagnostic_state_hash_u64_hex: String::new(),
+            core_environment_hash_u64_hex: String::new(),
+            actor_physical_decision_ordinal: 0,
+            candidate_action_seed_u64_hex: None,
+            selected_action_index: None,
+        };
+        drop(<FlatScoredFamilyV2 as FlatScoredFamilyCore>::into_owned_packet(packet));
+        Ok((scored, output))
+    }
+
+    fn depth8_branch_value_v1(
+        model: &dyn ShadowModelScorerV1,
+        sampled_root: &FastActorSessionV1,
+        root_scored: &ScoredCurrentDecisionV1,
+        structured_history: &[NativeStructuredHistoryEntryV1],
+        candidate_seat: PlayerSeatV1,
+        selected: u32,
+    ) -> Result<f32, &'static str> {
+        let candidate_index = usize::from(player_seat_index_v1(candidate_seat));
+        let mut branch = sampled_root.clone();
+        let mut branch_history = StructuredHistoryStateV1 {
+            completed: structured_history.to_vec(),
+            pending: None,
+        };
+        branch_history
+            .accept_selected_v1(root_scored, selected)
+            .map_err(|_| "depth8_search_history_update_failed")?;
+        let mut next = branch
+            .consume_current_flat_action_slice_v2(root_scored.binding.action_binding, selected)
+            .map_err(|_| "depth8_search_branch_consume_failed")?;
+        for _ in 0..DEPTH8_VALUE_CONTINUATION_STEPS_V1 {
+            if let FastActorResponseV1::Terminal(terminal) = next {
+                return Ok(terminal.terminal_reward[candidate_index] as f32);
+            }
+            let (branch_scored, output) =
+                Self::score_branch_current_decision_v1(model, &branch, &branch_history.completed)?;
+            let mut branch_selected = 0usize;
+            for index in 1..output.logits.len() {
+                if output.logits[index]
+                    .total_cmp(&output.logits[branch_selected])
+                    .is_gt()
+                {
+                    branch_selected = index;
+                }
+            }
+            let branch_selected =
+                u32::try_from(branch_selected).map_err(|_| "depth8_search_action_index_invalid")?;
+            branch_history
+                .accept_selected_v1(&branch_scored, branch_selected)
+                .map_err(|_| "depth8_search_history_update_failed")?;
+            next = branch
+                .consume_current_flat_action_slice_v2(
+                    branch_scored.binding.action_binding,
+                    branch_selected,
+                )
+                .map_err(|_| "depth8_search_branch_consume_failed")?;
+        }
+        match next {
+            FastActorResponseV1::Terminal(terminal) => {
+                Ok(terminal.terminal_reward[candidate_index] as f32)
+            }
+            FastActorResponseV1::Decision(_) => {
+                let (expected, output) =
+                    Self::score_current_model_output_v1(model, &branch, &branch_history.completed)?;
+                Ok(if expected.acting_player == candidate_seat {
+                    output.value
+                } else {
+                    -output.value
+                })
+            }
+        }
+    }
+
+    fn depth8_history_value_selection_v1(
+        model: &dyn ShadowModelScorerV1,
+        session: &FastActorSessionV1,
+        scored: &ScoredCurrentDecisionV1,
+        structured_history: &[NativeStructuredHistoryEntryV1],
+        candidate_seat: PlayerSeatV1,
+        fallback_selected_index: u32,
+    ) -> Result<Option<u32>, &'static str> {
+        let expected = scored.expected;
+        if !model.uses_structured_history_v1()
+            || expected.decision_kind != FastActorDecisionKindV1::Surface
+            || expected.substep_index != 0
+            || expected.substep_count != 1
+            || scored.actor_physical_decision_ordinal < ONE_STEP_VALUE_MIN_PHYSICAL_DECISION_V1
+            || expected.legal_action_count < ONE_STEP_VALUE_MIN_ACTIONS_V1
+            || expected.legal_action_count > ONE_STEP_VALUE_MAX_ACTIONS_V1
+        {
+            return Ok(None);
+        }
+        let action_count = usize::try_from(expected.legal_action_count)
+            .map_err(|_| "depth8_search_action_count_invalid")?;
+        let fallback = usize::try_from(fallback_selected_index)
+            .map_err(|_| "depth8_search_fallback_index_invalid")?;
+        if fallback >= action_count {
+            return Err("depth8_search_fallback_index_invalid");
+        }
+        let mut value_sums = vec![0.0f64; action_count];
+        let mut sampled_hashes = Vec::with_capacity(ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1);
+        for sample_index in 0..ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1 {
+            let mut seed_rng = SplitMix64::seed(
+                DEPTH8_VALUE_REDETERMINIZATION_DOMAIN_V1
+                    ^ expected.episode_id.wrapping_mul(0x9e37_79b1_85eb_ca87)
+                    ^ expected
+                        .physical_decision_id
+                        .wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
+                    ^ (sample_index as u64).wrapping_mul(0x1656_67b1_9e37_79f9),
+            );
+            let redeterminization_seed = seed_rng.next_u64();
+            let snapshot = session
+                .snapshot_current_actor_information_set_v1(redeterminization_seed)
+                .map_err(|_| "depth8_search_redeterminization_failed")?;
+            let mut sampled_root = session.clone();
+            sampled_root.restore_v1(&snapshot);
+            sampled_hashes.push(u64_hex_v1(sampled_root.privileged_core_environment_hash()));
+            let (sampled_expected, sampled_output) =
+                Self::score_current_model_output_v1(model, &sampled_root, structured_history)?;
+            if sampled_expected != expected
+                || sampled_output.value.to_bits() != scored.value_f32_bits
+                || sampled_output
+                    .logits
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .ne(scored.logits_f32_bits.iter().copied())
+            {
+                return Err("depth8_search_redeterminization_observation_drift");
+            }
+            for (action_index, value_sum) in value_sums.iter_mut().enumerate() {
+                let selected = u32::try_from(action_index)
+                    .map_err(|_| "depth8_search_action_index_invalid")?;
+                let value = Self::depth8_branch_value_v1(
+                    model,
+                    &sampled_root,
+                    scored,
+                    structured_history,
+                    candidate_seat,
+                    selected,
+                )?;
+                if !value.is_finite() {
+                    return Err("depth8_search_nonfinite_successor_value");
+                }
+                *value_sum += f64::from(value);
+            }
+        }
+        let values = value_sums
+            .into_iter()
+            .map(|sum| (sum / ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1 as f64) as f32)
+            .collect::<Vec<_>>();
+        let fallback_value = values[fallback];
+        let mut best = fallback;
+        let mut best_value = fallback_value;
+        for (index, value) in values.iter().copied().enumerate() {
+            if value > best_value {
+                best = index;
+                best_value = value;
+            }
+        }
+        let margin = best_value - fallback_value;
+        let selected = if best != fallback && margin >= ONE_STEP_VALUE_OVERRIDE_MARGIN_V1 {
+            best
+        } else {
+            fallback
+        };
+        let value_bits = values
+            .iter()
+            .map(|value| format!("{:08x}", value.to_bits()))
+            .collect::<Vec<_>>()
+            .join(",");
+        eprintln!(
+            "NATIVE_DEPTH8_HISTORY_VALUE episode={} step={} physical_decision={} actions={} continuation_steps={} information_set_samples={} sampled_hashes={} fallback={} best={} selected={} margin_bits={:08x} values_f32_bits={} override={}",
+            expected.episode_id,
+            expected.step,
+            expected.physical_decision_id,
+            action_count,
+            DEPTH8_VALUE_CONTINUATION_STEPS_V1,
+            ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1,
+            sampled_hashes.join(","),
+            fallback,
+            best,
+            selected,
+            margin.to_bits(),
+            value_bits,
+            selected != fallback,
+        );
+        Ok(Some(
+            u32::try_from(selected).map_err(|_| "depth8_search_selected_index_invalid")?,
+        ))
+    }
+
     fn one_step_history_value_selection_v1(
         model: &dyn ShadowModelScorerV1,
         session: &FastActorSessionV1,
@@ -2132,19 +2380,39 @@ impl ShadowScorerServiceV1 {
             selected_action_index,
         };
         if candidate_controls_current_actor
-            && candidate_selector == ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap
+            && matches!(
+                candidate_selector,
+                ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap
+                    | ShadowCandidateSelectorV1::Depth8HistoryValueBootstrap
+            )
         {
             let fallback = scored
                 .selected_action_index
                 .ok_or("value_search_fallback_selection_missing")?;
-            if let Some(selected) = Self::one_step_history_value_selection_v1(
-                model,
-                session,
-                &scored,
-                structured_history,
-                candidate_seat,
-                fallback,
-            )? {
+            let selected = match candidate_selector {
+                ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap => {
+                    Self::one_step_history_value_selection_v1(
+                        model,
+                        session,
+                        &scored,
+                        structured_history,
+                        candidate_seat,
+                        fallback,
+                    )?
+                }
+                ShadowCandidateSelectorV1::Depth8HistoryValueBootstrap => {
+                    Self::depth8_history_value_selection_v1(
+                        model,
+                        session,
+                        &scored,
+                        structured_history,
+                        candidate_seat,
+                        fallback,
+                    )?
+                }
+                ShadowCandidateSelectorV1::PolicySample => None,
+            };
+            if let Some(selected) = selected {
                 scored.selected_action_index = Some(selected);
             }
         }
@@ -2851,12 +3119,15 @@ fn run_checkpoint_shadow_stdio_configured_v1(
     outcome_jsonl: Option<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
-    if selector == ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap
-        && !service.model.uses_structured_history_v1()
+    if matches!(
+        selector,
+        ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap
+            | ShadowCandidateSelectorV1::Depth8HistoryValueBootstrap
+    ) && !service.model.uses_structured_history_v1()
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "one-step history-value selection requires a structured-history candidate",
+            "history-value selection requires a structured-history candidate",
         )
         .into());
     }
@@ -2998,6 +3269,31 @@ mod tests {
         }
     }
 
+    struct CountingStructuredFirstActionTestModelV1 {
+        calls: Arc<Mutex<usize>>,
+    }
+
+    impl ShadowModelScorerV1 for CountingStructuredFirstActionTestModelV1 {
+        fn uses_structured_history_v1(&self) -> bool {
+            true
+        }
+
+        fn score_v1(
+            &self,
+            decision: FlatScoringDecisionViewV2<'_>,
+            _history: &[NativeStructuredHistoryEntryV1],
+            _acting_player: u8,
+        ) -> Result<ShadowModelOutputV1, ()> {
+            *self.calls.lock().map_err(|_| ())? += 1;
+            Ok(ShadowModelOutputV1 {
+                logits: (0..decision.actions().len())
+                    .map(|index| if index == 0 { 0.0 } else { -1_000.0 })
+                    .collect(),
+                value: 0.125,
+            })
+        }
+    }
+
     fn service_v1() -> ShadowScorerServiceV1 {
         ShadowScorerServiceV1::with_test_model_v1(Box::new(DeterministicTestModelV1))
     }
@@ -3023,6 +3319,32 @@ mod tests {
         history.accept_selected_v1(&scored, 0).unwrap();
         assert_eq!(history.completed.len(), 1);
         assert!(history.pending.is_none());
+    }
+
+    #[test]
+    fn depth8_branch_takes_eight_policy_decisions_before_bootstrap_v1() {
+        let calls = Arc::new(Mutex::new(0usize));
+        let mut service = ShadowScorerServiceV1::with_test_model_v1(Box::new(
+            CountingStructuredFirstActionTestModelV1 {
+                calls: Arc::clone(&calls),
+            },
+        ));
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("depth8-reset")));
+        assert_eq!(response["response_type"], "decision");
+        *calls.lock().unwrap() = 0;
+        let active = service.active.as_ref().expect("reset opens a session");
+        let scored = active.current.as_ref().expect("reset scores the root");
+        let value = ShadowScorerServiceV1::depth8_branch_value_v1(
+            service.model.as_ref(),
+            &active.session,
+            scored,
+            &active.structured_history.completed,
+            active.candidate_seat,
+            0,
+        )
+        .unwrap();
+        assert!(value.is_finite());
+        assert_eq!(*calls.lock().unwrap(), 9);
     }
 
     fn service_with_teacher_export_v1(

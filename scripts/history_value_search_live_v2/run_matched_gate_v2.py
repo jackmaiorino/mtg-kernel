@@ -33,7 +33,10 @@ PARENT_IDENTITY = {
     "model": "883e4882d01d9cb55ecd7a4ae00e3c95793b6147baf3df08650ef1fa7f8e9546",
 }
 PAIR_PREFIX = "XMAGE_RALLY_ANCHOR_PAIR PASS "
-DIAGNOSTIC_PREFIX = "NATIVE_ONE_STEP_HISTORY_VALUE "
+DIAGNOSTIC_PREFIXES = {
+    "one-step": "NATIVE_ONE_STEP_HISTORY_VALUE ",
+    "depth8": "NATIVE_DEPTH8_HISTORY_VALUE ",
+}
 KEY_VALUE = re.compile(r"([a-z_]+)=([^ ]+)")
 
 
@@ -180,11 +183,11 @@ def _read_pair(path: Path) -> dict[str, str]:
     return markers[0]
 
 
-def _search_diagnostics(path: Path) -> list[dict[str, str]]:
+def _search_diagnostics(path: Path, prefix: str) -> list[dict[str, str]]:
     rows = []
     with path.open("r", encoding="utf-8", errors="strict") as handle:
         for line in handle:
-            if line.startswith(DIAGNOSTIC_PREFIX):
+            if line.startswith(prefix):
                 rows.append(_fields(line))
     return rows
 
@@ -205,6 +208,7 @@ def _adjudicate(
     eligible = {"p0": 0, "p1": 0}
     overrides = {"p0": 0, "p1": 0}
     sample_violations = 0
+    diagnostic_contract_violations = 0
     matched_pairs = []
     for pair_index in accepted:
         search_task = task_results[(pair_index, "search")]
@@ -233,7 +237,9 @@ def _adjudicate(
                 losses += 1
             else:
                 ties += 1
-        diagnostics = _search_diagnostics(Path(search_task["log"]))
+        diagnostics = _search_diagnostics(
+            Path(search_task["log"]), DIAGNOSTIC_PREFIXES[args.selector]
+        )
         for row in diagnostics:
             episode = int(row["episode"])
             seat = "p0" if episode % 2 == 0 else "p1"
@@ -242,6 +248,8 @@ def _adjudicate(
             hashes = row.get("sampled_hashes", "").split(",")
             if row.get("information_set_samples") != "4" or len(hashes) != 4 or len(set(hashes)) != 4:
                 sample_violations += 1
+            if args.selector == "depth8" and row.get("continuation_steps") != "8":
+                diagnostic_contract_violations += 1
         matched_pairs.append(
             {
                 "pair_index": pair_index,
@@ -257,9 +265,11 @@ def _adjudicate(
         "p0_override": overrides["p0"] >= 1,
         "p1_override": overrides["p1"] >= 1,
         "sample_distinctness": sample_violations == 0,
+        "diagnostic_contract": diagnostic_contract_violations == 0,
     }
     return {
         "schema": "mtg-kernel-history-value-search-matched-gate-report/v2",
+        "selector": args.selector,
         "base_seed": args.base_seed,
         "accepted_pairs": accepted,
         "excluded_pairs": excluded,
@@ -275,6 +285,7 @@ def _adjudicate(
         "eligible_roots": eligible,
         "overrides": overrides,
         "sample_distinctness_violations": sample_violations,
+        "diagnostic_contract_violations": diagnostic_contract_violations,
         "gates": gates,
         "status": "pass" if all(gates.values()) else "fail",
     }
@@ -337,6 +348,7 @@ def _run(args: argparse.Namespace) -> int:
         surplus.extend(successful[remaining:])
         state = {
             "schema": "mtg-kernel-history-value-search-matched-gate-state/v2",
+            "selector": args.selector,
             "base_seed": args.base_seed,
             "target_pairs": args.target_pairs,
             "accepted_pairs": accepted,
@@ -383,6 +395,9 @@ def _self_test() -> int:
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument(
+        "--selector", choices=tuple(DIAGNOSTIC_PREFIXES), default="one-step"
+    )
     parser.add_argument("--evidence-root", type=Path)
     parser.add_argument("--base-seed", type=int)
     parser.add_argument("--target-pairs", type=int, default=8)
