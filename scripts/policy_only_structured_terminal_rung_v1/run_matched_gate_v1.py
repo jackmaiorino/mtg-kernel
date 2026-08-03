@@ -17,6 +17,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 sys.path.insert(0, str(QUALIFICATION_DIR))
 
 import run_matched_gate_v1 as qualification  # noqa: E402
+import fit_head_only_v1 as head_only  # noqa: E402
 import project_trust_region_v1 as projection  # noqa: E402
 import run_pipeline_v1 as pipeline  # noqa: E402
 
@@ -27,7 +28,7 @@ FORMAL_PAIRS = 1_024
 PROFILE_MAX_PAIRS = 64
 TOPOLOGIES = ("sequential", "parallel")
 FORMAL_SCORER_SHA256 = (
-    "dd37668190d8bda5354d12c5684009e805175f3e65511cd05e3127adda2ecf56"
+    "afa8025d4b2462a35894f1aa6f8a0c4a3086cead1741b01e1ad2560fe2a5a0ba"
 )
 
 
@@ -51,6 +52,11 @@ def _candidate_identity(root: Path) -> dict[str, Any]:
             projection.REPORT_SCHEMA,
             projection.COMPOSITE_DOMAIN,
             "xmage-cp7-outcome-structured-policy-successor-v3",
+        ),
+        head_only.CANDIDATE_SCHEMA: (
+            head_only.REPORT_SCHEMA,
+            head_only.COMPOSITE_DOMAIN,
+            "xmage-cp7-outcome-structured-policy-successor-v4",
         ),
     }
     contract = contracts.get(candidate.get("schema"))
@@ -268,6 +274,15 @@ def run(args: argparse.Namespace) -> int:
     if args.formal and _sha256(args.scorer) != FORMAL_SCORER_SHA256:
         raise RuntimeError("formal native scorer SHA-256 mismatch")
     args.candidate_identity = _candidate_identity(args.candidate_root)
+    if args.formal:
+        expected_seed = (
+            1_680_001
+            if args.candidate_identity["authority_kind"].endswith("-v4")
+            else FORMAL_BASE_SEED
+        )
+        if args.base_seed not in (None, expected_seed):
+            raise RuntimeError("formal base seed does not match candidate contract")
+        args.base_seed = expected_seed
     args.baseline_identity = qualification._candidate_identity(args.baseline_root)
     args.parent_root = args.baseline_root
     arm_results = qualification._run_arms(args)
@@ -316,14 +331,11 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--scorer", type=Path, default=qualification.SCORER)
     args = parser.parse_args()
     if args.profile_pairs is None:
-        if args.base_seed not in (None, FORMAL_BASE_SEED):
-            parser.error("formal base seed is fixed to 1670001")
         if args.pool_root != qualification.POOL_ROOT:
             parser.error("formal Pool3 root is fixed")
         if args.scorer != qualification.SCORER:
             parser.error("formal scorer path is fixed")
         args.formal = True
-        args.base_seed = FORMAL_BASE_SEED
         args.target_pairs = FORMAL_PAIRS
     else:
         if not 1 <= args.profile_pairs <= PROFILE_MAX_PAIRS:

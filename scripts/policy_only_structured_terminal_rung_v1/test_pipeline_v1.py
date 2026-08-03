@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 import finalize_transport_v1 as finalizer
+import fit_head_only_v1 as head_only
 import project_trust_region_v1 as projection
 import run_pipeline_v1 as pipeline
 import torch
@@ -29,6 +30,14 @@ def _metric(mean: float = 0.01, p90: float = 0.02, joint: float = 0.1) -> dict:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_head_only_frozen_state_excludes_exactly_policy_weight(self) -> None:
+        model = pipeline.distill._model()
+        frozen = head_only._frozen_state(model)
+        self.assertNotIn(head_only.TRAINABLE_PARAMETER, frozen)
+        self.assertIn("policy_head.bias", frozen)
+        self.assertIn("value_head.weight", frozen)
+        self.assertEqual(model.policy_head.weight.numel(), 48)
+
     def test_trust_projection_is_fixed_one_sixteenth_displacement(self) -> None:
         initial = {
             "weight": torch.tensor([0.0, 16.0], dtype=torch.float32),
