@@ -1,10 +1,11 @@
-//! Strict live inference for the fixed policy-only structured residual.
+//! Strict live inference for the fixed structured residual families.
 
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
 use crate::native_flat_tensorizer_v2::{
-    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2, NATIVE_FLAT_ACTION_FEATURE_DIM_V2,
-    NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2, NATIVE_FLAT_EDGE_FEATURE_DIM_V2,
-    NATIVE_FLAT_OBJECT_FEATURE_DIM_V2, NATIVE_FLAT_STATE_FEATURE_DIM_V2,
+    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2, NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2,
+    NATIVE_FLAT_ACTION_FEATURE_DIM_V2, NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2,
+    NATIVE_FLAT_EDGE_FEATURE_DIM_V2, NATIVE_FLAT_OBJECT_FEATURE_DIM_V2,
+    NATIVE_FLAT_STATE_FEATURE_DIM_V2,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1,
@@ -23,19 +24,28 @@ use std::io;
 use std::path::Path;
 
 const CANDIDATE_FILENAME_V1: &str = "structured_candidate.json";
+const HISTORY_CANDIDATE_FILENAME_V1: &str = "structured_history_candidate.json";
 const REPORT_FILENAME_V1: &str = "report.json";
 const WEIGHTS_FILENAME_V1: &str = "weights.f32le";
 const PARENT_DIRECTORY_V1: &str = "parent";
 const PARENT_MANIFEST_FILENAME_V1: &str = "checkpoint.json";
 const PARENT_STATE_FILENAME_V1: &str = "checkpoint.state.f32le";
 const CANDIDATE_SCHEMA_V1: &str = "mtg-kernel-structured-policy-residual-candidate/v1";
+const HISTORY_CANDIDATE_SCHEMA_V1: &str =
+    "mtg-kernel-structured-history-policy-value-residual-candidate/v1";
 const REPORT_SCHEMA_V1: &str = "mtg-kernel-structured-policy-residual-fit/v1";
+const HISTORY_REPORT_SCHEMA_V1: &str = "mtg-kernel-structured-history-policy-value-residual-fit/v1";
 const PUBLICATION_ENCODING_V1: &str = "json-pretty-sorted-utf8-trailing-lf/v1";
 const WEIGHTS_ENCODING_V1: &str = "ordered-row-major-finite-f32-little-endian/v1";
 const ARCHITECTURE_V1: &str = "stateless-structured-object-action-attention-policy-residual/v1";
+const HISTORY_ARCHITECTURE_V1: &str =
+    "complete-public-history-structured-object-action-attention-policy-value-residual/v1";
 const VALUE_MODEL_V1: &str = "exact-parent-unchanged";
 const REPORT_VALUE_MODEL_V1: &str = "exact-retained-parent-unchanged";
+const HISTORY_VALUE_MODEL_V1: &str = "joint-terminal-residual/v1";
 const COMPOSITE_DOMAIN_V1: &[u8] = b"mtg-kernel-structured-policy-residual-composite-model/v1";
+const HISTORY_COMPOSITE_DOMAIN_V1: &[u8] =
+    b"mtg-kernel-structured-history-policy-value-residual-composite-model/v1";
 const PARENT_MANIFEST_SHA256_V1: &str =
     "706b3aa80ec7a3c067d458fef06bb2237320543f202fb2349c5cb885975fdbbb";
 const PARENT_PAYLOAD_SHA256_V1: &str =
@@ -46,11 +56,16 @@ const PARENT_MODEL_PARAMETER_SHA256_V1: &str =
     "883e4882d01d9cb55ecd7a4ae00e3c95793b6147baf3df08650ef1fa7f8e9546";
 const PARENT_ADAM_STEP_V1: u64 = 1;
 const HIDDEN_DIM_V1: usize = 48;
-const CARD_VOCAB_V1: usize = 136;
+pub(crate) const CARD_VOCAB_V1: usize = 136;
 const CARD_EMBEDDING_DIM_V1: usize = 24;
 const GROUP_VOCAB_V1: usize = 7;
 const GROUP_EMBEDDING_DIM_V1: usize = 16;
 const PARAMETER_COUNT_V1: usize = 63_521;
+pub(crate) const HISTORY_LENGTH_V1: usize = 16;
+const HISTORY_ROLE_DIM_V1: usize = 2;
+const HISTORY_FEATURE_DIM_V1: usize =
+    NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2 + HISTORY_ROLE_DIM_V1 + CARD_VOCAB_V1;
+const HISTORY_PARAMETER_COUNT_V1: usize = 107_298;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -89,6 +104,12 @@ struct ArchitectureV1 {
     card_embedding_dim: usize,
     group_vocab: usize,
     group_embedding_dim: usize,
+    #[serde(default)]
+    history_length: Option<usize>,
+    #[serde(default)]
+    history_feature_dim: Option<usize>,
+    #[serde(default)]
+    history_role_dim: Option<usize>,
     value_model: String,
 }
 
@@ -124,6 +145,35 @@ struct TensorV1 {
     values: Vec<f32>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativeStructuredHistoryEntryV1 {
+    acting_player: u8,
+    action_explicit_features: [f32; NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2],
+    public_card_histogram: [f32; CARD_VOCAB_V1],
+}
+
+impl NativeStructuredHistoryEntryV1 {
+    pub(crate) fn new_v1(
+        acting_player: u8,
+        action_explicit_features: [f32; NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2],
+        public_card_histogram: [f32; CARD_VOCAB_V1],
+    ) -> Result<Self, ()> {
+        if acting_player > 1
+            || action_explicit_features
+                .iter()
+                .any(|value| !value.is_finite())
+            || public_card_histogram.iter().any(|value| !value.is_finite())
+        {
+            return Err(());
+        }
+        Ok(Self {
+            acting_player,
+            action_explicit_features,
+            public_card_histogram,
+        })
+    }
+}
+
 pub(crate) struct NativeStructuredPolicyResidualOutputV1 {
     logits: Vec<f32>,
     value: f32,
@@ -146,6 +196,7 @@ pub(crate) struct NativeStructuredPolicyResidualInferenceV1 {
     weights_sha256: [u8; 32],
     report_sha256: [u8; 32],
     composite_model_parameter_sha256: [u8; 32],
+    history_aware: bool,
 }
 
 impl NativeStructuredPolicyResidualInferenceV1 {
@@ -169,6 +220,10 @@ impl NativeStructuredPolicyResidualInferenceV1 {
         self.parent.adam_step_v1()
     }
 
+    pub(crate) const fn is_history_aware_v1(&self) -> bool {
+        self.history_aware
+    }
+
     pub(crate) fn score_decision_v1(
         &self,
         decision: FlatScoringDecisionViewV2<'_>,
@@ -183,23 +238,58 @@ impl NativeStructuredPolicyResidualInferenceV1 {
         if parent.logits_v1().len() != action_count {
             return Err(());
         }
-        let residual = structured_residual_v1(&self.parameters, &tensor)?;
-        if residual.len() != action_count {
+        self.score_tensor_v1(parent, tensor, action_count, &[], 0)
+    }
+
+    pub(crate) fn score_decision_with_history_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        history: &[NativeStructuredHistoryEntryV1],
+        acting_player: u8,
+    ) -> Result<NativeStructuredPolicyResidualOutputV1, ()> {
+        let action_count = decision.actions().len();
+        let mut tensorizer = NativeFlatTensorizerV2::new();
+        let mut tensor = NativeFlatDecisionTensorV2::default();
+        tensorizer.fill(decision, &mut tensor).map_err(|_| ())?;
+        let parent = self
+            .parent
+            .score_encoded_decision_v1(tensor_view_v1(&tensor))?;
+        if parent.logits_v1().len() != action_count {
+            return Err(());
+        }
+        self.score_tensor_v1(parent, tensor, action_count, history, acting_player)
+    }
+
+    fn score_tensor_v1(
+        &self,
+        parent: crate::native_xmage_cp7_outcome_reinforce_v1::NativeXmageCp7OutcomeInferenceOutputV1,
+        tensor: NativeFlatDecisionTensorV2,
+        action_count: usize,
+        history: &[NativeStructuredHistoryEntryV1],
+        acting_player: u8,
+    ) -> Result<NativeStructuredPolicyResidualOutputV1, ()> {
+        if acting_player > 1 {
+            return Err(());
+        }
+        let residual = structured_residual_v1(
+            &self.parameters,
+            &tensor,
+            self.history_aware.then_some((history, acting_player)),
+        )?;
+        if residual.logits.len() != action_count {
             return Err(());
         }
         let logits = parent
             .logits_v1()
             .iter()
-            .zip(residual)
+            .zip(residual.logits)
             .map(|(parent, residual)| parent + residual)
             .collect::<Vec<_>>();
-        if logits.iter().any(|value| !value.is_finite()) {
+        let value = parent.value_v1() + residual.value.unwrap_or(0.0);
+        if logits.iter().any(|value| !value.is_finite()) || !value.is_finite() {
             return Err(());
         }
-        Ok(NativeStructuredPolicyResidualOutputV1 {
-            logits,
-            value: parent.value_v1(),
-        })
+        Ok(NativeStructuredPolicyResidualOutputV1 { logits, value })
     }
 }
 
@@ -249,6 +339,43 @@ fn expected_parameters_v1() -> Vec<(&'static str, Vec<usize>)> {
         ("combine.2.bias", vec![48]),
         ("policy_head.weight", vec![1, 48]),
         ("policy_head.bias", vec![1]),
+    ]
+}
+
+fn expected_history_parameters_v1() -> Vec<(&'static str, Vec<usize>)> {
+    vec![
+        ("state.0.weight", vec![48, 219]),
+        ("state.0.bias", vec![48]),
+        ("state.2.weight", vec![48, 48]),
+        ("state.2.bias", vec![48]),
+        ("history.weight_ih_l0", vec![144, 237]),
+        ("history.weight_hh_l0", vec![144, 48]),
+        ("history.bias_ih_l0", vec![144]),
+        ("history.bias_hh_l0", vec![144]),
+        ("history_mix.weight", vec![48, 48]),
+        ("object.0.weight", vec![48, 138]),
+        ("object.0.bias", vec![48]),
+        ("card.weight", vec![136, 24]),
+        ("group.weight", vec![7, 16]),
+        ("edge.0.weight", vec![48, 89]),
+        ("edge.0.bias", vec![48]),
+        ("edge.2.weight", vec![48, 48]),
+        ("edge.2.bias", vec![48]),
+        ("group_mix.weight", vec![48, 48]),
+        ("action.0.weight", vec![48, 195]),
+        ("action.0.bias", vec![48]),
+        ("ref.0.weight", vec![48, 73]),
+        ("ref.0.bias", vec![48]),
+        ("query.weight", vec![48, 96]),
+        ("query.bias", vec![48]),
+        ("combine.0.weight", vec![48, 240]),
+        ("combine.0.bias", vec![48]),
+        ("combine.2.weight", vec![48, 48]),
+        ("combine.2.bias", vec![48]),
+        ("policy_head.weight", vec![1, 48]),
+        ("policy_head.bias", vec![1]),
+        ("value_head.weight", vec![1, 144]),
+        ("value_head.bias", vec![1]),
     ]
 }
 
@@ -330,10 +457,69 @@ fn checked_index_v1(value: i64, count: usize) -> Result<usize, ()> {
     (value < count).then_some(value).ok_or(())
 }
 
+struct StructuredResidualV1 {
+    logits: Vec<f32>,
+    value: Option<f32>,
+}
+
+fn sigmoid_v1(value: f32) -> f32 {
+    1.0 / (1.0 + (-value).exp())
+}
+
+fn history_hidden_v1(
+    parameters: &BTreeMap<String, TensorV1>,
+    history: &[NativeStructuredHistoryEntryV1],
+    acting_player: u8,
+) -> Result<Vec<f32>, ()> {
+    if acting_player > 1 || history.len() > HISTORY_LENGTH_V1 {
+        return Err(());
+    }
+    let mut hidden = vec![0.0f32; HIDDEN_DIM_V1];
+    for entry in history {
+        let mut input = Vec::with_capacity(HISTORY_FEATURE_DIM_V1);
+        input.extend_from_slice(&entry.action_explicit_features);
+        input.push(f32::from(entry.acting_player == acting_player));
+        input.push(f32::from(entry.acting_player != acting_player));
+        input.extend_from_slice(&entry.public_card_histogram);
+        let input_gates = named_linear_v1(
+            parameters,
+            "history.weight_ih_l0",
+            Some("history.bias_ih_l0"),
+            &input,
+        )?;
+        let hidden_gates = named_linear_v1(
+            parameters,
+            "history.weight_hh_l0",
+            Some("history.bias_hh_l0"),
+            &hidden,
+        )?;
+        if input_gates.len() != HIDDEN_DIM_V1 * 3 || hidden_gates.len() != HIDDEN_DIM_V1 * 3 {
+            return Err(());
+        }
+        let mut next = vec![0.0f32; HIDDEN_DIM_V1];
+        for index in 0..HIDDEN_DIM_V1 {
+            let reset = sigmoid_v1(input_gates[index] + hidden_gates[index]);
+            let update = sigmoid_v1(
+                input_gates[HIDDEN_DIM_V1 + index] + hidden_gates[HIDDEN_DIM_V1 + index],
+            );
+            let new = (input_gates[HIDDEN_DIM_V1 * 2 + index]
+                + reset * hidden_gates[HIDDEN_DIM_V1 * 2 + index])
+                .tanh();
+            next[index] = (1.0 - update) * new + update * hidden[index];
+        }
+        if next.iter().any(|value| !value.is_finite()) {
+            return Err(());
+        }
+        hidden = next;
+    }
+    Ok(hidden)
+}
+
 fn structured_residual_v1(
     parameters: &BTreeMap<String, TensorV1>,
     tensor: &NativeFlatDecisionTensorV2,
-) -> Result<Vec<f32>, ()> {
+    history: Option<(&[NativeStructuredHistoryEntryV1], u8)>,
+) -> Result<StructuredResidualV1, ()> {
     if tensor.state.len() != NATIVE_FLAT_STATE_FEATURE_DIM_V2
         || tensor.object_card_ids.is_empty()
         || tensor.object_groups.len() != tensor.object_card_ids.len()
@@ -377,6 +563,13 @@ fn structured_residual_v1(
     tanh_v1(&mut state_h);
     state_h = named_linear_v1(parameters, "state.2.weight", Some("state.2.bias"), &state_h)?;
     tanh_v1(&mut state_h);
+    if let Some((history, acting_player)) = history {
+        let history_h = history_hidden_v1(parameters, history, acting_player)?;
+        let mixed = named_linear_v1(parameters, "history_mix.weight", None, &history_h)?;
+        for (state, value) in state_h.iter_mut().zip(mixed) {
+            *state += value;
+        }
+    }
 
     let card_embedding = parameter_v1(parameters, "card.weight")?;
     let group_embedding = parameter_v1(parameters, "group.weight")?;
@@ -488,6 +681,7 @@ fn structured_residual_v1(
     }
 
     let mut residual = Vec::with_capacity(action_count);
+    let mut joints = Vec::with_capacity(action_count);
     let inverse_root_width = 1.0 / (HIDDEN_DIM_V1 as f32).sqrt();
     for action in 0..action_count {
         let mut query_input = Vec::with_capacity(HIDDEN_DIM_V1 * 2);
@@ -553,11 +747,63 @@ fn structured_residual_v1(
             &joint,
         )?;
         residual.push(output[0]);
+        joints.push(joint);
     }
     if residual.iter().any(|value| !value.is_finite()) {
         return Err(());
     }
-    Ok(residual)
+    let value = if history.is_some() {
+        let mut object_mean = vec![0.0f32; HIDDEN_DIM_V1];
+        for object in &object_h {
+            for (sum, value) in object_mean.iter_mut().zip(object) {
+                *sum += value;
+            }
+        }
+        for value in &mut object_mean {
+            *value /= object_count as f32;
+        }
+        let mut group_mean = vec![0.0f32; HIDDEN_DIM_V1];
+        for group in &pooled {
+            for (sum, value) in group_mean.iter_mut().zip(group) {
+                *sum += value;
+            }
+        }
+        for value in &mut group_mean {
+            *value /= GROUP_VOCAB_V1 as f32;
+        }
+        let mut action_mean = vec![0.0f32; HIDDEN_DIM_V1];
+        for joint in &joints {
+            for (sum, value) in action_mean.iter_mut().zip(joint) {
+                *sum += value;
+            }
+        }
+        for value in &mut action_mean {
+            *value /= action_count as f32;
+        }
+        let mut input = Vec::with_capacity(HIDDEN_DIM_V1 * 3);
+        input.extend_from_slice(&state_h);
+        input.extend(
+            object_mean
+                .iter()
+                .zip(group_mean)
+                .map(|(object, group)| object + group),
+        );
+        input.extend_from_slice(&action_mean);
+        Some(
+            named_linear_v1(
+                parameters,
+                "value_head.weight",
+                Some("value_head.bias"),
+                &input,
+            )?[0],
+        )
+    } else {
+        None
+    };
+    Ok(StructuredResidualV1 {
+        logits: residual,
+        value,
+    })
 }
 
 fn raw_sha256_v1(bytes: &[u8]) -> [u8; 32] {
@@ -595,6 +841,7 @@ fn validate_report_v1(
     report: &Value,
     weights_sha256: [u8; 32],
     composite_sha256: [u8; 32],
+    history_aware: bool,
 ) -> Result<(), Box<dyn Error>> {
     let config = report
         .get("config")
@@ -641,28 +888,54 @@ fn validate_report_v1(
         .get("mean_total_variation")
         .and_then(Value::as_f64)
         .unwrap_or(f64::NAN);
-    if report.get("schema").and_then(Value::as_str) != Some(REPORT_SCHEMA_V1)
-        || config.get("architecture").and_then(Value::as_str) != Some(ARCHITECTURE_V1)
-        || config.get("value_model").and_then(Value::as_str) != Some(REPORT_VALUE_MODEL_V1)
-        || !exact_number("dim", HIDDEN_DIM_V1 as u64)
+    let common_invalid = !exact_number("dim", HIDDEN_DIM_V1 as u64)
         || !exact_number("card_vocab", CARD_VOCAB_V1 as u64)
         || !exact_number("group_vocab", GROUP_VOCAB_V1 as u64)
-        || !exact_number("epochs", 20)
-        || !exact_number("batch_size", 32)
         || !exact_number("seed", 20_260_802)
         || !exact_float("learning_rate", 3.0e-4)
         || !exact_float("weight_decay", 1.0e-4)
-        || !exact_float("target_mean_total_variation", 0.02)
         || !movement_finite
         || !seat_positive
-        || mean_tv > 0.020_000_000_001
         || report.get("weights_sha256").and_then(Value::as_str)
             != Some(lower_hex_v1(weights_sha256).as_str())
         || report
             .get("composite_model_parameter_sha256")
             .and_then(Value::as_str)
-            != Some(lower_hex_v1(composite_sha256).as_str())
-    {
+            != Some(lower_hex_v1(composite_sha256).as_str());
+    let family_invalid = if history_aware {
+        let value_seats = report
+            .pointer("/value_metrics/by_candidate_seat")
+            .and_then(Value::as_object);
+        report.get("schema").and_then(Value::as_str) != Some(HISTORY_REPORT_SCHEMA_V1)
+            || config.get("architecture").and_then(Value::as_str)
+                != Some(HISTORY_ARCHITECTURE_V1)
+            || config.get("value_model").and_then(Value::as_str)
+                != Some(HISTORY_VALUE_MODEL_V1)
+            || !exact_number("epochs", 5)
+            || !exact_number("batch_size", 64)
+            || !exact_number("history_length", HISTORY_LENGTH_V1 as u64)
+            || !exact_number("history_feature_dim", HISTORY_FEATURE_DIM_V1 as u64)
+            || !exact_float("residual_scale", 1.0)
+            || value_seats.is_none_or(|seats| {
+                ["0", "1"].into_iter().any(|seat| {
+                    let Some(metrics) = seats.get(seat) else {
+                        return true;
+                    };
+                    let parent = metrics.get("parent_mse").and_then(Value::as_f64);
+                    let candidate = metrics.get("candidate_mse").and_then(Value::as_f64);
+                    !matches!((parent, candidate), (Some(parent), Some(candidate)) if parent.is_finite() && candidate.is_finite() && candidate < parent)
+                })
+            })
+    } else {
+        report.get("schema").and_then(Value::as_str) != Some(REPORT_SCHEMA_V1)
+            || config.get("architecture").and_then(Value::as_str) != Some(ARCHITECTURE_V1)
+            || config.get("value_model").and_then(Value::as_str) != Some(REPORT_VALUE_MODEL_V1)
+            || !exact_number("epochs", 20)
+            || !exact_number("batch_size", 32)
+            || !exact_float("target_mean_total_variation", 0.02)
+            || mean_tv > 0.020_000_000_001
+    };
+    if common_invalid || family_invalid {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "structured report semantic mismatch",
@@ -672,7 +945,7 @@ fn validate_report_v1(
     Ok(())
 }
 
-fn validate_inventory_v1(root: &Path) -> Result<(), Box<dyn Error>> {
+fn validate_inventory_v1(root: &Path, candidate_filename: &str) -> Result<(), Box<dyn Error>> {
     let mut files = BTreeSet::new();
     let mut directories = BTreeSet::new();
     for entry in fs::read_dir(root)? {
@@ -695,7 +968,7 @@ fn validate_inventory_v1(root: &Path) -> Result<(), Box<dyn Error>> {
     }
     if files
         != BTreeSet::from([
-            CANDIDATE_FILENAME_V1.to_owned(),
+            candidate_filename.to_owned(),
             REPORT_FILENAME_V1.to_owned(),
             WEIGHTS_FILENAME_V1.to_owned(),
         ])
@@ -713,8 +986,22 @@ fn validate_inventory_v1(root: &Path) -> Result<(), Box<dyn Error>> {
 pub(crate) fn load_native_structured_policy_residual_inference_v1(
     root: &Path,
 ) -> Result<NativeStructuredPolicyResidualInferenceV1, Box<dyn Error>> {
-    validate_inventory_v1(root)?;
-    let candidate_bytes = fs::read(root.join(CANDIDATE_FILENAME_V1))?;
+    let stateless_exists = root.join(CANDIDATE_FILENAME_V1).try_exists()?;
+    let history_aware = root.join(HISTORY_CANDIDATE_FILENAME_V1).try_exists()?;
+    if stateless_exists == history_aware {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "structured root must contain exactly one candidate family",
+        )
+        .into());
+    }
+    let candidate_filename = if history_aware {
+        HISTORY_CANDIDATE_FILENAME_V1
+    } else {
+        CANDIDATE_FILENAME_V1
+    };
+    validate_inventory_v1(root, candidate_filename)?;
+    let candidate_bytes = fs::read(root.join(candidate_filename))?;
     let candidate: CandidateV1 = serde_json::from_value(strict_json_value_v1(&candidate_bytes)?)?;
     let report_bytes = fs::read(root.join(REPORT_FILENAME_V1))?;
     let report = strict_json_value_v1(&report_bytes)?;
@@ -724,11 +1011,44 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
     let weights_sha256 = raw_sha256_v1(&weights_bytes);
     let parent_model_sha256 = parse_lower_hex32_v1(PARENT_MODEL_PARAMETER_SHA256_V1)?;
     let mut composite_hasher = Sha256::new();
-    composite_hasher.update(COMPOSITE_DOMAIN_V1);
+    composite_hasher.update(if history_aware {
+        HISTORY_COMPOSITE_DOMAIN_V1
+    } else {
+        COMPOSITE_DOMAIN_V1
+    });
     composite_hasher.update(parent_model_sha256);
     composite_hasher.update(&weights_bytes);
     let composite_sha256: [u8; 32] = composite_hasher.finalize().into();
-    if candidate.schema != CANDIDATE_SCHEMA_V1
+    let expected_schema = if history_aware {
+        HISTORY_CANDIDATE_SCHEMA_V1
+    } else {
+        CANDIDATE_SCHEMA_V1
+    };
+    let expected_architecture = if history_aware {
+        HISTORY_ARCHITECTURE_V1
+    } else {
+        ARCHITECTURE_V1
+    };
+    let expected_value_model = if history_aware {
+        HISTORY_VALUE_MODEL_V1
+    } else {
+        VALUE_MODEL_V1
+    };
+    let expected_parameter_count = if history_aware {
+        HISTORY_PARAMETER_COUNT_V1
+    } else {
+        PARAMETER_COUNT_V1
+    };
+    let history_binding_invalid = if history_aware {
+        candidate.architecture.history_length != Some(HISTORY_LENGTH_V1)
+            || candidate.architecture.history_feature_dim != Some(HISTORY_FEATURE_DIM_V1)
+            || candidate.architecture.history_role_dim != Some(HISTORY_ROLE_DIM_V1)
+    } else {
+        candidate.architecture.history_length.is_some()
+            || candidate.architecture.history_feature_dim.is_some()
+            || candidate.architecture.history_role_dim.is_some()
+    };
+    if candidate.schema != expected_schema
         || candidate.publication_encoding != PUBLICATION_ENCODING_V1
         || candidate.parent.directory != PARENT_DIRECTORY_V1
         || candidate.parent.manifest_sha256 != PARENT_MANIFEST_SHA256_V1
@@ -736,7 +1056,7 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
         || candidate.parent.native_state_sha256 != PARENT_NATIVE_STATE_SHA256_V1
         || candidate.parent.model_parameter_sha256 != PARENT_MODEL_PARAMETER_SHA256_V1
         || candidate.parent.adam_step != PARENT_ADAM_STEP_V1
-        || candidate.architecture.identity != ARCHITECTURE_V1
+        || candidate.architecture.identity != expected_architecture
         || candidate.architecture.state_dim != NATIVE_FLAT_STATE_FEATURE_DIM_V2
         || candidate.architecture.object_dim != NATIVE_FLAT_OBJECT_FEATURE_DIM_V2
         || candidate.architecture.edge_dim != NATIVE_FLAT_EDGE_FEATURE_DIM_V2
@@ -747,13 +1067,14 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
         || candidate.architecture.card_embedding_dim != CARD_EMBEDDING_DIM_V1
         || candidate.architecture.group_vocab != GROUP_VOCAB_V1
         || candidate.architecture.group_embedding_dim != GROUP_EMBEDDING_DIM_V1
-        || candidate.architecture.value_model != VALUE_MODEL_V1
+        || candidate.architecture.value_model != expected_value_model
+        || history_binding_invalid
         || candidate.weights.filename != WEIGHTS_FILENAME_V1
         || candidate.weights.encoding != WEIGHTS_ENCODING_V1
         || candidate.weights.sha256 != lower_hex_v1(weights_sha256)
         || candidate.weights.byte_count != weights_bytes.len()
-        || candidate.weights.parameter_count != PARAMETER_COUNT_V1
-        || candidate.weights.byte_count != PARAMETER_COUNT_V1 * size_of::<f32>()
+        || candidate.weights.parameter_count != expected_parameter_count
+        || candidate.weights.byte_count != expected_parameter_count * size_of::<f32>()
         || candidate.report.filename != REPORT_FILENAME_V1
         || candidate.report.sha256 != lower_hex_v1(report_sha256)
         || candidate.composite_model_parameter_sha256 != lower_hex_v1(composite_sha256)
@@ -764,9 +1085,13 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
         )
         .into());
     }
-    validate_report_v1(&report, weights_sha256, composite_sha256)?;
+    validate_report_v1(&report, weights_sha256, composite_sha256, history_aware)?;
 
-    let expected = expected_parameters_v1();
+    let expected = if history_aware {
+        expected_history_parameters_v1()
+    } else {
+        expected_parameters_v1()
+    };
     if candidate.weights.parameters.len() != expected.len() {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "parameter list mismatch").into());
     }
@@ -774,7 +1099,7 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
         .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four-byte chunk")))
         .collect::<Vec<_>>();
-    if values.len() != PARAMETER_COUNT_V1 || values.iter().any(|value| !value.is_finite()) {
+    if values.len() != expected_parameter_count || values.iter().any(|value| !value.is_finite()) {
         return Err(
             io::Error::new(io::ErrorKind::InvalidData, "invalid structured weights").into(),
         );
@@ -808,7 +1133,7 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
         );
         offset += count;
     }
-    if offset != PARAMETER_COUNT_V1 {
+    if offset != expected_parameter_count {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "parameter count mismatch").into());
     }
 
@@ -851,6 +1176,7 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
         weights_sha256,
         report_sha256,
         composite_model_parameter_sha256: composite_sha256,
+        history_aware,
     })
 }
 
@@ -868,6 +1194,15 @@ mod tests {
     }
 
     #[test]
+    fn history_parameter_layout_is_exact_v1() {
+        let mut offset = 0usize;
+        for (_, shape) in expected_history_parameters_v1() {
+            offset += shape.into_iter().product::<usize>();
+        }
+        assert_eq!(offset, HISTORY_PARAMETER_COUNT_V1);
+    }
+
+    #[test]
     fn linear_uses_row_major_weight_and_bias_v1() {
         let weight = TensorV1 {
             shape: vec![2, 3],
@@ -881,6 +1216,62 @@ mod tests {
             linear_v1(&weight, Some(&bias), &[2.0, 3.0, 4.0]).unwrap(),
             vec![20.25, 7.0]
         );
+    }
+
+    #[test]
+    fn history_gru_uses_pytorch_gate_order_v1() {
+        let mut parameters = BTreeMap::new();
+        parameters.insert(
+            "history.weight_ih_l0".to_owned(),
+            TensorV1 {
+                shape: vec![HIDDEN_DIM_V1 * 3, HISTORY_FEATURE_DIM_V1],
+                values: vec![0.0; HIDDEN_DIM_V1 * 3 * HISTORY_FEATURE_DIM_V1],
+            },
+        );
+        parameters.insert(
+            "history.weight_hh_l0".to_owned(),
+            TensorV1 {
+                shape: vec![HIDDEN_DIM_V1 * 3, HIDDEN_DIM_V1],
+                values: vec![0.0; HIDDEN_DIM_V1 * 3 * HIDDEN_DIM_V1],
+            },
+        );
+        let mut input_bias = vec![0.0; HIDDEN_DIM_V1 * 3];
+        input_bias[..HIDDEN_DIM_V1].fill(0.2);
+        input_bias[HIDDEN_DIM_V1..HIDDEN_DIM_V1 * 2].fill(-0.4);
+        input_bias[HIDDEN_DIM_V1 * 2..].fill(0.3);
+        parameters.insert(
+            "history.bias_ih_l0".to_owned(),
+            TensorV1 {
+                shape: vec![HIDDEN_DIM_V1 * 3],
+                values: input_bias,
+            },
+        );
+        let mut hidden_bias = vec![0.0; HIDDEN_DIM_V1 * 3];
+        hidden_bias[..HIDDEN_DIM_V1].fill(0.1);
+        hidden_bias[HIDDEN_DIM_V1..HIDDEN_DIM_V1 * 2].fill(0.2);
+        hidden_bias[HIDDEN_DIM_V1 * 2..].fill(-0.2);
+        parameters.insert(
+            "history.bias_hh_l0".to_owned(),
+            TensorV1 {
+                shape: vec![HIDDEN_DIM_V1 * 3],
+                values: hidden_bias,
+            },
+        );
+        let entry = NativeStructuredHistoryEntryV1::new_v1(
+            0,
+            [0.0; NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2],
+            [0.0; CARD_VOCAB_V1],
+        )
+        .unwrap();
+        let observed = history_hidden_v1(&parameters, &[entry.clone(), entry], 1).unwrap();
+        let reset = sigmoid_v1(0.3);
+        let update = sigmoid_v1(-0.2);
+        let new = (0.3 + reset * -0.2).tanh();
+        let first = (1.0 - update) * new;
+        let expected = (1.0 - update) * new + update * first;
+        assert!(observed
+            .iter()
+            .all(|value| (*value - expected).abs() <= 1.0e-7));
     }
 
     #[test]

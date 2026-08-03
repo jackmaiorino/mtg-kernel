@@ -23,14 +23,16 @@ use crate::native_cp7_behavior_clone_v1::{
     load_cp7_behavior_clone_inference_v1, NativeCp7BehaviorCloneInferenceV1,
 };
 use crate::native_flat_tensorizer_v2::{
-    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2,
-    NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2, NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2, NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2,
+    NATIVE_FLAT_ACTION_FEATURE_DIM_V2, NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
+    NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
 };
 use crate::native_ladder_pool_resolution_v1::{
     resolve_ladder_checkpoint_authority_v1, stage_ladder_checkpoint_ref_v1,
 };
 use crate::native_structured_policy_residual_v1::{
-    load_native_structured_policy_residual_inference_v1, NativeStructuredPolicyResidualInferenceV1,
+    load_native_structured_policy_residual_inference_v1, NativeStructuredHistoryEntryV1,
+    NativeStructuredPolicyResidualInferenceV1, CARD_VOCAB_V1, HISTORY_LENGTH_V1,
 };
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
@@ -456,7 +458,16 @@ struct ShadowModelOutputV1 {
 }
 
 trait ShadowModelScorerV1 {
-    fn score_v1(&self, decision: FlatScoringDecisionViewV2<'_>) -> Result<ShadowModelOutputV1, ()>;
+    fn uses_structured_history_v1(&self) -> bool {
+        false
+    }
+
+    fn score_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        history: &[NativeStructuredHistoryEntryV1],
+        acting_player: u8,
+    ) -> Result<ShadowModelOutputV1, ()>;
 }
 
 struct NativeShadowModelScorerV1 {
@@ -464,7 +475,12 @@ struct NativeShadowModelScorerV1 {
 }
 
 impl ShadowModelScorerV1 for NativeShadowModelScorerV1 {
-    fn score_v1(&self, decision: FlatScoringDecisionViewV2<'_>) -> Result<ShadowModelOutputV1, ()> {
+    fn score_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        _history: &[NativeStructuredHistoryEntryV1],
+        _acting_player: u8,
+    ) -> Result<ShadowModelOutputV1, ()> {
         let output: NativeCheckpointInferenceOutputV1 =
             self.inference.score_decision_v1(decision).map_err(|_| ())?;
         Ok(ShadowModelOutputV1 {
@@ -491,7 +507,12 @@ struct NativeStructuredPolicyResidualShadowModelScorerV1 {
 }
 
 impl ShadowModelScorerV1 for XmageCp7OutcomeShadowModelScorerV1 {
-    fn score_v1(&self, decision: FlatScoringDecisionViewV2<'_>) -> Result<ShadowModelOutputV1, ()> {
+    fn score_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        _history: &[NativeStructuredHistoryEntryV1],
+        _acting_player: u8,
+    ) -> Result<ShadowModelOutputV1, ()> {
         let output = self.inference.score_decision_v1(decision)?;
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
@@ -501,7 +522,12 @@ impl ShadowModelScorerV1 for XmageCp7OutcomeShadowModelScorerV1 {
 }
 
 impl ShadowModelScorerV1 for NativeRank1PolicyResidualShadowModelScorerV1 {
-    fn score_v1(&self, decision: FlatScoringDecisionViewV2<'_>) -> Result<ShadowModelOutputV1, ()> {
+    fn score_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        _history: &[NativeStructuredHistoryEntryV1],
+        _acting_player: u8,
+    ) -> Result<ShadowModelOutputV1, ()> {
         let output = self.inference.score_decision_v1(decision)?;
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
@@ -511,8 +537,19 @@ impl ShadowModelScorerV1 for NativeRank1PolicyResidualShadowModelScorerV1 {
 }
 
 impl ShadowModelScorerV1 for NativeStructuredPolicyResidualShadowModelScorerV1 {
-    fn score_v1(&self, decision: FlatScoringDecisionViewV2<'_>) -> Result<ShadowModelOutputV1, ()> {
-        let output = self.inference.score_decision_v1(decision)?;
+    fn uses_structured_history_v1(&self) -> bool {
+        self.inference.is_history_aware_v1()
+    }
+
+    fn score_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        history: &[NativeStructuredHistoryEntryV1],
+        acting_player: u8,
+    ) -> Result<ShadowModelOutputV1, ()> {
+        let output =
+            self.inference
+                .score_decision_with_history_v1(decision, history, acting_player)?;
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
             value: output.value_v1(),
@@ -521,7 +558,12 @@ impl ShadowModelScorerV1 for NativeStructuredPolicyResidualShadowModelScorerV1 {
 }
 
 impl ShadowModelScorerV1 for Cp7BehaviorCloneShadowModelScorerV1 {
-    fn score_v1(&self, decision: FlatScoringDecisionViewV2<'_>) -> Result<ShadowModelOutputV1, ()> {
+    fn score_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        _history: &[NativeStructuredHistoryEntryV1],
+        _acting_player: u8,
+    ) -> Result<ShadowModelOutputV1, ()> {
         let output = self.inference.score_decision_v1(decision)?;
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
@@ -546,6 +588,118 @@ struct ScoredCurrentDecisionV1 {
     selected_action_index: Option<u32>,
 }
 
+fn player_seat_index_v1(seat: PlayerSeatV1) -> u8 {
+    match seat {
+        PlayerSeatV1::P0 => 0,
+        PlayerSeatV1::P1 => 1,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PendingStructuredHistoryEntryV1 {
+    physical_decision_id: u64,
+    acting_player: PlayerSeatV1,
+    substep_count: u32,
+    observed_substeps: u32,
+    action_sum: [f32; NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2],
+    public_card_sum: [f32; CARD_VOCAB_V1],
+    public_card_count: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct StructuredHistoryStateV1 {
+    completed: Vec<NativeStructuredHistoryEntryV1>,
+    pending: Option<PendingStructuredHistoryEntryV1>,
+}
+
+impl StructuredHistoryStateV1 {
+    fn accept_selected_v1(
+        &mut self,
+        scored: &ScoredCurrentDecisionV1,
+        selected_index: u32,
+    ) -> Result<(), ()> {
+        let expected = scored.expected;
+        if expected.substep_count == 0 || expected.substep_index >= expected.substep_count {
+            return Err(());
+        }
+        let selected = usize::try_from(selected_index).map_err(|_| ())?;
+        let action_start = selected
+            .checked_mul(NATIVE_FLAT_ACTION_FEATURE_DIM_V2)
+            .ok_or(())?;
+        let action = scored
+            .tensor
+            .action_features
+            .get(
+                action_start
+                    ..action_start
+                        .checked_add(NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2)
+                        .ok_or(())?,
+            )
+            .ok_or(())?;
+        if self.pending.is_none() {
+            if expected.substep_index != 0 {
+                return Err(());
+            }
+            self.pending = Some(PendingStructuredHistoryEntryV1 {
+                physical_decision_id: expected.physical_decision_id,
+                acting_player: expected.acting_player,
+                substep_count: expected.substep_count,
+                observed_substeps: 0,
+                action_sum: [0.0; NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2],
+                public_card_sum: [0.0; CARD_VOCAB_V1],
+                public_card_count: 0,
+            });
+        }
+        let pending = self.pending.as_mut().ok_or(())?;
+        if pending.physical_decision_id != expected.physical_decision_id
+            || pending.acting_player != expected.acting_player
+            || pending.substep_count != expected.substep_count
+            || pending.observed_substeps != expected.substep_index
+        {
+            return Err(());
+        }
+        for (sum, value) in pending.action_sum.iter_mut().zip(action) {
+            *sum += value;
+        }
+        let selected_i64 = i64::try_from(selected).map_err(|_| ())?;
+        for (action_index, card_id) in scored
+            .tensor
+            .action_ref_action_indices
+            .iter()
+            .zip(&scored.tensor.action_ref_card_ids)
+        {
+            if *action_index == selected_i64 {
+                let card = usize::try_from(*card_id).map_err(|_| ())? % CARD_VOCAB_V1;
+                pending.public_card_sum[card] += 1.0;
+                pending.public_card_count += 1;
+            }
+        }
+        pending.observed_substeps += 1;
+        if pending.observed_substeps == pending.substep_count {
+            let mut completed = self.pending.take().ok_or(())?;
+            let action_denominator = completed.substep_count as f32;
+            for value in &mut completed.action_sum {
+                *value /= action_denominator;
+            }
+            if completed.public_card_count > 0 {
+                let card_denominator = completed.public_card_count as f32;
+                for value in &mut completed.public_card_sum {
+                    *value /= card_denominator;
+                }
+            }
+            self.completed.push(NativeStructuredHistoryEntryV1::new_v1(
+                player_seat_index_v1(completed.acting_player),
+                completed.action_sum,
+                completed.public_card_sum,
+            )?);
+            if self.completed.len() > HISTORY_LENGTH_V1 {
+                self.completed.remove(0);
+            }
+        }
+        Ok(())
+    }
+}
+
 struct ActiveShadowSessionV1 {
     session: FastActorSessionV1,
     schedule: NativeLaneScheduleStateV1,
@@ -556,6 +710,7 @@ struct ActiveShadowSessionV1 {
     pair_environment_seed: u64,
     initial_library_card_definition_ids: [Vec<u16>; 2],
     current: Option<ScoredCurrentDecisionV1>,
+    structured_history: StructuredHistoryStateV1,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1488,7 +1643,15 @@ impl ShadowScorerServiceV1 {
                     ShadowScorerStartupErrorV1::new(
                         ShadowScorerStartupErrorKindV1::CheckpointAuthority,
                     )
-                })?;
+                })?
+                || root
+                    .join("structured_history_candidate.json")
+                    .try_exists()
+                    .map_err(|_| {
+                        ShadowScorerStartupErrorV1::new(
+                            ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                        )
+                    })?;
             if structured_candidate {
                 let inference =
                     load_native_structured_policy_residual_inference_v1(root).map_err(|_| {
@@ -1684,6 +1847,7 @@ impl ShadowScorerServiceV1 {
         session: &FastActorSessionV1,
         schedule: &mut NativeLaneScheduleStateV1,
         candidate_seat: PlayerSeatV1,
+        structured_history: &[NativeStructuredHistoryEntryV1],
     ) -> Result<Option<ScoredCurrentDecisionV1>, &'static str> {
         let expected = match session.current_response() {
             FastActorResponseV1::Decision(expected) => expected,
@@ -1719,7 +1883,11 @@ impl ShadowScorerServiceV1 {
             .map_err(|_| "decision_tensorization_failed")?;
         let model_input_sha256 = model_input_sha256_v1(&tensor);
         let output = model
-            .score_v1(view)
+            .score_v1(
+                view,
+                structured_history,
+                player_seat_index_v1(expected.acting_player),
+            )
             .map_err(|_| "checkpoint_scoring_failed")?;
         if output.logits.len()
             != usize::try_from(expected.legal_action_count).map_err(|_| "score_width_invalid")?
@@ -1904,6 +2072,7 @@ impl ShadowScorerServiceV1 {
         };
         let mut schedule =
             NativeLaneScheduleStateV1::new(base_seed, episode_id, candidate_seat, None);
+        let structured_history = StructuredHistoryStateV1::default();
         let current = match Self::score_session_v1(
             self.model.as_ref(),
             self.max_physical_decisions,
@@ -1911,6 +2080,7 @@ impl ShadowScorerServiceV1 {
             &session,
             &mut schedule,
             candidate_seat,
+            &structured_history.completed,
         ) {
             Ok(current) => current,
             Err(code) => {
@@ -1931,6 +2101,7 @@ impl ShadowScorerServiceV1 {
             pair_environment_seed: episode_schedule.environment_seed,
             initial_library_card_definition_ids,
             current,
+            structured_history,
         };
         if let Some(export) = self.outcome_export.as_mut() {
             let write_result = export.begin_episode_v1(&active).and_then(|()| {
@@ -2142,6 +2313,21 @@ impl ShadowScorerServiceV1 {
         let schedule_before = active.schedule;
         let expected = scored.expected;
         let binding = scored.binding;
+        let mut structured_history_after = active.structured_history.clone();
+        if self.model.uses_structured_history_v1()
+            && structured_history_after
+                .accept_selected_v1(scored, selected_index)
+                .is_err()
+        {
+            return response_v1(
+                Some(request_id),
+                &self.identity,
+                error_body_v1(
+                    "structured_history_update_failed",
+                    "the selected action could not be added to complete public history",
+                ),
+            );
+        }
         let next = match <FlatScoredFamilyV2 as FlatScoredFamilyCore>::consume(
             &mut active.session,
             binding,
@@ -2194,6 +2380,7 @@ impl ShadowScorerServiceV1 {
                 &active.session,
                 &mut active.schedule,
                 active.candidate_seat,
+                &structured_history_after.completed,
             ) {
                 Ok(Some(scored)) => Some(scored),
                 Ok(None) => {
@@ -2274,6 +2461,7 @@ impl ShadowScorerServiceV1 {
             }
         }
         active.current = next_scored;
+        active.structured_history = structured_history_after;
         let body = match next {
             FastActorResponseV1::Decision(_) => match Self::decision_body_v1(active, false) {
                 Ok(decision) => ShadowScorerResponseBodyV1::Decision {
@@ -2518,6 +2706,8 @@ mod tests {
         fn score_v1(
             &self,
             decision: FlatScoringDecisionViewV2<'_>,
+            _history: &[NativeStructuredHistoryEntryV1],
+            _acting_player: u8,
         ) -> Result<ShadowModelOutputV1, ()> {
             Ok(ShadowModelOutputV1 {
                 logits: (0..decision.actions().len())
@@ -2534,6 +2724,8 @@ mod tests {
         fn score_v1(
             &self,
             decision: FlatScoringDecisionViewV2<'_>,
+            _history: &[NativeStructuredHistoryEntryV1],
+            _acting_player: u8,
         ) -> Result<ShadowModelOutputV1, ()> {
             Ok(ShadowModelOutputV1 {
                 logits: (0..decision.actions().len())
@@ -2546,6 +2738,29 @@ mod tests {
 
     fn service_v1() -> ShadowScorerServiceV1 {
         ShadowScorerServiceV1::with_test_model_v1(Box::new(DeterministicTestModelV1))
+    }
+
+    #[test]
+    fn structured_history_commits_only_after_final_physical_substep_v1() {
+        let mut service = service_v1();
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("history-reset")));
+        assert_eq!(response["response_type"], "decision");
+        let mut scored = service
+            .active
+            .as_ref()
+            .and_then(|active| active.current.clone())
+            .expect("reset produces a scored decision");
+        scored.expected.physical_decision_id = 17;
+        scored.expected.substep_count = 2;
+        scored.expected.substep_index = 0;
+        let mut history = StructuredHistoryStateV1::default();
+        history.accept_selected_v1(&scored, 0).unwrap();
+        assert!(history.completed.is_empty());
+        assert!(history.pending.is_some());
+        scored.expected.substep_index = 1;
+        history.accept_selected_v1(&scored, 0).unwrap();
+        assert_eq!(history.completed.len(), 1);
+        assert!(history.pending.is_none());
     }
 
     fn service_with_teacher_export_v1(
