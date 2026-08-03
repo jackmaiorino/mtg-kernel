@@ -35,6 +35,8 @@ const HISTORY_CANDIDATE_SCHEMA_V1: &str =
     "mtg-kernel-structured-history-policy-value-residual-candidate/v1";
 const REPORT_SCHEMA_V1: &str = "mtg-kernel-structured-policy-residual-fit/v1";
 const HISTORY_REPORT_SCHEMA_V1: &str = "mtg-kernel-structured-history-policy-value-residual-fit/v1";
+const HISTORY_OUTCOME_REPORT_SCHEMA_V1: &str =
+    "mtg-kernel-scaled-history-outcome-policy-residual-fit/v1";
 const PUBLICATION_ENCODING_V1: &str = "json-pretty-sorted-utf8-trailing-lf/v1";
 const WEIGHTS_ENCODING_V1: &str = "ordered-row-major-finite-f32-little-endian/v1";
 const ARCHITECTURE_V1: &str = "stateless-structured-object-action-attention-policy-residual/v1";
@@ -856,14 +858,18 @@ fn validate_report_v1(
                 "missing structured report config",
             )
         })?;
-    let movement = report
-        .get("calibrated_movement")
-        .and_then(Value::as_object)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing structured movement"))?;
+    let report_schema = report.get("schema").and_then(Value::as_str);
+    let history_outcome = history_aware && report_schema == Some(HISTORY_OUTCOME_REPORT_SCHEMA_V1);
+    let movement = (if history_outcome {
+        report.pointer("/calibration/calibrated_movement")
+    } else {
+        report.get("calibrated_movement")
+    })
+    .and_then(Value::as_object)
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing structured movement"))?;
     let seat_metrics = report
         .pointer("/policy_metrics/by_acting_seat")
-        .and_then(Value::as_object)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing seat metrics"))?;
+        .and_then(Value::as_object);
     let exact_number =
         |name: &str, expected: u64| config.get(name).and_then(Value::as_u64) == Some(expected);
     let exact_float = |name: &str, expected: f64| {
@@ -881,12 +887,14 @@ fn validate_report_v1(
             .and_then(Value::as_f64)
             .is_some_and(f64::is_finite)
     });
-    let seat_positive = ["0", "1"].into_iter().all(|seat| {
-        seat_metrics
-            .get(seat)
-            .and_then(|value| value.get("relative_nll_improvement"))
-            .and_then(Value::as_f64)
-            .is_some_and(|value| value.is_finite() && value > 0.0)
+    let seat_positive = seat_metrics.is_some_and(|seat_metrics| {
+        ["0", "1"].into_iter().all(|seat| {
+            seat_metrics
+                .get(seat)
+                .and_then(|value| value.get("relative_nll_improvement"))
+                .and_then(Value::as_f64)
+                .is_some_and(|value| value.is_finite() && value > 0.0)
+        })
     });
     let mean_tv = movement
         .get("mean_total_variation")
@@ -904,18 +912,54 @@ fn validate_report_v1(
         || !exact_float("learning_rate", 3.0e-4)
         || !exact_float("weight_decay", 1.0e-4)
         || !movement_finite
-        || !seat_positive
         || report.get("weights_sha256").and_then(Value::as_str)
             != Some(lower_hex_v1(weights_sha256).as_str())
         || report
             .get("composite_model_parameter_sha256")
             .and_then(Value::as_str)
             != Some(lower_hex_v1(composite_sha256).as_str());
-    let family_invalid = if history_aware {
+    let family_invalid = if history_outcome {
+        let terminal_positive = ["overall", "0", "1"].into_iter().all(|seat| {
+            let pointer = if seat == "overall" {
+                "/descriptive_terminal_surrogate/overall/surrogate".to_owned()
+            } else {
+                format!("/descriptive_terminal_surrogate/by_candidate_seat/{seat}/surrogate")
+            };
+            report
+                .pointer(&pointer)
+                .and_then(Value::as_f64)
+                .is_some_and(|value| value.is_finite() && value > 0.0)
+        });
+        let permutation_delta = report
+            .pointer("/diagnostics/permutation_max_logit_delta")
+            .and_then(Value::as_f64)
+            .unwrap_or(f64::NAN);
+        let reference_rate = report
+            .pointer("/diagnostics/reference_affected_rate")
+            .and_then(Value::as_f64)
+            .unwrap_or(f64::NAN);
+        report_schema != Some(HISTORY_OUTCOME_REPORT_SCHEMA_V1)
+            || config.get("architecture").and_then(Value::as_str) != Some(HISTORY_ARCHITECTURE_V1)
+            || config.get("objective").and_then(Value::as_str)
+                != Some("physical-decision-terminal-ppo/v1")
+            || config.get("value_model").and_then(Value::as_str) != Some(REPORT_VALUE_MODEL_V1)
+            || !exact_number("epochs", 5)
+            || !exact_number("batch_size_physical_decisions", 64)
+            || !exact_number("history_length", HISTORY_LENGTH_V1 as u64)
+            || !exact_number("history_feature_dim", HISTORY_FEATURE_DIM_V1 as u64)
+            || !exact_float("ppo_clip", 0.10)
+            || !exact_float("target_mean_total_variation", 0.03)
+            || !terminal_positive
+            || mean_tv > 0.030_000_000_001
+            || !permutation_delta.is_finite()
+            || permutation_delta > 1.0e-5
+            || !reference_rate.is_finite()
+            || reference_rate < 0.20
+    } else if history_aware {
         let value_seats = report
             .pointer("/value_metrics/by_candidate_seat")
             .and_then(Value::as_object);
-        report.get("schema").and_then(Value::as_str) != Some(HISTORY_REPORT_SCHEMA_V1)
+        report_schema != Some(HISTORY_REPORT_SCHEMA_V1)
             || config.get("architecture").and_then(Value::as_str)
                 != Some(HISTORY_ARCHITECTURE_V1)
             || config.get("value_model").and_then(Value::as_str)
@@ -925,6 +969,7 @@ fn validate_report_v1(
             || !exact_number("history_length", HISTORY_LENGTH_V1 as u64)
             || !exact_number("history_feature_dim", HISTORY_FEATURE_DIM_V1 as u64)
             || !exact_float("residual_scale", 1.0)
+            || !seat_positive
             || value_seats.is_none_or(|seats| {
                 ["0", "1"].into_iter().any(|seat| {
                     let Some(metrics) = seats.get(seat) else {
@@ -936,12 +981,13 @@ fn validate_report_v1(
                 })
             })
     } else {
-        report.get("schema").and_then(Value::as_str) != Some(REPORT_SCHEMA_V1)
+        report_schema != Some(REPORT_SCHEMA_V1)
             || config.get("architecture").and_then(Value::as_str) != Some(ARCHITECTURE_V1)
             || config.get("value_model").and_then(Value::as_str) != Some(REPORT_VALUE_MODEL_V1)
             || !exact_number("epochs", 20)
             || !exact_number("batch_size", 32)
             || !exact_float("target_mean_total_variation", 0.02)
+            || !seat_positive
             || mean_tv > 0.020_000_000_001
     };
     if common_invalid || family_invalid {
