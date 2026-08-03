@@ -50,6 +50,9 @@ pub(crate) const REPORT_SCHEMA_V3: &str =
 pub(crate) const CANDIDATE_SCHEMA_V4: &str = "mtg-kernel-structured-policy-successor-candidate/v4";
 pub(crate) const REPORT_SCHEMA_V4: &str =
     "mtg-kernel-structured-policy-terminal-head-only-report/v1";
+pub(crate) const CANDIDATE_SCHEMA_V5: &str = "mtg-kernel-structured-policy-successor-candidate/v5";
+pub(crate) const REPORT_SCHEMA_V5: &str =
+    "mtg-kernel-structured-policy-space-response-oracle-report/v1";
 pub(crate) const PUBLICATION_ENCODING_V1: &str = "json-pretty-sorted-utf8-trailing-lf/v1";
 pub(crate) const WEIGHTS_ENCODING_V1: &str = "ordered-row-major-finite-f32-little-endian/v1";
 pub(crate) const ARCHITECTURE_V1: &str =
@@ -60,6 +63,8 @@ pub(crate) const ARCHITECTURE_V3: &str =
     "complete-public-history-structured-policy-terminal-rung-projected-frozen-parent-value/v1";
 pub(crate) const ARCHITECTURE_V4: &str =
     "complete-public-history-structured-policy-terminal-head-only-frozen-parent-value/v1";
+pub(crate) const ARCHITECTURE_V5: &str =
+    "complete-public-history-structured-policy-space-response-oracle-frozen-parent-value/v1";
 pub(crate) const VALUE_MODEL_V1: &str = "exact-retained-parent-frozen/v1";
 pub(crate) const COMPOSITE_DOMAIN_V1: &[u8] =
     b"mtg-kernel-structured-policy-successor-composite-model/v1";
@@ -69,6 +74,8 @@ pub(crate) const COMPOSITE_DOMAIN_V3: &[u8] =
     b"mtg-kernel-structured-policy-terminal-trust-projection-composite-model/v1";
 pub(crate) const COMPOSITE_DOMAIN_V4: &[u8] =
     b"mtg-kernel-structured-policy-terminal-head-only-composite-model/v1";
+pub(crate) const COMPOSITE_DOMAIN_V5: &[u8] =
+    b"mtg-kernel-structured-policy-space-response-oracle-composite-model/v1";
 const SOURCE_CACHE_SHA256_V1: &str =
     "280e34cd7f685beaf52c1cab3b41c53613a5029c063871942f48c063b6f5996f";
 const SOURCE_PAIR_COUNT_V1: u64 = 2_048;
@@ -91,6 +98,7 @@ const AUTHORITY_KIND_V1: &str = "xmage-cp7-outcome-structured-policy-successor-v
 const AUTHORITY_KIND_V2: &str = "xmage-cp7-outcome-structured-policy-successor-v2";
 const AUTHORITY_KIND_V3: &str = "xmage-cp7-outcome-structured-policy-successor-v3";
 const AUTHORITY_KIND_V4: &str = "xmage-cp7-outcome-structured-policy-successor-v4";
+const AUTHORITY_KIND_V5: &str = "xmage-cp7-outcome-structured-policy-successor-v5";
 const TERMINAL_TRUST_SOURCE_FIT_REPORT_SHA256_V1: &str =
     "355c1b179ccd5de5d16f0aeb39dc101ae97a876208a2315358f98b06dcc30a81";
 const TERMINAL_TRUST_SOURCE_MODEL_STATE_SHA256_V1: &str =
@@ -102,6 +110,7 @@ enum SuccessorVersionV1 {
     TerminalRungV2,
     TerminalTrustProjectionV3,
     TerminalHeadOnlyV4,
+    PolicySpaceResponseOracleV5,
 }
 
 #[derive(Deserialize)]
@@ -382,6 +391,49 @@ struct ReportConfigV4 {
     objective: String,
     trainable_parameter: String,
     trainable_parameter_count: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportV5 {
+    schema: String,
+    initializer: ReportInitializerV2,
+    source: ReportSourceV5,
+    config: ReportConfigV5,
+    adapter: ReportAdapterV5,
+    movement: Option<ReportMovementV2>,
+    transport: ReportTransportV1,
+    weights_sha256: String,
+    composite_model_parameter_sha256: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportSourceV5 {
+    source_commit: String,
+    oracle_seed: u64,
+    phase: String,
+    generation: u64,
+    candidate_index: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportConfigV5 {
+    architecture: String,
+    value_model: String,
+    optimizer: String,
+    adapter_parameter: String,
+    adapter_parameter_count: u64,
+    adapter_maximum_absolute_delta: f64,
+    development_only: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportAdapterV5 {
+    delta_f32_bits: Vec<String>,
+    l2_squared: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -924,6 +976,104 @@ fn validate_report_v4(
     Ok(())
 }
 
+fn parse_f32_bits_hex_v1(value: &str) -> Option<f32> {
+    (value.len() == 8
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+    .then(|| u32::from_str_radix(value, 16).ok().map(f32::from_bits))
+    .flatten()
+}
+
+fn movement_gates_pass_v1(movement: &ReportMovementV2) -> bool {
+    let seat_0 = movement.by_candidate_seat.get("0");
+    let seat_1 = movement.by_candidate_seat.get("1");
+    movement.by_candidate_seat.len() == 2
+        && [Some(&movement.overall), seat_0, seat_1]
+            .into_iter()
+            .flatten()
+            .count()
+            == 3
+        && [Some(&movement.overall), seat_0, seat_1]
+            .into_iter()
+            .flatten()
+            .all(|metric| {
+                finite_movement_metric_v2(metric)
+                    && metric.mean_total_variation <= 0.030
+                    && metric.p90_total_variation <= 0.100
+            })
+        && movement.overall.maximum_absolute_joint_log_ratio <= 0.50
+}
+
+fn validate_report_v5(
+    report: ReportV5,
+    weights_sha256: [u8; 32],
+    composite_sha256: [u8; 32],
+) -> Result<(), Box<dyn Error>> {
+    let config = &report.config;
+    let exact_float = |actual: f64, expected: f64| actual.to_bits() == expected.to_bits();
+    let deltas = report
+        .adapter
+        .delta_f32_bits
+        .iter()
+        .map(|value| parse_f32_bits_hex_v1(value))
+        .collect::<Option<Vec<_>>>();
+    let deltas_valid = deltas.as_ref().is_some_and(|values| {
+        values.len() == 48
+            && values
+                .iter()
+                .all(|value| value.is_finite() && value.abs() <= 0.050_000_001)
+    });
+    let phase_valid = matches!(
+        report.source.phase.as_str(),
+        "development" | "selector" | "selected"
+    );
+    let publication_valid = if config.development_only {
+        report.movement.is_none()
+            && exact_float(report.transport.maximum_absolute_logit_error, 1.0)
+            && !report.transport.parent_value_bit_exact
+            && report.source.phase != "selected"
+    } else {
+        report.source.phase == "selected"
+            && report.movement.as_ref().is_some_and(movement_gates_pass_v1)
+            && report.transport.maximum_absolute_logit_error.is_finite()
+            && report.transport.maximum_absolute_logit_error <= 3.0e-5
+            && report.transport.parent_value_bit_exact
+    };
+    if report.schema != REPORT_SCHEMA_V5
+        || report.initializer.candidate_json_sha256 != TERMINAL_RUNG_INITIALIZER_CANDIDATE_SHA256_V1
+        || report.initializer.report_sha256 != TERMINAL_RUNG_INITIALIZER_REPORT_SHA256_V1
+        || report.initializer.weights_sha256 != TERMINAL_RUNG_INITIALIZER_WEIGHTS_SHA256_V1
+        || report.initializer.composite_model_parameter_sha256
+            != TERMINAL_RUNG_INITIALIZER_COMPOSITE_SHA256_V1
+        || report.initializer.model_state_sha256 != TERMINAL_RUNG_INITIALIZER_MODEL_STATE_SHA256_V1
+        || !lower_hex_commit_v1(&report.source.source_commit)
+        || report.source.oracle_seed != 20_260_807
+        || !phase_valid
+        || report.source.generation > 100
+        || report.source.candidate_index > 100
+        || config.architecture != ARCHITECTURE_V5
+        || config.value_model != VALUE_MODEL_V1
+        || config.optimizer != "terminal-outcome-antithetic-cem/v1"
+        || config.adapter_parameter != "policy_head.weight"
+        || config.adapter_parameter_count != 48
+        || !exact_float(config.adapter_maximum_absolute_delta, 0.05)
+        || !deltas_valid
+        || !report.adapter.l2_squared.is_finite()
+        || report.adapter.l2_squared < 0.0
+        || !publication_valid
+        || report.weights_sha256 != lower_hex_v1(weights_sha256)
+        || report.composite_model_parameter_sha256 != lower_hex_v1(composite_sha256)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "policy-space response-oracle report semantic mismatch",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 pub(crate) fn successor_parameter_layout_sha256_v1() -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"mtg-kernel-structured-policy-successor-parameter-layout/v1");
@@ -980,6 +1130,7 @@ fn load_native_structured_policy_successor_inference_inner_v1(
         CANDIDATE_SCHEMA_V2 => SuccessorVersionV1::TerminalRungV2,
         CANDIDATE_SCHEMA_V3 => SuccessorVersionV1::TerminalTrustProjectionV3,
         CANDIDATE_SCHEMA_V4 => SuccessorVersionV1::TerminalHeadOnlyV4,
+        CANDIDATE_SCHEMA_V5 => SuccessorVersionV1::PolicySpaceResponseOracleV5,
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -1000,6 +1151,9 @@ fn load_native_structured_policy_successor_inference_inner_v1(
         }
         SuccessorVersionV1::TerminalHeadOnlyV4 => {
             (ARCHITECTURE_V4, COMPOSITE_DOMAIN_V4, AUTHORITY_KIND_V4)
+        }
+        SuccessorVersionV1::PolicySpaceResponseOracleV5 => {
+            (ARCHITECTURE_V5, COMPOSITE_DOMAIN_V5, AUTHORITY_KIND_V5)
         }
     };
     let report_bytes = fs::read(root.join(REPORT_FILENAME_V1))?;
@@ -1066,6 +1220,10 @@ fn load_native_structured_policy_successor_inference_inner_v1(
             SuccessorVersionV1::TerminalHeadOnlyV4 => {
                 let report: ReportV4 = serde_json::from_value(report_value)?;
                 validate_report_v4(report, weights_sha256, composite_sha256)?;
+            }
+            SuccessorVersionV1::PolicySpaceResponseOracleV5 => {
+                let report: ReportV5 = serde_json::from_value(report_value)?;
+                validate_report_v5(report, weights_sha256, composite_sha256)?;
             }
         }
     }
@@ -1227,6 +1385,14 @@ mod tests {
     }
 
     #[test]
+    fn policy_space_response_oracle_report_denies_unknown_fields_v1() {
+        let value = br#"{"schema":"x","initializer":{},"source":{},"config":{},"adapter":{},"movement":null,"transport":{},"weights_sha256":"x","composite_model_parameter_sha256":"x","unexpected":true}
+"#;
+        let parsed = strict_json_value_v1(value).unwrap();
+        assert!(serde_json::from_value::<ReportV5>(parsed).is_err());
+    }
+
+    #[test]
     fn successor_composite_hash_is_domain_bound_v1() {
         let parent = [7u8; 32];
         assert_ne!(
@@ -1252,6 +1418,10 @@ mod tests {
             composite_hash_v1(COMPOSITE_DOMAIN_V3, parent, b"a"),
             composite_hash_v1(COMPOSITE_DOMAIN_V4, parent, b"a")
         );
+        assert_ne!(
+            composite_hash_v1(COMPOSITE_DOMAIN_V4, parent, b"a"),
+            composite_hash_v1(COMPOSITE_DOMAIN_V5, parent, b"a")
+        );
     }
 
     #[test]
@@ -1272,6 +1442,7 @@ mod tests {
                 | "mtg-kernel-structured-policy-terminal-rung-parity-fixture/v1"
                 | "mtg-kernel-structured-policy-terminal-trust-projection-parity-fixture/v1"
                 | "mtg-kernel-structured-policy-terminal-head-only-parity-fixture/v1"
+                | "mtg-kernel-structured-policy-space-response-oracle-parity-fixture/v1"
         ));
         assert_eq!(
             fixture.output_semantics,

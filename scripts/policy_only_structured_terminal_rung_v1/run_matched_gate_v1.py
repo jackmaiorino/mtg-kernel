@@ -28,7 +28,7 @@ FORMAL_PAIRS = 1_024
 PROFILE_MAX_PAIRS = 64
 TOPOLOGIES = ("sequential", "parallel")
 FORMAL_SCORER_SHA256 = (
-    "afa8025d4b2462a35894f1aa6f8a0c4a3086cead1741b01e1ad2560fe2a5a0ba"
+    "3c1ea778f793fba867e78632d505fa9bd9197585cd42c046d6bc0451b7b18a5e"
 )
 
 
@@ -57,6 +57,11 @@ def _candidate_identity(root: Path) -> dict[str, Any]:
             head_only.REPORT_SCHEMA,
             head_only.COMPOSITE_DOMAIN,
             "xmage-cp7-outcome-structured-policy-successor-v4",
+        ),
+        "mtg-kernel-structured-policy-successor-candidate/v5": (
+            "mtg-kernel-structured-policy-space-response-oracle-report/v1",
+            b"mtg-kernel-structured-policy-space-response-oracle-composite-model/v1",
+            "xmage-cp7-outcome-structured-policy-successor-v5",
         ),
     }
     contract = contracts.get(candidate.get("schema"))
@@ -103,6 +108,12 @@ def _candidate_identity(root: Path) -> dict[str, Any]:
         <= pipeline.TRANSPORT_LIMIT
     ):
         raise RuntimeError("terminal-rung transport is not qualified")
+    if candidate.get("schema", "").endswith("/v5") and (
+        report.get("config", {}).get("development_only") is not False
+        or report.get("movement") is None
+        or report.get("source", {}).get("phase") != "selected"
+    ):
+        raise RuntimeError("response-oracle candidate is not selected and qualified")
     candidate_sha256 = _sha256(candidate_path)
     report_sha256 = _sha256(report_path)
     weights_sha256 = _sha256(weights_path)
@@ -276,9 +287,13 @@ def run(args: argparse.Namespace) -> int:
     args.candidate_identity = _candidate_identity(args.candidate_root)
     if args.formal:
         expected_seed = (
-            1_680_001
-            if args.candidate_identity["authority_kind"].endswith("-v4")
-            else FORMAL_BASE_SEED
+            1_790_001
+            if args.candidate_identity["authority_kind"].endswith("-v5")
+            else (
+                1_680_001
+                if args.candidate_identity["authority_kind"].endswith("-v4")
+                else FORMAL_BASE_SEED
+            )
         )
         if args.base_seed not in (None, expected_seed):
             raise RuntimeError("formal base seed does not match candidate contract")
