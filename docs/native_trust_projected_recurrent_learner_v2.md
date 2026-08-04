@@ -52,3 +52,26 @@ fresh folds, promotion, or a professional-level claim.
   `287d509794658bc167a7b61be450fa894d38ad837e7e6b212d49947629d542c6`.
 - Coverage: 1,024 pairs, 2,048 natural terminals, 170,055 policy steps, and
   142,857 complete physical decisions.
+
+## Result
+
+The projected GPU profile again selected batch 256 at 3,662.01 physical
+decisions per second with 366 MB peak allocation and exact deterministic hashes.
+The four fresh folds completed in 354.60 seconds.
+
+The hard envelope worked: aggregate maximum physical-decision joint log ratio was
+`0.49000013`. Mean TV was `0.011395`, p90 TV was `0.039699`, value MSE improved
+29.27 percent overall, and all permutation, reference, digest, value-seat, and
+numerical checks passed.
+
+The terminal policy signal did not replicate. Fold surrogates were `-0.001151`,
+`-0.000147`, `+0.000605`, and `+0.000076`. Aggregate surrogate was `-0.000154`;
+P0 was `+0.000028`, P1 was `-0.000336`, and the pair-bootstrap lower bound was
+`-0.000512`. Overall sign, both-seat sign, three-of-four-fold consistency, and
+bootstrap gates failed.
+
+This retires the recurrent terminal-PPO policy direction without a native strength
+test. The reproducible value improvement may receive one separately declared
+disjoint-corpus generalization check before any value-only search port. Aggregate
+SHA-256 is
+`093f706eb579205b427f63e2e2dd013b350698997cb5c19d104321ab9fc5cb27`.
