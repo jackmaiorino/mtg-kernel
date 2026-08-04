@@ -37,4 +37,16 @@ terminal win/loss gate remains mandatory for any strength or promotion claim.
 
 ## Result
 
-Pending.
+The five-arm screen completed in 102.71 seconds and rejected the coarse grid
+without touching residue 0. Beta `3`, epoch 6, passed the fit requirements with
+6.48 percent NLL improvement and 4.54 percentage points top-1 improvement, but
+failed movement at mean TV `0.050430` and p90 TV `0.159696`. Beta `10`, epoch 8,
+was movement-safe at mean TV `0.017960` and p90 TV `0.051124`, but narrowly
+missed fit at 4.53 percent NLL improvement and 2.47 percentage points top-1.
+Betas `30`, `100`, and `300` moved still less and fit worse.
+
+The coarse grid report SHA-256 is
+`7abf009588b68968553ccfa3bf1ec141fea3befb31c222bfd2f92c2cbc940c96`.
+This closes the exact coarse grid, but the monotone tradeoff brackets both gates.
+A rapid interpolation at betas `5`, `6`, `7`, and `8` on the same permitted
+selection split is justified before any fresh data collection.
