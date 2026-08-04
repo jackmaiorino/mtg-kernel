@@ -1,5 +1,7 @@
 # CP7 candidate-state DAgger screen
 
+Status: complete, rejected before held-out evaluation
+
 ## Question
 
 Does CP7 supervision transfer when CP7 labels states visited by the retained candidate, rather than states visited by CP7 itself?
@@ -35,3 +37,13 @@ The historical complete-history cache did not contain these candidate states: it
 Fit only a structured policy residual initialized from the retained policy-only successor and keep the retained parent value fixed. The split is fixed by pair index: residues 1 and 2 modulo 4 are training, residue 3 selects the residual clip, and residue 0 is touched once for the held-out gate. The held-out gate requires at least 5 percent overall relative NLL improvement, at least 3 percentage points of top-1 improvement, and no per-seat NLL regression. Candidate eligibility also requires mean total variation at most 0.03, p90 total variation at most 0.10, and maximum joint log-ratio at most 0.50 for each seat and overall. CP7-label metrics are eligibility diagnostics only. If eligible, refit the selected configuration on all 256 pairs before transport qualification.
 
 The playing-strength gate uses fresh natural games only: 128 new matched seat-swapped CP7 pairs for candidate and retained parent. Promotion requires gains at least losses plus 8, each seat's candidate-minus-parent wins at least -4, and zero protocol or identity failures. If this fails, close priority-only DAgger and move to an action-conditioned counterfactual learner.
+
+## Result
+
+The exact-history fit completed in 209.01 seconds. It used 6,934 training decisions and 3,698 selection decisions. The 3,893 held-out decisions were not touched because no clip passed the selection movement gate.
+
+At the smallest clip, `0.03`, overall CP7-label NLL improved by `0.7427%` and top-1 accuracy improved by `0.0539` percentage points. Mean TV was `0.0102640` and p90 TV was `0.0271627`, but maximum physical-decision joint log-ratio was `0.547092`, above the fixed `0.50` limit. Larger clips increased NLL improvement but remained unsafe; even at clip `0.40`, selection top-1 improved by only `0.3773` percentage points.
+
+The screen therefore rejected priority-only candidate-state DAgger. No held-out result, full-data refit, candidate package, transport qualification, or natural-terminal strength gate was produced. This is a negative result for the exact CP7 selected-index objective and movement envelope, not evidence that candidate-state supervision or action-conditioned learning is generally ineffective.
+
+Fit report: `D:\mtg-kernel-cp7-dagger-residual-v2\fit.json`, SHA-256 `bca3391a2f1c744fc66c126003ed6327851866b3b3f2542e503902ce0acf52f2`.
