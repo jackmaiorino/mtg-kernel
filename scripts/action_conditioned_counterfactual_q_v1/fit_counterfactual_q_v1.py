@@ -356,13 +356,17 @@ def _metrics(
         ]
     )
     changed = sum(choice != root["parent"] for root, choice in zip(roots, choices))
-    action_range_count = sum(
-        float(root["mean_rewards"].max() - root["mean_rewards"].min()) >= 0.5
-        for root in roots
+    action_range_count = int(
+        sum(
+            float(root["mean_rewards"].max() - root["mean_rewards"].min()) >= 0.5
+            for root in roots
+        )
     )
-    parent_not_best_count = sum(
-        root["mean_rewards"][root["parent"]] < root["mean_rewards"].max()
-        for root in roots
+    parent_not_best_count = int(
+        sum(
+            bool(root["mean_rewards"][root["parent"]] < root["mean_rewards"].max())
+            for root in roots
+        )
     )
 
     decisive = []
@@ -536,6 +540,7 @@ def main() -> None:
         ]
         >= 0.10,
     }
+    gates = {name: bool(value) for name, value in gates.items()}
     gates["mechanism_screen_pass"] = all(gates.values())
     report = {
         "schema": FIT_SCHEMA,
