@@ -174,6 +174,7 @@ def _validate_history_rows(decisions: list[Any]) -> dict[str, Any]:
     if not decisions:
         _fail("selected decision panel is empty")
     episode_groups: dict[tuple[Any, ...], list[Any]] = {}
+    parent_values: list[float] = []
     for decision in decisions:
         if decision.candidate_seat not in (0, 1):
             _fail("candidate seat is outside {0, 1}")
@@ -195,8 +196,9 @@ def _validate_history_rows(decisions: list[Any]) -> dict[str, Any]:
             if int(row["acting_seat"]) != decision.candidate_seat:
                 _fail("value-lane decision contains an opponent action")
             old_value = float(row["old_value"])
-            if not math.isfinite(old_value) or not -1.0 <= old_value <= 1.0:
-                _fail("frozen parent value is outside [-1, 1]")
+            if not math.isfinite(old_value):
+                _fail("frozen parent value is non-finite")
+            parent_values.append(old_value)
             histories.append(history)
         if any(not torch.equal(histories[0], history) for history in histories[1:]):
             _fail("substeps of one physical decision do not share prior history")
@@ -217,6 +219,9 @@ def _validate_history_rows(decisions: list[Any]) -> dict[str, Any]:
             for row in decision.rows
         ),
         "all_history_before_current_decision": True,
+        "all_frozen_parent_values_finite": True,
+        "minimum_frozen_parent_value": min(parent_values),
+        "maximum_frozen_parent_value": max(parent_values),
     }
 
 

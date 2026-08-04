@@ -89,6 +89,15 @@ class StructuredCreditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             subject.route_advantages([_decision(0, 0.0, 1.0)], "gae")
 
+    def test_mc_preserves_finite_unbounded_raw_parent_value(self) -> None:
+        decision = _decision(0, 1.25, -1.0)
+        companion = _decision(0, 0.0, -1.0, seat=1)
+        route = subject.route_advantages([decision, companion], "mc")
+        self.assertAlmostEqual(decision.raw_advantage, -2.25)
+        self.assertAlmostEqual(
+            route["history_integrity"]["maximum_frozen_parent_value"], 1.25
+        )
+
     def test_width48_trainable_contract(self) -> None:
         subject.structured_screen._configure(subject.DEFAULT_SEED, 1)
         model = subject.distill._model()
