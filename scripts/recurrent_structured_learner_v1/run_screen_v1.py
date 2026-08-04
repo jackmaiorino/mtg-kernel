@@ -110,8 +110,13 @@ def _configure(device_ordinal: int) -> torch.device:
 
 
 def _load_decisions(
-    cache_path: Path, *, pair_limit: int | None = None
+    cache_path: Path,
+    *,
+    pair_limit: int | None = None,
+    expected_pair_indices: set[int] | None = None,
 ) -> tuple[list[PhysicalDecision], dict[str, Any]]:
+    if pair_limit is not None and expected_pair_indices is not None:
+        _fail("pair_limit and expected_pair_indices are mutually exclusive")
     started = time.perf_counter()
     observed_sha256 = _sha256(cache_path)
     if observed_sha256 != EXPECTED_CACHE_SHA256:
@@ -141,10 +146,18 @@ def _load_decisions(
     decisions = legacy_outcome._physical_decisions(value)
     value.clear()
     gc.collect()
-    expected_pairs = pair_limit if pair_limit is not None else CORPUS_PAIR_COUNT
+    expected_pairs = (
+        set(range(pair_limit))
+        if pair_limit is not None
+        else (
+            set(expected_pair_indices)
+            if expected_pair_indices is not None
+            else set(range(CORPUS_PAIR_COUNT))
+        )
+    )
     observed_pairs = {decision.pair_index for decision in decisions}
     observed_episodes = {decision.episode_key for decision in decisions}
-    if observed_pairs != set(range(expected_pairs)) or len(observed_episodes) != 2 * expected_pairs:
+    if observed_pairs != expected_pairs or len(observed_episodes) != 2 * len(expected_pairs):
         _fail("decision panel does not have exact pair and episode coverage")
     metadata = {
         "cache": str(cache_path),

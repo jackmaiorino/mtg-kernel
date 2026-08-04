@@ -54,3 +54,19 @@ A pass is mechanism evidence only. The subsequent candidate must beat the
 behavior policy by a frozen integer terminal-win gate. A failure closes this
 exact CP7-encoder, one-batch, on-policy PPO correction without rejecting
 terminal-only learning, recurrent policies, or population training.
+
+## Collection and throughput record
+
+The eight-way collection completed six 64-pair shards. Pair 58 and pair 143
+each reproduced an outcome-blind mapper failure before terminal adjudication.
+They were excluded and replaced with pairs 514 and 515, respectively, which
+preserve the same modulo-four folds. The repaired panel therefore contains 512
+pairs and 128 pairs per fold. Its exact-history join covers 1,024 games,
+113,317 policy steps, and 92,832 physical decisions. The cache SHA-256 is
+`b526c2534db44a4372f6231d1c7bc159d6f3f05560b9f943701832b083712039`.
+
+The bounded GPU-1 profile selected batch 256. It measured 3,799.5 physical
+decisions per second versus 3,053.8 at batch 128, used 344,152,576 peak bytes,
+and repeated with identical loss-trace and model-state hashes. The profile
+report SHA-256 is
+`89223944b534c2e165d252b50f59532d8e3e92a01c0451052a76dd09ce0ec674`.

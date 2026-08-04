@@ -143,7 +143,14 @@ def _load_decisions(
     recurrent.EXPECTED_CACHE_SHA256 = _sha256(cache)
     recurrent.EXPECTED_CACHE_SCHEMA = CACHE_SCHEMA
     recurrent.CORPUS_PAIR_COUNT = EXPECTED_PAIRS
-    return recurrent._load_decisions(cache, pair_limit=pair_limit)
+    expected = None
+    if pair_limit is None:
+        expected = (set(range(EXPECTED_PAIRS)) - {58, 143}) | {514, 515}
+    return recurrent._load_decisions(
+        cache,
+        pair_limit=pair_limit,
+        expected_pair_indices=expected,
+    )
 
 
 def _project(
@@ -473,7 +480,20 @@ def _toolchain(device: torch.device) -> dict[str, Any]:
 
 def profile(args: argparse.Namespace) -> int:
     device = _configure(args.device)
-    decisions, source = _load_decisions(args.cache, pair_limit=PROFILE_PAIRS)
+    decisions, source = _load_decisions(args.cache)
+    profile_pair_indices = sorted({decision.pair_index for decision in decisions})[
+        :PROFILE_PAIRS
+    ]
+    profile_pair_set = set(profile_pair_indices)
+    decisions = [
+        decision for decision in decisions
+        if decision.pair_index in profile_pair_set
+    ]
+    source = {
+        **source,
+        "profile_pair_count": len(profile_pair_indices),
+        "profile_pair_indices": profile_pair_indices,
+    }
     arms = [
         _profile_arm(args.source_model, decisions, batch_size, device)
         for batch_size in PROFILE_BATCHES
