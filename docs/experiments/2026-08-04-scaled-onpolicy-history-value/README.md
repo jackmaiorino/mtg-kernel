@@ -1,6 +1,6 @@
 # Scaled on-policy complete-history value bootstrap
 
-Status: frozen before training.
+Status: complete, rejected on the numerical envelope.
 
 ## Question
 
@@ -37,3 +37,15 @@ All must pass:
 ## Disposition
 
 A pass authorizes a fresh, bounded short-horizon information-set search screen using the equal ensemble of the four cross-fit value models. Search must still win paired natural terminal continuations before any policy package or strength gate. A failure closes this width-48 complete-history value bootstrap and moves the project away from local search and residual optimization toward a larger recurrent end-to-end learner.
+
+## Result
+
+The 128-pair, one-epoch profile completed in 132.3 seconds, including 26.9 seconds of training at about 19 effective CPU cores. It provisionally improved held-out MSE by 27.2 percent and selected four concurrent formal folds with six threads each.
+
+All four formal folds completed concurrently in 35.5 minutes with zero stderr and about 18 to 21 effective CPU cores. Held-out MSE improved in every fold by `34.29%`, `33.80%`, `29.50%`, and `31.87%`. Aggregate MSE fell from `0.685149` to `0.463198`, a `32.39%` improvement. P0 improved `30.64%` and P1 improved `34.10%`. The aggregate, both-seat, fold-count, permutation, and action-reference gates passed.
+
+The exact unbounded residual failed all three numerical-envelope gates. Mean absolute residual was `0.401245` versus the `0.25` maximum, p90 was `0.772900` versus `0.50`, and maximum absolute prediction was `2.04314` versus `1.50`. The aggregate therefore rejects this exact value parameterization despite its strong predictive result. It does not authorize search.
+
+This failure differs from the prior small-data value rejection: predictive generalization is broad and seat-stable, while the output geometry is invalid for a terminal value. The next rapid branch uses a parent-preserving bounded value parameterization, fits it only on this now-revealed development corpus, and requires an entirely fresh on-policy Pool3 confirmation panel before search. No threshold or scale is selected from these fold outcomes.
+
+Aggregate: `D:\mtg-kernel-scaled-onpolicy-history-value-v1\aggregate.json`, SHA-256 `eaade33b947fee5ab8071141c32242fb833de36a17fa1fce03e9b1aaf1a01c24`.

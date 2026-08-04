@@ -475,6 +475,7 @@ def _load_decisions(
         "row_count": sum(len(decision.rows) for decision in decisions),
         "initializer_identity": source["initializer_identity"],
         "pool_json_sha256": source["pool_json_sha256"],
+        "collection_sha256": source["collection_sha256"],
     }
     timings = {
         "hash_and_load_seconds": loaded - started,
