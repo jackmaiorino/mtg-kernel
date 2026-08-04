@@ -1586,6 +1586,7 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             && checkpoint.model_parameter_sha256 == SOURCE_MODEL_PARAMETER_SHA256_V1;
         let verified_outcome_parent = (checkpoint.authority_kind
             == "xmage-cp7-outcome-reinforce-derivative-v1"
+            || checkpoint.authority_kind == "recurrent-cp7-deployment-v1"
             || checkpoint
                 .authority_kind
                 .starts_with("xmage-cp7-outcome-structured-policy-successor-v"))
@@ -4204,8 +4205,70 @@ pub fn run_checkpoint_shadow_stdio_with_recurrent_cp7_v1(
     root: PathBuf,
     python_executable: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
+    run_checkpoint_shadow_stdio_with_recurrent_cp7_exports_v1(
+        root,
+        python_executable,
+        None,
+        None,
+    )
+}
+
+/// Opt-in on-policy terminal export for the calibrated recurrent CP7 policy.
+/// The exported reward is still only the natural terminal result.
+pub fn run_checkpoint_shadow_stdio_with_recurrent_cp7_outcome_jsonl_v1(
+    root: PathBuf,
+    python_executable: PathBuf,
+    outcome_jsonl: PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    run_checkpoint_shadow_stdio_with_recurrent_cp7_exports_v1(
+        root,
+        python_executable,
+        None,
+        Some(outcome_jsonl),
+    )
+}
+
+/// Opt-in paired public-action and terminal export for on-policy recurrent data.
+pub fn run_checkpoint_shadow_stdio_with_recurrent_cp7_exports_jsonl_v1(
+    root: PathBuf,
+    python_executable: PathBuf,
+    teacher_jsonl: PathBuf,
+    outcome_jsonl: PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    run_checkpoint_shadow_stdio_with_recurrent_cp7_exports_v1(
+        root,
+        python_executable,
+        Some(teacher_jsonl),
+        Some(outcome_jsonl),
+    )
+}
+
+fn run_checkpoint_shadow_stdio_with_recurrent_cp7_exports_v1(
+    root: PathBuf,
+    python_executable: PathBuf,
+    teacher_jsonl: Option<PathBuf>,
+    outcome_jsonl: Option<PathBuf>,
+) -> Result<(), Box<dyn Error>> {
     let mut service =
         ShadowScorerServiceV1::load_recurrent_cp7_v1(root, python_executable)?;
+    if let Some(path) = teacher_jsonl {
+        let export = XmageCp7TeacherJsonlWriterV1::create_v1(&path, &service.identity)?;
+        service.install_teacher_export_v1(export).map_err(|()| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "recurrent CP7 teacher export must be installed before reset",
+            )
+        })?;
+    }
+    if let Some(path) = outcome_jsonl {
+        let export = XmageCp7OutcomeJsonlWriterV1::create_v1(&path, &service.identity)?;
+        service.install_outcome_export_v1(export).map_err(|()| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "recurrent CP7 outcome export must be installed before reset",
+            )
+        })?;
+    }
     run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
     Ok(())
 }
