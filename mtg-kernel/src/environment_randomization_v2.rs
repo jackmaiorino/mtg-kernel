@@ -616,6 +616,14 @@ mod tests {
                             .expect("valid owner stream");
                     (seed, permutation_v2(seed, &payload))
                 });
+                assert_ne!(
+                    direct[0].0, direct[1].0,
+                    "owner identity did not distinguish KDF streams at root {root}"
+                );
+                assert_ne!(
+                    direct[0].1, direct[1].1,
+                    "owner identity did not distinguish permutations at root {root}"
+                );
                 let relabeled = [PhysicalOwnerV2::P1, PhysicalOwnerV2::P0].map(|owner| {
                     let seed =
                         derive_environment_randomization_seed_v2(root, owner, purpose, ordinal)
