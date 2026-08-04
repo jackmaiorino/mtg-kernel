@@ -18,7 +18,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 STRUCTURED_DIR = SCRIPT_DIR.parent / "structured_adapter_screen_v1"
 sys.path.insert(0, str(STRUCTURED_DIR))
 
-import run_scaled_history_outcome_policy_v1 as scaled  # noqa: E402
 import run_screen as screen  # noqa: E402
 import run_structured_outcome_policy_v1 as outcome  # noqa: E402
 import run_structured_successor_distillation_v1 as distill  # noqa: E402
@@ -101,14 +100,53 @@ def _fit_args(args: argparse.Namespace) -> argparse.Namespace:
     )
 
 
+def _load_decisions(
+    cache_path: Path, pair_limit: int | None
+) -> tuple[list[Any], dict[str, Any], dict[str, float]]:
+    started = time.perf_counter()
+    cache_sha256 = _sha256(cache_path)
+    if cache_sha256 != CACHE_SHA256:
+        _fail("complete-history Pool3 cache SHA-256 mismatch")
+    cache = torch.load(cache_path, map_location="cpu", weights_only=False)
+    loaded = time.perf_counter()
+    if cache.get("version") != screen.SCRIPT_VERSION or not cache.get(
+        "complete_history_join"
+    ):
+        _fail("Pool3 cache is not the validated complete-history corpus")
+    examples = cache.get("value")
+    if not isinstance(examples, list) or not examples:
+        _fail("Pool3 cache has no candidate value examples")
+    pair_indices = sorted({int(row["pair_index"]) for row in examples})
+    if len(pair_indices) != PAIR_COUNT:
+        _fail("Pool3 cache does not contain exactly 2,048 pairs")
+    if pair_limit is not None:
+        selected = set(pair_indices[:pair_limit])
+        examples = [row for row in examples if int(row["pair_index"]) in selected]
+        pair_indices = pair_indices[:pair_limit]
+    screen._attach_complete_action_history(  # noqa: SLF001
+        [], examples, distill.HISTORY_LENGTH, distill.CARD_VOCAB
+    )
+    history_ready = time.perf_counter()
+    decisions = outcome._physical_decisions(examples)  # noqa: SLF001
+    grouped = time.perf_counter()
+    return decisions, {
+        "cache": str(cache_path),
+        "cache_sha256": cache_sha256,
+        "pair_count": len(pair_indices),
+        "episode_count": len({decision.episode_key for decision in decisions}),
+        "row_count": len(examples),
+        "physical_decision_count": len(decisions),
+        "cache_source_keys": sorted((cache.get("source") or {}).keys()),
+    }, {
+        "hash_and_load_seconds": loaded - started,
+        "attach_history_seconds": history_ready - loaded,
+        "group_decisions_seconds": grouped - history_ready,
+    }
+
+
 def run_fold(args: argparse.Namespace) -> dict[str, Any]:
     started = time.perf_counter()
-    decisions, source, timings = scaled._load_decisions(  # noqa: SLF001
-        args.cache,
-        args.pair_limit,
-        CACHE_SHA256,
-        PAIR_COUNT,
-    )
+    decisions, source, timings = _load_decisions(args.cache, args.pair_limit)
     pair_indices = sorted({decision.pair_index for decision in decisions})
     fit = [decision for decision in decisions if decision.pair_index % 4 != args.fold]
     heldout = [decision for decision in decisions if decision.pair_index % 4 == args.fold]
