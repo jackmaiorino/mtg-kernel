@@ -53,3 +53,27 @@ and each seat delta is at least `-4`.
 A pass authorizes adding the response to the empirical payoff matrix. A zero
 selection, movement rejection, or fresh-gate failure retires this exact
 blockwise basis. No result is a professional-level claim.
+
+## Result
+
+The bounded preflight passed in `98.25` seconds. The exact zero replay was
+bit-identical, and both uniform 1/16 and concentrated block probes changed
+normalized trajectories.
+
+All six search generations completed. On their 512-game development panels,
+the best searched policy exceeded zero by `0`, `3`, `1`, `1`, `1`, and `2`
+wins. The untouched selector chose generation mean 2, index 3. It improved
+from `334` to `336` wins on seed `1860001` and tied at `322` wins on seed
+`1870001`; worst-panel fitness tied at `320`, while summed fitness improved
+from `696` to `706`.
+
+The selected policy passed movement and native transport. Overall mean TV was
+`0.00201308`, p90 TV was `0.00600575`, maximum joint log-ratio was
+`0.273447`, native maximum logit error was `0.000002861`, and retained parent
+value was bit-exact.
+
+The fresh base-`1880001` strength gate failed. Candidate and initializer each
+won exactly `1300` of 2048 games. Matched `G/L/T` was `6/6/2036`, and both
+seat deltas were `0`. This retires the exact ten-block displacement basis
+without post-hoc tuning. Strength report SHA-256 is
+`36bc453d7263ba86032d157132b759d40991a233c097ad4bff7812f6ec1fa2c4`.
