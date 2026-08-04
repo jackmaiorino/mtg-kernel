@@ -14,6 +14,7 @@
 //! sampler identity, seed identity, schedule identity, loss identity, or gauge
 //! identity.  Those frozen contracts are consumed unchanged.
 
+use crate::async_flat_scored_rollout_v1::FlatScoredCompletePublicHistoryEpisodeV1;
 use crate::async_flat_scored_rollout_v2::{
     expected_scorer_contract, run_async_flat_scored_rollout_native_environment_randomization_v2,
     run_async_flat_scored_rollout_native_observed_v2, AsyncFlatScoredObservedRunErrorV2,
@@ -31,6 +32,7 @@ use crate::common_model_snapshot_v1::{
 use crate::flat_policy_v2::FlatDecisionBindingV2;
 use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2, NativeFlatTensorizerV2,
+    NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2, NATIVE_FLAT_ACTION_FEATURE_DIM_V2,
 };
 use crate::native_full_episode_trajectory_v2::{
     preflight_native_environment_window_v2, NativeEnvironmentWindowPreflightAuthorityV2,
@@ -62,6 +64,10 @@ use crate::native_policy_value_net_v1::{
     NativePolicyValueErrorV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
     NativePolicyValueNetWideV1, NativePolicyValueOutputV1,
 };
+use crate::native_structured_policy_residual_v1::{
+    load_native_structured_policy_residual_inference_v1, NativeStructuredHistoryEntryV1,
+    NativeStructuredPolicyResidualInferenceV1, CARD_VOCAB_V1, HISTORY_LENGTH_V1,
+};
 use crate::native_trainer_schedule_v1::{
     native_trainer_episode_schedule_v1, NativeTrainerScheduleErrorV1,
 };
@@ -70,9 +76,9 @@ use crate::native_training_phase_diagnostic_v1::{
 };
 use crate::native_training_store_run_v2::NativeRunEnvironmentTrajectoryContractV1;
 use crate::private_physical_trajectory_core::{
-    FlatGroupedTrajectoryBatchCore, FlatPhysicalLearnerSeatRuleCore,
-    FlatPhysicalTrajectoryObserverCore, FlatPhysicalUpdateStagingCore, FlatSelectedSampleCore,
-    FlatTerminalSampleCore,
+    FlatGroupedEpisodeCore, FlatGroupedTrajectoryBatchCore, FlatPhysicalDecisionSampleCore,
+    FlatPhysicalLearnerSeatRuleCore, FlatPhysicalTrajectoryObserverCore,
+    FlatPhysicalUpdateStagingCore, FlatSelectedSampleCore, FlatTerminalSampleCore,
 };
 use crate::private_physical_trajectory_v2::{
     selected_binding_matches, FlatPhysicalTrajectoryErrorV2,
@@ -1429,6 +1435,7 @@ fn validate_native_terminal_trajectory_receipt_v1(
 struct NativePolicyObservedTrajectoryV1 {
     grouped: NativePolicyGroupedTrajectoryV1,
     full_trajectory_receipts: Vec<NativeTrainingTrajectoryReceiptV2>,
+    complete_public_histories: Vec<FlatScoredCompletePublicHistoryEpisodeV1>,
 }
 
 #[derive(Debug)]
@@ -1443,6 +1450,8 @@ struct NativePolicyTrajectoryObserverV1 {
     expected_deck_hashes: SessionDeckHashesV1,
     expected_environment: NativeRunEnvironmentTrajectoryContractV1,
     full_trajectory_receipts: Vec<NativeTrainingTrajectoryReceiptV2>,
+    capture_complete_public_history: bool,
+    complete_public_histories: Vec<FlatScoredCompletePublicHistoryEpisodeV1>,
 }
 
 impl NativePolicyTrajectoryObserverV1 {
@@ -1454,6 +1463,7 @@ impl NativePolicyTrajectoryObserverV1 {
         expected_deck_hashes: SessionDeckHashesV1,
         expected_environment: NativeRunEnvironmentTrajectoryContractV1,
         associations: NativePolicyAssociationConsumerV1,
+        capture_complete_public_history: bool,
     ) -> Result<Self, NativePolicyTrajectoryErrorV1> {
         #[cfg(test)]
         TRAINER_OBSERVER_CONSTRUCTION_COUNT_V2.with(|count| count.set(count.get() + 1));
@@ -1477,6 +1487,12 @@ impl NativePolicyTrajectoryObserverV1 {
             expected_deck_hashes,
             expected_environment,
             full_trajectory_receipts: Vec::with_capacity(receipt_capacity),
+            capture_complete_public_history,
+            complete_public_histories: Vec::with_capacity(if capture_complete_public_history {
+                receipt_capacity
+            } else {
+                0
+            }),
         })
     }
 }
@@ -1484,6 +1500,10 @@ impl NativePolicyTrajectoryObserverV1 {
 impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
     type Error = NativePolicyTrajectoryErrorV1;
     type Output = NativePolicyObservedTrajectoryV1;
+
+    fn captures_complete_public_history_v2(&self) -> bool {
+        self.capture_complete_public_history
+    }
 
     fn observe_selected_v2(
         &mut self,
@@ -1515,7 +1535,29 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
             })
     }
 
-    fn observe_terminal_v2(&mut self, event: FlatScoredTerminalEventV2) -> Result<(), Self::Error> {
+    fn observe_terminal_v2(
+        &mut self,
+        mut event: FlatScoredTerminalEventV2,
+    ) -> Result<(), Self::Error> {
+        match (
+            self.capture_complete_public_history,
+            event.complete_public_history.as_ref(),
+        ) {
+            (true, Some(history))
+                if history.episode_id == event.terminal.episode_id
+                    && !self
+                        .complete_public_histories
+                        .iter()
+                        .any(|prior| prior.episode_id == history.episode_id) => {}
+            (false, None) => {}
+            _ => {
+                return Err(
+                    NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                        "complete public history does not match terminal capture authority",
+                    ),
+                );
+            }
+        };
         let receipt = event.native_full_trajectory_receipt.ok_or(
             NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
                 "native terminal is missing its full trajectory receipt",
@@ -1540,6 +1582,9 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
                 NativePolicyTrajectoryErrorV1::Grouping(FlatPhysicalTrajectoryErrorV2::from(error))
             })?;
         self.full_trajectory_receipts.push(receipt);
+        if let Some(history) = event.complete_public_history.take() {
+            self.complete_public_histories.push(history);
+        }
         Ok(())
     }
 
@@ -1552,6 +1597,8 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
             expected_deck_hashes: _,
             expected_environment: _,
             full_trajectory_receipts,
+            capture_complete_public_history,
+            complete_public_histories,
         } = self;
         associations
             .finish_v1()
@@ -1560,9 +1607,23 @@ impl FlatScoredTrajectoryObserverV2 for NativePolicyTrajectoryObserverV1 {
             NativePolicyTrajectoryErrorV1::Grouping(FlatPhysicalTrajectoryErrorV2::from(error))
         })?;
         validate_full_trajectory_receipts_v1(&grouped, &full_trajectory_receipts)?;
+        if complete_public_histories.len()
+            != if capture_complete_public_history {
+                grouped.episodes.len()
+            } else {
+                0
+            }
+        {
+            return Err(
+                NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(
+                    "complete public history count does not match grouped episodes",
+                ),
+            );
+        }
         Ok(NativePolicyObservedTrajectoryV1 {
             grouped,
             full_trajectory_receipts,
+            complete_public_histories,
         })
     }
 }
@@ -1825,6 +1886,7 @@ struct NativeTrainerGroupedTrainConfigV1 {
 }
 
 const NATIVE_LIVE_SEAT_CREDIT_ENV_V1: &str = "MTG_KERNEL_LIVE_SEAT_CREDIT_V1";
+const NATIVE_HISTORY_VALUE_CRITIC_ROOT_ENV_V1: &str = "MTG_KERNEL_HISTORY_VALUE_CRITIC_ROOT_V1";
 
 /// Narrow live-policy objective authority for the H4 development experiment.
 /// Unset is the canonical trainer. The explicit control records mechanism
@@ -1835,6 +1897,7 @@ enum NativeLiveSeatCreditPolicyReductionV1 {
     MeasuredControl,
     EqualEpisodeMass,
     EqualEpisodeMassSeatStandardized,
+    HistoryValueGae,
 }
 
 impl NativeLiveSeatCreditPolicyReductionV1 {
@@ -1846,6 +1909,7 @@ impl NativeLiveSeatCreditPolicyReductionV1 {
             Some(value) if value == "equal-episode-mass-seat-standardized-v1" => {
                 Ok(Self::EqualEpisodeMassSeatStandardized)
             }
+            Some(value) if value == "history-value-gae-v1" => Ok(Self::HistoryValueGae),
             Some(_) => Err(NativeTrainerErrorV1::InvalidUpdateConfig(
                 "live-seat-credit-policy-reduction",
             )),
@@ -1858,6 +1922,7 @@ impl NativeLiveSeatCreditPolicyReductionV1 {
             Self::MeasuredControl => "measured-control-v1",
             Self::EqualEpisodeMass => "equal-episode-mass-v1",
             Self::EqualEpisodeMassSeatStandardized => "equal-episode-mass-seat-standardized-v1",
+            Self::HistoryValueGae => "history-value-gae-v1",
         }
     }
 
@@ -1871,6 +1936,414 @@ impl NativeLiveSeatCreditPolicyReductionV1 {
     const fn uses_seat_standardization_v1(self) -> bool {
         matches!(self, Self::EqualEpisodeMassSeatStandardized)
     }
+}
+
+const HISTORY_VALUE_GAE_LAMBDA_V1: f32 = 0.95;
+
+/// Terminal-only GAE over one learner-decision sequence. Every nonterminal
+/// reward is exactly zero; the natural terminal result is the only reward.
+/// The supplied values are a frozen estimator and never become rewards.
+fn terminal_history_value_gae_v1(
+    values: &[f32],
+    terminal_return: i8,
+    lambda: f32,
+) -> Result<Vec<f32>, NativeTrainerErrorV1> {
+    if values.is_empty()
+        || !matches!(terminal_return, -1..=1)
+        || !lambda.is_finite()
+        || !(0.0..=1.0).contains(&lambda)
+        || values
+            .iter()
+            .any(|value| !value.is_finite() || !(-1.0..=1.0).contains(value))
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "history-value GAE input contract",
+        ));
+    }
+    let mut advantages = vec![0.0f32; values.len()];
+    let mut next_value = 0.0f32;
+    let mut next_advantage = 0.0f32;
+    for index in (0..values.len()).rev() {
+        let reward = if index + 1 == values.len() {
+            f32::from(terminal_return)
+        } else {
+            0.0
+        };
+        let delta = reward + next_value - values[index];
+        let advantage = delta + lambda * next_advantage;
+        if !advantage.is_finite() {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "history-value GAE produced a nonfinite coefficient",
+            ));
+        }
+        advantages[index] = advantage;
+        next_value = values[index];
+        next_advantage = advantage;
+    }
+    Ok(advantages)
+}
+
+type NativePolicyPhysicalGroupV1 =
+    FlatPhysicalDecisionSampleCore<FlatDecisionBindingV2, NativePolicyScoredTrainingInputV1>;
+type NativePolicyGroupedEpisodeV1 =
+    FlatGroupedEpisodeCore<FlatDecisionBindingV2, NativePolicyScoredTrainingInputV1>;
+
+fn structured_history_entry_from_group_v1(
+    group: &NativePolicyPhysicalGroupV1,
+) -> Result<NativeStructuredHistoryEntryV1, NativeTrainerErrorV1> {
+    if group.substeps.is_empty()
+        || usize::try_from(group.substep_count).ok() != Some(group.substeps.len())
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "history-value group substep contract",
+        ));
+    }
+    let mut action_sum = [0.0f32; NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2];
+    let mut public_card_sum = [0.0f32; CARD_VOCAB_V1];
+    let mut public_card_count = 0usize;
+    for substep in &group.substeps {
+        let tensor = &substep.scoring_inputs.tensor;
+        let selected = usize::try_from(substep.selected_index).map_err(|_| {
+            NativeTrainerErrorV1::GroupingInvariant(
+                "history-value selected action index does not fit usize",
+            )
+        })?;
+        let action_start = selected
+            .checked_mul(NATIVE_FLAT_ACTION_FEATURE_DIM_V2)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+        let explicit = tensor
+            .action_features
+            .get(
+                action_start
+                    ..action_start
+                        .checked_add(NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2)
+                        .ok_or(NativeTrainerErrorV1::CounterOverflow)?,
+            )
+            .ok_or(NativeTrainerErrorV1::GroupingInvariant(
+                "history-value selected action tensor slice",
+            ))?;
+        for (sum, value) in action_sum.iter_mut().zip(explicit) {
+            *sum += value;
+        }
+        let selected_i64 = i64::try_from(selected).map_err(|_| {
+            NativeTrainerErrorV1::GroupingInvariant(
+                "history-value selected action index does not fit i64",
+            )
+        })?;
+        for (action_index, card_id) in tensor
+            .action_ref_action_indices
+            .iter()
+            .zip(&tensor.action_ref_card_ids)
+        {
+            if *action_index == selected_i64 {
+                let card = usize::try_from(*card_id).map_err(|_| {
+                    NativeTrainerErrorV1::GroupingInvariant(
+                        "history-value public card identifier is negative",
+                    )
+                })? % CARD_VOCAB_V1;
+                public_card_sum[card] += 1.0;
+                public_card_count = public_card_count
+                    .checked_add(1)
+                    .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+            }
+        }
+    }
+    let action_denominator = group.substeps.len() as f32;
+    if !action_denominator.is_finite() || action_denominator <= 0.0 {
+        return Err(NativeTrainerErrorV1::CounterOverflow);
+    }
+    for value in &mut action_sum {
+        *value /= action_denominator;
+    }
+    if public_card_count > 0 {
+        let card_denominator = public_card_count as f32;
+        if !card_denominator.is_finite() {
+            return Err(NativeTrainerErrorV1::CounterOverflow);
+        }
+        for value in &mut public_card_sum {
+            *value /= card_denominator;
+        }
+    }
+    NativeStructuredHistoryEntryV1::new_v1(
+        live_seat_index_v1(group.acting_player) as u8,
+        action_sum,
+        public_card_sum,
+    )
+    .map_err(|_| NativeTrainerErrorV1::GroupingInvariant("history-value entry construction"))
+}
+
+fn history_value_gae_episode_terms_v1(
+    critic: &NativeStructuredPolicyResidualInferenceV1,
+    episode: &NativePolicyGroupedEpisodeV1,
+    complete_history: &FlatScoredCompletePublicHistoryEpisodeV1,
+) -> Result<Vec<NativePolicyFrozenObjectiveTermV1>, NativeTrainerErrorV1> {
+    let terminal_return = i8::try_from(episode.learner_return).map_err(|_| {
+        NativeTrainerErrorV1::TerminalReturnRange {
+            episode_index: episode.episode_id,
+            value: episode.learner_return,
+        }
+    })?;
+    if !matches!(terminal_return, -1..=1)
+        || episode.groups.is_empty()
+        || complete_history.episode_id != episode.episode_id
+        || complete_history.entries.len()
+            != usize::try_from(episode.terminal.physical_decision_count)
+                .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "history-value GAE episode contract",
+        ));
+    }
+    let captured_learner_groups = complete_history
+        .entries
+        .iter()
+        .filter(|entry| entry.acting_player == episode.learner_seat)
+        .count();
+    let captured_opponent_groups = complete_history
+        .entries
+        .len()
+        .checked_sub(captured_learner_groups)
+        .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+    if u64::try_from(captured_learner_groups).ok() != Some(episode.learner_physical_decision_count)
+        || u64::try_from(captured_opponent_groups).ok()
+            != Some(episode.opponent_physical_decision_count)
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "complete public history actor counts",
+        ));
+    }
+    let history = complete_history
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            if usize::try_from(entry.physical_decision_id).ok() != Some(index) {
+                return Err(NativeTrainerErrorV1::GroupingInvariant(
+                    "complete public history physical decision order",
+                ));
+            }
+            NativeStructuredHistoryEntryV1::new_v1(
+                live_seat_index_v1(entry.acting_player) as u8,
+                entry.action_explicit_features,
+                entry.public_card_histogram,
+            )
+            .map_err(|_| {
+                NativeTrainerErrorV1::GroupingInvariant(
+                    "complete public history entry construction",
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut values = Vec::with_capacity(episode.groups.len());
+    for group in &episode.groups {
+        let position = usize::try_from(group.physical_decision_id)
+            .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
+        let captured = complete_history.entries.get(position).ok_or(
+            NativeTrainerErrorV1::GroupingInvariant(
+                "learner group is missing from complete public history",
+            ),
+        )?;
+        if captured.acting_player != group.acting_player
+            || history.get(position) != Some(&structured_history_entry_from_group_v1(group)?)
+        {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "retained learner group does not match complete public history",
+            ));
+        }
+        let first = group
+            .substeps
+            .first()
+            .ok_or(NativeTrainerErrorV1::GroupingInvariant(
+                "history-value GAE group has no first substep",
+            ))?;
+        let output = critic
+            .score_native_tensor_with_history_v1(
+                &first.scoring_inputs.tensor,
+                &history[position.saturating_sub(HISTORY_LENGTH_V1)..position],
+                live_seat_index_v1(group.acting_player) as u8,
+            )
+            .map_err(|_| {
+                NativeTrainerErrorV1::GroupingInvariant(
+                    "history-value critic rejected a retained decision",
+                )
+            })?;
+        if !(-1.0..=1.0).contains(&output.value_v1()) {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "history-value critic output is outside the bounded envelope",
+            ));
+        }
+        values.push(output.value_v1());
+    }
+    let advantages =
+        terminal_history_value_gae_v1(&values, terminal_return, HISTORY_VALUE_GAE_LAMBDA_V1)?;
+    Ok(advantages
+        .into_iter()
+        .map(|policy_advantage| NativePolicyFrozenObjectiveTermV1 {
+            policy_advantage,
+            value_target: f32::from(terminal_return),
+            value_weight: 1.0,
+        })
+        .collect())
+}
+
+fn history_value_gae_terms_v1(
+    critic: &NativeStructuredPolicyResidualInferenceV1,
+    episodes: &[NativePolicyGroupedEpisodeV1],
+    complete_histories: &[FlatScoredCompletePublicHistoryEpisodeV1],
+    worker_limit: usize,
+) -> Result<Vec<NativePolicyFrozenObjectiveTermV1>, NativeTrainerErrorV1> {
+    if !critic.is_history_aware_v1()
+        || episodes.is_empty()
+        || complete_histories.len() != episodes.len()
+        || worker_limit == 0
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "history-value GAE requires a history-aware critic, episodes, and workers",
+        ));
+    }
+    let total_groups = episodes.iter().try_fold(0usize, |total, episode| {
+        total
+            .checked_add(episode.groups.len())
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)
+    })?;
+    let worker_count = worker_limit.min(episodes.len());
+    let chunk_size = episodes.len().div_ceil(worker_count);
+    let episode_histories = episodes
+        .iter()
+        .map(|episode| {
+            let mut matches = complete_histories
+                .iter()
+                .filter(|history| history.episode_id == episode.episode_id);
+            let history = matches
+                .next()
+                .ok_or(NativeTrainerErrorV1::GroupingInvariant(
+                    "history-value GAE episode is missing complete public history",
+                ))?;
+            if matches.next().is_some() {
+                return Err(NativeTrainerErrorV1::GroupingInvariant(
+                    "history-value GAE episode has duplicate complete public history",
+                ));
+            }
+            Ok((episode, history))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let chunks = if worker_count == 1 {
+        vec![episode_histories
+            .iter()
+            .map(|(episode, history)| history_value_gae_episode_terms_v1(critic, episode, history))
+            .collect::<Result<Vec<_>, _>>()?]
+    } else {
+        thread::scope(|scope| {
+            let handles = episode_histories
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .map(|(episode, history)| {
+                                history_value_gae_episode_terms_v1(critic, episode, history)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle.join().map_err(|_| {
+                        NativeTrainerErrorV1::GroupingInvariant("history-value GAE worker panicked")
+                    })?
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?
+    };
+    let mut terms = Vec::with_capacity(total_groups);
+    for chunk in chunks {
+        for episode_terms in chunk {
+            terms.extend(episode_terms);
+        }
+    }
+    if terms.len() != total_groups {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "history-value GAE term count",
+        ));
+    }
+    Ok(terms)
+}
+
+fn history_value_gae_plan_v1(
+    critic: &NativeStructuredPolicyResidualInferenceV1,
+    episodes: &[NativePolicyGroupedEpisodeV1],
+    complete_histories: &[FlatScoredCompletePublicHistoryEpisodeV1],
+    worker_limit: usize,
+) -> Result<NativeLiveSeatCreditPlanV1, NativeTrainerErrorV1> {
+    let terms = history_value_gae_terms_v1(critic, episodes, complete_histories, worker_limit)?;
+    let group_seats = episodes
+        .iter()
+        .flat_map(|episode| episode.groups.iter().map(|_| episode.learner_seat))
+        .collect::<Vec<_>>();
+    if terms.is_empty() || terms.len() != group_seats.len() {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "history-value GAE plan cardinality",
+        ));
+    }
+    let weight = 1.0 / terms.len() as f64;
+    if !weight.is_finite() || weight <= 0.0 {
+        return Err(NativeTrainerErrorV1::CounterOverflow);
+    }
+    let group_policy_advantages = terms
+        .iter()
+        .map(|term| term.policy_advantage)
+        .collect::<Vec<_>>();
+    let mut seat_weight_mass = [0.0f64; 2];
+    let mut raw_weighted_sum = [0.0f64; 2];
+    for (seat, advantage) in group_seats.iter().zip(&group_policy_advantages) {
+        let seat_index = live_seat_index_v1(*seat);
+        seat_weight_mass[seat_index] += weight;
+        raw_weighted_sum[seat_index] += weight * f64::from(*advantage);
+    }
+    if seat_weight_mass
+        .iter()
+        .any(|mass| !mass.is_finite() || *mass <= 0.0)
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "history-value GAE requires both learner seats",
+        ));
+    }
+    let mut raw_weighted_mean = [0.0f64; 2];
+    for seat_index in 0..2 {
+        raw_weighted_mean[seat_index] = raw_weighted_sum[seat_index] / seat_weight_mass[seat_index];
+    }
+    let mut raw_weighted_population_variance = [0.0f64; 2];
+    for (seat, advantage) in group_seats.iter().zip(&group_policy_advantages) {
+        let seat_index = live_seat_index_v1(*seat);
+        let centered = f64::from(*advantage) - raw_weighted_mean[seat_index];
+        raw_weighted_population_variance[seat_index] += weight * centered * centered;
+    }
+    for seat_index in 0..2 {
+        raw_weighted_population_variance[seat_index] /= seat_weight_mass[seat_index];
+    }
+    let group_count = u64::try_from(group_policy_advantages.len())
+        .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
+    Ok(NativeLiveSeatCreditPlanV1 {
+        terms: Some(terms),
+        group_seats,
+        group_policy_advantages,
+        evidence: NativeTrainerLiveSeatCreditEvidenceV1 {
+            policy_reduction_identity: NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae
+                .identity_v1(),
+            episode_count: u64::try_from(episodes.len())
+                .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?,
+            group_count,
+            seat_weight_mass,
+            raw_weighted_mean,
+            raw_weighted_population_variance,
+            transformed_weighted_mean: raw_weighted_mean,
+            transformed_weighted_population_variance: raw_weighted_population_variance,
+            absolute_policy_coefficient_mass: [0.0; 2],
+            gradient_l2_norm: None,
+        },
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -2753,6 +3226,13 @@ impl NativeTrainerStateV2 {
                 phase_recorder,
             ),
             NativeTrainerModelStateV2::Wide(_) => {
+                if live_seat_credit_policy_reduction
+                    == NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae
+                {
+                    return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                        "history-value-gae-requires-frozen-native-trainer",
+                    ));
+                }
                 #[cfg(test)]
                 if entropy_coefficient != EntropyCoefficientAuthorityV1::Zero {
                     return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
@@ -2816,6 +3296,24 @@ impl NativeTrainerStateV2 {
         let test_physical_substep_count_mutation =
             std::mem::take(&mut self.pending_test_physical_substep_count_mutation);
         validate_update_config_v2(config)?;
+        let history_value_critic = if live_seat_credit_policy_reduction
+            == NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae
+        {
+            let root = std::env::var_os(NATIVE_HISTORY_VALUE_CRITIC_ROOT_ENV_V1).ok_or(
+                NativeTrainerErrorV1::InvalidUpdateConfig("history-value-critic-root-missing"),
+            )?;
+            Some(
+                load_native_structured_policy_residual_inference_v1(Path::new(&root)).map_err(
+                    |_| {
+                        NativeTrainerErrorV1::InvalidUpdateConfig(
+                            "history-value-critic-root-invalid",
+                        )
+                    },
+                )?,
+            )
+        } else {
+            None
+        };
         if config.batch_episodes != self.batch_episodes {
             return Err(NativeTrainerErrorV1::InvalidUpdateConfig("batch_episodes"));
         }
@@ -2892,6 +3390,8 @@ impl NativeTrainerStateV2 {
             expected_deck_hashes,
             environment,
             consumer,
+            live_seat_credit_policy_reduction
+                == NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae,
         )
         .map_err(NativeTrainerErrorV1::ObserverConstruction)?;
         let mut scorer = NativePolicyBatchScorerV2::new_v1(
@@ -2971,6 +3471,7 @@ impl NativeTrainerStateV2 {
         let NativePolicyObservedTrajectoryV1 {
             grouped,
             full_trajectory_receipts,
+            complete_public_histories,
         } = observed_trajectory;
         validate_grouped_batch_v2(&grouped, first_episode_index, config.batch_episodes)?;
         let expected_episode_count = usize::try_from(config.batch_episodes)
@@ -3004,6 +3505,7 @@ impl NativeTrainerStateV2 {
                 &mut candidate_train_state,
                 &grouped,
                 &full_trajectory_receipts,
+                &complete_public_histories,
                 NativeTrainerGroupedTrainConfigV1 {
                     value_coefficient: f32::from_bits(config.value_coefficient_bits),
                     learning_rate: f32::from_bits(config.learning_rate_bits),
@@ -3014,6 +3516,7 @@ impl NativeTrainerStateV2 {
                     #[cfg(test)]
                     entropy_coefficient,
                 },
+                history_value_critic.as_ref(),
                 #[cfg(test)]
                 test_physical_substep_count_mutation,
                 phase_recorder,
@@ -3120,6 +3623,7 @@ impl NativeTrainerStateV2 {
             drop(parameters_after);
             drop(grouped);
             drop(full_trajectory_receipts);
+            drop(complete_public_histories);
             drop(rollout);
             phase_recorder.finish_v1(cleanup_timer);
         }
@@ -3884,7 +4388,9 @@ fn train_grouped_candidate_v1(
     candidate: &mut NativePolicyValueTrainStateV1,
     grouped: &NativePolicyGroupedTrajectoryV1,
     full_trajectory_receipts: &[NativeTrainingTrajectoryReceiptV2],
+    complete_public_histories: &[FlatScoredCompletePublicHistoryEpisodeV1],
     execution: NativeTrainerGroupedTrainConfigV1,
+    history_value_critic: Option<&NativeStructuredPolicyResidualInferenceV1>,
     #[cfg(test)] test_physical_substep_count_mutation: bool,
     phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
 ) -> Result<
@@ -4010,10 +4516,33 @@ fn train_grouped_candidate_v1(
             },
         )
         .collect::<Vec<_>>();
-    let live_seat_credit_plan = build_live_seat_credit_plan_v1(
-        execution.live_seat_credit_policy_reduction,
-        &live_seat_credit_inputs,
-    )?;
+    let live_seat_credit_plan = if execution.live_seat_credit_policy_reduction
+        == NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae
+    {
+        Some(history_value_gae_plan_v1(
+            history_value_critic.ok_or(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "history-value-critic-not-loaded",
+            ))?,
+            &grouped.episodes,
+            complete_public_histories,
+            execution.recompute_worker_limit,
+        )?)
+    } else {
+        if history_value_critic.is_some() {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "history-value-critic-unexpected",
+            ));
+        }
+        if !complete_public_histories.is_empty() {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "complete public history is unexpected for canonical credit",
+            ));
+        }
+        build_live_seat_credit_plan_v1(
+            execution.live_seat_credit_policy_reduction,
+            &live_seat_credit_inputs,
+        )?
+    };
     let frozen_objective_terms = live_seat_credit_plan
         .as_ref()
         .and_then(|plan| plan.terms.as_deref());
@@ -4564,6 +5093,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn terminal_history_value_gae_lambda_one_is_monte_carlo_minus_each_value() {
+        let values = [0.25f32, -0.5, 0.75];
+        let advantages = terminal_history_value_gae_v1(&values, 1, 1.0).unwrap();
+        assert_eq!(
+            advantages
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            values
+                .iter()
+                .map(|value| (1.0 - value).to_bits())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn terminal_history_value_gae_matches_hand_recurrence() {
+        let values = [0.2f32, -0.1, 0.4];
+        let observed =
+            terminal_history_value_gae_v1(&values, -1, HISTORY_VALUE_GAE_LAMBDA_V1).unwrap();
+        let a2 = -1.0 - values[2];
+        let a1 = values[2] - values[1] + HISTORY_VALUE_GAE_LAMBDA_V1 * a2;
+        let a0 = values[1] - values[0] + HISTORY_VALUE_GAE_LAMBDA_V1 * a1;
+        assert_eq!(
+            observed
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            [a0, a1, a2]
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn terminal_history_value_gae_rejects_nonterminal_or_estimator_drift() {
+        assert!(terminal_history_value_gae_v1(&[], 1, 0.95).is_err());
+        assert!(terminal_history_value_gae_v1(&[0.0], 2, 0.95).is_err());
+        assert!(terminal_history_value_gae_v1(&[1.01], 1, 0.95).is_err());
+        assert!(terminal_history_value_gae_v1(&[f32::NAN], 1, 0.95).is_err());
+        assert!(terminal_history_value_gae_v1(&[0.0], 1, 1.01).is_err());
+    }
+
     fn live_seat_credit_episode_v1(
         episode_id: u64,
         learner_seat: PlayerSeatV1,
@@ -4760,6 +5334,8 @@ mod tests {
     const H4_CANARY_OUTPUT_ROOT_V1: &str = "D:\\mtg-kernel-h4-live-seat-credit-canary-v1";
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     const H4_DEVELOPMENT_OUTPUT_ROOT_V1: &str = "D:\\mtg-kernel-h4-live-seat-credit-development-v1";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const COMPOSED_CREDIT_OUTPUT_ROOT_V1: &str = "D:\\mtg-kernel-composed-credit-throughput-v1";
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     struct H4CanarySourceV1 {
@@ -5291,6 +5867,196 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[ignore = "requires retained campaign stores, qualified critic, and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn history_value_gae_real_update_tape_canary_v1() {
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let critic_root = std::env::var_os(NATIVE_HISTORY_VALUE_CRITIC_ROOT_ENV_V1)
+            .expect("qualified critic root environment authority");
+        let critic = load_native_structured_policy_residual_inference_v1(Path::new(&critic_root))
+            .expect("qualified history-value critic package");
+        assert!(critic.is_history_aware_v1());
+        assert_eq!(
+            h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
+            "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
+        );
+
+        let source = load_h4_canary_source_v1();
+        let control = run_h4_canary_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+        );
+        let treatment = run_h4_canary_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+        );
+        let treatment_repeat = run_h4_canary_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+        );
+
+        for arm in [&treatment, &treatment_repeat] {
+            assert_eq!(arm.evidence.episodes, control.evidence.episodes);
+            assert_eq!(
+                arm.evidence.selected_outputs,
+                control.evidence.selected_outputs
+            );
+            assert_eq!(arm.evidence.physical_terms, control.evidence.physical_terms);
+            let mechanism = arm
+                .evidence
+                .live_seat_credit
+                .as_ref()
+                .expect("history-value GAE mechanism evidence");
+            assert_eq!(mechanism.policy_reduction_identity, "history-value-gae-v1");
+            assert_eq!(mechanism.episode_count, 64);
+            assert_eq!(mechanism.group_count, arm.evidence.learner_group_count);
+            assert!(mechanism
+                .raw_weighted_mean
+                .iter()
+                .chain(&mechanism.raw_weighted_population_variance)
+                .chain(&mechanism.absolute_policy_coefficient_mass)
+                .all(|value| value.is_finite()));
+        }
+        assert_eq!(
+            without_observed_timing_v2(treatment.evidence.clone()),
+            without_observed_timing_v2(treatment_repeat.evidence.clone())
+        );
+        assert_eq!(
+            treatment.final_state_sha256,
+            treatment_repeat.final_state_sha256
+        );
+        assert_eq!(
+            treatment.parameter_movement_l2,
+            treatment_repeat.parameter_movement_l2
+        );
+        assert_ne!(
+            treatment.evidence.policy_sum_bits, control.evidence.policy_sum_bits,
+            "the critic plus GAE treatment must change the policy objective"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires retained campaign stores, qualified critic, and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn history_value_gae_topology_throughput_screen_v1() {
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let critic_root = std::env::var_os(NATIVE_HISTORY_VALUE_CRITIC_ROOT_ENV_V1)
+            .expect("qualified critic root environment authority");
+        let critic = load_native_structured_policy_residual_inference_v1(Path::new(&critic_root))
+            .expect("qualified history-value critic package");
+        assert_eq!(
+            h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
+            "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
+        );
+        let source = load_h4_canary_source_v1();
+        let warmup = run_h4_canary_arm_with_topology_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            2,
+            32,
+        );
+        let topologies = [(1usize, 32usize), (2, 32), (4, 16)];
+        let mut runs = Vec::new();
+        for (worker_count, sessions_per_worker) in topologies {
+            runs.push((
+                worker_count,
+                sessions_per_worker,
+                run_h4_canary_arm_with_topology_v1(
+                    &source,
+                    NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae,
+                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                    worker_count,
+                    sessions_per_worker,
+                ),
+            ));
+        }
+        let reference = &runs[0].2;
+        for (_, _, arm) in &runs {
+            assert_eq!(arm.evidence.episodes, reference.evidence.episodes);
+            assert_eq!(
+                arm.evidence.selected_outputs,
+                reference.evidence.selected_outputs
+            );
+            assert_eq!(
+                arm.evidence.physical_terms,
+                reference.evidence.physical_terms
+            );
+            assert_eq!(
+                arm.evidence.policy_sum_bits,
+                reference.evidence.policy_sum_bits
+            );
+            assert_eq!(
+                arm.evidence.value_sum_bits,
+                reference.evidence.value_sum_bits
+            );
+            assert_eq!(arm.evidence.loss_bits, reference.evidence.loss_bits);
+            assert_eq!(
+                arm.evidence.live_seat_credit,
+                reference.evidence.live_seat_credit
+            );
+            assert_eq!(arm.final_state_sha256, reference.final_state_sha256);
+            assert_eq!(arm.parameter_movement_l2, reference.parameter_movement_l2);
+        }
+        let rows = runs
+            .iter()
+            .map(|(worker_count, sessions_per_worker, arm)| {
+                let seconds = arm.evidence.update_elapsed_ns as f64 / 1.0e9;
+                serde_json::json!({
+                    "worker_count": worker_count,
+                    "sessions_per_worker": sessions_per_worker,
+                    "logical_actor_count": worker_count * sessions_per_worker,
+                    "update_elapsed_ns": arm.evidence.update_elapsed_ns,
+                    "games_per_second": 64.0 / seconds,
+                    "learner_group_count": arm.evidence.learner_group_count,
+                    "final_state_sha256": &arm.final_state_sha256,
+                    "mechanism": h4_arm_json_v1(arm),
+                })
+            })
+            .collect::<Vec<_>>();
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-history-value-gae-topology-screen/v1",
+            "status": "complete",
+            "reward": "natural-terminal-win-loss-draw-only/v1",
+            "nonclaims": ["development-throughput-only", "not-strength-evidence", "not-promotable"],
+            "source_checkpoint_state_sha256": "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0",
+            "critic_composite_model_parameter_sha256": "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22",
+            "base_seed": 970001_u64,
+            "first_episode_index": 32768_u64,
+            "batch_episodes": 64_u64,
+            "gpu_ordinal": 1_u64,
+            "cuda_warmup_update_elapsed_ns": warmup.evidence.update_elapsed_ns,
+            "cross_topology_outputs_bit_identical": true,
+            "topologies": rows,
+        });
+        let output_root = h4_canary_path_v1(
+            "MTG_KERNEL_COMPOSED_CREDIT_OUTPUT_ROOT",
+            COMPOSED_CREDIT_OUTPUT_ROOT_V1,
+        );
+        fs::create_dir_all(&output_root).expect("create composed credit output root");
+        let output_path = output_root.join("throughput-screen.json");
+        let output = serde_json::to_vec_pretty(&report)
+            .expect("serialize composed credit throughput report");
+        fs::write(&output_path, &output).expect("write composed credit throughput report");
+        println!(
+            "COMPOSED_CREDIT_THROUGHPUT_RESULT {}",
+            output_path.display()
+        );
+        println!("{}", String::from_utf8(output).unwrap());
     }
 
     #[test]
@@ -7240,6 +8006,7 @@ mod tests {
                 receipt.episode_index(),
             ),
             native_full_trajectory_receipt: Some(receipt),
+            complete_public_history: None,
         };
         let invariant_of = |error: NativePolicyTrajectoryErrorV1| match error {
             NativePolicyTrajectoryErrorV1::FullTrajectoryReceiptInvariant(message) => message,
@@ -7258,6 +8025,7 @@ mod tests {
                 deck_hashes,
                 NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
                 consumer,
+                false,
             )
             .unwrap();
             observer.observe_terminal_v2(event_with(receipt))

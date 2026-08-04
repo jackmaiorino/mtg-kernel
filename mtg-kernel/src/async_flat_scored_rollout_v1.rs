@@ -37,7 +37,11 @@ use crate::flat_policy_v1::{
     FLAT_SCORER_PACKET_VERSION_V1, FLAT_SCORER_VISIBLE_MANIFEST_V1,
     FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V1,
 };
-use crate::flat_policy_v2::FlatScoringDecisionViewV2;
+use crate::flat_policy_v2::{FlatScorerActionKindV2, FlatScoringDecisionViewV2, FlatZoneV2};
+use crate::native_flat_tensorizer_v2::{
+    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2, NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2,
+    NATIVE_FLAT_ACTION_FEATURE_DIM_V2,
+};
 use crate::native_full_episode_trajectory_v1::{
     NativeFullEpisodeTrajectoryDecisionRowV1, NativeTrajectoryActorRoleV1,
 };
@@ -82,6 +86,8 @@ pub const ASYNC_FLAT_SCORED_SAMPLER_ID_V1: &str =
 
 const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
+const COMPLETE_PUBLIC_HISTORY_CARD_VOCAB_V1: usize =
+    crate::native_structured_policy_residual_v1::CARD_VOCAB_V1;
 
 /// Crate-private execution schedule selected before worker construction.
 /// Public V1/V2 entry points always select `Legacy`; only the native trainer
@@ -760,7 +766,21 @@ pub(crate) struct FlatScoredSelectedEventV1<'a> {
 }
 
 /// Compact terminal notification paired with the selected-action stream.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FlatScoredCompletePublicHistoryEntryV1 {
+    pub(crate) physical_decision_id: u64,
+    pub(crate) acting_player: PlayerSeatV1,
+    pub(crate) action_explicit_features: [f32; NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2],
+    pub(crate) public_card_histogram: [f32; COMPLETE_PUBLIC_HISTORY_CARD_VOCAB_V1],
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FlatScoredCompletePublicHistoryEpisodeV1 {
+    pub(crate) episode_id: u64,
+    pub(crate) entries: Vec<FlatScoredCompletePublicHistoryEntryV1>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FlatScoredTerminalEventV1 {
     pub(crate) terminal: AsyncRolloutTerminalV1,
     pub(crate) learner_action_count: u64,
@@ -770,6 +790,10 @@ pub(crate) struct FlatScoredTerminalEventV1 {
     /// carries either the legacy V1 receipt or the environment randomization
     /// V2 receipt, matching the schedule that produced the episode.
     pub(crate) native_full_trajectory_receipt: Option<NativeTrainingTrajectoryReceiptV2>,
+    /// Present only when a crate-private native observer explicitly requests
+    /// complete public history. Each row is one completed physical decision,
+    /// including both learner and opponent actions, in engine chronology.
+    pub(crate) complete_public_history: Option<FlatScoredCompletePublicHistoryEpisodeV1>,
 }
 
 /// Crate-private staging boundary for a future native learner. Implementations
@@ -785,6 +809,10 @@ pub(crate) trait FlatScoredTrajectoryObserverV1: Sized {
     /// Compile-time capability used to preserve the original public no-op hot
     /// path. Real observers retain complete-round prevalidation semantics.
     const OBSERVES_TRAJECTORY: bool = true;
+
+    fn captures_complete_public_history_v1(&self) -> bool {
+        false
+    }
 
     fn observe_selected_v1(
         &mut self,
@@ -1385,6 +1413,10 @@ pub(crate) trait FlatScoredTrajectoryObserverCore<F: FlatScoredFamilyCore>: Size
 
     const OBSERVES_TRAJECTORY: bool = true;
 
+    fn captures_complete_public_history_core(&self) -> bool {
+        false
+    }
+
     fn observe_selected_core(
         &mut self,
         event: FlatScoredSelectedEventCore<'_, F>,
@@ -1487,6 +1519,10 @@ impl<O: FlatScoredTrajectoryObserverV1> FlatScoredTrajectoryObserverCore<FlatSco
 
     const OBSERVES_TRAJECTORY: bool = O::OBSERVES_TRAJECTORY;
 
+    fn captures_complete_public_history_core(&self) -> bool {
+        self.0.captures_complete_public_history_v1()
+    }
+
     fn observe_selected_core(
         &mut self,
         event: FlatScoredSelectedEventCore<'_, FlatScoredFamilyV1>,
@@ -1515,7 +1551,219 @@ impl<O: FlatScoredTrajectoryObserverV1> FlatScoredTrajectoryObserverCore<FlatSco
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+struct CompletePublicHistoryPendingGroupV1 {
+    physical_decision_id: u64,
+    acting_player: PlayerSeatV1,
+    substep_count: u32,
+    next_substep_index: u32,
+    action_explicit_sum: [f32; NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2],
+    public_card_sum: [f32; COMPLETE_PUBLIC_HISTORY_CARD_VOCAB_V1],
+    public_card_count: usize,
+}
+
+struct CompletePublicHistoryAccumulatorV1 {
+    episode_id: u64,
+    entries: Vec<FlatScoredCompletePublicHistoryEntryV1>,
+    pending: Option<CompletePublicHistoryPendingGroupV1>,
+    tensorizer: NativeFlatTensorizerV2,
+    tensor: NativeFlatDecisionTensorV2,
+}
+
+fn selected_public_card_bins_v1(
+    decision: FlatScoringDecisionViewV2<'_>,
+    selected_index: usize,
+) -> Result<Vec<usize>, ()> {
+    let action = decision.actions().get(selected_index).ok_or(())?;
+    let allows_zone = |zone: FlatZoneV2| match action.kind {
+        FlatScorerActionKindV2::PlayLand | FlatScorerActionKindV2::CastSpell => {
+            matches!(zone, FlatZoneV2::Hand | FlatZoneV2::Exile)
+        }
+        FlatScorerActionKindV2::Discard => matches!(zone, FlatZoneV2::Hand),
+        FlatScorerActionKindV2::Pass
+        | FlatScorerActionKindV2::ActivateManaAbility
+        | FlatScorerActionKindV2::ActivateAbility
+        | FlatScorerActionKindV2::ChooseTarget
+        | FlatScorerActionKindV2::ChooseKicker
+        | FlatScorerActionKindV2::ChooseSpellCopyPayment
+        | FlatScorerActionKindV2::ChooseSpellCopyRetarget
+        | FlatScorerActionKindV2::ChooseAttackerInclusion
+        | FlatScorerActionKindV2::ChooseBlockerInclusion
+        | FlatScorerActionKindV2::OrderTriggers => matches!(
+            zone,
+            FlatZoneV2::Battlefield | FlatZoneV2::Stack | FlatZoneV2::Graveyard | FlatZoneV2::Exile
+        ),
+        _ => false,
+    };
+    if !matches!(
+        action.kind,
+        FlatScorerActionKindV2::Pass
+            | FlatScorerActionKindV2::PlayLand
+            | FlatScorerActionKindV2::CastSpell
+            | FlatScorerActionKindV2::ActivateManaAbility
+            | FlatScorerActionKindV2::ActivateAbility
+            | FlatScorerActionKindV2::ChooseTarget
+            | FlatScorerActionKindV2::ChooseKicker
+            | FlatScorerActionKindV2::ChooseSpellCopyPayment
+            | FlatScorerActionKindV2::ChooseSpellCopyRetarget
+            | FlatScorerActionKindV2::Discard
+            | FlatScorerActionKindV2::ChooseAttackerInclusion
+            | FlatScorerActionKindV2::ChooseBlockerInclusion
+            | FlatScorerActionKindV2::OrderTriggers
+    ) {
+        return Err(());
+    }
+    let ref_start = usize::try_from(action.ref_start).map_err(|_| ())?;
+    let ref_end = ref_start
+        .checked_add(usize::from(action.ref_len))
+        .ok_or(())?;
+    if action.kind == FlatScorerActionKindV2::Pass && ref_start != ref_end {
+        return Err(());
+    }
+    decision
+        .action_refs()
+        .get(ref_start..ref_end)
+        .ok_or(())?
+        .iter()
+        .map(|reference| {
+            if usize::try_from(reference.action_index).ok() != Some(selected_index) {
+                return Err(());
+            }
+            let object = decision
+                .objects()
+                .get(usize::try_from(reference.model_object_index).map_err(|_| ())?)
+                .ok_or(())?;
+            if object.card_token != reference.card_token
+                || reference.card_token == 0
+                || !allows_zone(object.zone.ok_or(())?)
+            {
+                return Err(());
+            }
+            Ok(usize::try_from(reference.card_token).map_err(|_| ())?
+                % COMPLETE_PUBLIC_HISTORY_CARD_VOCAB_V1)
+        })
+        .collect()
+}
+
+impl CompletePublicHistoryAccumulatorV1 {
+    fn new(episode_id: u64) -> Self {
+        Self {
+            episode_id,
+            entries: Vec::new(),
+            pending: None,
+            tensorizer: NativeFlatTensorizerV2::new(),
+            tensor: NativeFlatDecisionTensorV2::default(),
+        }
+    }
+
+    fn record_selected(
+        &mut self,
+        expected: FastActorDecisionV1,
+        decision: FlatScoringDecisionViewV2<'_>,
+        selected_index: u32,
+    ) -> Result<(), ()> {
+        if expected.episode_id != self.episode_id
+            || expected.substep_count == 0
+            || expected.substep_index >= expected.substep_count
+            || selected_index >= expected.legal_action_count
+            || usize::try_from(expected.legal_action_count).ok() != Some(decision.actions().len())
+        {
+            return Err(());
+        }
+        if self.pending.is_none() {
+            if expected.substep_index != 0
+                || usize::try_from(expected.physical_decision_id).ok() != Some(self.entries.len())
+            {
+                return Err(());
+            }
+            self.pending = Some(CompletePublicHistoryPendingGroupV1 {
+                physical_decision_id: expected.physical_decision_id,
+                acting_player: expected.acting_player,
+                substep_count: expected.substep_count,
+                next_substep_index: 0,
+                action_explicit_sum: [0.0; NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2],
+                public_card_sum: [0.0; COMPLETE_PUBLIC_HISTORY_CARD_VOCAB_V1],
+                public_card_count: 0,
+            });
+        }
+        let pending = self.pending.as_mut().ok_or(())?;
+        if pending.physical_decision_id != expected.physical_decision_id
+            || pending.acting_player != expected.acting_player
+            || pending.substep_count != expected.substep_count
+            || pending.next_substep_index != expected.substep_index
+        {
+            return Err(());
+        }
+        self.tensorizer
+            .fill(decision, &mut self.tensor)
+            .map_err(|_| ())?;
+        let selected = usize::try_from(selected_index).map_err(|_| ())?;
+        let action_start = selected
+            .checked_mul(NATIVE_FLAT_ACTION_FEATURE_DIM_V2)
+            .ok_or(())?;
+        let explicit = self
+            .tensor
+            .action_features
+            .get(
+                action_start
+                    ..action_start
+                        .checked_add(NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2)
+                        .ok_or(())?,
+            )
+            .ok_or(())?;
+        for (sum, value) in pending.action_explicit_sum.iter_mut().zip(explicit) {
+            *sum += value;
+        }
+        for card in selected_public_card_bins_v1(decision, selected)? {
+            pending.public_card_sum[card] += 1.0;
+            pending.public_card_count = pending.public_card_count.checked_add(1).ok_or(())?;
+        }
+        pending.next_substep_index = pending.next_substep_index.checked_add(1).ok_or(())?;
+        if pending.next_substep_index == pending.substep_count {
+            let mut complete = self.pending.take().ok_or(())?;
+            let action_denominator = complete.substep_count as f32;
+            if !action_denominator.is_finite() || action_denominator <= 0.0 {
+                return Err(());
+            }
+            for value in &mut complete.action_explicit_sum {
+                *value /= action_denominator;
+            }
+            if complete.public_card_count > 0 {
+                let card_denominator = complete.public_card_count as f32;
+                if !card_denominator.is_finite() {
+                    return Err(());
+                }
+                for value in &mut complete.public_card_sum {
+                    *value /= card_denominator;
+                }
+            }
+            self.entries.push(FlatScoredCompletePublicHistoryEntryV1 {
+                physical_decision_id: complete.physical_decision_id,
+                acting_player: complete.acting_player,
+                action_explicit_features: complete.action_explicit_sum,
+                public_card_histogram: complete.public_card_sum,
+            });
+        }
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        terminal: AsyncRolloutTerminalV1,
+    ) -> Result<FlatScoredCompletePublicHistoryEpisodeV1, ()> {
+        if self.pending.is_some()
+            || terminal.episode_id != self.episode_id
+            || usize::try_from(terminal.physical_decision_count).ok() != Some(self.entries.len())
+        {
+            return Err(());
+        }
+        Ok(FlatScoredCompletePublicHistoryEpisodeV1 {
+            episode_id: self.episode_id,
+            entries: self.entries,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 struct RoundTerminalV1 {
     worker_id: usize,
     logical_lane_id: usize,
@@ -1523,6 +1771,7 @@ struct RoundTerminalV1 {
     learner_action_count: u64,
     learner_trace_hash: u64,
     native_full_trajectory_receipt: Option<NativeTrainingTrajectoryReceiptV2>,
+    complete_public_history: Option<FlatScoredCompletePublicHistoryEpisodeV1>,
 }
 
 struct WorkerRoundCore<F: FlatScoredFamilyCore> {
@@ -1645,6 +1894,8 @@ struct LocalLaneCore<F: FlatScoredFamilyCore> {
     learner_seat: PlayerSeatV1,
     native_schedule: Option<NativeLaneScheduleStateV1>,
     native_full_trajectory: Option<NativeRunBoundFullEpisodeAccumulatorV2>,
+    capture_complete_public_history: bool,
+    complete_public_history: Option<CompletePublicHistoryAccumulatorV1>,
     learner_action_count: u64,
     learner_trace_hash: u64,
     /// Set once per lane at construction; absence reproduces today's
@@ -1665,6 +1916,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
         first_episode_id: u64,
         end_episode_id: u64,
         ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+        capture_complete_public_history: bool,
     ) -> Self {
         let next_episode_id = first_episode_id
             .checked_add(logical_lane_id as u64)
@@ -1684,6 +1936,8 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             learner_seat: PlayerSeatV1::P0,
             native_schedule: None,
             native_full_trajectory: None,
+            capture_complete_public_history,
+            complete_public_history: None,
             learner_action_count: 0,
             learner_trace_hash: FNV1A64_OFFSET,
             ladder_opponent,
@@ -1707,6 +1961,22 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             episode_id: self.episode_id,
             phase,
         }
+    }
+
+    fn record_complete_public_history(
+        &mut self,
+        expected: FastActorDecisionV1,
+        packet: &F::ValidatedPacket,
+        selected_index: u32,
+    ) -> Result<(), WorkerFailureV1> {
+        let failure = self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol);
+        let Some(history) = self.complete_public_history.as_mut() else {
+            return Ok(());
+        };
+        let decision = F::ladder_scoring_view(F::packet_view(packet)).ok_or(failure)?;
+        history
+            .record_selected(expected, decision, selected_index)
+            .map_err(|_| failure)
     }
 
     fn apply_reply(&mut self, reply: &mut WorkerReplyCore<F>) -> Result<(), WorkerFailureV1> {
@@ -1760,6 +2030,11 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                     return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
                 }
             };
+            self.record_complete_public_history(
+                waiting.expected,
+                &action.packet,
+                action.scored.selected_index,
+            )?;
             let missing_session = self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol);
             let session = self.session.as_mut().ok_or(missing_session)?;
             let response = F::consume(session, action.scored.binding, action.scored.selected_index)
@@ -1835,6 +2110,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             self.waiting_terminal = false;
             self.native_schedule = None;
             self.native_full_trajectory = None;
+            self.complete_public_history = None;
             self.episode_id = u64::MAX;
         } else if reply.terminal_acks.contains(&self.logical_lane_id) {
             return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
@@ -1961,6 +2237,15 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
         self.learner_seat = learner_seat;
         self.native_schedule = native_schedule;
         self.native_full_trajectory = native_full_trajectory;
+        self.complete_public_history = if self.capture_complete_public_history {
+            if self.native_schedule.is_none() {
+                self.episode_id = episode_id;
+                return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Reset));
+            }
+            Some(CompletePublicHistoryAccumulatorV1::new(episode_id))
+        } else {
+            None
+        };
         self.learner_action_count = 0;
         self.learner_trace_hash = initial_learner_trace_hash_v1(episode_id);
         Ok(())
@@ -1997,6 +2282,20 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                     }
                     let terminal_deck_hashes = terminal.deck_hashes;
                     let compact_terminal = compact_terminal(&terminal);
+                    let complete_public_history = match (
+                        self.capture_complete_public_history,
+                        self.complete_public_history.take(),
+                    ) {
+                        (true, Some(history)) => {
+                            Some(history.finish(compact_terminal).map_err(|_| {
+                                self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                            })?)
+                        }
+                        (false, None) => None,
+                        _ => {
+                            return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                        }
+                    };
                     let native_full_trajectory_receipt =
                         match (self.native_schedule, self.native_full_trajectory.take()) {
                             (Some(_), Some(trajectory)) => Some(
@@ -2018,6 +2317,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         learner_action_count: self.learner_action_count,
                         learner_trace_hash: self.learner_trace_hash,
                         native_full_trajectory_receipt,
+                        complete_public_history,
                     });
                     self.waiting_terminal = true;
                     return Ok(());
@@ -2093,9 +2393,32 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                             .and_then(|schedule| schedule.ladder_member);
                         match ladder_member {
                             None | Some(OpponentLadderPoolMemberV2::UniformFloor) => {
-                                preflight.opponent_selected_index.ok_or_else(|| {
+                                let index = preflight.opponent_selected_index.ok_or_else(|| {
                                     self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
-                                })?
+                                })?;
+                                if self.complete_public_history.is_some() {
+                                    let owned_packet = self.packet.take().ok_or_else(|| {
+                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                    })?;
+                                    let validated_packet = F::encode_packet(
+                                        self.session.as_ref().ok_or_else(|| {
+                                            self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                        })?,
+                                        decision,
+                                        &mut self.encoder,
+                                        owned_packet,
+                                    )
+                                    .map_err(|_| {
+                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Encode)
+                                    })?;
+                                    self.record_complete_public_history(
+                                        decision,
+                                        &validated_packet,
+                                        index,
+                                    )?;
+                                    self.packet = Some(F::into_owned_packet(validated_packet));
+                                }
+                                index
                             }
                             Some(policy_member) => {
                                 // Deferred from preflight (Self-Play Ladder
@@ -2141,9 +2464,14 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                                         .map_err(|_| {
                                             self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
                                         })
-                                });
+                                })?;
+                                self.record_complete_public_history(
+                                    decision,
+                                    &validated_packet,
+                                    index,
+                                )?;
                                 self.packet = Some(F::into_owned_packet(validated_packet));
-                                index?
+                                index
                             }
                         }
                     } else {
@@ -2700,6 +3028,7 @@ struct WorkerRuntimeV1 {
     /// Set once per rollout run; absence reproduces today's opponent branch
     /// exactly (Self-Play Ladder Design Contract S2, Section 5).
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    capture_complete_public_history: bool,
     #[cfg(test)]
     test_instrumentation: Arc<TestRunInstrumentationV1>,
 }
@@ -2741,6 +3070,7 @@ fn worker_loop<F: FlatScoredFamilyCore>(
                 config.first_episode_id,
                 runtime.end_episode_id,
                 runtime.ladder_opponent.clone(),
+                runtime.capture_complete_public_history,
             );
             #[cfg(test)]
             let lane = LocalLaneCore {
@@ -3221,6 +3551,13 @@ pub(crate) fn run_async_flat_scored_rollout_core<
                 .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
         }
     }
+    let capture_complete_public_history = observer.captures_complete_public_history_core();
+    if capture_complete_public_history
+        && (!O::OBSERVES_TRAJECTORY
+            || matches!(execution_schedule, FlatScoredExecutionScheduleV1::Legacy))
+    {
+        return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
+    }
     // Exhaustive schedule/authority diagonal, after the basic range and
     // topology checks and before result reservation, channel creation,
     // worker spawn, or any session reset. The move-only authority is
@@ -3286,6 +3623,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
         cancel: Arc::clone(&cancel),
         released_epoch: Arc::clone(&released_epoch),
         ladder_opponent,
+        capture_complete_public_history,
         #[cfg(test)]
         test_instrumentation: Arc::clone(&test_instrumentation),
     };
@@ -3669,6 +4007,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
                             learner_action_count: episode.learner_action_count,
                             learner_trace_hash: episode.learner_trace_hash,
                             native_full_trajectory_receipt: terminal.native_full_trajectory_receipt,
+                            complete_public_history: terminal.complete_public_history,
                         },
                     ) {
                         observer_interruption = Some(interruption);
@@ -3974,6 +4313,137 @@ mod tests {
     const TEST_LEARNER_POLICY_SEED: u64 = 83_501;
 
     #[test]
+    fn complete_public_history_card_filter_matches_qualified_python_contract() {
+        use crate::flat_policy_v2::{
+            FlatGlobalsV2, FlatObjectCoreV2, FlatScorerActionCoreV2, FlatScorerActionRefV2,
+        };
+
+        fn bins(
+            kind: FlatScorerActionKindV2,
+            zone: Option<FlatZoneV2>,
+            action_card_token: u32,
+            object_card_token: u32,
+        ) -> Result<Vec<usize>, ()> {
+            let globals = FlatGlobalsV2::default();
+            let objects = [FlatObjectCoreV2 {
+                card_token: object_card_token,
+                zone,
+                ..FlatObjectCoreV2::default()
+            }];
+            let actions = [FlatScorerActionCoreV2 {
+                kind,
+                ref_start: 0,
+                ref_len: 1,
+                ..FlatScorerActionCoreV2::default()
+            }];
+            let refs = [FlatScorerActionRefV2 {
+                action_index: 0,
+                card_token: action_card_token,
+                model_object_index: 0,
+                ..FlatScorerActionRefV2::default()
+            }];
+            selected_public_card_bins_v1(
+                FlatScoringDecisionViewV2::new(
+                    &globals,
+                    &objects,
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &actions,
+                    &refs,
+                ),
+                0,
+            )
+        }
+
+        assert_eq!(
+            bins(
+                FlatScorerActionKindV2::CastSpell,
+                Some(FlatZoneV2::Hand),
+                41,
+                41,
+            ),
+            Ok(vec![41 % COMPLETE_PUBLIC_HISTORY_CARD_VOCAB_V1])
+        );
+        assert!(bins(
+            FlatScorerActionKindV2::PlayLand,
+            Some(FlatZoneV2::Exile),
+            42,
+            42,
+        )
+        .is_ok());
+        assert!(bins(
+            FlatScorerActionKindV2::Discard,
+            Some(FlatZoneV2::Hand),
+            43,
+            43,
+        )
+        .is_ok());
+        assert!(bins(
+            FlatScorerActionKindV2::ActivateAbility,
+            Some(FlatZoneV2::Battlefield),
+            44,
+            44,
+        )
+        .is_ok());
+        assert!(bins(
+            FlatScorerActionKindV2::CastSpell,
+            Some(FlatZoneV2::Battlefield),
+            45,
+            45,
+        )
+        .is_err());
+        assert!(bins(
+            FlatScorerActionKindV2::ActivateAbility,
+            Some(FlatZoneV2::Hand),
+            46,
+            46,
+        )
+        .is_err());
+        assert!(bins(
+            FlatScorerActionKindV2::PlotSpell,
+            Some(FlatZoneV2::Exile),
+            47,
+            47,
+        )
+        .is_err());
+        assert!(bins(FlatScorerActionKindV2::ChooseTarget, None, 48, 48,).is_err());
+        assert!(bins(
+            FlatScorerActionKindV2::ChooseTarget,
+            Some(FlatZoneV2::Stack),
+            49,
+            50,
+        )
+        .is_err());
+
+        let globals = FlatGlobalsV2::default();
+        let pass = [FlatScorerActionCoreV2::default()];
+        assert_eq!(
+            selected_public_card_bins_v1(
+                FlatScoringDecisionViewV2::new(
+                    &globals,
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &pass,
+                    &[],
+                ),
+                0,
+            ),
+            Ok(Vec::new())
+        );
+    }
+
+    #[test]
     fn data_free_coordination_lock_recovers_after_a_panicking_holder() {
         let lock = Arc::new(std::sync::Mutex::new(()));
         let panicking_lock = Arc::clone(&lock);
@@ -4089,7 +4559,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone, PartialEq)]
     struct TestObservedSelectedEventV1 {
         expected: FastActorDecisionV1,
         binding: FlatDecisionBindingV1,
@@ -4101,7 +4571,7 @@ mod tests {
         safe_packet_payload: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone, PartialEq)]
     enum TestObservedTrajectoryEventV1 {
         Selected(Box<TestObservedSelectedEventV1>),
         Terminal(FlatScoredTerminalEventV1),
@@ -5045,7 +5515,7 @@ mod tests {
             let observed_terminals = stream
                 .iter()
                 .filter_map(|event| match event {
-                    TestObservedTrajectoryEventV1::Terminal(event) => Some(*event),
+                    TestObservedTrajectoryEventV1::Terminal(event) => Some(event.clone()),
                     TestObservedTrajectoryEventV1::Selected(_) => None,
                 })
                 .collect::<Vec<_>>();
@@ -5057,6 +5527,7 @@ mod tests {
                     learner_action_count: episode.learner_action_count,
                     learner_trace_hash: episode.learner_trace_hash,
                     native_full_trajectory_receipt: None,
+                    complete_public_history: None,
                 })
                 .collect::<Vec<_>>();
             assert_eq!(observed_terminals, expected_terminals);
@@ -5436,7 +5907,8 @@ mod tests {
         let _test_state = acquire_async_flat_scored_test_guard_v1();
         let shaped = config(1, 1, 1, 1);
         let end_episode_id = shaped.first_episode_id + shaped.episode_count;
-        let mut lane = LocalLaneV1::vacant(0, 0, shaped.first_episode_id, end_episode_id, None);
+        let mut lane =
+            LocalLaneV1::vacant(0, 0, shaped.first_episode_id, end_episode_id, None, false);
         lane.test_instrumentation = _test_state.instrumentation_arc();
         lane.fill(
             &shaped,

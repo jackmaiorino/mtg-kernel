@@ -2,16 +2,16 @@
 
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
 use crate::native_flat_tensorizer_v2::{
-    NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2, NATIVE_FLAT_ACTION_FEATURE_DIM_V2,
-    NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2, NATIVE_FLAT_EDGE_FEATURE_DIM_V2,
-    NATIVE_FLAT_OBJECT_FEATURE_DIM_V2, NATIVE_FLAT_STATE_FEATURE_DIM_V2,
-    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2,
+    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2, NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2,
+    NATIVE_FLAT_ACTION_FEATURE_DIM_V2, NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2,
+    NATIVE_FLAT_EDGE_FEATURE_DIM_V2, NATIVE_FLAT_OBJECT_FEATURE_DIM_V2,
+    NATIVE_FLAT_STATE_FEATURE_DIM_V2,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1,
 };
 use crate::native_xmage_cp7_outcome_reinforce_v1::{
-    NativeXmageCp7OutcomeInferenceV1, load_xmage_cp7_outcome_inference_v1,
+    load_xmage_cp7_outcome_inference_v1, NativeXmageCp7OutcomeInferenceV1,
 };
 use crate::rl::parse_strict_json_value;
 use serde::Deserialize;
@@ -385,7 +385,7 @@ impl NativeStructuredPolicyResidualInferenceV1 {
         if parent.logits_v1().len() != action_count {
             return Err(());
         }
-        self.score_tensor_v1(parent, tensor, action_count, &[], 0)
+        self.score_tensor_v1(parent, &tensor, action_count, &[], 0)
     }
 
     pub(crate) fn score_decision_with_history_v1(
@@ -404,13 +404,38 @@ impl NativeStructuredPolicyResidualInferenceV1 {
         if parent.logits_v1().len() != action_count {
             return Err(());
         }
+        self.score_tensor_v1(parent, &tensor, action_count, history, acting_player)
+    }
+
+    /// Scores an already tensorized decision. The native trainer retains this
+    /// exact tensor after rollout, so credit estimation can reuse the
+    /// qualified frozen critic without changing action selection or the
+    /// rollout packet contract.
+    pub(crate) fn score_native_tensor_with_history_v1(
+        &self,
+        tensor: &NativeFlatDecisionTensorV2,
+        history: &[NativeStructuredHistoryEntryV1],
+        acting_player: u8,
+    ) -> Result<NativeStructuredPolicyResidualOutputV1, ()> {
+        if tensor.action_features.is_empty()
+            || tensor.action_features.len() % NATIVE_FLAT_ACTION_FEATURE_DIM_V2 != 0
+        {
+            return Err(());
+        }
+        let action_count = tensor.action_features.len() / NATIVE_FLAT_ACTION_FEATURE_DIM_V2;
+        let parent = self
+            .parent
+            .score_encoded_decision_v1(tensor_view_v1(tensor))?;
+        if parent.logits_v1().len() != action_count {
+            return Err(());
+        }
         self.score_tensor_v1(parent, tensor, action_count, history, acting_player)
     }
 
     fn score_tensor_v1(
         &self,
         parent: crate::native_xmage_cp7_outcome_reinforce_v1::NativeXmageCp7OutcomeInferenceOutputV1,
-        tensor: NativeFlatDecisionTensorV2,
+        tensor: &NativeFlatDecisionTensorV2,
         action_count: usize,
         history: &[NativeStructuredHistoryEntryV1],
         acting_player: u8,
@@ -420,7 +445,7 @@ impl NativeStructuredPolicyResidualInferenceV1 {
         }
         let residual = structured_residual_v1(
             &self.parameters,
-            &tensor,
+            tensor,
             self.history_aware.then_some((history, acting_player)),
             self.group_vocab,
         )?;
@@ -1806,11 +1831,9 @@ mod tests {
         let new = (0.3 + reset * -0.2).tanh();
         let first = (1.0 - update) * new;
         let expected = (1.0 - update) * new + update * first;
-        assert!(
-            observed
-                .iter()
-                .all(|value| (*value - expected).abs() <= 1.0e-7)
-        );
+        assert!(observed
+            .iter()
+            .all(|value| (*value - expected).abs() <= 1.0e-7));
     }
 
     #[test]

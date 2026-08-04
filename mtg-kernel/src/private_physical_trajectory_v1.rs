@@ -353,6 +353,7 @@ mod tests {
             learner_action_count: u64::try_from(learner_actions.len()).unwrap(),
             learner_trace_hash,
             native_full_trajectory_receipt: None,
+            complete_public_history: None,
         }
     }
 
@@ -1378,9 +1379,9 @@ mod tests {
     fn duplicate_terminal_and_selected_after_terminal_fail_closed() {
         let mut duplicate = FlatPhysicalTrajectoryObserverV1::new(PlayerSeatV1::P0, 20, 1).unwrap();
         let terminal = natural_terminal(20, &[], 2, 2, TerminalOutcomeV1::Draw);
-        duplicate.observe_terminal_v1(terminal).unwrap();
+        duplicate.observe_terminal_v1(terminal.clone()).unwrap();
         assert_eq!(
-            duplicate.observe_terminal_v1(terminal),
+            duplicate.observe_terminal_v1(terminal.clone()),
             Err(FlatPhysicalTrajectoryErrorV1::DuplicateTerminal { episode_id: 20 })
         );
 

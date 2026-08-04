@@ -2362,6 +2362,7 @@ mod tests {
             learner_action_count: receipt.learner_policy_step_count(),
             learner_trace_hash: 0,
             native_full_trajectory_receipt: Some(receipt),
+            complete_public_history: None,
         };
         let fresh_observer = || {
             NativeCheckpointRunnerObserverV1::new_v1(
@@ -2443,7 +2444,7 @@ mod tests {
         // check and its error class.
         let baseline_event = event_with(genuine);
         let fixed_event_case = |receipt: NativeTrainingTrajectoryReceiptV2| {
-            let mut event = baseline_event;
+            let mut event = baseline_event.clone();
             event.native_full_trajectory_receipt = Some(receipt);
             let mut observer = fresh_observer();
             let error = observer.observe_terminal_v2(event).unwrap_err();

@@ -10,10 +10,11 @@ use crate::async_flat_scored_rollout_v1::{
     run_async_flat_scored_rollout_core, AsyncFlatScoredObservedRunErrorV1,
     AsyncFlatScoredRolloutErrorV1, AsyncFlatScoredRolloutMetricsV1, AsyncFlatScoredRolloutResultV1,
     AsyncFlatScoredWorkerPhaseV1, FlatBatchScorerCore, FlatBatchScorerErrorV1,
-    FlatScoredExecutionScheduleV1, FlatScoredFamilyCore, FlatScoredObserverPhaseV1,
-    FlatScoredSelectedEventCore, FlatScoredSessionEnvironmentV1, FlatScoredTerminalEventV1,
-    FlatScoredTrajectoryObserverCore, RoundDecisionCore, ASYNC_FLAT_SCORED_SAMPLER_ID_V1,
-    ASYNC_FLAT_SCORED_SAMPLER_VERSION_V1, ASYNC_FLAT_SCORED_SPLITMIX_GAMMA_V1,
+    FlatScoredCompletePublicHistoryEpisodeV1, FlatScoredExecutionScheduleV1, FlatScoredFamilyCore,
+    FlatScoredObserverPhaseV1, FlatScoredSelectedEventCore, FlatScoredSessionEnvironmentV1,
+    FlatScoredTerminalEventV1, FlatScoredTrajectoryObserverCore, RoundDecisionCore,
+    ASYNC_FLAT_SCORED_SAMPLER_ID_V1, ASYNC_FLAT_SCORED_SAMPLER_VERSION_V1,
+    ASYNC_FLAT_SCORED_SPLITMIX_GAMMA_V1,
 };
 use crate::async_rollout::{AsyncRolloutEpisodeV1, AsyncRolloutTerminalV1};
 use crate::async_rollout_v2::{
@@ -175,12 +176,13 @@ pub(crate) struct FlatScoredSelectedEventV2<'a> {
     pub(crate) decision: FlatScoringDecisionViewV2<'a>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FlatScoredTerminalEventV2 {
     pub(crate) terminal: AsyncRolloutTerminalV1,
     pub(crate) learner_action_count: u64,
     pub(crate) learner_trace_hash: u64,
     pub(crate) native_full_trajectory_receipt: Option<NativeTrainingTrajectoryReceiptV2>,
+    pub(crate) complete_public_history: Option<FlatScoredCompletePublicHistoryEpisodeV1>,
 }
 
 pub(crate) trait FlatScoredTrajectoryObserverV2: Sized {
@@ -188,6 +190,10 @@ pub(crate) trait FlatScoredTrajectoryObserverV2: Sized {
     type Output;
 
     const OBSERVES_TRAJECTORY: bool = true;
+
+    fn captures_complete_public_history_v2(&self) -> bool {
+        false
+    }
 
     fn observe_selected_v2(
         &mut self,
@@ -980,6 +986,10 @@ impl<O: FlatScoredTrajectoryObserverV2> FlatScoredTrajectoryObserverCore<FlatSco
 
     const OBSERVES_TRAJECTORY: bool = O::OBSERVES_TRAJECTORY;
 
+    fn captures_complete_public_history_core(&self) -> bool {
+        self.0.captures_complete_public_history_v2()
+    }
+
     fn observe_selected_core(
         &mut self,
         event: FlatScoredSelectedEventCore<'_, FlatScoredFamilyV2>,
@@ -1005,6 +1015,7 @@ impl<O: FlatScoredTrajectoryObserverV2> FlatScoredTrajectoryObserverCore<FlatSco
             learner_action_count: event.learner_action_count,
             learner_trace_hash: event.learner_trace_hash,
             native_full_trajectory_receipt: event.native_full_trajectory_receipt,
+            complete_public_history: event.complete_public_history,
         })
     }
 
@@ -1533,6 +1544,37 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct CompletePublicHistoryObserverV2(Vec<FlatScoredCompletePublicHistoryEpisodeV1>);
+
+    impl FlatScoredTrajectoryObserverV2 for CompletePublicHistoryObserverV2 {
+        type Error = ();
+        type Output = Vec<FlatScoredCompletePublicHistoryEpisodeV1>;
+
+        fn captures_complete_public_history_v2(&self) -> bool {
+            true
+        }
+
+        fn observe_selected_v2(
+            &mut self,
+            _event: FlatScoredSelectedEventV2<'_>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn observe_terminal_v2(
+            &mut self,
+            mut event: FlatScoredTerminalEventV2,
+        ) -> Result<(), Self::Error> {
+            self.0.push(event.complete_public_history.take().ok_or(())?);
+            Ok(())
+        }
+
+        fn finish_v2(self) -> Result<Self::Output, Self::Error> {
+            Ok(self.0)
+        }
+    }
+
     fn canonical_uniform_trajectory_fold(rows: &[UniformTrajectoryRow]) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(b"mtg-kernel-test-uniform-trajectory-v1\0");
@@ -1697,6 +1739,69 @@ mod tests {
             exercised_width_invariance,
             "real Rally processing must include a later learner group after a multi-substep group"
         );
+    }
+
+    #[test]
+    fn native_complete_public_history_captures_both_actors_topology_free() {
+        const BASE_SEED: u64 = 71_501;
+        let mut reference = None;
+        for (workers, sessions, target) in [(1, 1, 1), (2, 1, 2)] {
+            let mut shaped = config(2);
+            shaped.worker_count = workers;
+            shaped.sessions_per_worker = sessions;
+            shaped.broker_batch_target = target;
+            let mut scorer = ContractCheckingScorerV2::default();
+            let (result, mut histories) = run_async_flat_scored_rollout_native_observed_v2(
+                shaped,
+                BASE_SEED,
+                None,
+                &mut scorer,
+                CompletePublicHistoryObserverV2::default(),
+            )
+            .unwrap();
+            histories.sort_by_key(|history| history.episode_id);
+            assert_eq!(histories.len(), result.episodes.len());
+            for history in &histories {
+                let episode = result
+                    .episodes
+                    .iter()
+                    .find(|episode| episode.terminal.episode_id == history.episode_id)
+                    .unwrap();
+                assert_eq!(
+                    history.entries.len(),
+                    usize::try_from(episode.terminal.physical_decision_count).unwrap()
+                );
+                assert!(history
+                    .entries
+                    .iter()
+                    .any(|entry| entry.acting_player == PlayerSeatV1::P0));
+                assert!(history
+                    .entries
+                    .iter()
+                    .any(|entry| entry.acting_player == PlayerSeatV1::P1));
+                for (physical_decision_id, entry) in history.entries.iter().enumerate() {
+                    assert_eq!(
+                        usize::try_from(entry.physical_decision_id).unwrap(),
+                        physical_decision_id
+                    );
+                    assert!(entry
+                        .action_explicit_features
+                        .iter()
+                        .all(|value| value.is_finite()));
+                    assert!(entry
+                        .public_card_histogram
+                        .iter()
+                        .all(|value| value.is_finite()));
+                    let card_mass = entry.public_card_histogram.iter().sum::<f32>();
+                    assert!(card_mass == 0.0 || (card_mass - 1.0).abs() <= 1.0e-6);
+                }
+            }
+            let canonical = (result.episodes, histories);
+            match &reference {
+                Some(expected) => assert_eq!(&canonical, expected),
+                None => reference = Some(canonical),
+            }
+        }
     }
 
     #[test]
