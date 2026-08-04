@@ -6553,6 +6553,23 @@ mod tests {
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn write_gae_v3_atomic_file_v1(path: &Path, bytes: &[u8]) {
+        assert!(!path.exists(), "refusing to overwrite {}", path.display());
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("GAE V3 artifact basename");
+        let staging_path = path.with_file_name(format!(".{file_name}.partial"));
+        assert!(
+            !staging_path.exists(),
+            "refusing to overwrite {}",
+            staging_path.display()
+        );
+        write_composed_staged_file_v1(&staging_path, bytes);
+        fs::rename(&staging_path, path).expect("atomically publish GAE V3 artifact file");
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn create_composed_artifact_staging_root_v1(output_root: &Path) -> (PathBuf, PathBuf) {
         let published_root = output_root.join("current-row-fresh-eval-v1");
         assert!(
@@ -6751,6 +6768,766 @@ mod tests {
                 "p1": {"treatment_only_wins": by_seat[1][0], "control_only_wins": by_seat[1][1], "ties": by_seat[1][2]},
             },
         })
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_CANDIDATE_STATE_PATH_V1: &str = "D:\\mtg-kernel-composed-factorial-v1\\current-row-fresh-eval-v1\\history-value-gae.state.f32le";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_FORMAL_OUTPUT_ROOT_V1: &str =
+        "D:\\mtg-kernel-composed-factorial-v1\\gae-v3-formal-strength-v1";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_INITIAL_FIRST_EPISODE_V1: u64 = 131_072;
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_CONFIRM_FIRST_EPISODE_V1: u64 = 196_608;
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_MAX_CLUSTERS_V1: u64 = 16_384;
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_BATCH_EPISODES_V1: u64 = 64;
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_BATCH_CLUSTERS_V1: u64 = GAE_V3_BATCH_EPISODES_V1 / 2;
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_INITIAL_SCHEDULE_SHA256_V1: &str =
+        "488b64430f2aa806dbaa2689e6bd0d14570f87ed091ca1ac4c553561d05dfa96";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_CONFIRM_SCHEDULE_SHA256_V1: &str =
+        "b82fa7bd4b4220bcfac60415c097448e7d992846871f1d485865dc3e12f9faaa";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_CANDIDATE_FILE_SHA256_V1: &str =
+        "a0b7752181a562f8e5a0821a490ce20b777b509855d754283536e8242f489b98";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_CANDIDATE_NATIVE_STATE_SHA256_V1: &str =
+        "ab7dd25ca6619a4a613ca089e1eb8e75981f8e5cfc0bae8535b78cddd7efa952";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_CANDIDATE_MODEL_SHA256_V1: &str =
+        "5efe2f167045bde379da3be8af6c480b6702f5d7a849ff8435d8ac6b1d91daa8";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_ANALYZER_SHA256_V1: &str =
+        "30d69aa0a86747ef2338735651d40565cc2b3850da01b9fbaa0719a7fb2e2b07";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_V3_PYTHON_SHA256_V1: &str =
+        "cce21c0e8710e304273e98ac4b2b0f5aceb639acbcd2343cbaa5c4e81619c45b";
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    struct GaeV3FixedBatchV1 {
+        evidence: NativeTrainerUpdateEvidenceV2,
+        fixed_policy_model_parameter_sha256: String,
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn gae_v3_pool_member_label_v1(
+        member: crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2,
+    ) -> &'static str {
+        use crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2;
+        match member {
+            OpponentLadderPoolMemberV2::Primary => "primary",
+            OpponentLadderPoolMemberV2::PredecessorA => "predecessor_a",
+            OpponentLadderPoolMemberV2::PredecessorB => "predecessor_b",
+            OpponentLadderPoolMemberV2::UniformFloor => "uniform_floor",
+        }
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn gae_v3_schedule_identifier_v1(base_seed: u64, pair_index: u64) -> String {
+        let p0_episode = pair_index.checked_mul(2).expect("P0 episode index");
+        let p1_episode = p0_episode.checked_add(1).expect("P1 episode index");
+        let p0_component = crate::native_ladder_opponent_v1::ladder_pool_member_for_episode_v1(
+            base_seed, p0_episode,
+        )
+        .expect("P0 Pool3 member");
+        let p1_component = crate::native_ladder_opponent_v1::ladder_pool_member_for_episode_v1(
+            base_seed, p1_episode,
+        )
+        .expect("P1 Pool3 member");
+        format!(
+            "mtg-kernel-native-trainer-schedule-sha256-v2;base_seed={base_seed};pair_index={pair_index};episode_p0={p0_episode};p0_component={};episode_p1={p1_episode};p1_component={}",
+            gae_v3_pool_member_label_v1(p0_component),
+            gae_v3_pool_member_label_v1(p1_component),
+        )
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn gae_v3_schedule_sha256_v1(
+        base_seed: u64,
+        first_episode_index: u64,
+        cluster_count: u64,
+    ) -> String {
+        assert_eq!(first_episode_index % 2, 0);
+        let first_pair_index = first_episode_index / 2;
+        let mut canonical = String::new();
+        for ordinal in 0..cluster_count {
+            if ordinal != 0 {
+                canonical.push(',');
+            }
+            canonical.push_str(&gae_v3_schedule_identifier_v1(
+                base_seed,
+                first_pair_index.checked_add(ordinal).expect("pair index"),
+            ));
+        }
+        h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(
+            canonical.as_bytes(),
+        ))
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn load_gae_v3_candidate_state_v1() -> NativePolicyValueTrainStateV1 {
+        let path = h4_canary_path_v1(
+            "MTG_KERNEL_GAE_V3_CANDIDATE_STATE",
+            GAE_V3_CANDIDATE_STATE_PATH_V1,
+        );
+        let payload = fs::read(&path).expect("retained GAE candidate state payload");
+        assert_eq!(
+            h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(&payload)),
+            GAE_V3_CANDIDATE_FILE_SHA256_V1,
+            "GAE candidate file identity"
+        );
+        let expected = NativeTrainStatePayloadDigestsV1 {
+            payload_sha256: h4_canary_digest_v1(GAE_V3_CANDIDATE_FILE_SHA256_V1),
+            parameters_sha256: h4_canary_digest_v1(
+                "039c07b60df0b1e580abb875eff93f3b4e5e33c7ef7a209c400a639adefd6053",
+            ),
+            first_moments_sha256: h4_canary_digest_v1(
+                "15faca5c01c0fe055e285d46a9ae91313ac71cac80d2fe02a9ead7567a0f9aaa",
+            ),
+            second_moments_sha256: h4_canary_digest_v1(
+                "fa9221dc26881559ecd14b11ae20321ac8fd98c8063f7e57cd33f20078dc8424",
+            ),
+            model_parameter_sha256: h4_canary_digest_v1(GAE_V3_CANDIDATE_MODEL_SHA256_V1),
+            native_state_sha256: h4_canary_digest_v1(GAE_V3_CANDIDATE_NATIVE_STATE_SHA256_V1),
+        };
+        let decoded =
+            decode_native_train_state_payload_verified_v1(&payload, 520, 0xbb3e_02e6, &expected)
+                .expect("retained GAE candidate payload must verify");
+        let mut model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .expect("GAE candidate model");
+        model
+            .replace_parameter_snapshot_v1(&decoded.snapshot.parameters)
+            .expect("GAE candidate parameters match model manifest");
+        let state = NativePolicyValueTrainStateV1::from_snapshot_v1(model, &decoded.snapshot)
+            .expect("GAE candidate train state");
+        assert_eq!(
+            h4_canary_hex_v1(state.state_sha256_v1().expect("GAE state digest")),
+            GAE_V3_CANDIDATE_NATIVE_STATE_SHA256_V1
+        );
+        state
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_gae_v3_fixed_batch_v1(
+        state: &NativePolicyValueTrainStateV1,
+        source: &H4CanarySourceV1,
+        first_episode_index: u64,
+        worker_count: usize,
+        sessions_per_worker: usize,
+    ) -> GaeV3FixedBatchV1 {
+        assert_eq!(first_episode_index % GAE_V3_BATCH_EPISODES_V1, 0);
+        assert_eq!(worker_count * sessions_per_worker, 64);
+        let update_index = first_episode_index / GAE_V3_BATCH_EPISODES_V1;
+        let eval_state = composed_eval_state_at_update_v1(state, update_index);
+        let encoded = encode_native_train_state_payload_v1(
+            &eval_state
+                .snapshot_v1()
+                .expect("snapshot GAE V3 fixed eval state"),
+        )
+        .expect("encode GAE V3 fixed eval state identity");
+        let fixed_policy_model_parameter_sha256 =
+            h4_canary_hex_v1(encoded.digests.model_parameter_sha256);
+        let progress = NativeTrainerProgressV2 {
+            next_episode_index: first_episode_index,
+            successful_update_count: update_index,
+            completed_episode_count: first_episode_index,
+            learner_physical_decision_count: 0,
+            learner_policy_step_count: 0,
+        };
+        let mut trainer = NativeTrainerStateV2::from_resumed_parts_v2(
+            970_001,
+            GAE_V3_BATCH_EPISODES_V1,
+            &eval_state,
+            progress,
+        )
+        .expect("GAE V3 fixed-policy trainer");
+        trainer.set_ladder_opponent_v1(Some(Arc::clone(&source.ladder)));
+        let config = h4_canary_config_with_topology_v1(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            worker_count,
+            sessions_per_worker,
+        );
+        let evidence = trainer
+            .run_even_batch_update_live_seat_credit_canary_v1(
+                &config,
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            )
+            .expect("GAE V3 fixed-policy rollout");
+        assert_eq!(evidence.first_episode_index, first_episode_index);
+        assert_eq!(evidence.episode_count, GAE_V3_BATCH_EPISODES_V1);
+        assert_eq!(
+            evidence.model_digest_before, fixed_policy_model_parameter_sha256,
+            "rollout policy identity before discarded update"
+        );
+        GaeV3FixedBatchV1 {
+            evidence,
+            fixed_policy_model_parameter_sha256,
+        }
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn gae_v3_leg_score_v1(candidate_return: i8, parent_return: i8) -> i8 {
+        assert!(
+            matches!(candidate_return, -1..=1),
+            "candidate return outside terminal alphabet"
+        );
+        assert!(
+            matches!(parent_return, -1..=1),
+            "parent return outside terminal alphabet"
+        );
+        match candidate_return.cmp(&parent_return) {
+            std::cmp::Ordering::Greater => 1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Less => -1,
+        }
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_gae_v3_throughput_screen_v1(
+        source: &H4CanarySourceV1,
+        candidate: &NativePolicyValueTrainStateV1,
+    ) {
+        let output_root = h4_canary_path_v1(
+            "MTG_KERNEL_GAE_V3_FORMAL_OUTPUT_ROOT",
+            GAE_V3_FORMAL_OUTPUT_ROOT_V1,
+        );
+        fs::create_dir_all(&output_root).expect("create GAE V3 output root");
+        let output_path = output_root.join("throughput-screen.json");
+        let mut rows = Vec::new();
+        let mut parent_baseline = None;
+        let mut candidate_baseline = None;
+        for (worker_count, sessions_per_worker) in [(1_usize, 64_usize), (2, 32), (4, 16)] {
+            let parent = run_gae_v3_fixed_batch_v1(
+                &source.train_state,
+                source,
+                65_536,
+                worker_count,
+                sessions_per_worker,
+            );
+            let treatment = run_gae_v3_fixed_batch_v1(
+                candidate,
+                source,
+                65_536,
+                worker_count,
+                sessions_per_worker,
+            );
+            assert_eq!(
+                parent.fixed_policy_model_parameter_sha256,
+                "5c8e09aabab375a2eb73aba2201b8d616a18bac13f28f74a03d93c6ff0e05c6b"
+            );
+            assert_eq!(
+                treatment.fixed_policy_model_parameter_sha256,
+                GAE_V3_CANDIDATE_MODEL_SHA256_V1
+            );
+            if let Some(baseline) = &parent_baseline {
+                assert_eq!(baseline, &parent.evidence.episodes);
+            } else {
+                parent_baseline = Some(parent.evidence.episodes.clone());
+            }
+            if let Some(baseline) = &candidate_baseline {
+                assert_eq!(baseline, &treatment.evidence.episodes);
+            } else {
+                candidate_baseline = Some(treatment.evidence.episodes.clone());
+            }
+            rows.push(serde_json::json!({
+                "worker_count": worker_count,
+                "sessions_per_worker": sessions_per_worker,
+                "parent_update_elapsed_ns": parent.evidence.update_elapsed_ns,
+                "candidate_update_elapsed_ns": treatment.evidence.update_elapsed_ns,
+                "parent_games_per_second": GAE_V3_BATCH_EPISODES_V1 as f64 / (parent.evidence.update_elapsed_ns as f64 / 1.0e9),
+                "candidate_games_per_second": GAE_V3_BATCH_EPISODES_V1 as f64 / (treatment.evidence.update_elapsed_ns as f64 / 1.0e9),
+                "combined_serial_elapsed_ns": parent.evidence.update_elapsed_ns + treatment.evidence.update_elapsed_ns,
+            }));
+        }
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-gae-v3-throughput-screen/v1",
+            "status": "complete",
+            "panel": "already-revealed-development-episodes-65536..65599",
+            "episode_count_per_arm_per_topology": GAE_V3_BATCH_EPISODES_V1,
+            "topologies": rows,
+            "bit_identical_episode_evidence_across_topologies": true,
+            "gpu_ordinal": 1,
+            "nonclaims": ["preflight-only", "no-strength-evidence", "no-alpha-spent"],
+        });
+        let bytes = serde_json::to_vec_pretty(&report).expect("serialize GAE V3 throughput report");
+        write_composed_staged_file_v1(&output_path, &bytes);
+        println!("GAE_V3_THROUGHPUT_SCREEN_RESULT {}", output_path.display());
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_gae_v3_formal_measurement_v1(
+        mode: &str,
+        source: &H4CanarySourceV1,
+        candidate: &NativePolicyValueTrainStateV1,
+        worker_count: usize,
+        sessions_per_worker: usize,
+    ) {
+        let (first_episode_index, expected_schedule_sha256) = match mode {
+            "initial" => (
+                GAE_V3_INITIAL_FIRST_EPISODE_V1,
+                GAE_V3_INITIAL_SCHEDULE_SHA256_V1,
+            ),
+            "confirmation" => (
+                GAE_V3_CONFIRM_FIRST_EPISODE_V1,
+                GAE_V3_CONFIRM_SCHEDULE_SHA256_V1,
+            ),
+            _ => panic!("GAE V3 formal mode must be initial or confirmation"),
+        };
+        assert_eq!(worker_count * sessions_per_worker, 64);
+        let schedule_sha256 =
+            gae_v3_schedule_sha256_v1(970_001, first_episode_index, GAE_V3_MAX_CLUSTERS_V1);
+        assert_eq!(schedule_sha256, expected_schedule_sha256);
+        let gate_id = match mode {
+            "initial" => "candidate-01-gae-initial",
+            "confirmation" => "candidate-01-gae-confirm",
+            _ => unreachable!(),
+        };
+        let gate_contract = serde_json::json!({
+            "gate_id": gate_id,
+            "gate_class": "LARGE-EFFECT",
+            "delta_worthwhile": 0.01_f64,
+            "delta_promote": 0.01_f64,
+            "alpha": 0.00875_f64,
+            "c": 0.5_f64,
+            "conditional_mean_stability": "IID-MIXTURE",
+            "blinded_pilot": "none",
+            "alpha_pool": "candidates",
+            "alpha_consumed_at_launch": true,
+        });
+        let initial_success_authority = if mode == "confirmation" {
+            Some(load_gae_v3_initial_success_authority_v1())
+        } else {
+            None
+        };
+        let parent_native_state_sha256 = h4_canary_hex_v1(
+            source
+                .train_state
+                .state_sha256_v1()
+                .expect("parent state digest"),
+        );
+        assert_eq!(
+            parent_native_state_sha256,
+            "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0"
+        );
+        let candidate_native_state_sha256 =
+            h4_canary_hex_v1(candidate.state_sha256_v1().expect("candidate state digest"));
+        assert_eq!(
+            candidate_native_state_sha256,
+            GAE_V3_CANDIDATE_NATIVE_STATE_SHA256_V1
+        );
+
+        let output_root = h4_canary_path_v1(
+            "MTG_KERNEL_GAE_V3_FORMAL_OUTPUT_ROOT",
+            GAE_V3_FORMAL_OUTPUT_ROOT_V1,
+        );
+        fs::create_dir_all(&output_root).expect("create GAE V3 output root");
+        let run_root = output_root.join(mode);
+        fs::create_dir(&run_root).expect("create fresh GAE V3 formal run root");
+        let start = serde_json::json!({
+            "schema": "mtg-kernel-gae-v3-formal-run-start/v1",
+            "mode": mode,
+            "status": "measurement-started",
+            "base_seed": 970001_u64,
+            "first_episode_index": first_episode_index,
+            "max_clusters": GAE_V3_MAX_CLUSTERS_V1,
+            "pre_outcome_seed_schedule_sha256": schedule_sha256,
+            "worker_count": worker_count,
+            "sessions_per_worker": sessions_per_worker,
+            "gpu_ordinal": 1,
+            "gate": gate_contract.clone(),
+            "initial_success_authority": initial_success_authority.clone(),
+            "parent_native_state_sha256": parent_native_state_sha256,
+            "candidate_native_state_sha256": candidate_native_state_sha256,
+        });
+        let start_bytes = serde_json::to_vec_pretty(&start).expect("serialize GAE V3 start record");
+        let run_start_sha256 = h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(
+            &start_bytes,
+        ));
+        write_gae_v3_atomic_file_v1(&run_root.join("run-start.json"), &start_bytes);
+
+        let batch_count = GAE_V3_MAX_CLUSTERS_V1 / GAE_V3_BATCH_CLUSTERS_V1;
+        assert_eq!(
+            batch_count * GAE_V3_BATCH_CLUSTERS_V1,
+            GAE_V3_MAX_CLUSTERS_V1
+        );
+        let mut chunks = Vec::with_capacity(batch_count as usize);
+        let mut parent_elapsed_ns = 0_u64;
+        let mut candidate_elapsed_ns = 0_u64;
+        for chunk_index in 0..batch_count {
+            let first_cluster_ordinal = chunk_index * GAE_V3_BATCH_CLUSTERS_V1;
+            let chunk_first_episode = first_episode_index
+                .checked_add(first_cluster_ordinal * 2)
+                .expect("chunk first episode");
+            let parent = run_gae_v3_fixed_batch_v1(
+                &source.train_state,
+                source,
+                chunk_first_episode,
+                worker_count,
+                sessions_per_worker,
+            );
+            let treatment = run_gae_v3_fixed_batch_v1(
+                candidate,
+                source,
+                chunk_first_episode,
+                worker_count,
+                sessions_per_worker,
+            );
+            assert_eq!(
+                parent.fixed_policy_model_parameter_sha256,
+                "5c8e09aabab375a2eb73aba2201b8d616a18bac13f28f74a03d93c6ff0e05c6b"
+            );
+            assert_eq!(
+                treatment.fixed_policy_model_parameter_sha256,
+                GAE_V3_CANDIDATE_MODEL_SHA256_V1
+            );
+            parent_elapsed_ns = parent_elapsed_ns
+                .checked_add(parent.evidence.update_elapsed_ns)
+                .expect("parent elapsed total");
+            candidate_elapsed_ns = candidate_elapsed_ns
+                .checked_add(treatment.evidence.update_elapsed_ns)
+                .expect("candidate elapsed total");
+            assert_eq!(
+                parent.evidence.episodes.len(),
+                GAE_V3_BATCH_EPISODES_V1 as usize
+            );
+            assert_eq!(
+                treatment.evidence.episodes.len(),
+                GAE_V3_BATCH_EPISODES_V1 as usize
+            );
+            let mut cluster_records = Vec::with_capacity(GAE_V3_BATCH_CLUSTERS_V1 as usize);
+            for local_cluster in 0..GAE_V3_BATCH_CLUSTERS_V1 as usize {
+                let p0_index = local_cluster * 2;
+                let p1_index = p0_index + 1;
+                let parent_p0 = parent.evidence.episodes[p0_index];
+                let parent_p1 = parent.evidence.episodes[p1_index];
+                let candidate_p0 = treatment.evidence.episodes[p0_index];
+                let candidate_p1 = treatment.evidence.episodes[p1_index];
+                assert_eq!(parent_p0.episode_index, candidate_p0.episode_index);
+                assert_eq!(parent_p1.episode_index, candidate_p1.episode_index);
+                assert_eq!(parent_p0.learner_seat, PlayerSeatV1::P0);
+                assert_eq!(parent_p1.learner_seat, PlayerSeatV1::P1);
+                assert_eq!(candidate_p0.learner_seat, PlayerSeatV1::P0);
+                assert_eq!(candidate_p1.learner_seat, PlayerSeatV1::P1);
+                let p0_schedule =
+                    native_trainer_episode_schedule_v1(970_001, parent_p0.episode_index)
+                        .expect("P0 formal schedule");
+                let p1_schedule =
+                    native_trainer_episode_schedule_v1(970_001, parent_p1.episode_index)
+                        .expect("P1 formal schedule");
+                assert_eq!(p0_schedule.pair_index, p1_schedule.pair_index);
+                assert_eq!(p0_schedule.environment_seed, p1_schedule.environment_seed);
+                let p0_component = source
+                    .ladder
+                    .pool_member_for_episode_v1(970_001, parent_p0.episode_index)
+                    .expect("P0 realized Pool3 member");
+                let p1_component = source
+                    .ladder
+                    .pool_member_for_episode_v1(970_001, parent_p1.episode_index)
+                    .expect("P1 realized Pool3 member");
+                assert_eq!(
+                    p0_component,
+                    crate::native_ladder_opponent_v1::ladder_pool_member_for_episode_v1(
+                        970_001,
+                        parent_p0.episode_index,
+                    )
+                    .expect("P0 pure Pool3 member")
+                );
+                assert_eq!(
+                    p1_component,
+                    crate::native_ladder_opponent_v1::ladder_pool_member_for_episode_v1(
+                        970_001,
+                        parent_p1.episode_index,
+                    )
+                    .expect("P1 pure Pool3 member")
+                );
+                let p0_score =
+                    gae_v3_leg_score_v1(candidate_p0.learner_return, parent_p0.learner_return);
+                let p1_score =
+                    gae_v3_leg_score_v1(candidate_p1.learner_return, parent_p1.learner_return);
+                let cluster_score = f64::from(p0_score + p1_score) / 2.0;
+                let ordinal = first_cluster_ordinal + local_cluster as u64;
+                assert_eq!(p0_schedule.pair_index, first_episode_index / 2 + ordinal);
+                cluster_records.push(serde_json::json!({
+                    "ordinal": ordinal,
+                    "pair_index": p0_schedule.pair_index,
+                    "p0": {
+                        "episode_index": parent_p0.episode_index,
+                        "environment_seed": p0_schedule.environment_seed,
+                        "opponent_component": gae_v3_pool_member_label_v1(p0_component),
+                        "parent_return": parent_p0.learner_return,
+                        "candidate_return": candidate_p0.learner_return,
+                        "leg_score": p0_score,
+                    },
+                    "p1": {
+                        "episode_index": parent_p1.episode_index,
+                        "environment_seed": p1_schedule.environment_seed,
+                        "opponent_component": gae_v3_pool_member_label_v1(p1_component),
+                        "parent_return": parent_p1.learner_return,
+                        "candidate_return": candidate_p1.learner_return,
+                        "leg_score": p1_score,
+                    },
+                    "cluster_score": cluster_score,
+                }));
+            }
+            let chunk = serde_json::json!({
+                "schema": "mtg-kernel-gae-v3-formal-chunk/v1",
+                "mode": mode,
+                "chunk_index": chunk_index,
+                "first_cluster_ordinal": first_cluster_ordinal,
+                "cluster_count": GAE_V3_BATCH_CLUSTERS_V1,
+                "clusters": cluster_records,
+            });
+            let chunk_bytes =
+                serde_json::to_vec_pretty(&chunk).expect("serialize GAE V3 formal chunk");
+            let chunk_sha256 = h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(
+                &chunk_bytes,
+            ));
+            let file_name = format!("chunk-{chunk_index:05}.json");
+            write_gae_v3_atomic_file_v1(&run_root.join(&file_name), &chunk_bytes);
+            chunks.push(serde_json::json!({
+                "chunk_index": chunk_index,
+                "file_name": file_name,
+                "sha256": chunk_sha256,
+                "first_cluster_ordinal": first_cluster_ordinal,
+                "cluster_count": GAE_V3_BATCH_CLUSTERS_V1,
+            }));
+        }
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-gae-v3-formal-raw/v1",
+            "mode": mode,
+            "status": "measurement-complete",
+            "reward": "natural-terminal-win-loss-draw-only/v1",
+            "base_seed": 970001_u64,
+            "first_episode_index": first_episode_index,
+            "max_clusters": GAE_V3_MAX_CLUSTERS_V1,
+            "observed_clusters": GAE_V3_MAX_CLUSTERS_V1,
+            "run_start_sha256": run_start_sha256,
+            "pre_outcome_seed_schedule_sha256": expected_schedule_sha256,
+            "worker_count": worker_count,
+            "sessions_per_worker": sessions_per_worker,
+            "gpu_ordinal": 1,
+            "gate": gate_contract,
+            "initial_success_authority": initial_success_authority,
+            "parent": {
+                "native_state_sha256": parent_native_state_sha256,
+                "model_parameter_sha256": "5c8e09aabab375a2eb73aba2201b8d616a18bac13f28f74a03d93c6ff0e05c6b",
+                "rollout_elapsed_ns": parent_elapsed_ns,
+            },
+            "candidate": {
+                "file_sha256": GAE_V3_CANDIDATE_FILE_SHA256_V1,
+                "native_state_sha256": candidate_native_state_sha256,
+                "model_parameter_sha256": GAE_V3_CANDIDATE_MODEL_SHA256_V1,
+                "rollout_elapsed_ns": candidate_elapsed_ns,
+            },
+            "chunks": chunks,
+            "nonclaims": ["formal-kernel-strength-only", "not-pro-level-evidence", "analysis-pending"],
+        });
+        let report_path = run_root.join("report.json");
+        write_gae_v3_atomic_file_v1(
+            &report_path,
+            &serde_json::to_vec_pretty(&report).expect("serialize GAE V3 raw report"),
+        );
+        println!("GAE_V3_FORMAL_RAW_RESULT {}", report_path.display());
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn load_gae_v3_initial_success_authority_v1() -> serde_json::Value {
+        let path = std::env::var_os("MTG_KERNEL_GAE_V3_INITIAL_ANALYSIS")
+            .map(PathBuf::from)
+            .expect("confirmation requires MTG_KERNEL_GAE_V3_INITIAL_ANALYSIS");
+        let expected_sha256 = std::env::var("MTG_KERNEL_GAE_V3_INITIAL_ANALYSIS_SHA256")
+            .expect("confirmation requires MTG_KERNEL_GAE_V3_INITIAL_ANALYSIS_SHA256")
+            .to_ascii_lowercase();
+        assert_eq!(expected_sha256.len(), 64);
+        assert!(
+            expected_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "initial analysis SHA-256 must be lowercase hex"
+        );
+        let bytes = fs::read(&path).expect("read initial SUCCESS analysis authority");
+        let observed_sha256 =
+            h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(&bytes));
+        assert_eq!(observed_sha256, expected_sha256);
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("initial analysis authority JSON");
+        assert_eq!(value["schema"], "mtg-kernel-gae-v3-formal-analysis/v1");
+        assert_eq!(value["status"], "analysis-complete");
+        assert_eq!(value["mode"], "initial");
+        assert_eq!(value["observed_clusters"], GAE_V3_MAX_CLUSTERS_V1);
+        assert_eq!(
+            value["pre_outcome_seed_schedule_sha256"],
+            GAE_V3_INITIAL_SCHEDULE_SHA256_V1
+        );
+        assert_eq!(
+            value["candidate"]["native_state_sha256"],
+            GAE_V3_CANDIDATE_NATIVE_STATE_SHA256_V1
+        );
+        assert_eq!(
+            value["candidate"]["model_parameter_sha256"],
+            GAE_V3_CANDIDATE_MODEL_SHA256_V1
+        );
+        assert_eq!(value["gate_decision"]["verdict"], "SUCCESS");
+        let decision_n = value["gate_decision"]["decision_n"]
+            .as_u64()
+            .expect("initial SUCCESS decision_n");
+        assert!((1..=GAE_V3_MAX_CLUSTERS_V1).contains(&decision_n));
+        let raw_root = std::env::var_os("MTG_KERNEL_GAE_V3_INITIAL_RAW_ROOT")
+            .map(PathBuf::from)
+            .expect("confirmation requires MTG_KERNEL_GAE_V3_INITIAL_RAW_ROOT");
+        let analyzer_path = std::env::var_os("MTG_KERNEL_GAE_V3_ANALYZER")
+            .map(PathBuf::from)
+            .expect("confirmation requires MTG_KERNEL_GAE_V3_ANALYZER");
+        let analyzer_bytes = fs::read(&analyzer_path).expect("read frozen GAE V3 analyzer");
+        assert_eq!(
+            h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(
+                &analyzer_bytes
+            )),
+            GAE_V3_ANALYZER_SHA256_V1,
+            "GAE V3 analyzer source identity"
+        );
+        let python_path = std::env::var_os("MTG_KERNEL_GAE_V3_PYTHON")
+            .map(PathBuf::from)
+            .expect("confirmation requires MTG_KERNEL_GAE_V3_PYTHON");
+        let python_bytes = fs::read(&python_path).expect("read frozen Python executable");
+        assert_eq!(
+            h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(
+                &python_bytes
+            )),
+            GAE_V3_PYTHON_SHA256_V1,
+            "GAE V3 Python executable identity"
+        );
+        let verification = std::process::Command::new(&python_path)
+            .arg("-I")
+            .arg("-B")
+            .arg(&analyzer_path)
+            .arg(&raw_root)
+            .arg("--verify-existing")
+            .arg(&path)
+            .output()
+            .expect("execute full initial-analysis verification");
+        assert!(
+            verification.status.success(),
+            "initial-analysis verification failed: {}",
+            String::from_utf8_lossy(&verification.stderr)
+        );
+        let proof: serde_json::Value = serde_json::from_slice(&verification.stdout)
+            .expect("initial-analysis verification proof JSON");
+        assert_eq!(
+            proof["schema"],
+            "mtg-kernel-gae-v3-confirmation-authorization/v1"
+        );
+        assert_eq!(proof["authorized"], true);
+        assert_eq!(proof["mode"], "initial");
+        assert_eq!(proof["verdict"], "SUCCESS");
+        assert_eq!(proof["decision_n"], decision_n);
+        assert_eq!(proof["analysis_sha256"], observed_sha256);
+        assert_eq!(
+            proof["reference_sha256"],
+            "ffae17bdc020578a34d7cc420e138951fcb587531cf5191c978384a4bd4b73ef"
+        );
+        let expected_raw_root = fs::canonicalize(&raw_root).expect("canonical initial raw root");
+        let proof_raw_root = proof["raw_artifact_directory"]
+            .as_str()
+            .map(PathBuf::from)
+            .and_then(|value| fs::canonicalize(value).ok())
+            .expect("canonical proof raw root");
+        assert_eq!(proof_raw_root, expected_raw_root);
+        serde_json::json!({
+            "path": path,
+            "sha256": observed_sha256,
+            "verdict": "SUCCESS",
+            "decision_n": decision_n,
+            "pre_outcome_seed_schedule_sha256": GAE_V3_INITIAL_SCHEDULE_SHA256_V1,
+            "raw_artifact_directory": expected_raw_root,
+            "raw_report_sha256": proof["raw_report_sha256"],
+            "realized_score_stream_sha256": proof["realized_score_stream_sha256"],
+            "reference_sha256": proof["reference_sha256"],
+            "analyzer_path": analyzer_path,
+            "analyzer_sha256": GAE_V3_ANALYZER_SHA256_V1,
+            "python_path": python_path,
+            "python_sha256": GAE_V3_PYTHON_SHA256_V1,
+        })
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn gae_v3_frozen_seed_schedule_hashes_are_exact() {
+        assert_eq!(
+            gae_v3_schedule_sha256_v1(
+                970_001,
+                GAE_V3_INITIAL_FIRST_EPISODE_V1,
+                GAE_V3_MAX_CLUSTERS_V1,
+            ),
+            GAE_V3_INITIAL_SCHEDULE_SHA256_V1
+        );
+        assert_eq!(
+            gae_v3_schedule_sha256_v1(
+                970_001,
+                GAE_V3_CONFIRM_FIRST_EPISODE_V1,
+                GAE_V3_MAX_CLUSTERS_V1,
+            ),
+            GAE_V3_CONFIRM_SCHEDULE_SHA256_V1
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn gae_v3_leg_score_orders_all_terminal_results() {
+        for candidate in -1_i8..=1 {
+            for parent in -1_i8..=1 {
+                assert_eq!(
+                    gae_v3_leg_score_v1(candidate, parent),
+                    if candidate > parent {
+                        1
+                    } else if candidate < parent {
+                        -1
+                    } else {
+                        0
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires retained campaign stores, exact GAE candidate sidecar, and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn composed_factorial_gae_v3_formal_strength_v1() {
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let mode = std::env::var("MTG_KERNEL_GAE_V3_MODE")
+            .expect("MTG_KERNEL_GAE_V3_MODE=throughput|initial|confirmation");
+        let source = load_h4_canary_source_v1();
+        let candidate = load_gae_v3_candidate_state_v1();
+        if mode == "throughput" {
+            run_gae_v3_throughput_screen_v1(&source, &candidate);
+            return;
+        }
+        let worker_count = std::env::var("MTG_KERNEL_GAE_V3_WORKERS")
+            .expect("formal worker count")
+            .parse::<usize>()
+            .expect("formal worker count integer");
+        let sessions_per_worker = std::env::var("MTG_KERNEL_GAE_V3_SESSIONS_PER_WORKER")
+            .expect("formal sessions per worker")
+            .parse::<usize>()
+            .expect("formal sessions-per-worker integer");
+        run_gae_v3_formal_measurement_v1(
+            &mode,
+            &source,
+            &candidate,
+            worker_count,
+            sessions_per_worker,
+        );
     }
 
     #[test]

@@ -3,6 +3,13 @@
 Status: frozen design, measurement not launched. This sheet is governed by
 `SEQUENTIAL-GATE-CONTRACT-DRAFT-V3.md` plus
 `SEQUENTIAL-GATE-CONTRACT-V3-ERRATUM-1.md` in `collab`.
+Their frozen SHA-256 values are respectively
+`3220e9b17ad13ff44e21e3f0bf4119d7f2b19652db30c0d77e03a164cca79d0f`
+and `f205f6067b81bdc4245281cfa47dad1d5ea9980975329e1b9be9594285fd5091`.
+The authoritative `eb_cs_reference_v1.py` SHA-256 is
+`ffae17bdc020578a34d7cc420e138951fcb587531cf5191c978384a4bd4b73ef`;
+its fixture package SHA-256 is
+`de9ae592add1d077431ec44bebfc50a08f5263b15ed9b86061ca97ea9a9c41e1`.
 
 ## Candidate and comparison
 
