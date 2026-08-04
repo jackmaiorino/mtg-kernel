@@ -1460,9 +1460,10 @@ mod windows_science_loop_tests {
         use crate::native_training_store_run_v2::{
             test_fixture_bytes_with_schedule_and_base_seed_ladder_v2,
             test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2,
-            OpponentLadderPoolContractV1,
+            NativeRunEnvironmentTrajectoryContractV1, OpponentLadderPoolContractV1,
         };
         use crate::rl::PlayerSeatV1;
+        use crate::rl_session::FastActorDecisionKindV1;
 
         fn required_env_v1(name: &str) -> String {
             std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
@@ -1481,6 +1482,10 @@ mod windows_science_loop_tests {
             .unwrap_or_else(|_| "1024".to_owned())
             .parse()
             .expect("H2H_PAIRS");
+        let first_pair: u64 = std::env::var("H2H_FIRST_PAIR")
+            .unwrap_or_else(|_| "0".to_owned())
+            .parse()
+            .expect("H2H_FIRST_PAIR");
         let eval_seed: u64 = std::env::var("H2H_EVAL_SEED")
             .unwrap_or_else(|_| "7777".to_owned())
             .parse()
@@ -1503,6 +1508,8 @@ mod windows_science_loop_tests {
             "P1" | "p1" => PlayerSeatV1::P1,
             other => panic!("H2H_STARTING_PLAYER must be P0 or P1, got {other:?}"),
         };
+        let episode_diagnostics =
+            std::env::var("H2H_EPISODE_DIAGNOSTICS_V1").is_ok_and(|value| value != "0");
         // Capacity-experiment wide-net knob; see the doc comment. Candidate
         // side only; the opponent stays frozen-identity by protocol.
         let wide = std::env::var("WIDE").is_ok_and(|value| value != "0");
@@ -1574,6 +1581,11 @@ mod windows_science_loop_tests {
         };
         let candidate_run =
             decode_train_run_v2(&candidate_run_bytes).expect("candidate ladder run record");
+        let environment_randomization_v2 = matches!(
+            candidate_run.environment_trajectory_contract_v1(),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        println!("H2H envrand_v2={environment_randomization_v2}");
         let candidate_root =
             ValidatedNativeTrainingStoreRootV2::open_v2(&candidate_store_root).unwrap();
         let candidate_boundary =
@@ -1649,7 +1661,7 @@ mod windows_science_loop_tests {
 
         let runner_config = NativeCheckpointRunnerConfigV1 {
             evaluation_base_seed: eval_seed,
-            first_episode_index: 0,
+            first_episode_index: first_pair.checked_mul(2).expect("H2H_FIRST_PAIR overflow"),
             episode_count,
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
@@ -1721,6 +1733,39 @@ mod windows_science_loop_tests {
                     PlayerSeatV1::P1 => 1,
                 };
                 let reward = episode.terminal.terminal_reward[seat_index];
+                if episode_diagnostics {
+                    let seat_label = if seat_index == 0 { "P0" } else { "P1" };
+                    let legal_action_count = binding
+                        .first_learner_legal_action_count()
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "null".to_owned());
+                    let decision_kind = match binding.first_learner_decision_kind() {
+                        Some(FastActorDecisionKindV1::Surface) => "\"surface\"",
+                        Some(FastActorDecisionKindV1::AttackerInclusion) => {
+                            "\"attacker_inclusion\""
+                        }
+                        Some(FastActorDecisionKindV1::BlockerInclusion) => "\"blocker_inclusion\"",
+                        None => "null",
+                    };
+                    println!(
+                        "H2H_EPISODE_JSON {{\"episode_index\":{},\"pair_index\":{},\"environment_seed\":{},\"learner_seat\":\"{}\",\"starting_player\":\"{:?}\",\"reward\":{},\"learner_trace_hash\":\"{:016x}\",\"first_learner_legal_action_count\":{},\"first_learner_decision_kind\":{},\"policy_step_count\":{},\"physical_decision_count\":{},\"learner_policy_step_count\":{},\"opponent_policy_step_count\":{},\"learner_physical_decision_count\":{},\"opponent_physical_decision_count\":{}}}",
+                        binding.episode_index(),
+                        binding.episode_index() / 2,
+                        binding.environment_seed(),
+                        seat_label,
+                        starting_player,
+                        reward,
+                        binding.learner_trace_hash(),
+                        legal_action_count,
+                        decision_kind,
+                        binding.policy_step_count(),
+                        binding.physical_decision_count(),
+                        binding.learner_policy_step_count(),
+                        binding.opponent_policy_step_count(),
+                        binding.learner_physical_decision_count(),
+                        binding.opponent_physical_decision_count(),
+                    );
+                }
                 match reward {
                     1 => {
                         wins += 1;

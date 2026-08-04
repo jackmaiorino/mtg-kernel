@@ -36,9 +36,11 @@ use crate::native_training_store_run_v2::{
 };
 use crate::rl::PlayerSeatV1;
 use crate::rl_session::{
-    FLAT_ACTION_FLAG_CAST_IT_V1, FLAT_ACTION_FLAG_CHANGE_TARGET_V1, FLAT_ACTION_FLAG_INCLUDE_V1,
-    FLAT_ACTION_FLAG_PAY_V1, FLAT_ACTION_FLAG_USE_COST_V1, FLAT_ACTION_FLAG_VALUE_V1,
+    FastActorDecisionKindV1, FLAT_ACTION_FLAG_CAST_IT_V1, FLAT_ACTION_FLAG_CHANGE_TARGET_V1,
+    FLAT_ACTION_FLAG_INCLUDE_V1, FLAT_ACTION_FLAG_PAY_V1, FLAT_ACTION_FLAG_USE_COST_V1,
+    FLAT_ACTION_FLAG_VALUE_V1,
 };
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
@@ -339,6 +341,9 @@ pub struct NativeCheckpointRunnerEpisodeV1 {
     environment_seed: u64,
     deck_hashes: [u64; 2],
     learner_seat: PlayerSeatV1,
+    learner_trace_hash: u64,
+    first_learner_legal_action_count: Option<u32>,
+    first_learner_decision_kind: Option<FastActorDecisionKindV1>,
     trajectory_sha256: [u8; 32],
     outer_trajectory_sha256_v2: Option<[u8; 32]>,
     policy_step_count: u64,
@@ -364,6 +369,20 @@ impl NativeCheckpointRunnerEpisodeV1 {
 
     pub const fn learner_seat(&self) -> PlayerSeatV1 {
         self.learner_seat
+    }
+
+    /// Hash of learner decision metadata and selected actions. This remains
+    /// an ephemeral diagnostic fact and is not persisted Store authority.
+    pub const fn learner_trace_hash(&self) -> u64 {
+        self.learner_trace_hash
+    }
+
+    pub const fn first_learner_legal_action_count(&self) -> Option<u32> {
+        self.first_learner_legal_action_count
+    }
+
+    pub const fn first_learner_decision_kind(&self) -> Option<FastActorDecisionKindV1> {
+        self.first_learner_decision_kind
     }
 
     pub const fn trajectory_sha256(&self) -> [u8; 32] {
@@ -595,6 +614,7 @@ struct NativeCheckpointRunnerObserverV1 {
     expected_deck_hashes: [u64; 2],
     expected_environment: NativeRunEnvironmentTrajectoryContractV1,
     expected_episode_count: usize,
+    first_learner_decisions: BTreeMap<u64, (u32, FastActorDecisionKindV1)>,
     episode_bindings: Vec<NativeCheckpointRunnerEpisodeV1>,
 }
 
@@ -662,6 +682,7 @@ impl NativeCheckpointRunnerObserverV1 {
             expected_deck_hashes,
             expected_environment,
             expected_episode_count,
+            first_learner_decisions: BTreeMap::new(),
             episode_bindings,
         })
     }
@@ -675,8 +696,25 @@ impl FlatScoredTrajectoryObserverV2 for NativeCheckpointRunnerObserverV1 {
 
     fn observe_selected_v2(
         &mut self,
-        _event: FlatScoredSelectedEventV2<'_>,
+        event: FlatScoredSelectedEventV2<'_>,
     ) -> Result<(), Self::Error> {
+        if event.learner_ordinal == 0 {
+            if !(self.first_episode_index..self.end_episode_index_exclusive)
+                .contains(&event.expected.episode_id)
+                || self
+                    .first_learner_decisions
+                    .insert(
+                        event.expected.episode_id,
+                        (
+                            event.expected.legal_action_count,
+                            event.expected.decision_kind,
+                        ),
+                    )
+                    .is_some()
+            {
+                return Err(NativeCheckpointRunnerObserverErrorV1::DuplicateEpisode);
+            }
+        }
         Ok(())
     }
 
@@ -751,6 +789,15 @@ impl FlatScoredTrajectoryObserverV2 for NativeCheckpointRunnerObserverV1 {
             environment_seed: receipt.environment_seed(),
             deck_hashes: receipt.deck_hashes(),
             learner_seat: receipt.learner_seat(),
+            learner_trace_hash: event.learner_trace_hash,
+            first_learner_legal_action_count: self
+                .first_learner_decisions
+                .get(&receipt.episode_index())
+                .map(|diagnostic| diagnostic.0),
+            first_learner_decision_kind: self
+                .first_learner_decisions
+                .get(&receipt.episode_index())
+                .map(|diagnostic| diagnostic.1),
             trajectory_sha256: receipt.trajectory_sha256(),
             outer_trajectory_sha256_v2: receipt.outer_trajectory_sha256_v2(),
             policy_step_count: receipt.policy_step_count(),
