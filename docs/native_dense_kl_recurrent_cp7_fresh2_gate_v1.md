@@ -34,4 +34,19 @@ strength gate. It is not itself playing-strength or promotion evidence.
 
 ## Result
 
-Pending.
+The fixed evaluation completed in 6.71 seconds and rejected on one seat movement
+threshold. NLL improved 5.42 percent overall, 5.26 percent at P0, and 5.56 percent
+at P1. Top-1 improved 3.44 percentage points overall. Overall mean TV was
+`0.029444`, p90 TV was `0.080725`, and maximum legal-action log-probability change
+was `0.490000`.
+
+P0 mean TV passed at `0.028416`. P1 mean TV was `0.030457`, above the `0.030000`
+limit by `0.000457`. The result is therefore a formal reject. Report SHA-256 is
+`0e89666ef3eb2a1acac30a2a66832793ea57f4a95cd66e8338ace61a0e1a39f5`.
+
+The repeated out-of-sample fit gains show that the representation generalizes;
+the remaining issue is movement calibration. For rapid engineering progression,
+the next deployment recipe applies a fixed `0.97` interpolation from parent to
+the already hard-projected candidate. This panel may verify calibration mechanics
+but cannot provide another held-out label claim. Only a new natural terminal
+win/loss gate can qualify that deployment recipe.
