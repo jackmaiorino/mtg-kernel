@@ -73,6 +73,11 @@ def _candidate_identity(root: Path) -> dict[str, Any]:
             b"mtg-kernel-structured-policy-bounded-logit-residual-composite-model/v1",
             "xmage-cp7-outcome-structured-policy-successor-v7",
         ),
+        "mtg-kernel-structured-policy-successor-candidate/v8": (
+            "mtg-kernel-structured-policy-cp7-dagger-residual-report/v1",
+            b"mtg-kernel-structured-policy-cp7-dagger-residual-composite-model/v1",
+            "xmage-cp7-outcome-structured-policy-successor-v8",
+        ),
     }
     contract = contracts.get(candidate.get("schema"))
     if contract is None:

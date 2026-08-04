@@ -6,23 +6,24 @@
 
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
 use crate::native_flat_tensorizer_v2::{
-    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2, NATIVE_FLAT_ACTION_FEATURE_DIM_V2,
-    NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2, NATIVE_FLAT_EDGE_FEATURE_DIM_V2,
-    NATIVE_FLAT_OBJECT_FEATURE_DIM_V2, NATIVE_FLAT_STATE_FEATURE_DIM_V2,
+    NATIVE_FLAT_ACTION_FEATURE_DIM_V2, NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2,
+    NATIVE_FLAT_EDGE_FEATURE_DIM_V2, NATIVE_FLAT_OBJECT_FEATURE_DIM_V2,
+    NATIVE_FLAT_STATE_FEATURE_DIM_V2, NativeFlatDecisionTensorV2, NativeFlatTensorizerV2,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1,
 };
 use crate::native_structured_policy_residual_v1::{
-    decode_structured_residual_parameters_v1, expected_history_parameters_v1, lower_hex_v1,
-    parse_lower_hex32_v1, raw_sha256_v1, structured_residual_v1, NativeStructuredHistoryEntryV1,
-    TensorV1, CARD_EMBEDDING_DIM_V1, CARD_VOCAB_V1, GROUP_EMBEDDING_DIM_V1, HIDDEN_DIM_V1,
+    CARD_EMBEDDING_DIM_V1, CARD_VOCAB_V1, GROUP_EMBEDDING_DIM_V1, HIDDEN_DIM_V1,
     HISTORY_FEATURE_DIM_V1, HISTORY_GROUP_VOCAB_V1, HISTORY_LENGTH_V1, HISTORY_PARAMETER_COUNT_V1,
-    HISTORY_ROLE_DIM_V1, PARENT_ADAM_STEP_V1, PARENT_MANIFEST_SHA256_V1,
-    PARENT_MODEL_PARAMETER_SHA256_V1, PARENT_NATIVE_STATE_SHA256_V1, PARENT_PAYLOAD_SHA256_V1,
+    HISTORY_ROLE_DIM_V1, NativeStructuredHistoryEntryV1, PARENT_ADAM_STEP_V1,
+    PARENT_MANIFEST_SHA256_V1, PARENT_MODEL_PARAMETER_SHA256_V1, PARENT_NATIVE_STATE_SHA256_V1,
+    PARENT_PAYLOAD_SHA256_V1, TensorV1, decode_structured_residual_parameters_v1,
+    expected_history_parameters_v1, lower_hex_v1, parse_lower_hex32_v1, raw_sha256_v1,
+    structured_residual_v1,
 };
 use crate::native_xmage_cp7_outcome_reinforce_v1::{
-    load_xmage_cp7_outcome_inference_v1, NativeXmageCp7OutcomeInferenceV1,
+    NativeXmageCp7OutcomeInferenceV1, load_xmage_cp7_outcome_inference_v1,
 };
 use crate::rl::parse_strict_json_value;
 use serde::Deserialize;
@@ -59,6 +60,9 @@ pub(crate) const REPORT_SCHEMA_V6: &str =
 pub(crate) const CANDIDATE_SCHEMA_V7: &str = "mtg-kernel-structured-policy-successor-candidate/v7";
 pub(crate) const REPORT_SCHEMA_V7: &str =
     "mtg-kernel-structured-policy-bounded-logit-residual-report/v1";
+pub(crate) const CANDIDATE_SCHEMA_V8: &str = "mtg-kernel-structured-policy-successor-candidate/v8";
+pub(crate) const REPORT_SCHEMA_V8: &str =
+    "mtg-kernel-structured-policy-cp7-dagger-residual-report/v1";
 pub(crate) const PUBLICATION_ENCODING_V1: &str = "json-pretty-sorted-utf8-trailing-lf/v1";
 pub(crate) const WEIGHTS_ENCODING_V1: &str = "ordered-row-major-finite-f32-little-endian/v1";
 pub(crate) const ARCHITECTURE_V1: &str =
@@ -75,6 +79,8 @@ pub(crate) const ARCHITECTURE_V6: &str =
     "complete-public-history-structured-policy-block-response-oracle-frozen-parent-value/v1";
 pub(crate) const ARCHITECTURE_V7: &str =
     "complete-public-history-structured-policy-bounded-logit-residual-frozen-parent-value/v1";
+pub(crate) const ARCHITECTURE_V8: &str =
+    "complete-public-history-structured-policy-cp7-dagger-residual-frozen-parent-value/v1";
 pub(crate) const VALUE_MODEL_V1: &str = "exact-retained-parent-frozen/v1";
 pub(crate) const COMPOSITE_DOMAIN_V1: &[u8] =
     b"mtg-kernel-structured-policy-successor-composite-model/v1";
@@ -90,6 +96,8 @@ pub(crate) const COMPOSITE_DOMAIN_V6: &[u8] =
     b"mtg-kernel-structured-policy-block-response-oracle-composite-model/v1";
 pub(crate) const COMPOSITE_DOMAIN_V7: &[u8] =
     b"mtg-kernel-structured-policy-bounded-logit-residual-composite-model/v1";
+pub(crate) const COMPOSITE_DOMAIN_V8: &[u8] =
+    b"mtg-kernel-structured-policy-cp7-dagger-residual-composite-model/v1";
 const SOURCE_CACHE_SHA256_V1: &str =
     "280e34cd7f685beaf52c1cab3b41c53613a5029c063871942f48c063b6f5996f";
 const SOURCE_PAIR_COUNT_V1: u64 = 2_048;
@@ -115,6 +123,7 @@ const AUTHORITY_KIND_V4: &str = "xmage-cp7-outcome-structured-policy-successor-v
 const AUTHORITY_KIND_V5: &str = "xmage-cp7-outcome-structured-policy-successor-v5";
 const AUTHORITY_KIND_V6: &str = "xmage-cp7-outcome-structured-policy-successor-v6";
 const AUTHORITY_KIND_V7: &str = "xmage-cp7-outcome-structured-policy-successor-v7";
+const AUTHORITY_KIND_V8: &str = "xmage-cp7-outcome-structured-policy-successor-v8";
 const TERMINAL_TRUST_SOURCE_FIT_REPORT_SHA256_V1: &str =
     "355c1b179ccd5de5d16f0aeb39dc101ae97a876208a2315358f98b06dcc30a81";
 const TERMINAL_TRUST_SOURCE_MODEL_STATE_SHA256_V1: &str =
@@ -129,6 +138,7 @@ enum SuccessorVersionV1 {
     PolicySpaceResponseOracleV5,
     PolicyBlockResponseOracleV6,
     BoundedLogitResidualV7,
+    Cp7DaggerResidualV8,
 }
 
 #[derive(Deserialize)]
@@ -545,6 +555,112 @@ struct ReportMovementMetricV7 {
     physical_decisions: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportV8 {
+    schema: String,
+    initializer: ReportInitializerV2,
+    source: ReportSourceV8,
+    split: ReportSplitV8,
+    config: ReportConfigV8,
+    heldout_gate: ReportGateV8,
+    heldout_metrics: ReportMetricsV8,
+    full_fit_training_history: Vec<ReportTrainingEpochV8>,
+    movement: ReportMetricsV8,
+    transport: ReportTransportV1,
+    weights_sha256: String,
+    composite_model_parameter_sha256: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportSourceV8 {
+    history_cache: String,
+    history_cache_sha256: String,
+    pair_count: u64,
+    episode_count: u64,
+    physical_decision_count: u64,
+    label_count: u64,
+    history_sources: String,
+    label_scope: String,
+    corpus_report: String,
+    corpus_report_sha256: String,
+    teacher_task_sha256s: Vec<String>,
+    candidate_teacher_disagreements: u64,
+    disagreement_fraction: f64,
+    base_seed: u64,
+    source_commit: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportSplitV8 {
+    train: String,
+    selection: String,
+    heldout: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportConfigV8 {
+    architecture: String,
+    value_model: String,
+    objective: String,
+    projection_method: String,
+    logit_residual_clip: f64,
+    seed: u64,
+    epochs: u64,
+    batch_size_physical_decisions: u64,
+    learning_rate: f64,
+    weight_decay: f64,
+    gradient_norm_cap: f64,
+    history_length: u64,
+    history_feature_dim: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportGateV8 {
+    pass: bool,
+    checks: BTreeMap<String, bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportMetricsV8 {
+    overall: ReportMetricV8,
+    by_candidate_seat: BTreeMap<String, ReportMetricV8>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportMetricV8 {
+    initializer_selected_index_nll: f64,
+    candidate_selected_index_nll: f64,
+    relative_nll_improvement: f64,
+    initializer_top1: f64,
+    candidate_top1: f64,
+    top1_delta: f64,
+    mean_total_variation: f64,
+    p90_total_variation: f64,
+    top_action_agreement: f64,
+    top_action_change_rate: f64,
+    maximum_absolute_joint_log_ratio: f64,
+    policy_mass: f64,
+    policy_rows: u64,
+    physical_decisions: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportTrainingEpochV8 {
+    epoch: u64,
+    selected_index_cross_entropy: f64,
+    policy_mass: f64,
+    maximum_preclip_gradient_norm: f64,
+    optimizer_steps: u64,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct NativeStructuredPolicySuccessorOutputV1 {
     logits: Vec<f32>,
@@ -813,12 +929,19 @@ fn validate_parent_inventory_v1(parent: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn uses_bounded_two_model_layout_v1(version: SuccessorVersionV1) -> bool {
+    matches!(
+        version,
+        SuccessorVersionV1::BoundedLogitResidualV7 | SuccessorVersionV1::Cp7DaggerResidualV8
+    )
+}
+
 fn validate_parameter_bindings_v1(
     bindings: &[ParameterBindingV1],
     version: SuccessorVersionV1,
 ) -> Result<(), Box<dyn Error>> {
     let expected = expected_history_parameters_v1();
-    let copies = if version == SuccessorVersionV1::BoundedLogitResidualV7 {
+    let copies = if uses_bounded_two_model_layout_v1(version) {
         2
     } else {
         1
@@ -835,10 +958,18 @@ fn validate_parameter_bindings_v1(
         let copy = index / expected.len();
         let (expected_name, expected_shape) = &expected[index % expected.len()];
         let qualified_name = match (version, copy) {
-            (SuccessorVersionV1::BoundedLogitResidualV7, 0) => {
+            (
+                SuccessorVersionV1::BoundedLogitResidualV7
+                | SuccessorVersionV1::Cp7DaggerResidualV8,
+                0,
+            ) => {
                 format!("initializer.{expected_name}")
             }
-            (SuccessorVersionV1::BoundedLogitResidualV7, 1) => {
+            (
+                SuccessorVersionV1::BoundedLogitResidualV7
+                | SuccessorVersionV1::Cp7DaggerResidualV8,
+                1,
+            ) => {
                 format!("trained.{expected_name}")
             }
             (_, 0) => expected_name.to_string(),
@@ -1466,6 +1597,176 @@ fn validate_report_v7(
     Ok(config.logit_residual_clip as f32)
 }
 
+fn finite_metric_v8(metric: &ReportMetricV8) -> bool {
+    metric.initializer_selected_index_nll.is_finite()
+        && metric.candidate_selected_index_nll.is_finite()
+        && metric.relative_nll_improvement.is_finite()
+        && metric.initializer_top1.is_finite()
+        && metric.candidate_top1.is_finite()
+        && metric.top1_delta.is_finite()
+        && metric.mean_total_variation.is_finite()
+        && metric.p90_total_variation.is_finite()
+        && metric.top_action_agreement.is_finite()
+        && metric.top_action_change_rate.is_finite()
+        && metric.maximum_absolute_joint_log_ratio.is_finite()
+        && metric.policy_mass.is_finite()
+        && metric.initializer_selected_index_nll >= 0.0
+        && metric.candidate_selected_index_nll >= 0.0
+        && (0.0..=1.0).contains(&metric.initializer_top1)
+        && (0.0..=1.0).contains(&metric.candidate_top1)
+        && (-1.0..=1.0).contains(&metric.top1_delta)
+        && metric.mean_total_variation >= 0.0
+        && metric.p90_total_variation >= 0.0
+        && (0.0..=1.0).contains(&metric.top_action_agreement)
+        && (0.0..=1.0).contains(&metric.top_action_change_rate)
+        && ((1.0 - metric.top_action_agreement) - metric.top_action_change_rate).abs() <= 1.0e-12
+        && metric.maximum_absolute_joint_log_ratio >= 0.0
+        && metric.policy_mass > 0.0
+        && metric.policy_rows > 0
+        && metric.physical_decisions > 0
+}
+
+fn metrics_v8_are_safe(metrics: &ReportMetricsV8) -> bool {
+    let seat_0 = metrics.by_candidate_seat.get("0");
+    let seat_1 = metrics.by_candidate_seat.get("1");
+    metrics.by_candidate_seat.len() == 2
+        && [Some(&metrics.overall), seat_0, seat_1]
+            .into_iter()
+            .flatten()
+            .count()
+            == 3
+        && [Some(&metrics.overall), seat_0, seat_1]
+            .into_iter()
+            .flatten()
+            .all(|metric| {
+                finite_metric_v8(metric)
+                    && metric.mean_total_variation <= 0.030
+                    && metric.p90_total_variation <= 0.100
+            })
+        && metrics.overall.maximum_absolute_joint_log_ratio <= 0.50
+}
+
+fn validate_report_v8(
+    report: ReportV8,
+    weights_sha256: [u8; 32],
+    composite_sha256: [u8; 32],
+) -> Result<f32, Box<dyn Error>> {
+    let exact_float = |actual: f64, expected: f64| actual.to_bits() == expected.to_bits();
+    let config = &report.config;
+    let clip_valid = [
+        0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.12, 0.16, 0.20, 0.24, 0.28, 0.32, 0.40,
+    ]
+    .into_iter()
+    .any(|expected| exact_float(config.logit_residual_clip, expected));
+    let expected_checks = BTreeSet::from([
+        "safe_clip_exists",
+        "heldout_movement_safe",
+        "heldout_relative_nll_improvement_at_least_0p05",
+        "heldout_top1_delta_at_least_0p03",
+        "heldout_seat_0_nll_nonregression",
+        "heldout_seat_1_nll_nonregression",
+        "full_fit_movement_safe",
+    ]);
+    let observed_checks = report
+        .heldout_gate
+        .checks
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let full_history_valid = report.full_fit_training_history.len() == 5
+        && report
+            .full_fit_training_history
+            .iter()
+            .enumerate()
+            .all(|(index, epoch)| {
+                epoch.epoch == index as u64 + 1
+                    && epoch.selected_index_cross_entropy.is_finite()
+                    && epoch.selected_index_cross_entropy >= 0.0
+                    && epoch.policy_mass.is_finite()
+                    && epoch.policy_mass > 0.0
+                    && epoch.maximum_preclip_gradient_norm.is_finite()
+                    && epoch.maximum_preclip_gradient_norm >= 0.0
+                    && epoch.optimizer_steps > 0
+            });
+    let disagreement_consistent = report.source.disagreement_fraction.is_finite()
+        && (0.0..=1.0).contains(&report.source.disagreement_fraction)
+        && report.source.candidate_teacher_disagreements <= report.source.label_count
+        && (report.source.disagreement_fraction
+            - report.source.candidate_teacher_disagreements as f64
+                / report.source.label_count.max(1) as f64)
+            .abs()
+            <= 1.0e-12;
+    let heldout_seat_0 = report.heldout_metrics.by_candidate_seat.get("0");
+    let heldout_seat_1 = report.heldout_metrics.by_candidate_seat.get("1");
+    let heldout_signal = metrics_v8_are_safe(&report.heldout_metrics)
+        && report.heldout_metrics.overall.relative_nll_improvement >= 0.05
+        && report.heldout_metrics.overall.top1_delta >= 0.03
+        && heldout_seat_0.is_some_and(|metric| metric.relative_nll_improvement >= 0.0)
+        && heldout_seat_1.is_some_and(|metric| metric.relative_nll_improvement >= 0.0);
+    if report.schema != REPORT_SCHEMA_V8
+        || report.initializer.candidate_json_sha256 != TERMINAL_RUNG_INITIALIZER_CANDIDATE_SHA256_V1
+        || report.initializer.report_sha256 != TERMINAL_RUNG_INITIALIZER_REPORT_SHA256_V1
+        || report.initializer.weights_sha256 != TERMINAL_RUNG_INITIALIZER_WEIGHTS_SHA256_V1
+        || report.initializer.composite_model_parameter_sha256
+            != TERMINAL_RUNG_INITIALIZER_COMPOSITE_SHA256_V1
+        || report.initializer.model_state_sha256 != TERMINAL_RUNG_INITIALIZER_MODEL_STATE_SHA256_V1
+        || report.source.history_cache.is_empty()
+        || report.source.history_cache_sha256
+            != "280e34cd7f685beaf52c1cab3b41c53613a5029c063871942f48c063b6f5996f"
+        || report.source.pair_count != 256
+        || report.source.episode_count != 512
+        || report.source.physical_decision_count != report.source.label_count
+        || report.source.label_count == 0
+        || report.source.history_sources != "candidate_and_cp7_public_actions"
+        || report.source.label_scope != "candidate_priority_surface_only/v1"
+        || report.source.corpus_report.is_empty()
+        || parse_lower_hex32_v1(&report.source.corpus_report_sha256).is_err()
+        || report.source.teacher_task_sha256s.len() != 8
+        || report
+            .source
+            .teacher_task_sha256s
+            .iter()
+            .any(|value| parse_lower_hex32_v1(value).is_err())
+        || !disagreement_consistent
+        || report.source.base_seed != 1_400_001
+        || !lower_hex_commit_v1(&report.source.source_commit)
+        || report.split.train != "pair_index_mod_4_in_1_2"
+        || report.split.selection != "pair_index_mod_4_eq_3"
+        || report.split.heldout != "pair_index_mod_4_eq_0"
+        || config.architecture != ARCHITECTURE_V8
+        || config.value_model != VALUE_MODEL_V1
+        || config.objective != "candidate-state-cp7-selected-index-cross-entropy/v1"
+        || config.projection_method != "initializer-weighted-centered-logit-residual-clamp/v1"
+        || !clip_valid
+        || config.seed != 20_260_808
+        || config.epochs != 5
+        || config.batch_size_physical_decisions != 64
+        || !exact_float(config.learning_rate, 3.0e-4)
+        || !exact_float(config.weight_decay, 1.0e-4)
+        || !exact_float(config.gradient_norm_cap, 5.0)
+        || config.history_length != HISTORY_LENGTH_V1 as u64
+        || config.history_feature_dim != HISTORY_FEATURE_DIM_V1 as u64
+        || !report.heldout_gate.pass
+        || observed_checks != expected_checks
+        || report.heldout_gate.checks.values().any(|pass| !pass)
+        || !heldout_signal
+        || !full_history_valid
+        || !metrics_v8_are_safe(&report.movement)
+        || !report.transport.maximum_absolute_logit_error.is_finite()
+        || report.transport.maximum_absolute_logit_error > 3.0e-5
+        || !report.transport.parent_value_bit_exact
+        || report.weights_sha256 != lower_hex_v1(weights_sha256)
+        || report.composite_model_parameter_sha256 != lower_hex_v1(composite_sha256)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "CP7 DAgger successor report semantic mismatch",
+        )
+        .into());
+    }
+    Ok(config.logit_residual_clip as f32)
+}
+
 pub(crate) fn successor_parameter_layout_sha256_v1() -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"mtg-kernel-structured-policy-successor-parameter-layout/v1");
@@ -1525,6 +1826,7 @@ fn load_native_structured_policy_successor_inference_inner_v1(
         CANDIDATE_SCHEMA_V5 => SuccessorVersionV1::PolicySpaceResponseOracleV5,
         CANDIDATE_SCHEMA_V6 => SuccessorVersionV1::PolicyBlockResponseOracleV6,
         CANDIDATE_SCHEMA_V7 => SuccessorVersionV1::BoundedLogitResidualV7,
+        CANDIDATE_SCHEMA_V8 => SuccessorVersionV1::Cp7DaggerResidualV8,
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -1555,6 +1857,9 @@ fn load_native_structured_policy_successor_inference_inner_v1(
         SuccessorVersionV1::BoundedLogitResidualV7 => {
             (ARCHITECTURE_V7, COMPOSITE_DOMAIN_V7, AUTHORITY_KIND_V7)
         }
+        SuccessorVersionV1::Cp7DaggerResidualV8 => {
+            (ARCHITECTURE_V8, COMPOSITE_DOMAIN_V8, AUTHORITY_KIND_V8)
+        }
     };
     let report_bytes = fs::read(root.join(REPORT_FILENAME_V1))?;
     let report_value = strict_json_value_v1(&report_bytes)?;
@@ -1564,7 +1869,7 @@ fn load_native_structured_policy_successor_inference_inner_v1(
     let weights_sha256 = raw_sha256_v1(&weights_bytes);
     let parent_model_sha256 = parse_lower_hex32_v1(PARENT_MODEL_PARAMETER_SHA256_V1)?;
     let composite_sha256 = composite_hash_v1(composite_domain, parent_model_sha256, &weights_bytes);
-    let parameter_copies = if version == SuccessorVersionV1::BoundedLogitResidualV7 {
+    let parameter_copies = if uses_bounded_two_model_layout_v1(version) {
         2
     } else {
         1
@@ -1609,9 +1914,20 @@ fn load_native_structured_policy_successor_inference_inner_v1(
         .into());
     }
     validate_parameter_bindings_v1(&candidate.weights.parameters, version)?;
-    let report_logit_residual_clip = if version == SuccessorVersionV1::BoundedLogitResidualV7 {
-        let parsed: ReportV7 = serde_json::from_value(report_value.clone())?;
-        let clip = parsed.config.logit_residual_clip;
+    let report_logit_residual_clip = if uses_bounded_two_model_layout_v1(version) {
+        let clip = match version {
+            SuccessorVersionV1::BoundedLogitResidualV7 => {
+                serde_json::from_value::<ReportV7>(report_value.clone())?
+                    .config
+                    .logit_residual_clip
+            }
+            SuccessorVersionV1::Cp7DaggerResidualV8 => {
+                serde_json::from_value::<ReportV8>(report_value.clone())?
+                    .config
+                    .logit_residual_clip
+            }
+            _ => unreachable!(),
+        };
         if !clip.is_finite() || clip < 0.0 || clip > 0.40 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -1653,23 +1969,26 @@ fn load_native_structured_policy_successor_inference_inner_v1(
                 let report: ReportV7 = serde_json::from_value(report_value)?;
                 validate_report_v7(report, weights_sha256, composite_sha256)?;
             }
+            SuccessorVersionV1::Cp7DaggerResidualV8 => {
+                let report: ReportV8 = serde_json::from_value(report_value)?;
+                validate_report_v8(report, weights_sha256, composite_sha256)?;
+            }
         }
     }
-    let (initializer_parameters, parameters) =
-        if version == SuccessorVersionV1::BoundedLogitResidualV7 {
-            let split = HISTORY_PARAMETER_COUNT_V1 * size_of::<f32>();
-            (
-                Some(decode_structured_residual_parameters_v1(
-                    &weights_bytes[..split],
-                )?),
-                decode_structured_residual_parameters_v1(&weights_bytes[split..])?,
-            )
-        } else {
-            (
-                None,
-                decode_structured_residual_parameters_v1(&weights_bytes)?,
-            )
-        };
+    let (initializer_parameters, parameters) = if uses_bounded_two_model_layout_v1(version) {
+        let split = HISTORY_PARAMETER_COUNT_V1 * size_of::<f32>();
+        (
+            Some(decode_structured_residual_parameters_v1(
+                &weights_bytes[..split],
+            )?),
+            decode_structured_residual_parameters_v1(&weights_bytes[split..])?,
+        )
+    } else {
+        (
+            None,
+            decode_structured_residual_parameters_v1(&weights_bytes)?,
+        )
+    };
     let parent_root = root.join(PARENT_DIRECTORY_V1);
     validate_parent_inventory_v1(&parent_root)?;
     let parent = load_xmage_cp7_outcome_inference_v1(&parent_root)?;
@@ -1797,10 +2116,12 @@ mod tests {
             initial
         );
         let bounded = bounded_structured_logit_residual_v1(&initial, &trained, 0.06).unwrap();
-        assert!(bounded
-            .iter()
-            .zip(&initial)
-            .all(|(actual, before)| (actual - before).abs() <= 0.060001));
+        assert!(
+            bounded
+                .iter()
+                .zip(&initial)
+                .all(|(actual, before)| (actual - before).abs() <= 0.060001)
+        );
         assert!(bounded_structured_logit_residual_v1(&initial, &trained, -0.1).is_err());
     }
 
@@ -1861,6 +2182,14 @@ mod tests {
     }
 
     #[test]
+    fn cp7_dagger_report_denies_unknown_fields_v1() {
+        let value = br#"{"schema":"x","initializer":{},"source":{},"split":{},"config":{},"heldout_gate":{},"heldout_metrics":{},"full_fit_training_history":[],"movement":{},"transport":{},"weights_sha256":"x","composite_model_parameter_sha256":"x","unexpected":true}
+"#;
+        let parsed = strict_json_value_v1(value).unwrap();
+        assert!(serde_json::from_value::<ReportV8>(parsed).is_err());
+    }
+
+    #[test]
     fn successor_composite_hash_is_domain_bound_v1() {
         let parent = [7u8; 32];
         assert_ne!(
@@ -1898,6 +2227,10 @@ mod tests {
             composite_hash_v1(COMPOSITE_DOMAIN_V6, parent, b"a"),
             composite_hash_v1(COMPOSITE_DOMAIN_V7, parent, b"a")
         );
+        assert_ne!(
+            composite_hash_v1(COMPOSITE_DOMAIN_V7, parent, b"a"),
+            composite_hash_v1(COMPOSITE_DOMAIN_V8, parent, b"a")
+        );
     }
 
     #[test]
@@ -1921,6 +2254,7 @@ mod tests {
                 | "mtg-kernel-structured-policy-space-response-oracle-parity-fixture/v1"
                 | "mtg-kernel-structured-policy-block-response-oracle-parity-fixture/v1"
                 | "mtg-kernel-structured-policy-bounded-logit-residual-parity-fixture/v1"
+                | "mtg-kernel-structured-policy-cp7-dagger-residual-parity-fixture/v1"
         ));
         assert!(matches!(
             fixture.output_semantics.as_str(),

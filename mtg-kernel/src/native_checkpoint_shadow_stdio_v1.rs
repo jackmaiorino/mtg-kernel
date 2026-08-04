@@ -9,40 +9,40 @@
 use crate::async_flat_scored_rollout_v1::{FlatScoredFamilyCore, NativeLaneScheduleStateV1};
 use crate::async_flat_scored_rollout_v2::{FlatScoredFamilyV2, OwnedFlatScoringDecisionV2};
 use crate::fast_sampler::{
-    FastCategoricalScratch, FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
-    FAST_CATEGORICAL_SAMPLER_VERSION,
+    FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
+    FastCategoricalScratch,
 };
 use crate::flat_policy_v2::{FlatDecisionBindingV2, FlatScoringDecisionViewV2};
 use crate::native_bilinear_policy_residual_v1::{
-    load_native_rank1_policy_residual_inference_v1, NativeRank1PolicyResidualInferenceV1,
+    NativeRank1PolicyResidualInferenceV1, load_native_rank1_policy_residual_inference_v1,
 };
 use crate::native_checkpoint_inference_v1::{
     NativeCheckpointInferenceOutputV1, NativeCheckpointInferenceV1,
 };
 use crate::native_cp7_behavior_clone_v1::{
-    load_cp7_behavior_clone_inference_v1, NativeCp7BehaviorCloneInferenceV1,
+    NativeCp7BehaviorCloneInferenceV1, load_cp7_behavior_clone_inference_v1,
 };
 use crate::native_flat_tensorizer_v2::{
-    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2, NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2,
-    NATIVE_FLAT_ACTION_FEATURE_DIM_V2, NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
-    NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+    NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2, NATIVE_FLAT_ACTION_FEATURE_DIM_V2,
+    NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2, NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_ladder_pool_resolution_v1::{
     resolve_ladder_checkpoint_authority_v1, resolve_ladder_pool_v1, stage_ladder_checkpoint_ref_v1,
 };
 use crate::native_structured_history_stack_v1::{
-    load_native_structured_history_stack_inference_v1, NativeStructuredHistoryStackInferenceV1,
+    NativeStructuredHistoryStackInferenceV1, load_native_structured_history_stack_inference_v1,
 };
 use crate::native_structured_policy_residual_v1::{
-    load_native_structured_policy_residual_inference_v1, NativeStructuredHistoryEntryV1,
-    NativeStructuredPolicyResidualInferenceV1, CARD_VOCAB_V1, HISTORY_LENGTH_V1,
-    PARENT_NATIVE_STATE_SHA256_V1,
+    CARD_VOCAB_V1, HISTORY_LENGTH_V1, NativeStructuredHistoryEntryV1,
+    NativeStructuredPolicyResidualInferenceV1, PARENT_NATIVE_STATE_SHA256_V1,
+    load_native_structured_policy_residual_inference_v1,
 };
 use crate::native_structured_policy_successor_v1::{
-    load_native_structured_policy_successor_inference_v1,
-    NativeStructuredPolicySuccessorInferenceV1,
     CANDIDATE_FILENAME_V1 as STRUCTURED_POLICY_SUCCESSOR_CANDIDATE_FILENAME_V1,
+    NativeStructuredPolicySuccessorInferenceV1,
+    load_native_structured_policy_successor_inference_v1,
 };
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2;
@@ -52,14 +52,14 @@ use crate::native_training_store_run_v2::{
     OpponentLadderPoolContractV1, ValidatedTrainRunV2,
 };
 use crate::native_xmage_cp7_outcome_reinforce_v1::{
-    load_xmage_cp7_outcome_inference_v1, NativeXmageCp7OutcomeInferenceV1,
+    NativeXmageCp7OutcomeInferenceV1, load_xmage_cp7_outcome_inference_v1,
 };
 use crate::rl::{
-    parse_strict_json_value, rally_deck_ids, shuffled, ActionSemanticV1, PlayerSeatV1,
+    ActionSemanticV1, PlayerSeatV1, parse_strict_json_value, rally_deck_ids, shuffled,
 };
 use crate::rl_session::{
-    FastActorDecisionKindV1, FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1,
-    RlSessionErrorCode, RlSessionTerminalV1, SessionDeckIdsV1, CANONICAL_RALLY_DECK_ID,
+    CANONICAL_RALLY_DECK_ID, FastActorDecisionKindV1, FastActorDecisionV1, FastActorResponseV1,
+    FastActorSessionV1, RlSessionErrorCode, RlSessionTerminalV1, SessionDeckIdsV1,
 };
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
@@ -1206,8 +1206,11 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             && checkpoint.loaded_payload_sha256 == SOURCE_PAYLOAD_SHA256_V1
             && checkpoint.loaded_train_state_sha256 == SOURCE_TRAIN_STATE_SHA256_V1
             && checkpoint.model_parameter_sha256 == SOURCE_MODEL_PARAMETER_SHA256_V1;
-        let iterative_parent = checkpoint.authority_kind
+        let verified_outcome_parent = (checkpoint.authority_kind
             == "xmage-cp7-outcome-reinforce-derivative-v1"
+            || checkpoint
+                .authority_kind
+                .starts_with("xmage-cp7-outcome-structured-policy-successor-v"))
             && checkpoint.source_run_sha256 == SOURCE_RUN_SHA256_V1
             && checkpoint.source_generation == SOURCE_GENERATION_V1
             && checkpoint.source_checkpoint_sha256 == SOURCE_CHECKPOINT_SHA256_V1
@@ -1222,7 +1225,7 @@ impl XmageCp7OutcomeJsonlWriterV1 {
                 XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1,
                 None,
             )
-        } else if iterative_parent {
+        } else if verified_outcome_parent {
             (
                 XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V2,
                 XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2,
@@ -2245,7 +2248,7 @@ impl ShadowScorerServiceV1 {
         for continuation_index in 0..DEPTH8_VALUE_CONTINUATION_STEPS_V1 {
             let expected = match next {
                 FastActorResponseV1::Terminal(terminal) => {
-                    return Ok(terminal.terminal_reward[candidate_index] as f32)
+                    return Ok(terminal.terminal_reward[candidate_index] as f32);
                 }
                 FastActorResponseV1::Decision(expected) => expected,
             };
@@ -2859,7 +2862,7 @@ impl ShadowScorerServiceV1 {
                         "native_episode_schedule_invalid",
                         "base_seed and episode_id must satisfy the native trainer schedule",
                     ),
-                )
+                );
             }
         };
         let candidate_seat = episode_schedule.learner_seat;
@@ -2882,7 +2885,7 @@ impl ShadowScorerServiceV1 {
                     Some(request_id),
                     &self.identity,
                     error_body_v1(rl_error_code_v1(error.code), "session reset failed"),
-                )
+                );
             }
         };
         let population_opponent_member = match self.population_opponent.as_ref() {
@@ -2896,7 +2899,7 @@ impl ShadowScorerServiceV1 {
                             "population_opponent_schedule_invalid",
                             "the native population opponent could not be selected",
                         ),
-                    )
+                    );
                 }
             },
             None => None,
@@ -2928,7 +2931,7 @@ impl ShadowScorerServiceV1 {
                     Some(request_id),
                     &self.identity,
                     error_body_v1(code, "initial decision scoring failed"),
-                )
+                );
             }
         };
         let active = ActiveShadowSessionV1 {
@@ -3111,7 +3114,7 @@ impl ShadowScorerServiceV1 {
                         "selected_index_out_of_range",
                         "selected_index is outside the current action row",
                     ),
-                )
+                );
             }
         };
         let teacher_decision_record = match self.teacher_export.as_ref() {
@@ -3126,7 +3129,7 @@ impl ShadowScorerServiceV1 {
                                 "teacher_export_record_invalid",
                                 "the accepted CP7 teacher row could not be constructed",
                             ),
-                        )
+                        );
                     }
                 }
             }
@@ -3144,7 +3147,7 @@ impl ShadowScorerServiceV1 {
                                 "outcome_export_record_invalid",
                                 "the accepted candidate outcome row could not be constructed",
                             ),
-                        )
+                        );
                     }
                 }
             }
@@ -3976,11 +3979,11 @@ mod tests {
             .as_array()
             .expect("reset includes initial library orders");
         assert_eq!(initial_libraries.len(), 2);
-        assert!(initial_libraries.iter().all(|library| library
-            .as_array()
-            .expect("library row")
-            .len()
-            == 60));
+        assert!(
+            initial_libraries
+                .iter()
+                .all(|library| library.as_array().expect("library row").len() == 60)
+        );
         assert!(reset["decision"]["selected_action_index"].is_u64());
         assert!(reset["decision"]["candidate_action_seed_u64_hex"].is_string());
         assert_eq!(
@@ -4340,10 +4343,31 @@ mod tests {
             header["checkpoint"]["loaded_checkpoint_sha256"],
             "1".repeat(64)
         );
-        assert!(rows[1..]
-            .iter()
-            .all(|row| row["schema_version"] == 2 && row["checkpoint"] == header["checkpoint"]));
+        assert!(
+            rows[1..]
+                .iter()
+                .all(|row| row["schema_version"] == 2 && row["checkpoint"] == header["checkpoint"])
+        );
         assert_eq!(rows.last().unwrap()["record_type"], "terminal");
+    }
+
+    #[test]
+    fn structured_successor_outcome_export_uses_verified_v2_contract() {
+        let mut service =
+            ShadowScorerServiceV1::with_test_model_v1(Box::new(FirstActionTestModelV1));
+        service.identity.authority_kind =
+            "xmage-cp7-outcome-structured-policy-successor-v8".to_owned();
+        service.identity.loaded_generation = 1;
+        let bytes = SharedBytesV1::default();
+        XmageCp7OutcomeJsonlWriterV1::from_writer_v1(Box::new(bytes.clone()), &service.identity)
+            .unwrap();
+        let rows = outcome_rows_v1(&bytes);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["schema_version"], 2);
+        assert_eq!(
+            rows[0]["export_contract"],
+            XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
+        );
     }
 
     #[test]
@@ -4538,9 +4562,11 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.ends_with('\n'));
         assert_eq!(output.lines().count(), 2);
-        assert!(output
-            .lines()
-            .all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok()));
+        assert!(
+            output
+                .lines()
+                .all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok())
+        );
     }
 
     #[test]
