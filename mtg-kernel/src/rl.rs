@@ -191,6 +191,15 @@ impl From<PlayerId> for PlayerSeatV1 {
     }
 }
 
+impl From<PlayerSeatV1> for PlayerId {
+    fn from(value: PlayerSeatV1) -> Self {
+        match value {
+            PlayerSeatV1::P0 => PlayerId::P0,
+            PlayerSeatV1::P1 => PlayerId::P1,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CountersV1 {
     pub plus1_plus1: i16,
@@ -1336,6 +1345,17 @@ pub fn build_deck_pair_state(
     p0_deck: &[u16],
     p1_deck: &[u16],
 ) -> std::result::Result<GameState, DeckPreflightError> {
+    build_deck_pair_state_with_starting_player(seed, p0_deck, p1_deck, PlayerId::P0)
+}
+
+/// Starting-player-explicit sibling of `build_deck_pair_state`. Physical
+/// owner shuffle order and opening-hand draw order remain unchanged.
+pub fn build_deck_pair_state_with_starting_player(
+    seed: u64,
+    p0_deck: &[u16],
+    p1_deck: &[u16],
+    starting_player: PlayerId,
+) -> std::result::Result<GameState, DeckPreflightError> {
     // Both complete decks are admitted before RNG consumption or state
     // construction, so a bad second seat cannot partially shuffle/mutate an
     // environment that callers might otherwise retain.
@@ -1344,7 +1364,13 @@ pub fn build_deck_pair_state(
     let mut shuffle_rng = SplitMix64::seed(seed);
     let lib0 = shuffled(p0_deck, &mut shuffle_rng);
     let lib1 = shuffled(p1_deck, &mut shuffle_rng);
-    let mut state = GameState::new_from_libraries(&lib0, &lib1, card_name, seed);
+    let mut state = GameState::new_from_libraries_with_starting_player(
+        &lib0,
+        &lib1,
+        card_name,
+        seed,
+        starting_player,
+    );
     for _ in 0..7 {
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P1));
@@ -1396,6 +1422,22 @@ pub fn build_deck_pair_state_environment_v2(
     p0_deck: &[u16],
     p1_deck: &[u16],
 ) -> std::result::Result<GameState, DeckPairBuildErrorV2> {
+    build_deck_pair_state_environment_v2_with_starting_player(
+        pair_environment_seed,
+        p0_deck,
+        p1_deck,
+        PlayerId::P0,
+    )
+}
+
+/// Starting-player-explicit environment-v2 builder. Starting-player choice
+/// is orthogonal to the frozen owner-specific KDF and opening-hand sequence.
+pub fn build_deck_pair_state_environment_v2_with_starting_player(
+    pair_environment_seed: u64,
+    p0_deck: &[u16],
+    p1_deck: &[u16],
+    starting_player: PlayerId,
+) -> std::result::Result<GameState, DeckPairBuildErrorV2> {
     use crate::environment_randomization_v2 as env2;
     preflight_fully_supported_deck(p0_deck).map_err(DeckPairBuildErrorV2::DeckPreflight)?;
     preflight_fully_supported_deck(p1_deck).map_err(DeckPairBuildErrorV2::DeckPreflight)?;
@@ -1415,11 +1457,12 @@ pub fn build_deck_pair_state_environment_v2(
     .map_err(DeckPairBuildErrorV2::EnvironmentRandomization)?;
     let lib0 = env2::permutation_v2(p0_seed, p0_deck);
     let lib1 = env2::permutation_v2(p1_seed, p1_deck);
-    let mut state = GameState::new_from_libraries_environment_v2(
+    let mut state = GameState::new_from_libraries_environment_v2_with_starting_player(
         &lib0,
         &lib1,
         card_name,
         pair_environment_seed,
+        starting_player,
     );
     for _ in 0..7 {
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
@@ -5772,6 +5815,51 @@ fn tmp_path(path: &Path) -> PathBuf {
 
 #[allow(dead_code)]
 fn _assert_game_object_is_visible_data(_: &GameObject) {}
+
+#[cfg(test)]
+mod starting_player_tests {
+    use super::*;
+    use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
+
+    fn opening_hand_card_defs(state: &GameState, player: PlayerId) -> Vec<u16> {
+        state.players[player.index()]
+            .hand
+            .iter()
+            .map(|&id| state.objects.get(id).card_def)
+            .collect()
+    }
+
+    #[test]
+    fn env_v2_opening_hands_are_independent_of_starting_player_on_frozen_roots() {
+        let deck = burn_deck_ids();
+        for pair_index in 0_u64..256 {
+            let root = native_trainer_episode_schedule_v1(982_001, pair_index * 2)
+                .expect("frozen diagnostic root")
+                .environment_seed;
+            let p0_first = build_deck_pair_state_environment_v2_with_starting_player(
+                root,
+                &deck,
+                &deck,
+                PlayerId::P0,
+            )
+            .expect("P0-first mirror state");
+            let p1_first = build_deck_pair_state_environment_v2_with_starting_player(
+                root,
+                &deck,
+                &deck,
+                PlayerId::P1,
+            )
+            .expect("P1-first mirror state");
+            for player in [PlayerId::P0, PlayerId::P1] {
+                assert_eq!(
+                    opening_hand_card_defs(&p0_first, player),
+                    opening_hand_card_defs(&p1_first, player),
+                    "opening hand changed with starting player at pair {pair_index} for {player:?}"
+                );
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod policy_v5_artifact_tests {

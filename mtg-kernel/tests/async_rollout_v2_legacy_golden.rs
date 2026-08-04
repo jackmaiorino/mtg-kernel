@@ -9,6 +9,7 @@ fn legacy_uniform_v2_c625d9a_golden_is_unchanged() {
     let result = run_seeded_uniform_async_rollout_v2(AsyncRolloutConfigV2 {
         deck_ids: ["Rally".to_string(), "Rally".to_string()],
         learner_seat: PlayerSeatV1::P0,
+        starting_player: PlayerSeatV1::P0,
         environment_seed: 71_501,
         opponent_policy_seed: 72_501,
         learner_policy_seed: 73_501,

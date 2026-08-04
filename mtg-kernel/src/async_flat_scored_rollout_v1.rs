@@ -2625,12 +2625,13 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV1 {
             FlatScoredSessionEnvironmentV1::Legacy => {}
             FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2 => return Err(()),
         }
-        FastActorSessionV1::reset_with_decks_and_limits(
+        FastActorSessionV1::reset_with_decks_and_limits_starting_player(
             episode_id,
             environment_seed,
             config.max_physical_decisions,
             config.max_policy_steps,
             config.deck_ids.clone(),
+            config.starting_player.into(),
         )
         .map_err(|_| ())
     }
@@ -4553,6 +4554,7 @@ mod tests {
         AsyncRolloutConfigV2 {
             deck_ids: ["Rally".to_string(), "Rally".to_string()],
             learner_seat: PlayerSeatV1::P0,
+            starting_player: PlayerSeatV1::P0,
             environment_seed: 81_501,
             opponent_policy_seed: 82_501,
             learner_policy_seed: TEST_LEARNER_POLICY_SEED,

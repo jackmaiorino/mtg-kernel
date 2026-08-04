@@ -2458,6 +2458,7 @@ impl NativeTrainerStateV2 {
         let rollout_config = AsyncRolloutConfigV2 {
             deck_ids: config.deck_ids.clone(),
             learner_seat: PlayerSeatV1::P0,
+            starting_player: PlayerSeatV1::P0,
             environment_seed: self.base_seed,
             opponent_policy_seed: self.base_seed,
             learner_policy_seed: self.base_seed,
@@ -2792,6 +2793,7 @@ impl NativeTrainerStateV2 {
         let rollout_config = AsyncRolloutConfigV2 {
             deck_ids: config.deck_ids.clone(),
             learner_seat: PlayerSeatV1::P0,
+            starting_player: PlayerSeatV1::P0,
             environment_seed: self.base_seed,
             opponent_policy_seed: self.base_seed,
             learner_policy_seed: self.base_seed,

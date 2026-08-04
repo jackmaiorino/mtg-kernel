@@ -1425,6 +1425,7 @@ mod tests {
         AsyncRolloutConfigV2 {
             deck_ids: ["Rally".to_string(), "Rally".to_string()],
             learner_seat: PlayerSeatV1::P0,
+            starting_player: PlayerSeatV1::P0,
             environment_seed: 61_001,
             opponent_policy_seed: 62_001,
             learner_policy_seed: 63_001,

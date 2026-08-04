@@ -19,11 +19,12 @@ use crate::policy_surface_v5::{
     POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2, POLICY_SURFACE_VERSION,
 };
 use crate::rl::{
-    build_deck_pair_state, core_policy_action_candidates_v5, legal_action_candidates_v5,
-    observe_policy_v5, observe_policy_v5_unhashed_for_flat_policy, parse_strict_json_value,
-    ActionSemanticV1, CardStableRefV1, CorePolicyActionCandidateV1, EpisodeTerminalSummaryV1,
-    LegalActionV5, ObservationV5, PlayerSeatV1, PolicyLegalActionCandidateV5, RlContractError,
-    TargetRefV1, TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2,
+    build_deck_pair_state_with_starting_player, core_policy_action_candidates_v5,
+    legal_action_candidates_v5, observe_policy_v5, observe_policy_v5_unhashed_for_flat_policy,
+    parse_strict_json_value, ActionSemanticV1, CardStableRefV1, CorePolicyActionCandidateV1,
+    EpisodeTerminalSummaryV1, LegalActionV5, ObservationV5, PlayerSeatV1,
+    PolicyLegalActionCandidateV5, RlContractError, TargetRefV1, TerminalClassificationV1,
+    TerminalOutcomeV1, TerminalSafeCodeV2,
 };
 use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition};
 use crate::state::{Target, Zone};
@@ -3824,7 +3825,10 @@ impl RlEpisodeSessionV1 {
     ) -> Result<Self, RlSessionError> {
         Self::reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
             episode_id,
-            ResetRandomization::Legacy { env_seed },
+            ResetRandomization::Legacy {
+                env_seed,
+                starting_player: PlayerId::P0,
+            },
             max_physical_decisions,
             max_policy_steps,
             deck_ids,
@@ -3871,6 +3875,7 @@ impl RlEpisodeSessionV1 {
             episode_id,
             ResetRandomization::EnvironmentV2 {
                 pair_environment_seed,
+                starting_player: PlayerId::P0,
             },
             max_physical_decisions,
             max_policy_steps,
@@ -4452,9 +4457,30 @@ impl FastActorSessionV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
     ) -> Result<Self, RlSessionError> {
-        Self::reset_with_decks_and_limits_in_flat_action_mode(
+        Self::reset_with_decks_and_limits_starting_player(
             episode_id,
             env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            PlayerId::P0,
+        )
+    }
+
+    pub fn reset_with_decks_and_limits_starting_player(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        starting_player: PlayerId,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
+            episode_id,
+            ResetRandomization::Legacy {
+                env_seed,
+                starting_player,
+            },
             max_physical_decisions,
             max_policy_steps,
             deck_ids,
@@ -4472,9 +4498,31 @@ impl FastActorSessionV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
     ) -> Result<Self, RlSessionError> {
-        Self::reset_with_decks_and_limits_in_flat_action_mode(
+        Self::reset_with_decks_and_limits_flat_action_v2_starting_player(
             episode_id,
             env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            PlayerId::P0,
+        )
+    }
+
+    /// Starting-player-explicit flat-action V2 reset on legacy randomness.
+    pub fn reset_with_decks_and_limits_flat_action_v2_starting_player(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        starting_player: PlayerId,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
+            episode_id,
+            ResetRandomization::Legacy {
+                env_seed,
+                starting_player,
+            },
             max_physical_decisions,
             max_policy_steps,
             deck_ids,
@@ -4493,33 +4541,36 @@ impl FastActorSessionV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_flat_action_v2_environment_v2_starting_player(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            PlayerId::P0,
+        )
+    }
+
+    /// Diagnostic activation boundary that varies only the physical player
+    /// taking the first turn. The legacy constructor above delegates with P0.
+    pub fn reset_with_decks_and_limits_flat_action_v2_environment_v2_starting_player(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        starting_player: PlayerId,
+    ) -> Result<Self, RlSessionError> {
         Self::reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
             episode_id,
             ResetRandomization::EnvironmentV2 {
                 pair_environment_seed,
+                starting_player,
             },
             max_physical_decisions,
             max_policy_steps,
             deck_ids,
             FlatActionContractModeV1::V2,
-        )
-    }
-
-    fn reset_with_decks_and_limits_in_flat_action_mode(
-        episode_id: u64,
-        env_seed: u64,
-        max_physical_decisions: u64,
-        max_policy_steps: u64,
-        deck_ids: SessionDeckIdsV1,
-        flat_action_contract_mode: FlatActionContractModeV1,
-    ) -> Result<Self, RlSessionError> {
-        Self::reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
-            episode_id,
-            ResetRandomization::Legacy { env_seed },
-            max_physical_decisions,
-            max_policy_steps,
-            deck_ids,
-            flat_action_contract_mode,
         )
     }
 
@@ -4573,6 +4624,29 @@ impl FastActorSessionV1 {
             legal_action_count: u32::try_from(current.candidates.len())
                 .expect("fast actor candidate count was checked when bound"),
         })
+    }
+
+    /// Builds the true P0/P1-relabelled twin of the untouched opening
+    /// decision. This is intentionally test-only: it is an action-surface
+    /// metamorphic oracle, not a gameplay transition.
+    #[cfg(test)]
+    pub(crate) fn opening_physical_seat_relabel_twin_v1(&self) -> Self {
+        assert_eq!(self.policy_step_count, 0);
+        assert_eq!(self.physical_decision_count, 0);
+        assert!(self.terminal.is_none());
+        assert!(self.current.is_some());
+
+        let mut twin = self.clone();
+        twin.deck_ids.swap(0, 1);
+        twin.deck_hashes.swap(0, 1);
+        twin.state.flip_opening_physical_seats_for_metamorphic_v1();
+        twin.surface = PolicySurfaceV5::new_for_session();
+        twin.current = None;
+        twin.flat_action_cache_spare = None;
+        twin.flat_action_cache_spare_v2 = None;
+        twin.terminal = None;
+        twin.advance_to_decision_or_terminal();
+        twin
     }
 
     /// Crate-private immutable provenance needed to seed the native full-
@@ -6716,8 +6790,14 @@ fn canonical_burn_mirror_deck_ids() -> SessionDeckIdsV1 {
 /// the sole persisted randomness and diagnostic identity.
 #[derive(Clone, Copy)]
 enum ResetRandomization {
-    Legacy { env_seed: u64 },
-    EnvironmentV2 { pair_environment_seed: u64 },
+    Legacy {
+        env_seed: u64,
+        starting_player: PlayerId,
+    },
+    EnvironmentV2 {
+        pair_environment_seed: u64,
+        starting_player: PlayerId,
+    },
 }
 
 /// Shared state construction for both session types: resolves both runtime
@@ -6732,10 +6812,14 @@ fn build_session_deck_pair_state(
     let resolved_decks = resolve_runtime_decks(deck_ids)?;
     let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
     let state = match randomization {
-        ResetRandomization::Legacy { env_seed } => build_deck_pair_state(
+        ResetRandomization::Legacy {
+            env_seed,
+            starting_player,
+        } => build_deck_pair_state_with_starting_player(
             env_seed,
             resolved_decks[0].card_ids,
             resolved_decks[1].card_ids,
+            starting_player,
         )
         .map_err(|_| {
             session_error(
@@ -6745,10 +6829,12 @@ fn build_session_deck_pair_state(
         })?,
         ResetRandomization::EnvironmentV2 {
             pair_environment_seed,
-        } => crate::rl::build_deck_pair_state_environment_v2(
+            starting_player,
+        } => crate::rl::build_deck_pair_state_environment_v2_with_starting_player(
             pair_environment_seed,
             resolved_decks[0].card_ids,
             resolved_decks[1].card_ids,
+            starting_player,
         )
         .map_err(map_deck_pair_build_error_v2)?,
     };

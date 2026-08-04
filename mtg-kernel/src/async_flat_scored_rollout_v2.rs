@@ -782,22 +782,24 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV2 {
         // root the frozen trainer schedule derived.
         match environment {
             FlatScoredSessionEnvironmentV1::Legacy => {
-                FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+                FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_starting_player(
                     episode_id,
                     environment_seed,
                     config.max_physical_decisions,
                     config.max_policy_steps,
                     config.deck_ids.clone(),
+                    config.starting_player.into(),
                 )
                 .map_err(|_| ())
             }
             FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2 => {
-                FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+                FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2_starting_player(
                     episode_id,
                     environment_seed,
                     config.max_physical_decisions,
                     config.max_policy_steps,
                     config.deck_ids.clone(),
+                    config.starting_player.into(),
                 )
                 .map_err(|_| ())
             }
@@ -1246,6 +1248,7 @@ mod tests {
         AsyncRolloutConfigV2 {
             deck_ids: ["Rally".to_string(), "Rally".to_string()],
             learner_seat: PlayerSeatV1::P0,
+            starting_player: PlayerSeatV1::P0,
             environment_seed: 91_501,
             opponent_policy_seed: 92_501,
             learner_policy_seed: 93_501,

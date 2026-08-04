@@ -11,6 +11,56 @@ use std::hash::{Hash, Hasher};
 
 pub const STARTING_LIFE: i32 = 20;
 
+/// Runtime authority for which physical player takes the first turn.
+///
+/// The legacy P0 value deliberately serializes and hashes as no additional
+/// state. This preserves the sealed legacy `GameState` JSON, diagnostic hash,
+/// and hot-path derived hash byte-for-byte. A P1-start state serializes the
+/// explicit non-default value and contributes a domain-separated hash byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StartingPlayerAuthorityV1 {
+    P0,
+    P1,
+}
+
+impl Default for StartingPlayerAuthorityV1 {
+    fn default() -> Self {
+        Self::P0
+    }
+}
+
+impl StartingPlayerAuthorityV1 {
+    fn from_player(player: PlayerId) -> Self {
+        match player {
+            PlayerId::P0 => Self::P0,
+            PlayerId::P1 => Self::P1,
+            _ => panic!("unsupported starting player {}", player.0),
+        }
+    }
+
+    fn player(self) -> PlayerId {
+        match self {
+            Self::P0 => PlayerId::P0,
+            Self::P1 => PlayerId::P1,
+        }
+    }
+
+    fn is_legacy_p0(&self) -> bool {
+        *self == Self::P0
+    }
+}
+
+impl Hash for StartingPlayerAuthorityV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if *self == Self::P1 {
+            // P0 is intentionally a no-op so adding this derived-Hash field
+            // cannot perturb the sealed legacy hash sequence.
+            0x53_u8.hash(state);
+        }
+    }
+}
+
 /// Exact diagnostic full-state hash contract written into privileged audit
 /// artifacts. The algorithm is FNV-1a-64 over the compact UTF-8 JSON bytes of
 /// `DiagnosticStateHashEnvelopeV5` below.
@@ -912,6 +962,11 @@ pub struct GameState {
     pub turn: u32,
     pub active_player: PlayerId,
     pub priority_player: PlayerId,
+    #[serde(
+        default,
+        skip_serializing_if = "StartingPlayerAuthorityV1::is_legacy_p0"
+    )]
+    starting_player: StartingPlayerAuthorityV1,
     pub step: Step,
     pub stack: Vec<StackItem>,
     pub exile: Vec<ObjectId>,
@@ -1313,6 +1368,20 @@ impl GameState {
         names: impl Fn(u16) -> String,
         seed: u64,
     ) -> GameState {
+        Self::new_from_libraries_with_starting_player(lib0, lib1, names, seed, PlayerId::P0)
+    }
+
+    /// Starting-player-explicit sibling of `new_from_libraries`. Object-id
+    /// assignment and all other construction order remain physical P0 then
+    /// P1, independent of who takes the first turn.
+    pub fn new_from_libraries_with_starting_player(
+        lib0: &[u16],
+        lib1: &[u16],
+        names: impl Fn(u16) -> String,
+        seed: u64,
+        starting_player: PlayerId,
+    ) -> GameState {
+        let starting_player_authority = StartingPlayerAuthorityV1::from_player(starting_player);
         let mut objects = Arena::with_capacity(lib0.len() + lib1.len());
         let mut library0 = Vec::with_capacity(lib0.len());
         let mut library1 = Vec::with_capacity(lib1.len());
@@ -1343,8 +1412,9 @@ impl GameState {
             objects,
             players: [player0, player1],
             turn: 1,
-            active_player: PlayerId::P0,
-            priority_player: PlayerId::P0,
+            active_player: starting_player,
+            priority_player: starting_player,
+            starting_player: starting_player_authority,
             step: Step::Untap,
             stack: Vec::new(),
             exile: Vec::new(),
@@ -1938,13 +2008,94 @@ impl GameState {
         card_name: impl Fn(u16) -> String,
         pair_environment_seed: u64,
     ) -> GameState {
-        let mut state = GameState::new_from_libraries(library0, library1, card_name, 0);
+        Self::new_from_libraries_environment_v2_with_starting_player(
+            library0,
+            library1,
+            card_name,
+            pair_environment_seed,
+            PlayerId::P0,
+        )
+    }
+
+    /// Starting-player-explicit environment-v2 constructor. The environment
+    /// root and owner-specific shuffle streams are unchanged by turn order.
+    pub fn new_from_libraries_environment_v2_with_starting_player(
+        library0: &[u16],
+        library1: &[u16],
+        card_name: impl Fn(u16) -> String,
+        pair_environment_seed: u64,
+        starting_player: PlayerId,
+    ) -> GameState {
+        let mut state = GameState::new_from_libraries_with_starting_player(
+            library0,
+            library1,
+            card_name,
+            0,
+            starting_player,
+        );
         state.randomness = GameRandomnessState::EnvironmentV2(
             crate::environment_randomization_v2::GameEnvironmentRandomizationV2::new(
                 pair_environment_seed,
             ),
         );
         state
+    }
+
+    /// The physical player authorized to take turn one and skip that turn's
+    /// draw under rule 103.8a.
+    pub fn starting_player(&self) -> PlayerId {
+        self.starting_player.player()
+    }
+
+    /// Test-only physical-seat relabel for an opening-decision metamorphic
+    /// twin. The game objects and their identities are preserved while every
+    /// player-indexed state component that can affect the opening policy
+    /// decision is mapped P0 <-> P1.
+    #[cfg(test)]
+    pub(crate) fn flip_opening_physical_seats_for_metamorphic_v1(&mut self) {
+        assert!(self.stack.is_empty());
+        assert!(self.engine.pending_cast.is_none());
+        assert!(self.engine.pending_activation.is_none());
+        assert!(self.engine.pending_discard.is_none());
+        assert!(self.engine.pending_optional_cost.is_none());
+        assert!(self.engine.pending_optional_cost_sacrifice.is_none());
+        assert!(self.engine.pending_spell_copy.is_none());
+        assert!(self.engine.pending_effect.is_none());
+        assert!(self.engine.pending_triggers.is_empty());
+
+        self.players.swap(0, 1);
+        self.active_player = self.active_player.opponent();
+        self.priority_player = self.priority_player.opponent();
+        self.starting_player =
+            StartingPlayerAuthorityV1::from_player(self.starting_player.player().opponent());
+        self.initiative = self.initiative.map(PlayerId::opponent);
+        self.engine.priority_passes.swap(0, 1);
+        self.engine.last_mana_ability_activator = self
+            .engine
+            .last_mana_ability_activator
+            .map(PlayerId::opponent);
+
+        for (_, object) in self.objects.iter_mut() {
+            object.owner = object.owner.opponent();
+            object.controller = object.controller.opponent();
+        }
+
+        let library_knowledge = self.library_knowledge.clone();
+        self.library_knowledge = [
+            [
+                library_knowledge[1][1].clone(),
+                library_knowledge[1][0].clone(),
+            ],
+            [
+                library_knowledge[0][1].clone(),
+                library_knowledge[0][0].clone(),
+            ],
+        ];
+        let hand_knowledge = self.hand_knowledge.clone();
+        self.hand_knowledge = [
+            [hand_knowledge[1][1].clone(), hand_knowledge[1][0].clone()],
+            [hand_knowledge[0][1].clone(), hand_knowledge[0][0].clone()],
+        ];
     }
 
     /// Clears all observers' facts about one library. Used for shuffles and
@@ -2656,6 +2807,32 @@ mod tests {
             "legacy hot-path state_hash changed (Hash derivation drift)"
         );
         assert_eq!(state.diagnostic_state_hash(), 0x8650_30b6_0d41_3489);
+    }
+
+    #[test]
+    fn p1_starting_player_is_explicit_and_round_trips() {
+        let (lib0, lib1) = two_card_libraries();
+        let state = GameState::new_from_libraries_with_starting_player(
+            &lib0,
+            &lib1,
+            debug_names,
+            99,
+            PlayerId::P1,
+        );
+        assert_eq!(state.starting_player(), PlayerId::P1);
+        assert_eq!(state.active_player, PlayerId::P1);
+        assert_eq!(state.priority_player, PlayerId::P1);
+
+        let json = serde_json::to_string(&state).expect("P1-start state serializes");
+        assert!(json.contains("\"starting_player\":\"p1\""));
+        let restored: GameState = serde_json::from_str(&json).expect("P1-start state restores");
+        assert_eq!(restored, state);
+        assert_eq!(restored.starting_player(), PlayerId::P1);
+        assert_eq!(restored.state_hash(), state.state_hash());
+        assert_eq!(
+            restored.diagnostic_state_hash(),
+            state.diagnostic_state_hash()
+        );
     }
 
     fn v2_capture_state(root: u64) -> GameState {

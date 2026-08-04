@@ -567,19 +567,25 @@ mod tests {
     // to real cards).
 
     #[test]
-    fn sba_declares_loss_at_zero_life() {
-        let mut state = GameState::new_from_libraries(&[1], &[2], |c| format!("card-{c}"), 1);
-        state.players[0].life = 0;
-        sba_fixed_point(&mut state);
-        assert!(state.players[0].has_lost);
+    fn sba_declares_loss_at_zero_life_for_either_player() {
+        for losing_player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries(&[1], &[2], |c| format!("card-{c}"), 1);
+            state.players[losing_player.index()].life = 0;
+            sba_fixed_point(&mut state);
+            assert!(state.players[losing_player.index()].has_lost);
+            assert!(!state.players[losing_player.opponent().index()].has_lost);
+        }
     }
 
     #[test]
-    fn sba_declares_loss_on_drew_from_empty() {
-        let mut state = GameState::new_from_libraries(&[1], &[2], |c| format!("card-{c}"), 1);
-        state.players[1].drew_from_empty = true;
-        sba_fixed_point(&mut state);
-        assert!(state.players[1].has_lost);
+    fn sba_declares_loss_on_drew_from_empty_for_either_player() {
+        for losing_player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries(&[1], &[2], |c| format!("card-{c}"), 1);
+            state.players[losing_player.index()].drew_from_empty = true;
+            sba_fixed_point(&mut state);
+            assert!(state.players[losing_player.index()].has_lost);
+            assert!(!state.players[losing_player.opponent().index()].has_lost);
+        }
     }
 
     #[test]

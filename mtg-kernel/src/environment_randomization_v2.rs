@@ -600,6 +600,32 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn owner_swap_relabels_kdf_and_permutation_outputs_exactly() {
+        let payload = (0_u16..32).collect::<Vec<_>>();
+        for root in [0_u64, 1, 982_001, u64::MAX] {
+            for (purpose, ordinal) in [
+                (ShufflePurposeV2::InitialLibraryShuffle, 0_u64),
+                (ShufflePurposeV2::InGameLibraryShuffle, 0),
+                (ShufflePurposeV2::InGameLibraryShuffle, 17),
+            ] {
+                let direct = [PhysicalOwnerV2::P0, PhysicalOwnerV2::P1].map(|owner| {
+                    let seed =
+                        derive_environment_randomization_seed_v2(root, owner, purpose, ordinal)
+                            .expect("valid owner stream");
+                    (seed, permutation_v2(seed, &payload))
+                });
+                let relabeled = [PhysicalOwnerV2::P1, PhysicalOwnerV2::P0].map(|owner| {
+                    let seed =
+                        derive_environment_randomization_seed_v2(root, owner, purpose, ordinal)
+                            .expect("valid relabeled owner stream");
+                    (seed, permutation_v2(seed, &payload))
+                });
+                assert_eq!(relabeled, [direct[1].clone(), direct[0].clone()]);
+            }
+        }
+    }
 }
 
 /// Evidence-only portable reset-trajectory golden proof. This activates no

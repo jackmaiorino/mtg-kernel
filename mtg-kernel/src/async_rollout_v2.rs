@@ -98,6 +98,7 @@ impl BatchMembershipDigestV2 {
 pub struct AsyncRolloutConfigV2 {
     pub deck_ids: SessionDeckIdsV1,
     pub learner_seat: PlayerSeatV1,
+    pub starting_player: PlayerSeatV1,
     pub environment_seed: u64,
     pub opponent_policy_seed: u64,
     pub learner_policy_seed: u64,
@@ -1711,6 +1712,7 @@ mod tests {
         AsyncRolloutConfigV2 {
             deck_ids: ["Rally".to_string(), "Rally".to_string()],
             learner_seat: PlayerSeatV1::P0,
+            starting_player: PlayerSeatV1::P0,
             environment_seed: 71_501,
             opponent_policy_seed: 72_501,
             learner_policy_seed: 73_501,

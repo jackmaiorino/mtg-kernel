@@ -4689,7 +4689,7 @@ fn advance_step(state: &mut GameState) {
 
     if next_idx >= STEP_ORDER.len() {
         state.active_player = state.active_player.opponent();
-        if state.active_player == PlayerId::P0 {
+        if state.active_player == state.starting_player() {
             state.turn += 1;
         }
         next_idx = 0;
@@ -4785,12 +4785,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         Step::Draw => {
             let p = state.active_player;
             // 103.8a: the starting player skips the draw step of their
-            // very first turn. `turn == 1 && p == P0` uniquely identifies
-            // that turn under this kernel's round-based turn numbering
-            // (see module doc): `turn` only becomes 1 again... it never
-            // does, it's monotonic, so this combination occurs exactly
-            // once, at the start of the game.
-            let is_first_turn_of_the_game = state.turn == 1 && p == PlayerId::P0;
+            // very first turn. `turn == 1 && p == starting_player` uniquely
+            // identifies that turn under this kernel's round-based turn
+            // numbering: `turn` increments only when play returns to the
+            // starting player and never decreases.
+            let is_first_turn_of_the_game = state.turn == 1 && p == state.starting_player();
             if !is_first_turn_of_the_game {
                 event::propose_and_commit(state, ProposedEvent::draw(p));
                 collect_and_queue_triggers(state);
@@ -7617,6 +7616,62 @@ mod tests {
             .push(UntilEndOfTurnEffect::SyntheticMarker(ObjectId(0)));
         run_step_entry_action(&mut state, Step::Cleanup);
         assert!(state.engine.until_end_of_turn.is_empty());
+    }
+
+    #[test]
+    fn p1_start_skips_only_p1_first_turn_draw() {
+        let mut state = GameState::new_from_libraries_with_starting_player(
+            &[0, 1],
+            &[2, 3],
+            |card_def| format!("card-{card_def}"),
+            7,
+            PlayerId::P1,
+        );
+        assert_eq!(state.active_player, PlayerId::P1);
+
+        run_step_entry_action(&mut state, Step::Draw);
+        assert_eq!(state.players[1].library.len(), 2);
+        assert!(state.players[1].hand.is_empty());
+
+        state.active_player = PlayerId::P0;
+        run_step_entry_action(&mut state, Step::Draw);
+        assert_eq!(state.players[0].library.len(), 1);
+        assert_eq!(state.players[0].hand.len(), 1);
+    }
+
+    #[test]
+    fn p1_start_round_increments_when_play_returns_to_p1() {
+        let mut state = GameState::new_from_libraries_with_starting_player(
+            &[],
+            &[],
+            |_| String::new(),
+            7,
+            PlayerId::P1,
+        );
+        state.step = Step::Cleanup;
+        advance_step(&mut state);
+        assert_eq!(state.active_player, PlayerId::P0);
+        assert_eq!(state.turn, 1);
+
+        state.step = Step::Cleanup;
+        advance_step(&mut state);
+        assert_eq!(state.active_player, PlayerId::P1);
+        assert_eq!(state.turn, 2);
+    }
+
+    #[test]
+    fn simultaneous_loss_conditions_resolve_to_draw() {
+        let mut state = empty_game();
+        state.players[0].life = 0;
+        state.players[0].drew_from_empty = true;
+        state.players[1].life = 0;
+        state.players[1].drew_from_empty = true;
+        trigger::sba_fixed_point(&mut state);
+
+        assert_eq!(
+            check_game_over(&state),
+            Some(Decision::GameOver { winner: None })
+        );
     }
 
     /// Regression test for the increment-13 fix (root-caused against

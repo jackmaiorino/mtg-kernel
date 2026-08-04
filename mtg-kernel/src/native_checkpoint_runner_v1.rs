@@ -792,7 +792,15 @@ pub fn run_native_checkpoint_v1(
     checkpoint_payload: &[u8],
     config: NativeCheckpointRunnerConfigV1,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
-    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, None, None)
+    run_native_checkpoint_core_v1(
+        run,
+        checkpoint,
+        checkpoint_payload,
+        config,
+        None,
+        None,
+        PlayerSeatV1::P0,
+    )
 }
 
 /// EVAL-ONLY (Self-Play Ladder Design Contract S2, Deliverable 2 head-to-head
@@ -837,6 +845,29 @@ pub(crate) fn run_native_checkpoint_with_ladder_opponent_eval_v1(
         config,
         ladder_opponent,
         None,
+        PlayerSeatV1::P0,
+    )
+}
+
+/// Diagnostic-only starting-player-explicit sibling. Existing evaluators
+/// remain pinned to P0 through their wrappers above.
+#[cfg(test)]
+pub(crate) fn run_native_checkpoint_with_ladder_opponent_starting_player_eval_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    checkpoint_payload: &[u8],
+    config: NativeCheckpointRunnerConfigV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    starting_player: PlayerSeatV1,
+) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    run_native_checkpoint_core_v1(
+        run,
+        checkpoint,
+        checkpoint_payload,
+        config,
+        ladder_opponent,
+        None,
+        starting_player,
     )
 }
 
@@ -860,6 +891,7 @@ pub(crate) fn run_native_checkpoint_with_ladder_opponent_action_residual_eval_v1
         config,
         ladder_opponent,
         Some(NativeEvaluationResidualV1::ActionKind(residual)),
+        PlayerSeatV1::P0,
     )
 }
 
@@ -883,6 +915,7 @@ pub(crate) fn run_native_checkpoint_with_ladder_opponent_state_conditional_resid
         config,
         ladder_opponent,
         Some(NativeEvaluationResidualV1::StateConditional(residual)),
+        PlayerSeatV1::P0,
     )
 }
 
@@ -893,6 +926,7 @@ fn run_native_checkpoint_core_v1(
     config: NativeCheckpointRunnerConfigV1,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     action_residual: Option<NativeEvaluationResidualV1>,
+    starting_player: PlayerSeatV1,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
     let validated = validate_runner_config_v1(run, config)?;
     let expected_episode_count = usize::try_from(config.episode_count)
@@ -930,6 +964,7 @@ fn run_native_checkpoint_core_v1(
         ],
         // The native schedule replaces this placeholder on every episode.
         learner_seat: PlayerSeatV1::P0,
+        starting_player,
         // The native schedule is the only consumer of these seed roles. Keep
         // all legacy placeholders equal to the one explicit evaluation seed,
         // matching the existing trainer construction.
@@ -1124,6 +1159,7 @@ fn run_native_checkpoint_wide_core_v1(
             run.record().environment().deck_ids()[1].clone(),
         ],
         learner_seat: PlayerSeatV1::P0,
+        starting_player: PlayerSeatV1::P0,
         environment_seed: config.evaluation_base_seed,
         opponent_policy_seed: config.evaluation_base_seed,
         learner_policy_seed: config.evaluation_base_seed,

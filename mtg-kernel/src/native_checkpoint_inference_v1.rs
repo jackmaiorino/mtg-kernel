@@ -1340,6 +1340,7 @@ mod tests {
         AsyncRolloutConfigV2 {
             deck_ids: run.record().environment().deck_ids().clone(),
             learner_seat: PlayerSeatV1::P0,
+            starting_player: PlayerSeatV1::P0,
             environment_seed: 71_901,
             opponent_policy_seed: 72_901,
             learner_policy_seed: 73_901,

@@ -1453,6 +1453,7 @@ mod windows_science_loop_tests {
         use crate::native_checkpoint_runner_v1::{
             run_native_checkpoint_wide_with_ladder_opponent_eval_v1,
             run_native_checkpoint_with_ladder_opponent_eval_v1,
+            run_native_checkpoint_with_ladder_opponent_starting_player_eval_v1,
         };
         use crate::native_ladder_promotion_v1::promotion_gate_win_rate_passes_v1;
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
@@ -1494,12 +1495,24 @@ mod windows_science_loop_tests {
             .parse()
             .expect("init generation");
         let episode_count = pairs.checked_mul(2).expect("H2H_PAIRS overflow");
+        let starting_player = match std::env::var("H2H_STARTING_PLAYER")
+            .unwrap_or_else(|_| "P0".to_owned())
+            .as_str()
+        {
+            "P0" | "p0" => PlayerSeatV1::P0,
+            "P1" | "p1" => PlayerSeatV1::P1,
+            other => panic!("H2H_STARTING_PLAYER must be P0 or P1, got {other:?}"),
+        };
         // Capacity-experiment wide-net knob; see the doc comment. Candidate
         // side only; the opponent stays frozen-identity by protocol.
         let wide = std::env::var("WIDE").is_ok_and(|value| value != "0");
         assert!(
             !(wide && init_store.is_some()),
             "WIDE=1 is not supported with H2H_INIT_STORE: the wide protocol trains fresh-init only"
+        );
+        assert!(
+            !(wide && starting_player == PlayerSeatV1::P1),
+            "P1-start is diagnostic-only and unsupported by the wide evaluator"
         );
 
         // Candidate: the SAME ladder run-record reconstruction as
@@ -1641,6 +1654,7 @@ mod windows_science_loop_tests {
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
         };
+        println!("H2H starting_player={starting_player:?}");
         let result = if wide {
             run_native_checkpoint_wide_with_ladder_opponent_eval_v1(
                 &candidate_run,
@@ -1650,13 +1664,23 @@ mod windows_science_loop_tests {
                 Some(engine),
             )
             .unwrap()
-        } else {
+        } else if starting_player == PlayerSeatV1::P0 {
             run_native_checkpoint_with_ladder_opponent_eval_v1(
                 &candidate_run,
                 candidate_boundary.checkpoint(),
                 candidate_boundary.payload(),
                 runner_config,
                 Some(engine),
+            )
+            .unwrap()
+        } else {
+            run_native_checkpoint_with_ladder_opponent_starting_player_eval_v1(
+                &candidate_run,
+                candidate_boundary.checkpoint(),
+                candidate_boundary.payload(),
+                runner_config,
+                Some(engine),
+                starting_player,
             )
             .unwrap()
         };

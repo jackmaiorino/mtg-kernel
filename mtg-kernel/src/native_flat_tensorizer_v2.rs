@@ -6231,8 +6231,10 @@ mod tests {
         FlatManaColorV2 as FlatManaColorV1, FlatScoringOwnedBuffersV2,
     };
     use crate::rl::{
-        make_legal_action_v5, ActionSemanticV1, KnownLibraryCardV4, ObjectRelationPublicV4,
-        ObservationV5, PlayerSeatV1,
+        make_legal_action_v5, ActionSemanticV1, CardStableRefV1, DiscardResumeSemanticV2,
+        KnownLibraryCardV4, ObjectRelationPublicV4, ObservationV5, PendingActivationSemanticV2,
+        PendingCastSemanticV2, PendingDiscardSemanticV2, PlayerSeatV1, PrivateCombatSelectionV5,
+        TargetRefV1,
     };
     use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
     use crate::state::Zone;
@@ -7063,6 +7065,655 @@ mod tests {
                     "synthetic observation transform changed a scorer action-ref row"
                 );
             }
+        }
+    }
+
+    fn metamorphic_opponent_v1(player: PlayerSeatV1) -> PlayerSeatV1 {
+        match player {
+            PlayerSeatV1::P0 => PlayerSeatV1::P1,
+            PlayerSeatV1::P1 => PlayerSeatV1::P0,
+        }
+    }
+
+    fn metamorphic_seat_index_v1(player: PlayerSeatV1) -> usize {
+        match player {
+            PlayerSeatV1::P0 => 0,
+            PlayerSeatV1::P1 => 1,
+        }
+    }
+
+    fn flip_stable_seats_for_metamorphic_v1(stable: &mut CardStableRefV1) {
+        stable.owner = metamorphic_opponent_v1(stable.owner);
+        stable.controller = metamorphic_opponent_v1(stable.controller);
+    }
+
+    fn flip_target_seats_for_metamorphic_v1(target: &mut TargetRefV1) {
+        match target {
+            TargetRefV1::Player { player } => *player = metamorphic_opponent_v1(*player),
+            TargetRefV1::Object { object } => flip_stable_seats_for_metamorphic_v1(object),
+        }
+    }
+
+    /// Physical P0/P1 relabel for the initial-state metamorphic fixtures below.
+    /// Object identity and every non-seat semantic are held fixed.
+    fn flip_observation_seats_for_metamorphic_v1(observation: &mut ObservationV5) {
+        observation.acting_player = metamorphic_opponent_v1(observation.acting_player);
+        let surface = &mut observation.projection.surface;
+        surface.active_player = metamorphic_opponent_v1(surface.active_player);
+        surface.priority_player = metamorphic_opponent_v1(surface.priority_player);
+        surface.initiative = surface.initiative.map(metamorphic_opponent_v1);
+        surface.life_totals.swap(0, 1);
+        surface.mana_pools.swap(0, 1);
+        surface.hand_counts.swap(0, 1);
+        surface.library_counts.swap(0, 1);
+        surface.player_status.swap(0, 1);
+        surface.battlefield.swap(0, 1);
+        surface.graveyards.swap(0, 1);
+        surface.engine_context.priority_passes.swap(0, 1);
+        surface
+            .engine_context
+            .last_mana_ability_activator_since_priority_boundary = surface
+            .engine_context
+            .last_mana_ability_activator_since_priority_boundary
+            .map(metamorphic_opponent_v1);
+        surface.surface_context.combat_priority_spent.swap(0, 1);
+
+        for card in surface
+            .battlefield
+            .iter_mut()
+            .chain(surface.graveyards.iter_mut())
+            .flat_map(|zone| zone.iter_mut())
+            .chain(surface.exile.iter_mut())
+        {
+            flip_stable_seats_for_metamorphic_v1(&mut card.stable);
+            for goad in &mut card.goaded_by {
+                goad.player = metamorphic_opponent_v1(goad.player);
+            }
+            card.goaded_by
+                .sort_unstable_by_key(|goad| metamorphic_seat_index_v1(goad.player));
+        }
+        for item in &mut surface.stack {
+            flip_stable_seats_for_metamorphic_v1(&mut item.source);
+            item.controller = metamorphic_opponent_v1(item.controller);
+            for target in &mut item.targets {
+                flip_target_seats_for_metamorphic_v1(target);
+            }
+            for paid in &mut item.paid_cost_refs {
+                flip_stable_seats_for_metamorphic_v1(paid);
+            }
+        }
+        for relation in &mut surface.object_relations {
+            match relation {
+                ObjectRelationPublicV4::AttachedTo {
+                    object,
+                    attached_to,
+                } => {
+                    flip_stable_seats_for_metamorphic_v1(object);
+                    flip_stable_seats_for_metamorphic_v1(attached_to);
+                }
+                ObjectRelationPublicV4::ExiledBy { object, exiled_by } => {
+                    flip_stable_seats_for_metamorphic_v1(object);
+                    flip_stable_seats_for_metamorphic_v1(exiled_by);
+                }
+            }
+        }
+        for attacker in &mut surface.combat.ordered_attackers {
+            flip_stable_seats_for_metamorphic_v1(attacker);
+        }
+        for (attacker, blockers) in &mut surface.combat.attacker_to_ordered_blockers {
+            flip_stable_seats_for_metamorphic_v1(attacker);
+            for blocker in blockers {
+                flip_stable_seats_for_metamorphic_v1(blocker);
+            }
+        }
+        for effect in &mut surface.continuous_effects {
+            if let Some(source) = &mut effect.source {
+                flip_stable_seats_for_metamorphic_v1(source);
+            }
+            effect.controller = effect.controller.map(metamorphic_opponent_v1);
+            for affected in &mut effect.affected_objects {
+                flip_stable_seats_for_metamorphic_v1(affected);
+            }
+            for affected in &mut effect.affected_players {
+                *affected = metamorphic_opponent_v1(*affected);
+            }
+            effect
+                .affected_players
+                .sort_unstable_by_key(|&player| metamorphic_seat_index_v1(player));
+        }
+        for permission in &mut surface.exile_play_permissions {
+            flip_stable_seats_for_metamorphic_v1(&mut permission.object);
+            permission.holder = metamorphic_opponent_v1(permission.holder);
+        }
+
+        if let Some(pending) = &mut surface.engine_context.pending_cast {
+            if let Some(source) = &mut pending.source {
+                flip_stable_seats_for_metamorphic_v1(source);
+            }
+            pending.controller = metamorphic_opponent_v1(pending.controller);
+            for target in &mut pending.chosen_targets {
+                flip_target_seats_for_metamorphic_v1(target);
+            }
+            if let Some(discarded) = &mut pending.additional_cost_discarded {
+                for card in discarded {
+                    flip_stable_seats_for_metamorphic_v1(card);
+                }
+            }
+            for card in &mut pending.sacrifice_chosen {
+                flip_stable_seats_for_metamorphic_v1(card);
+            }
+        }
+        if let Some(pending) = &mut surface.engine_context.pending_activation {
+            if let Some(source) = &mut pending.source {
+                flip_stable_seats_for_metamorphic_v1(source);
+            }
+            pending.controller = metamorphic_opponent_v1(pending.controller);
+            for target in &mut pending.chosen_targets {
+                flip_target_seats_for_metamorphic_v1(target);
+            }
+            if let Some(discarded) = &mut pending.cost_discard_paid {
+                for card in discarded {
+                    flip_stable_seats_for_metamorphic_v1(card);
+                }
+            }
+        }
+        if let Some(pending) = &mut surface.engine_context.pending_discard {
+            pending.player = metamorphic_opponent_v1(pending.player);
+            if let Some(source) = &mut pending.resume_source {
+                flip_stable_seats_for_metamorphic_v1(source);
+            }
+        }
+
+        for card in &mut observation.own_hand {
+            flip_stable_seats_for_metamorphic_v1(&mut card.stable);
+        }
+        observation.known_library_cards.swap(0, 1);
+        for entries in &mut observation.known_library_cards {
+            for entry in entries {
+                flip_stable_seats_for_metamorphic_v1(&mut entry.card.stable);
+            }
+        }
+        observation.known_hand_cards.swap(0, 1);
+        for cards in &mut observation.known_hand_cards {
+            for card in cards {
+                flip_stable_seats_for_metamorphic_v1(&mut card.stable);
+            }
+        }
+
+        if let Some(private) = &mut observation
+            .projection
+            .policy_surface_context
+            .private_combat_selection
+        {
+            if let Some(attacker) = &mut private.attacker {
+                flip_stable_seats_for_metamorphic_v1(attacker);
+            }
+            for selected in &mut private.selected {
+                flip_stable_seats_for_metamorphic_v1(selected);
+            }
+            flip_stable_seats_for_metamorphic_v1(&mut private.current_candidate);
+            for remaining in &mut private.remaining_after_current {
+                flip_stable_seats_for_metamorphic_v1(remaining);
+            }
+        }
+    }
+
+    fn assert_same_actor_relative_observation_tables_v1(
+        fixture_name: &str,
+        expected: &ObservationV5,
+        relabeled: &ObservationV5,
+    ) {
+        let expected = encode_observation_owned_tables_for_fixture_v2(expected)
+            .unwrap_or_else(|error| panic!("{fixture_name} baseline failed: {error:?}"));
+        let relabeled = encode_observation_owned_tables_for_fixture_v2(relabeled)
+            .unwrap_or_else(|error| panic!("{fixture_name} relabel failed: {error:?}"));
+        assert_eq!(expected.globals, relabeled.globals);
+        assert_eq!(expected.objects, relabeled.objects);
+        assert_eq!(expected.relations, relabeled.relations);
+        assert_eq!(expected.object_subtypes, relabeled.object_subtypes);
+        assert_eq!(expected.ability_uses, relabeled.ability_uses);
+        assert_eq!(expected.goads, relabeled.goads);
+        assert_eq!(expected.completed_dungeons, relabeled.completed_dungeons);
+        assert_eq!(
+            expected.effect_subtype_changes,
+            relabeled.effect_subtype_changes
+        );
+        assert_eq!(
+            expected.context_path_elements,
+            relabeled.context_path_elements
+        );
+    }
+
+    #[test]
+    fn physical_seat_relabel_preserves_actor_relative_observation_tables_v1() {
+        let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            71_000,
+            0x71_000,
+            256,
+            32_768,
+            ["Burn".to_string(), "Burn".to_string()],
+        )
+        .unwrap();
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("expected a live decision");
+        };
+        let base = session.flat_policy_observation_v2(expected).unwrap();
+        let actor = base.acting_player;
+        let opponent = metamorphic_opponent_v1(actor);
+        let opponent_index = metamorphic_seat_index_v1(opponent);
+
+        let mut hidden = base.clone();
+        let mut known_hand = hidden.own_hand[0].clone();
+        known_hand.stable.arena_id = 0xfe00_0001;
+        known_hand.stable.owner = opponent;
+        known_hand.stable.controller = opponent;
+        known_hand.stable.zone = Zone::Hand;
+        hidden.known_hand_cards[opponent_index] = vec![known_hand];
+        let mut known_library = hidden.own_hand[1].clone();
+        known_library.stable.arena_id = 0xfe00_0002;
+        known_library.stable.owner = opponent;
+        known_library.stable.controller = opponent;
+        known_library.stable.zone = Zone::Library;
+        hidden.known_library_cards[opponent_index] = vec![KnownLibraryCardV4 {
+            position: 3,
+            card: known_library,
+        }];
+
+        let mut pending_cast = base.clone();
+        pending_cast.projection.surface.engine_context.pending_cast = Some(PendingCastSemanticV2 {
+            source: Some(pending_cast.own_hand[0].stable.clone()),
+            controller: actor,
+            chosen_targets: vec![TargetRefV1::Player { player: opponent }],
+            is_flashback: false,
+            cast_mode: None,
+            additional_cost_discarded: Some(vec![pending_cast.own_hand[1].stable.clone()]),
+            mode_chosen: Some(0),
+            origin_zone: Zone::Hand,
+            sacrifice_chosen: Vec::new(),
+            kicked: Some(false),
+        });
+
+        let activation_source = base.own_hand[2].stable.clone();
+        let mut pending_activation = base.clone();
+        pending_activation
+            .projection
+            .surface
+            .engine_context
+            .pending_activation = Some(PendingActivationSemanticV2 {
+            source: Some(activation_source),
+            controller: actor,
+            ability_index: 1,
+            chosen_targets: vec![TargetRefV1::Player { player: opponent }],
+            cost_discard_paid: Some(vec![pending_activation.own_hand[3].stable.clone()]),
+        });
+
+        let resume_source = base.own_hand[4].stable.clone();
+        let mut pending_discard = base.clone();
+        pending_discard
+            .projection
+            .surface
+            .engine_context
+            .pending_discard = Some(PendingDiscardSemanticV2 {
+            player: actor,
+            count: 2,
+            resume_stage: DiscardResumeSemanticV2::FinishCast,
+            resume_source: Some(resume_source),
+        });
+
+        let attacker = base.own_hand[0].stable.clone();
+        let candidate = base.own_hand[1].stable.clone();
+        let remaining = base.own_hand[2].stable.clone();
+        let mut private_combat = base.clone();
+        private_combat
+            .projection
+            .policy_surface_context
+            .private_combat_selection = Some(PrivateCombatSelectionV5 {
+            attacker: Some(attacker),
+            candidate_index: 1,
+            candidate_count: 3,
+            selected: vec![candidate.clone()],
+            current_candidate: candidate,
+            remaining_after_current: vec![remaining],
+        });
+
+        for (name, observation) in [
+            ("hidden_knowledge", hidden),
+            ("pending_cast", pending_cast),
+            ("pending_activation", pending_activation),
+            ("pending_discard", pending_discard),
+            ("private_combat", private_combat),
+        ] {
+            let mut relabeled = observation.clone();
+            flip_observation_seats_for_metamorphic_v1(&mut relabeled);
+            assert_same_actor_relative_observation_tables_v1(name, &observation, &relabeled);
+            assert_eq!(
+                relabeled.acting_player,
+                metamorphic_opponent_v1(observation.acting_player),
+                "{name} did not physically relabel the actor"
+            );
+        }
+    }
+
+    fn flip_action_semantic_seats_for_metamorphic_v1(
+        semantic: &ActionSemanticV1,
+    ) -> ActionSemanticV1 {
+        let mut relabeled = semantic.clone();
+        match &mut relabeled {
+            ActionSemanticV1::Pass { actor }
+            | ActionSemanticV1::ChooseOptionalCostUse { actor, .. }
+            | ActionSemanticV1::ChooseOptionalCostWhich { actor, .. } => {
+                *actor = metamorphic_opponent_v1(*actor);
+            }
+            ActionSemanticV1::PlayLand { actor, source }
+            | ActionSemanticV1::CastSpell { actor, source }
+            | ActionSemanticV1::ActivateManaAbility { actor, source, .. }
+            | ActionSemanticV1::ActivateAbility { actor, source, .. }
+            | ActionSemanticV1::PlotSpell { actor, source }
+            | ActionSemanticV1::ChooseCastMode { actor, source, .. }
+            | ActionSemanticV1::ChooseKicker { actor, source, .. }
+            | ActionSemanticV1::ChooseSpellMode { actor, source, .. }
+            | ActionSemanticV1::ChooseEffectOption { actor, source, .. }
+            | ActionSemanticV1::FinishEffectSelection { actor, source, .. }
+            | ActionSemanticV1::ChooseEffectColor { actor, source, .. }
+            | ActionSemanticV1::ChooseEffectNumber { actor, source, .. }
+            | ActionSemanticV1::ChooseEffectBoolean { actor, source, .. }
+            | ActionSemanticV1::FinishTargetSelection { actor, source, .. }
+            | ActionSemanticV1::ChooseSpellCopyPayment { actor, source, .. }
+            | ActionSemanticV1::ChooseSpellCopyRetarget { actor, source, .. } => {
+                *actor = metamorphic_opponent_v1(*actor);
+                flip_stable_seats_for_metamorphic_v1(source);
+            }
+            ActionSemanticV1::ChooseTarget {
+                actor,
+                source,
+                target,
+                ..
+            }
+            | ActionSemanticV1::ChooseEffectTarget {
+                actor,
+                source,
+                target,
+                ..
+            } => {
+                *actor = metamorphic_opponent_v1(*actor);
+                flip_stable_seats_for_metamorphic_v1(source);
+                flip_target_seats_for_metamorphic_v1(target);
+            }
+            ActionSemanticV1::ChooseCostTarget {
+                actor,
+                source,
+                candidate,
+                ..
+            } => {
+                *actor = metamorphic_opponent_v1(*actor);
+                flip_stable_seats_for_metamorphic_v1(source);
+                flip_stable_seats_for_metamorphic_v1(candidate);
+            }
+            ActionSemanticV1::ChooseMadnessCast { actor, card, .. } => {
+                *actor = metamorphic_opponent_v1(*actor);
+                flip_stable_seats_for_metamorphic_v1(card);
+            }
+            ActionSemanticV1::Discard { actor, cards }
+            | ActionSemanticV1::DeclareAttackers {
+                actor,
+                attackers: cards,
+            } => {
+                *actor = metamorphic_opponent_v1(*actor);
+                for card in cards {
+                    flip_stable_seats_for_metamorphic_v1(card);
+                }
+            }
+            ActionSemanticV1::DeclareBlockersForAttacker {
+                actor,
+                attacker,
+                blockers,
+            } => {
+                *actor = metamorphic_opponent_v1(*actor);
+                flip_stable_seats_for_metamorphic_v1(attacker);
+                for blocker in blockers {
+                    flip_stable_seats_for_metamorphic_v1(blocker);
+                }
+            }
+            ActionSemanticV1::ChooseAttackerInclusion {
+                actor, attacker, ..
+            } => {
+                *actor = metamorphic_opponent_v1(*actor);
+                flip_stable_seats_for_metamorphic_v1(attacker);
+            }
+            ActionSemanticV1::ChooseBlockerInclusion {
+                actor,
+                attacker,
+                blocker,
+                ..
+            } => {
+                *actor = metamorphic_opponent_v1(*actor);
+                flip_stable_seats_for_metamorphic_v1(attacker);
+                flip_stable_seats_for_metamorphic_v1(blocker);
+            }
+            ActionSemanticV1::OrderTriggers {
+                actor,
+                pending_sources,
+                ..
+            } => {
+                *actor = metamorphic_opponent_v1(*actor);
+                for source in pending_sources {
+                    flip_stable_seats_for_metamorphic_v1(source);
+                }
+            }
+            ActionSemanticV1::Ambiguous { .. } => {}
+        }
+        relabeled
+    }
+
+    fn assert_f32_bits_equal_v1(label: &str, expected: &[f32], actual: &[f32]) {
+        assert_eq!(expected.len(), actual.len(), "{label} length");
+        assert_eq!(
+            expected
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            actual
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            "{label} bits"
+        );
+    }
+
+    fn metamorphic_test_policy_logit_v1(
+        tensor: &NativeFlatDecisionTensorV2,
+        action_index: usize,
+    ) -> f32 {
+        let mut hasher = Sha256::new();
+        for value in tensor
+            .state
+            .iter()
+            .chain(tensor.object_features.iter())
+            .chain(tensor.edge_features.iter())
+        {
+            hasher.update(value.to_bits().to_le_bytes());
+        }
+        for value in tensor
+            .object_card_ids
+            .iter()
+            .chain(tensor.object_groups.iter())
+            .chain(tensor.object_node_ids.iter())
+            .chain(tensor.edge_source_indices.iter())
+            .chain(tensor.edge_target_indices.iter())
+        {
+            hasher.update(value.to_le_bytes());
+        }
+        let action_start = action_index * NATIVE_FLAT_ACTION_FEATURE_DIM_V2;
+        for value in
+            &tensor.action_features[action_start..action_start + NATIVE_FLAT_ACTION_FEATURE_DIM_V2]
+        {
+            hasher.update(value.to_bits().to_le_bytes());
+        }
+        for (reference_index, &reference_action_index) in
+            tensor.action_ref_action_indices.iter().enumerate()
+        {
+            if usize::try_from(reference_action_index).unwrap() != action_index {
+                continue;
+            }
+            let reference_start = reference_index * NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2;
+            for value in &tensor.action_ref_features
+                [reference_start..reference_start + NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2]
+            {
+                hasher.update(value.to_bits().to_le_bytes());
+            }
+            hasher.update(tensor.action_ref_card_ids[reference_index].to_le_bytes());
+            hasher.update(tensor.action_ref_node_indices[reference_index].to_le_bytes());
+        }
+        let digest = hasher.finalize();
+        let payload = u32::from_le_bytes(digest[..4].try_into().unwrap()) & 0x007f_ffff;
+        f32::from_bits(0x3f00_0000 | payload)
+    }
+
+    fn assert_action_ref_rows_equal_under_bijection_v1(
+        original: &NativeFlatDecisionTensorV2,
+        original_action_index: usize,
+        relabeled: &NativeFlatDecisionTensorV2,
+        relabeled_action_index: usize,
+    ) {
+        let original_refs = original
+            .action_ref_action_indices
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &action)| {
+                (usize::try_from(action).unwrap() == original_action_index).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        let relabeled_refs = relabeled
+            .action_ref_action_indices
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &action)| {
+                (usize::try_from(action).unwrap() == relabeled_action_index).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(original_refs.len(), relabeled_refs.len());
+        for (&original_ref, &relabeled_ref) in original_refs.iter().zip(&relabeled_refs) {
+            let original_start = original_ref * NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2;
+            let relabeled_start = relabeled_ref * NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2;
+            assert_f32_bits_equal_v1(
+                "action-ref features",
+                &original.action_ref_features
+                    [original_start..original_start + NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2],
+                &relabeled.action_ref_features
+                    [relabeled_start..relabeled_start + NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2],
+            );
+            assert_eq!(
+                original.action_ref_card_ids[original_ref],
+                relabeled.action_ref_card_ids[relabeled_ref]
+            );
+            assert_eq!(
+                original.action_ref_node_indices[original_ref],
+                relabeled.action_ref_node_indices[relabeled_ref]
+            );
+        }
+    }
+
+    #[test]
+    fn physical_seat_relabel_preserves_action_map_and_policy_logits_v1() {
+        let original = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            71_008,
+            0x71_008,
+            256,
+            32_768,
+            ["Burn".to_string(), "Burn".to_string()],
+        )
+        .unwrap();
+        let relabeled = original.opening_physical_seat_relabel_twin_v1();
+        let original_semantics = original.diagnostic_current_action_semantics().unwrap();
+        let relabeled_semantics = relabeled.diagnostic_current_action_semantics().unwrap();
+        assert_eq!(original_semantics.len(), relabeled_semantics.len());
+
+        let mut original_to_relabeled = Vec::with_capacity(original_semantics.len());
+        for semantic in &original_semantics {
+            let expected = flip_action_semantic_seats_for_metamorphic_v1(semantic);
+            let matches = relabeled_semantics
+                .iter()
+                .enumerate()
+                .filter_map(|(index, candidate)| (candidate == &expected).then_some(index))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                matches.len(),
+                1,
+                "semantic action bijection is not one-to-one"
+            );
+            original_to_relabeled.push(matches[0]);
+        }
+        let mut sorted = original_to_relabeled.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..relabeled_semantics.len()).collect::<Vec<_>>());
+
+        let original_owned = OwnedScoringDecisionV2::from_session(&original);
+        let relabeled_owned = OwnedScoringDecisionV2::from_session(&relabeled);
+        let mut original_tensor = NativeFlatDecisionTensorV2::default();
+        let mut relabeled_tensor = NativeFlatDecisionTensorV2::default();
+        fill_native_flat_decision_tensors_v2(original_owned.view(), &mut original_tensor).unwrap();
+        fill_native_flat_decision_tensors_v2(relabeled_owned.view(), &mut relabeled_tensor)
+            .unwrap();
+
+        assert_f32_bits_equal_v1("state", &original_tensor.state, &relabeled_tensor.state);
+        assert_f32_bits_equal_v1(
+            "object features",
+            &original_tensor.object_features,
+            &relabeled_tensor.object_features,
+        );
+        assert_eq!(
+            original_tensor.object_card_ids,
+            relabeled_tensor.object_card_ids
+        );
+        assert_eq!(
+            original_tensor.object_groups,
+            relabeled_tensor.object_groups
+        );
+        assert_eq!(
+            original_tensor.object_node_ids,
+            relabeled_tensor.object_node_ids
+        );
+        assert_f32_bits_equal_v1(
+            "edge features",
+            &original_tensor.edge_features,
+            &relabeled_tensor.edge_features,
+        );
+        assert_eq!(
+            original_tensor.edge_source_indices,
+            relabeled_tensor.edge_source_indices
+        );
+        assert_eq!(
+            original_tensor.edge_target_indices,
+            relabeled_tensor.edge_target_indices
+        );
+
+        let original_legal_mask = vec![true; original_semantics.len()];
+        let relabeled_legal_mask = vec![true; relabeled_semantics.len()];
+        for (original_index, &relabeled_index) in original_to_relabeled.iter().enumerate() {
+            assert_eq!(
+                original_legal_mask[original_index],
+                relabeled_legal_mask[relabeled_index]
+            );
+            let original_start = original_index * NATIVE_FLAT_ACTION_FEATURE_DIM_V2;
+            let relabeled_start = relabeled_index * NATIVE_FLAT_ACTION_FEATURE_DIM_V2;
+            assert_f32_bits_equal_v1(
+                "action features",
+                &original_tensor.action_features
+                    [original_start..original_start + NATIVE_FLAT_ACTION_FEATURE_DIM_V2],
+                &relabeled_tensor.action_features
+                    [relabeled_start..relabeled_start + NATIVE_FLAT_ACTION_FEATURE_DIM_V2],
+            );
+            assert_action_ref_rows_equal_under_bijection_v1(
+                &original_tensor,
+                original_index,
+                &relabeled_tensor,
+                relabeled_index,
+            );
+            assert_eq!(
+                metamorphic_test_policy_logit_v1(&original_tensor, original_index).to_bits(),
+                metamorphic_test_policy_logit_v1(&relabeled_tensor, relabeled_index).to_bits(),
+                "policy logit changed under inverse action mapping"
+            );
         }
     }
 
@@ -8398,8 +9049,8 @@ mod tests {
                     panic!("corpus decision {index} failed real fill: {error:?}")
                 });
             action_counts.push(owned.actions.len());
-            let checksum = encode_full_decision_skip_hash_v1(owned.view())
-                .unwrap_or_else(|error| {
+            let checksum =
+                encode_full_decision_skip_hash_v1(owned.view()).unwrap_or_else(|error| {
                     panic!("corpus decision {index} failed skip-hash fill: {error:?}")
                 });
             std::hint::black_box(checksum);
