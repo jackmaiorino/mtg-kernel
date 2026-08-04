@@ -2,16 +2,16 @@
 
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
 use crate::native_flat_tensorizer_v2::{
-    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2, NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2,
-    NATIVE_FLAT_ACTION_FEATURE_DIM_V2, NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2,
-    NATIVE_FLAT_EDGE_FEATURE_DIM_V2, NATIVE_FLAT_OBJECT_FEATURE_DIM_V2,
-    NATIVE_FLAT_STATE_FEATURE_DIM_V2,
+    NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2, NATIVE_FLAT_ACTION_FEATURE_DIM_V2,
+    NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V2, NATIVE_FLAT_EDGE_FEATURE_DIM_V2,
+    NATIVE_FLAT_OBJECT_FEATURE_DIM_V2, NATIVE_FLAT_STATE_FEATURE_DIM_V2,
+    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1,
 };
 use crate::native_xmage_cp7_outcome_reinforce_v1::{
-    load_xmage_cp7_outcome_inference_v1, NativeXmageCp7OutcomeInferenceV1,
+    NativeXmageCp7OutcomeInferenceV1, load_xmage_cp7_outcome_inference_v1,
 };
 use crate::rl::parse_strict_json_value;
 use serde::Deserialize;
@@ -25,6 +25,8 @@ use std::path::Path;
 
 pub(crate) const CANDIDATE_FILENAME_V1: &str = "structured_candidate.json";
 pub(crate) const HISTORY_CANDIDATE_FILENAME_V1: &str = "structured_history_candidate.json";
+pub(crate) const BOUNDED_VALUE_CANDIDATE_FILENAME_V1: &str =
+    "structured_bounded_value_candidate.json";
 pub(crate) const REPORT_FILENAME_V1: &str = "report.json";
 pub(crate) const WEIGHTS_FILENAME_V1: &str = "weights.f32le";
 pub(crate) const PARENT_DIRECTORY_V1: &str = "parent";
@@ -33,9 +35,13 @@ pub(crate) const PARENT_STATE_FILENAME_V1: &str = "checkpoint.state.f32le";
 pub(crate) const CANDIDATE_SCHEMA_V1: &str = "mtg-kernel-structured-policy-residual-candidate/v1";
 pub(crate) const HISTORY_CANDIDATE_SCHEMA_V1: &str =
     "mtg-kernel-structured-history-policy-value-residual-candidate/v1";
+pub(crate) const BOUNDED_VALUE_CANDIDATE_SCHEMA_V1: &str =
+    "mtg-kernel-structured-history-bounded-value-residual-candidate/v1";
 pub(crate) const REPORT_SCHEMA_V1: &str = "mtg-kernel-structured-policy-residual-fit/v1";
 pub(crate) const HISTORY_REPORT_SCHEMA_V1: &str =
     "mtg-kernel-structured-history-policy-value-residual-fit/v1";
+pub(crate) const BOUNDED_VALUE_REPORT_SCHEMA_V1: &str =
+    "mtg-kernel-structured-history-bounded-value-residual-fit/v1";
 pub(crate) const HISTORY_OUTCOME_REPORT_SCHEMA_V1: &str =
     "mtg-kernel-scaled-history-outcome-policy-residual-fit/v1";
 pub(crate) const PUBLICATION_ENCODING_V1: &str = "json-pretty-sorted-utf8-trailing-lf/v1";
@@ -47,10 +53,20 @@ pub(crate) const HISTORY_ARCHITECTURE_V1: &str =
 pub(crate) const VALUE_MODEL_V1: &str = "exact-parent-unchanged";
 pub(crate) const REPORT_VALUE_MODEL_V1: &str = "exact-retained-parent-unchanged";
 pub(crate) const HISTORY_VALUE_MODEL_V1: &str = "joint-terminal-residual/v1";
+pub(crate) const BOUNDED_VALUE_MODEL_V1: &str = "projected-parent-tanh-addition-terminal-value/v1";
 pub(crate) const COMPOSITE_DOMAIN_V1: &[u8] =
     b"mtg-kernel-structured-policy-residual-composite-model/v1";
 pub(crate) const HISTORY_COMPOSITE_DOMAIN_V1: &[u8] =
     b"mtg-kernel-structured-history-policy-value-residual-composite-model/v1";
+pub(crate) const BOUNDED_VALUE_COMPOSITE_DOMAIN_V1: &[u8] =
+    b"mtg-kernel-structured-history-bounded-value-residual-composite-model/v1";
+pub(crate) const BOUNDED_VALUE_PARENT_EPSILON_V1: f32 = 1.0e-3;
+const BOUNDED_VALUE_FIT_REPORT_SHA256_V1: &str =
+    "da05adb9f3703dee79efc90f3afb70ced39927eeb594ef675ac01a5e6acadd31";
+const BOUNDED_VALUE_MODEL_STATE_SHA256_V1: &str =
+    "cae8e19ef825325508de351b883b2df3863dc66f0288be06ad2ccf868e3d7d7c";
+const BOUNDED_VALUE_CONFIRMATION_SHA256_V1: &str =
+    "716189e49c635eebdf5647e17ef4e3b3ab684c68addbc6b3c94fc3bed46f7539";
 pub(crate) const PARENT_MANIFEST_SHA256_V1: &str =
     "706b3aa80ec7a3c067d458fef06bb2237320543f202fb2349c5cb885975fdbbb";
 pub(crate) const PARENT_PAYLOAD_SHA256_V1: &str =
@@ -289,7 +305,30 @@ pub(crate) struct NativeStructuredPolicyResidualInferenceV1 {
     report_sha256: [u8; 32],
     composite_model_parameter_sha256: [u8; 32],
     history_aware: bool,
+    value_transform: StructuredValueTransformV1,
     group_vocab: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StructuredValueTransformV1 {
+    Additive,
+    ProjectedTanhAddition,
+}
+
+fn projected_tanh_addition_value_v1(parent: f32, raw_residual: f32) -> Result<f32, ()> {
+    if !parent.is_finite() || !raw_residual.is_finite() {
+        return Err(());
+    }
+    let bounded_parent = parent.clamp(
+        -1.0 + BOUNDED_VALUE_PARENT_EPSILON_V1,
+        1.0 - BOUNDED_VALUE_PARENT_EPSILON_V1,
+    );
+    let shift = raw_residual.tanh();
+    let value = (bounded_parent + shift) / (1.0 + bounded_parent * shift);
+    if !value.is_finite() || !(-1.0..=1.0).contains(&value) {
+        return Err(());
+    }
+    Ok(value)
 }
 
 impl NativeStructuredPolicyResidualInferenceV1 {
@@ -379,7 +418,13 @@ impl NativeStructuredPolicyResidualInferenceV1 {
             .zip(residual.logits)
             .map(|(parent, residual)| parent + residual)
             .collect::<Vec<_>>();
-        let value = parent.value_v1() + residual.value.unwrap_or(0.0);
+        let raw_residual = residual.value.unwrap_or(0.0);
+        let value = match self.value_transform {
+            StructuredValueTransformV1::Additive => parent.value_v1() + raw_residual,
+            StructuredValueTransformV1::ProjectedTanhAddition => {
+                projected_tanh_addition_value_v1(parent.value_v1(), raw_residual)?
+            }
+        };
         if logits.iter().any(|value| !value.is_finite()) || !value.is_finite() {
             return Err(());
         }
@@ -942,12 +987,73 @@ fn strict_json_value_v1(bytes: &[u8]) -> Result<Value, Box<dyn Error>> {
     Ok(parse_strict_json_value(std::str::from_utf8(bytes)?)?)
 }
 
+fn validate_bounded_value_report_v1(
+    report: &Value,
+    weights_sha256: [u8; 32],
+    composite_sha256: [u8; 32],
+) -> Result<(), Box<dyn Error>> {
+    let config = report
+        .get("config")
+        .and_then(Value::as_object)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing bounded config"))?;
+    let source = report
+        .get("source")
+        .and_then(Value::as_object)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing bounded source"))?;
+    let exact_number =
+        |name: &str, expected: u64| config.get(name).and_then(Value::as_u64) == Some(expected);
+    let exact_float = |name: &str, expected: f64| {
+        config.get(name).and_then(Value::as_f64).map(f64::to_bits) == Some(expected.to_bits())
+    };
+    let invalid = report.get("schema").and_then(Value::as_str)
+        != Some(BOUNDED_VALUE_REPORT_SCHEMA_V1)
+        || config.get("architecture").and_then(Value::as_str) != Some(HISTORY_ARCHITECTURE_V1)
+        || config.get("value_model").and_then(Value::as_str) != Some(BOUNDED_VALUE_MODEL_V1)
+        || config.get("policy_usage").and_then(Value::as_str) != Some("forbidden-value-only")
+        || !exact_number("dim", HIDDEN_DIM_V1 as u64)
+        || !exact_number("card_vocab", CARD_VOCAB_V1 as u64)
+        || !exact_number("group_vocab", HISTORY_GROUP_VOCAB_V1 as u64)
+        || !exact_number("history_length", HISTORY_LENGTH_V1 as u64)
+        || !exact_number("history_feature_dim", HISTORY_FEATURE_DIM_V1 as u64)
+        || !exact_number("epochs", 5)
+        || !exact_number("batch_size_physical_decisions", 32)
+        || !exact_number("seed", 20_260_810)
+        || !exact_float("learning_rate", 3.0e-4)
+        || !exact_float("weight_decay", 1.0e-4)
+        || !exact_float("parent_projection_epsilon", 1.0e-3)
+        || source.get("fit_report_sha256").and_then(Value::as_str)
+            != Some(BOUNDED_VALUE_FIT_REPORT_SHA256_V1)
+        || source.get("model_state_sha256").and_then(Value::as_str)
+            != Some(BOUNDED_VALUE_MODEL_STATE_SHA256_V1)
+        || source.get("confirmation_sha256").and_then(Value::as_str)
+            != Some(BOUNDED_VALUE_CONFIRMATION_SHA256_V1)
+        || report.get("confirmation_status").and_then(Value::as_str) != Some("pass")
+        || report.get("weights_sha256").and_then(Value::as_str)
+            != Some(lower_hex_v1(weights_sha256).as_str())
+        || report
+            .get("composite_model_parameter_sha256")
+            .and_then(Value::as_str)
+            != Some(lower_hex_v1(composite_sha256).as_str());
+    if invalid {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "bounded value report semantic mismatch",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn validate_report_v1(
     report: &Value,
     weights_sha256: [u8; 32],
     composite_sha256: [u8; 32],
     history_aware: bool,
+    value_transform: StructuredValueTransformV1,
 ) -> Result<(), Box<dyn Error>> {
+    if value_transform == StructuredValueTransformV1::ProjectedTanhAddition {
+        return validate_bounded_value_report_v1(report, weights_sha256, composite_sha256);
+    }
     let config = report
         .get("config")
         .and_then(Value::as_object)
@@ -1282,15 +1388,30 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
     root: &Path,
 ) -> Result<NativeStructuredPolicyResidualInferenceV1, Box<dyn Error>> {
     let stateless_exists = root.join(CANDIDATE_FILENAME_V1).try_exists()?;
-    let history_aware = root.join(HISTORY_CANDIDATE_FILENAME_V1).try_exists()?;
-    if stateless_exists == history_aware {
+    let history_exists = root.join(HISTORY_CANDIDATE_FILENAME_V1).try_exists()?;
+    let bounded_value_exists = root
+        .join(BOUNDED_VALUE_CANDIDATE_FILENAME_V1)
+        .try_exists()?;
+    if usize::from(stateless_exists)
+        + usize::from(history_exists)
+        + usize::from(bounded_value_exists)
+        != 1
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "structured root must contain exactly one candidate family",
         )
         .into());
     }
-    let candidate_filename = if history_aware {
+    let history_aware = history_exists || bounded_value_exists;
+    let value_transform = if bounded_value_exists {
+        StructuredValueTransformV1::ProjectedTanhAddition
+    } else {
+        StructuredValueTransformV1::Additive
+    };
+    let candidate_filename = if bounded_value_exists {
+        BOUNDED_VALUE_CANDIDATE_FILENAME_V1
+    } else if history_exists {
         HISTORY_CANDIDATE_FILENAME_V1
     } else {
         CANDIDATE_FILENAME_V1
@@ -1306,7 +1427,9 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
     let weights_sha256 = raw_sha256_v1(&weights_bytes);
     let parent_model_sha256 = parse_lower_hex32_v1(PARENT_MODEL_PARAMETER_SHA256_V1)?;
     let mut composite_hasher = Sha256::new();
-    composite_hasher.update(if history_aware {
+    composite_hasher.update(if bounded_value_exists {
+        BOUNDED_VALUE_COMPOSITE_DOMAIN_V1
+    } else if history_aware {
         HISTORY_COMPOSITE_DOMAIN_V1
     } else {
         COMPOSITE_DOMAIN_V1
@@ -1314,7 +1437,9 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
     composite_hasher.update(parent_model_sha256);
     composite_hasher.update(&weights_bytes);
     let composite_sha256: [u8; 32] = composite_hasher.finalize().into();
-    let expected_schema = if history_aware {
+    let expected_schema = if bounded_value_exists {
+        BOUNDED_VALUE_CANDIDATE_SCHEMA_V1
+    } else if history_aware {
         HISTORY_CANDIDATE_SCHEMA_V1
     } else {
         CANDIDATE_SCHEMA_V1
@@ -1324,7 +1449,9 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
     } else {
         ARCHITECTURE_V1
     };
-    let expected_value_model = if history_aware {
+    let expected_value_model = if bounded_value_exists {
+        BOUNDED_VALUE_MODEL_V1
+    } else if history_aware {
         HISTORY_VALUE_MODEL_V1
     } else {
         VALUE_MODEL_V1
@@ -1385,7 +1512,13 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
         )
         .into());
     }
-    validate_report_v1(&report, weights_sha256, composite_sha256, history_aware)?;
+    validate_report_v1(
+        &report,
+        weights_sha256,
+        composite_sha256,
+        history_aware,
+        value_transform,
+    )?;
 
     let expected = if history_aware {
         expected_history_parameters_v1()
@@ -1474,6 +1607,7 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
         report_sha256,
         composite_model_parameter_sha256: composite_sha256,
         history_aware,
+        value_transform,
         group_vocab: expected_group_vocab,
     })
 }
@@ -1481,6 +1615,26 @@ pub(crate) fn load_native_structured_policy_residual_inference_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn projected_tanh_addition_is_parent_aligned_and_bounded_v1() {
+        for parent in [-2.0f32, -0.75, 0.0, 0.75, 2.0] {
+            let expected = parent.clamp(-0.999, 0.999);
+            assert_eq!(
+                projected_tanh_addition_value_v1(parent, 0.0)
+                    .unwrap()
+                    .to_bits(),
+                expected.to_bits()
+            );
+            for residual in [-100.0f32, -2.0, 2.0, 100.0] {
+                let value = projected_tanh_addition_value_v1(parent, residual).unwrap();
+                assert!(value.is_finite());
+                assert!((-1.0..=1.0).contains(&value));
+            }
+        }
+        assert!(projected_tanh_addition_value_v1(f32::NAN, 0.0).is_err());
+        assert!(projected_tanh_addition_value_v1(0.0, f32::INFINITY).is_err());
+    }
 
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -1637,9 +1791,11 @@ mod tests {
         let new = (0.3 + reset * -0.2).tanh();
         let first = (1.0 - update) * new;
         let expected = (1.0 - update) * new + update * first;
-        assert!(observed
-            .iter()
-            .all(|value| (*value - expected).abs() <= 1.0e-7));
+        assert!(
+            observed
+                .iter()
+                .all(|value| (*value - expected).abs() <= 1.0e-7)
+        );
     }
 
     #[test]

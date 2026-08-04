@@ -32,9 +32,24 @@ PARENT_IDENTITY = {
     "train_state": "2c55a13abb3157f3f4ba012af663ffa56599c5d6cb90743c1ba6e024ca47a9c8",
     "model": "883e4882d01d9cb55ecd7a4ae00e3c95793b6147baf3df08650ef1fa7f8e9546",
 }
+BOUNDED_SEARCH_IDENTITY = {
+    "adam_step": "1",
+    "manifest": "0d883d169fca504e4a413810454565d98cd0e8316cb76e7de4f538187b2865c9",
+    "payload": "c55b61678aed544580a692e70a0f72e9df64018ce2d975421e81089d1b3a32d9",
+    "train_state": "86f9d6795e8aecd6d32ab8cacb70dbb1e14a33769a3c5ac30a5fce41031408b3",
+    "model": "c55b61678aed544580a692e70a0f72e9df64018ce2d975421e81089d1b3a32d9",
+}
+QUALIFIED_POLICY_IDENTITY = {
+    "adam_step": "1",
+    "manifest": "204beb91c1a4b039e0c497f2b420e823b5cc9e2ceb8560f897d0b6251e916b72",
+    "payload": "ca3c45cd69d8d60f1f921bc78c27b098064ef6b16fe7566b84e5045681781b28",
+    "train_state": "7d854edb46119a611d4283e6cf4630d0207ceb24c12b4089a7d27a43c97fe0b3",
+    "model": "47b10c1114efc01f9445c71c0c8c4d8cd4a4b89a2154ac68275f3b0c6ebb9ce3",
+}
 PAIR_PREFIX = "XMAGE_RALLY_ANCHOR_PAIR PASS "
 DIAGNOSTIC_PREFIXES = {
     "one-step": "NATIVE_ONE_STEP_HISTORY_VALUE ",
+    "bounded-candidate-turn": "NATIVE_BOUNDED_CANDIDATE_TURN_VALUE ",
     "depth8": "NATIVE_DEPTH8_HISTORY_VALUE ",
     "depth8-cp7-opponent": "NATIVE_DEPTH8_CP7_OPPONENT_HISTORY_VALUE ",
 }
@@ -110,7 +125,12 @@ def _run_task(
         raise RuntimeError(f"refusing to overwrite {log}")
     scorer = args.search_scorer if arm == "search" else args.parent_scorer
     outcome_root = args.search_root if arm == "search" else args.parent_root
-    identity = SEARCH_IDENTITY if arm == "search" else PARENT_IDENTITY
+    if args.selector == "bounded-candidate-turn":
+        identity = (
+            BOUNDED_SEARCH_IDENTITY if arm == "search" else QUALIFIED_POLICY_IDENTITY
+        )
+    else:
+        identity = SEARCH_IDENTITY if arm == "search" else PARENT_IDENTITY
     execution_args = " ".join(
         (
             "--repo-root",
@@ -209,6 +229,7 @@ def _adjudicate(
     ties = 0
     seat_net = {"p0": 0, "p1": 0}
     eligible = {"p0": 0, "p1": 0}
+    ineligible = {"p0": 0, "p1": 0}
     overrides = {"p0": 0, "p1": 0}
     sample_violations = 0
     diagnostic_contract_violations = 0
@@ -246,7 +267,9 @@ def _adjudicate(
         for row in diagnostics:
             episode = int(row["episode"])
             seat = "p0" if episode % 2 == 0 else "p1"
-            eligible[seat] += 1
+            row_eligible = row.get("eligible", "true") == "true"
+            eligible[seat] += int(row_eligible)
+            ineligible[seat] += int(not row_eligible)
             overrides[seat] += int(row.get("override") == "true")
             hashes = row.get("sampled_hashes", "").split(",")
             if row.get("information_set_samples") != "4" or len(hashes) != 4 or len(set(hashes)) != 4:
@@ -258,6 +281,12 @@ def _adjudicate(
                 and row.get("opponent_policy") != "cp7_behavior_clone_sample"
             ):
                 diagnostic_contract_violations += 1
+            if args.selector == "bounded-candidate-turn":
+                opponent_successors = int(row.get("opponent_successors", "-1"))
+                if (row_eligible and opponent_successors != 0) or (
+                    not row_eligible and opponent_successors <= 0
+                ):
+                    diagnostic_contract_violations += 1
         matched_pairs.append(
             {
                 "pair_index": pair_index,
@@ -291,6 +320,7 @@ def _adjudicate(
         "ties": ties,
         "seat_net": seat_net,
         "eligible_roots": eligible,
+        "ineligible_opponent_successor_roots": ineligible,
         "overrides": overrides,
         "sample_distinctness_violations": sample_violations,
         "diagnostic_contract_violations": diagnostic_contract_violations,
@@ -400,6 +430,16 @@ def _self_test() -> int:
     )
     if diagnostic["sampled_hashes"].split(",") != ["a", "b", "c", "d"]:
         raise RuntimeError("diagnostic parser self-test failed")
+    bounded_diagnostic = _fields(
+        "NATIVE_BOUNDED_CANDIDATE_TURN_VALUE episode=3 eligible=false "
+        "candidate_successors=4 opponent_successors=1 terminal_successors=3 "
+        "information_set_samples=4 sampled_hashes=a,b,c,d override=false"
+    )
+    if (
+        bounded_diagnostic["eligible"] != "false"
+        or bounded_diagnostic["opponent_successors"] != "1"
+    ):
+        raise RuntimeError("bounded diagnostic parser self-test failed")
     cp7_diagnostic = _fields(
         "NATIVE_DEPTH8_CP7_OPPONENT_HISTORY_VALUE episode=2 continuation_steps=8 "
         "opponent_policy=cp7_behavior_clone_sample information_set_samples=4 "

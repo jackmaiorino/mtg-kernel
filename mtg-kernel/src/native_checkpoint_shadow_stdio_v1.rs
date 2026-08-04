@@ -75,12 +75,27 @@ pub const CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V1: u32 = 1;
 pub const CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1: &str =
     "mtg-kernel-checkpoint-shadow-model-input-framed-sha256/v1";
 pub const CHECKPOINT_SHADOW_MAX_REQUEST_BYTES_V1: usize = 1_048_576;
+const BOUNDED_VALUE_SEARCH_MANIFEST_FILENAME_V1: &str = "bounded_value_search.json";
+const BOUNDED_VALUE_SEARCH_SCHEMA_V1: &str = "mtg-kernel-qualified-policy-bounded-value-search/v1";
+const BOUNDED_VALUE_SEARCH_COMPOSITE_DOMAIN_V1: &[u8] =
+    b"mtg-kernel-qualified-policy-bounded-value-search-composite/v1";
+const BOUNDED_VALUE_SEARCH_MANIFEST_SHA256_V1: &str =
+    "0d883d169fca504e4a413810454565d98cd0e8316cb76e7de4f538187b2865c9";
+const BOUNDED_VALUE_SEARCH_POLICY_CANDIDATE_SHA256_V1: &str =
+    "204beb91c1a4b039e0c497f2b420e823b5cc9e2ceb8560f897d0b6251e916b72";
+const BOUNDED_VALUE_SEARCH_POLICY_COMPOSITE_SHA256_V1: &str =
+    "47b10c1114efc01f9445c71c0c8c4d8cd4a4b89a2154ac68275f3b0c6ebb9ce3";
+const BOUNDED_VALUE_SEARCH_VALUE_CANDIDATE_SHA256_V1: &str =
+    "83d6d2ddb97e96cf5ef4feda525b035bba079d6d1d2f4bc44f4affcf70fd6529";
+const BOUNDED_VALUE_SEARCH_VALUE_COMPOSITE_SHA256_V1: &str =
+    "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ShadowCandidateSelectorV1 {
     #[default]
     PolicySample,
     OneStepHistoryValueBootstrap,
+    CandidateTurnOnlyOneStepBoundedValueBootstrap,
     Depth8HistoryValueBootstrap,
     Depth8Cp7OpponentHistoryValueBootstrap,
 }
@@ -550,6 +565,11 @@ struct NativeStructuredHistoryStackShadowModelScorerV1 {
     inference: NativeStructuredHistoryStackInferenceV1,
 }
 
+struct NativeQualifiedPolicyBoundedValueShadowModelScorerV1 {
+    policy: NativeStructuredPolicySuccessorInferenceV1,
+    value: NativeStructuredPolicyResidualInferenceV1,
+}
+
 impl ShadowModelScorerV1 for XmageCp7OutcomeShadowModelScorerV1 {
     fn score_v1(
         &self,
@@ -618,6 +638,33 @@ impl ShadowModelScorerV1 for NativeStructuredPolicySuccessorShadowModelScorerV1 
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
             value: output.value_v1(),
+        })
+    }
+}
+
+impl ShadowModelScorerV1 for NativeQualifiedPolicyBoundedValueShadowModelScorerV1 {
+    fn uses_structured_history_v1(&self) -> bool {
+        true
+    }
+
+    fn score_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        history: &[NativeStructuredHistoryEntryV1],
+        acting_player: u8,
+    ) -> Result<ShadowModelOutputV1, ()> {
+        let policy =
+            self.policy
+                .score_decision_with_history_v1(decision, history, acting_player)?;
+        let value = self
+            .value
+            .score_decision_with_history_v1(decision, history, acting_player)?;
+        if policy.logits_v1().len() != value.logits_v1().len() {
+            return Err(());
+        }
+        Ok(ShadowModelOutputV1 {
+            logits: policy.logits_v1().to_vec(),
+            value: value.value_v1(),
         })
     }
 }
@@ -1796,6 +1843,189 @@ impl ShadowScorerServiceV1 {
             });
         }
         if let ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root } = &authority {
+            let bounded_value_search = root
+                .join(BOUNDED_VALUE_SEARCH_MANIFEST_FILENAME_V1)
+                .try_exists()
+                .map_err(|_| {
+                    ShadowScorerStartupErrorV1::new(
+                        ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                    )
+                })?;
+            if bounded_value_search {
+                let inventory = fs::read_dir(root)
+                    .map_err(|_| {
+                        ShadowScorerStartupErrorV1::new(
+                            ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                        )
+                    })?
+                    .map(|entry| {
+                        let entry = entry.map_err(|_| ())?;
+                        let name = entry.file_name().into_string().map_err(|_| ())?;
+                        let file_type = entry.file_type().map_err(|_| ())?;
+                        if file_type.is_symlink() {
+                            return Err(());
+                        }
+                        Ok((name, file_type.is_dir()))
+                    })
+                    .collect::<Result<std::collections::BTreeMap<_, _>, ()>>()
+                    .map_err(|_| {
+                        ShadowScorerStartupErrorV1::new(
+                            ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                        )
+                    })?;
+                if inventory
+                    != std::collections::BTreeMap::from([
+                        (BOUNDED_VALUE_SEARCH_MANIFEST_FILENAME_V1.to_owned(), false),
+                        ("policy".to_owned(), true),
+                        ("value".to_owned(), true),
+                    ])
+                {
+                    return Err(ShadowScorerStartupErrorV1::new(
+                        ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                    ));
+                }
+                let manifest_bytes = fs::read(root.join(BOUNDED_VALUE_SEARCH_MANIFEST_FILENAME_V1))
+                    .map_err(|_| {
+                        ShadowScorerStartupErrorV1::new(
+                            ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                        )
+                    })?;
+                let manifest_sha256: [u8; 32] = Sha256::digest(&manifest_bytes).into();
+                if lower_hex_raw32_v1(manifest_sha256) != BOUNDED_VALUE_SEARCH_MANIFEST_SHA256_V1 {
+                    return Err(ShadowScorerStartupErrorV1::new(
+                        ShadowScorerStartupErrorKindV1::CheckpointIdentity,
+                    ));
+                }
+                let manifest_text = std::str::from_utf8(&manifest_bytes).map_err(|_| {
+                    ShadowScorerStartupErrorV1::new(
+                        ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                    )
+                })?;
+                let manifest = parse_strict_json_value(manifest_text).map_err(|_| {
+                    ShadowScorerStartupErrorV1::new(
+                        ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                    )
+                })?;
+                let policy =
+                    load_native_structured_policy_successor_inference_v1(&root.join("policy"))
+                        .map_err(|_| {
+                            ShadowScorerStartupErrorV1::new(
+                                ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                            )
+                        })?;
+                let value =
+                    load_native_structured_policy_residual_inference_v1(&root.join("value"))
+                        .map_err(|_| {
+                            ShadowScorerStartupErrorV1::new(
+                                ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                            )
+                        })?;
+                let exact_string = |pointer: &str, expected: &str| {
+                    manifest
+                        .pointer(pointer)
+                        .and_then(serde_json::Value::as_str)
+                        == Some(expected)
+                };
+                let exact_u64 = |pointer: &str, expected: u64| {
+                    manifest
+                        .pointer(pointer)
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(expected)
+                };
+                let exact_f64 = |pointer: &str, expected: f64| {
+                    manifest
+                        .pointer(pointer)
+                        .and_then(serde_json::Value::as_f64)
+                        .map(f64::to_bits)
+                        == Some(expected.to_bits())
+                };
+                if !exact_string("/schema", BOUNDED_VALUE_SEARCH_SCHEMA_V1)
+                    || !exact_string("/selector", "candidate-turn-only-one-step-bounded-value/v1")
+                    || !exact_string("/policy/directory", "policy")
+                    || !exact_string(
+                        "/policy/candidate_json_sha256",
+                        BOUNDED_VALUE_SEARCH_POLICY_CANDIDATE_SHA256_V1,
+                    )
+                    || !exact_string(
+                        "/policy/candidate_json_sha256",
+                        &lower_hex_raw32_v1(policy.candidate_json_sha256_v1()),
+                    )
+                    || !exact_string(
+                        "/policy/composite_model_parameter_sha256",
+                        BOUNDED_VALUE_SEARCH_POLICY_COMPOSITE_SHA256_V1,
+                    )
+                    || !exact_string(
+                        "/policy/composite_model_parameter_sha256",
+                        &lower_hex_raw32_v1(policy.composite_model_parameter_sha256_v1()),
+                    )
+                    || !exact_string("/value/directory", "value")
+                    || !exact_string(
+                        "/value/candidate_json_sha256",
+                        BOUNDED_VALUE_SEARCH_VALUE_CANDIDATE_SHA256_V1,
+                    )
+                    || !exact_string(
+                        "/value/candidate_json_sha256",
+                        &lower_hex_raw32_v1(value.candidate_json_sha256_v1()),
+                    )
+                    || !exact_string(
+                        "/value/composite_model_parameter_sha256",
+                        BOUNDED_VALUE_SEARCH_VALUE_COMPOSITE_SHA256_V1,
+                    )
+                    || !exact_string(
+                        "/value/composite_model_parameter_sha256",
+                        &lower_hex_raw32_v1(value.composite_model_parameter_sha256_v1()),
+                    )
+                    || !exact_u64("/information_set_samples", 4)
+                    || !exact_u64("/minimum_actor_physical_decision", 20)
+                    || !exact_u64("/minimum_legal_actions", 2)
+                    || !exact_u64("/maximum_legal_actions", 8)
+                    || !exact_f64("/override_margin", 0.25)
+                    || !exact_string("/opponent_successor", "root-ineligible-retain-fallback")
+                {
+                    return Err(ShadowScorerStartupErrorV1::new(
+                        ShadowScorerStartupErrorKindV1::CheckpointIdentity,
+                    ));
+                }
+                let mut composite_hasher = Sha256::new();
+                composite_hasher.update(BOUNDED_VALUE_SEARCH_COMPOSITE_DOMAIN_V1);
+                composite_hasher.update(policy.composite_model_parameter_sha256_v1());
+                composite_hasher.update(value.composite_model_parameter_sha256_v1());
+                let composite_sha256: [u8; 32] = composite_hasher.finalize().into();
+                let identity = ShadowCheckpointIdentityV1 {
+                    authority_kind: "qualified-policy-bounded-value-search-v1".to_owned(),
+                    source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                    source_generation: SOURCE_GENERATION_V1,
+                    source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+                    source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+                    source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+                    source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+                    loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                    loaded_generation: policy.parent_adam_step_v1(),
+                    loaded_checkpoint_sha256: lower_hex_raw32_v1(manifest_sha256),
+                    loaded_payload_sha256: lower_hex_raw32_v1(composite_sha256),
+                    loaded_train_state_sha256: lower_hex_raw32_v1(value.report_sha256_v1()),
+                    model_parameter_sha256: lower_hex_raw32_v1(composite_sha256),
+                    environment_trajectory_contract: SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
+                    sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+                    sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+                };
+                return Ok(Self {
+                    model: Box::new(NativeQualifiedPolicyBoundedValueShadowModelScorerV1 {
+                        policy,
+                        value,
+                    }),
+                    opponent_model: None,
+                    population_opponent: None,
+                    identity,
+                    candidate_selector: ShadowCandidateSelectorV1::PolicySample,
+                    max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
+                    max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
+                    active: None,
+                    teacher_export: None,
+                    outcome_export: None,
+                    export_poisoned: false,
+                });
+            }
             let structured_policy_successor = root
                 .join(STRUCTURED_POLICY_SUCCESSOR_CANDIDATE_FILENAME_V1)
                 .try_exists()
@@ -2453,6 +2683,7 @@ impl ShadowScorerServiceV1 {
         structured_history: &[NativeStructuredHistoryEntryV1],
         candidate_seat: PlayerSeatV1,
         fallback_selected_index: u32,
+        candidate_turn_only: bool,
     ) -> Result<Option<u32>, &'static str> {
         let expected = scored.expected;
         if !model.uses_structured_history_v1()
@@ -2475,6 +2706,9 @@ impl ShadowScorerServiceV1 {
         let candidate_index = usize::from(player_seat_index_v1(candidate_seat));
         let mut value_sums = vec![0.0f64; action_count];
         let mut sampled_hashes = Vec::with_capacity(ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1);
+        let mut candidate_successors = 0usize;
+        let mut opponent_successors = 0usize;
+        let mut terminal_successors = 0usize;
         for sample_index in 0..ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1 {
             let mut seed_rng = SplitMix64::seed(
                 ONE_STEP_VALUE_REDETERMINIZATION_DOMAIN_V1
@@ -2519,17 +2753,27 @@ impl ShadowScorerServiceV1 {
                     .map_err(|_| "value_search_branch_consume_failed")?;
                 let value = match next {
                     FastActorResponseV1::Terminal(terminal) => {
+                        terminal_successors += 1;
                         terminal.terminal_reward[candidate_index] as f32
                     }
-                    FastActorResponseV1::Decision(_) => {
-                        let (next_expected, output) = Self::score_current_model_output_v1(
+                    FastActorResponseV1::Decision(next_expected) => {
+                        if candidate_turn_only && next_expected.acting_player != candidate_seat {
+                            opponent_successors += 1;
+                            continue;
+                        }
+                        let (observed_expected, output) = Self::score_current_model_output_v1(
                             model,
                             &branch,
                             &branch_history.completed,
                         )?;
+                        if observed_expected != next_expected {
+                            return Err("value_search_successor_binding_mismatch");
+                        }
                         if next_expected.acting_player == candidate_seat {
+                            candidate_successors += 1;
                             output.value
                         } else {
+                            opponent_successors += 1;
                             -output.value
                         }
                     }
@@ -2539,6 +2783,25 @@ impl ShadowScorerServiceV1 {
                 }
                 *value_sum += f64::from(value);
             }
+        }
+        if candidate_turn_only && opponent_successors > 0 {
+            eprintln!(
+                "NATIVE_BOUNDED_CANDIDATE_TURN_VALUE episode={} step={} physical_decision={} actions={} information_set_samples={} sampled_hashes={} eligible=false candidate_successors={} opponent_successors={} terminal_successors={} fallback={} best={} selected={} margin_bits={:08x} values_f32_bits=none override=false",
+                expected.episode_id,
+                expected.step,
+                expected.physical_decision_id,
+                action_count,
+                ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1,
+                sampled_hashes.join(","),
+                candidate_successors,
+                opponent_successors,
+                terminal_successors,
+                fallback,
+                fallback,
+                fallback,
+                0.0f32.to_bits(),
+            );
+            return Ok(None);
         }
         let values = value_sums
             .into_iter()
@@ -2564,14 +2827,23 @@ impl ShadowScorerServiceV1 {
             .map(|value| format!("{:08x}", value.to_bits()))
             .collect::<Vec<_>>()
             .join(",");
+        let diagnostic_prefix = if candidate_turn_only {
+            "NATIVE_BOUNDED_CANDIDATE_TURN_VALUE"
+        } else {
+            "NATIVE_ONE_STEP_HISTORY_VALUE"
+        };
         eprintln!(
-            "NATIVE_ONE_STEP_HISTORY_VALUE episode={} step={} physical_decision={} actions={} information_set_samples={} sampled_hashes={} fallback={} best={} selected={} margin_bits={:08x} values_f32_bits={} override={}",
+            "{} episode={} step={} physical_decision={} actions={} information_set_samples={} sampled_hashes={} eligible=true candidate_successors={} opponent_successors={} terminal_successors={} fallback={} best={} selected={} margin_bits={:08x} values_f32_bits={} override={}",
+            diagnostic_prefix,
             expected.episode_id,
             expected.step,
             expected.physical_decision_id,
             action_count,
             ONE_STEP_VALUE_INFORMATION_SET_SAMPLES_V1,
             sampled_hashes.join(","),
+            candidate_successors,
+            opponent_successors,
+            terminal_successors,
             fallback,
             best,
             selected,
@@ -2701,6 +2973,7 @@ impl ShadowScorerServiceV1 {
             && matches!(
                 candidate_selector,
                 ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap
+                    | ShadowCandidateSelectorV1::CandidateTurnOnlyOneStepBoundedValueBootstrap
                     | ShadowCandidateSelectorV1::Depth8HistoryValueBootstrap
                     | ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap
             )
@@ -2717,6 +2990,18 @@ impl ShadowScorerServiceV1 {
                         structured_history,
                         candidate_seat,
                         fallback,
+                        false,
+                    )?
+                }
+                ShadowCandidateSelectorV1::CandidateTurnOnlyOneStepBoundedValueBootstrap => {
+                    Self::one_step_history_value_selection_v1(
+                        model,
+                        session,
+                        &scored,
+                        structured_history,
+                        candidate_seat,
+                        fallback,
+                        true,
                     )?
                 }
                 ShadowCandidateSelectorV1::Depth8HistoryValueBootstrap => {
@@ -3573,6 +3858,7 @@ fn run_checkpoint_shadow_stdio_configured_v1(
     if matches!(
         selector,
         ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap
+            | ShadowCandidateSelectorV1::CandidateTurnOnlyOneStepBoundedValueBootstrap
             | ShadowCandidateSelectorV1::Depth8HistoryValueBootstrap
     ) && !service.model.uses_structured_history_v1()
     {
