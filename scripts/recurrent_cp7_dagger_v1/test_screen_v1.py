@@ -63,6 +63,18 @@ class ScreenTests(unittest.TestCase):
         ).abs().masked_fill(~packed.action_mask, 0.0)
         self.assertLessEqual(float(delta.max()), 0.4901)
 
+    def test_deployment_scale_interpolates_after_projection(self) -> None:
+        packed = pack_rows([_row(8)], torch.device("cpu"))
+        torch.manual_seed(10)
+        model = screen.RecurrentStructuredActorCritic(32)
+        with torch.no_grad():
+            full, _ = screen._candidate_logits(model, packed)
+            scaled, _ = screen._candidate_logits(
+                model, packed, deployment_scale=0.97
+            )
+        expected = packed.parent_logits + 0.97 * (full - packed.parent_logits)
+        self.assertTrue(torch.allclose(scaled, expected, atol=1.0e-6))
+
     def test_gate_requires_substantive_fit_and_both_seats(self) -> None:
         row = {
             "relative_nll_improvement": 0.06,

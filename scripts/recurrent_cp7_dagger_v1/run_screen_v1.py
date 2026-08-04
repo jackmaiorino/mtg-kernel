@@ -198,6 +198,7 @@ def _candidate_logits(
     model: RecurrentStructuredActorCritic,
     packed: Any,
     budget_per_decision: float = JOINT_LOG_RATIO_BUDGET,
+    deployment_scale: float = 1.0,
 ) -> tuple[Tensor, Tensor]:
     residual, _ = model(packed)
     raw = torch.where(
@@ -205,13 +206,22 @@ def _candidate_logits(
         packed.parent_logits + residual,
         packed.parent_logits,
     )
-    return _project_with_scale(
+    projected, scale = _project_with_scale(
         packed.parent_logits,
         raw,
         packed.action_mask,
         packed.substep_count,
         budget_per_decision,
     )
+    if not 0.0 < deployment_scale <= 1.0:
+        raise ValueError("deployment_scale must be in (0, 1]")
+    if deployment_scale < 1.0:
+        projected = (
+            packed.parent_logits
+            + deployment_scale * (projected - packed.parent_logits)
+        ).masked_fill(~packed.action_mask, -1.0e9)
+        scale = scale * deployment_scale
+    return projected, scale
 
 
 def _batch_loss(
@@ -363,6 +373,7 @@ def _evaluate(
     batch_size: int,
     device: torch.device,
     budget_per_decision: float = JOINT_LOG_RATIO_BUDGET,
+    deployment_scale: float = 1.0,
 ) -> dict[str, Any]:
     raw = {"overall": _empty_metric(), "seats": {0: _empty_metric(), 1: _empty_metric()}}
     model.eval()
@@ -372,7 +383,7 @@ def _evaluate(
             rows = [decision.rows[0] for decision in selected]
             packed = pack_rows(rows, device)
             candidate_logits, projection_scale = _candidate_logits(
-                model, packed, budget_per_decision
+                model, packed, budget_per_decision, deployment_scale
             )
             parent_logp = torch.log_softmax(packed.parent_logits, dim=1)
             candidate_logp = torch.log_softmax(candidate_logits, dim=1)
