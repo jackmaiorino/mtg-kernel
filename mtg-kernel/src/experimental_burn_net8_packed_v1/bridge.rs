@@ -15,13 +15,14 @@
 //! exported device state is parked for the next update.
 
 use super::training::{
-    build_dense_group_loss_plan_v1, DenseGroupLossPlanV1, ExperimentalDeviceTrainStateV1,
+    build_dense_group_loss_plan_v1, build_dense_group_loss_plan_with_frozen_policy_v1,
+    DenseGroupLossPlanV1, ExperimentalDeviceTrainStateV1,
 };
 use super::{DevicePackedBatch, HostPackingWorkspace};
 use crate::native_policy_train_step_v1::{
     selected_log_softmax, NativePhysicalLossTermV1, NativePolicyForwardInputV1,
-    NativePolicyPhysicalDecisionV1, NativePolicyTrainErrorV1, NativePolicyTrainStepResultV1,
-    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+    NativePolicyFrozenObjectiveTermV1, NativePolicyPhysicalDecisionV1, NativePolicyTrainErrorV1,
+    NativePolicyTrainStepResultV1, NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
     NativePolicyValueTrainStateWideV1, NativeSelectedOutputV1, ScorerBiasGaugeAccumulatorV1,
 };
 // Only the #[cfg(test)] measurement-mode diagnostic below needs the wide
@@ -296,6 +297,7 @@ fn train_step_cuda_burn_dense_inner_v1(
     groups: &[NativePolicyPhysicalDecisionV1<'_>],
     value_coefficient: f32,
     learning_rate: f32,
+    frozen_policy_advantages: Option<&[f32]>,
     #[cfg(test)] capture_named_gradients: bool,
     #[cfg(test)] entropy_coefficient: EntropyCoefficientAuthorityV1,
 ) -> Result<
@@ -307,6 +309,16 @@ fn train_step_cuda_burn_dense_inner_v1(
 > {
     if groups.is_empty() {
         return Err(NativePolicyTrainErrorV1::EmptyBatch);
+    }
+    if let Some(advantages) = frozen_policy_advantages {
+        if wide
+            || advantages.len() != groups.len()
+            || advantages.iter().any(|advantage| !advantage.is_finite())
+        {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-frozen-policy-contract",
+            });
+        }
     }
     // The capture template is the input snapshot's OWN 33 named parameters.
     // The device import borrows the snapshot, so the capture branch reads
@@ -424,29 +436,54 @@ fn train_step_cuda_burn_dense_inner_v1(
         chunk_workspace
             .pack_views(&views[substep_begin..substep_end])
             .map_err(bridge_error_v1)?;
-        let chunk_plan: DenseGroupLossPlanV1 = build_dense_group_loss_plan_v1(
-            &chunk_workspace,
-            &selected_action_indices[substep_begin..substep_end],
-            &chunk_substep_group_indices,
-            &chunk_group_first_substeps,
-            &terminal_returns[chunk_start_group..chunk_end_group],
-            &device,
-            #[cfg(test)]
-            entropy_coefficient,
-        )
-        .map_err(bridge_error_v1)?;
         let chunk_batch = DevicePackedBatch::upload(&device, &chunk_workspace);
-        let chunk_outputs = device_state
-            .chunk_backward_v1(
-                &mut accumulator,
-                &chunk_batch,
-                &chunk_plan,
-                value_coefficient,
-                total_group_count,
+        let chunk_outputs = if let Some(advantages) = frozen_policy_advantages {
+            let (chunk_plan, chunk_advantages) = build_dense_group_loss_plan_with_frozen_policy_v1(
+                &chunk_workspace,
+                &selected_action_indices[substep_begin..substep_end],
+                &chunk_substep_group_indices,
+                &chunk_group_first_substeps,
+                &terminal_returns[chunk_start_group..chunk_end_group],
+                &advantages[chunk_start_group..chunk_end_group],
+                &device,
                 #[cfg(test)]
                 entropy_coefficient,
             )
             .map_err(bridge_error_v1)?;
+            device_state
+                .chunk_backward_with_frozen_policy_v1(
+                    &mut accumulator,
+                    &chunk_batch,
+                    &chunk_plan,
+                    chunk_advantages,
+                    value_coefficient,
+                    total_group_count,
+                )
+                .map_err(bridge_error_v1)?
+        } else {
+            let chunk_plan: DenseGroupLossPlanV1 = build_dense_group_loss_plan_v1(
+                &chunk_workspace,
+                &selected_action_indices[substep_begin..substep_end],
+                &chunk_substep_group_indices,
+                &chunk_group_first_substeps,
+                &terminal_returns[chunk_start_group..chunk_end_group],
+                &device,
+                #[cfg(test)]
+                entropy_coefficient,
+            )
+            .map_err(bridge_error_v1)?;
+            device_state
+                .chunk_backward_v1(
+                    &mut accumulator,
+                    &chunk_batch,
+                    &chunk_plan,
+                    value_coefficient,
+                    total_group_count,
+                    #[cfg(test)]
+                    entropy_coefficient,
+                )
+                .map_err(bridge_error_v1)?
+        };
         let chunk_substep_count = substep_end - substep_begin;
         if chunk_workspace.action_offsets.len() != chunk_substep_count + 1 {
             return Err(NativePolicyTrainErrorV1::CudaBackend {
@@ -648,7 +685,9 @@ fn train_step_cuda_burn_dense_inner_v1(
         )?;
         let transported_first_value = f32::from_bits(group.substeps[0].expected_value_bits);
         let target = f32::from(group.terminal_return);
-        let advantage = target - transported_first_value;
+        let advantage = frozen_policy_advantages
+            .map(|advantages| advantages[group_index])
+            .unwrap_or_else(|| target - transported_first_value);
         for (substep_index, substep) in group.substeps.iter().enumerate() {
             let begin = global_action_offsets[flat_substep];
             let end = global_action_offsets[flat_substep + 1];
@@ -1056,6 +1095,59 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         groups,
         value_coefficient,
         learning_rate,
+        None,
+        #[cfg(test)]
+        false,
+        #[cfg(test)]
+        EntropyCoefficientAuthorityV1::Zero,
+    )?;
+    *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+        code: "cuda-burn-dense-bridge-state-reimport-failure",
+    })?;
+    Ok(result)
+}
+
+/// H4 live-policy treatment. The policy coefficients are caller-frozen while
+/// the value head retains the exact terminal target and unit group weight.
+pub(crate) fn train_step_cuda_burn_dense_with_frozen_policy_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    terms: &[NativePolicyFrozenObjectiveTermV1],
+    value_coefficient: f32,
+    learning_rate: f32,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    if terms.len() != groups.len() {
+        return Err(NativePolicyTrainErrorV1::FrozenObjectiveTermCountMismatch {
+            expected: groups.len(),
+            actual: terms.len(),
+        });
+    }
+    let mut policy_advantages = Vec::with_capacity(terms.len());
+    for (group_index, (group, term)) in groups.iter().zip(terms).enumerate() {
+        if !term.policy_advantage.is_finite()
+            || term.value_target.to_bits() != f32::from(group.terminal_return).to_bits()
+            || term.value_weight.to_bits() != 1.0f32.to_bits()
+        {
+            return Err(NativePolicyTrainErrorV1::InvalidFrozenObjectiveTerm { group_index });
+        }
+        policy_advantages.push(term.policy_advantage);
+    }
+    let snapshot = state
+        .snapshot_v1()
+        .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-snapshot-failure",
+        })?;
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        false,
+        groups,
+        value_coefficient,
+        learning_rate,
+        Some(&policy_advantages),
         #[cfg(test)]
         false,
         #[cfg(test)]
@@ -1095,6 +1187,7 @@ pub(crate) fn train_step_cuda_burn_dense_entropy_smoke_v1(
         groups,
         value_coefficient,
         learning_rate,
+        None,
         false,
         entropy_coefficient,
     )?;
@@ -1140,10 +1233,66 @@ pub(crate) fn train_step_cuda_burn_dense_capture_named_gradients_v1(
         groups,
         value_coefficient,
         learning_rate,
+        None,
         true,
         EntropyCoefficientAuthorityV1::Zero,
     )?;
     if result.gradients.len() != 33 || result.gradients.len() != expected_tensor_count {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-capture-cardinality",
+        });
+    }
+    *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+        code: "cuda-burn-dense-bridge-state-reimport-failure",
+    })?;
+    Ok(result)
+}
+
+#[cfg(test)]
+pub(crate) fn train_step_cuda_burn_dense_with_frozen_policy_capture_named_gradients_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    terms: &[NativePolicyFrozenObjectiveTermV1],
+    value_coefficient: f32,
+    learning_rate: f32,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    if terms.len() != groups.len() {
+        return Err(NativePolicyTrainErrorV1::FrozenObjectiveTermCountMismatch {
+            expected: groups.len(),
+            actual: terms.len(),
+        });
+    }
+    let mut policy_advantages = Vec::with_capacity(terms.len());
+    for (group_index, (group, term)) in groups.iter().zip(terms).enumerate() {
+        if !term.policy_advantage.is_finite()
+            || term.value_target.to_bits() != f32::from(group.terminal_return).to_bits()
+            || term.value_weight.to_bits() != 1.0f32.to_bits()
+        {
+            return Err(NativePolicyTrainErrorV1::InvalidFrozenObjectiveTerm { group_index });
+        }
+        policy_advantages.push(term.policy_advantage);
+    }
+    let snapshot = state
+        .snapshot_v1()
+        .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-snapshot-failure",
+        })?;
+    let expected_tensor_count = snapshot.parameters.len();
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        false,
+        groups,
+        value_coefficient,
+        learning_rate,
+        Some(&policy_advantages),
+        true,
+        EntropyCoefficientAuthorityV1::Zero,
+    )?;
+    if result.gradients.len() != expected_tensor_count {
         return Err(NativePolicyTrainErrorV1::CudaBackend {
             code: "cuda-burn-dense-bridge-capture-cardinality",
         });
@@ -1186,6 +1335,7 @@ pub(super) fn train_step_cuda_burn_dense_entropy_smoke_capture_named_gradients_v
         groups,
         value_coefficient,
         learning_rate,
+        None,
         true,
         entropy_coefficient,
     )?;
@@ -1233,6 +1383,7 @@ pub(crate) fn train_step_cuda_burn_dense_wide_v1(
         groups,
         value_coefficient,
         learning_rate,
+        None,
         #[cfg(test)]
         false,
         #[cfg(test)]

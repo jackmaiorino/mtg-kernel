@@ -43,6 +43,7 @@ use crate::native_policy_train_step_v1::{
 };
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1,
+    NativePolicyFrozenObjectiveTermV1,
     NativePolicyPackedForwardBuilderV1,
     NativePolicyPackedForwardTapeV1,
     NativePolicyPhysicalDecisionV1,
@@ -1818,8 +1819,374 @@ struct NativeTrainerGroupedTrainConfigV1 {
     recompute_worker_limit: usize,
     numerical_backend: NativeTrainingNumericalBackendV1,
     backward_worker_limit: usize,
+    live_seat_credit_policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
     #[cfg(test)]
     entropy_coefficient: EntropyCoefficientAuthorityV1,
+}
+
+const NATIVE_LIVE_SEAT_CREDIT_ENV_V1: &str = "MTG_KERNEL_LIVE_SEAT_CREDIT_V1";
+
+/// Narrow live-policy objective authority for the H4 development experiment.
+/// Unset is the canonical trainer. The explicit control records mechanism
+/// evidence but executes the exact canonical numerical branch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeLiveSeatCreditPolicyReductionV1 {
+    CanonicalControl,
+    MeasuredControl,
+    EqualEpisodeMass,
+    EqualEpisodeMassSeatStandardized,
+}
+
+impl NativeLiveSeatCreditPolicyReductionV1 {
+    fn from_environment_v1() -> Result<Self, NativeTrainerErrorV1> {
+        match std::env::var_os(NATIVE_LIVE_SEAT_CREDIT_ENV_V1) {
+            None => Ok(Self::CanonicalControl),
+            Some(value) if value == "control-v1" => Ok(Self::MeasuredControl),
+            Some(value) if value == "equal-episode-mass-v1" => Ok(Self::EqualEpisodeMass),
+            Some(value) if value == "equal-episode-mass-seat-standardized-v1" => {
+                Ok(Self::EqualEpisodeMassSeatStandardized)
+            }
+            Some(_) => Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "live-seat-credit-policy-reduction",
+            )),
+        }
+    }
+
+    const fn identity_v1(self) -> &'static str {
+        match self {
+            Self::CanonicalControl => "canonical-control-v1",
+            Self::MeasuredControl => "measured-control-v1",
+            Self::EqualEpisodeMass => "equal-episode-mass-v1",
+            Self::EqualEpisodeMassSeatStandardized => "equal-episode-mass-seat-standardized-v1",
+        }
+    }
+
+    const fn uses_equal_episode_mass_v1(self) -> bool {
+        matches!(
+            self,
+            Self::EqualEpisodeMass | Self::EqualEpisodeMassSeatStandardized
+        )
+    }
+
+    const fn uses_seat_standardization_v1(self) -> bool {
+        matches!(self, Self::EqualEpisodeMassSeatStandardized)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct NativeLiveSeatCreditEpisodeInputV1 {
+    episode_id: u64,
+    learner_seat: PlayerSeatV1,
+    terminal_return: i8,
+    group_value_bits: Vec<u32>,
+}
+
+#[derive(Clone, Debug)]
+struct NativeLiveSeatCreditPlanV1 {
+    terms: Option<Vec<NativePolicyFrozenObjectiveTermV1>>,
+    group_seats: Vec<PlayerSeatV1>,
+    group_policy_advantages: Vec<f32>,
+    evidence: NativeTrainerLiveSeatCreditEvidenceV1,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeTrainerLiveSeatCreditEvidenceV1 {
+    pub policy_reduction_identity: &'static str,
+    pub episode_count: u64,
+    pub group_count: u64,
+    pub seat_weight_mass: [f64; 2],
+    pub raw_weighted_mean: [f64; 2],
+    pub raw_weighted_population_variance: [f64; 2],
+    pub transformed_weighted_mean: [f64; 2],
+    pub transformed_weighted_population_variance: [f64; 2],
+    pub absolute_policy_coefficient_mass: [f64; 2],
+    /// Available on CPU and on the test-only CUDA canary capture path. Normal
+    /// production CUDA updates do not pay the named-gradient readback cost.
+    pub gradient_l2_norm: Option<f64>,
+}
+
+fn live_seat_index_v1(seat: PlayerSeatV1) -> usize {
+    match seat {
+        PlayerSeatV1::P0 => 0,
+        PlayerSeatV1::P1 => 1,
+    }
+}
+
+fn build_live_seat_credit_plan_v1(
+    policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
+    episodes: &[NativeLiveSeatCreditEpisodeInputV1],
+) -> Result<Option<NativeLiveSeatCreditPlanV1>, NativeTrainerErrorV1> {
+    if policy_reduction == NativeLiveSeatCreditPolicyReductionV1::CanonicalControl {
+        return Ok(None);
+    }
+    if episodes.is_empty() || episodes.len() & 1 != 0 {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "live seat credit requires a nonempty even episode batch",
+        ));
+    }
+    if episodes
+        .windows(2)
+        .any(|pair| pair[0].episode_id >= pair[1].episode_id)
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "live seat credit episode identifiers must be strictly increasing",
+        ));
+    }
+    let mut seat_episode_counts = [0usize; 2];
+    let mut group_count = 0usize;
+    for episode in episodes {
+        if episode.group_value_bits.is_empty() {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "live seat credit requires a nonempty episode",
+            ));
+        }
+        if !matches!(episode.terminal_return, -1..=1) {
+            return Err(NativeTrainerErrorV1::TerminalReturnRange {
+                episode_index: episode.episode_id,
+                value: i32::from(episode.terminal_return),
+            });
+        }
+        seat_episode_counts[live_seat_index_v1(episode.learner_seat)] += 1;
+        group_count = group_count
+            .checked_add(episode.group_value_bits.len())
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+    }
+    if seat_episode_counts[0] != seat_episode_counts[1] || group_count == 0 {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "live seat credit requires balanced learner-seat episodes",
+        ));
+    }
+
+    let episode_count_f64 = episodes.len() as f64;
+    let group_count_f64 = group_count as f64;
+    let group_count_f32 = group_count as f32;
+    if !episode_count_f64.is_finite()
+        || !group_count_f64.is_finite()
+        || !group_count_f32.is_finite()
+    {
+        return Err(NativeTrainerErrorV1::CounterOverflow);
+    }
+
+    let mut group_seats = Vec::with_capacity(group_count);
+    let mut weights = Vec::with_capacity(group_count);
+    let mut raw_advantages = Vec::with_capacity(group_count);
+    let mut targets = Vec::with_capacity(group_count);
+    let mut seat_weight_mass = [0.0f64; 2];
+    let mut raw_weighted_sum = [0.0f64; 2];
+    for episode in episodes {
+        let episode_group_count_f64 = episode.group_value_bits.len() as f64;
+        let weight = if policy_reduction.uses_equal_episode_mass_v1() {
+            1.0 / (episode_count_f64 * episode_group_count_f64)
+        } else {
+            1.0 / group_count_f64
+        };
+        let target = f32::from(episode.terminal_return);
+        let seat_index = live_seat_index_v1(episode.learner_seat);
+        for value_bits in &episode.group_value_bits {
+            let value = f32::from_bits(*value_bits);
+            if !value.is_finite() {
+                return Err(NativeTrainerErrorV1::GroupingInvariant(
+                    "live seat credit requires finite transported values",
+                ));
+            }
+            let raw_advantage = target - value;
+            if !raw_advantage.is_finite() || !weight.is_finite() || weight <= 0.0 {
+                return Err(NativeTrainerErrorV1::GroupingInvariant(
+                    "live seat credit produced a nonfinite raw coefficient",
+                ));
+            }
+            group_seats.push(episode.learner_seat);
+            weights.push(weight);
+            raw_advantages.push(f64::from(raw_advantage));
+            targets.push(target);
+            seat_weight_mass[seat_index] += weight;
+            raw_weighted_sum[seat_index] += weight * f64::from(raw_advantage);
+        }
+    }
+    if seat_weight_mass
+        .iter()
+        .any(|mass| !mass.is_finite() || *mass <= 0.0)
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "live seat credit produced invalid seat mass",
+        ));
+    }
+    if policy_reduction.uses_equal_episode_mass_v1()
+        && seat_weight_mass
+            .iter()
+            .any(|mass| (*mass - 0.5).abs() > 1.0e-12)
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "live seat credit equal episode mass must allocate one half per seat",
+        ));
+    }
+
+    let mut raw_weighted_mean = [0.0f64; 2];
+    for seat_index in 0..2 {
+        raw_weighted_mean[seat_index] = raw_weighted_sum[seat_index] / seat_weight_mass[seat_index];
+    }
+    let mut raw_weighted_population_variance = [0.0f64; 2];
+    for group_index in 0..group_count {
+        let seat_index = live_seat_index_v1(group_seats[group_index]);
+        let centered = raw_advantages[group_index] - raw_weighted_mean[seat_index];
+        raw_weighted_population_variance[seat_index] += weights[group_index] * centered * centered;
+    }
+    for seat_index in 0..2 {
+        raw_weighted_population_variance[seat_index] /= seat_weight_mass[seat_index];
+    }
+
+    let transformed_advantages = (0..group_count)
+        .map(|group_index| {
+            let seat_index = live_seat_index_v1(group_seats[group_index]);
+            if policy_reduction.uses_seat_standardization_v1() {
+                let variance = raw_weighted_population_variance[seat_index];
+                if variance <= 1.0e-18 {
+                    0.0
+                } else {
+                    (raw_advantages[group_index] - raw_weighted_mean[seat_index]) / variance.sqrt()
+                }
+            } else {
+                raw_advantages[group_index]
+            }
+        })
+        .collect::<Vec<_>>();
+    if transformed_advantages
+        .iter()
+        .any(|value| !value.is_finite())
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "live seat credit produced a nonfinite transformed coefficient",
+        ));
+    }
+
+    let mut transformed_weighted_sum = [0.0f64; 2];
+    for group_index in 0..group_count {
+        let seat_index = live_seat_index_v1(group_seats[group_index]);
+        transformed_weighted_sum[seat_index] +=
+            weights[group_index] * transformed_advantages[group_index];
+    }
+    let mut transformed_weighted_mean = [0.0f64; 2];
+    for seat_index in 0..2 {
+        transformed_weighted_mean[seat_index] =
+            transformed_weighted_sum[seat_index] / seat_weight_mass[seat_index];
+    }
+    let mut transformed_weighted_population_variance = [0.0f64; 2];
+    for group_index in 0..group_count {
+        let seat_index = live_seat_index_v1(group_seats[group_index]);
+        let centered = transformed_advantages[group_index] - transformed_weighted_mean[seat_index];
+        transformed_weighted_population_variance[seat_index] +=
+            weights[group_index] * centered * centered;
+    }
+    for seat_index in 0..2 {
+        transformed_weighted_population_variance[seat_index] /= seat_weight_mass[seat_index];
+    }
+
+    let group_policy_advantages = if policy_reduction.uses_equal_episode_mass_v1() {
+        transformed_advantages
+            .iter()
+            .zip(&weights)
+            .map(|(advantage, weight)| (group_count_f64 * weight * advantage) as f32)
+            .collect::<Vec<_>>()
+    } else {
+        raw_advantages.iter().map(|value| *value as f32).collect()
+    };
+    if group_policy_advantages
+        .iter()
+        .any(|advantage| !advantage.is_finite())
+    {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "live seat credit produced an unrepresentable policy coefficient",
+        ));
+    }
+    let terms = if policy_reduction.uses_equal_episode_mass_v1() {
+        Some(
+            group_policy_advantages
+                .iter()
+                .zip(targets)
+                .map(
+                    |(policy_advantage, value_target)| NativePolicyFrozenObjectiveTermV1 {
+                        policy_advantage: *policy_advantage,
+                        value_target,
+                        value_weight: 1.0,
+                    },
+                )
+                .collect(),
+        )
+    } else {
+        None
+    };
+    Ok(Some(NativeLiveSeatCreditPlanV1 {
+        terms,
+        group_seats,
+        group_policy_advantages,
+        evidence: NativeTrainerLiveSeatCreditEvidenceV1 {
+            policy_reduction_identity: policy_reduction.identity_v1(),
+            episode_count: u64::try_from(episodes.len())
+                .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?,
+            group_count: u64::try_from(group_count)
+                .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?,
+            seat_weight_mass,
+            raw_weighted_mean,
+            raw_weighted_population_variance,
+            transformed_weighted_mean,
+            transformed_weighted_population_variance,
+            absolute_policy_coefficient_mass: [0.0; 2],
+            gradient_l2_norm: None,
+        },
+    }))
+}
+
+fn finalize_live_seat_credit_evidence_v1(
+    mut plan: NativeLiveSeatCreditPlanV1,
+    result: &NativePolicyTrainStepResultV1,
+) -> Result<NativeTrainerLiveSeatCreditEvidenceV1, NativeTrainerErrorV1> {
+    let group_count = plan.group_policy_advantages.len();
+    if group_count == 0 || plan.group_seats.len() != group_count {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "live seat credit result binding cardinality",
+        ));
+    }
+    let group_count_f32 = group_count as f32;
+    for output in &result.selected_outputs {
+        let seat = *plan.group_seats.get(output.group_index).ok_or(
+            NativeTrainerErrorV1::GroupingInvariant(
+                "live seat credit selected output group binding",
+            ),
+        )?;
+        let advantage = plan.group_policy_advantages[output.group_index];
+        let selected_probability = f64::from(output.selected_log_probability).exp();
+        let d_joint_log_probability = -advantage / group_count_f32;
+        let mass = 2.0 * f64::from(d_joint_log_probability).abs() * (1.0 - selected_probability);
+        if !selected_probability.is_finite()
+            || !(0.0..=1.0).contains(&selected_probability)
+            || !mass.is_finite()
+            || mass < 0.0
+        {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "live seat credit coefficient mass is invalid",
+            ));
+        }
+        plan.evidence.absolute_policy_coefficient_mass[live_seat_index_v1(seat)] += mass;
+    }
+    if !result.gradients.is_empty() {
+        let squared_norm = result
+            .gradients
+            .iter()
+            .flat_map(|gradient| gradient.values.iter())
+            .try_fold(0.0f64, |sum, value| {
+                let value = f64::from(*value);
+                let next = sum + value * value;
+                if next.is_finite() {
+                    Ok(next)
+                } else {
+                    Err(NativeTrainerErrorV1::GroupingInvariant(
+                        "live seat credit gradient norm is nonfinite",
+                    ))
+                }
+            })?;
+        plan.evidence.gradient_l2_norm = Some(squared_norm.sqrt());
+    }
+    Ok(plan.evidence)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1895,6 +2262,9 @@ pub struct NativeTrainerUpdateEvidenceV2 {
     pub selected_outputs: Vec<NativeTrainerSelectedOutputEvidenceV1>,
     pub physical_terms: Vec<NativeTrainerPhysicalTermEvidenceV1>,
     pub scorer_bias_gauge: NativeScorerBiasGaugeRecordV1,
+    /// Present only for an explicit H4 mechanism arm. Unset canonical control
+    /// retains the historical observation and numerical path.
+    pub live_seat_credit: Option<NativeTrainerLiveSeatCreditEvidenceV1>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2371,10 +2741,13 @@ impl NativeTrainerStateV2 {
         #[cfg(test)] entropy_coefficient: EntropyCoefficientAuthorityV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+        let live_seat_credit_policy_reduction =
+            NativeLiveSeatCreditPolicyReductionV1::from_environment_v1()?;
         match &self.train_state {
             NativeTrainerModelStateV2::Frozen(_) => self.run_even_batch_update_inner_v2(
                 config,
                 environment,
+                live_seat_credit_policy_reduction,
                 #[cfg(test)]
                 entropy_coefficient,
                 phase_recorder,
@@ -2386,15 +2759,45 @@ impl NativeTrainerStateV2 {
                         "entropy_coefficient_requires_frozen_cuda",
                     ));
                 }
-                self.run_even_batch_update_wide_inner_v2(config, environment, phase_recorder)
+                self.run_even_batch_update_wide_inner_v2(
+                    config,
+                    environment,
+                    live_seat_credit_policy_reduction,
+                    phase_recorder,
+                )
             }
         }
+    }
+
+    #[cfg(test)]
+    fn run_even_batch_update_live_seat_credit_canary_v1(
+        &mut self,
+        config: &NativeTrainerUpdateConfigV2,
+        environment: NativeRunEnvironmentTrajectoryContractV1,
+        policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
+    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+        if !matches!(&self.train_state, NativeTrainerModelStateV2::Frozen(_))
+            || policy_reduction == NativeLiveSeatCreditPolicyReductionV1::CanonicalControl
+        {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "live-seat-credit-canary-authority",
+            ));
+        }
+        let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
+        self.run_even_batch_update_inner_v2(
+            config,
+            environment,
+            policy_reduction,
+            EntropyCoefficientAuthorityV1::Zero,
+            &mut phase_recorder,
+        )
     }
 
     fn run_even_batch_update_inner_v2(
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
         environment: NativeRunEnvironmentTrajectoryContractV1,
+        live_seat_credit_policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
         #[cfg(test)] entropy_coefficient: EntropyCoefficientAuthorityV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
@@ -2596,23 +2999,25 @@ impl NativeTrainerStateV2 {
         let adam_step_before = self.train_state_v1().adam_step_v1();
         let mut candidate_train_state = self.train_state_v1().clone();
         phase_recorder.finish_v1(grouping_timer);
-        let (train_result, episode_evidence, learner_group_count) = train_grouped_candidate_v1(
-            &mut candidate_train_state,
-            &grouped,
-            &full_trajectory_receipts,
-            NativeTrainerGroupedTrainConfigV1 {
-                value_coefficient: f32::from_bits(config.value_coefficient_bits),
-                learning_rate: f32::from_bits(config.learning_rate_bits),
-                recompute_worker_limit: config.worker_count,
-                numerical_backend: config.numerical_backend,
-                backward_worker_limit: config.backward_worker_limit,
+        let (train_result, episode_evidence, learner_group_count, live_seat_credit) =
+            train_grouped_candidate_v1(
+                &mut candidate_train_state,
+                &grouped,
+                &full_trajectory_receipts,
+                NativeTrainerGroupedTrainConfigV1 {
+                    value_coefficient: f32::from_bits(config.value_coefficient_bits),
+                    learning_rate: f32::from_bits(config.learning_rate_bits),
+                    recompute_worker_limit: config.worker_count,
+                    numerical_backend: config.numerical_backend,
+                    backward_worker_limit: config.backward_worker_limit,
+                    live_seat_credit_policy_reduction,
+                    #[cfg(test)]
+                    entropy_coefficient,
+                },
                 #[cfg(test)]
-                entropy_coefficient,
-            },
-            #[cfg(test)]
-            test_physical_substep_count_mutation,
-            phase_recorder,
-        )?;
+                test_physical_substep_count_mutation,
+                phase_recorder,
+            )?;
         let finalization_timer =
             phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
         let parameters_after = candidate_train_state.model_v1().parameter_snapshot_v1();
@@ -2702,6 +3107,7 @@ impl NativeTrainerStateV2 {
             selected_outputs,
             physical_terms,
             scorer_bias_gauge,
+            live_seat_credit,
         };
         phase_recorder.finish_v1(evidence_timer);
 
@@ -2745,6 +3151,7 @@ impl NativeTrainerStateV2 {
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
         environment: NativeRunEnvironmentTrajectoryContractV1,
+        live_seat_credit_policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         let update_started = Instant::now();
@@ -2902,7 +3309,7 @@ impl NativeTrainerStateV2 {
         let adam_step_before = self.train_state_wide_v1().adam_step_v1();
         let mut candidate_train_state = self.train_state_wide_v1().clone();
         phase_recorder.finish_v1(grouping_timer);
-        let (train_result, episode_evidence, learner_group_count) =
+        let (train_result, episode_evidence, learner_group_count, live_seat_credit) =
             train_grouped_candidate_wide_v1(
                 &mut candidate_train_state,
                 &grouped,
@@ -2913,6 +3320,7 @@ impl NativeTrainerStateV2 {
                     recompute_worker_limit: config.worker_count,
                     numerical_backend: config.numerical_backend,
                     backward_worker_limit: config.backward_worker_limit,
+                    live_seat_credit_policy_reduction,
                     #[cfg(test)]
                     entropy_coefficient: EntropyCoefficientAuthorityV1::Zero,
                 },
@@ -3009,6 +3417,7 @@ impl NativeTrainerStateV2 {
             selected_outputs,
             physical_terms,
             scorer_bias_gauge,
+            live_seat_credit,
         };
         phase_recorder.finish_v1(evidence_timer);
 
@@ -3483,12 +3892,14 @@ fn train_grouped_candidate_v1(
         NativePolicyTrainStepResultV1,
         Vec<NativeTrainerEpisodeEvidenceV1>,
         u64,
+        Option<NativeTrainerLiveSeatCreditEvidenceV1>,
     ),
     NativeTrainerErrorV1,
 > {
     let grouping_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::GroupingMaterialization);
     let mut source_groups = Vec::new();
     let mut terminal_returns = Vec::new();
+    let mut live_seat_credit_inputs = Vec::new();
     let episode_capacity = usize::try_from(grouped.episode_count)
         .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
     if full_trajectory_receipts.len() != episode_capacity {
@@ -3535,6 +3946,16 @@ fn train_grouped_candidate_v1(
             learner_trace_hash: episode.learner_trace_hash,
             terminal_outcome: episode.terminal.terminal_outcome,
             full_trajectory_receipt,
+        });
+        live_seat_credit_inputs.push(NativeLiveSeatCreditEpisodeInputV1 {
+            episode_id: episode.episode_id,
+            learner_seat: episode.learner_seat,
+            terminal_return,
+            group_value_bits: episode
+                .groups
+                .iter()
+                .map(|group| group.value_bits)
+                .collect(),
         });
         for group in &episode.groups {
             source_groups.push(group);
@@ -3589,58 +4010,122 @@ fn train_grouped_candidate_v1(
             },
         )
         .collect::<Vec<_>>();
+    let live_seat_credit_plan = build_live_seat_credit_plan_v1(
+        execution.live_seat_credit_policy_reduction,
+        &live_seat_credit_inputs,
+    )?;
+    let frozen_objective_terms = live_seat_credit_plan
+        .as_ref()
+        .and_then(|plan| plan.terms.as_deref());
     phase_recorder.finish_v1(grouping_timer);
     let result = match execution.numerical_backend {
-        NativeTrainingNumericalBackendV1::Sequential => candidate
-            .train_step_with_recompute_workers_profiled_v1(
+        NativeTrainingNumericalBackendV1::Sequential => match frozen_objective_terms {
+            Some(terms) => candidate.train_step_with_frozen_objective_profiled_v1(
+                &borrowed_groups,
+                terms,
+                execution.value_coefficient,
+                execution.learning_rate,
+                execution.recompute_worker_limit,
+                phase_recorder,
+            ),
+            None => candidate.train_step_with_recompute_workers_profiled_v1(
                 &borrowed_groups,
                 execution.value_coefficient,
                 execution.learning_rate,
                 execution.recompute_worker_limit,
                 phase_recorder,
             ),
-        NativeTrainingNumericalBackendV1::FixedFourPartitions => candidate
-            .train_step_with_fixed_partition_parallel_backward_profiled_v1(
+        },
+        NativeTrainingNumericalBackendV1::FixedFourPartitions => {
+            if frozen_objective_terms.is_some() {
+                return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                    "live-seat-credit-fixed-partition-backend-not-supported",
+                ));
+            }
+            candidate.train_step_with_fixed_partition_parallel_backward_profiled_v1(
                 &borrowed_groups,
                 execution.value_coefficient,
                 execution.learning_rate,
                 execution.recompute_worker_limit,
                 execution.backward_worker_limit,
                 phase_recorder,
-            ),
+            )
+        }
         // The device-resident bridge: dense group loss on the GPU, evidence
         // recomputed host-side from the CUDA outputs, CPU state replaced
         // through the validating snapshot constructor.
         #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
         NativeTrainingNumericalBackendV1::CudaBurnDense => {
-            #[cfg(not(test))]
-            {
-                crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
-                    candidate,
-                    &borrowed_groups,
-                    execution.value_coefficient,
-                    execution.learning_rate,
-                )
-            }
-            #[cfg(test)]
-            {
-                match execution.entropy_coefficient {
-                    // The control is deliberately the existing production
-                    // bridge call, not beta-zero arithmetic in the entropy
-                    // sibling.
-                    EntropyCoefficientAuthorityV1::Zero => crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
+            if let Some(terms) = frozen_objective_terms {
+                #[cfg(test)]
+                if execution.entropy_coefficient != EntropyCoefficientAuthorityV1::Zero {
+                    return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                        "live-seat-credit-cannot-combine-with-entropy",
+                    ));
+                }
+                #[cfg(not(test))]
+                {
+                    crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_with_frozen_policy_v1(
+                        candidate,
+                        &borrowed_groups,
+                        terms,
+                        execution.value_coefficient,
+                        execution.learning_rate,
+                    )
+                }
+                #[cfg(test)]
+                {
+                    crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_with_frozen_policy_capture_named_gradients_v1(
+                        candidate,
+                        &borrowed_groups,
+                        terms,
+                        execution.value_coefficient,
+                        execution.learning_rate,
+                    )
+                }
+            } else {
+                #[cfg(not(test))]
+                {
+                    crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
                         candidate,
                         &borrowed_groups,
                         execution.value_coefficient,
                         execution.learning_rate,
-                    ),
-                    EntropyCoefficientAuthorityV1::Beta0p01 => crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_entropy_smoke_v1(
-                        candidate,
-                        &borrowed_groups,
-                        execution.value_coefficient,
-                        execution.learning_rate,
-                        execution.entropy_coefficient,
-                    ),
+                    )
+                }
+                #[cfg(test)]
+                {
+                    match execution.entropy_coefficient {
+                        // The control is deliberately the existing production
+                        // bridge call, not beta-zero arithmetic in the entropy
+                        // sibling.
+                        EntropyCoefficientAuthorityV1::Zero => {
+                            if execution.live_seat_credit_policy_reduction
+                                == NativeLiveSeatCreditPolicyReductionV1::MeasuredControl
+                            {
+                                crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_capture_named_gradients_v1(
+                                    candidate,
+                                    &borrowed_groups,
+                                    execution.value_coefficient,
+                                    execution.learning_rate,
+                                )
+                            } else {
+                                crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
+                                    candidate,
+                                    &borrowed_groups,
+                                    execution.value_coefficient,
+                                    execution.learning_rate,
+                                )
+                            }
+                        },
+                        EntropyCoefficientAuthorityV1::Beta0p01 => crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_entropy_smoke_v1(
+                            candidate,
+                            &borrowed_groups,
+                            execution.value_coefficient,
+                            execution.learning_rate,
+                            execution.entropy_coefficient,
+                        ),
+                    }
                 }
             }
         }
@@ -3665,6 +4150,10 @@ fn train_grouped_candidate_v1(
                 ))?;
         term.substep_count ^= 1;
     }
+    let live_seat_credit = match live_seat_credit_plan {
+        Some(plan) => Some(finalize_live_seat_credit_evidence_v1(plan, &result)?),
+        None => None,
+    };
     let finalization_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
     verify_recomputed_outputs_v1(&source_groups, &terminal_returns, &result)?;
     if episode_evidence.len() != episode_capacity {
@@ -3681,7 +4170,12 @@ fn train_grouped_candidate_v1(
         drop(terminal_returns);
         phase_recorder.finish_v1(cleanup_timer);
     }
-    Ok((result, episode_evidence, learner_group_count))
+    Ok((
+        result,
+        episode_evidence,
+        learner_group_count,
+        live_seat_credit,
+    ))
 }
 
 /// Capacity-experiment wide-net sibling of [`train_grouped_candidate_v1`]
@@ -3709,9 +4203,17 @@ fn train_grouped_candidate_wide_v1(
         NativePolicyTrainStepResultV1,
         Vec<NativeTrainerEpisodeEvidenceV1>,
         u64,
+        Option<NativeTrainerLiveSeatCreditEvidenceV1>,
     ),
     NativeTrainerErrorV1,
 > {
+    if execution.live_seat_credit_policy_reduction
+        != NativeLiveSeatCreditPolicyReductionV1::CanonicalControl
+    {
+        return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+            "live-seat-credit-wide-model-not-supported",
+        ));
+    }
     let grouping_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::GroupingMaterialization);
     let mut source_groups = Vec::new();
     let mut terminal_returns = Vec::new();
@@ -3851,7 +4353,7 @@ fn train_grouped_candidate_wide_v1(
         drop(terminal_returns);
         phase_recorder.finish_v1(cleanup_timer);
     }
-    Ok((result, episode_evidence, learner_group_count))
+    Ok((result, episode_evidence, learner_group_count, None))
 }
 
 // Generic over the scoring-input type for the same reason
@@ -4036,6 +4538,7 @@ mod tests {
     };
     use crate::native_train_state_payload_v1::{
         decode_native_train_state_payload_verified_v1, encode_native_train_state_payload_v1,
+        NativeTrainStatePayloadDigestsV1,
     };
     use crate::native_trainer_schedule_v1::derive_native_trainer_model_init_seed_v1;
     use std::fs;
@@ -4059,6 +4562,1057 @@ mod tests {
             EntropyCoefficientAuthorityV1::Beta0p01.value_v1().to_bits(),
             0x3c23_d70a
         );
+    }
+
+    fn live_seat_credit_episode_v1(
+        episode_id: u64,
+        learner_seat: PlayerSeatV1,
+        terminal_return: i8,
+        values: &[f32],
+    ) -> NativeLiveSeatCreditEpisodeInputV1 {
+        NativeLiveSeatCreditEpisodeInputV1 {
+            episode_id,
+            learner_seat,
+            terminal_return,
+            group_value_bits: values.iter().map(|value| value.to_bits()).collect(),
+        }
+    }
+
+    #[test]
+    fn live_seat_credit_standardization_normalizes_by_half_seat_mass() {
+        // Raw advantages by episode are P0 [0, 2], P1 [-1, 1]. Each group
+        // weighs 1/4, so the seat masses are 1/2 and the normalized means are
+        // exactly [1, 0]. Omitting division by seat mass would report [1/2, 0].
+        let episodes = [
+            live_seat_credit_episode_v1(0, PlayerSeatV1::P0, 1, &[1.0]),
+            live_seat_credit_episode_v1(1, PlayerSeatV1::P1, -1, &[0.0]),
+            live_seat_credit_episode_v1(2, PlayerSeatV1::P0, 1, &[-1.0]),
+            live_seat_credit_episode_v1(3, PlayerSeatV1::P1, 1, &[0.0]),
+        ];
+        let plan = build_live_seat_credit_plan_v1(
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMassSeatStandardized,
+            &episodes,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(plan
+            .evidence
+            .seat_weight_mass
+            .iter()
+            .all(|mass| (*mass - 0.5).abs() <= 1.0e-12));
+        assert_eq!(plan.evidence.raw_weighted_mean, [1.0, 0.0]);
+        assert_eq!(plan.evidence.raw_weighted_population_variance, [1.0, 1.0]);
+        assert_eq!(plan.evidence.transformed_weighted_mean, [0.0, 0.0]);
+        assert_eq!(
+            plan.evidence.transformed_weighted_population_variance,
+            [1.0, 1.0]
+        );
+        assert_eq!(
+            plan.terms
+                .unwrap()
+                .iter()
+                .map(|term| term.policy_advantage)
+                .collect::<Vec<_>>(),
+            vec![-1.0, -1.0, 1.0, 1.0]
+        );
+    }
+
+    #[test]
+    fn live_seat_credit_equal_mass_gives_each_episode_one_quarter() {
+        let episodes = [
+            live_seat_credit_episode_v1(10, PlayerSeatV1::P0, 1, &[0.0]),
+            live_seat_credit_episode_v1(11, PlayerSeatV1::P1, 1, &[0.0, 0.0]),
+            live_seat_credit_episode_v1(12, PlayerSeatV1::P0, 1, &[0.0, 0.0, 0.0]),
+            live_seat_credit_episode_v1(13, PlayerSeatV1::P1, 1, &[0.0, 0.0, 0.0, 0.0]),
+        ];
+        let plan = build_live_seat_credit_plan_v1(
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMass,
+            &episodes,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(plan
+            .evidence
+            .seat_weight_mass
+            .iter()
+            .all(|mass| (*mass - 0.5).abs() <= 1.0e-12));
+        let effective = plan
+            .terms
+            .unwrap()
+            .iter()
+            .map(|term| f64::from(term.policy_advantage) / 10.0)
+            .collect::<Vec<_>>();
+        let mut cursor = 0usize;
+        for episode in &episodes {
+            let end = cursor + episode.group_value_bits.len();
+            let episode_mass: f64 = effective[cursor..end].iter().sum();
+            assert!((episode_mass - 0.25).abs() <= 1.0e-8);
+            cursor = end;
+        }
+    }
+
+    #[test]
+    fn live_seat_credit_zero_variance_maps_that_seat_to_zero() {
+        let episodes = [
+            live_seat_credit_episode_v1(20, PlayerSeatV1::P0, 1, &[0.0]),
+            live_seat_credit_episode_v1(21, PlayerSeatV1::P1, 1, &[0.0]),
+            live_seat_credit_episode_v1(22, PlayerSeatV1::P0, 1, &[0.0]),
+            live_seat_credit_episode_v1(23, PlayerSeatV1::P1, 1, &[0.0]),
+        ];
+        let plan = build_live_seat_credit_plan_v1(
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMassSeatStandardized,
+            &episodes,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            plan.terms
+                .unwrap()
+                .iter()
+                .map(|term| term.policy_advantage.to_bits())
+                .collect::<Vec<_>>(),
+            vec![0; 4]
+        );
+        assert_eq!(
+            plan.evidence.transformed_weighted_population_variance,
+            [0.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn standardized_seat_moments_do_not_force_equal_absolute_gradient_mass() {
+        let episodes = [
+            live_seat_credit_episode_v1(30, PlayerSeatV1::P0, 1, &[1.0]),
+            live_seat_credit_episode_v1(31, PlayerSeatV1::P1, -1, &[0.0]),
+            live_seat_credit_episode_v1(32, PlayerSeatV1::P0, 1, &[-1.0]),
+            live_seat_credit_episode_v1(33, PlayerSeatV1::P1, 1, &[0.0]),
+        ];
+        let plan = build_live_seat_credit_plan_v1(
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMassSeatStandardized,
+            &episodes,
+        )
+        .unwrap()
+        .unwrap();
+        let selected_outputs = [0.5f32, 0.99, 0.5, 0.99]
+            .into_iter()
+            .enumerate()
+            .map(|(group_index, probability)| {
+                crate::native_policy_train_step_v1::NativeSelectedOutputV1 {
+                    group_index,
+                    substep_index: 0,
+                    selected_action_index: 0,
+                    selected_logit: 0.0,
+                    value: 0.0,
+                    selected_log_probability: probability.ln(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let evidence = finalize_live_seat_credit_evidence_v1(
+            plan,
+            &NativePolicyTrainStepResultV1 {
+                policy_sum: 0.0,
+                value_sum: 0.0,
+                loss: 0.0,
+                adam_step: 0,
+                selected_outputs,
+                physical_terms: Vec::new(),
+                gradients: Vec::new(),
+                scorer_bias_gauge: NativeScorerBiasGaugeRecordV1 {
+                    parameter_name: "scorer.2.bias",
+                    substep_count: 0,
+                    total_action_count: 0,
+                    max_action_count: 0,
+                    sum_abs_policy_coefficients: 0.0,
+                    substep_bounds: Vec::new(),
+                    per_substep_bound_sum: 0.0,
+                    cross_substep_bound: 0.0,
+                    raw_gradient_residual: 0.0,
+                    derived_absolute_bound: 0.0,
+                    high_precision_residual: 0.0,
+                    canonical_gradient: 0.0,
+                    parameter_before_bits: 0,
+                    parameter_after_bits: 0,
+                },
+            },
+        )
+        .unwrap();
+        let ratio = evidence.absolute_policy_coefficient_mass[0]
+            / evidence.absolute_policy_coefficient_mass[1];
+        assert!((ratio - 50.0).abs() < 1.0e-3, "observed ratio {ratio}");
+    }
+
+    #[test]
+    fn unset_live_seat_credit_authority_has_no_plan() {
+        assert!(build_live_seat_credit_plan_v1(
+            NativeLiveSeatCreditPolicyReductionV1::CanonicalControl,
+            &[],
+        )
+        .unwrap()
+        .is_none());
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const H4_CANARY_STORE_ROOT_V1: &str =
+        "D:\\mtg-kernel-macro-selfplay-envrand-v2-rung-v1\\runs\\seed-970001\\run-0\\store";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const H4_CANARY_POOL_ROOT_V1: &str = "D:\\mtg-kernel-ladder-pilot-20260725\\pool3";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const H4_CANARY_OUTPUT_ROOT_V1: &str = "D:\\mtg-kernel-h4-live-seat-credit-canary-v1";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const H4_DEVELOPMENT_OUTPUT_ROOT_V1: &str = "D:\\mtg-kernel-h4-live-seat-credit-development-v1";
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    struct H4CanarySourceV1 {
+        train_state: NativePolicyValueTrainStateV1,
+        progress: NativeTrainerProgressV2,
+        ladder: Arc<LadderOpponentEngineV1>,
+        store_root: PathBuf,
+        pool_root: PathBuf,
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    struct H4CanaryArmRunV1 {
+        evidence: NativeTrainerUpdateEvidenceV2,
+        final_state_sha256: String,
+        parameter_movement_l2: f64,
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_canary_path_v1(environment_name: &str, default: &str) -> PathBuf {
+        std::env::var_os(environment_name)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(default))
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_canary_digest_v1(value: &str) -> [u8; 32] {
+        crate::native_training_store_digest_v1::parse_lower_hex_raw32_v1(value)
+            .expect("frozen H4 canary digest literal")
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_canary_hex_v1(value: [u8; 32]) -> String {
+        crate::native_training_store_digest_v1::lower_hex_raw32_v1(value)
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn load_h4_canary_source_v1() -> H4CanarySourceV1 {
+        let store_root =
+            h4_canary_path_v1("MTG_KERNEL_H4_CANARY_STORE_ROOT", H4_CANARY_STORE_ROOT_V1);
+        let pool_root = h4_canary_path_v1("MTG_KERNEL_H4_CANARY_POOL_ROOT", H4_CANARY_POOL_ROOT_V1);
+        let run_bytes = fs::read(store_root.join("run.json")).expect("retained run.json");
+        assert_eq!(
+            h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(
+                &run_bytes
+            )),
+            "2307caf5a0093bf3f6f9d3673788eac1d73bcd248bfb6fcb3af785a596304cab"
+        );
+        let checkpoint_path = store_root
+            .join("checkpoints")
+            .join("update-00000512.checkpoint.json");
+        let checkpoint_bytes = fs::read(&checkpoint_path).expect("retained checkpoint manifest");
+        assert_eq!(
+            h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(
+                &checkpoint_bytes
+            )),
+            "fb195eda940625c0ef031293f465c8475463e64c7ea002e8e7122c8e937de93c"
+        );
+        let payload = fs::read(
+            store_root
+                .join("checkpoints")
+                .join("update-00000512.state.f32le"),
+        )
+        .expect("retained checkpoint payload");
+        let expected = NativeTrainStatePayloadDigestsV1 {
+            payload_sha256: h4_canary_digest_v1(
+                "1d3ea58463122b034f0f8d8441de7c91c697db3b1f137e82e62b6d04cb9508b1",
+            ),
+            parameters_sha256: h4_canary_digest_v1(
+                "fb4b3f7383ccb1d818daf6e36dd461004c610daae0cd1cce1251b114a575a9a9",
+            ),
+            first_moments_sha256: h4_canary_digest_v1(
+                "e1926f0fa50e14d086d6a0fe692b90a3b50787f5650786c179a0011de9f8781c",
+            ),
+            second_moments_sha256: h4_canary_digest_v1(
+                "02d3fa6fc826683c1351ac024aaffcad80bbc59925f28df8c22829d9eeb5153d",
+            ),
+            model_parameter_sha256: h4_canary_digest_v1(
+                "5c8e09aabab375a2eb73aba2201b8d616a18bac13f28f74a03d93c6ff0e05c6b",
+            ),
+            native_state_sha256: h4_canary_digest_v1(
+                "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0",
+            ),
+        };
+        let decoded =
+            decode_native_train_state_payload_verified_v1(&payload, 512, 3_141_403_366, &expected)
+                .expect("retained checkpoint payload must verify");
+        let mut model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .expect("canary model");
+        model
+            .replace_parameter_snapshot_v1(&decoded.snapshot.parameters)
+            .expect("checkpoint parameters must match the canary model manifest");
+        let train_state = NativePolicyValueTrainStateV1::from_snapshot_v1(model, &decoded.snapshot)
+            .expect("retained train state");
+        assert_eq!(
+            train_state
+                .state_sha256_v1()
+                .expect("retained state digest"),
+            expected.native_state_sha256
+        );
+        let progress = NativeTrainerProgressV2 {
+            next_episode_index: 32_768,
+            successful_update_count: 512,
+            completed_episode_count: 32_768,
+            learner_physical_decision_count: 614_505 + 555_045,
+            learner_policy_step_count: 732_818 + 674_065,
+        };
+
+        let pool_bytes = fs::read(pool_root.join("pool.json")).expect("retained Pool3 document");
+        assert_eq!(
+            h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(
+                &pool_bytes
+            )),
+            "6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71"
+        );
+        let pool: crate::native_training_store_run_v2::OpponentLadderPoolContractV1 =
+            serde_json::from_slice(&pool_bytes).expect("retained Pool3 document must decode");
+        let (primary, predecessor_a, predecessor_b) =
+            crate::native_ladder_pool_resolution_v1::resolve_ladder_pool_v1(
+                &pool,
+                &pool_root.join("primary"),
+                &pool_root.join("pred-a"),
+                &pool_root.join("pred-b"),
+            )
+            .expect("retained Pool3 authorities must resolve");
+        let ladder = Arc::new(
+            LadderOpponentEngineV1::new_v1(pool, primary, predecessor_a, predecessor_b)
+                .expect("retained Pool3 engine"),
+        );
+        H4CanarySourceV1 {
+            train_state,
+            progress,
+            ladder,
+            store_root,
+            pool_root,
+        }
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_canary_config_v1(
+        numerical_backend: NativeTrainingNumericalBackendV1,
+    ) -> NativeTrainerUpdateConfigV2 {
+        h4_canary_config_with_topology_v1(numerical_backend, 2, 32)
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_canary_config_with_topology_v1(
+        numerical_backend: NativeTrainingNumericalBackendV1,
+        worker_count: usize,
+        sessions_per_worker: usize,
+    ) -> NativeTrainerUpdateConfigV2 {
+        NativeTrainerUpdateConfigV2 {
+            deck_ids: ["Rally".to_owned(), "Rally".to_owned()],
+            batch_episodes: 64,
+            max_physical_decisions: 1_024,
+            max_policy_steps: 2_048,
+            worker_count,
+            sessions_per_worker,
+            broker_batch_target: 16,
+            scheduler_timeout: Duration::from_secs(30),
+            measure_broker_service_time: false,
+            value_coefficient_bits: 0.5f32.to_bits(),
+            learning_rate_bits: 0.001f32.to_bits(),
+            numerical_backend,
+            backward_worker_limit: 1,
+        }
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_parameter_movement_l2_v1(
+        before: &NativePolicyValueTrainStateV1,
+        after: &NativePolicyValueTrainStateV1,
+    ) -> f64 {
+        let before = before.snapshot_v1().expect("before canary snapshot");
+        let after = after.snapshot_v1().expect("after canary snapshot");
+        let squared = before
+            .parameters
+            .iter()
+            .zip(&after.parameters)
+            .flat_map(|(before, after)| {
+                assert_eq!(before.name, after.name);
+                assert_eq!(before.shape, after.shape);
+                before.values.iter().zip(&after.values)
+            })
+            .map(|(before, after)| {
+                let delta = f64::from(*after) - f64::from(*before);
+                delta * delta
+            })
+            .sum::<f64>();
+        squared.sqrt()
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_h4_canary_arm_v1(
+        source: &H4CanarySourceV1,
+        policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
+        numerical_backend: NativeTrainingNumericalBackendV1,
+    ) -> H4CanaryArmRunV1 {
+        run_h4_canary_arm_with_topology_v1(source, policy_reduction, numerical_backend, 2, 32)
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_h4_canary_arm_with_topology_v1(
+        source: &H4CanarySourceV1,
+        policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
+        numerical_backend: NativeTrainingNumericalBackendV1,
+        worker_count: usize,
+        sessions_per_worker: usize,
+    ) -> H4CanaryArmRunV1 {
+        let mut trainer = NativeTrainerStateV2::from_resumed_parts_v2(
+            970_001,
+            64,
+            &source.train_state,
+            source.progress,
+        )
+        .expect("retained trainer resume");
+        trainer.set_ladder_opponent_v1(Some(Arc::clone(&source.ladder)));
+        let evidence = trainer
+            .run_even_batch_update_live_seat_credit_canary_v1(
+                &h4_canary_config_with_topology_v1(
+                    numerical_backend,
+                    worker_count,
+                    sessions_per_worker,
+                ),
+                NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                policy_reduction,
+            )
+            .expect("H4 retained-tape arm");
+        let parameter_movement_l2 =
+            h4_parameter_movement_l2_v1(&source.train_state, trainer.train_state_v1());
+        let final_state_sha256 = h4_canary_hex_v1(
+            trainer
+                .train_state_v1()
+                .state_sha256_v1()
+                .expect("final canary state digest"),
+        );
+        H4CanaryArmRunV1 {
+            evidence,
+            final_state_sha256,
+            parameter_movement_l2,
+        }
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_policy_mass_share_v1(evidence: &NativeTrainerLiveSeatCreditEvidenceV1) -> f64 {
+        let total = evidence
+            .absolute_policy_coefficient_mass
+            .iter()
+            .sum::<f64>();
+        assert!(total.is_finite() && total > 0.0);
+        evidence.absolute_policy_coefficient_mass[0] / total
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_arm_json_v1(run: &H4CanaryArmRunV1) -> serde_json::Value {
+        let mechanism = run
+            .evidence
+            .live_seat_credit
+            .as_ref()
+            .expect("explicit H4 arm evidence");
+        let outcomes = run
+            .evidence
+            .episodes
+            .iter()
+            .fold([0_u64; 3], |mut counts, episode| {
+                match episode.learner_return {
+                    1 => counts[0] += 1,
+                    0 => counts[1] += 1,
+                    -1 => counts[2] += 1,
+                    value => panic!("invalid retained terminal return {value}"),
+                }
+                counts
+            });
+        serde_json::json!({
+            "policy_reduction_identity": mechanism.policy_reduction_identity,
+            "episode_count": mechanism.episode_count,
+            "group_count": mechanism.group_count,
+            "terminal_outcomes": {"win": outcomes[0], "draw": outcomes[1], "loss": outcomes[2]},
+            "seat_weight_mass": mechanism.seat_weight_mass,
+            "raw_weighted_mean": mechanism.raw_weighted_mean,
+            "raw_weighted_population_variance": mechanism.raw_weighted_population_variance,
+            "transformed_weighted_mean": mechanism.transformed_weighted_mean,
+            "transformed_weighted_population_variance": mechanism.transformed_weighted_population_variance,
+            "absolute_policy_coefficient_mass": mechanism.absolute_policy_coefficient_mass,
+            "p0_policy_coefficient_mass_share": h4_policy_mass_share_v1(mechanism),
+            "policy_sum_bits": format!("{:08x}", run.evidence.policy_sum_bits),
+            "value_sum_bits": format!("{:08x}", run.evidence.value_sum_bits),
+            "loss_bits": format!("{:08x}", run.evidence.loss_bits),
+            "gradient_l2_norm": mechanism.gradient_l2_norm,
+            "parameter_movement_l2": run.parameter_movement_l2,
+            "changed_non_gauge_parameter_count": run.evidence.changed_non_gauge_parameter_count,
+            "update_elapsed_ns": run.evidence.update_elapsed_ns,
+            "final_state_sha256": run.final_state_sha256,
+        })
+    }
+
+    #[test]
+    #[ignore = "requires retained campaign stores"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn live_seat_credit_real_update_source_preflight_v1() {
+        let source = load_h4_canary_source_v1();
+        let mut trainer = NativeTrainerStateV2::from_resumed_parts_v2(
+            970_001,
+            64,
+            &source.train_state,
+            source.progress,
+        )
+        .expect("retained trainer resume");
+        trainer.set_ladder_opponent_v1(Some(Arc::clone(&source.ladder)));
+        assert_eq!(trainer.progress_v2(), source.progress);
+        assert_eq!(
+            h4_canary_hex_v1(trainer.train_state_v1().state_sha256_v1().unwrap()),
+            "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0"
+        );
+        validate_update_config_v2(&h4_canary_config_v1(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+        ))
+        .expect("retained canary update config");
+    }
+
+    #[test]
+    #[ignore = "requires retained campaign stores and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn live_seat_credit_real_update_tape_canary_v1() {
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let source = load_h4_canary_source_v1();
+
+        let control = run_h4_canary_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+        );
+        let equal = run_h4_canary_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMass,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+        );
+        let equal_repeat = run_h4_canary_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMass,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+        );
+        let full = run_h4_canary_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMassSeatStandardized,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+        );
+        let full_repeat = run_h4_canary_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMassSeatStandardized,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+        );
+        let full_cpu = run_h4_canary_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMassSeatStandardized,
+            NativeTrainingNumericalBackendV1::Sequential,
+        );
+
+        for arm in [&equal, &full, &full_cpu] {
+            let mechanism = arm.evidence.live_seat_credit.as_ref().unwrap();
+            assert!(mechanism
+                .seat_weight_mass
+                .iter()
+                .all(|mass| (*mass - 0.5).abs() <= 1.0e-12));
+        }
+        for arm in [&full, &full_cpu] {
+            let mechanism = arm.evidence.live_seat_credit.as_ref().unwrap();
+            for seat in 0..2 {
+                assert!(mechanism.transformed_weighted_mean[seat].abs() <= 1.0e-10);
+                if mechanism.raw_weighted_population_variance[seat] > 1.0e-18 {
+                    assert!(
+                        (mechanism.transformed_weighted_population_variance[seat] - 1.0).abs()
+                            <= 1.0e-10
+                    );
+                }
+            }
+        }
+
+        for arm in [&equal, &full, &equal_repeat, &full_repeat, &full_cpu] {
+            assert_eq!(arm.evidence.episodes, control.evidence.episodes);
+            assert_eq!(
+                arm.evidence.selected_outputs,
+                control.evidence.selected_outputs
+            );
+            assert_eq!(arm.evidence.physical_terms, control.evidence.physical_terms);
+        }
+        assert_eq!(
+            without_observed_timing_v2(equal.evidence.clone()),
+            without_observed_timing_v2(equal_repeat.evidence.clone())
+        );
+        assert_eq!(equal.final_state_sha256, equal_repeat.final_state_sha256);
+        assert_eq!(
+            equal.parameter_movement_l2,
+            equal_repeat.parameter_movement_l2
+        );
+        assert_eq!(
+            without_observed_timing_v2(full.evidence.clone()),
+            without_observed_timing_v2(full_repeat.evidence.clone())
+        );
+        assert_eq!(full.final_state_sha256, full_repeat.final_state_sha256);
+        assert_eq!(
+            full.parameter_movement_l2,
+            full_repeat.parameter_movement_l2
+        );
+
+        assert_eq!(
+            full.evidence.policy_sum_bits,
+            full_cpu.evidence.policy_sum_bits
+        );
+        assert_eq!(
+            full.evidence.value_sum_bits,
+            full_cpu.evidence.value_sum_bits
+        );
+        assert_eq!(full.evidence.loss_bits, full_cpu.evidence.loss_bits);
+        let full_mechanism = full.evidence.live_seat_credit.as_ref().unwrap();
+        let cpu_mechanism = full_cpu.evidence.live_seat_credit.as_ref().unwrap();
+        assert_eq!(
+            full_mechanism.absolute_policy_coefficient_mass,
+            cpu_mechanism.absolute_policy_coefficient_mass
+        );
+        let cuda_gradient_norm = full_mechanism.gradient_l2_norm.unwrap();
+        let cpu_gradient_norm = cpu_mechanism.gradient_l2_norm.unwrap();
+        assert!(cuda_gradient_norm.is_finite() && cpu_gradient_norm.is_finite());
+
+        let control_share =
+            h4_policy_mass_share_v1(control.evidence.live_seat_credit.as_ref().unwrap());
+        let full_share = h4_policy_mass_share_v1(full_mechanism);
+        let control_deviation = (control_share - 0.5).abs();
+        let full_deviation = (full_share - 0.5).abs();
+        let coefficient_gate = if control_deviation >= 0.01 {
+            assert!(
+                full_deviation <= control_deviation * 0.5 + 1.0e-12,
+                "full deviation {full_deviation} did not halve control {control_deviation}"
+            );
+            "pass"
+        } else {
+            "uninformative"
+        };
+
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-h4-live-seat-credit-real-update-canary/v1",
+            "status": "pass",
+            "nonclaims": ["not-strength-evidence", "not-promotable", "single-retained-update"],
+            "source": {
+                "store_root": source.store_root,
+                "pool_root": source.pool_root,
+                "base_seed": 970001_u64,
+                "first_episode_index": 32768_u64,
+                "batch_episodes": 64_u64,
+                "checkpoint_generation": 512_u64,
+                "checkpoint_state_sha256": "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0",
+                "run_sha256": "2307caf5a0093bf3f6f9d3673788eac1d73bcd248bfb6fcb3af785a596304cab",
+                "pool_sha256": "6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71",
+                "gpu_ordinal": 1_u64,
+            },
+            "arms": {
+                "control_cuda": h4_arm_json_v1(&control),
+                "equal_episode_mass_cuda": h4_arm_json_v1(&equal),
+                "equal_episode_mass_seat_standardized_cuda": h4_arm_json_v1(&full),
+                "equal_episode_mass_seat_standardized_cpu": h4_arm_json_v1(&full_cpu),
+            },
+            "exact_repeat": {
+                "equal_episode_mass": "bit-identical-excluding-observed-timing",
+                "equal_episode_mass_seat_standardized": "bit-identical-excluding-observed-timing",
+            },
+            "cpu_cuda": {
+                "policy_value_loss_bits": "exact",
+                "selected_outputs_and_physical_terms": "exact",
+                "cuda_gradient_l2_norm": cuda_gradient_norm,
+                "cpu_gradient_l2_norm": cpu_gradient_norm,
+                "gradient_l2_relative_delta": (cuda_gradient_norm - cpu_gradient_norm).abs() / cpu_gradient_norm.max(1.0e-30),
+                "cuda_parameter_movement_l2": full.parameter_movement_l2,
+                "cpu_parameter_movement_l2": full_cpu.parameter_movement_l2,
+                "named_gradient_envelope_qualified_by": "frozen_policy_bridge_matches_cpu_reference_within_named_gradient_envelope",
+            },
+            "coefficient_mass_effect_gate": {
+                "status": coefficient_gate,
+                "control_p0_share": control_share,
+                "full_p0_share": full_share,
+                "control_deviation_from_half": control_deviation,
+                "full_deviation_from_half": full_deviation,
+            },
+        });
+        let output_root =
+            h4_canary_path_v1("MTG_KERNEL_H4_CANARY_OUTPUT_ROOT", H4_CANARY_OUTPUT_ROOT_V1);
+        fs::create_dir_all(&output_root).expect("create H4 canary output root");
+        let output_path = output_root.join("result.json");
+        let output = serde_json::to_vec_pretty(&report).expect("serialize H4 canary report");
+        fs::write(&output_path, &output).expect("write H4 canary report");
+        println!("H4_CANARY_RESULT {}", output_path.display());
+        println!("{}", String::from_utf8(output).unwrap());
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_validate_live_arm_invariants_v1(
+        policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
+        mechanism: &NativeTrainerLiveSeatCreditEvidenceV1,
+    ) {
+        assert!(mechanism
+            .absolute_policy_coefficient_mass
+            .iter()
+            .all(|value| value.is_finite() && *value >= 0.0));
+        assert!(mechanism
+            .gradient_l2_norm
+            .is_some_and(|value| value.is_finite() && value >= 0.0));
+        if policy_reduction.uses_equal_episode_mass_v1() {
+            assert!(mechanism
+                .seat_weight_mass
+                .iter()
+                .all(|mass| (*mass - 0.5).abs() <= 1.0e-12));
+        }
+        if policy_reduction.uses_seat_standardization_v1() {
+            for seat in 0..2 {
+                assert!(mechanism.transformed_weighted_mean[seat].abs() <= 1.0e-10);
+                let expected_variance =
+                    if mechanism.raw_weighted_population_variance[seat] <= 1.0e-18 {
+                        0.0
+                    } else {
+                        1.0
+                    };
+                assert!(
+                    (mechanism.transformed_weighted_population_variance[seat] - expected_variance)
+                        .abs()
+                        <= 1.0e-10
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires retained campaign stores and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn live_seat_credit_topology_throughput_screen_v1() {
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let source = load_h4_canary_source_v1();
+        let warmup = run_h4_canary_arm_with_topology_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            2,
+            32,
+        );
+        let topologies = [(1_usize, 32_usize), (2, 32), (4, 16)];
+        let reductions = [
+            NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMass,
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMassSeatStandardized,
+        ];
+        let mut rows = Vec::new();
+        for (worker_count, sessions_per_worker) in topologies {
+            let mut arms = Vec::new();
+            let mut total_update_elapsed_ns = 0_u64;
+            for policy_reduction in reductions {
+                let arm = run_h4_canary_arm_with_topology_v1(
+                    &source,
+                    policy_reduction,
+                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                    worker_count,
+                    sessions_per_worker,
+                );
+                let mechanism = arm.evidence.live_seat_credit.as_ref().unwrap();
+                h4_validate_live_arm_invariants_v1(policy_reduction, mechanism);
+                total_update_elapsed_ns = total_update_elapsed_ns
+                    .checked_add(arm.evidence.update_elapsed_ns)
+                    .unwrap();
+                arms.push(h4_arm_json_v1(&arm));
+            }
+            let total_seconds = total_update_elapsed_ns as f64 / 1.0e9;
+            rows.push(serde_json::json!({
+                "worker_count": worker_count,
+                "sessions_per_worker": sessions_per_worker,
+                "logical_actor_count": worker_count * sessions_per_worker,
+                "broker_batch_target": 16,
+                "arms": arms,
+                "total_update_elapsed_ns": total_update_elapsed_ns,
+                "aggregate_games_per_second": 192.0 / total_seconds,
+            }));
+        }
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-h4-live-seat-credit-throughput-screen/v1",
+            "status": "complete",
+            "nonclaims": ["not-strength-evidence", "not-promotable"],
+            "source_checkpoint_state_sha256": "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0",
+            "base_seed": 970001_u64,
+            "first_episode_index": 32768_u64,
+            "batch_episodes_per_arm": 64_u64,
+            "gpu_ordinal": 1_u64,
+            "cuda_warmup_update_elapsed_ns": warmup.evidence.update_elapsed_ns,
+            "topologies": rows,
+        });
+        let output_root = h4_canary_path_v1(
+            "MTG_KERNEL_H4_DEVELOPMENT_OUTPUT_ROOT",
+            H4_DEVELOPMENT_OUTPUT_ROOT_V1,
+        );
+        fs::create_dir_all(&output_root).expect("create H4 development output root");
+        let output_path = output_root.join("throughput-screen.json");
+        let output = serde_json::to_vec_pretty(&report).expect("serialize H4 throughput report");
+        fs::write(&output_path, &output).expect("write H4 throughput report");
+        println!("H4_THROUGHPUT_RESULT {}", output_path.display());
+        println!("{}", String::from_utf8(output).unwrap());
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_development_topology_v1() -> (usize, usize) {
+        let worker_count = std::env::var("MTG_KERNEL_H4_WORKER_COUNT")
+            .ok()
+            .map(|value| {
+                value
+                    .parse::<usize>()
+                    .expect("H4 worker count must be an integer")
+            })
+            .unwrap_or(2);
+        let sessions_per_worker = match worker_count {
+            1 | 2 => 32,
+            4 => 16,
+            _ => panic!("H4 worker count must be 1, 2, or 4"),
+        };
+        (worker_count, sessions_per_worker)
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn h4_sampled_policy_entropy_estimate_v1(evidence: &NativeTrainerUpdateEvidenceV2) -> f64 {
+        assert!(!evidence.selected_outputs.is_empty());
+        let total = evidence
+            .selected_outputs
+            .iter()
+            .map(|output| -f64::from(f32::from_bits(output.selected_log_probability_bits)))
+            .sum::<f64>();
+        let estimate = total / evidence.selected_outputs.len() as f64;
+        assert!(estimate.is_finite() && estimate >= 0.0);
+        estimate
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_h4_development_arm_v1(
+        source: &H4CanarySourceV1,
+        policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
+        worker_count: usize,
+        sessions_per_worker: usize,
+    ) -> serde_json::Value {
+        const UPDATE_COUNT: u64 = 32;
+        let mut trainer = NativeTrainerStateV2::from_resumed_parts_v2(
+            970_001,
+            64,
+            &source.train_state,
+            source.progress,
+        )
+        .expect("retained development trainer resume");
+        trainer.set_ladder_opponent_v1(Some(Arc::clone(&source.ladder)));
+        let config = h4_canary_config_with_topology_v1(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            worker_count,
+            sessions_per_worker,
+        );
+        let mut cumulative_outcomes = [0_u64; 3];
+        let mut cumulative_outcomes_by_seat = [[0_u64; 3]; 2];
+        let mut total_update_elapsed_ns = 0_u64;
+        let mut updates = Vec::with_capacity(UPDATE_COUNT as usize);
+        for update_ordinal in 0..UPDATE_COUNT {
+            let evidence = trainer
+                .run_even_batch_update_live_seat_credit_canary_v1(
+                    &config,
+                    NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                    policy_reduction,
+                )
+                .expect("H4 development update");
+            let expected_first_episode = source.progress.next_episode_index + update_ordinal * 64;
+            assert_eq!(evidence.first_episode_index, expected_first_episode);
+            assert_eq!(evidence.episode_count, 64);
+            assert_eq!(
+                evidence.episodes.first().unwrap().episode_index,
+                expected_first_episode
+            );
+            assert_eq!(
+                evidence.episodes.last().unwrap().episode_index,
+                expected_first_episode + 63
+            );
+            let mechanism = evidence.live_seat_credit.as_ref().unwrap();
+            h4_validate_live_arm_invariants_v1(policy_reduction, mechanism);
+            let mut update_outcomes = [0_u64; 3];
+            let mut update_outcomes_by_seat = [[0_u64; 3]; 2];
+            for episode in &evidence.episodes {
+                let outcome_index = match episode.learner_return {
+                    1 => 0,
+                    0 => 1,
+                    -1 => 2,
+                    value => panic!("invalid development terminal return {value}"),
+                };
+                let seat_index = live_seat_index_v1(episode.learner_seat);
+                update_outcomes[outcome_index] += 1;
+                update_outcomes_by_seat[seat_index][outcome_index] += 1;
+                cumulative_outcomes[outcome_index] += 1;
+                cumulative_outcomes_by_seat[seat_index][outcome_index] += 1;
+            }
+            let value_sum = f64::from(f32::from_bits(evidence.value_sum_bits));
+            let value_mse = value_sum / evidence.learner_group_count as f64;
+            assert!(value_mse.is_finite() && value_mse >= 0.0);
+            let sampled_policy_entropy_estimate_nats =
+                h4_sampled_policy_entropy_estimate_v1(&evidence);
+            let parameter_movement_l2 =
+                h4_parameter_movement_l2_v1(&source.train_state, trainer.train_state_v1());
+            assert!(parameter_movement_l2.is_finite() && parameter_movement_l2 > 0.0);
+            let train_state_sha256 = h4_canary_hex_v1(
+                trainer
+                    .train_state_v1()
+                    .state_sha256_v1()
+                    .expect("development state digest"),
+            );
+            total_update_elapsed_ns = total_update_elapsed_ns
+                .checked_add(evidence.update_elapsed_ns)
+                .unwrap();
+            updates.push(serde_json::json!({
+                "update_ordinal": update_ordinal + 1,
+                "first_episode_index": evidence.first_episode_index,
+                "terminal_outcomes": {"win": update_outcomes[0], "draw": update_outcomes[1], "loss": update_outcomes[2]},
+                "terminal_outcomes_by_seat": {
+                    "p0": {"win": update_outcomes_by_seat[0][0], "draw": update_outcomes_by_seat[0][1], "loss": update_outcomes_by_seat[0][2]},
+                    "p1": {"win": update_outcomes_by_seat[1][0], "draw": update_outcomes_by_seat[1][1], "loss": update_outcomes_by_seat[1][2]},
+                },
+                "learner_group_count": evidence.learner_group_count,
+                "learner_policy_step_count": evidence.learner_policy_step_count,
+                "absolute_policy_coefficient_mass": mechanism.absolute_policy_coefficient_mass,
+                "p0_policy_coefficient_mass_share": h4_policy_mass_share_v1(mechanism),
+                "seat_weight_mass": mechanism.seat_weight_mass,
+                "raw_weighted_mean": mechanism.raw_weighted_mean,
+                "raw_weighted_population_variance": mechanism.raw_weighted_population_variance,
+                "transformed_weighted_mean": mechanism.transformed_weighted_mean,
+                "transformed_weighted_population_variance": mechanism.transformed_weighted_population_variance,
+                "value_mse": value_mse,
+                "sampled_policy_entropy_estimate_nats": sampled_policy_entropy_estimate_nats,
+                "gradient_l2_norm": mechanism.gradient_l2_norm,
+                "parameter_movement_l2_from_initial": parameter_movement_l2,
+                "policy_sum_bits": format!("{:08x}", evidence.policy_sum_bits),
+                "value_sum_bits": format!("{:08x}", evidence.value_sum_bits),
+                "loss_bits": format!("{:08x}", evidence.loss_bits),
+                "model_digest_after": evidence.model_digest_after,
+                "train_state_sha256": train_state_sha256,
+                "update_elapsed_ns": evidence.update_elapsed_ns,
+            }));
+        }
+        assert_eq!(cumulative_outcomes.iter().sum::<u64>(), UPDATE_COUNT * 64);
+        assert_eq!(
+            trainer.progress_v2().successful_update_count,
+            512 + UPDATE_COUNT
+        );
+        assert_eq!(
+            trainer.progress_v2().next_episode_index,
+            32_768 + UPDATE_COUNT * 64
+        );
+        let final_train_state_sha256 = h4_canary_hex_v1(
+            trainer
+                .train_state_v1()
+                .state_sha256_v1()
+                .expect("final development state digest"),
+        );
+        serde_json::json!({
+            "policy_reduction_identity": policy_reduction.identity_v1(),
+            "update_count": UPDATE_COUNT,
+            "terminal_outcomes": {"win": cumulative_outcomes[0], "draw": cumulative_outcomes[1], "loss": cumulative_outcomes[2]},
+            "terminal_outcomes_by_seat": {
+                "p0": {"win": cumulative_outcomes_by_seat[0][0], "draw": cumulative_outcomes_by_seat[0][1], "loss": cumulative_outcomes_by_seat[0][2]},
+                "p1": {"win": cumulative_outcomes_by_seat[1][0], "draw": cumulative_outcomes_by_seat[1][1], "loss": cumulative_outcomes_by_seat[1][2]},
+            },
+            "total_update_elapsed_ns": total_update_elapsed_ns,
+            "aggregate_games_per_second": (UPDATE_COUNT * 64) as f64 / (total_update_elapsed_ns as f64 / 1.0e9),
+            "final_train_state_sha256": final_train_state_sha256,
+            "updates": updates,
+        })
+    }
+
+    #[test]
+    #[ignore = "requires retained campaign stores and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn live_seat_credit_matched_32_update_development_v1() {
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let (worker_count, sessions_per_worker) = h4_development_topology_v1();
+        let source = load_h4_canary_source_v1();
+        let warmup = run_h4_canary_arm_with_topology_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            worker_count,
+            sessions_per_worker,
+        );
+        let control = run_h4_development_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            worker_count,
+            sessions_per_worker,
+        );
+        let equal = run_h4_development_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMass,
+            worker_count,
+            sessions_per_worker,
+        );
+        let full = run_h4_development_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMassSeatStandardized,
+            worker_count,
+            sessions_per_worker,
+        );
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-h4-live-seat-credit-matched-development/v1",
+            "status": "stable-complete",
+            "nonclaims": ["not-formal-strength-evidence", "not-promotable", "development-roots"],
+            "source": {
+                "checkpoint_state_sha256": "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0",
+                "run_sha256": "2307caf5a0093bf3f6f9d3673788eac1d73bcd248bfb6fcb3af785a596304cab",
+                "pool_sha256": "6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71",
+                "base_seed": 970001_u64,
+                "first_episode_index": 32768_u64,
+                "updates_per_arm": 32_u64,
+                "batch_episodes": 64_u64,
+                "value_coefficient_bits": "3f000000",
+                "learning_rate_bits": "3a83126f",
+                "gpu_ordinal": 1_u64,
+            },
+            "topology": {
+                "worker_count": worker_count,
+                "sessions_per_worker": sessions_per_worker,
+                "logical_actor_count": worker_count * sessions_per_worker,
+                "broker_batch_target": 16_u64,
+                "cuda_warmup_update_elapsed_ns": warmup.evidence.update_elapsed_ns,
+            },
+            "arms": {
+                "control": control,
+                "equal_episode_mass": equal,
+                "equal_episode_mass_seat_standardized": full,
+            },
+        });
+        let output_root = h4_canary_path_v1(
+            "MTG_KERNEL_H4_DEVELOPMENT_OUTPUT_ROOT",
+            H4_DEVELOPMENT_OUTPUT_ROOT_V1,
+        );
+        fs::create_dir_all(&output_root).expect("create H4 development output root");
+        let output_path = output_root.join("matched-32-update-trial.json");
+        let output = serde_json::to_vec_pretty(&report).expect("serialize H4 development report");
+        fs::write(&output_path, &output).expect("write H4 development report");
+        println!("H4_DEVELOPMENT_RESULT {}", output_path.display());
+        println!("{}", String::from_utf8(output).unwrap());
     }
 
     struct CorruptedSnapshotPayloadV1 {

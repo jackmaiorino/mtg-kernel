@@ -745,6 +745,80 @@ impl ExperimentalDeviceTrainStateV1 {
         })
     }
 
+    /// H4 treatment sibling of [`Self::chunk_backward_v1`]. The supplied
+    /// group-aligned tensor is the complete frozen policy advantage before the
+    /// whole-update group mean. Value targets and their flat-group reduction
+    /// remain the canonical terminal-return objective.
+    pub(crate) fn chunk_backward_with_frozen_policy_v1(
+        &self,
+        accumulator: &mut burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
+        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+        plan: &DenseGroupLossPlanV1,
+        frozen_policy_advantages: Tensor<CudaAutodiffBackendV1, 1>,
+        value_coefficient: f32,
+        normalization_group_count: f32,
+    ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
+        if self.wide {
+            return Err(training_error(
+                "frozen policy objective is not supported by the wide model",
+            ));
+        }
+        let (logits, values) = self.model.forward(batch);
+        let logit_outputs = logits.clone().inner();
+        let value_outputs = values.clone().inner();
+        let loss = dense_group_loss_with_frozen_policy_v1(
+            logits,
+            values,
+            plan,
+            frozen_policy_advantages,
+            value_coefficient,
+            normalization_group_count,
+        )?;
+        let raw_gradients = loss.backward();
+        let mut gradients = GradientsParams::from_grads(raw_gradients, &self.model);
+        if gradients.len() != PARAMETER_TENSOR_COUNT_V1 {
+            return Err(training_error(format!(
+                "CUDA frozen-policy chunk gradient tensor count mismatch: {} != {PARAMETER_TENSOR_COUNT_V1}",
+                gradients.len()
+            )));
+        }
+        let gauge_parameter = self
+            .model
+            .scorer
+            .output
+            .bias
+            .as_ref()
+            .ok_or_else(|| training_error("scorer output has no bias"))?;
+        let gauge_gradient = gradients
+            .remove::<CudaBackendV1, 1>(gauge_parameter.id)
+            .ok_or_else(|| training_error("scorer output bias gradient is missing"))?;
+        let readback = Transaction::<CudaBackendV1>::default()
+            .register(logit_outputs)
+            .register(value_outputs)
+            .register(gauge_gradient.clone());
+        let readback = readback.try_execute()?;
+        let readback_count = readback.len();
+        let [logit_data, value_data, gauge_data]: [TensorData; 3] =
+            readback.try_into().map_err(|_| {
+                training_error(format!(
+                    "CUDA frozen-policy chunk readback cardinality mismatch: {readback_count} != 3"
+                ))
+            })?;
+        let logit_outputs = logit_data.into_vec::<f32>()?;
+        let value_outputs = value_data.into_vec::<f32>()?;
+        let chunk_raw = gauge_data.into_vec::<f32>()?;
+        let chunk_raw = *chunk_raw
+            .first()
+            .ok_or_else(|| training_error("scorer output bias gradient is empty"))?;
+        gradients.register(gauge_parameter.id, gauge_gradient);
+        accumulator.accumulate(&self.model, gradients);
+        Ok(ChunkBackwardOutputsV1 {
+            raw_gauge_residual: chunk_raw,
+            logit_outputs,
+            value_outputs,
+        })
+    }
+
     /// Canonicalizes the accumulated gauge gradient to exact zero, applies one
     /// Adam step over the accumulated gradients, and commits the candidate
     /// model and moments.
@@ -1733,6 +1807,51 @@ pub(crate) fn build_dense_group_loss_plan_v1(
     })
 }
 
+pub(crate) fn build_dense_group_loss_plan_with_frozen_policy_v1(
+    host: &HostPackingWorkspace,
+    selected_action_indices: &[usize],
+    substep_group_indices: &[usize],
+    group_first_substeps: &[usize],
+    terminal_returns: &[i8],
+    frozen_policy_advantages: &[f32],
+    device: &burn_cuda::CudaDevice,
+    #[cfg(test)] entropy_coefficient: EntropyCoefficientAuthorityV1,
+) -> Result<(DenseGroupLossPlanV1, Tensor<CudaAutodiffBackendV1, 1>), Box<dyn Error>> {
+    if frozen_policy_advantages.len() != terminal_returns.len()
+        || frozen_policy_advantages
+            .iter()
+            .any(|advantage| !advantage.is_finite())
+    {
+        return Err(training_error(
+            "frozen policy objective cardinality/finiteness mismatch",
+        ));
+    }
+    #[cfg(test)]
+    if entropy_coefficient != EntropyCoefficientAuthorityV1::Zero {
+        return Err(training_error(
+            "frozen policy objective cannot be combined with entropy",
+        ));
+    }
+    let plan = build_dense_group_loss_plan_v1(
+        host,
+        selected_action_indices,
+        substep_group_indices,
+        group_first_substeps,
+        terminal_returns,
+        device,
+        #[cfg(test)]
+        entropy_coefficient,
+    )?;
+    let advantages = Tensor::from_data(
+        TensorData::new(
+            frozen_policy_advantages.to_vec(),
+            [frozen_policy_advantages.len()],
+        ),
+        device,
+    );
+    Ok((plan, advantages))
+}
+
 /// Reinterprets an autodiff-typed device batch on the inner backend. Tensor
 /// handles are shared, not copied; the returned batch simply cannot record an
 /// autodiff graph.
@@ -1797,6 +1916,54 @@ fn dense_group_loss_v1(
     let advantage = plan.targets.clone() - group_values.clone().detach();
     let policy_sum = joint_log_probabilities
         .mul(advantage)
+        .mul_scalar(-1.0)
+        .sum();
+    let value_error = group_values - plan.targets.clone();
+    let value_sum = value_error.clone().mul(value_error).sum();
+    Ok(
+        (policy_sum + value_sum.mul_scalar(value_coefficient))
+            .div_scalar(normalization_group_count),
+    )
+}
+
+fn dense_group_loss_with_frozen_policy_v1(
+    logits: Tensor<CudaAutodiffBackendV1, 1>,
+    values: Tensor<CudaAutodiffBackendV1, 1>,
+    plan: &DenseGroupLossPlanV1,
+    frozen_policy_advantages: Tensor<CudaAutodiffBackendV1, 1>,
+    value_coefficient: f32,
+    normalization_group_count: f32,
+) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
+    if values.dims()[0] != plan.substeps
+        || frozen_policy_advantages.dims()[0] != plan.group_count
+        || !value_coefficient.is_finite()
+        || value_coefficient <= 0.0
+        || !normalization_group_count.is_finite()
+        || normalization_group_count < plan.group_count as f32
+    {
+        return Err(training_error(
+            "frozen policy dense group loss shape/parameter mismatch",
+        ));
+    }
+    let padded = logits
+        .clone()
+        .select(0, plan.pad_gather.clone())
+        .reshape([plan.substeps, plan.max_actions])
+        + plan.pad_mask.clone();
+    let row_max = padded.clone().max_dim(1).detach();
+    let log_sum_exp = (padded - row_max.clone()).exp().sum_dim(1).log() + row_max;
+    let selected_logits = logits.select(0, plan.selected_gather.clone());
+    let selected_log_probabilities = selected_logits - log_sum_exp.squeeze_dim::<1>(1);
+    let joint_log_probabilities = Tensor::zeros([plan.group_count], &plan.targets.device())
+        .scatter(
+            0,
+            plan.group_scatter.clone(),
+            selected_log_probabilities,
+            IndexingUpdateOp::Add,
+        );
+    let group_values = values.select(0, plan.group_first_gather.clone());
+    let policy_sum = joint_log_probabilities
+        .mul(frozen_policy_advantages)
         .mul_scalar(-1.0)
         .sum();
     let value_error = group_values - plan.targets.clone();
@@ -4493,6 +4660,151 @@ mod tests {
             .values
             .iter()
             .all(|value| value.to_bits() == 0));
+        super::bridge::clear_resident_device_state_for_test_v1();
+    }
+
+    #[test]
+    #[ignore = "requires a CUDA device, run explicitly"]
+    fn frozen_policy_bridge_matches_cpu_reference_within_named_gradient_envelope() {
+        use crate::native_policy_train_step_v1::NativePolicyFrozenObjectiveTermV1;
+
+        let native_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut seed_state = NativePolicyValueTrainStateV1::new_v1(native_model).unwrap();
+        let (manifest_path, payload_path) = common_model_snapshot_paths_v1();
+        load_common_model_snapshot_v1(&manifest_path, &payload_path, &mut seed_state).unwrap();
+        let seed_snapshot = seed_state.snapshot_v1().unwrap();
+        let cases = load_real_fixture_cases().unwrap();
+        let group_sizes = [1_usize, 2, 1, 3];
+        let substep_total = group_sizes.iter().sum::<usize>();
+        struct ExpectedBitsV1 {
+            case_index: usize,
+            selected: usize,
+            logit_bits: Vec<u32>,
+            value_bits: u32,
+        }
+        let expected = (0..substep_total)
+            .map(|flat| {
+                let case_index = flat % cases.len();
+                let output = seed_state
+                    .model_v1()
+                    .forward_v1(cases[case_index].view())
+                    .unwrap();
+                ExpectedBitsV1 {
+                    case_index,
+                    selected: flat % output.logits.len(),
+                    logit_bits: output.logits.iter().map(|value| value.to_bits()).collect(),
+                    value_bits: output.value.to_bits(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut group_substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = Vec::new();
+        let mut flat = 0_usize;
+        for size in group_sizes {
+            let mut substeps = Vec::new();
+            for _ in 0..size {
+                let entry = &expected[flat];
+                substeps.push(NativePolicySubstepV1 {
+                    forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                        cases[entry.case_index].view(),
+                    )),
+                    selected_action_index: entry.selected,
+                    expected_raw_action_logit_bits: &entry.logit_bits,
+                    expected_value_bits: entry.value_bits,
+                });
+                flat += 1;
+            }
+            group_substeps.push(substeps);
+        }
+        let terminal_returns = [1_i8, -1, 0, 1];
+        let groups = group_substeps
+            .iter()
+            .zip(terminal_returns)
+            .map(
+                |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
+                    substeps,
+                    terminal_return,
+                },
+            )
+            .collect::<Vec<_>>();
+        let frozen_advantages = [-1.25_f32, 0.5, 0.0, 1.75];
+        let terms = frozen_advantages
+            .into_iter()
+            .zip(terminal_returns)
+            .map(
+                |(policy_advantage, terminal_return)| NativePolicyFrozenObjectiveTermV1 {
+                    policy_advantage,
+                    value_target: f32::from(terminal_return),
+                    value_weight: 1.0,
+                },
+            )
+            .collect::<Vec<_>>();
+
+        let mut cpu_state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+            seed_state.model_v1().clone(),
+            &seed_snapshot,
+        )
+        .unwrap();
+        let mut cuda_state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+            seed_state.model_v1().clone(),
+            &seed_snapshot,
+        )
+        .unwrap();
+        let cpu = cpu_state
+            .train_step_with_frozen_objective_v1(
+                &groups,
+                &terms,
+                VALUE_COEFFICIENT_V1,
+                BENCHMARK_LEARNING_RATE_V1,
+            )
+            .unwrap();
+        super::bridge::clear_resident_device_state_for_test_v1();
+        let cuda = super::bridge::train_step_cuda_burn_dense_with_frozen_policy_capture_named_gradients_v1(
+            &mut cuda_state,
+            &groups,
+            &terms,
+            VALUE_COEFFICIENT_V1,
+            BENCHMARK_LEARNING_RATE_V1,
+        )
+        .unwrap();
+
+        assert_eq!(cpu.policy_sum.to_bits(), cuda.policy_sum.to_bits());
+        assert_eq!(cpu.value_sum.to_bits(), cuda.value_sum.to_bits());
+        assert_eq!(cpu.loss.to_bits(), cuda.loss.to_bits());
+        assert_eq!(cpu.selected_outputs, cuda.selected_outputs);
+        assert_eq!(cpu.physical_terms, cuda.physical_terms);
+        compare_named_tensors_v1(
+            &cpu.gradients,
+            &cuda.gradients,
+            GRADIENT_ABSOLUTE_TOLERANCE_V1,
+            GRADIENT_RELATIVE_TOLERANCE_V1,
+        )
+        .unwrap();
+        let cpu_after = cpu_state.snapshot_v1().unwrap();
+        let cuda_after = cuda_state.snapshot_v1().unwrap();
+        compare_named_tensors_v1(
+            &cpu_after.parameters,
+            &cuda_after.parameters,
+            UPDATE_ABSOLUTE_TOLERANCE_V1,
+            UPDATE_RELATIVE_TOLERANCE_V1,
+        )
+        .unwrap();
+        compare_named_tensors_v1(
+            &cpu_after.first_moments,
+            &cuda_after.first_moments,
+            UPDATE_ABSOLUTE_TOLERANCE_V1,
+            UPDATE_RELATIVE_TOLERANCE_V1,
+        )
+        .unwrap();
+        compare_named_tensors_v1(
+            &cpu_after.second_moments,
+            &cuda_after.second_moments,
+            UPDATE_ABSOLUTE_TOLERANCE_V1,
+            UPDATE_RELATIVE_TOLERANCE_V1,
+        )
+        .unwrap();
+        assert_eq!(cuda.scorer_bias_gauge.canonical_gradient.to_bits(), 0);
         super::bridge::clear_resident_device_state_for_test_v1();
     }
 

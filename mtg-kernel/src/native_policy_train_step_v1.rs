@@ -1309,6 +1309,30 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    /// Profiled live-training sibling of [`Self::train_step_with_frozen_objective_v1`].
+    /// The caller still freezes every policy coefficient and value target; this
+    /// entry point only admits the ordinary packed-forward recompute topology and
+    /// phase recorder used by the production trainer.
+    pub(crate) fn train_step_with_frozen_objective_profiled_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        terms: &[NativePolicyFrozenObjectiveTermV1],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_with_recompute_workers_inner_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            BackwardExecutionV1::Sequential,
+            TrainingObjectiveV1::FrozenWeighted(terms),
+            phase_recorder,
+        )
+    }
+
     fn train_step_with_recompute_workers_inner_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
