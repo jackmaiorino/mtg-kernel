@@ -83,6 +83,18 @@ The extension passes only if all conditions hold:
 
 An extension pass authorizes a larger strength validation. Any extension failure closes this one-step selector and moves the project to the larger recurrent end-to-end learner. These thresholds were fixed after observing only the rapid panel and before touching seed `1710001`.
 
+## Extension result
+
+The 24-task topology screen completed 12 matched pairs, 48 total simulated games, in `121.64` seconds, or `0.3946` games per second. Peak observed Java working set was `29.41` GB. All tasks succeeded, so batch size 12 was selected.
+
+The independent extension completed all 64 matched pairs in `588.20` seconds with zero exclusions. Treatment won 51 of 128 candidate games and control won 50. Paired outcomes were 1 gain, 0 losses, and 127 ties, with seat net `+1` at P0 and `0` at P1. The required gain margin was `+4`, so the strength gate failed.
+
+Mechanism activity was sufficient to interpret the result. Treatment overrode 37 P0 decisions and 13 P1 decisions across 336 and 121 eligible roots. Another 801 P0 and 459 P1 roots were correctly excluded by the candidate-turn boundary. All four-sample sets were distinct and every diagnostic contract passed.
+
+The observed `+1` is directionally favorable but far below the frozen advancement threshold and comes from one changed result among 128 paired games. It does not justify another search calibration or strength panel. The one-step bounded-value selector is closed. The next path is a larger recurrent end-to-end structured learner whose policy and value are trained jointly, while terminal win, draw, or loss remains the only reward and promotion measure.
+
+Extension report: `D:\mtg-kernel-bounded-history-value-search-v1-extension\report.json`, SHA-256 `985109b2cff4a9a195a57215e4ca1f77fb197812e221a3dfd6710e600376fcb1`.
+
 ## Nonclaims
 
 - This is a rapid mechanism screen, not evidence of pro-level play.
