@@ -40,4 +40,19 @@ Only a later fresh natural terminal win/loss gate could establish strength.
 
 ## Result
 
-Pending.
+The five-arm screen completed in 103.27 seconds and rejected every arm without
+touching residue 0. The best fit was beta `0.3`, epoch 2: selection NLL improved
+2.97 percent and movement was safe at mean TV `0.026538`, p90 TV `0.077813`, and
+maximum legal-action log-probability change `0.200000`. Top-1 changed by only
+`0.0113` percentage points. Larger KL coefficients reduced movement further but
+did not improve the fit tradeoff. Report SHA-256 is
+`d9f2bfa7d504ea2afa7690f390d08c63a92b2d7e42537d66a894b33f22b23387`.
+
+A direct parent-margin audit confirmed that the movement gate is feasible in
+principle: at budget `0.20`, 9.99 percentage points of selection error mass is
+legally flippable, while the cheapest 3 percentage points require only about
+`0.000202` mean-TV mass. The failure therefore reflects this disagreement-only
+learning objective, not a mathematical conflict in the gate. Agreement labels
+appear necessary for learning the CP7 policy representation. This exact sparse
+objective is closed. The next rapid screen retains full CP7 cross entropy while
+using a much stronger, correctly scaled parent-KL regularizer.
