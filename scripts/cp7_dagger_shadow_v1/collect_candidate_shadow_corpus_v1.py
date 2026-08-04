@@ -21,6 +21,7 @@ SCHEMA = "mtg-kernel-cp7-candidate-shadow-corpus/v1"
 TEACHER_SCHEMA = "xmage-rally-cp7-counterfactual-teacher-jsonl/v1"
 TEACHER_SOURCE = "xmage_rally_shadow_cp7_candidate_priority"
 OUTCOME_CONTRACT_PREFIX = "mtg-kernel-xmage-cp7-outcome-jsonl/"
+OPPONENT_TEACHER_CONTRACT_PREFIX = "mtg-kernel-xmage-cp7-teacher-jsonl/"
 PARENT_IDENTITY = {
     "adam_step": "1",
     "manifest": "706b3aa80ec7a3c067d458fef06bb2237320543f202fb2349c5cb885975fdbbb",
@@ -115,6 +116,47 @@ def _validate_task_outputs(
         (pair, pair * 2 + seat, f"p{seat}")
         for pair in range(first_pair, first_pair + pair_count)
         for seat in (0, 1)
+    }
+
+
+def _validate_opponent_teacher_output(
+    path: Path,
+    first_pair: int,
+    pair_count: int,
+) -> dict[str, Any]:
+    rows = _load_jsonl(path)
+    headers = [row for row in rows if row.get("record_type") == "header"]
+    decisions = [row for row in rows if row.get("record_type") == "decision"]
+    terminals = [row for row in rows if row.get("record_type") == "terminal"]
+    if len(headers) != 1 or not str(headers[0].get("export_contract", "")).startswith(
+        OPPONENT_TEACHER_CONTRACT_PREFIX
+    ):
+        _fail(f"{path}: unexpected opponent teacher header")
+    expected_terminals = {
+        (pair, pair * 2 + seat, f"p{seat}")
+        for pair in range(first_pair, first_pair + pair_count)
+        for seat in (0, 1)
+    }
+    observed_terminals = {
+        (row.get("pair_index"), row.get("episode_id"), row.get("candidate_seat"))
+        for row in terminals
+    }
+    if observed_terminals != expected_terminals or not decisions:
+        _fail(f"{path}: incomplete opponent teacher coverage")
+    for row in terminals:
+        terminal = row.get("terminal")
+        if (
+            not isinstance(terminal, dict)
+            or terminal.get("terminal_classification") != "natural"
+            or terminal.get("terminal_code") != "natural_game_over"
+        ):
+            _fail(f"{path}: opponent teacher terminal is not natural")
+    return {
+        "opponent_teacher_path": str(path),
+        "opponent_teacher_sha256": _sha256(path),
+        "opponent_teacher_bytes": path.stat().st_size,
+        "opponent_teacher_decisions": len(decisions),
+        "opponent_teacher_terminal_count": len(terminals),
     }
     observed_terminals = {
         (row.get("pair_index"), row.get("episode_id"), row.get("candidate_seat"))
@@ -245,12 +287,15 @@ def _run_task(
         stem = f"p{first_pair:06d}-n{pair_count:03d}"
         outcome_path = task_root / f"{stem}.outcome.jsonl"
         teacher_path = task_root / f"{stem}.teacher.jsonl"
+        opponent_teacher_path = task_root / f"{stem}.opponent-teacher.jsonl"
         log_path = task_root / f"{stem}.log"
-        for path in (outcome_path, teacher_path, log_path):
+        outputs = [outcome_path, teacher_path, log_path]
+        if args.collect_opponent_teacher:
+            outputs.append(opponent_teacher_path)
+        for path in outputs:
             if path.exists():
                 _fail(f"task output already exists: {path}")
-        exec_args = " ".join(
-            (
+        exec_parts = [
                 "--repo-root",
                 str(args.mage_repo),
                 "--scorer-exe",
@@ -270,8 +315,10 @@ def _run_task(
                 str(teacher_path),
                 "--shadow-cp7-max-think-seconds",
                 str(args.shadow_max_think_seconds),
-            )
-        )
+        ]
+        if args.collect_opponent_teacher:
+            exec_parts.extend(("--teacher-export", str(opponent_teacher_path)))
+        exec_args = " ".join(exec_parts)
         command = [
             str(args.maven),
             "-o",
@@ -298,6 +345,11 @@ def _run_task(
         if completed.returncode != 0:
             _fail(f"task {stem} exited {completed.returncode}; see {log_path}")
         validated = _validate_task_outputs(outcome_path, teacher_path, first_pair, pair_count)
+        opponent_teacher = (
+            _validate_opponent_teacher_output(opponent_teacher_path, first_pair, pair_count)
+            if args.collect_opponent_teacher
+            else {}
+        )
         return {
             "worker": worker,
             "first_pair": first_pair,
@@ -308,6 +360,7 @@ def _run_task(
             "log_path": str(log_path),
             "log_sha256": _sha256(log_path),
             **validated,
+            **opponent_teacher,
         }
     finally:
         slots.put((worker, database_root))
@@ -323,8 +376,12 @@ def _existing_task_result(
     stem = f"p{first_pair:06d}-n{pair_count:03d}"
     outcome_path = task_root / f"{stem}.outcome.jsonl"
     teacher_path = task_root / f"{stem}.teacher.jsonl"
+    opponent_teacher_path = task_root / f"{stem}.opponent-teacher.jsonl"
     log_path = task_root / f"{stem}.log"
-    for path in (outcome_path, teacher_path, log_path):
+    outputs = [outcome_path, teacher_path, log_path]
+    if args.collect_opponent_teacher:
+        outputs.append(opponent_teacher_path)
+    for path in outputs:
         if not path.is_file():
             _fail(f"missing completed task output: {path}")
     final_lines = [
@@ -336,6 +393,11 @@ def _existing_task_result(
         _fail(f"{log_path}: expected one completed-run summary")
     elapsed_seconds = int(final_lines[0].rsplit(" elapsed_ms=", 1)[1]) / 1_000.0
     validated = _validate_task_outputs(outcome_path, teacher_path, first_pair, pair_count)
+    opponent_teacher = (
+        _validate_opponent_teacher_output(opponent_teacher_path, first_pair, pair_count)
+        if args.collect_opponent_teacher
+        else {}
+    )
     return {
         "worker": worker,
         "first_pair": first_pair,
@@ -346,6 +408,7 @@ def _existing_task_result(
         "log_path": str(log_path),
         "log_sha256": _sha256(log_path),
         **validated,
+        **opponent_teacher,
     }
 
 
@@ -427,6 +490,11 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "candidate_teacher_disagreements": total_disagreements,
         "disagreement_fraction": total_disagreements / total_usable,
+        "opponent_teacher_decisions": (
+            sum(result["opponent_teacher_decisions"] for result in results)
+            if args.collect_opponent_teacher
+            else None
+        ),
         "inputs": {
             "kernel_git_commit": _version(["git", "rev-parse", "HEAD"], kernel_repo),
             "mage_git_commit": _version(
@@ -442,6 +510,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             "maven": str(args.maven),
             "parent_identity": PARENT_IDENTITY,
             "completed_task_reuse": args.reuse_completed_tasks,
+            "opponent_teacher_export": args.collect_opponent_teacher,
         },
         "toolchain": {
             "python": sys.version.split()[0],
@@ -475,6 +544,7 @@ def main() -> int:
     parser.add_argument("--task-timeout-seconds", type=int, default=7_200)
     parser.add_argument("--reuse-completed-tasks", action="store_true")
     parser.add_argument("--collection-wall-seconds", type=float)
+    parser.add_argument("--collect-opponent-teacher", action="store_true")
     args = parser.parse_args()
     args.evidence_root = args.evidence_root.resolve()
     args.mage_repo = args.mage_repo.resolve(strict=True)
