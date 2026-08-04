@@ -36,4 +36,17 @@ and a fresh natural terminal win/loss gate remain mandatory before promotion.
 
 ## Result
 
-Pending.
+The fixed evaluation completed in 6.35 seconds and rejected on one threshold.
+Overall NLL improved 4.890 percent versus the required 5.000 percent. P0 improved
+5.24 percent and P1 improved 4.62 percent, so both seat-safety checks passed.
+Top-1 improved 3.78 percentage points. Mean TV was `0.026520`, p90 TV was
+`0.077996`, and maximum legal-action log-probability change was `0.490000`; all
+movement checks passed.
+
+Formal report SHA-256 is
+`ef91fe9130b52682813717d069af4ef4ab8856f7a463df6b565ed5cb14c97d70`.
+The 0.110-percentage-point NLL miss is a reject under the fixed gate. It is also a
+strong generalization result for a model trained on only 6,934 labels. The next
+justified recipe keeps beta `6`, eight epochs, architecture, and all gates fixed,
+refits on all 18,002 labels now available, and evaluates once on a second disjoint
+64-pair panel. This panel may be used for that refit but never re-evaluated.
