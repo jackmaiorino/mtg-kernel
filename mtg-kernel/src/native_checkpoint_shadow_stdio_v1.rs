@@ -67,8 +67,10 @@ use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::Mutex;
 
 pub const CHECKPOINT_SHADOW_STDIO_PROTOCOL_V1: &str = "mtg-kernel-checkpoint-shadow-stdio/v1";
 pub const CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V1: u32 = 1;
@@ -518,6 +520,7 @@ trait ShadowModelScorerV1 {
         decision: FlatScoringDecisionViewV2<'_>,
         history: &[NativeStructuredHistoryEntryV1],
         acting_player: u8,
+        substep_count: u32,
     ) -> Result<ShadowModelOutputV1, ()>;
 }
 
@@ -531,6 +534,7 @@ impl ShadowModelScorerV1 for NativeShadowModelScorerV1 {
         decision: FlatScoringDecisionViewV2<'_>,
         _history: &[NativeStructuredHistoryEntryV1],
         _acting_player: u8,
+        _substep_count: u32,
     ) -> Result<ShadowModelOutputV1, ()> {
         let output: NativeCheckpointInferenceOutputV1 =
             self.inference.score_decision_v1(decision).map_err(|_| ())?;
@@ -576,6 +580,7 @@ impl ShadowModelScorerV1 for XmageCp7OutcomeShadowModelScorerV1 {
         decision: FlatScoringDecisionViewV2<'_>,
         _history: &[NativeStructuredHistoryEntryV1],
         _acting_player: u8,
+        _substep_count: u32,
     ) -> Result<ShadowModelOutputV1, ()> {
         let output = self.inference.score_decision_v1(decision)?;
         Ok(ShadowModelOutputV1 {
@@ -591,6 +596,7 @@ impl ShadowModelScorerV1 for NativeRank1PolicyResidualShadowModelScorerV1 {
         decision: FlatScoringDecisionViewV2<'_>,
         _history: &[NativeStructuredHistoryEntryV1],
         _acting_player: u8,
+        _substep_count: u32,
     ) -> Result<ShadowModelOutputV1, ()> {
         let output = self.inference.score_decision_v1(decision)?;
         Ok(ShadowModelOutputV1 {
@@ -610,6 +616,7 @@ impl ShadowModelScorerV1 for NativeStructuredPolicyResidualShadowModelScorerV1 {
         decision: FlatScoringDecisionViewV2<'_>,
         history: &[NativeStructuredHistoryEntryV1],
         acting_player: u8,
+        _substep_count: u32,
     ) -> Result<ShadowModelOutputV1, ()> {
         let output =
             self.inference
@@ -631,6 +638,7 @@ impl ShadowModelScorerV1 for NativeStructuredPolicySuccessorShadowModelScorerV1 
         decision: FlatScoringDecisionViewV2<'_>,
         history: &[NativeStructuredHistoryEntryV1],
         acting_player: u8,
+        _substep_count: u32,
     ) -> Result<ShadowModelOutputV1, ()> {
         let output =
             self.inference
@@ -652,6 +660,7 @@ impl ShadowModelScorerV1 for NativeQualifiedPolicyBoundedValueShadowModelScorerV
         decision: FlatScoringDecisionViewV2<'_>,
         history: &[NativeStructuredHistoryEntryV1],
         acting_player: u8,
+        _substep_count: u32,
     ) -> Result<ShadowModelOutputV1, ()> {
         let policy =
             self.policy
@@ -679,6 +688,7 @@ impl ShadowModelScorerV1 for NativeStructuredHistoryStackShadowModelScorerV1 {
         decision: FlatScoringDecisionViewV2<'_>,
         history: &[NativeStructuredHistoryEntryV1],
         acting_player: u8,
+        _substep_count: u32,
     ) -> Result<ShadowModelOutputV1, ()> {
         let output =
             self.inference
@@ -696,6 +706,7 @@ impl ShadowModelScorerV1 for Cp7BehaviorCloneShadowModelScorerV1 {
         decision: FlatScoringDecisionViewV2<'_>,
         _history: &[NativeStructuredHistoryEntryV1],
         _acting_player: u8,
+        _substep_count: u32,
     ) -> Result<ShadowModelOutputV1, ()> {
         let output = self.inference.score_decision_v1(decision)?;
         Ok(ShadowModelOutputV1 {
@@ -882,6 +893,326 @@ impl XmageCp7TeacherTensorV1 {
             action_ref_node_indices: tensor.action_ref_node_indices.clone(),
         }
     }
+}
+
+const RECURRENT_CP7_PACKAGE_SCHEMA_V1: &str = "mtg-kernel-recurrent-cp7-deployment/v1";
+const RECURRENT_CP7_MANIFEST_FILENAME_V1: &str = "recurrent_cp7_deployment.json";
+const RECURRENT_CP7_REQUEST_SCHEMA_V1: &str =
+    "mtg-kernel-recurrent-cp7-inference-request/v1";
+const RECURRENT_CP7_RESPONSE_SCHEMA_V1: &str =
+    "mtg-kernel-recurrent-cp7-inference-response/v1";
+const RECURRENT_CP7_READY_SCHEMA_V1: &str = "mtg-kernel-recurrent-cp7-inference-ready/v1";
+const RECURRENT_CP7_COMPOSITE_DOMAIN_V1: &[u8] =
+    b"mtg-kernel-recurrent-cp7-deployment-composite/v1\0";
+const RECURRENT_CP7_MAX_WORKER_LINE_BYTES_V1: usize = 4 * 1_048_576;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecurrentCp7FileV1 {
+    path: String,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecurrentCp7FilesV1 {
+    model: RecurrentCp7FileV1,
+    model_definition: RecurrentCp7FileV1,
+    worker: RecurrentCp7FileV1,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecurrentCp7ParentV1 {
+    path: String,
+    adam_step: u64,
+    candidate_sha256: String,
+    weights_sha256: String,
+    report_sha256: String,
+    composite_model_parameter_sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecurrentCp7IdentityV1 {
+    authority_kind: String,
+    model_parameter_sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecurrentCp7SourceV1 {
+    full_refit_report_sha256: String,
+    deployment_calibration_report_sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecurrentCp7PackageV1 {
+    schema: String,
+    architecture: String,
+    git_commit: String,
+    deployment_scale: f64,
+    log_ratio_budget: f64,
+    model_state_sha256: String,
+    files: RecurrentCp7FilesV1,
+    parent: RecurrentCp7ParentV1,
+    identity: RecurrentCp7IdentityV1,
+    source: RecurrentCp7SourceV1,
+    non_claims: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct RecurrentCp7RequestV1 {
+    schema: &'static str,
+    sequence: u64,
+    acting_player: u8,
+    substep_count: u32,
+    tensor: XmageCp7TeacherTensorV1,
+    history_f32_bits: Vec<u32>,
+    parent_logits_f32_bits: Vec<u32>,
+    parent_value_f32_bits: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecurrentCp7ResponseV1 {
+    schema: String,
+    sequence: u64,
+    logits_f32_bits: Vec<u32>,
+    projection_scale: f32,
+    maximum_absolute_log_ratio: f32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecurrentCp7ReadyV1 {
+    schema: String,
+    model_file_sha256: String,
+    model_state_sha256: String,
+    torch: String,
+    device: String,
+}
+
+struct RecurrentCp7WorkerV1 {
+    child: Child,
+    stdin: BufWriter<ChildStdin>,
+    stdout: BufReader<ChildStdout>,
+    sequence: u64,
+}
+
+impl RecurrentCp7WorkerV1 {
+    fn launch_v1(
+        python_executable: &Path,
+        root: &Path,
+        expected_model_file_sha256: &str,
+        expected_model_state_sha256: &str,
+    ) -> io::Result<Self> {
+        let mut child = Command::new(python_executable)
+            .arg(root.join("worker_v1.py"))
+            .arg("--package-root")
+            .arg(root)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        let stdin = child.stdin.take().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "recurrent worker stdin missing")
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "recurrent worker stdout missing")
+        })?;
+        let mut worker = Self {
+            child,
+            stdin: BufWriter::new(stdin),
+            stdout: BufReader::new(stdout),
+            sequence: 0,
+        };
+        let mut ready_line = String::new();
+        let count = worker.stdout.read_line(&mut ready_line)?;
+        if count == 0 || count > RECURRENT_CP7_MAX_WORKER_LINE_BYTES_V1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "recurrent worker ready line invalid",
+            ));
+        }
+        let ready: RecurrentCp7ReadyV1 = serde_json::from_str(ready_line.trim_end())
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "recurrent worker ready JSON invalid",
+                )
+            })?;
+        if ready.schema != RECURRENT_CP7_READY_SCHEMA_V1
+            || ready.model_file_sha256 != expected_model_file_sha256
+            || ready.model_state_sha256 != expected_model_state_sha256
+            || ready.device != "cpu"
+            || ready.torch.is_empty()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "recurrent worker ready identity mismatch",
+            ));
+        }
+        Ok(worker)
+    }
+
+    fn exchange_v1(&mut self, request: &RecurrentCp7RequestV1) -> io::Result<Vec<f32>> {
+        if request.sequence != self.sequence {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "recurrent worker request sequence mismatch",
+            ));
+        }
+        serde_json::to_writer(&mut self.stdin, request).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "recurrent worker request encoding failed",
+            )
+        })?;
+        self.stdin.write_all(b"\n")?;
+        self.stdin.flush()?;
+        let mut line = String::new();
+        let count = self.stdout.read_line(&mut line)?;
+        if count == 0 || count > RECURRENT_CP7_MAX_WORKER_LINE_BYTES_V1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "recurrent worker response line invalid",
+            ));
+        }
+        let response: RecurrentCp7ResponseV1 = serde_json::from_str(line.trim_end())
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "recurrent worker response JSON invalid",
+                )
+            })?;
+        if response.schema != RECURRENT_CP7_RESPONSE_SCHEMA_V1
+            || response.sequence != self.sequence
+            || !response.projection_scale.is_finite()
+            || !(0.0..=0.97 + 1.0e-5).contains(&response.projection_scale)
+            || !response.maximum_absolute_log_ratio.is_finite()
+            || response.maximum_absolute_log_ratio > 0.49 + 1.0e-5
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "recurrent worker response envelope invalid",
+            ));
+        }
+        let logits = response
+            .logits_f32_bits
+            .into_iter()
+            .map(f32::from_bits)
+            .collect::<Vec<_>>();
+        if logits.is_empty() || logits.iter().any(|value| !value.is_finite()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "recurrent worker logits invalid",
+            ));
+        }
+        self.sequence = self.sequence.checked_add(1).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "recurrent worker sequence overflow")
+        })?;
+        Ok(logits)
+    }
+}
+
+impl Drop for RecurrentCp7WorkerV1 {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+struct RecurrentCp7ShadowModelScorerV1 {
+    parent: NativeStructuredPolicySuccessorInferenceV1,
+    worker: Mutex<RecurrentCp7WorkerV1>,
+}
+
+impl ShadowModelScorerV1 for RecurrentCp7ShadowModelScorerV1 {
+    fn uses_structured_history_v1(&self) -> bool {
+        true
+    }
+
+    fn score_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        history: &[NativeStructuredHistoryEntryV1],
+        acting_player: u8,
+        substep_count: u32,
+    ) -> Result<ShadowModelOutputV1, ()> {
+        if acting_player > 1 || substep_count == 0 || history.len() > HISTORY_LENGTH_V1 {
+            return Err(());
+        }
+        let parent = self
+            .parent
+            .score_decision_with_history_v1(decision, history, acting_player)?;
+        let mut tensorizer = NativeFlatTensorizerV2::new();
+        let mut tensor = NativeFlatDecisionTensorV2::default();
+        tensorizer.fill(decision, &mut tensor).map_err(|_| ())?;
+        let mut history_f32_bits = Vec::with_capacity(history.len() * 237);
+        for entry in history {
+            history_f32_bits.extend(
+                entry
+                    .actor_relative_features_v1(acting_player)?
+                    .into_iter()
+                    .map(f32::to_bits),
+            );
+        }
+        let mut worker = self.worker.lock().map_err(|_| ())?;
+        let request = RecurrentCp7RequestV1 {
+            schema: RECURRENT_CP7_REQUEST_SCHEMA_V1,
+            sequence: worker.sequence,
+            acting_player,
+            substep_count,
+            tensor: XmageCp7TeacherTensorV1::from_native_v1(&tensor),
+            history_f32_bits,
+            parent_logits_f32_bits: parent.logits_v1().iter().map(|value| value.to_bits()).collect(),
+            parent_value_f32_bits: parent.value_v1().to_bits(),
+        };
+        let logits = worker.exchange_v1(&request).map_err(|_| ())?;
+        if logits.len() != parent.logits_v1().len() {
+            return Err(());
+        }
+        Ok(ShadowModelOutputV1 {
+            logits,
+            value: parent.value_v1(),
+        })
+    }
+}
+
+fn recurrent_cp7_sha256_v1(path: &Path) -> Result<String, ShadowScorerStartupErrorV1> {
+    let bytes = fs::read(path).map_err(|_| {
+        ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
+    })?;
+    Ok(lower_hex_raw32_v1(Sha256::digest(bytes).into()))
+}
+
+fn recurrent_cp7_is_sha256_v1(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .as_bytes()
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+}
+
+fn recurrent_cp7_composite_v1(package: &RecurrentCp7PackageV1) -> String {
+    let mut digest = Sha256::new();
+    digest.update(RECURRENT_CP7_COMPOSITE_DOMAIN_V1);
+    for value in [
+        package.parent.composite_model_parameter_sha256.as_str(),
+        package.files.model.sha256.as_str(),
+        package.model_state_sha256.as_str(),
+        package.files.worker.sha256.as_str(),
+        package.files.model_definition.sha256.as_str(),
+    ] {
+        digest.update(value.as_bytes());
+        digest.update([0]);
+    }
+    digest.update(package.log_ratio_budget.to_le_bytes());
+    digest.update(package.deployment_scale.to_le_bytes());
+    lower_hex_raw32_v1(digest.finalize().into())
 }
 
 fn f32_bits_v1(values: &[f32]) -> Vec<u32> {
@@ -1805,6 +2136,165 @@ struct ShadowScorerServiceV1 {
 }
 
 impl ShadowScorerServiceV1 {
+    fn load_recurrent_cp7_v1(
+        root: PathBuf,
+        python_executable: PathBuf,
+    ) -> Result<Self, ShadowScorerStartupErrorV1> {
+        let authority_error = || {
+            ShadowScorerStartupErrorV1::new(
+                ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+            )
+        };
+        let identity_error = || {
+            ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointIdentity)
+        };
+        if !root.is_dir() || !python_executable.is_file() {
+            return Err(authority_error());
+        }
+        let inventory = fs::read_dir(&root)
+            .map_err(|_| authority_error())?
+            .map(|entry| {
+                let entry = entry.map_err(|_| ())?;
+                let file_type = entry.file_type().map_err(|_| ())?;
+                if file_type.is_symlink() {
+                    return Err(());
+                }
+                Ok((
+                    entry.file_name().into_string().map_err(|_| ())?,
+                    file_type.is_dir(),
+                ))
+            })
+            .collect::<Result<std::collections::BTreeMap<_, _>, ()>>()
+            .map_err(|_| authority_error())?;
+        if inventory
+            != std::collections::BTreeMap::from([
+                ("model.pt".to_owned(), false),
+                ("model_v1.py".to_owned(), false),
+                ("parent".to_owned(), true),
+                (RECURRENT_CP7_MANIFEST_FILENAME_V1.to_owned(), false),
+                ("worker_v1.py".to_owned(), false),
+            ])
+        {
+            return Err(authority_error());
+        }
+        let manifest_path = root.join(RECURRENT_CP7_MANIFEST_FILENAME_V1);
+        let manifest_bytes = fs::read(&manifest_path).map_err(|_| authority_error())?;
+        if !manifest_bytes.ends_with(b"\n") || manifest_bytes.contains(&b'\r') {
+            return Err(authority_error());
+        }
+        let manifest_text = std::str::from_utf8(&manifest_bytes).map_err(|_| authority_error())?;
+        let manifest_value = parse_strict_json_value(manifest_text).map_err(|_| authority_error())?;
+        let package: RecurrentCp7PackageV1 =
+            serde_json::from_value(manifest_value).map_err(|_| authority_error())?;
+        if package.schema != RECURRENT_CP7_PACKAGE_SCHEMA_V1
+            || package.architecture != "width128-two-layer-gru-structured-cp7-residual/v1"
+            || package.identity.authority_kind != "recurrent-cp7-deployment-v1"
+            || package.files.model.path != "model.pt"
+            || package.files.model_definition.path != "model_v1.py"
+            || package.files.worker.path != "worker_v1.py"
+            || package.parent.path != "parent"
+            || package.deployment_scale.to_bits() != 0.97f64.to_bits()
+            || package.log_ratio_budget.to_bits() != 0.49f64.to_bits()
+            || package.git_commit.len() != 40
+            || package.non_claims
+                != [
+                    "CP7 label fit is not playing strength".to_owned(),
+                    "terminal win or loss remains the only promotion measure".to_owned(),
+                ]
+            || package.source.full_refit_report_sha256
+                != "7c333e8bec2d332eb5dfba764f29df39d801211e74c0052bb2fd8555c68455f4"
+            || package.source.deployment_calibration_report_sha256
+                != "f3fc251dfcda2e742b02bca5d92e4eb38c2e5afe3f203a00b9a2bebfa7fe3b82"
+        {
+            return Err(identity_error());
+        }
+        for digest in [
+            package.files.model.sha256.as_str(),
+            package.files.model_definition.sha256.as_str(),
+            package.files.worker.sha256.as_str(),
+            package.model_state_sha256.as_str(),
+            package.parent.candidate_sha256.as_str(),
+            package.parent.weights_sha256.as_str(),
+            package.parent.report_sha256.as_str(),
+            package.parent.composite_model_parameter_sha256.as_str(),
+            package.identity.model_parameter_sha256.as_str(),
+        ] {
+            if !recurrent_cp7_is_sha256_v1(digest) {
+                return Err(authority_error());
+            }
+        }
+        for (relative, expected) in [
+            ("model.pt", package.files.model.sha256.as_str()),
+            ("model_v1.py", package.files.model_definition.sha256.as_str()),
+            ("worker_v1.py", package.files.worker.sha256.as_str()),
+        ] {
+            if recurrent_cp7_sha256_v1(&root.join(relative))? != expected {
+                return Err(identity_error());
+            }
+        }
+        if recurrent_cp7_composite_v1(&package) != package.identity.model_parameter_sha256 {
+            return Err(identity_error());
+        }
+        let parent = load_native_structured_policy_successor_inference_v1(&root.join("parent"))
+            .map_err(|_| authority_error())?;
+        if parent.parent_adam_step_v1() != package.parent.adam_step
+            || lower_hex_raw32_v1(parent.candidate_json_sha256_v1())
+                != package.parent.candidate_sha256
+            || lower_hex_raw32_v1(parent.weights_sha256_v1()) != package.parent.weights_sha256
+            || lower_hex_raw32_v1(parent.report_sha256_v1()) != package.parent.report_sha256
+            || lower_hex_raw32_v1(parent.composite_model_parameter_sha256_v1())
+                != package.parent.composite_model_parameter_sha256
+        {
+            return Err(identity_error());
+        }
+        let worker = RecurrentCp7WorkerV1::launch_v1(
+            &python_executable,
+            &root,
+            &package.files.model.sha256,
+            &package.model_state_sha256,
+        )
+        .map_err(|_| authority_error())?;
+        let manifest_sha256 = lower_hex_raw32_v1(Sha256::digest(&manifest_bytes).into());
+        let identity = ShadowCheckpointIdentityV1 {
+            authority_kind: package.identity.authority_kind,
+            source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+            source_generation: SOURCE_GENERATION_V1,
+            source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+            source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+            source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+            source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+            loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+            loaded_generation: package.parent.adam_step,
+            loaded_checkpoint_sha256: manifest_sha256.clone(),
+            loaded_payload_sha256: package.files.model.sha256.clone(),
+            loaded_train_state_sha256: package.model_state_sha256.clone(),
+            model_parameter_sha256: package.identity.model_parameter_sha256.clone(),
+            environment_trajectory_contract: SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
+            sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+            sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+        };
+        eprintln!(
+            "RECURRENT_CP7_DEPLOYMENT manifest_sha256={} model_file_sha256={} model_state_sha256={} deployment_scale=0.97 log_ratio_budget=0.49 device=cpu",
+            manifest_sha256, package.files.model.sha256, package.model_state_sha256
+        );
+        Ok(Self {
+            model: Box::new(RecurrentCp7ShadowModelScorerV1 {
+                parent,
+                worker: Mutex::new(worker),
+            }),
+            opponent_model: None,
+            population_opponent: None,
+            identity,
+            candidate_selector: ShadowCandidateSelectorV1::PolicySample,
+            max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
+            max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
+            active: None,
+            teacher_export: None,
+            outcome_export: None,
+            export_poisoned: false,
+        })
+    }
+
     fn load_v1(authority: ShadowCheckpointAuthorityV1) -> Result<Self, ShadowScorerStartupErrorV1> {
         if let ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { root } = &authority {
             let inference = load_cp7_behavior_clone_inference_v1(root).map_err(|_| {
@@ -2375,6 +2865,7 @@ impl ShadowScorerServiceV1 {
                 view,
                 structured_history,
                 player_seat_index_v1(expected.acting_player),
+                expected.substep_count,
             )
             .map_err(|_| "value_search_checkpoint_scoring_failed")?;
         drop(<FlatScoredFamilyV2 as FlatScoredFamilyCore>::into_owned_packet(packet));
@@ -2423,6 +2914,7 @@ impl ShadowScorerServiceV1 {
                 view,
                 structured_history,
                 player_seat_index_v1(expected.acting_player),
+                expected.substep_count,
             )
             .map_err(|_| "depth8_search_checkpoint_scoring_failed")?;
         if output.logits.len()
@@ -2908,6 +3400,7 @@ impl ShadowScorerServiceV1 {
                 view,
                 structured_history,
                 player_seat_index_v1(expected.acting_player),
+                expected.substep_count,
             )
             .map_err(|_| "checkpoint_scoring_failed")?;
         if output.logits.len()
@@ -3703,6 +4196,20 @@ pub fn run_checkpoint_shadow_stdio_v1(
     )
 }
 
+/// Opt-in deployment bridge for the calibrated width-128 recurrent CP7 policy.
+/// The package owns the exact parent authority, model, inference worker, and
+/// identity hashes. Inference is CPU-only and terminal outcomes remain outside
+/// this transport boundary.
+pub fn run_checkpoint_shadow_stdio_with_recurrent_cp7_v1(
+    root: PathBuf,
+    python_executable: PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    let mut service =
+        ShadowScorerServiceV1::load_recurrent_cp7_v1(root, python_executable)?;
+    run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
+    Ok(())
+}
+
 /// Experimental live selector for the parity-checked complete-history model.
 /// It is intentionally unavailable with trajectory exports because those
 /// schemas bind selection to direct checkpoint-policy sampling.
@@ -3978,6 +4485,7 @@ mod tests {
             decision: FlatScoringDecisionViewV2<'_>,
             _history: &[NativeStructuredHistoryEntryV1],
             _acting_player: u8,
+            _substep_count: u32,
         ) -> Result<ShadowModelOutputV1, ()> {
             Ok(ShadowModelOutputV1 {
                 logits: (0..decision.actions().len())
@@ -3996,6 +4504,7 @@ mod tests {
             decision: FlatScoringDecisionViewV2<'_>,
             _history: &[NativeStructuredHistoryEntryV1],
             _acting_player: u8,
+            _substep_count: u32,
         ) -> Result<ShadowModelOutputV1, ()> {
             Ok(ShadowModelOutputV1 {
                 logits: (0..decision.actions().len())
@@ -4020,6 +4529,7 @@ mod tests {
             decision: FlatScoringDecisionViewV2<'_>,
             _history: &[NativeStructuredHistoryEntryV1],
             _acting_player: u8,
+            _substep_count: u32,
         ) -> Result<ShadowModelOutputV1, ()> {
             *self.calls.lock().map_err(|_| ())? += 1;
             Ok(ShadowModelOutputV1 {

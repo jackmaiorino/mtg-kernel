@@ -211,6 +211,21 @@ impl NativeStructuredHistoryEntryV1 {
             public_card_histogram,
         })
     }
+
+    pub(crate) fn actor_relative_features_v1(&self, acting_player: u8) -> Result<Vec<f32>, ()> {
+        if acting_player > 1 {
+            return Err(());
+        }
+        let mut features = Vec::with_capacity(HISTORY_FEATURE_DIM_V1);
+        features.extend_from_slice(&self.action_explicit_features);
+        features.push(f32::from(self.acting_player == acting_player));
+        features.push(f32::from(self.acting_player != acting_player));
+        features.extend_from_slice(&self.public_card_histogram);
+        if features.len() != HISTORY_FEATURE_DIM_V1 {
+            return Err(());
+        }
+        Ok(features)
+    }
 }
 
 #[derive(Clone, Debug)]
