@@ -68,6 +68,11 @@ def _candidate_identity(root: Path) -> dict[str, Any]:
             b"mtg-kernel-structured-policy-block-response-oracle-composite-model/v1",
             "xmage-cp7-outcome-structured-policy-successor-v6",
         ),
+        "mtg-kernel-structured-policy-successor-candidate/v7": (
+            "mtg-kernel-structured-policy-bounded-logit-residual-report/v1",
+            b"mtg-kernel-structured-policy-bounded-logit-residual-composite-model/v1",
+            "xmage-cp7-outcome-structured-policy-successor-v7",
+        ),
     }
     contract = contracts.get(candidate.get("schema"))
     if contract is None:
@@ -292,15 +297,19 @@ def run(args: argparse.Namespace) -> int:
     args.candidate_identity = _candidate_identity(args.candidate_root)
     if args.formal:
         expected_seed = (
-            1_880_001
-            if args.candidate_identity["authority_kind"].endswith("-v6")
+            1_900_001
+            if args.candidate_identity["authority_kind"].endswith("-v7")
             else (
-                1_790_001
-                if args.candidate_identity["authority_kind"].endswith("-v5")
+                1_880_001
+                if args.candidate_identity["authority_kind"].endswith("-v6")
                 else (
-                    1_680_001
-                    if args.candidate_identity["authority_kind"].endswith("-v4")
-                    else FORMAL_BASE_SEED
+                    1_790_001
+                    if args.candidate_identity["authority_kind"].endswith("-v5")
+                    else (
+                        1_680_001
+                        if args.candidate_identity["authority_kind"].endswith("-v4")
+                        else FORMAL_BASE_SEED
+                    )
                 )
             )
         )
