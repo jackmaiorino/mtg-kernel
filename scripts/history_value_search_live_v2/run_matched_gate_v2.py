@@ -33,6 +33,7 @@ PARENT_IDENTITY = {
     "model": "883e4882d01d9cb55ecd7a4ae00e3c95793b6147baf3df08650ef1fa7f8e9546",
 }
 BOUNDED_SEARCH_IDENTITY = {
+    "authority_kind": "qualified-policy-bounded-value-search-v1",
     "adam_step": "1",
     "manifest": "0d883d169fca504e4a413810454565d98cd0e8316cb76e7de4f538187b2865c9",
     "payload": "c55b61678aed544580a692e70a0f72e9df64018ce2d975421e81089d1b3a32d9",
@@ -40,6 +41,7 @@ BOUNDED_SEARCH_IDENTITY = {
     "model": "c55b61678aed544580a692e70a0f72e9df64018ce2d975421e81089d1b3a32d9",
 }
 QUALIFIED_POLICY_IDENTITY = {
+    "authority_kind": "xmage-cp7-outcome-structured-policy-successor-v1",
     "adam_step": "1",
     "manifest": "204beb91c1a4b039e0c497f2b420e823b5cc9e2ceb8560f897d0b6251e916b72",
     "payload": "ca3c45cd69d8d60f1f921bc78c27b098064ef6b16fe7566b84e5045681781b28",
@@ -94,15 +96,19 @@ def _pair_marker(path: Path, base_seed: int, pair_index: int) -> bool:
 
 
 def _maven_opts(identity: dict[str, str]) -> str:
-    return " ".join(
-        (
+    options = [
             f"-Dxmage.rally.cp7Outcome.adamStep={identity['adam_step']}",
             f"-Dxmage.rally.cp7Outcome.manifestSha256={identity['manifest']}",
             f"-Dxmage.rally.cp7Outcome.payloadSha256={identity['payload']}",
             f"-Dxmage.rally.cp7Outcome.trainStateSha256={identity['train_state']}",
             f"-Dxmage.rally.cp7Outcome.modelParameterSha256={identity['model']}",
+    ]
+    if "authority_kind" in identity:
+        options.insert(
+            0,
+            "-Dxmage.rally.cp7Outcome.authorityKind=" + identity["authority_kind"],
         )
-    )
+    return " ".join(options)
 
 
 def _worker_database(args: argparse.Namespace, worker: int) -> Path:
