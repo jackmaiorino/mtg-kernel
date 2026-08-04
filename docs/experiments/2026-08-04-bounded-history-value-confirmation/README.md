@@ -22,7 +22,7 @@ Natural terminal win, draw, or loss remains the only target. This is a value-mod
 
 - Candidate behavior: exact qualified structured successor.
 - Opponent: exact Pool3 `40/20/20/20` mixture.
-- Native scorer SHA-256: `8af1ffabe836cfe53d9b62edb98943e68183825e332cd47070ea20e93ae5c990`.
+- Native scorer SHA-256: `c0c9b2004261c5f220f105636c09bdf38a82e43c117e8a67d5ba9d00e0297672`.
 - Base seed `1690001`, 1,024 seat-swapped pairs and 2,048 natural games, collected in four parallel 256-pair persistent-scorer shards.
 - The fresh corpus is never used for optimization, architecture choice, checkpoint selection, or calibration.
 - Require exact complete public history, natural terminals, fixed identities, and no missing, duplicate, or substituted pair.
