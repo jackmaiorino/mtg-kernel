@@ -28,3 +28,15 @@ finite and in `[-1,1]`, and the repeat is exact. A pass authorizes a value-only
 native port and separately frozen search screen. A failure closes the recurrent
 branch. It does not authorize policy training, promotion, or a professional-level
 claim.
+
+## Result
+
+The exact repeat passed, and all predictions were finite and bounded. The recurrent
+ensemble improved 33.39 percent over the raw parent, but its MSE was `0.450439`,
+worse than the confirmed width-48 benchmark `0.442846`. P0 was `0.456248` versus
+`0.458175`, a small improvement; P1 was `0.444630` versus `0.427516`, a regression.
+No individual recurrent member beat the ensemble.
+
+The overall 5-percent superiority and P1 non-regression gates failed. This closes
+the recurrent branch without a native port or search run. Result SHA-256 is
+`ca3b2c2b8a101ab069221c3a63691e413b82cee5762fd975aff13f723a8e3335`.
