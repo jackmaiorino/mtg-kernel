@@ -165,13 +165,14 @@ def _project_with_scale(
     raw_logits: Tensor,
     action_mask: Tensor,
     substep_count: Tensor,
+    budget_per_decision: float = JOINT_LOG_RATIO_BUDGET,
 ) -> tuple[Tensor, Tensor]:
     parent_log_probability = torch.log_softmax(parent_logits, dim=1)
     delta = raw_logits - parent_logits
     low = torch.zeros((raw_logits.shape[0], 1), device=raw_logits.device)
     high = torch.ones_like(low)
     budget = (
-        JOINT_LOG_RATIO_BUDGET
+        budget_per_decision
         / substep_count.to(raw_logits.dtype).clamp_min(1.0)
     ).unsqueeze(1)
     for _ in range(BISECTION_STEPS):
@@ -194,7 +195,9 @@ def _project_with_scale(
 
 
 def _candidate_logits(
-    model: RecurrentStructuredActorCritic, packed: Any
+    model: RecurrentStructuredActorCritic,
+    packed: Any,
+    budget_per_decision: float = JOINT_LOG_RATIO_BUDGET,
 ) -> tuple[Tensor, Tensor]:
     residual, _ = model(packed)
     raw = torch.where(
@@ -207,6 +210,7 @@ def _candidate_logits(
         raw,
         packed.action_mask,
         packed.substep_count,
+        budget_per_decision,
     )
 
 
@@ -358,6 +362,7 @@ def _evaluate(
     decisions: list[Any],
     batch_size: int,
     device: torch.device,
+    budget_per_decision: float = JOINT_LOG_RATIO_BUDGET,
 ) -> dict[str, Any]:
     raw = {"overall": _empty_metric(), "seats": {0: _empty_metric(), 1: _empty_metric()}}
     model.eval()
@@ -366,7 +371,9 @@ def _evaluate(
             selected = decisions[start : start + batch_size]
             rows = [decision.rows[0] for decision in selected]
             packed = pack_rows(rows, device)
-            candidate_logits, projection_scale = _candidate_logits(model, packed)
+            candidate_logits, projection_scale = _candidate_logits(
+                model, packed, budget_per_decision
+            )
             parent_logp = torch.log_softmax(packed.parent_logits, dim=1)
             candidate_logp = torch.log_softmax(candidate_logits, dim=1)
             parent_probability = torch.softmax(packed.parent_logits, dim=1)
