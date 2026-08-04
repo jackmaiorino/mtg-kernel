@@ -153,7 +153,11 @@ def main() -> None:
         default=Path(r"D:\mtg-kernel-cp7-dagger-shadow-v1-synchronized\complete-history-cache.pt"),
     )
     parser.add_argument("--device", type=int, default=1)
+    parser.add_argument("--betas", type=float, nargs="+", default=BETAS)
     args = parser.parse_args()
+    betas = tuple(float(beta) for beta in args.betas)
+    if not betas or any(beta <= 0.0 for beta in betas) or len(set(betas)) != len(betas):
+        base._fail("betas must be unique positive values")
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         base._fail("output directory must be absent or empty")
     device = base._configure(args.device)
@@ -162,7 +166,7 @@ def main() -> None:
         args.corpus_report, args.history_cache
     )
     train, selection, heldout = base._split(decisions)
-    arms = [_fit_arm(train, selection, beta, device) for beta in BETAS]
+    arms = [_fit_arm(train, selection, beta, device) for beta in betas]
     passing = [arm for arm in arms if arm[1]["gate"]["pass"]]
     selected = (
         min(
@@ -199,7 +203,7 @@ def main() -> None:
         "source": source,
         "load_timings": load_timings,
         "config": {
-            "betas": BETAS,
+            "betas": betas,
             "epochs": EPOCHS,
             "batch_size": BATCH_SIZE,
             "log_ratio_budget": LOG_RATIO_BUDGET,
