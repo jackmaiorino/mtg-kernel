@@ -460,6 +460,32 @@ def _parse_example(row: dict[str, Any], is_outcome: bool) -> dict[str, Any]:
             else _decode_float(old_value_raw, "old_value")
         ).reshape(-1)[0]
     )
+    structured_parent_logits_raw = row.get(
+        "structured_parent_policy_logits_f32_bits"
+    )
+    structured_parent_value_raw = row.get("structured_parent_value_f32_bits")
+    if (structured_parent_logits_raw is None) != (structured_parent_value_raw is None):
+        _fail("structured parent policy and value must be exported together")
+    structured_parent_logits = None
+    structured_parent_value = None
+    if structured_parent_logits_raw is not None:
+        structured_parent_logits = _decode_f32_bits(
+            structured_parent_logits_raw,
+            "structured_parent_policy_logits_f32_bits",
+        )
+        if (
+            structured_parent_logits.ndim != 1
+            or structured_parent_logits.shape[0] != n_actions
+        ):
+            _fail(
+                "structured parent logits shape "
+                f"{structured_parent_logits.shape} expected [{n_actions}]"
+            )
+        structured_parent_value = float(
+            _decode_f32_bits(
+                [structured_parent_value_raw], "structured_parent_value_f32_bits"
+            ).reshape(-1)[0]
+        )
     selected_raw = _lookup(row, "selected_index", "selected_index_u32", "selected_action_index", default=None)
     if selected_raw is None:
         _fail("missing selected_index")
@@ -514,6 +540,16 @@ def _parse_example(row: dict[str, Any], is_outcome: bool) -> dict[str, Any]:
         "selected_public_card_ids": torch.from_numpy(selected_public_card_ids.copy()),
         "old_logits": torch.from_numpy(old_logits.copy()),
         "old_value": torch.tensor(old_value, dtype=torch.float32),
+        "structured_parent_logits": (
+            torch.from_numpy(structured_parent_logits.copy())
+            if structured_parent_logits is not None
+            else None
+        ),
+        "structured_parent_value": (
+            torch.tensor(structured_parent_value, dtype=torch.float32)
+            if structured_parent_value is not None
+            else None
+        ),
         "selected_index": selected,
         "selected_action_kind": selected_action_kind,
         "pair_index": pair,

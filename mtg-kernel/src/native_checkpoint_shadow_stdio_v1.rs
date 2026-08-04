@@ -508,6 +508,8 @@ fn load_checkpoint_v1(
 struct ShadowModelOutputV1 {
     logits: Vec<f32>,
     value: f32,
+    structured_parent_logits: Option<Vec<f32>>,
+    structured_parent_value: Option<f32>,
 }
 
 trait ShadowModelScorerV1 {
@@ -541,6 +543,8 @@ impl ShadowModelScorerV1 for NativeShadowModelScorerV1 {
         Ok(ShadowModelOutputV1 {
             logits: output.action_logits().to_vec(),
             value: output.value(),
+            structured_parent_logits: None,
+            structured_parent_value: None,
         })
     }
 }
@@ -586,6 +590,8 @@ impl ShadowModelScorerV1 for XmageCp7OutcomeShadowModelScorerV1 {
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
             value: output.value_v1(),
+            structured_parent_logits: None,
+            structured_parent_value: None,
         })
     }
 }
@@ -602,6 +608,8 @@ impl ShadowModelScorerV1 for NativeRank1PolicyResidualShadowModelScorerV1 {
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
             value: output.value_v1(),
+            structured_parent_logits: None,
+            structured_parent_value: None,
         })
     }
 }
@@ -624,6 +632,8 @@ impl ShadowModelScorerV1 for NativeStructuredPolicyResidualShadowModelScorerV1 {
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
             value: output.value_v1(),
+            structured_parent_logits: None,
+            structured_parent_value: None,
         })
     }
 }
@@ -646,6 +656,8 @@ impl ShadowModelScorerV1 for NativeStructuredPolicySuccessorShadowModelScorerV1 
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
             value: output.value_v1(),
+            structured_parent_logits: None,
+            structured_parent_value: None,
         })
     }
 }
@@ -674,6 +686,8 @@ impl ShadowModelScorerV1 for NativeQualifiedPolicyBoundedValueShadowModelScorerV
         Ok(ShadowModelOutputV1 {
             logits: policy.logits_v1().to_vec(),
             value: value.value_v1(),
+            structured_parent_logits: None,
+            structured_parent_value: None,
         })
     }
 }
@@ -696,6 +710,8 @@ impl ShadowModelScorerV1 for NativeStructuredHistoryStackShadowModelScorerV1 {
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
             value: output.value_v1(),
+            structured_parent_logits: None,
+            structured_parent_value: None,
         })
     }
 }
@@ -712,6 +728,8 @@ impl ShadowModelScorerV1 for Cp7BehaviorCloneShadowModelScorerV1 {
         Ok(ShadowModelOutputV1 {
             logits: output.logits_v1().to_vec(),
             value: output.value_v1(),
+            structured_parent_logits: None,
+            structured_parent_value: None,
         })
     }
 }
@@ -724,6 +742,8 @@ struct ScoredCurrentDecisionV1 {
     action_semantics: Vec<ActionSemanticV1>,
     logits_f32_bits: Vec<u32>,
     value_f32_bits: u32,
+    structured_parent_logits_f32_bits: Option<Vec<u32>>,
+    structured_parent_value_f32_bits: Option<u32>,
     model_input_sha256: String,
     diagnostic_state_hash_u64_hex: String,
     core_environment_hash_u64_hex: String,
@@ -904,6 +924,10 @@ const RECURRENT_CP7_RESPONSE_SCHEMA_V1: &str =
 const RECURRENT_CP7_READY_SCHEMA_V1: &str = "mtg-kernel-recurrent-cp7-inference-ready/v1";
 const RECURRENT_CP7_COMPOSITE_DOMAIN_V1: &[u8] =
     b"mtg-kernel-recurrent-cp7-deployment-composite/v1\0";
+const RECURRENT_TERMINAL_PACKAGE_SCHEMA_V1: &str =
+    "mtg-kernel-recurrent-terminal-deployment/v1";
+const RECURRENT_TERMINAL_COMPOSITE_DOMAIN_V1: &[u8] =
+    b"mtg-kernel-recurrent-terminal-deployment-composite/v1\0";
 const RECURRENT_CP7_MAX_WORKER_LINE_BYTES_V1: usize = 4 * 1_048_576;
 
 #[derive(Debug, Deserialize)]
@@ -944,6 +968,7 @@ struct RecurrentCp7IdentityV1 {
 struct RecurrentCp7SourceV1 {
     full_refit_report_sha256: String,
     deployment_calibration_report_sha256: String,
+    terminal_training_report_sha256: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -982,6 +1007,7 @@ struct RecurrentCp7ResponseV1 {
     logits_f32_bits: Vec<u32>,
     projection_scale: f32,
     maximum_absolute_log_ratio: f32,
+    value_f32_bits: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -999,6 +1025,9 @@ struct RecurrentCp7WorkerV1 {
     stdin: BufWriter<ChildStdin>,
     stdout: BufReader<ChildStdout>,
     sequence: u64,
+    deployment_scale: f32,
+    log_ratio_budget: f32,
+    require_recurrent_value: bool,
 }
 
 impl RecurrentCp7WorkerV1 {
@@ -1007,6 +1036,9 @@ impl RecurrentCp7WorkerV1 {
         root: &Path,
         expected_model_file_sha256: &str,
         expected_model_state_sha256: &str,
+        deployment_scale: f32,
+        log_ratio_budget: f32,
+        require_recurrent_value: bool,
     ) -> io::Result<Self> {
         let mut child = Command::new(python_executable)
             .arg(root.join("worker_v1.py"))
@@ -1028,6 +1060,9 @@ impl RecurrentCp7WorkerV1 {
             stdin: BufWriter::new(stdin),
             stdout: BufReader::new(stdout),
             sequence: 0,
+            deployment_scale,
+            log_ratio_budget,
+            require_recurrent_value,
         };
         let mut ready_line = String::new();
         let count = worker.stdout.read_line(&mut ready_line)?;
@@ -1058,7 +1093,10 @@ impl RecurrentCp7WorkerV1 {
         Ok(worker)
     }
 
-    fn exchange_v1(&mut self, request: &RecurrentCp7RequestV1) -> io::Result<Vec<f32>> {
+    fn exchange_v1(
+        &mut self,
+        request: &RecurrentCp7RequestV1,
+    ) -> io::Result<(Vec<f32>, Option<f32>)> {
         if request.sequence != self.sequence {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -1091,9 +1129,14 @@ impl RecurrentCp7WorkerV1 {
         if response.schema != RECURRENT_CP7_RESPONSE_SCHEMA_V1
             || response.sequence != self.sequence
             || !response.projection_scale.is_finite()
-            || !(0.0..=0.97 + 1.0e-5).contains(&response.projection_scale)
+            || !(0.0..=self.deployment_scale + 1.0e-5)
+                .contains(&response.projection_scale)
             || !response.maximum_absolute_log_ratio.is_finite()
-            || response.maximum_absolute_log_ratio > 0.49 + 1.0e-5
+            || response.maximum_absolute_log_ratio > self.log_ratio_budget + 1.0e-5
+            || response.value_f32_bits.is_some() != self.require_recurrent_value
+            || response
+                .value_f32_bits
+                .is_some_and(|bits| !f32::from_bits(bits).is_finite())
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -1114,7 +1157,10 @@ impl RecurrentCp7WorkerV1 {
         self.sequence = self.sequence.checked_add(1).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "recurrent worker sequence overflow")
         })?;
-        Ok(logits)
+        Ok((
+            logits,
+            response.value_f32_bits.map(f32::from_bits),
+        ))
     }
 }
 
@@ -1171,13 +1217,15 @@ impl ShadowModelScorerV1 for RecurrentCp7ShadowModelScorerV1 {
             parent_logits_f32_bits: parent.logits_v1().iter().map(|value| value.to_bits()).collect(),
             parent_value_f32_bits: parent.value_v1().to_bits(),
         };
-        let logits = worker.exchange_v1(&request).map_err(|_| ())?;
+        let (logits, recurrent_value) = worker.exchange_v1(&request).map_err(|_| ())?;
         if logits.len() != parent.logits_v1().len() {
             return Err(());
         }
         Ok(ShadowModelOutputV1 {
             logits,
-            value: parent.value_v1(),
+            value: recurrent_value.unwrap_or_else(|| parent.value_v1()),
+            structured_parent_logits: Some(parent.logits_v1().to_vec()),
+            structured_parent_value: Some(parent.value_v1()),
         })
     }
 }
@@ -1199,7 +1247,11 @@ fn recurrent_cp7_is_sha256_v1(value: &str) -> bool {
 
 fn recurrent_cp7_composite_v1(package: &RecurrentCp7PackageV1) -> String {
     let mut digest = Sha256::new();
-    digest.update(RECURRENT_CP7_COMPOSITE_DOMAIN_V1);
+    digest.update(if package.schema == RECURRENT_TERMINAL_PACKAGE_SCHEMA_V1 {
+        RECURRENT_TERMINAL_COMPOSITE_DOMAIN_V1
+    } else {
+        RECURRENT_CP7_COMPOSITE_DOMAIN_V1
+    });
     for value in [
         package.parent.composite_model_parameter_sha256.as_str(),
         package.files.model.sha256.as_str(),
@@ -1257,6 +1309,10 @@ enum XmageCp7TeacherRecordV1 {
         model_input_sha256: String,
         old_policy_logits_f32_bits: Vec<u32>,
         old_value_f32_bits: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        structured_parent_policy_logits_f32_bits: Option<Vec<u32>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        structured_parent_value_f32_bits: Option<u32>,
         action_semantics: Vec<ActionSemanticV1>,
         selected_index: u32,
         selected_semantic: ActionSemanticV1,
@@ -1383,6 +1439,10 @@ impl XmageCp7TeacherJsonlWriterV1 {
             model_input_sha256: scored.model_input_sha256.clone(),
             old_policy_logits_f32_bits: scored.logits_f32_bits.clone(),
             old_value_f32_bits: scored.value_f32_bits,
+            structured_parent_policy_logits_f32_bits: scored
+                .structured_parent_logits_f32_bits
+                .clone(),
+            structured_parent_value_f32_bits: scored.structured_parent_value_f32_bits,
             action_semantics: scored.action_semantics.clone(),
             selected_index,
             selected_semantic,
@@ -1497,6 +1557,10 @@ enum XmageCp7OutcomeRecordV1 {
         model_input_sha256: String,
         old_policy_logits_f32_bits: Vec<u32>,
         old_value_f32_bits: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        structured_parent_policy_logits_f32_bits: Option<Vec<u32>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        structured_parent_value_f32_bits: Option<u32>,
         action_semantics: Vec<ActionSemanticV1>,
         selected_index: u32,
         selected_semantic: ActionSemanticV1,
@@ -1734,6 +1798,10 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             model_input_sha256: scored.model_input_sha256.clone(),
             old_policy_logits_f32_bits: scored.logits_f32_bits.clone(),
             old_value_f32_bits: scored.value_f32_bits,
+            structured_parent_policy_logits_f32_bits: scored
+                .structured_parent_logits_f32_bits
+                .clone(),
+            structured_parent_value_f32_bits: scored.structured_parent_value_f32_bits,
             action_semantics: scored.action_semantics.clone(),
             selected_index,
             selected_semantic,
@@ -2187,25 +2255,44 @@ impl ShadowScorerServiceV1 {
         let manifest_value = parse_strict_json_value(manifest_text).map_err(|_| authority_error())?;
         let package: RecurrentCp7PackageV1 =
             serde_json::from_value(manifest_value).map_err(|_| authority_error())?;
-        if package.schema != RECURRENT_CP7_PACKAGE_SCHEMA_V1
+        let cp7_package = package.schema == RECURRENT_CP7_PACKAGE_SCHEMA_V1;
+        let terminal_package = package.schema == RECURRENT_TERMINAL_PACKAGE_SCHEMA_V1;
+        if (!cp7_package && !terminal_package)
             || package.architecture != "width128-two-layer-gru-structured-cp7-residual/v1"
-            || package.identity.authority_kind != "recurrent-cp7-deployment-v1"
             || package.files.model.path != "model.pt"
             || package.files.model_definition.path != "model_v1.py"
             || package.files.worker.path != "worker_v1.py"
             || package.parent.path != "parent"
-            || package.deployment_scale.to_bits() != 0.97f64.to_bits()
-            || package.log_ratio_budget.to_bits() != 0.49f64.to_bits()
             || package.git_commit.len() != 40
-            || package.non_claims
-                != [
-                    "CP7 label fit is not playing strength".to_owned(),
-                    "terminal win or loss remains the only promotion measure".to_owned(),
-                ]
             || package.source.full_refit_report_sha256
                 != "7c333e8bec2d332eb5dfba764f29df39d801211e74c0052bb2fd8555c68455f4"
             || package.source.deployment_calibration_report_sha256
                 != "f3fc251dfcda2e742b02bca5d92e4eb38c2e5afe3f203a00b9a2bebfa7fe3b82"
+            || (cp7_package
+                && (package.identity.authority_kind != "recurrent-cp7-deployment-v1"
+                    || package.deployment_scale.to_bits() != 0.97f64.to_bits()
+                    || package.log_ratio_budget.to_bits() != 0.49f64.to_bits()
+                    || package.source.terminal_training_report_sha256.is_some()
+                    || package.non_claims
+                        != [
+                            "CP7 label fit is not playing strength".to_owned(),
+                            "terminal win or loss remains the only promotion measure".to_owned(),
+                        ]))
+            || (terminal_package
+                && (package.identity.authority_kind
+                    != "recurrent-terminal-policy-deployment-v1"
+                    || package.deployment_scale.to_bits() != 1.0f64.to_bits()
+                    || package.log_ratio_budget.to_bits() != 0.20f64.to_bits()
+                    || package
+                        .source
+                        .terminal_training_report_sha256
+                        .as_deref()
+                        .is_none_or(|digest| !recurrent_cp7_is_sha256_v1(digest))
+                    || package.non_claims
+                        != [
+                            "training diagnostics are not playing strength".to_owned(),
+                            "terminal win or loss remains the only promotion measure".to_owned(),
+                        ]))
         {
             return Err(identity_error());
         }
@@ -2253,11 +2340,14 @@ impl ShadowScorerServiceV1 {
             &root,
             &package.files.model.sha256,
             &package.model_state_sha256,
+            package.deployment_scale as f32,
+            package.log_ratio_budget as f32,
+            terminal_package,
         )
         .map_err(|_| authority_error())?;
         let manifest_sha256 = lower_hex_raw32_v1(Sha256::digest(&manifest_bytes).into());
         let identity = ShadowCheckpointIdentityV1 {
-            authority_kind: package.identity.authority_kind,
+            authority_kind: package.identity.authority_kind.clone(),
             source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
             source_generation: SOURCE_GENERATION_V1,
             source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
@@ -2275,8 +2365,13 @@ impl ShadowScorerServiceV1 {
             sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
         };
         eprintln!(
-            "RECURRENT_CP7_DEPLOYMENT manifest_sha256={} model_file_sha256={} model_state_sha256={} deployment_scale=0.97 log_ratio_budget=0.49 device=cpu",
-            manifest_sha256, package.files.model.sha256, package.model_state_sha256
+            "RECURRENT_DEPLOYMENT authority_kind={} manifest_sha256={} model_file_sha256={} model_state_sha256={} deployment_scale={} log_ratio_budget={} device=cpu",
+            package.identity.authority_kind,
+            manifest_sha256,
+            package.files.model.sha256,
+            package.model_state_sha256,
+            package.deployment_scale,
+            package.log_ratio_budget,
         );
         Ok(Self {
             model: Box::new(RecurrentCp7ShadowModelScorerV1 {
@@ -2935,6 +3030,11 @@ impl ShadowScorerServiceV1 {
             action_semantics: Vec::new(),
             logits_f32_bits: output.logits.iter().map(|value| value.to_bits()).collect(),
             value_f32_bits: output.value.to_bits(),
+            structured_parent_logits_f32_bits: output
+                .structured_parent_logits
+                .as_ref()
+                .map(|values| values.iter().map(|value| value.to_bits()).collect()),
+            structured_parent_value_f32_bits: output.structured_parent_value.map(f32::to_bits),
             model_input_sha256: String::new(),
             diagnostic_state_hash_u64_hex: String::new(),
             core_environment_hash_u64_hex: String::new(),
@@ -3456,6 +3556,11 @@ impl ShadowScorerServiceV1 {
             action_semantics,
             logits_f32_bits: output.logits.iter().map(|value| value.to_bits()).collect(),
             value_f32_bits: output.value.to_bits(),
+            structured_parent_logits_f32_bits: output
+                .structured_parent_logits
+                .as_ref()
+                .map(|values| values.iter().map(|value| value.to_bits()).collect()),
+            structured_parent_value_f32_bits: output.structured_parent_value.map(f32::to_bits),
             model_input_sha256,
             diagnostic_state_hash_u64_hex: u64_hex_v1(session.diagnostic_state_hash()),
             core_environment_hash_u64_hex: u64_hex_v1(session.privileged_core_environment_hash()),
@@ -4373,6 +4478,44 @@ pub fn run_checkpoint_shadow_stdio_with_native_population_exports_jsonl_v1(
     outcome_jsonl: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
+    install_native_population_exports_v1(
+        &mut service,
+        pool_root,
+        teacher_jsonl,
+        outcome_jsonl,
+    )?;
+    run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
+    Ok(())
+}
+
+/// Opt-in native Pool3 corpus generation for a verified recurrent package.
+/// Python performs CPU inference only. The native engine owns trajectories,
+/// the frozen opponent mixture, and natural terminal adjudication.
+pub fn run_checkpoint_shadow_stdio_with_recurrent_native_population_exports_jsonl_v1(
+    root: PathBuf,
+    python_executable: PathBuf,
+    pool_root: PathBuf,
+    teacher_jsonl: PathBuf,
+    outcome_jsonl: PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    let mut service =
+        ShadowScorerServiceV1::load_recurrent_cp7_v1(root, python_executable)?;
+    install_native_population_exports_v1(
+        &mut service,
+        pool_root,
+        teacher_jsonl,
+        outcome_jsonl,
+    )?;
+    run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
+    Ok(())
+}
+
+fn install_native_population_exports_v1(
+    service: &mut ShadowScorerServiceV1,
+    pool_root: PathBuf,
+    teacher_jsonl: PathBuf,
+    outcome_jsonl: PathBuf,
+) -> Result<(), Box<dyn Error>> {
     let pool_bytes = fs::read(pool_root.join("pool.json"))?;
     let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)?;
     let (primary, predecessor_a, predecessor_b) = resolve_ladder_pool_v1(
@@ -4407,7 +4550,6 @@ pub fn run_checkpoint_shadow_stdio_with_native_population_exports_jsonl_v1(
         "NATIVE_POPULATION_CORPUS pool_root={} weights=40,20,20,20",
         pool_root.display()
     );
-    run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
     Ok(())
 }
 
@@ -4555,6 +4697,8 @@ mod tests {
                     .map(|index| index as f32 * 0.125 - 0.5)
                     .collect(),
                 value: 0.25,
+                structured_parent_logits: None,
+                structured_parent_value: None,
             })
         }
     }
@@ -4574,6 +4718,33 @@ mod tests {
                     .map(|index| if index == 0 { 0.0 } else { -1_000.0 })
                     .collect(),
                 value: 0.0,
+                structured_parent_logits: None,
+                structured_parent_value: None,
+            })
+        }
+    }
+
+    struct StructuredParentExportTestModelV1;
+
+    impl ShadowModelScorerV1 for StructuredParentExportTestModelV1 {
+        fn score_v1(
+            &self,
+            decision: FlatScoringDecisionViewV2<'_>,
+            _history: &[NativeStructuredHistoryEntryV1],
+            _acting_player: u8,
+            _substep_count: u32,
+        ) -> Result<ShadowModelOutputV1, ()> {
+            let structured_parent_logits = (0..decision.actions().len())
+                .map(|index| index as f32 * 0.25 - 0.75)
+                .collect::<Vec<_>>();
+            Ok(ShadowModelOutputV1 {
+                logits: structured_parent_logits
+                    .iter()
+                    .map(|value| value + 0.125)
+                    .collect(),
+                value: 0.25,
+                structured_parent_logits: Some(structured_parent_logits),
+                structured_parent_value: Some(-0.5),
             })
         }
     }
@@ -4600,6 +4771,8 @@ mod tests {
                     .map(|index| if index == 0 { 0.0 } else { -1_000.0 })
                     .collect(),
                 value: 0.125,
+                structured_parent_logits: None,
+                structured_parent_value: None,
             })
         }
     }
@@ -5142,6 +5315,46 @@ mod tests {
                 "missing tensor field {field}"
             );
         }
+    }
+
+    #[test]
+    fn outcome_export_binds_recurrent_structured_parent_inputs_v1() {
+        let (mut service, bytes) =
+            service_with_outcome_export_v1(Box::new(StructuredParentExportTestModelV1));
+        let before = value_v1(&service.handle_line_v1(&reset_line_v1("parent-export-reset")));
+        let selected = before["decision"]["selected_action_index"]
+            .as_u64()
+            .expect("candidate selection");
+        let accepted = value_v1(&service.handle_line_v1(&format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"parent-export-step\",\"episode_id\":2,\"expected_step\":0,\"selected_index\":{selected}}}"
+        )));
+        assert_ne!(accepted["response_type"], "error");
+
+        let rows = outcome_rows_v1(&bytes);
+        assert_eq!(rows.len(), 2);
+        let row = &rows[1];
+        let legal = before["decision"]["legal_action_count"]
+            .as_u64()
+            .expect("legal action count") as usize;
+        let expected = (0..legal)
+            .map(|index| serde_json::json!((index as f32 * 0.25 - 0.75).to_bits()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            row["structured_parent_policy_logits_f32_bits"],
+            serde_json::Value::Array(expected)
+        );
+        assert_eq!(
+            row["structured_parent_value_f32_bits"],
+            serde_json::json!((-0.5f32).to_bits())
+        );
+        assert_ne!(
+            row["structured_parent_policy_logits_f32_bits"],
+            row["old_policy_logits_f32_bits"]
+        );
+        assert_ne!(
+            row["structured_parent_value_f32_bits"],
+            row["old_value_f32_bits"]
+        );
     }
 
     #[test]

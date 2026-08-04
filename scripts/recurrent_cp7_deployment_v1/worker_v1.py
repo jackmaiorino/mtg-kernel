@@ -18,7 +18,8 @@ import torch
 REQUEST_SCHEMA = "mtg-kernel-recurrent-cp7-inference-request/v1"
 RESPONSE_SCHEMA = "mtg-kernel-recurrent-cp7-inference-response/v1"
 READY_SCHEMA = "mtg-kernel-recurrent-cp7-inference-ready/v1"
-PACKAGE_SCHEMA = "mtg-kernel-recurrent-cp7-deployment/v1"
+CP7_PACKAGE_SCHEMA = "mtg-kernel-recurrent-cp7-deployment/v1"
+TERMINAL_PACKAGE_SCHEMA = "mtg-kernel-recurrent-terminal-deployment/v1"
 STATE_DIM = 219
 OBJECT_DIM = 98
 EDGE_DIM = 41
@@ -103,7 +104,8 @@ class Worker:
     def __init__(self, package_root: Path) -> None:
         manifest_path = package_root / "recurrent_cp7_deployment.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("schema") != PACKAGE_SCHEMA:
+        package_schema = manifest.get("schema")
+        if package_schema not in (CP7_PACKAGE_SCHEMA, TERMINAL_PACKAGE_SCHEMA):
             _fail("package schema mismatch")
         model_path = package_root / "model.pt"
         definition_path = package_root / "model_v1.py"
@@ -133,10 +135,16 @@ class Worker:
         self.pack_rows = pack_rows
         self.budget = float(manifest["log_ratio_budget"])
         self.deployment_scale = float(manifest["deployment_scale"])
-        if struct.pack("<d", self.budget) != struct.pack("<d", 0.49):
+        expected_envelope = (
+            (0.49, 0.97)
+            if package_schema == CP7_PACKAGE_SCHEMA
+            else (0.20, 1.0)
+        )
+        if struct.pack("<d", self.budget) != struct.pack("<d", expected_envelope[0]):
             _fail("log-ratio budget mismatch")
-        if struct.pack("<d", self.deployment_scale) != struct.pack("<d", 0.97):
+        if struct.pack("<d", self.deployment_scale) != struct.pack("<d", expected_envelope[1]):
             _fail("deployment scale mismatch")
+        self.return_recurrent_value = package_schema == TERMINAL_PACKAGE_SCHEMA
         self.model_file_sha256 = expected["model"]["sha256"]
         self.model_state_sha256 = manifest["model_state_sha256"]
 
@@ -200,7 +208,7 @@ class Worker:
             _fail("action count mismatch")
         packed = self.pack_rows([row], torch.device("cpu"))
         with torch.inference_mode():
-            residual, _ = self.model(packed)
+            residual, value = self.model(packed)
             raw = torch.where(
                 packed.action_mask,
                 packed.parent_logits + residual,
@@ -221,13 +229,18 @@ class Worker:
         maximum = float((candidate_logp - parent_logp).abs().max())
         if not bool(torch.isfinite(logits).all()) or maximum > self.budget + 1.0e-5:
             _fail("candidate output violates deployment envelope")
-        return {
+        response = {
             "schema": RESPONSE_SCHEMA,
             "sequence": request["sequence"],
             "logits_f32_bits": _bits(logits[0, :action_count]),
             "projection_scale": float(scale[0]) * self.deployment_scale,
             "maximum_absolute_log_ratio": maximum,
         }
+        if self.return_recurrent_value:
+            if not bool(torch.isfinite(value).all()):
+                _fail("candidate value is non-finite")
+            response["value_f32_bits"] = int(_bits(value.reshape(-1))[0])
+        return response
 
 
 def arguments() -> argparse.Namespace:

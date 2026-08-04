@@ -40,7 +40,10 @@ def _request(process: subprocess.Popen[str], payload: dict[str, Any]) -> dict[st
 
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
-    for path in (args.scorer, args.candidate_root, args.pool_root):
+    required = [args.scorer, args.candidate_root, args.pool_root]
+    if args.python is not None:
+        required.append(args.python)
+    for path in required:
         if not path.exists():
             raise RuntimeError(f"required path does not exist: {path}")
     for path in (args.teacher_jsonl, args.outcome_jsonl, args.output):
@@ -48,17 +51,28 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             raise RuntimeError(f"output already exists: {path}")
         path.parent.mkdir(parents=True, exist_ok=True)
 
-    command = [
-        str(args.scorer),
-        "--candidate-outcome-root",
-        str(args.candidate_root),
-        "--pool-root",
-        str(args.pool_root),
-        "--teacher-jsonl",
-        str(args.teacher_jsonl),
-        "--outcome-jsonl",
-        str(args.outcome_jsonl),
-    ]
+    command = [str(args.scorer)]
+    if args.python is None:
+        command.extend(("--candidate-outcome-root", str(args.candidate_root)))
+    else:
+        command.extend(
+            (
+                "--recurrent-root",
+                str(args.candidate_root),
+                "--python",
+                str(args.python),
+            )
+        )
+    command.extend(
+        (
+            "--pool-root",
+            str(args.pool_root),
+            "--teacher-jsonl",
+            str(args.teacher_jsonl),
+            "--outcome-jsonl",
+            str(args.outcome_jsonl),
+        )
+    )
     started = time.perf_counter()
     process = subprocess.Popen(
         command,
@@ -159,6 +173,11 @@ def main() -> int:
     parser.add_argument("--scorer", type=Path, required=True)
     parser.add_argument("--candidate-root", type=Path, required=True)
     parser.add_argument("--pool-root", type=Path, required=True)
+    parser.add_argument(
+        "--python",
+        type=Path,
+        help="Python executable for a recurrent scorer; omit for the native scorer",
+    )
     parser.add_argument("--teacher-jsonl", type=Path, required=True)
     parser.add_argument("--outcome-jsonl", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
