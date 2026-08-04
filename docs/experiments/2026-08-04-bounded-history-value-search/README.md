@@ -14,6 +14,7 @@ The treatment changes only action selection at eligible candidate-controlled roo
 - Bounded value package: `D:\mtg-kernel-bounded-history-value-search-v1\value`, candidate SHA-256 `83d6d2ddb97e96cf5ef4feda525b035bba079d6d1d2f4bc44f4affcf70fd6529`, weights SHA-256 `ac5cef36ba96af11acef1c01edc41cbeec792130d498277243d75f8801ff12bf`, composite SHA-256 `6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22`.
 - Combined manifest: SHA-256 `0d883d169fca504e4a413810454565d98cd0e8316cb76e7de4f538187b2865c9`.
 - Python-to-Rust five-bucket raw-output parity fixture: SHA-256 `ea24f60614d923d47254d4baaa32b44f8395814a60cafb6b3ed76f7350ecc1a6`, with maximum accepted delta fixed by the native test at `2e-4`.
+- Frozen card database source: SHA-256 `b833d6a7b44ad1f7bd6aef9a21d1f2498136ef61e44db0e48e60e5ec471ce09d`. This is a dedicated copy of the current XMage H2 database and differs bytewise from the historical `e7c982...` snapshot used by earlier search screens. Treatment and control use copies of this same source.
 - The value package is forbidden from supplying policy logits. The separate qualified policy package always supplies fallback and action logits.
 
 ## Fixed selector

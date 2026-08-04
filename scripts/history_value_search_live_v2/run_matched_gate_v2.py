@@ -17,7 +17,7 @@ import time
 from typing import Any
 
 
-CARD_DB_SHA256 = "e7c9825ca95c327461d3fa677adb5f5b0b2d4dc854e2b81ad6d8187d993df4ae"
+CARD_DB_SHA256 = "b833d6a7b44ad1f7bd6aef9a21d1f2498136ef61e44db0e48e60e5ec471ce09d"
 SEARCH_IDENTITY = {
     "adam_step": "1",
     "manifest": "56c4d38d6c0f0d27b23981d41801226145e6b0f4bf8a003c67e36716a84ad14f",
