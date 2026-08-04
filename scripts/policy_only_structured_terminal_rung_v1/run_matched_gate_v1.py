@@ -28,7 +28,7 @@ FORMAL_PAIRS = 1_024
 PROFILE_MAX_PAIRS = 64
 TOPOLOGIES = ("sequential", "parallel")
 FORMAL_SCORER_SHA256 = (
-    "3c1ea778f793fba867e78632d505fa9bd9197585cd42c046d6bc0451b7b18a5e"
+    "78917bdf01b07bb90ea97fe740e278fb26377a12f531dff8fae22fc27bb75b26"
 )
 
 
@@ -62,6 +62,11 @@ def _candidate_identity(root: Path) -> dict[str, Any]:
             "mtg-kernel-structured-policy-space-response-oracle-report/v1",
             b"mtg-kernel-structured-policy-space-response-oracle-composite-model/v1",
             "xmage-cp7-outcome-structured-policy-successor-v5",
+        ),
+        "mtg-kernel-structured-policy-successor-candidate/v6": (
+            "mtg-kernel-structured-policy-block-response-oracle-report/v1",
+            b"mtg-kernel-structured-policy-block-response-oracle-composite-model/v1",
+            "xmage-cp7-outcome-structured-policy-successor-v6",
         ),
     }
     contract = contracts.get(candidate.get("schema"))
@@ -108,7 +113,7 @@ def _candidate_identity(root: Path) -> dict[str, Any]:
         <= pipeline.TRANSPORT_LIMIT
     ):
         raise RuntimeError("terminal-rung transport is not qualified")
-    if candidate.get("schema", "").endswith("/v5") and (
+    if candidate.get("schema", "").endswith(("/v5", "/v6")) and (
         report.get("config", {}).get("development_only") is not False
         or report.get("movement") is None
         or report.get("source", {}).get("phase") != "selected"
@@ -287,12 +292,16 @@ def run(args: argparse.Namespace) -> int:
     args.candidate_identity = _candidate_identity(args.candidate_root)
     if args.formal:
         expected_seed = (
-            1_790_001
-            if args.candidate_identity["authority_kind"].endswith("-v5")
+            1_880_001
+            if args.candidate_identity["authority_kind"].endswith("-v6")
             else (
-                1_680_001
-                if args.candidate_identity["authority_kind"].endswith("-v4")
-                else FORMAL_BASE_SEED
+                1_790_001
+                if args.candidate_identity["authority_kind"].endswith("-v5")
+                else (
+                    1_680_001
+                    if args.candidate_identity["authority_kind"].endswith("-v4")
+                    else FORMAL_BASE_SEED
+                )
             )
         )
         if args.base_seed not in (None, expected_seed):
