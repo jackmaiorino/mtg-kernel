@@ -5070,11 +5070,13 @@ mod tests {
         NativeTrainStatePayloadDigestsV1,
     };
     use crate::native_trainer_schedule_v1::derive_native_trainer_model_init_seed_v1;
-    use std::fs;
+    use std::fs::{self, OpenOptions};
+    use std::io::{ErrorKind, Write};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SNAPSHOT_CORRUPTION_ORDINAL_V1: AtomicU64 = AtomicU64::new(0);
+    static COMPOSED_ARTIFACT_ORDINAL_V1: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn entropy_smoke_authority_bits_are_exact_and_positive_zero_is_canonical() {
@@ -6508,19 +6510,24 @@ mod tests {
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn persist_composed_train_state_v1(
         state: &NativePolicyValueTrainStateV1,
-        path: &Path,
+        staging_path: &Path,
+        published_path: &Path,
     ) -> serde_json::Value {
-        assert!(!path.exists(), "refusing to overwrite {}", path.display());
+        assert!(
+            !staging_path.exists(),
+            "refusing to overwrite {}",
+            staging_path.display()
+        );
         let snapshot = state.snapshot_v1().expect("snapshot composed candidate");
         let encoded = encode_native_train_state_payload_v1(&snapshot)
             .expect("encode composed candidate train state");
-        fs::write(path, &encoded.bytes).expect("write composed candidate train state");
+        write_composed_staged_file_v1(staging_path, &encoded.bytes);
         assert_eq!(
             crate::native_training_store_digest_v1::sha256_v1(&encoded.bytes),
             encoded.digests.payload_sha256
         );
         serde_json::json!({
-            "path": path,
+            "path": published_path,
             "byte_count": encoded.bytes.len(),
             "adam_step": state.adam_step_v1(),
             "scorer_bias_anchor_f32_bits": format!("{:08x}", state.scorer_bias_anchor_f32_bits_v1()),
@@ -6531,6 +6538,40 @@ mod tests {
             "model_parameter_sha256": h4_canary_hex_v1(encoded.digests.model_parameter_sha256),
             "native_state_sha256": h4_canary_hex_v1(encoded.digests.native_state_sha256),
         })
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn write_composed_staged_file_v1(path: &Path, bytes: &[u8]) {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .expect("create new composed staged file");
+        file.write_all(bytes)
+            .expect("write complete composed staged file");
+        file.sync_all().expect("sync composed staged file");
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn create_composed_artifact_staging_root_v1(output_root: &Path) -> (PathBuf, PathBuf) {
+        let published_root = output_root.join("current-row-fresh-eval-v1");
+        assert!(
+            !published_root.exists(),
+            "refusing to overwrite {}",
+            published_root.display()
+        );
+        loop {
+            let ordinal = COMPOSED_ARTIFACT_ORDINAL_V1.fetch_add(1, Ordering::Relaxed);
+            let staging_root = output_root.join(format!(
+                ".current-row-fresh-eval-v1.staging-{}-{ordinal}",
+                std::process::id()
+            ));
+            match fs::create_dir(&staging_root) {
+                Ok(()) => return (staging_root, published_root),
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create composed staging root: {error}"),
+            }
+        }
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -6555,6 +6596,16 @@ mod tests {
         const FIRST_EVAL_UPDATE: u64 = 1_024;
         const EVAL_CLUSTER_COUNT: u64 = 16;
         const BATCH_EPISODES: u64 = 64;
+        let source_encoded = encode_native_train_state_payload_v1(
+            &state
+                .snapshot_v1()
+                .expect("snapshot fixed policy source state"),
+        )
+        .expect("encode fixed policy source state identity");
+        let source_native_state_sha256 =
+            h4_canary_hex_v1(source_encoded.digests.native_state_sha256);
+        let fixed_policy_model_parameter_sha256 =
+            h4_canary_hex_v1(source_encoded.digests.model_parameter_sha256);
         let config = h4_canary_config_with_topology_v1(
             NativeTrainingNumericalBackendV1::CudaBurnDense,
             worker_count,
@@ -6572,6 +6623,17 @@ mod tests {
         for cluster_index in 0..EVAL_CLUSTER_COUNT {
             let update_index = FIRST_EVAL_UPDATE + cluster_index;
             let eval_state = composed_eval_state_at_update_v1(state, update_index);
+            let eval_encoded = encode_native_train_state_payload_v1(
+                &eval_state
+                    .snapshot_v1()
+                    .expect("snapshot schedule-relabeled eval state"),
+            )
+            .expect("encode schedule-relabeled eval state identity");
+            assert_eq!(
+                eval_encoded.digests.model_parameter_sha256,
+                source_encoded.digests.model_parameter_sha256,
+                "schedule relabel must preserve fixed policy parameters"
+            );
             let first_episode_index = update_index * BATCH_EPISODES;
             let progress = NativeTrainerProgressV2 {
                 next_episode_index: first_episode_index,
@@ -6621,6 +6683,8 @@ mod tests {
             clusters.push(serde_json::json!({
                 "cluster_index": cluster_index,
                 "first_episode_index": first_episode_index,
+                "schedule_adam_step": update_index,
+                "schedule_state_native_state_sha256": h4_canary_hex_v1(eval_encoded.digests.native_state_sha256),
                 "terminal_outcomes": {"win": outcomes[0], "draw": outcomes[1], "loss": outcomes[2]},
                 "terminal_outcomes_by_seat": {
                     "p0": {"win": outcomes_by_seat[0][0], "draw": outcomes_by_seat[0][1], "loss": outcomes_by_seat[0][2]},
@@ -6634,7 +6698,9 @@ mod tests {
         ComposedFixedPolicyEvalArmV1 {
             report: serde_json::json!({
                 "label": label,
-                "fixed_model_native_state_sha256": h4_canary_hex_v1(state.state_sha256_v1().expect("fixed eval state digest")),
+                "fixed_policy_source_native_state_sha256": source_native_state_sha256,
+                "fixed_policy_model_parameter_sha256": fixed_policy_model_parameter_sha256,
+                "schedule_metadata_relabel_changes_only_adam_step": true,
                 "episode_count": expected_episode_count,
                 "terminal_outcomes": {"win": aggregate[0], "draw": aggregate[1], "loss": aggregate[2]},
                 "terminal_outcomes_by_seat": {
@@ -6727,17 +6793,13 @@ mod tests {
             COMPOSED_FACTORIAL_OUTPUT_ROOT_V1,
         );
         fs::create_dir_all(&output_root).expect("create composed factorial output root");
-        let monte_carlo_state_path = output_root.join("current-row-monte-carlo.state.f32le");
-        let history_value_gae_state_path =
-            output_root.join("current-row-history-value-gae.state.f32le");
-        let output_path = output_root.join("current-row-fresh-eval.json");
-        for path in [
-            &monte_carlo_state_path,
-            &history_value_gae_state_path,
-            &output_path,
-        ] {
-            assert!(!path.exists(), "refusing to overwrite {}", path.display());
-        }
+        let (staging_root, published_root) = create_composed_artifact_staging_root_v1(&output_root);
+        let monte_carlo_staging_path = staging_root.join("monte-carlo.state.f32le");
+        let history_value_gae_staging_path = staging_root.join("history-value-gae.state.f32le");
+        let report_staging_path = staging_root.join("report.json");
+        let monte_carlo_published_path = published_root.join("monte-carlo.state.f32le");
+        let history_value_gae_published_path = published_root.join("history-value-gae.state.f32le");
+        let report_published_path = published_root.join("report.json");
         let parent_eval = run_composed_fixed_policy_eval_arm_v1(
             "update-512-parent",
             &source.train_state,
@@ -6762,11 +6824,15 @@ mod tests {
         let gae_vs_mc = composed_paired_win_summary_v1(&history_value_gae_eval, &monte_carlo_eval);
         let gae_vs_parent = composed_paired_win_summary_v1(&history_value_gae_eval, &parent_eval);
         let mc_vs_parent = composed_paired_win_summary_v1(&monte_carlo_eval, &parent_eval);
-        let monte_carlo_state_artifact =
-            persist_composed_train_state_v1(&monte_carlo_state, &monte_carlo_state_path);
+        let monte_carlo_state_artifact = persist_composed_train_state_v1(
+            &monte_carlo_state,
+            &monte_carlo_staging_path,
+            &monte_carlo_published_path,
+        );
         let history_value_gae_state_artifact = persist_composed_train_state_v1(
             &history_value_gae_state,
-            &history_value_gae_state_path,
+            &history_value_gae_staging_path,
+            &history_value_gae_published_path,
         );
         let gae_vs_mc_positive = gae_vs_mc["treatment_only_wins"].as_u64().unwrap()
             > gae_vs_mc["control_only_wins"].as_u64().unwrap();
@@ -6821,10 +6887,12 @@ mod tests {
         });
         let output = serde_json::to_vec_pretty(&report)
             .expect("serialize composed factorial current-row fresh evaluation");
-        fs::write(&output_path, &output).expect("write composed factorial fresh evaluation");
+        write_composed_staged_file_v1(&report_staging_path, &output);
+        fs::rename(&staging_root, &published_root)
+            .expect("atomically publish composed factorial artifact directory");
         println!(
             "COMPOSED_FACTORIAL_CURRENT_ROW_FRESH_EVAL_RESULT {}",
-            output_path.display()
+            report_published_path.display()
         );
         println!("{}", String::from_utf8(output).unwrap());
     }
