@@ -46,3 +46,22 @@ above zero using 4,096 fixed resamples.
 A failure closes this exact GAE head-only objective. A pass still provides no
 strength claim. The subsequent fresh live gate must use an integer terminal-win
 criterion, with no hand-coded rewards or proxy promotion measure.
+
+## Result
+
+The 768-pair fit and 256-pair holdout completed in 316.97 seconds. Both arms
+passed every movement and numerical bound. GAE moved less than Monte Carlo:
+mean TV was `0.001183` versus `0.001996`, and maximum joint log ratio was
+`0.114750` versus `0.188716`.
+
+On the common Monte Carlo terminal held-out score, Monte Carlo was
+`-0.00007325` and GAE was `-0.00004365`. GAE was better overall but remained
+negative. It improved P0 to `+0.00000861` but regressed P1 to `-0.00009592`.
+The paired GAE-minus-Monte-Carlo point difference was `+0.00002960`, while the
+bootstrap 5th percentile was `-0.00011376`.
+
+The positive-overall, both-seat, and bootstrap gates failed. No full fit or
+live strength gate is authorized. This closes the exact width-48 head-only
+`lambda=0.95` objective, not temporal credit assignment in general. Result
+SHA-256 is
+`24fafd44a1313c7acc1a6524f2ebe1b5d0098f5e855eb743f6380cf2703f4e6a`.

@@ -55,3 +55,15 @@ policy fit. A pass authorizes only a matched Monte Carlo-versus-GAE head-only
 fit on a separate corpus, followed by a fresh integer win-count gate if the
 offline objective gate also passes. It does not establish playing strength or
 professional-level play.
+
+## Result
+
+The 1,024-pair mechanism panel passed every gate. Relative to Monte Carlo, GAE
+reduced raw advantage variance to `0.4794x`, improved even/odd policy-gradient
+cosine from `0.6201` to `0.7866`, and improved gradient signal-to-noise by
+`1.6270x`. Both seats improved, and the material-transition contrast increased
+from `2.4065` to `2.6449`. The exact `lambda=1` identity and all numerical
+checks passed. This authorized the separately frozen matched objective screen.
+
+Result SHA-256 is
+`b069def65138abb04b06313dff47a7629093295680fa7bfb1de6461f76ef43ad`.
