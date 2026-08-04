@@ -58,4 +58,25 @@ Terminal win, draw, or loss remains the only reward and promotion measure.
 
 ## Result
 
-Pending.
+The GPU 1 profile selected batch 256 at 4,708.73 labeled decisions per second,
+versus 2,264.74 at batch 64. Peak allocated device memory was 259 MB. The repeated
+selected arm had identical loss-trace and model-state hashes. Profile report
+SHA-256 is `d017561f174c268bcb8b037b26249312d546c99fb41387bb7256c02fbb96d745`.
+
+The full 14,525-label run completed in 46.45 seconds and selected epoch 11. On the
+untouched 3,893-decision held-out split, CP7 NLL improved 6.90 percent overall,
+7.32 percent at P0, and 6.56 percent at P1. Top-1 accuracy improved 3.21 percentage
+points overall. These substantive fit gates passed.
+
+The candidate was rejected by both movement gates. Mean total variation was
+`0.068007` versus the `0.03` maximum, and p90 was `0.204394` versus `0.10`.
+Maximum legal-action log-probability change remained inside the hard envelope at
+`0.490000`. The mean projection scale was only `0.008188`, and 99.68 percent of
+held-out episode mass had scale below `0.1`. Thus the cross-entropy learner learned
+useful CP7 distinctions but tried to spend the full trust budget almost everywhere.
+
+This closes the exact dense cross-entropy residual recipe. The next justified
+screen is a sparse disagreement-correction objective that preserves the parent
+distribution on already-correct states. It does not justify a native port, larger
+label campaign, strength claim, or promotion. Formal report SHA-256 is
+`559c463c2f8fd2f87c272c404d8270cd169ffd72c04610c54c707b7d634866d5`.
