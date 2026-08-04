@@ -5336,6 +5336,8 @@ mod tests {
     const H4_DEVELOPMENT_OUTPUT_ROOT_V1: &str = "D:\\mtg-kernel-h4-live-seat-credit-development-v1";
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     const COMPOSED_CREDIT_OUTPUT_ROOT_V1: &str = "D:\\mtg-kernel-composed-credit-throughput-v1";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const COMPOSED_FACTORIAL_OUTPUT_ROOT_V1: &str = "D:\\mtg-kernel-composed-factorial-v1";
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     struct H4CanarySourceV1 {
@@ -6173,8 +6175,9 @@ mod tests {
         policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
         worker_count: usize,
         sessions_per_worker: usize,
+        update_count: u64,
     ) -> serde_json::Value {
-        const UPDATE_COUNT: u64 = 32;
+        assert!(update_count > 0);
         let mut trainer = NativeTrainerStateV2::from_resumed_parts_v2(
             970_001,
             64,
@@ -6191,8 +6194,8 @@ mod tests {
         let mut cumulative_outcomes = [0_u64; 3];
         let mut cumulative_outcomes_by_seat = [[0_u64; 3]; 2];
         let mut total_update_elapsed_ns = 0_u64;
-        let mut updates = Vec::with_capacity(UPDATE_COUNT as usize);
-        for update_ordinal in 0..UPDATE_COUNT {
+        let mut updates = Vec::with_capacity(update_count as usize);
+        for update_ordinal in 0..update_count {
             let evidence = trainer
                 .run_even_batch_update_live_seat_credit_canary_v1(
                     &config,
@@ -6274,14 +6277,14 @@ mod tests {
                 "update_elapsed_ns": evidence.update_elapsed_ns,
             }));
         }
-        assert_eq!(cumulative_outcomes.iter().sum::<u64>(), UPDATE_COUNT * 64);
+        assert_eq!(cumulative_outcomes.iter().sum::<u64>(), update_count * 64);
         assert_eq!(
             trainer.progress_v2().successful_update_count,
-            512 + UPDATE_COUNT
+            512 + update_count
         );
         assert_eq!(
             trainer.progress_v2().next_episode_index,
-            32_768 + UPDATE_COUNT * 64
+            32_768 + update_count * 64
         );
         let final_train_state_sha256 = h4_canary_hex_v1(
             trainer
@@ -6291,14 +6294,14 @@ mod tests {
         );
         serde_json::json!({
             "policy_reduction_identity": policy_reduction.identity_v1(),
-            "update_count": UPDATE_COUNT,
+            "update_count": update_count,
             "terminal_outcomes": {"win": cumulative_outcomes[0], "draw": cumulative_outcomes[1], "loss": cumulative_outcomes[2]},
             "terminal_outcomes_by_seat": {
                 "p0": {"win": cumulative_outcomes_by_seat[0][0], "draw": cumulative_outcomes_by_seat[0][1], "loss": cumulative_outcomes_by_seat[0][2]},
                 "p1": {"win": cumulative_outcomes_by_seat[1][0], "draw": cumulative_outcomes_by_seat[1][1], "loss": cumulative_outcomes_by_seat[1][2]},
             },
             "total_update_elapsed_ns": total_update_elapsed_ns,
-            "aggregate_games_per_second": (UPDATE_COUNT * 64) as f64 / (total_update_elapsed_ns as f64 / 1.0e9),
+            "aggregate_games_per_second": (update_count * 64) as f64 / (total_update_elapsed_ns as f64 / 1.0e9),
             "final_train_state_sha256": final_train_state_sha256,
             "updates": updates,
         })
@@ -6327,18 +6330,21 @@ mod tests {
             NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
             worker_count,
             sessions_per_worker,
+            32,
         );
         let equal = run_h4_development_arm_v1(
             &source,
             NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMass,
             worker_count,
             sessions_per_worker,
+            32,
         );
         let full = run_h4_development_arm_v1(
             &source,
             NativeLiveSeatCreditPolicyReductionV1::EqualEpisodeMassSeatStandardized,
             worker_count,
             sessions_per_worker,
+            32,
         );
         let report = serde_json::json!({
             "schema": "mtg-kernel-h4-live-seat-credit-matched-development/v1",
@@ -6378,6 +6384,97 @@ mod tests {
         let output = serde_json::to_vec_pretty(&report).expect("serialize H4 development report");
         fs::write(&output_path, &output).expect("write H4 development report");
         println!("H4_DEVELOPMENT_RESULT {}", output_path.display());
+        println!("{}", String::from_utf8(output).unwrap());
+    }
+
+    #[test]
+    #[ignore = "requires retained campaign stores, qualified critic, and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn composed_factorial_current_row_matched_8_update_development_v1() {
+        const UPDATE_COUNT: u64 = 8;
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let critic_root = std::env::var_os(NATIVE_HISTORY_VALUE_CRITIC_ROOT_ENV_V1)
+            .expect("qualified critic root environment authority");
+        let critic = load_native_structured_policy_residual_inference_v1(Path::new(&critic_root))
+            .expect("qualified history-value critic package");
+        assert!(critic.is_history_aware_v1());
+        assert_eq!(
+            h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
+            "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
+        );
+
+        let source = load_h4_canary_source_v1();
+        let (worker_count, sessions_per_worker) = (4_usize, 16_usize);
+        let warmup = run_h4_canary_arm_with_topology_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            worker_count,
+            sessions_per_worker,
+        );
+        let monte_carlo = run_h4_development_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            worker_count,
+            sessions_per_worker,
+            UPDATE_COUNT,
+        );
+        let history_value_gae = run_h4_development_arm_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae,
+            worker_count,
+            sessions_per_worker,
+            UPDATE_COUNT,
+        );
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-composed-factorial-current-row-development/v1",
+            "status": "stable-complete",
+            "reward": "natural-terminal-win-loss-draw-only/v1",
+            "question": "current-net8 initialization: canonical Monte Carlo versus qualified complete-history value plus GAE(lambda=0.95)",
+            "nonclaims": ["development-roots", "not-formal-strength-evidence", "not-promotable", "on-policy-training-outcomes-are-diagnostic"],
+            "fixed": {
+                "source_checkpoint_state_sha256": "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0",
+                "source_run_sha256": "2307caf5a0093bf3f6f9d3673788eac1d73bcd248bfb6fcb3af785a596304cab",
+                "pool_sha256": "6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71",
+                "critic_composite_model_parameter_sha256": "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22",
+                "base_seed": 970001_u64,
+                "first_episode_index": 32768_u64,
+                "updates_per_arm": UPDATE_COUNT,
+                "batch_episodes": 64_u64,
+                "value_coefficient_bits": "3f000000",
+                "learning_rate_bits": "3a83126f",
+                "environment": "environment-randomization-v2",
+                "gpu_ordinal": 1_u64,
+            },
+            "topology": {
+                "worker_count": worker_count,
+                "sessions_per_worker": sessions_per_worker,
+                "logical_actor_count": worker_count * sessions_per_worker,
+                "broker_batch_target": 16_u64,
+                "cuda_warmup_update_elapsed_ns": warmup.evidence.update_elapsed_ns,
+            },
+            "arms": {
+                "frozen_parent_value_plus_monte_carlo": monte_carlo,
+                "history_value_critic_plus_gae": history_value_gae,
+            },
+        });
+        let output_root = h4_canary_path_v1(
+            "MTG_KERNEL_COMPOSED_FACTORIAL_OUTPUT_ROOT",
+            COMPOSED_FACTORIAL_OUTPUT_ROOT_V1,
+        );
+        fs::create_dir_all(&output_root).expect("create composed factorial output root");
+        let output_path = output_root.join("current-row-8-update.json");
+        let output = serde_json::to_vec_pretty(&report)
+            .expect("serialize composed factorial current-row report");
+        fs::write(&output_path, &output).expect("write composed factorial current-row report");
+        println!(
+            "COMPOSED_FACTORIAL_CURRENT_ROW_RESULT {}",
+            output_path.display()
+        );
         println!("{}", String::from_utf8(output).unwrap());
     }
 
