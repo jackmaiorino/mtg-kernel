@@ -1,6 +1,6 @@
 # Parent-preserving bounded history-value confirmation
 
-Status: frozen before fresh collection or fit.
+Status: complete, passed.
 
 ## Question
 
@@ -40,3 +40,17 @@ All must pass:
 ## Disposition
 
 A pass authorizes one fresh learned-value short-horizon information-set search mechanism screen. Search still must improve paired natural terminal continuations before any policy package or strength gate. A failure closes local learned-value search at width 48 and moves to a larger recurrent end-to-end learner.
+
+## Result
+
+The fit completed on the fixed development cache in 3,312.3 training seconds and 3,461.1 seconds total, with zero stderr. Its state SHA-256 is `cae8e19ef825325508de351b883b2df3863dc66f0288be06ad2ccf868e3d7d7c`.
+
+The untouched confirmation cache contained 1,024 matched pairs, 2,048 natural games, and 80,634 physical value decisions. Its SHA-256 is `44eae5bee2b5556faa6293c80a88cb8f67f90d46066ffb5115ced2daac579800`.
+
+All gates passed. Episode-balanced MSE fell from the projected parent's `0.674345` to `0.442846`, a `34.33%` improvement. Improvement was `32.29%` for candidate P0 and `36.38%` for candidate P1. Improvement over the raw retained parent was `34.51%`, so projection alone did not create the result. Every prediction was finite and bounded from `-0.999956` to `0.999970`.
+
+The exact 1,024-decision permutation diagnostic had maximum delta `7.15e-7`. Removing action references changed the value by more than `1e-4` for `93.95%` of the exact 1,024 eligible decisions.
+
+This is fresh evidence that the width-48 public-history model predicts natural terminal outcomes broadly and on both seats. It is not playing-strength evidence. The pass authorizes the declared learned-value short-horizon information-set search mechanism screen.
+
+Confirmation: `D:\mtg-kernel-bounded-onpolicy-history-value-v1\confirmation.json`, SHA-256 `716189e49c635eebdf5647e17ef4e3b3ab684c68addbc6b3c94fc3bed46f7539`.
