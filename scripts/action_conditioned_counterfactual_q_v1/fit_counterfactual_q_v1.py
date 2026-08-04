@@ -81,7 +81,7 @@ def _parse_row(
     substep_index: int,
     substep_count: int,
 ) -> dict[str, Any]:
-    return structured._parse_example(  # noqa: SLF001
+    example = structured._parse_example(  # noqa: SLF001
         {
             "tensor": raw["tensor"] if "tensor" in raw else raw["public_root_tensor"],
             "old_policy_logits_f32_bits": raw["parent_logits_f32_bits"],
@@ -100,6 +100,12 @@ def _parse_row(
         },
         is_outcome=True,
     )
+    example["episode_key"] = (
+        example["pair_index"],
+        example["episode"],
+        example["candidate_seat"],
+    )
+    return example
 
 
 def _load_corpus(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
