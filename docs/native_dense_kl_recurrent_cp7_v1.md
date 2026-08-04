@@ -50,3 +50,17 @@ The coarse grid report SHA-256 is
 This closes the exact coarse grid, but the monotone tradeoff brackets both gates.
 A rapid interpolation at betas `5`, `6`, `7`, and `8` on the same permitted
 selection split is justified before any fresh data collection.
+
+The interpolation completed in 88.53 seconds and passed at beta `6`, epoch 8.
+Selection NLL improved 5.10 percent overall, 5.74 percent at P0, and 4.68 percent
+at P1. Top-1 improved 3.43 percentage points overall. Mean TV was `0.026627`,
+p90 TV was `0.079029`, and maximum legal-action log-probability change was
+`0.490000`. Beta `5` fit more strongly but moved too far; betas `7` and `8` were
+safe but missed fit.
+
+Interpolation report SHA-256 is
+`240fc573cc314289fac44022e2360e5dc51628d1c1f6da90c43614a675fc44aa`.
+Selected model file SHA-256 is
+`93732c91aee17782441ee7c8276ae4337a093ca643912e8c734df10de511265a`.
+This mechanism pass authorizes one fresh disjoint candidate-state label panel and
+fixed out-of-sample gate. It does not authorize a native port or strength claim.
