@@ -13,6 +13,7 @@ use crate::fast_sampler::{
     FAST_CATEGORICAL_SAMPLER_VERSION,
 };
 use crate::flat_policy_v2::FlatDecisionBindingV2;
+use crate::native_flat_tensorizer_v2::{NativeFlatDecisionTensorV2, NativeFlatTensorizerV2};
 use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
 use crate::native_xmage_cp7_outcome_reinforce_v1::{
     load_xmage_cp7_outcome_inference_v1, NativeXmageCp7OutcomeInferenceV1,
@@ -231,6 +232,7 @@ struct ScoredCurrentDecisionV1 {
     expected: FastActorDecisionV1,
     binding: FlatDecisionBindingV2,
     logits: Vec<f32>,
+    value: f32,
 }
 
 fn invalid_data_v1(message: &'static str) -> io::Error {
@@ -329,9 +331,11 @@ fn score_current_decision_v1(
         ))
         .map_err(|_| ())?;
     let logits = output.logits_v1().to_vec();
+    let value = output.value_v1();
     if logits.len() != expected.legal_action_count as usize
         || logits.is_empty()
         || logits.iter().any(|value| !value.is_finite())
+        || !value.is_finite()
     {
         return Err(());
     }
@@ -340,6 +344,7 @@ fn score_current_decision_v1(
         expected,
         binding,
         logits,
+        value,
     })
 }
 
@@ -2131,6 +2136,602 @@ pub fn run_native_selective_search_signal_v1(
     })
 }
 
+pub const NATIVE_ACTION_CONDITIONED_COUNTERFACTUAL_CORPUS_SCHEMA_V1: &str =
+    "mtg-kernel-native-action-conditioned-counterfactual-corpus/v1";
+
+const COUNTERFACTUAL_ROOT_COUNT_V1: usize = 256;
+const COUNTERFACTUAL_ROOTS_PER_SEAT_V1: usize = 128;
+const COUNTERFACTUAL_SAMPLES_PER_ACTION_V1: usize = 4;
+const COUNTERFACTUAL_MAX_SOURCE_EPISODES_V1: usize = 2_048;
+const COUNTERFACTUAL_ROOT_EPISODE_ID_BASE_V1: u64 = 1_604_000;
+const COUNTERFACTUAL_BASE_SEED_V1: u64 = 0x6371_5f72_6f6f_7431;
+const COUNTERFACTUAL_SOURCE_POLICY_DOMAIN_V1: u64 = 0x6371_5f73_7263_7031;
+const COUNTERFACTUAL_REDETERMINIZATION_DOMAIN_V1: u64 = 0x6371_5f72_6564_6574;
+const COUNTERFACTUAL_CONTINUATION_POLICY_DOMAIN_V1: u64 = 0x6371_5f63_6f6e_7431;
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct NativeCounterfactualFlatTensorV1 {
+    pub state_f32_bits: Vec<u32>,
+    pub object_features_f32_bits: Vec<u32>,
+    pub object_card_ids: Vec<i64>,
+    pub object_groups: Vec<i64>,
+    pub object_node_ids: Vec<i64>,
+    pub edge_features_f32_bits: Vec<u32>,
+    pub edge_source_indices: Vec<i64>,
+    pub edge_target_indices: Vec<i64>,
+    pub action_features_f32_bits: Vec<u32>,
+    pub action_ref_features_f32_bits: Vec<u32>,
+    pub action_ref_card_ids: Vec<i64>,
+    pub action_ref_action_indices: Vec<i64>,
+    pub action_ref_node_indices: Vec<i64>,
+}
+
+impl From<NativeFlatDecisionTensorV2> for NativeCounterfactualFlatTensorV1 {
+    fn from(value: NativeFlatDecisionTensorV2) -> Self {
+        Self {
+            state_f32_bits: value.state.into_iter().map(f32::to_bits).collect(),
+            object_features_f32_bits: value
+                .object_features
+                .into_iter()
+                .map(f32::to_bits)
+                .collect(),
+            object_card_ids: value.object_card_ids,
+            object_groups: value.object_groups,
+            object_node_ids: value.object_node_ids,
+            edge_features_f32_bits: value.edge_features.into_iter().map(f32::to_bits).collect(),
+            edge_source_indices: value.edge_source_indices,
+            edge_target_indices: value.edge_target_indices,
+            action_features_f32_bits: value
+                .action_features
+                .into_iter()
+                .map(f32::to_bits)
+                .collect(),
+            action_ref_features_f32_bits: value
+                .action_ref_features
+                .into_iter()
+                .map(f32::to_bits)
+                .collect(),
+            action_ref_card_ids: value.action_ref_card_ids,
+            action_ref_action_indices: value.action_ref_action_indices,
+            action_ref_node_indices: value.action_ref_node_indices,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeCounterfactualHistoryDecisionV1 {
+    pub step: u64,
+    pub physical_decision_id: u64,
+    pub substep_index: u32,
+    pub substep_count: u32,
+    pub acting_player: PlayerSeatV1,
+    pub selected_index: u32,
+    pub selected_semantic: ActionSemanticV1,
+    pub parent_logits_f32_bits: Vec<u32>,
+    pub parent_value_f32_bits: u32,
+    pub tensor: NativeCounterfactualFlatTensorV1,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeCounterfactualSampleV1 {
+    pub sample_ordinal: usize,
+    pub redeterminization_seed_u64_hex: String,
+    pub sampled_privileged_state_hash_u64_hex: String,
+    pub checked_branch_start_hashes_u64_hex: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeCounterfactualRootV1 {
+    pub root_ordinal: usize,
+    pub balance_pair_index: usize,
+    pub within_seat_ordinal: usize,
+    pub source_episode_ordinal: usize,
+    pub episode_id: u64,
+    pub environment_seed_u64_hex: String,
+    pub step: u64,
+    pub physical_decision_id: u64,
+    pub acting_player: PlayerSeatV1,
+    pub legal_action_count: u32,
+    pub public_root_tensor: NativeCounterfactualFlatTensorV1,
+    pub action_semantics: Vec<ActionSemanticV1>,
+    pub parent_logits_f32_bits: Vec<u32>,
+    pub parent_value_f32_bits: u32,
+    pub parent_argmax_index: u32,
+    pub public_history: Vec<NativeCounterfactualHistoryDecisionV1>,
+    pub samples: Vec<NativeCounterfactualSampleV1>,
+    pub action_terminal_rewards: Vec<Vec<i32>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeCounterfactualConfigV1 {
+    pub base_seed_u64_hex: String,
+    pub root_count: usize,
+    pub roots_per_acting_seat: usize,
+    pub samples_per_action: usize,
+    pub maximum_source_episodes: usize,
+    pub root_eligibility: &'static str,
+    pub split: &'static str,
+    pub continuation_policy: &'static str,
+    pub information_scope: &'static str,
+    pub target: &'static str,
+    pub input_exclusions: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeCounterfactualAggregateV1 {
+    pub source_episodes_examined: usize,
+    pub roots_collected: usize,
+    pub p0_roots: usize,
+    pub p1_roots: usize,
+    pub balance_pairs: usize,
+    pub train_roots: usize,
+    pub selection_roots: usize,
+    pub heldout_roots: usize,
+    pub legal_actions: usize,
+    pub natural_terminal_continuations: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeCounterfactualGatesV1 {
+    pub collected_exactly_256_roots: bool,
+    pub exactly_128_roots_per_acting_seat: bool,
+    pub exactly_one_root_per_source_episode: bool,
+    pub every_root_has_four_distinct_information_set_samples: bool,
+    pub every_sample_shared_by_every_legal_action: bool,
+    pub exact_public_root_identity_under_every_sample: bool,
+    pub every_branch_reached_natural_terminal: bool,
+    pub split_is_exactly_128_64_64_roots: bool,
+    pub corpus_qualified: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeCounterfactualReportV1 {
+    pub schema: &'static str,
+    pub publication_encoding: &'static str,
+    pub source: NativeRolloutTeacherSourceV1,
+    pub config: NativeCounterfactualConfigV1,
+    pub roots: Vec<NativeCounterfactualRootV1>,
+    pub aggregate: NativeCounterfactualAggregateV1,
+    pub gates: NativeCounterfactualGatesV1,
+    pub interpretation: &'static str,
+}
+
+pub struct NativeCounterfactualEnvelopeV1 {
+    pub deterministic_report_sha256: String,
+    pub elapsed_milliseconds: u64,
+    pub disposition: &'static str,
+    pub report: NativeCounterfactualReportV1,
+}
+
+fn counterfactual_environment_seed_v1(episode_ordinal: usize) -> u64 {
+    splitmix64_first_v1(
+        COUNTERFACTUAL_BASE_SEED_V1 ^ (episode_ordinal as u64).wrapping_mul(0xd6e8_feb8_6659_fd93),
+    )
+}
+
+fn counterfactual_source_policy_seed_v1(episode_ordinal: usize, policy_step: u64) -> u64 {
+    splitmix64_first_v1(
+        COUNTERFACTUAL_BASE_SEED_V1
+            ^ COUNTERFACTUAL_SOURCE_POLICY_DOMAIN_V1
+            ^ (episode_ordinal as u64).wrapping_mul(0xa076_1d64_78bd_642f)
+            ^ policy_step.wrapping_mul(0xe703_7ed1_a0b4_28db),
+    )
+}
+
+fn tensorize_current_decision_v1(
+    session: &FastActorSessionV1,
+    expected: FastActorDecisionV1,
+) -> Result<NativeFlatDecisionTensorV2, io::Error> {
+    let packet = <FlatScoredFamilyV2 as FlatScoredFamilyCore>::encode_packet(
+        session,
+        expected,
+        &mut Default::default(),
+        OwnedFlatScoringDecisionV2::default(),
+    )
+    .map_err(|_| invalid_data_v1("counterfactual tensor packet encode failed"))?;
+    if !<FlatScoredFamilyV2 as FlatScoredFamilyCore>::expected_matches_binding(
+        expected,
+        <FlatScoredFamilyV2 as FlatScoredFamilyCore>::packet_decision(&packet),
+    ) {
+        return Err(invalid_data_v1(
+            "counterfactual tensor packet binding mismatch",
+        ));
+    }
+    let mut tensorizer = NativeFlatTensorizerV2::new();
+    let mut tensor = NativeFlatDecisionTensorV2::default();
+    tensorizer
+        .fill(
+            <FlatScoredFamilyV2 as FlatScoredFamilyCore>::packet_view(&packet),
+            &mut tensor,
+        )
+        .map_err(|_| invalid_data_v1("counterfactual native tensorization failed"))?;
+    drop(<FlatScoredFamilyV2 as FlatScoredFamilyCore>::into_owned_packet(packet));
+    Ok(tensor)
+}
+
+fn evaluate_counterfactual_root_v1(
+    inference: &NativeXmageCp7OutcomeInferenceV1,
+    session: &FastActorSessionV1,
+    scored: ScoredCurrentDecisionV1,
+    root_ordinal: usize,
+    balance_pair_index: usize,
+    within_seat_ordinal: usize,
+    source_episode_ordinal: usize,
+    environment_seed: u64,
+    history: &[NativeCounterfactualHistoryDecisionV1],
+) -> Result<NativeCounterfactualRootV1, io::Error> {
+    let expected = scored.expected;
+    let root_actor = expected.acting_player;
+    let semantics = session
+        .diagnostic_current_action_semantics()
+        .ok_or_else(|| invalid_data_v1("counterfactual root action semantics missing"))?;
+    if semantics.len() != scored.logits.len() {
+        return Err(invalid_data_v1(
+            "counterfactual root action semantic width mismatch",
+        ));
+    }
+    let parent_logits_f32_bits: Vec<u32> =
+        scored.logits.iter().map(|value| value.to_bits()).collect();
+    let parent_argmax_index = argmax_v1(&scored.logits);
+    let root_tensor = tensorize_current_decision_v1(session, expected)?;
+    let mut action_terminal_rewards =
+        vec![Vec::with_capacity(COUNTERFACTUAL_SAMPLES_PER_ACTION_V1); scored.logits.len()];
+    let mut samples = Vec::with_capacity(COUNTERFACTUAL_SAMPLES_PER_ACTION_V1);
+
+    for sample_ordinal in 0..COUNTERFACTUAL_SAMPLES_PER_ACTION_V1 {
+        let seed = redeterminization_seed_v1(
+            COUNTERFACTUAL_REDETERMINIZATION_DOMAIN_V1,
+            root_ordinal,
+            sample_ordinal,
+        );
+        let (snapshot, sampled_hash) = prepare_information_set_sample_v1(
+            inference,
+            session,
+            expected,
+            &parent_logits_f32_bits,
+            seed,
+        )?;
+        let mut restored = session.clone();
+        restored.restore_v1(&snapshot);
+        let restored_tensor = tensorize_current_decision_v1(&restored, expected)?;
+        let restored_semantics = restored
+            .diagnostic_current_action_semantics()
+            .ok_or_else(|| invalid_data_v1("counterfactual sampled semantics missing"))?;
+        if restored_tensor != root_tensor || restored_semantics != semantics {
+            return Err(invalid_data_v1(
+                "counterfactual sampled public root identity changed",
+            ));
+        }
+
+        let mut checked_branch_start_hashes = Vec::with_capacity(scored.logits.len());
+        for (action_index, rewards) in action_terminal_rewards.iter_mut().enumerate() {
+            let (outcome, checked_hash) = run_information_set_continuation_v1(
+                session,
+                &snapshot,
+                sampled_hash,
+                inference,
+                root_actor,
+                action_index as u32,
+                COUNTERFACTUAL_CONTINUATION_POLICY_DOMAIN_V1,
+                root_ordinal,
+                sample_ordinal,
+            );
+            let ContinuationOutcomeV1::Natural(reward) = outcome else {
+                return Err(invalid_data_v1(
+                    "counterfactual branch did not reach a natural terminal",
+                ));
+            };
+            if !(-1..=1).contains(&reward) || checked_hash != Some(sampled_hash) {
+                return Err(invalid_data_v1(
+                    "counterfactual reward or shared branch-start check failed",
+                ));
+            }
+            rewards.push(reward);
+            checked_branch_start_hashes.push(format!("{sampled_hash:016x}"));
+        }
+        samples.push(NativeCounterfactualSampleV1 {
+            sample_ordinal,
+            redeterminization_seed_u64_hex: format!("{seed:016x}"),
+            sampled_privileged_state_hash_u64_hex: format!("{sampled_hash:016x}"),
+            checked_branch_start_hashes_u64_hex: checked_branch_start_hashes,
+        });
+    }
+
+    if unique_sample_hash_count_v1(samples.iter().map(|sample| {
+        u64::from_str_radix(&sample.sampled_privileged_state_hash_u64_hex, 16)
+            .expect("collector emitted a valid fixed-width hash")
+    })) != COUNTERFACTUAL_SAMPLES_PER_ACTION_V1
+    {
+        return Err(invalid_data_v1(
+            "counterfactual root did not produce four distinct hidden samples",
+        ));
+    }
+    if action_terminal_rewards
+        .iter()
+        .any(|rewards| rewards.len() != COUNTERFACTUAL_SAMPLES_PER_ACTION_V1)
+    {
+        return Err(invalid_data_v1(
+            "counterfactual action reward matrix is incomplete",
+        ));
+    }
+
+    let minimum_history_physical = expected.physical_decision_id.saturating_sub(16);
+    let public_history = history
+        .iter()
+        .filter(|row| row.physical_decision_id >= minimum_history_physical)
+        .cloned()
+        .collect();
+    Ok(NativeCounterfactualRootV1 {
+        root_ordinal,
+        balance_pair_index,
+        within_seat_ordinal,
+        source_episode_ordinal,
+        episode_id: expected.episode_id,
+        environment_seed_u64_hex: format!("{environment_seed:016x}"),
+        step: expected.step,
+        physical_decision_id: expected.physical_decision_id,
+        acting_player: root_actor,
+        legal_action_count: expected.legal_action_count,
+        public_root_tensor: root_tensor.into(),
+        action_semantics: semantics,
+        parent_logits_f32_bits,
+        parent_value_f32_bits: scored.value.to_bits(),
+        parent_argmax_index,
+        public_history,
+        samples,
+        action_terminal_rewards,
+    })
+}
+
+fn counterfactual_report_bytes_v1(
+    report: &NativeCounterfactualReportV1,
+) -> Result<Vec<u8>, serde_json::Error> {
+    let mut bytes = serde_json::to_vec_pretty(report)?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+pub fn native_action_conditioned_counterfactual_report_bytes_v1(
+    report: &NativeCounterfactualReportV1,
+) -> Result<Vec<u8>, serde_json::Error> {
+    counterfactual_report_bytes_v1(report)
+}
+
+pub fn run_native_action_conditioned_counterfactual_v1(
+    source_outcome_root: impl AsRef<Path>,
+) -> Result<NativeCounterfactualEnvelopeV1, Box<dyn Error>> {
+    let started = Instant::now();
+    let inference = load_xmage_cp7_outcome_inference_v1(source_outcome_root.as_ref())?;
+    if lower_hex_raw32_v1(inference.manifest_sha256_v1()) != RETAINED_MANIFEST_SHA256_V1
+        || lower_hex_raw32_v1(inference.payload_sha256_v1()) != RETAINED_PAYLOAD_SHA256_V1
+        || lower_hex_raw32_v1(inference.native_state_sha256_v1()) != RETAINED_NATIVE_STATE_SHA256_V1
+        || lower_hex_raw32_v1(inference.model_parameter_sha256_v1())
+            != RETAINED_MODEL_PARAMETER_SHA256_V1
+        || inference.adam_step_v1() != RETAINED_ADAM_STEP_V1
+    {
+        return Err(invalid_data_v1("source is not the exact retained 706b checkpoint").into());
+    }
+    let source = NativeRolloutTeacherSourceV1 {
+        outcome_manifest_sha256: lower_hex_raw32_v1(inference.manifest_sha256_v1()),
+        outcome_payload_sha256: lower_hex_raw32_v1(inference.payload_sha256_v1()),
+        native_state_sha256: lower_hex_raw32_v1(inference.native_state_sha256_v1()),
+        model_parameter_sha256: lower_hex_raw32_v1(inference.model_parameter_sha256_v1()),
+        corpus_sha256: lower_hex_raw32_v1(inference.corpus_sha256_v1()),
+        adam_step: inference.adam_step_v1(),
+    };
+    let config = NativeCounterfactualConfigV1 {
+        base_seed_u64_hex: format!("{COUNTERFACTUAL_BASE_SEED_V1:016x}"),
+        root_count: COUNTERFACTUAL_ROOT_COUNT_V1,
+        roots_per_acting_seat: COUNTERFACTUAL_ROOTS_PER_SEAT_V1,
+        samples_per_action: COUNTERFACTUAL_SAMPLES_PER_ACTION_V1,
+        maximum_source_episodes: COUNTERFACTUAL_MAX_SOURCE_EPISODES_V1,
+        root_eligibility:
+            "surface, substep_count=1, physical_decision_id>=10, legal_action_count=2..8",
+        split:
+            "balance_pair_index modulo 4: 1,2 train; 3 selection; 0 heldout; pair is seat-balance-only",
+        continuation_policy: "exact-retained-706b-temperature-1-self-play-to-natural-terminal",
+        information_scope:
+            "acting-player-information-set-deterministic-modulo-fisher-yates-redeterminization/v1",
+        target: "actor-relative-natural-terminal-reward-only/v1",
+        input_exclusions:
+            "no-opponent-private-hand,no-library-order,no-privileged-state,no-rollout-outcome-inputs",
+    };
+
+    let mut roots = Vec::with_capacity(COUNTERFACTUAL_ROOT_COUNT_V1);
+    let mut roots_by_seat = [0usize; 2];
+    let mut source_episodes_examined = 0usize;
+    for episode_ordinal in 0..COUNTERFACTUAL_MAX_SOURCE_EPISODES_V1 {
+        if roots_by_seat == [COUNTERFACTUAL_ROOTS_PER_SEAT_V1; 2] {
+            break;
+        }
+        source_episodes_examined += 1;
+        let episode_id = COUNTERFACTUAL_ROOT_EPISODE_ID_BASE_V1 + episode_ordinal as u64;
+        let environment_seed = counterfactual_environment_seed_v1(episode_ordinal);
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            episode_id,
+            environment_seed,
+            SESSION_MAX_PHYSICAL_DECISIONS_V1,
+            SESSION_MAX_POLICY_STEPS_V1,
+            ["Rally".to_owned(), "Rally".to_owned()],
+        )
+        .map_err(|_| invalid_data_v1("counterfactual Rally source session reset failed"))?;
+        let mut history = Vec::new();
+
+        for _ in 0..MAX_SOURCE_POLICY_STEPS_V1 {
+            let FastActorResponseV1::Decision(_) = session.current_response() else {
+                break;
+            };
+            let scored = score_current_decision_v1(&inference, &session)
+                .map_err(|_| invalid_data_v1("counterfactual source policy scoring failed"))?;
+            let actor_index = player_index_v1(scored.expected.acting_player);
+            if eligible_root_v1(scored.expected)
+                && roots_by_seat[actor_index] < COUNTERFACTUAL_ROOTS_PER_SEAT_V1
+            {
+                let within_seat_ordinal = roots_by_seat[actor_index];
+                let root = evaluate_counterfactual_root_v1(
+                    &inference,
+                    &session,
+                    scored,
+                    roots.len(),
+                    within_seat_ordinal,
+                    within_seat_ordinal,
+                    episode_ordinal,
+                    environment_seed,
+                    &history,
+                )?;
+                roots_by_seat[actor_index] += 1;
+                roots.push(root);
+                break;
+            }
+
+            let selected = sample_policy_v1(
+                &scored.logits,
+                counterfactual_source_policy_seed_v1(episode_ordinal, scored.expected.step),
+            )
+            .map_err(|_| invalid_data_v1("counterfactual source policy sampling failed"))?;
+            let semantics = session
+                .diagnostic_current_action_semantics()
+                .ok_or_else(|| invalid_data_v1("counterfactual source semantics missing"))?;
+            let selected_semantic = semantics
+                .get(selected as usize)
+                .cloned()
+                .ok_or_else(|| invalid_data_v1("counterfactual selected semantic missing"))?;
+            let tensor = tensorize_current_decision_v1(&session, scored.expected)?;
+            history.push(NativeCounterfactualHistoryDecisionV1 {
+                step: scored.expected.step,
+                physical_decision_id: scored.expected.physical_decision_id,
+                substep_index: scored.expected.substep_index,
+                substep_count: scored.expected.substep_count,
+                acting_player: scored.expected.acting_player,
+                selected_index: selected,
+                selected_semantic,
+                parent_logits_f32_bits: scored.logits.iter().map(|value| value.to_bits()).collect(),
+                parent_value_f32_bits: scored.value.to_bits(),
+                tensor: tensor.into(),
+            });
+            consume_scored_v1(&mut session, scored, selected)
+                .map_err(|_| invalid_data_v1("counterfactual source policy consume failed"))?;
+        }
+    }
+
+    let legal_actions = roots
+        .iter()
+        .map(|root| root.legal_action_count as usize)
+        .sum::<usize>();
+    let natural_terminal_continuations = legal_actions * COUNTERFACTUAL_SAMPLES_PER_ACTION_V1;
+    let train_roots = roots
+        .iter()
+        .filter(|root| matches!(root.balance_pair_index % 4, 1 | 2))
+        .count();
+    let selection_roots = roots
+        .iter()
+        .filter(|root| root.balance_pair_index % 4 == 3)
+        .count();
+    let heldout_roots = roots
+        .iter()
+        .filter(|root| root.balance_pair_index % 4 == 0)
+        .count();
+    let source_episode_unique = roots
+        .iter()
+        .map(|root| root.source_episode_ordinal)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        == roots.len();
+    let four_distinct = roots.iter().all(|root| {
+        root.samples
+            .iter()
+            .map(|sample| &sample.sampled_privileged_state_hash_u64_hex)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == COUNTERFACTUAL_SAMPLES_PER_ACTION_V1
+    });
+    let shared = roots.iter().all(|root| {
+        root.samples.iter().all(|sample| {
+            sample.checked_branch_start_hashes_u64_hex.len() == root.legal_action_count as usize
+                && sample
+                    .checked_branch_start_hashes_u64_hex
+                    .iter()
+                    .all(|hash| hash == &sample.sampled_privileged_state_hash_u64_hex)
+        })
+    });
+    let natural = roots.iter().all(|root| {
+        root.action_terminal_rewards.len() == root.legal_action_count as usize
+            && root.action_terminal_rewards.iter().all(|rewards| {
+                rewards.len() == COUNTERFACTUAL_SAMPLES_PER_ACTION_V1
+                    && rewards.iter().all(|reward| (-1..=1).contains(reward))
+            })
+    });
+    let collected = roots.len() == COUNTERFACTUAL_ROOT_COUNT_V1;
+    let balanced = roots_by_seat == [COUNTERFACTUAL_ROOTS_PER_SEAT_V1; 2];
+    let split_exact = train_roots == 128 && selection_roots == 64 && heldout_roots == 64;
+    // Every accepted root was compared byte-for-byte at all four sampled
+    // observations. Any mismatch returns before a report can be constructed.
+    let exact_public_identity = collected;
+    let corpus_qualified = collected
+        && balanced
+        && source_episode_unique
+        && four_distinct
+        && shared
+        && exact_public_identity
+        && natural
+        && split_exact;
+    let aggregate = NativeCounterfactualAggregateV1 {
+        source_episodes_examined,
+        roots_collected: roots.len(),
+        p0_roots: roots_by_seat[0],
+        p1_roots: roots_by_seat[1],
+        balance_pairs: roots_by_seat[0].min(roots_by_seat[1]),
+        train_roots,
+        selection_roots,
+        heldout_roots,
+        legal_actions,
+        natural_terminal_continuations,
+    };
+    let gates = NativeCounterfactualGatesV1 {
+        collected_exactly_256_roots: collected,
+        exactly_128_roots_per_acting_seat: balanced,
+        exactly_one_root_per_source_episode: source_episode_unique,
+        every_root_has_four_distinct_information_set_samples: four_distinct,
+        every_sample_shared_by_every_legal_action: shared,
+        exact_public_root_identity_under_every_sample: exact_public_identity,
+        every_branch_reached_natural_terminal: natural,
+        split_is_exactly_128_64_64_roots: split_exact,
+        corpus_qualified,
+    };
+    let report = NativeCounterfactualReportV1 {
+        schema: NATIVE_ACTION_CONDITIONED_COUNTERFACTUAL_CORPUS_SCHEMA_V1,
+        publication_encoding: "serde-json-pretty-utf8-trailing-lf/v1",
+        source,
+        config,
+        roots,
+        aggregate,
+        gates,
+        interpretation: "Mechanism-screen corpus only. Targets are actor-relative natural terminal rewards from shared acting-player information-set redeterminizations and retained-policy continuations. Balance pairs are split groups, not matched trajectories. A corpus pass authorizes only the frozen linear held-out screen.",
+    };
+    let bytes = counterfactual_report_bytes_v1(&report)?;
+    let deterministic_report_sha256 = {
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    let elapsed_milliseconds = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let disposition = if report.gates.corpus_qualified {
+        "pass-corpus-proceed-to-frozen-linear-heldout-screen"
+    } else {
+        "reject-counterfactual-corpus"
+    };
+    Ok(NativeCounterfactualEnvelopeV1 {
+        deterministic_report_sha256,
+        elapsed_milliseconds,
+        disposition,
+        report,
+    })
+}
+
 #[cfg(test)]
 mod information_set_tests {
     use super::*;
@@ -2154,6 +2755,53 @@ mod information_set_tests {
         assert_ne!(
             ranking,
             redeterminization_seed_v1(RANKING_REDETERMINIZATION_DOMAIN_V1, 3, 8)
+        );
+    }
+
+    #[test]
+    fn counterfactual_split_is_pair_grouped_balanced_128_64_64_v1() {
+        let roots: Vec<_> = (0..COUNTERFACTUAL_ROOTS_PER_SEAT_V1)
+            .flat_map(|pair| [(pair, PlayerSeatV1::P0), (pair, PlayerSeatV1::P1)])
+            .collect();
+        let train: Vec<_> = roots
+            .iter()
+            .filter(|(pair, _)| matches!(pair % 4, 1 | 2))
+            .collect();
+        let selection: Vec<_> = roots.iter().filter(|(pair, _)| pair % 4 == 3).collect();
+        let heldout: Vec<_> = roots.iter().filter(|(pair, _)| pair % 4 == 0).collect();
+        assert_eq!([train.len(), selection.len(), heldout.len()], [128, 64, 64]);
+        for split in [&train, &selection, &heldout] {
+            assert_eq!(
+                split
+                    .iter()
+                    .filter(|(_, seat)| *seat == PlayerSeatV1::P0)
+                    .count(),
+                split.len() / 2
+            );
+        }
+    }
+
+    #[test]
+    fn counterfactual_seed_domains_are_distinct_from_prior_screens_v1() {
+        let counterfactual =
+            redeterminization_seed_v1(COUNTERFACTUAL_REDETERMINIZATION_DOMAIN_V1, 7, 3);
+        assert_ne!(
+            counterfactual,
+            redeterminization_seed_v1(RANKING_REDETERMINIZATION_DOMAIN_V1, 7, 3)
+        );
+        assert_ne!(
+            counterfactual,
+            redeterminization_seed_v1(RANK16_RANKING_REDETERMINIZATION_DOMAIN_V1, 7, 3)
+        );
+        assert_ne!(
+            continuation_policy_seed_v1(
+                COUNTERFACTUAL_CONTINUATION_POLICY_DOMAIN_V1,
+                7,
+                3,
+                PlayerSeatV1::P1,
+                2,
+            ),
+            continuation_policy_seed_v1(RANK16_RANKING_POLICY_DOMAIN_V1, 7, 3, PlayerSeatV1::P1, 2,)
         );
     }
 
