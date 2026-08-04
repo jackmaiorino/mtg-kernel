@@ -41,3 +41,14 @@ identity, finiteness, and deterministic-repeat checks.
 A pass authorizes a native port and fresh matched strength gate. A failure closes
 this projected recurrent direction. It does not authorize tuning on the revealed
 fresh folds, promotion, or a professional-level claim.
+
+## Frozen fresh identities
+
+- Teacher JSONL SHA-256:
+  `d2eb89f175f8e41e7ca1515eb3d59ff01fb1ccf9beadb630363991909d9ca2cd`.
+- Outcome JSONL SHA-256:
+  `b9a3b627d9c7e4df560309b584677dd80b2601e0fadad0bc76bdadda4583fdad`.
+- Complete-history cache SHA-256:
+  `287d509794658bc167a7b61be450fa894d38ad837e7e6b212d49947629d542c6`.
+- Coverage: 1,024 pairs, 2,048 natural terminals, 170,055 policy steps, and
+  142,857 complete physical decisions.

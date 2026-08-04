@@ -38,6 +38,7 @@ EXPECTED_CACHE_SHA256 = (
     "454e4ce1b8f7413839a36c8e2731fc0cb65581ce13e593634bffa70013a6f16d"
 )
 CORPUS_PAIR_COUNT = 2_048
+EXPECTED_CACHE_SCHEMA: str | None = "mtg-kernel-structured-policy-terminal-rung-cache/v1"
 SEED = 20_260_804
 DIM = 128
 HISTORY_LENGTH = 32
@@ -119,8 +120,10 @@ def _load_decisions(
     loaded = time.perf_counter()
     if (
         cache.get("version") != legacy_screen.SCRIPT_VERSION
-        or cache.get("schema")
-        != "mtg-kernel-structured-policy-terminal-rung-cache/v1"
+        or (
+            EXPECTED_CACHE_SCHEMA is not None
+            and cache.get("schema") != EXPECTED_CACHE_SCHEMA
+        )
         or not cache.get("complete_history_join")
     ):
         _fail("cache is not the fixed complete-history terminal-rung corpus")
