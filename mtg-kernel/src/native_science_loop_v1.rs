@@ -1510,6 +1510,8 @@ mod windows_science_loop_tests {
         };
         let episode_diagnostics =
             std::env::var("H2H_EPISODE_DIAGNOSTICS_V1").is_ok_and(|value| value != "0");
+        let requested_environment_randomization_v2 =
+            std::env::var("H2H_ENVIRONMENT_RANDOMIZATION_V2").is_ok_and(|value| value != "0");
         // Capacity-experiment wide-net knob; see the doc comment. Candidate
         // side only; the opponent stays frozen-identity by protocol.
         let wide = std::env::var("WIDE").is_ok_and(|value| value != "0");
@@ -1521,6 +1523,10 @@ mod windows_science_loop_tests {
             !(wide && starting_player == PlayerSeatV1::P1),
             "P1-start is diagnostic-only and unsupported by the wide evaluator"
         );
+        assert!(
+            !(wide && requested_environment_randomization_v2),
+            "H2H_ENVIRONMENT_RANDOMIZATION_V2=1 is unsupported by the wide evaluator"
+        );
 
         // Candidate: the SAME ladder run-record reconstruction as
         // ladder_saturation_eval_v1.
@@ -1528,62 +1534,74 @@ mod windows_science_loop_tests {
             .expect("H2H_CANDIDATE_POOL_JSON must be a readable file");
         let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
             .expect("pool.json must decode as OpponentLadderPoolContractV1");
-        let candidate_run_bytes = match (&init_store, wide) {
-            (Some(dir), false) => {
-                let initialization =
-                    crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1(
-                        std::path::Path::new(dir),
-                        init_gen,
+        let candidate_run_bytes = if requested_environment_randomization_v2 {
+            // Envrand-v2 stores carry additional frozen run-contract fields that
+            // the legacy fixture reconstruction does not model. Bind evaluation
+            // to the exact run record already validated by the candidate store.
+            fs::read(std::path::Path::new(&candidate_store_root).join("run.json"))
+                .expect("H2H_CANDIDATE_STORE_ROOT/run.json must be readable")
+        } else {
+            match (&init_store, wide) {
+                (Some(dir), false) => {
+                    let initialization =
+                        crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1(
+                            std::path::Path::new(dir),
+                            init_gen,
+                        )
+                        .expect("stage eval init section");
+                    crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
+                        NativeTrainingNumericalBackendV1::CudaBurnDense,
+                        64,
+                        4,
+                        ladder_updates,
+                        2,
+                        32,
+                        16,
+                        1_024,
+                        2_048,
+                        candidate_base_seed,
+                        pool,
+                        initialization,
                     )
-                    .expect("stage eval init section");
-                crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
-            NativeTrainingNumericalBackendV1::CudaBurnDense,
-            64,
-            4,
-            ladder_updates,
-            2,
-            32,
-            16,
-            1_024,
-            2_048,
-            candidate_base_seed,
-            pool,
-                    initialization,
-                )
+                }
+                (None, false) => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
+                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                    64,
+                    4,
+                    ladder_updates,
+                    2,
+                    32,
+                    16,
+                    1_024,
+                    2_048,
+                    candidate_base_seed,
+                    pool,
+                ),
+                (None, true) => test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
+                    NativeTrainingNumericalBackendV1::CudaBurnDense,
+                    64,
+                    4,
+                    ladder_updates,
+                    2,
+                    32,
+                    16,
+                    1_024,
+                    2_048,
+                    candidate_base_seed,
+                    pool,
+                ),
+                (Some(_), true) => unreachable!("guarded above"),
             }
-            (None, false) => test_fixture_bytes_with_schedule_and_base_seed_ladder_v2(
-                NativeTrainingNumericalBackendV1::CudaBurnDense,
-                64,
-                4,
-                ladder_updates,
-                2,
-                32,
-                16,
-                1_024,
-                2_048,
-                candidate_base_seed,
-                pool,
-            ),
-            (None, true) => test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
-                NativeTrainingNumericalBackendV1::CudaBurnDense,
-                64,
-                4,
-                ladder_updates,
-                2,
-                32,
-                16,
-                1_024,
-                2_048,
-                candidate_base_seed,
-                pool,
-            ),
-            (Some(_), true) => unreachable!("guarded above"),
         };
         let candidate_run =
             decode_train_run_v2(&candidate_run_bytes).expect("candidate ladder run record");
         let environment_randomization_v2 = matches!(
             candidate_run.environment_trajectory_contract_v1(),
             NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        assert_eq!(
+            environment_randomization_v2, requested_environment_randomization_v2,
+            "candidate run environment-randomization contract does not match H2H_ENVIRONMENT_RANDOMIZATION_V2"
         );
         println!("H2H envrand_v2={environment_randomization_v2}");
         let candidate_root =
