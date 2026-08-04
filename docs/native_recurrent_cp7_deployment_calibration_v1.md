@@ -20,4 +20,14 @@ claim.
 
 ## Result
 
-Pending.
+The fixed diagnostic completed in 6.70 seconds and mechanically passed every
+prior label and movement threshold. Overall NLL improved 5.26 percent and top-1
+improved 3.35 percentage points. P0 and P1 NLL improved 5.11 and 5.40 percent.
+Overall mean TV was `0.028535`, P1 mean TV was `0.029516`, p90 TV was `0.078231`,
+and maximum legal-action log-probability change was `0.478114`.
+
+Report SHA-256 is
+`f3fc251dfcda2e742b02bca5d92e4eb38c2e5afe3f203a00b9a2bebfa7fe3b82`.
+Because the panel was revealed before choosing `0.97`, these values are
+calibration mechanics, not held-out evidence. The calibrated recipe now advances
+to transport and a fresh natural terminal win/loss A/B.
