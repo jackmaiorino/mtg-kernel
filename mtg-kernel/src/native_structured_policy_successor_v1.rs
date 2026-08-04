@@ -98,6 +98,8 @@ pub(crate) const COMPOSITE_DOMAIN_V7: &[u8] =
     b"mtg-kernel-structured-policy-bounded-logit-residual-composite-model/v1";
 pub(crate) const COMPOSITE_DOMAIN_V8: &[u8] =
     b"mtg-kernel-structured-policy-cp7-dagger-residual-composite-model/v1";
+const CP7_DAGGER_HISTORY_CACHE_SHA256_V1: &str =
+    "98babc28617a57d3053bf178ba1d1084f943339f69d75b918402f2e4dd10d1df";
 const SOURCE_CACHE_SHA256_V1: &str =
     "280e34cd7f685beaf52c1cab3b41c53613a5029c063871942f48c063b6f5996f";
 const SOURCE_PAIR_COUNT_V1: u64 = 2_048;
@@ -1711,8 +1713,7 @@ fn validate_report_v8(
             != TERMINAL_RUNG_INITIALIZER_COMPOSITE_SHA256_V1
         || report.initializer.model_state_sha256 != TERMINAL_RUNG_INITIALIZER_MODEL_STATE_SHA256_V1
         || report.source.history_cache.is_empty()
-        || report.source.history_cache_sha256
-            != "280e34cd7f685beaf52c1cab3b41c53613a5029c063871942f48c063b6f5996f"
+        || report.source.history_cache_sha256 != CP7_DAGGER_HISTORY_CACHE_SHA256_V1
         || report.source.pair_count != 256
         || report.source.episode_count != 512
         || report.source.physical_decision_count != report.source.label_count

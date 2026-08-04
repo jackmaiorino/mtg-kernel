@@ -39,7 +39,7 @@ ARCHITECTURE = (
 OBJECTIVE = "candidate-state-cp7-selected-index-cross-entropy/v1"
 PROJECTION_METHOD = "initializer-weighted-centered-logit-residual-clamp/v1"
 COMPOSITE_DOMAIN = b"mtg-kernel-structured-policy-cp7-dagger-residual-composite-model/v1"
-HISTORY_CACHE_SHA256 = "280e34cd7f685beaf52c1cab3b41c53613a5029c063871942f48c063b6f5996f"
+HISTORY_CACHE_SHA256 = "98babc28617a57d3053bf178ba1d1084f943339f69d75b918402f2e4dd10d1df"
 INITIALIZER_STATE_SHA256 = "ff2abf50e8760780a9331e53aa7323cb96e3c64edb6e7d89062dbe38bf6a5cc0"
 INITIALIZER_CANDIDATE_SHA256 = "204beb91c1a4b039e0c497f2b420e823b5cc9e2ceb8560f897d0b6251e916b72"
 INITIALIZER_REPORT_SHA256 = "7d854edb46119a611d4283e6cf4630d0207ceb24c12b4089a7d27a43c97fe0b3"
@@ -228,7 +228,7 @@ def _load_decisions(
         "history_cache": str(history_cache_path),
         "history_cache_sha256": cache_sha256,
         "pair_count": PAIR_COUNT,
-        "episode_count": len({decision.episode_key for decision in decisions}),
+        "episode_count": PAIR_COUNT * 2,
         "physical_decision_count": len(decisions),
         "label_count": len(joined),
         "history_sources": "candidate_and_cp7_public_actions",

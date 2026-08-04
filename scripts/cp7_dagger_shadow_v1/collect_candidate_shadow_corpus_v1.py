@@ -117,47 +117,6 @@ def _validate_task_outputs(
         for pair in range(first_pair, first_pair + pair_count)
         for seat in (0, 1)
     }
-
-
-def _validate_opponent_teacher_output(
-    path: Path,
-    first_pair: int,
-    pair_count: int,
-) -> dict[str, Any]:
-    rows = _load_jsonl(path)
-    headers = [row for row in rows if row.get("record_type") == "header"]
-    decisions = [row for row in rows if row.get("record_type") == "decision"]
-    terminals = [row for row in rows if row.get("record_type") == "terminal"]
-    if len(headers) != 1 or not str(headers[0].get("export_contract", "")).startswith(
-        OPPONENT_TEACHER_CONTRACT_PREFIX
-    ):
-        _fail(f"{path}: unexpected opponent teacher header")
-    expected_terminals = {
-        (pair, pair * 2 + seat, f"p{seat}")
-        for pair in range(first_pair, first_pair + pair_count)
-        for seat in (0, 1)
-    }
-    observed_terminals = {
-        (row.get("pair_index"), row.get("episode_id"), row.get("candidate_seat"))
-        for row in terminals
-    }
-    if observed_terminals != expected_terminals or not decisions:
-        _fail(f"{path}: incomplete opponent teacher coverage")
-    for row in terminals:
-        terminal = row.get("terminal")
-        if (
-            not isinstance(terminal, dict)
-            or terminal.get("terminal_classification") != "natural"
-            or terminal.get("terminal_code") != "natural_game_over"
-        ):
-            _fail(f"{path}: opponent teacher terminal is not natural")
-    return {
-        "opponent_teacher_path": str(path),
-        "opponent_teacher_sha256": _sha256(path),
-        "opponent_teacher_bytes": path.stat().st_size,
-        "opponent_teacher_decisions": len(decisions),
-        "opponent_teacher_terminal_count": len(terminals),
-    }
     observed_terminals = {
         (row.get("pair_index"), row.get("episode_id"), row.get("candidate_seat"))
         for row in terminals
@@ -233,6 +192,47 @@ def _validate_opponent_teacher_output(
         "episodes_without_priority_labels": episodes_without_priority_labels,
         "candidate_teacher_disagreements": disagreements,
         "teacher_statuses": dict(sorted(statuses.items())),
+    }
+
+
+def _validate_opponent_teacher_output(
+    path: Path,
+    first_pair: int,
+    pair_count: int,
+) -> dict[str, Any]:
+    rows = _load_jsonl(path)
+    headers = [row for row in rows if row.get("record_type") == "header"]
+    decisions = [row for row in rows if row.get("record_type") == "decision"]
+    terminals = [row for row in rows if row.get("record_type") == "terminal"]
+    if len(headers) != 1 or not str(headers[0].get("export_contract", "")).startswith(
+        OPPONENT_TEACHER_CONTRACT_PREFIX
+    ):
+        _fail(f"{path}: unexpected opponent teacher header")
+    expected_terminals = {
+        (pair, pair * 2 + seat, f"p{seat}")
+        for pair in range(first_pair, first_pair + pair_count)
+        for seat in (0, 1)
+    }
+    observed_terminals = {
+        (row.get("pair_index"), row.get("episode_id"), row.get("candidate_seat"))
+        for row in terminals
+    }
+    if observed_terminals != expected_terminals or not decisions:
+        _fail(f"{path}: incomplete opponent teacher coverage")
+    for row in terminals:
+        terminal = row.get("terminal")
+        if (
+            not isinstance(terminal, dict)
+            or terminal.get("terminal_classification") != "natural"
+            or terminal.get("terminal_code") != "natural_game_over"
+        ):
+            _fail(f"{path}: opponent teacher terminal is not natural")
+    return {
+        "opponent_teacher_path": str(path),
+        "opponent_teacher_sha256": _sha256(path),
+        "opponent_teacher_bytes": path.stat().st_size,
+        "opponent_teacher_decisions": len(decisions),
+        "opponent_teacher_terminal_count": len(terminals),
     }
 
 
