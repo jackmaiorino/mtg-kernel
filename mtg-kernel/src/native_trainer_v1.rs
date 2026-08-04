@@ -6170,13 +6170,13 @@ mod tests {
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    fn run_h4_development_arm_v1(
+    fn run_h4_development_arm_with_state_v1(
         source: &H4CanarySourceV1,
         policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
         worker_count: usize,
         sessions_per_worker: usize,
         update_count: u64,
-    ) -> serde_json::Value {
+    ) -> (serde_json::Value, NativePolicyValueTrainStateV1) {
         assert!(update_count > 0);
         let mut trainer = NativeTrainerStateV2::from_resumed_parts_v2(
             970_001,
@@ -6292,7 +6292,7 @@ mod tests {
                 .state_sha256_v1()
                 .expect("final development state digest"),
         );
-        serde_json::json!({
+        let report = serde_json::json!({
             "policy_reduction_identity": policy_reduction.identity_v1(),
             "update_count": update_count,
             "terminal_outcomes": {"win": cumulative_outcomes[0], "draw": cumulative_outcomes[1], "loss": cumulative_outcomes[2]},
@@ -6304,7 +6304,26 @@ mod tests {
             "aggregate_games_per_second": (update_count * 64) as f64 / (total_update_elapsed_ns as f64 / 1.0e9),
             "final_train_state_sha256": final_train_state_sha256,
             "updates": updates,
-        })
+        });
+        (report, trainer.train_state_v1().clone())
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_h4_development_arm_v1(
+        source: &H4CanarySourceV1,
+        policy_reduction: NativeLiveSeatCreditPolicyReductionV1,
+        worker_count: usize,
+        sessions_per_worker: usize,
+        update_count: u64,
+    ) -> serde_json::Value {
+        run_h4_development_arm_with_state_v1(
+            source,
+            policy_reduction,
+            worker_count,
+            sessions_per_worker,
+            update_count,
+        )
+        .0
     }
 
     #[test]
@@ -6473,6 +6492,338 @@ mod tests {
         fs::write(&output_path, &output).expect("write composed factorial current-row report");
         println!(
             "COMPOSED_FACTORIAL_CURRENT_ROW_RESULT {}",
+            output_path.display()
+        );
+        println!("{}", String::from_utf8(output).unwrap());
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    struct ComposedFixedPolicyEvalArmV1 {
+        report: serde_json::Value,
+        episode_indices: Vec<u64>,
+        learner_seats: Vec<PlayerSeatV1>,
+        terminal_returns: Vec<i8>,
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn persist_composed_train_state_v1(
+        state: &NativePolicyValueTrainStateV1,
+        path: &Path,
+    ) -> serde_json::Value {
+        assert!(!path.exists(), "refusing to overwrite {}", path.display());
+        let snapshot = state.snapshot_v1().expect("snapshot composed candidate");
+        let encoded = encode_native_train_state_payload_v1(&snapshot)
+            .expect("encode composed candidate train state");
+        fs::write(path, &encoded.bytes).expect("write composed candidate train state");
+        assert_eq!(
+            crate::native_training_store_digest_v1::sha256_v1(&encoded.bytes),
+            encoded.digests.payload_sha256
+        );
+        serde_json::json!({
+            "path": path,
+            "byte_count": encoded.bytes.len(),
+            "adam_step": state.adam_step_v1(),
+            "scorer_bias_anchor_f32_bits": format!("{:08x}", state.scorer_bias_anchor_f32_bits_v1()),
+            "payload_sha256": h4_canary_hex_v1(encoded.digests.payload_sha256),
+            "parameters_sha256": h4_canary_hex_v1(encoded.digests.parameters_sha256),
+            "first_moments_sha256": h4_canary_hex_v1(encoded.digests.first_moments_sha256),
+            "second_moments_sha256": h4_canary_hex_v1(encoded.digests.second_moments_sha256),
+            "model_parameter_sha256": h4_canary_hex_v1(encoded.digests.model_parameter_sha256),
+            "native_state_sha256": h4_canary_hex_v1(encoded.digests.native_state_sha256),
+        })
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn composed_eval_state_at_update_v1(
+        state: &NativePolicyValueTrainStateV1,
+        update_index: u64,
+    ) -> NativePolicyValueTrainStateV1 {
+        let mut snapshot = state.snapshot_v1().expect("snapshot fixed eval state");
+        snapshot.adam_step = update_index;
+        NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &snapshot)
+            .expect("relabel fixed eval state schedule ordinal")
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_composed_fixed_policy_eval_arm_v1(
+        label: &str,
+        state: &NativePolicyValueTrainStateV1,
+        source: &H4CanarySourceV1,
+        worker_count: usize,
+        sessions_per_worker: usize,
+    ) -> ComposedFixedPolicyEvalArmV1 {
+        const FIRST_EVAL_UPDATE: u64 = 1_024;
+        const EVAL_CLUSTER_COUNT: u64 = 16;
+        const BATCH_EPISODES: u64 = 64;
+        let config = h4_canary_config_with_topology_v1(
+            NativeTrainingNumericalBackendV1::CudaBurnDense,
+            worker_count,
+            sessions_per_worker,
+        );
+        let mut aggregate = [0_u64; 3];
+        let mut aggregate_by_seat = [[0_u64; 3]; 2];
+        let mut episode_indices =
+            Vec::with_capacity((EVAL_CLUSTER_COUNT * BATCH_EPISODES) as usize);
+        let mut learner_seats = Vec::with_capacity((EVAL_CLUSTER_COUNT * BATCH_EPISODES) as usize);
+        let mut terminal_returns =
+            Vec::with_capacity((EVAL_CLUSTER_COUNT * BATCH_EPISODES) as usize);
+        let mut clusters = Vec::with_capacity(EVAL_CLUSTER_COUNT as usize);
+        let mut total_elapsed_ns = 0_u64;
+        for cluster_index in 0..EVAL_CLUSTER_COUNT {
+            let update_index = FIRST_EVAL_UPDATE + cluster_index;
+            let eval_state = composed_eval_state_at_update_v1(state, update_index);
+            let first_episode_index = update_index * BATCH_EPISODES;
+            let progress = NativeTrainerProgressV2 {
+                next_episode_index: first_episode_index,
+                successful_update_count: update_index,
+                completed_episode_count: first_episode_index,
+                learner_physical_decision_count: 0,
+                learner_policy_step_count: 0,
+            };
+            let mut trainer = NativeTrainerStateV2::from_resumed_parts_v2(
+                970_001,
+                BATCH_EPISODES,
+                &eval_state,
+                progress,
+            )
+            .expect("fixed-policy evaluation trainer");
+            trainer.set_ladder_opponent_v1(Some(Arc::clone(&source.ladder)));
+            let evidence = trainer
+                .run_even_batch_update_live_seat_credit_canary_v1(
+                    &config,
+                    NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+                    NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+                )
+                .expect("fixed-policy evaluation rollout");
+            assert_eq!(evidence.first_episode_index, first_episode_index);
+            assert_eq!(evidence.episode_count, BATCH_EPISODES);
+            let mut outcomes = [0_u64; 3];
+            let mut outcomes_by_seat = [[0_u64; 3]; 2];
+            for episode in &evidence.episodes {
+                let outcome_index = match episode.learner_return {
+                    1 => 0,
+                    0 => 1,
+                    -1 => 2,
+                    value => panic!("invalid fixed-policy terminal return {value}"),
+                };
+                let seat_index = live_seat_index_v1(episode.learner_seat);
+                outcomes[outcome_index] += 1;
+                outcomes_by_seat[seat_index][outcome_index] += 1;
+                aggregate[outcome_index] += 1;
+                aggregate_by_seat[seat_index][outcome_index] += 1;
+                episode_indices.push(episode.episode_index);
+                learner_seats.push(episode.learner_seat);
+                terminal_returns.push(episode.learner_return);
+            }
+            total_elapsed_ns = total_elapsed_ns
+                .checked_add(evidence.update_elapsed_ns)
+                .unwrap();
+            clusters.push(serde_json::json!({
+                "cluster_index": cluster_index,
+                "first_episode_index": first_episode_index,
+                "terminal_outcomes": {"win": outcomes[0], "draw": outcomes[1], "loss": outcomes[2]},
+                "terminal_outcomes_by_seat": {
+                    "p0": {"win": outcomes_by_seat[0][0], "draw": outcomes_by_seat[0][1], "loss": outcomes_by_seat[0][2]},
+                    "p1": {"win": outcomes_by_seat[1][0], "draw": outcomes_by_seat[1][1], "loss": outcomes_by_seat[1][2]},
+                },
+                "rollout_plus_discarded_update_elapsed_ns": evidence.update_elapsed_ns,
+            }));
+        }
+        let expected_episode_count = EVAL_CLUSTER_COUNT * BATCH_EPISODES;
+        assert_eq!(episode_indices.len(), expected_episode_count as usize);
+        ComposedFixedPolicyEvalArmV1 {
+            report: serde_json::json!({
+                "label": label,
+                "fixed_model_native_state_sha256": h4_canary_hex_v1(state.state_sha256_v1().expect("fixed eval state digest")),
+                "episode_count": expected_episode_count,
+                "terminal_outcomes": {"win": aggregate[0], "draw": aggregate[1], "loss": aggregate[2]},
+                "terminal_outcomes_by_seat": {
+                    "p0": {"win": aggregate_by_seat[0][0], "draw": aggregate_by_seat[0][1], "loss": aggregate_by_seat[0][2]},
+                    "p1": {"win": aggregate_by_seat[1][0], "draw": aggregate_by_seat[1][1], "loss": aggregate_by_seat[1][2]},
+                },
+                "aggregate_games_per_second": expected_episode_count as f64 / (total_elapsed_ns as f64 / 1.0e9),
+                "clusters": clusters,
+            }),
+            episode_indices,
+            learner_seats,
+            terminal_returns,
+        }
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn composed_paired_win_summary_v1(
+        treatment: &ComposedFixedPolicyEvalArmV1,
+        control: &ComposedFixedPolicyEvalArmV1,
+    ) -> serde_json::Value {
+        assert_eq!(treatment.episode_indices, control.episode_indices);
+        assert_eq!(treatment.learner_seats, control.learner_seats);
+        let mut totals = [0_u64; 3];
+        let mut by_seat = [[0_u64; 3]; 2];
+        for ((treatment_return, control_return), seat) in treatment
+            .terminal_returns
+            .iter()
+            .zip(&control.terminal_returns)
+            .zip(&treatment.learner_seats)
+        {
+            let outcome = match (*treatment_return == 1, *control_return == 1) {
+                (true, false) => 0,
+                (false, true) => 1,
+                _ => 2,
+            };
+            totals[outcome] += 1;
+            by_seat[live_seat_index_v1(*seat)][outcome] += 1;
+        }
+        let episode_count = treatment.terminal_returns.len() as u64;
+        serde_json::json!({
+            "episode_count": episode_count,
+            "treatment_only_wins": totals[0],
+            "control_only_wins": totals[1],
+            "ties": totals[2],
+            "paired_win_rate_effect_percentage_points": 100.0 * (totals[0] as f64 - totals[1] as f64) / episode_count as f64,
+            "by_seat": {
+                "p0": {"treatment_only_wins": by_seat[0][0], "control_only_wins": by_seat[0][1], "ties": by_seat[0][2]},
+                "p1": {"treatment_only_wins": by_seat[1][0], "control_only_wins": by_seat[1][1], "ties": by_seat[1][2]},
+            },
+        })
+    }
+
+    #[test]
+    #[ignore = "requires retained campaign stores, qualified critic, and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn composed_factorial_current_row_fresh_matched_eval_v1() {
+        const UPDATE_COUNT: u64 = 8;
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let critic_root = std::env::var_os(NATIVE_HISTORY_VALUE_CRITIC_ROOT_ENV_V1)
+            .expect("qualified critic root environment authority");
+        let critic = load_native_structured_policy_residual_inference_v1(Path::new(&critic_root))
+            .expect("qualified history-value critic package");
+        assert_eq!(
+            h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
+            "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
+        );
+        let source = load_h4_canary_source_v1();
+        let (worker_count, sessions_per_worker) = (4_usize, 16_usize);
+        let (monte_carlo_training, monte_carlo_state) = run_h4_development_arm_with_state_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::MeasuredControl,
+            worker_count,
+            sessions_per_worker,
+            UPDATE_COUNT,
+        );
+        let (history_value_gae_training, history_value_gae_state) =
+            run_h4_development_arm_with_state_v1(
+                &source,
+                NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae,
+                worker_count,
+                sessions_per_worker,
+                UPDATE_COUNT,
+            );
+        let output_root = h4_canary_path_v1(
+            "MTG_KERNEL_COMPOSED_FACTORIAL_OUTPUT_ROOT",
+            COMPOSED_FACTORIAL_OUTPUT_ROOT_V1,
+        );
+        fs::create_dir_all(&output_root).expect("create composed factorial output root");
+        let monte_carlo_state_path = output_root.join("current-row-monte-carlo.state.f32le");
+        let history_value_gae_state_path =
+            output_root.join("current-row-history-value-gae.state.f32le");
+        let output_path = output_root.join("current-row-fresh-eval.json");
+        for path in [
+            &monte_carlo_state_path,
+            &history_value_gae_state_path,
+            &output_path,
+        ] {
+            assert!(!path.exists(), "refusing to overwrite {}", path.display());
+        }
+        let parent_eval = run_composed_fixed_policy_eval_arm_v1(
+            "update-512-parent",
+            &source.train_state,
+            &source,
+            worker_count,
+            sessions_per_worker,
+        );
+        let monte_carlo_eval = run_composed_fixed_policy_eval_arm_v1(
+            "current-net8-monte-carlo-8-update",
+            &monte_carlo_state,
+            &source,
+            worker_count,
+            sessions_per_worker,
+        );
+        let history_value_gae_eval = run_composed_fixed_policy_eval_arm_v1(
+            "current-net8-history-value-gae-8-update",
+            &history_value_gae_state,
+            &source,
+            worker_count,
+            sessions_per_worker,
+        );
+        let gae_vs_mc = composed_paired_win_summary_v1(&history_value_gae_eval, &monte_carlo_eval);
+        let gae_vs_parent = composed_paired_win_summary_v1(&history_value_gae_eval, &parent_eval);
+        let mc_vs_parent = composed_paired_win_summary_v1(&monte_carlo_eval, &parent_eval);
+        let monte_carlo_state_artifact =
+            persist_composed_train_state_v1(&monte_carlo_state, &monte_carlo_state_path);
+        let history_value_gae_state_artifact = persist_composed_train_state_v1(
+            &history_value_gae_state,
+            &history_value_gae_state_path,
+        );
+        let gae_vs_mc_positive = gae_vs_mc["treatment_only_wins"].as_u64().unwrap()
+            > gae_vs_mc["control_only_wins"].as_u64().unwrap();
+        let gae_wins = history_value_gae_eval.report["terminal_outcomes"]["win"]
+            .as_u64()
+            .unwrap();
+        let parent_wins = parent_eval.report["terminal_outcomes"]["win"]
+            .as_u64()
+            .unwrap();
+        let gae_not_below_parent = gae_wins >= parent_wins;
+        let decision = if gae_vs_mc_positive && gae_not_below_parent {
+            "ADVANCE_TO_SEPARATELY_SIZED_FORMAL_STRENGTH_DESIGN"
+        } else {
+            "STOP_CURRENT_NET8_HISTORY_VALUE_GAE"
+        };
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-composed-factorial-current-row-fresh-eval/v1",
+            "status": "complete",
+            "reward": "natural-terminal-win-loss-draw-only/v1",
+            "decision": decision,
+            "nonclaims": ["development-strength-screen", "not-formal-strength-evidence", "not-promotable", "no-pro-level-claim"],
+            "training": {
+                "monte_carlo": monte_carlo_training,
+                "history_value_gae": history_value_gae_training,
+            },
+            "state_artifacts": {
+                "monte_carlo": monte_carlo_state_artifact,
+                "history_value_gae": history_value_gae_state_artifact,
+            },
+            "fresh_evaluation": {
+                "base_seed": 970001_u64,
+                "first_episode_index": 65536_u64,
+                "episode_count_per_arm": 1024_u64,
+                "common_roots": true,
+                "fixed_policy_during_each_rollout": true,
+                "post_rollout_updates_discarded": true,
+                "arms": {
+                    "parent": parent_eval.report,
+                    "monte_carlo": monte_carlo_eval.report,
+                    "history_value_gae": history_value_gae_eval.report,
+                },
+                "paired": {
+                    "history_value_gae_vs_monte_carlo": gae_vs_mc,
+                    "history_value_gae_vs_parent": gae_vs_parent,
+                    "monte_carlo_vs_parent": mc_vs_parent,
+                },
+            },
+            "development_gate": {
+                "history_value_gae_paired_net_positive_vs_monte_carlo": gae_vs_mc_positive,
+                "history_value_gae_wins_not_below_parent": gae_not_below_parent,
+            },
+        });
+        let output = serde_json::to_vec_pretty(&report)
+            .expect("serialize composed factorial current-row fresh evaluation");
+        fs::write(&output_path, &output).expect("write composed factorial fresh evaluation");
+        println!(
+            "COMPOSED_FACTORIAL_CURRENT_ROW_FRESH_EVAL_RESULT {}",
             output_path.display()
         );
         println!("{}", String::from_utf8(output).unwrap());

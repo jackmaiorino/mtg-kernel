@@ -35,7 +35,10 @@ structured-plus-GAE run is not an attributable substitute.
 All eight-update results are development evidence. On-policy training outcomes
 are diagnostic because the two arms induce different later trajectories. A
 finite, stable mechanism trajectory with no collapse is required before any
-fresh matched Pool3 evaluation. Any promising cell must then face a separately
-sized terminal win-count strength gate. Non-finite values, root/schedule drift,
-critic identity mismatch, malformed complete histories, or reward-contract
-drift stop the affected arm.
+fresh matched Pool3 evaluation. The current-Net8 GAE cell advances from that
+screen only if, on 1,024 fresh common Pool3 episodes, it has a strictly positive
+paired win net against the MC sibling and no fewer total wins than the shared
+parent. This development gate authorizes only a separately sized formal
+strength design. Non-finite values, root/schedule drift, critic identity
+mismatch, malformed complete histories, or reward-contract drift stop the
+affected arm.
