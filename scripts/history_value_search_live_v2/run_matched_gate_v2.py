@@ -55,7 +55,7 @@ DIAGNOSTIC_PREFIXES = {
     "depth8": "NATIVE_DEPTH8_HISTORY_VALUE ",
     "depth8-cp7-opponent": "NATIVE_DEPTH8_CP7_OPPONENT_HISTORY_VALUE ",
 }
-KEY_VALUE = re.compile(r"([a-z_]+)=([^ ]+)")
+KEY_VALUE = re.compile(r"([a-z0-9_]+)=([^ ]+)")
 
 
 def _sha256(path: Path) -> str:
@@ -301,18 +301,20 @@ def _adjudicate(
                 "parent_log_sha256": parent_task["log_sha256"],
             }
         )
+    extension = args.gate_profile == "extension"
     gates = {
-        "paired_gain": gains >= losses + 2,
-        "p0_net": seat_net["p0"] >= -1,
-        "p1_net": seat_net["p1"] >= -1,
-        "p0_override": overrides["p0"] >= 1,
-        "p1_override": overrides["p1"] >= 1,
+        "paired_gain": gains >= losses + (4 if extension else 2),
+        "p0_net": seat_net["p0"] >= (-2 if extension else -1),
+        "p1_net": seat_net["p1"] >= (-2 if extension else -1),
+        "p0_override": overrides["p0"] >= (8 if extension else 1),
+        "p1_override": overrides["p1"] >= (8 if extension else 1),
         "sample_distinctness": sample_violations == 0,
         "diagnostic_contract": diagnostic_contract_violations == 0,
     }
     return {
         "schema": "mtg-kernel-history-value-search-matched-gate-report/v2",
         "selector": args.selector,
+        "gate_profile": args.gate_profile,
         "base_seed": args.base_seed,
         "accepted_pairs": accepted,
         "excluded_pairs": excluded,
@@ -466,6 +468,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--selector", choices=tuple(DIAGNOSTIC_PREFIXES), default="one-step"
     )
+    parser.add_argument("--gate-profile", choices=("rapid", "extension"), default="rapid")
     parser.add_argument("--evidence-root", type=Path)
     parser.add_argument("--base-seed", type=int)
     parser.add_argument("--target-pairs", type=int, default=8)
@@ -518,8 +521,8 @@ def _arguments() -> argparse.Namespace:
         parser.error("--evidence-root and --base-seed are required")
     if not (1 <= args.target_pairs <= args.max_pairs <= 128):
         parser.error("require 1 <= target-pairs <= max-pairs <= 128")
-    if not (1 <= args.batch_pairs <= 4):
-        parser.error("batch-pairs must be in [1,4]")
+    if not (1 <= args.batch_pairs <= 12):
+        parser.error("batch-pairs must be in [1,12]")
     return args
 
 

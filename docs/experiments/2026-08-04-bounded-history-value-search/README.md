@@ -1,6 +1,6 @@
 # Candidate-turn bounded history-value search
 
-Status: frozen before natural-terminal execution.
+Status: rapid mechanism gate complete, failed. One independent extension is frozen below.
 
 ## Question
 
@@ -56,6 +56,32 @@ All gates must pass:
 6. All accepted games are natural terminals with exact matched seeds and seat swaps. Harness or scorer errors do not count as outcomes.
 
 If the gate passes, extend to a larger fresh paired panel before making a strength claim. If it fails because the mechanism is active but loses, close this one-step selector. If it is too sparse to override on both seats, use the diagnostics to decide whether to relax only the candidate-turn deployment boundary or move directly to a larger recurrent end-to-end learner. No threshold is tuned on these eight pairs.
+
+## Rapid gate result
+
+The repeated one-pair preflight completed in `35.42` and `34.22` seconds. Treatment and control trajectory-bearing log content was bit-identical between repeats after replacing only the explicitly nondeterministic `elapsed_ms` fields. Canonical treatment SHA-256 was `489dd57472f634a5330536abeeb0fe1f4c777e8efac17daaa3c3eb0b445fb8fc`; canonical control SHA-256 was `f19e81cd07de5b868f0a3af3205b06d949c4dbe8554ef5cfb8b6cd0b51657b75`.
+
+The fresh eight-pair gate completed all 16 treatment games and 16 matched control games in `95.31` seconds with no task, sample-distinctness, or diagnostic failures. Treatment and control each won 8 of 16 candidate games. Every paired outcome tied, so gains, losses, and net were all zero. The paired-gain gate failed.
+
+The mechanism was active but sparse. It found 22 eligible P0 roots and 13 eligible P1 roots, excluded 107 P0 roots and 70 P1 roots because some immediate successor passed control to the opponent, and overrode the policy twice at P0 and once at P1. Two overrides changed downstream trajectory-length summaries but no override changed a winner. This is a valid negative rapid screen, but three interventions are too few to distinguish a genuinely neutral selector from a low-frequency useful one.
+
+Report: `D:\mtg-kernel-bounded-history-value-search-v1-formal\report.json`, SHA-256 `690cce58e219700d34c7cbfaa23259827568bf0128bb2eb8075f800770fbb42f`.
+
+## Independent extension
+
+Run exactly one independent 64-pair, 128-game treatment panel and matched 128-game control panel at base seed `1710001`. Keep every model and selector setting above unchanged. This panel is not pooled with the observed rapid gate.
+
+Before it, run a 12-pair nonfresh topology screen at base seed `950001` with 24 concurrent single-threaded JVM tasks. Use batch size 12 only if all tasks succeed, peak Java working set remains below 60 GB, and total simulated throughput is at least `0.32` games per second across both arms. Otherwise retain batch size 4. Topology is the only selectable setting.
+
+The extension passes only if all conditions hold:
+
+1. Treatment gains are at least treatment losses plus four games.
+2. Treatment paired net is at least `-2` separately at P0 and P1.
+3. At least eight eligible overrides occur at each candidate seat.
+4. Sample distinctness and candidate-turn diagnostic contracts have zero violations.
+5. All 64 matched pairs complete with natural terminal outcomes and no substituted pair.
+
+An extension pass authorizes a larger strength validation. Any extension failure closes this one-step selector and moves the project to the larger recurrent end-to-end learner. These thresholds were fixed after observing only the rapid panel and before touching seed `1710001`.
 
 ## Nonclaims
 
