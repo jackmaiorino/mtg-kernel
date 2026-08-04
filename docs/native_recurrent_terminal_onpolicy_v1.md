@@ -70,3 +70,22 @@ decisions per second versus 3,053.8 at batch 128, used 344,152,576 peak bytes,
 and repeated with identical loss-trace and model-state hashes. The profile
 report SHA-256 is
 `89223944b534c2e165d252b50f59532d8e3e92a01c0451052a76dd09ce0ec674`.
+
+## Result
+
+The formal screen completed in `77.37` seconds at commit `3b21fe6`. Selection
+chose epoch four, but the held-out terminal surrogate was `-0.00001611`
+overall. Candidate-seat values were `+0.00005152` at P0 and `-0.00008374` at
+P1, and the pair-bootstrap 80 percent lower bound was `-0.00011383`.
+
+The candidate remained inside the hard behavior envelope. Maximum absolute
+physical-decision log ratio was `0.093745`, and p90 total variation was
+`0.002655`. Mean total variation was only `0.000984`, below the frozen
+`0.005` activity floor. The overall-sign, both-seat, bootstrap, and mean-TV
+gates failed.
+
+This rejects the exact CP7-initialized, one-batch on-policy terminal-correction
+recipe. No full refit, deployment package, or fresh terminal gate is justified.
+It does not reject online terminal learning or recurrent population training.
+The formal report SHA-256 is
+`8be2a78a7ab12321d3465d16a2eb2b161574de0f21536477da5bf7314edd1dbe`.
