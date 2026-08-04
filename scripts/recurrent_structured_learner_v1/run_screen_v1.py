@@ -37,6 +37,7 @@ PROFILE_SCHEMA = SCHEMA + ".profile"
 EXPECTED_CACHE_SHA256 = (
     "454e4ce1b8f7413839a36c8e2731fc0cb65581ce13e593634bffa70013a6f16d"
 )
+CORPUS_PAIR_COUNT = 2_048
 SEED = 20_260_804
 DIM = 128
 HISTORY_LENGTH = 32
@@ -137,7 +138,7 @@ def _load_decisions(
     decisions = legacy_outcome._physical_decisions(value)
     value.clear()
     gc.collect()
-    expected_pairs = pair_limit if pair_limit is not None else 2_048
+    expected_pairs = pair_limit if pair_limit is not None else CORPUS_PAIR_COUNT
     observed_pairs = {decision.pair_index for decision in decisions}
     observed_episodes = {decision.episode_key for decision in decisions}
     if observed_pairs != set(range(expected_pairs)) or len(observed_episodes) != 2 * expected_pairs:
@@ -717,8 +718,8 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
             "schema": SCHEMA + ".fold",
             "fold": fold,
             "source_cache_sha256": EXPECTED_CACHE_SHA256,
-            "fit_pairs": 1_536,
-            "heldout_pairs": 512,
+            "fit_pairs": CORPUS_PAIR_COUNT * 3 // 4,
+            "heldout_pairs": CORPUS_PAIR_COUNT // 4,
             "advantage_statistics": {str(k): v for k, v in statistics.items()},
             "training": training,
             "evaluation": evaluation,

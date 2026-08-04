@@ -60,3 +60,25 @@ A failure closes this exact architecture and fit. Do not tune width, history len
 loss weights, epochs, or gates on the revealed folds. A pass authorizes one native
 implementation and fresh terminal-outcome strength gate, not promotion or a
 professional-level claim.
+
+## Result
+
+The GPU 1 throughput screen selected batch 256 at 3,816.78 physical decisions
+per second, versus 2,027.42 at batch 64. Peak allocated device memory was 381 MB,
+and the repeated selected arm produced identical packed-input, loss-trace, and
+model-state hashes.
+
+The four-fold screen completed in 624.71 seconds. All four held-out terminal
+surrogates were positive: `0.000590`, `0.005439`, `0.007498`, and `0.012845`.
+The aggregate was `0.006593`; P0 was `0.009532`, P1 was `0.003654`, and the
+pair-bootstrap 90 percent lower bound was `0.003730`. Held-out value MSE improved
+29.72 percent overall, 27.15 percent at P0, and 32.21 percent at P1. Mean total
+variation was `0.028175`, p90 was `0.068356`, and all permutation, reference, and
+digest-channel diagnostics passed.
+
+The exact candidate failed one frozen gate. Maximum physical-decision joint log
+ratio was `6.50847`, above the `0.50` envelope. This retires the unconstrained
+direct policy head without a native strength test. It supports retaining the
+recurrent structured representation for a separately frozen hard trust-projected
+head on fresh data. Aggregate SHA-256 is
+`a56d41f47accb5844b45f35bbfdcbf2b505be966d6878b210e95814aa9f2cb22`.

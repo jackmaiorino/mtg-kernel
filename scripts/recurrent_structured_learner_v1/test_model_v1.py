@@ -37,6 +37,7 @@ def _row(seed: int, objects: int = 4, actions: int = 3) -> dict:
         "old_logits": torch.randn(actions, generator=generator),
         "old_value": torch.randn((), generator=generator),
         "selected_index": min(1, actions - 1),
+        "substep_count": 1,
     }
 
 

@@ -40,6 +40,7 @@ class PackedRows:
     parent_logits: Tensor
     parent_value: Tensor
     selected_index: Tensor
+    substep_count: Tensor
     ref_features: Tensor
     ref_batch: Tensor
     ref_action: Tensor
@@ -83,6 +84,11 @@ def pack_rows(
     selected_index = torch.tensor(
         [int(row["selected_index"]) for row in rows], dtype=torch.long
     )
+    substep_count = torch.tensor(
+        [int(row["substep_count"]) for row in rows], dtype=torch.long
+    )
+    if bool((substep_count < 1).any()):
+        raise ValueError("substep_count must be positive")
 
     edge_features: list[Tensor] = []
     edge_batch: list[Tensor] = []
@@ -141,6 +147,7 @@ def pack_rows(
         parent_logits=parent_logits,
         parent_value=parent_value,
         selected_index=selected_index,
+        substep_count=substep_count,
         ref_features=torch.cat(ref_features) if ref_features else empty_ref_f,
         ref_batch=torch.cat(ref_batch) if ref_batch else empty_i,
         ref_action=torch.cat(ref_action) if ref_action else empty_i,
