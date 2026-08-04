@@ -123,15 +123,23 @@ def _example_key(row: dict[str, Any]) -> tuple[int, str, int, int, int, int]:
     )
 
 
-def _load_labels(corpus_report_path: Path) -> tuple[dict[tuple[int, str, int, int, int, int], dict[str, Any]], dict[str, Any]]:
+def _load_labels(
+    corpus_report_path: Path,
+    *,
+    base_seed: int = BASE_SEED,
+    pair_start: int = 0,
+    pair_count: int = PAIR_COUNT,
+) -> tuple[
+    dict[tuple[int, str, int, int, int, int], dict[str, Any]], dict[str, Any]
+]:
     report_sha256 = _sha256(corpus_report_path)
     report = json.loads(corpus_report_path.read_text(encoding="utf-8"))
     if (
         report.get("schema") != "mtg-kernel-cp7-candidate-shadow-corpus/v1"
         or report.get("status") != "complete"
-        or report.get("base_seed") != BASE_SEED
-        or report.get("pair_start") != 0
-        or report.get("pairs") != PAIR_COUNT
+        or report.get("base_seed") != base_seed
+        or report.get("pair_start") != pair_start
+        or report.get("pairs") != pair_count
         or float(report.get("usable_fraction", 0.0)) < 0.95
     ):
         _fail("candidate-state label corpus is not qualified")
@@ -178,16 +186,19 @@ def _load_labels(corpus_report_path: Path) -> tuple[dict[tuple[int, str, int, in
 def _load_decisions(
     history_cache_path: Path,
     labels: dict[tuple[int, str, int, int, int, int], dict[str, Any]],
+    *,
+    expected_cache_sha256: str = HISTORY_CACHE_SHA256,
+    selected_pairs: set[int] | None = None,
 ) -> tuple[list[Any], dict[str, Any], dict[str, float]]:
     started = time.perf_counter()
     cache_sha256 = _sha256(history_cache_path)
-    if cache_sha256 != HISTORY_CACHE_SHA256:
+    if cache_sha256 != expected_cache_sha256:
         _fail("complete-history cache SHA-256 mismatch")
     cache = torch.load(history_cache_path, map_location="cpu", weights_only=False)
     loaded = time.perf_counter()
     if cache.get("version") != structured.SCRIPT_VERSION or not cache.get("complete_history_join"):
         _fail("history cache is not the validated complete public history corpus")
-    selected_pairs = set(range(PAIR_COUNT))
+    selected_pairs = set(range(PAIR_COUNT)) if selected_pairs is None else selected_pairs
     policy = [row for row in cache["policy"] if int(row["pair_index"]) in selected_pairs]
     value = [row for row in cache["value"] if int(row["pair_index"]) in selected_pairs]
     if (
@@ -227,8 +238,8 @@ def _load_decisions(
     return decisions, {
         "history_cache": str(history_cache_path),
         "history_cache_sha256": cache_sha256,
-        "pair_count": PAIR_COUNT,
-        "episode_count": PAIR_COUNT * 2,
+        "pair_count": len(selected_pairs),
+        "episode_count": len(selected_pairs) * 2,
         "physical_decision_count": len(decisions),
         "label_count": len(joined),
         "history_sources": "candidate_and_cp7_public_actions",

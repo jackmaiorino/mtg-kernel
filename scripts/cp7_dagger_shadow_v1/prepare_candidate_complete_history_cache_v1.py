@@ -75,9 +75,9 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     if (
         corpus.get("schema") != CORPUS_SCHEMA
         or corpus.get("status") != "complete"
-        or corpus.get("base_seed") != BASE_SEED
-        or corpus.get("pair_start") != 0
-        or corpus.get("pairs") != PAIR_COUNT
+        or corpus.get("base_seed") != args.expected_base_seed
+        or corpus.get("pair_start") != args.expected_pair_start
+        or corpus.get("pairs") != args.expected_pairs
         or corpus.get("inputs", {}).get("opponent_teacher_export") is not True
         or float(corpus.get("usable_fraction", 0.0)) < 0.95
     ):
@@ -139,11 +139,14 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
                 "join": join,
             }
         )
-    if observed_pairs != set(range(PAIR_COUNT)):
-        _fail("complete-history cache lacks the exact 256-pair panel")
+    expected_pair_indices = set(
+        range(args.expected_pair_start, args.expected_pair_start + args.expected_pairs)
+    )
+    if observed_pairs != expected_pair_indices:
+        _fail("complete-history cache lacks the exact expected pair panel")
     if (
-        complete_join["pair_count"] != PAIR_COUNT
-        or complete_join["episode_count"] != PAIR_COUNT * 2
+        complete_join["pair_count"] != args.expected_pairs
+        or complete_join["episode_count"] != args.expected_pairs * 2
         or not all(
             complete_join[key]
             for key in (
@@ -184,6 +187,9 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         "cache_bytes": args.cache.stat().st_size,
         "corpus_report": str(args.corpus_report),
         "corpus_report_sha256": corpus_sha256,
+        "base_seed": args.expected_base_seed,
+        "pair_start": args.expected_pair_start,
+        "pairs": args.expected_pairs,
         "policy_examples": len(policy),
         "value_examples": len(value),
         "card_max": card_max,
@@ -201,10 +207,15 @@ def main() -> int:
     parser.add_argument("--corpus-report", type=Path, required=True)
     parser.add_argument("--cache", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--expected-base-seed", type=int, default=BASE_SEED)
+    parser.add_argument("--expected-pair-start", type=int, default=0)
+    parser.add_argument("--expected-pairs", type=int, default=PAIR_COUNT)
     args = parser.parse_args()
     args.corpus_report = args.corpus_report.resolve(strict=True)
     args.cache = args.cache.resolve()
     args.report = args.report.resolve()
+    if args.expected_base_seed < 0 or args.expected_pair_start < 0 or args.expected_pairs < 1:
+        _fail("invalid expected corpus panel")
     result = prepare(args)
     print(json.dumps(result, sort_keys=True, allow_nan=False))
     return 0
