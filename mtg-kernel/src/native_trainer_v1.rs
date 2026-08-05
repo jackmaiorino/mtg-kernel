@@ -5425,7 +5425,7 @@ mod tests {
             .expect("retained Pool3 authorities must resolve for population response");
         assert_eq!(
             h4_canary_hex_v1(primary.train_state_sha256()),
-            "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99"
+            "fc471f85d28293d72b42dc61de628859173bd67426e251a51bfbbe86c7d586d8"
         );
         primary
     }
@@ -5436,7 +5436,7 @@ mod tests {
         parent: &NativePolicyValueTrainStateV1,
         pool_root: &Path,
     ) -> Arc<LadderOpponentEngineV1> {
-        Arc::new(LadderOpponentEngineV1::development_population_v1([
+        let ladder = Arc::new(LadderOpponentEngineV1::development_population_v1([
             (
                 "current_gae8",
                 population_response_inference_from_state_v1("current_gae8", gae8),
@@ -5449,7 +5449,26 @@ mod tests {
                 "retained_pool3_primary",
                 load_retained_pool_primary_inference_v1(pool_root),
             ),
-        ]))
+        ]));
+        assert_eq!(
+            ladder.diagnostic_member_label_v1(
+                crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2::Primary,
+            ),
+            Some("current_gae8")
+        );
+        assert_eq!(
+            ladder.diagnostic_member_label_v1(
+                crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2::PredecessorA,
+            ),
+            Some("historical_update512")
+        );
+        assert_eq!(
+            ladder.diagnostic_member_label_v1(
+                crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2::PredecessorB,
+            ),
+            Some("retained_pool3_primary")
+        );
+        ladder
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -8746,6 +8765,7 @@ mod tests {
             sessions_per_worker,
             8,
         );
+        assert_eq!(candidate.adam_step_v1(), 528);
 
         let standard_labels = ["primary", "predecessor_a", "predecessor_b", "uniform_floor"];
         let original_parent = run_composed_fixed_policy_eval_arm_with_ladder_v1(
@@ -8927,7 +8947,7 @@ mod tests {
             "fixed": {
                 "initializer_native_state_sha256": EXPECTED_GAE8_STATE_SHA256,
                 "historical_parent_native_state_sha256": "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0",
-                "retained_pool3_primary_state_sha256": "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99",
+                "retained_pool3_primary_state_sha256": "fc471f85d28293d72b42dc61de628859173bd67426e251a51bfbbe86c7d586d8",
                 "critic_composite_model_parameter_sha256": "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22",
                 "population_weights": {"current_gae8": 40, "historical_update512": 20, "retained_pool3_primary": 20, "uniform_floor": 20},
                 "training_base_seed": TRAIN_BASE_SEED,

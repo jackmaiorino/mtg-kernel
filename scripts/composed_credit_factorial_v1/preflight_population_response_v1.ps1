@@ -92,7 +92,7 @@ Require-Equal $manifest.inputs.initializer.byte_count (Get-Item -LiteralPath $in
 Require-Equal $manifest.inputs.initializer.native_state_sha256 'ab7dd25ca6619a4a613ca089e1eb8e75981f8e5cfc0bae8535b78cddd7efa952' 'inputs.initializer.native_state_sha256'
 Require-Equal $manifest.inputs.initializer.model_parameter_sha256 '5efe2f167045bde379da3be8af6c480b6702f5d7a849ff8435d8ac6b1d91daa8' 'inputs.initializer.model_parameter_sha256'
 Require-Equal $manifest.inputs.historical_parent_native_state_sha256 '00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0' 'inputs.historical_parent_native_state_sha256'
-Require-Equal $manifest.inputs.retained_pool3_primary_native_state_sha256 'a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99' 'inputs.retained_pool3_primary_native_state_sha256'
+Require-Equal $manifest.inputs.retained_pool3_primary_native_state_sha256 'fc471f85d28293d72b42dc61de628859173bd67426e251a51bfbbe86c7d586d8' 'inputs.retained_pool3_primary_native_state_sha256'
 Require-Equal $manifest.inputs.pool_sha256 '6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71' 'inputs.pool_sha256'
 Require-Equal $manifest.inputs.critic_composite_model_parameter_sha256 '6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22' 'inputs.critic_composite_model_parameter_sha256'
 Require-Condition (Test-Path -LiteralPath $manifest.inputs.source_store_root -PathType Container) 'inputs.source_store_root missing'

@@ -22,7 +22,9 @@ run against the old Pool3, or an accumulation-chain reclassification.
   The cycle does not spend compute retraining this initializer.
 - Historical anchor: update-512 native state SHA-256
   `00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0`.
-- Retained promoted Pool3 primary: generation 384 state SHA-256
+- Retained promoted Pool3 primary: generation 384 native state SHA-256
+  `fc471f85d28293d72b42dc61de628859173bd67426e251a51bfbbe86c7d586d8`
+  and payload SHA-256
   `a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99`.
 - Response population: the existing deterministic 40/20/20/20 schedule,
   remapped explicitly to current GAE8, historical update-512, retained Pool3
