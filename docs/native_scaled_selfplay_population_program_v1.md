@@ -161,8 +161,11 @@ speedup that selected the two-GPU topology.
 For long-run pricing, the same screen separates one-time process setup from
 the update-4-to-update-8 checkpoint slope. The measured post-warm rates are
 13.5080 episodes/s on GPU 1 and 27.2659 episodes/s in aggregate on GPU 0 plus
-GPU 1. The corresponding fixed launch terms are 240.805 seconds per GPU-1
-process and 254.243 seconds per paired two-GPU launch wave. Every 128-update
+GPU 1. The single-GPU split is
+`278.708 - 512/13.5080 = 240.805` seconds of fixed launch time. In the paired
+screen the slower post-warm lane was GPU 1 at 13.5604 episodes/s, so the wave
+split is `291.999 - 512/13.5604 = 254.243` seconds. These are the fixed launch
+terms per GPU-1 process and paired two-GPU launch wave. Every 128-update
 pool refresh requires a process boundary. The base therefore has 32 training
 process launches: 24 active-lineage segments across eight refresh intervals
 and eight exploiter builds. That is 32 serial GPU-1 launches or 16 two-GPU
@@ -206,7 +209,9 @@ lineage only when two consecutive scheduled reads cross at least one boundary,
 and stop at the second read without rescuing an intermediate peak.
 
 At 1,024 pairs, the retained planning variance gives overall net SD
-`2*sqrt(1024*0.036617)=12.25`; seat SDs scale to 8.71 and 8.58. The boundaries
+`2*sqrt(1024*0.036617)=12.25`. The retained P0 and P1 leg variances are
+`0.0742005` and `0.0720449`, giving seat SDs
+`sqrt(1024*0.0742005)=8.71` and `sqrt(1024*0.0720449)=8.58`. The boundaries
 are approximately 4.08, 4.13, and 4.20 null SD below zero, with one-read normal
 tail approximations `2.3e-5`, `1.8e-5`, and `1.3e-5`. Their union is at most
 `5.4e-5` per read under that planning law. Across three lineages and four
