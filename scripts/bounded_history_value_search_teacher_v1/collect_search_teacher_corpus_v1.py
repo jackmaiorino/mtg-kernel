@@ -33,6 +33,14 @@ EXPECTED_AUTHORITY_KIND = "qualified-policy-bounded-value-search-v1"
 EXPECTED_PACKAGE_MANIFEST_SHA256 = (
     "0d883d169fca504e4a413810454565d98cd0e8316cb76e7de4f538187b2865c9"
 )
+EXPECTED_OUTCOME_IDENTITY = {
+    "authority_kind": EXPECTED_AUTHORITY_KIND,
+    "adam_step": "1",
+    "manifest": EXPECTED_PACKAGE_MANIFEST_SHA256,
+    "payload": "c55b61678aed544580a692e70a0f72e9df64018ce2d975421e81089d1b3a32d9",
+    "train_state": "86f9d6795e8aecd6d32ab8cacb70dbb1e14a33769a3c5ac30a5fce41031408b3",
+    "model": "c55b61678aed544580a692e70a0f72e9df64018ce2d975421e81089d1b3a32d9",
+}
 EXPECTED_OUTCOME_SELECTION_SOURCE = "candidate_checkpoint_policy"
 EXPECTED_TEACHER_SELECTION_SOURCE = "xmage_rally_cp7_mapper"
 SEARCH_OVERRIDE_MARGIN = 0.25
@@ -572,6 +580,22 @@ def _environment(database_root: Path) -> dict[str, str]:
             "AI_DETERMINISTIC_SEARCH": "true",
             "AI_DETERMINISTIC_MAX_NODES": "5000",
             "AI_MAX_THREADS_FOR_SIMULATIONS": "1",
+            "MAVEN_OPTS": " ".join(
+                (
+                    "-Dxmage.rally.cp7Outcome.authorityKind="
+                    + EXPECTED_OUTCOME_IDENTITY["authority_kind"],
+                    "-Dxmage.rally.cp7Outcome.adamStep="
+                    + EXPECTED_OUTCOME_IDENTITY["adam_step"],
+                    "-Dxmage.rally.cp7Outcome.manifestSha256="
+                    + EXPECTED_OUTCOME_IDENTITY["manifest"],
+                    "-Dxmage.rally.cp7Outcome.payloadSha256="
+                    + EXPECTED_OUTCOME_IDENTITY["payload"],
+                    "-Dxmage.rally.cp7Outcome.trainStateSha256="
+                    + EXPECTED_OUTCOME_IDENTITY["train_state"],
+                    "-Dxmage.rally.cp7Outcome.modelParameterSha256="
+                    + EXPECTED_OUTCOME_IDENTITY["model"],
+                )
+            ),
         }
     )
     return environment

@@ -164,6 +164,34 @@ def _fixture() -> tuple[list[dict], list[dict], list[dict]]:
 
 
 class CollectorTests(unittest.TestCase):
+    def test_environment_binds_exact_bounded_package_outcome_identity(self) -> None:
+        environment = collector._environment(Path("worker-db"))
+        expected = {
+            "xmage.rally.cp7Outcome.authorityKind": collector.EXPECTED_OUTCOME_IDENTITY[
+                "authority_kind"
+            ],
+            "xmage.rally.cp7Outcome.adamStep": collector.EXPECTED_OUTCOME_IDENTITY[
+                "adam_step"
+            ],
+            "xmage.rally.cp7Outcome.manifestSha256": collector.EXPECTED_OUTCOME_IDENTITY[
+                "manifest"
+            ],
+            "xmage.rally.cp7Outcome.payloadSha256": collector.EXPECTED_OUTCOME_IDENTITY[
+                "payload"
+            ],
+            "xmage.rally.cp7Outcome.trainStateSha256": collector.EXPECTED_OUTCOME_IDENTITY[
+                "train_state"
+            ],
+            "xmage.rally.cp7Outcome.modelParameterSha256": collector.EXPECTED_OUTCOME_IDENTITY[
+                "model"
+            ],
+        }
+        observed = {
+            item[2:].split("=", 1)[0]: item.split("=", 1)[1]
+            for item in environment["MAVEN_OPTS"].split()
+        }
+        self.assertEqual(observed, expected)
+
     def test_validates_search_diagnostics_and_aggregates_by_seat(self) -> None:
         outcome, teacher, diagnostics = _fixture()
         with tempfile.TemporaryDirectory() as directory:
