@@ -63,9 +63,15 @@ class SelectorTests(unittest.TestCase):
                 "model_parameter_sha256": "2" * 64,
                 "parameter_l2_from_gae8": 0.3,
                 "movement": {
+                    "minimum_likelihood_ratio": 0.8,
+                    "maximum_likelihood_ratio": 1.2,
+                    "mean_likelihood_ratio": 1.0,
+                    "mean_absolute_log_likelihood_ratio": 0.02,
                     "mean_action_total_variation": mean_tv,
                     "p90_action_total_variation_nearest_rank": 0.03,
                     "maximum_absolute_joint_log_likelihood_ratio": max_log_ratio,
+                    "mean_old_to_current_forward_kl": 0.002,
+                    "mean_policy_surrogate": 0.001,
                 },
             },
             "publication_gate": {

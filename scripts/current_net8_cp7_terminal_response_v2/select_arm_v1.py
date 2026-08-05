@@ -95,13 +95,22 @@ def validate_arm(
     movement = candidate.get("movement", {})
     finite_values = [
         candidate.get("parameter_l2_from_gae8"),
+        movement.get("minimum_likelihood_ratio"),
+        movement.get("maximum_likelihood_ratio"),
+        movement.get("mean_likelihood_ratio"),
+        movement.get("mean_absolute_log_likelihood_ratio"),
+        movement.get("maximum_absolute_joint_log_likelihood_ratio"),
+        movement.get("mean_old_to_current_forward_kl"),
         movement.get("mean_action_total_variation"),
         movement.get("p90_action_total_variation_nearest_rank"),
-        movement.get("maximum_absolute_joint_log_likelihood_ratio"),
+        movement.get("mean_policy_surrogate"),
     ]
     if not all(isinstance(value, (int, float)) for value in finite_values):
         raise ValueError(f"{name} movement fields are absent")
-    parameter_l2, mean_tv, p90_tv, max_log_ratio = map(float, finite_values)
+    parameter_l2 = float(candidate["parameter_l2_from_gae8"])
+    mean_tv = float(movement["mean_action_total_variation"])
+    p90_tv = float(movement["p90_action_total_variation_nearest_rank"])
+    max_log_ratio = float(movement["maximum_absolute_joint_log_likelihood_ratio"])
     finite = all(
         value == value and value not in (float("inf"), float("-inf"))
         for value in finite_values
