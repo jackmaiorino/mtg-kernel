@@ -1,7 +1,7 @@
 # Current Net8 CP7 terminal response v4
 
-Status: draft for combined design and implementation review. No v4 collection
-or training arm has run.
+Status: combined design and implementation review. No v4 collection or
+training arm has run.
 
 ## Question
 
@@ -62,6 +62,11 @@ Both arms run all eight updates. Candidate checkpoints are measured after
 updates `2`, `4`, `6`, and `8`. No terminal result, coefficient, learning rate,
 update count, or checkpoint is changed after collection begins.
 
+After collection and merge, the exact merged corpus SHA-256, decision count,
+physical-group count, and terminal-return counts are pinned into the trainer
+and screen manifest in one reviewed commit before either arm runs. A
+caller-supplied hash is only a consistency check until that pin is present.
+
 ## Movement-only eligibility and selection
 
 A checkpoint is eligible only if all quantities are finite, Adam step equals
@@ -76,6 +81,15 @@ larger beta, then the earlier update. Corpus terminal counts and gameplay
 outcomes are excluded from selection. If none is eligible, stop this exact
 larger-corpus, fresh-optimizer recipe without another local schedule, beta, or
 threshold retry.
+
+Each arm may write only a non-runnable staging package for its own best
+eligible checkpoint. One global selector consumes both complete arm reports,
+re-applies every movement gate over the Rust-written metrics, validates the
+staging payload hashes, and applies the cross-arm rule. Only that selector can
+write a package with a terminal-gate authority, and the Rust loader must reload
+that package against the selector-report hash before gameplay. The selector
+does not independently derive movement metrics from model parameters; its
+explicit trust boundary is the Rust arm report.
 
 ## Ordered terminal gates
 

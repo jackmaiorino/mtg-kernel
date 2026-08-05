@@ -25,8 +25,8 @@ use crate::native_policy_train_step_v1::{
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, TRAINER_ALGORITHM_V1,
 };
 use crate::native_policy_value_net_v1::{
-    NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativePolicyValueModelConfigV1,
-    NativePolicyValueNetV1, HIDDEN_DIM_V1,
+    NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativeNamedParameterV1,
+    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, HIDDEN_DIM_V1,
 };
 use crate::native_train_state_payload_v1::{
     decode_native_train_state_payload_verified_v1, encode_native_train_state_payload_v1,
@@ -104,6 +104,10 @@ const CURRENT_NET8_CP7_RESPONSE_V4_KL_0_3_AUTHORITY_KIND_V1: &str =
     "current-net8-cp7-terminal-response-v4-kl-0.3";
 const CURRENT_NET8_CP7_RESPONSE_V4_KL_1_0_AUTHORITY_KIND_V1: &str =
     "current-net8-cp7-terminal-response-v4-kl-1.0";
+const CURRENT_NET8_CP7_RESPONSE_V4_KL_0_3_ARM_CANDIDATE_AUTHORITY_KIND_V1: &str =
+    "current-net8-cp7-terminal-response-v4-kl-0.3-arm-candidate";
+const CURRENT_NET8_CP7_RESPONSE_V4_KL_1_0_ARM_CANDIDATE_AUTHORITY_KIND_V1: &str =
+    "current-net8-cp7-terminal-response-v4-kl-1.0-arm-candidate";
 const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_BASE_SEED_HEX_V1: &str = "00000000001d7311";
 const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_PAIR_COUNT_V1: usize = 256;
 const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_EPISODE_COUNT_V1: usize = 512;
@@ -2610,10 +2614,17 @@ impl FixedNativeV4RecipeV1 {
         }
     }
 
-    fn authority_kind_v1(self) -> &'static str {
+    fn final_authority_kind_v1(self) -> &'static str {
         match self {
             Self::Kl03 => CURRENT_NET8_CP7_RESPONSE_V4_KL_0_3_AUTHORITY_KIND_V1,
             Self::Kl10 => CURRENT_NET8_CP7_RESPONSE_V4_KL_1_0_AUTHORITY_KIND_V1,
+        }
+    }
+
+    fn arm_candidate_authority_kind_v1(self) -> &'static str {
+        match self {
+            Self::Kl03 => CURRENT_NET8_CP7_RESPONSE_V4_KL_0_3_ARM_CANDIDATE_AUTHORITY_KIND_V1,
+            Self::Kl10 => CURRENT_NET8_CP7_RESPONSE_V4_KL_1_0_ARM_CANDIDATE_AUTHORITY_KIND_V1,
         }
     }
 
@@ -5339,6 +5350,23 @@ fn fixed_native_v4_checkpoint_gate_v1(
     (finite, pass)
 }
 
+fn named_parameters_bit_exact_v1(
+    left: &[NativeNamedParameterV1],
+    right: &[NativeNamedParameterV1],
+) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.name == right.name
+                && left.shape == right.shape
+                && left.values.len() == right.values.len()
+                && left
+                    .values
+                    .iter()
+                    .zip(&right.values)
+                    .all(|(left, right)| left.to_bits() == right.to_bits())
+        })
+}
+
 fn run_fixed_native_v4_training_v1(
     config: FixedNativeV4TrainConfigV1,
     recipe: FixedNativeV4RecipeV1,
@@ -5390,7 +5418,7 @@ fn run_fixed_native_v4_training_v1(
     let reset_snapshot = state.snapshot_v1()?;
     let reset_is_exact = reset_snapshot.adam_step == 0
         && reset_snapshot.scorer_bias_anchor_bits == source_snapshot.scorer_bias_anchor_bits
-        && reset_snapshot.parameters == source_snapshot.parameters
+        && named_parameters_bit_exact_v1(&reset_snapshot.parameters, &source_snapshot.parameters)
         && reset_snapshot
             .first_moments
             .iter()
@@ -5482,6 +5510,7 @@ fn run_fixed_native_v4_training_v1(
             );
             checkpoints.push(serde_json::json!({
                 "update": update,
+                "adam_step": state.adam_step_v1(),
                 "parameter_l2_from_gae8": parameter_l2,
                 "movement": &next.ratio_metrics,
                 "tail_shape": &next.tail_shape,
@@ -5616,7 +5645,7 @@ fn run_fixed_native_v4_training_v1(
         },
         "checkpoints": checkpoints,
         "candidate": candidate,
-        "publication_pass": selected.is_some(),
+        "arm_eligibility_pass": selected.is_some(),
         "nonclaims": [
             "development training metrics are not playing-strength evidence",
             "terminal win/loss/draw remains the only promotion measure",
@@ -5641,7 +5670,7 @@ fn run_fixed_native_v4_training_v1(
         )?;
         let manifest = FixedNativeOutputManifestV1 {
             schema: FIXED_NATIVE_STATE_SCHEMA_V1.to_owned(),
-            authority_kind: recipe.authority_kind_v1().to_owned(),
+            authority_kind: recipe.arm_candidate_authority_kind_v1().to_owned(),
             source_result_sha256: lower_hex_raw32_v1(report_sha256),
             payload: FixedNativeOutputPayloadManifestV1 {
                 filename: FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1.to_owned(),
@@ -5656,6 +5685,7 @@ fn run_fixed_native_v4_training_v1(
                 native_state_sha256: lower_hex_raw32_v1(encoded.digests.native_state_sha256),
             },
             non_claims: vec![
+                "arm candidate authority cannot enter terminal gameplay gates".to_owned(),
                 "external software anchor is not professional-level evidence".to_owned(),
                 "terminal win/loss/draw is the only playing-strength outcome".to_owned(),
             ],
@@ -5669,7 +5699,7 @@ fn run_fixed_native_v4_training_v1(
             &manifest_bytes,
         )?;
         let reloaded = load_fixed_native_training_source_v1(&config.output_dir)?;
-        if reloaded.authority_kind != recipe.authority_kind_v1()
+        if reloaded.authority_kind != recipe.arm_candidate_authority_kind_v1()
             || reloaded.source_result_sha256 != report_sha256
             || reloaded.payload_sha256 != encoded.digests.payload_sha256
             || reloaded.native_state_sha256 != encoded.digests.native_state_sha256
@@ -5685,12 +5715,85 @@ fn run_fixed_native_v4_training_v1(
 
     Ok(serde_json::json!({
         "schema": recipe.summary_schema_v1(),
-        "publication_pass": selected.is_some(),
+        "arm_eligibility_pass": selected.is_some(),
         "report_sha256": lower_hex_raw32_v1(report_sha256),
         "manifest_sha256": manifest_sha256,
         "selected_update": selected.as_ref().map(|(_, update, _, _, _)| update),
         "mean_action_total_variation": selected.as_ref().map(|(_, _, _, movement, _)| movement.mean_action_total_variation),
         "policy_anchor_coefficient": recipe.policy_anchor_coefficient_v1(),
+    }))
+}
+
+fn verify_fixed_native_v4_selected_package_v1(
+    output_dir: &Path,
+    selection_report_path: &Path,
+) -> DynResultV1<serde_json::Value> {
+    let report_bytes = fs::read(selection_report_path)?;
+    let report: serde_json::Value = serde_json::from_slice(&report_bytes)?;
+    let selected = report
+        .get("selected")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| invalid_data_v1("v4 selection report has no selected checkpoint"))?;
+    let arm = selected
+        .get("arm")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| invalid_data_v1("v4 selection report selected arm is absent"))?;
+    let selected_recipe = match arm {
+        "beta-0.3" => FixedNativeV4RecipeV1::Kl03,
+        "beta-1.0" => FixedNativeV4RecipeV1::Kl10,
+        _ => return Err(invalid_data_v1("v4 selection report selected arm is not pinned").into()),
+    };
+    let expected_authority = selected_recipe.final_authority_kind_v1();
+    let selected_update = selected
+        .get("update")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| invalid_data_v1("v4 selection report selected update is absent"))?;
+    let selected_payload_sha256 = selected
+        .get("payload_sha256")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| invalid_data_v1("v4 selection report payload SHA-256 is absent"))?;
+    let selected_package_root = selected
+        .get("final_package_root")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| invalid_data_v1("v4 selection report package root is absent"))?;
+    if report.get("schema").and_then(serde_json::Value::as_str)
+        != Some("mtg-kernel-current-net8-cp7-terminal-response-v4-selection/v1")
+        || report.get("status").and_then(serde_json::Value::as_str) != Some("selected")
+        || report
+            .get("publication_pass")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        || selected
+            .get("final_authority_kind")
+            .and_then(serde_json::Value::as_str)
+            != Some(expected_authority)
+        || fs::canonicalize(selected_package_root)? != fs::canonicalize(output_dir)?
+    {
+        return Err(invalid_data_v1("v4 selection report binding mismatch").into());
+    }
+    parse_lower_hex_raw32_v1(selected_payload_sha256)?;
+    let report_sha256 = sha256_v1(&report_bytes);
+    let loaded = load_fixed_native_training_source_v1(output_dir)?;
+    if loaded.authority_kind != expected_authority
+        || loaded.source_result_sha256 != report_sha256
+        || lower_hex_raw32_v1(loaded.payload_sha256) != selected_payload_sha256
+        || loaded.adam_step != selected_update
+        || loaded.state.adam_step_v1() != selected_update
+        || loaded.state.state_sha256_v1()? != loaded.native_state_sha256
+    {
+        return Err(invalid_data_v1("selected fixed-native v4 package reload mismatch").into());
+    }
+    Ok(serde_json::json!({
+        "schema": "mtg-kernel-current-net8-cp7-terminal-response-v4-package-verification/v1",
+        "status": "pass",
+        "arm": arm,
+        "selected_update": selected_update,
+        "authority_kind": expected_authority,
+        "selection_report_sha256": lower_hex_raw32_v1(report_sha256),
+        "manifest_sha256": lower_hex_raw32_v1(loaded.manifest_sha256),
+        "payload_sha256": lower_hex_raw32_v1(loaded.payload_sha256),
+        "native_state_sha256": lower_hex_raw32_v1(loaded.native_state_sha256),
+        "model_parameter_sha256": lower_hex_raw32_v1(loaded.model_parameter_sha256),
     }))
 }
 
@@ -5723,6 +5826,21 @@ where
                 let (recipe, config) = parse_fixed_native_v4_train_config_v1(tail.iter().cloned())?;
                 run_fixed_native_v4_training_v1(config, recipe)?
             }
+            Some("verify-fixed-v4-selection") => {
+                if tail.len() != 4
+                    || tail[0] != "--output-dir"
+                    || tail[2] != "--selection-report"
+                {
+                    return Err(invalid_data_v1(
+                        "usage: xmage_cp7_outcome_reinforce_v1 verify-fixed-v4-selection --output-dir PATH --selection-report PATH",
+                    )
+                    .into());
+                }
+                verify_fixed_native_v4_selected_package_v1(
+                    Path::new(&tail[1]),
+                    Path::new(&tail[3]),
+                )?
+            }
             Some("verify") => {
                 if tail.len() != 2 || tail[0] != "--output-dir" {
                     return Err(invalid_data_v1(
@@ -5735,7 +5853,7 @@ where
                 ))?)?
             }
             _ => return Err(invalid_data_v1(
-                "expected train, train-fixed, train-fixed-v2, train-fixed-v3, train-fixed-v4, or verify command",
+                "expected train, train-fixed, train-fixed-v2, train-fixed-v3, train-fixed-v4, verify-fixed-v4-selection, or verify command",
             )
             .into()),
         };
@@ -6078,8 +6196,12 @@ mod tests {
             0.3_f32.to_bits()
         );
         assert_eq!(
-            recipe.authority_kind_v1(),
+            recipe.final_authority_kind_v1(),
             CURRENT_NET8_CP7_RESPONSE_V4_KL_0_3_AUTHORITY_KIND_V1
+        );
+        assert_eq!(
+            recipe.arm_candidate_authority_kind_v1(),
+            CURRENT_NET8_CP7_RESPONSE_V4_KL_0_3_ARM_CANDIDATE_AUTHORITY_KIND_V1
         );
         assert_eq!(
             config.outcome_jsonl_sha256,
@@ -6113,8 +6235,12 @@ mod tests {
             1.0_f32.to_bits()
         );
         assert_eq!(
-            recipe.authority_kind_v1(),
+            recipe.final_authority_kind_v1(),
             CURRENT_NET8_CP7_RESPONSE_V4_KL_1_0_AUTHORITY_KIND_V1
+        );
+        assert_eq!(
+            recipe.arm_candidate_authority_kind_v1(),
+            CURRENT_NET8_CP7_RESPONSE_V4_KL_1_0_ARM_CANDIDATE_AUTHORITY_KIND_V1
         );
 
         for extra in [
@@ -6239,7 +6365,18 @@ mod tests {
             reset.scorer_bias_anchor_bits,
             before.scorer_bias_anchor_bits
         );
-        assert_eq!(reset.parameters, before.parameters);
+        assert!(named_parameters_bit_exact_v1(
+            &reset.parameters,
+            &before.parameters,
+        ));
+        let mut positive_zero = before.parameters.clone();
+        let mut negative_zero = before.parameters.clone();
+        positive_zero[0].values[0] = 0.0;
+        negative_zero[0].values[0] = -0.0;
+        assert!(!named_parameters_bit_exact_v1(
+            &positive_zero,
+            &negative_zero,
+        ));
         assert!(reset
             .first_moments
             .iter()
