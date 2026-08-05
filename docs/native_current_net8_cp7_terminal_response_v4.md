@@ -1,7 +1,8 @@
 # Current Net8 CP7 terminal response v4
 
-Status: formal collection and merge complete. The exact corpus pin is pending
-review. Both training arms have not run.
+Status: complete and stopped. The selected beta `0.3`, update-4 candidate
+passed Pool3 noninferiority and narrowly failed the CP7 skill-7 development
+gate. See `native_current_net8_cp7_terminal_response_v4_result.md`.
 
 ## Question
 
