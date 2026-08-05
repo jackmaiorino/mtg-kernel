@@ -13,7 +13,7 @@ KL-to-parent anchor make that same self-play-scale continuation stable?
 This is a causal development experiment, not a promotion gate. It repeats the
 original envrand-v2 macro recipe and changes only the policy regularizer. A
 fixed resulting policy can enter formal V3 evaluation only through a later
-candidate sheet and one remaining alpha-ledger slot.
+candidate sheet and one of the three remaining alpha-ledger slots.
 
 ## Fixed training recipe
 
@@ -69,6 +69,12 @@ beta-zero bit identity through update 64 and a Store close/reopen.
 
 ## Bounded coefficient screen
 
+The gates are ordered and cannot be reordered: (1) focused implementation
+tests, then the 64-update beta-zero Store identity check; (2) the bounded
+throughput screen and topology freeze; (3) the coefficient screen; (4) the
+gross-safety panel; (5) full-horizon training and development evaluation.
+Failure at an earlier gate prevents every later gate.
+
 One 32-update matched screen uses development seed `1940001`. All five arms
 finish before selection:
 
@@ -78,11 +84,13 @@ finish before selection:
 4. beta `0.1`
 5. beta `0.3`
 
-A fixed parent-generated validation read at seed `1941001` measures every arm
-at updates `0`, `8`, `16`, `24`, and `32`. It reports, overall and by learner
-seat, mean forward KL, mean and p90/p99 action TV, entropy, maximum action
-probability, selected joint log-ratio tails, parameter L2, and finiteness.
-No gameplay outcome is read during coefficient selection.
+A fixed parent-generated validation read of 512 seat-swapped pairs at seed
+`1941001` measures every arm at updates `0`, `8`, `16`, `24`, and `32` over
+every retained learner physical group. It reports the game and group
+inventories and, overall and by learner seat, mean forward KL, mean and
+p90/p99 action TV, entropy, maximum action probability, selected joint
+log-ratio tails, parameter L2, and finiteness. No gameplay outcome is read
+during coefficient selection.
 
 A positive-beta arm is eligible only if:
 
@@ -106,6 +114,15 @@ promoted(2) at development seed `1942001`. Require selected-minus-control
 terminal-order net at least `-26` overall and at least `-18` in each selected
 seat. Failure is a gross-safety stop. It cannot select a different beta.
 
+The planning model predeclares `d=0.1363` nonzero clusters, derived from the
+candidate-01 stream, for both selected-versus-control and late-checkpoint
+pairings under common random numbers. At 512 clusters, its variance `0.036617`
+gives overall terminal-order leg-net SD `8.66`; the `-26` floor is `3.00` SD
+below true zero, about `0.13%` one-sided false-stop. Candidate-01 seat
+variances `0.0742005` and `0.0720449` give seat-net SD `6.16` and `6.07`; the
+`-18` floors are `2.92` and `2.97` SD below zero, about `0.18%` and `0.15%`
+false-stop. These are planning approximations, not outcome gates or evidence.
+
 ## Throughput screen
 
 Before the coefficient screen, run one bounded campaign-topology comparison on
@@ -118,8 +135,14 @@ Each point uses eight updates and separate create-new roots in an exclusive
 campaign window with no other trainer or evaluator process. The same-seed
 stores must be bit-identical across attempts and devices. Record wall time,
 episodes per second, CPU, host memory, per-GPU memory and utilization, process
-count, and GPU 0 desktop load. Cross-device nonidentity is a legitimate
-GPU-heterogeneity result and selects the GPU-1-only fallback. The two-device
+count, GPU 0 desktop load, git commit, Rust and Cargo versions, linker identity,
+CUDA toolkit version, driver version, and exact GPU names and ordinals. The
+create-new evidence root is
+`D:\mtg-kernel-regularized-continuation-retest-v1\preflight\seed-969999`.
+Unexplained same-device beta-zero nonidentity is `FAIL-INVESTIGATE` and blocks
+the screen rather than authorizing a retry recipe. Cross-device nonidentity is
+a legitimate GPU-heterogeneity result and selects the GPU-1-only fallback
+after the same-device identity check has passed. The two-device
 topology is selected only if it is resource-safe, bit-identical, and at least
 `1.5x` faster in aggregate. Otherwise use GPU 1 only. No third topology is
 tested. Formal V3 measurement, if later authorized, remains exclusive to
@@ -156,6 +179,17 @@ report retains per-leg terminal outcomes and computes:
   percentage point. Training seeds are not pooled into one confidence
   sequence because their fixed policies may have different conditional means.
 
+For the full-horizon movement trend, the frozen 512-pair validation corpus at
+seed `1941001` also measures mean parent KL, TV, and log-ratio tails at
+generations 64, 128, 256, 384, and 512 for every regularized seed and its
+matched beta-zero control. The predeclared late-anchor-loss diagnostic is the
+ratio
+`R_g = regularized_mean_parent_KL_g / beta_zero_mean_parent_KL_g`.
+All five ratios are reported. A rise at an intermediate checkpoint is
+descriptive. `R_512 >= 0.75` is the only late-onset condition that licenses
+the single escalation below; `R_512 < 0.75` means the anchor held at the
+endpoint and no late-drift retry is allowed, even if an earlier ratio crossed.
+
 Terminal order is `W > D > L`. A paired leg is `+1`, `0`, or `-1` according
 to that ordering, and a cluster is the mean of its two seat legs. Direct score
 against promoted(2) uses `W=1`, `D=0.5`, and `L=0`; this defines the `50%`
@@ -172,6 +206,19 @@ generation 512 minus generation 384 win-score effects were `-0.0742`,
 restoration scale is therefore `0.0382` pooled, with the weakest of the two
 historically collapsing seeds requiring about `0.0239` restoration to reach
 50 percent.
+
+The archived primary sources are
+`D:\mtg-kernel-macro-selfplay-envrand-v2-rung-v1\native-eval\native-eval-summary.json`
+at SHA-256
+`8de514c6be0494a24bb125aa65482165bfe31567a760d6492ee3b3fd8cc6bcc8`
+and
+`D:\mtg-kernel-macro-selfplay-envrand-v2-rung-v1\formal-summary.json`
+at SHA-256
+`2cb7788f4d3335409557aebaa5e87f06c8db511bf7cd09babeb259f199920d68`.
+The diagnostic source is
+`C:\Users\Jack\IdeaProjects\collab\POST-RUNG-DIAGNOSTIC-V1-RESULT-20260802.md`
+at SHA-256
+`04896a6bf4e92723bf0f26b18ef6f2a3196f16b13aefd8fbf3d6941a5add4e38`.
 
 The candidate-01 formal stream supplies a conservative planning law without
 new gameplay: at 16,384 clusters its score counts were
@@ -193,6 +240,13 @@ inferential authority. The measured candidate-01 null variances imply, at
 `2.55` null SD below zero, for approximate one-sided false-stop rates
 `0.55%`, `0.60%`, and `0.54%`. Pooling three P1 reads gives SE `0.00342`; a
 `-0.01` tolerance is `2.92` SD below true zero, about `0.17%` false-stop.
+For the actual generation-512 versus generation-384 comparison, the same
+predeclared `d=0.1363` planning rate means about 279 nonzero clusters among
+2,048 common-random-number seat-swapped clusters. Pairing is exact on base
+seed, environment seed, deck hashes, Pool3 component, and learner seat; the
+two seat legs remain one cluster and Pool3 is retained as the fixed IID
+mixture. Realized discordance is reported but never substituted into a
+threshold.
 
 ## Causal prerequisite and advancement
 
@@ -220,17 +274,18 @@ The retest advances to candidate nomination only if all of the following hold:
 
 If the late-stability checks pass but the endpoint strength checks do not, the
 result is `STABLE-NO-STRENGTH` and does not nominate. If seat-linked drift
-persists after regularization, mechanically defined as a repeated negative P1
-generation-512 versus generation-384 net beyond the `-31` floor while P0 stays
-within its floor, the previously frozen H4 condition routes a longer-horizon
-seat-credit retest.
+persists after regularization, the previously frozen H4 condition routes a
+longer-horizon seat-credit retest. Mechanically, for each seed define
+`seat_gap = P1_leg_net - P0_leg_net` for generation 512 versus generation 384.
+H4 reopens only if at least two of three seeds have `P1_leg_net < -31`,
+`P0_leg_net >= -31`, and therefore `seat_gap < 0`. All three quantities are
+reported for every seed.
 
 Exactly one full-horizon anchor escalation is predeclared. If the first
-selected-beta result does not advance and its generation-512 mean parent KL is
-at least `75%` of the matched beta-zero control's generation-512 mean parent
-KL, the next-larger coefficient that was already screen-eligible runs once on
+selected-beta result does not advance and `R_512 >= 0.75`, the next-larger
+coefficient that was already screen-eligible runs once on
 the same three training seeds and fixed development panel. If no larger beta
-was eligible, or if KL remained below `75%` and strength still failed, there
+was eligible, or if `R_512 < 0.75` and strength still failed, there
 is no escalation. The second result is final for this lane. No third beta,
 optimizer, schedule, threshold, seed, or endpoint retry is allowed.
 
@@ -240,11 +295,13 @@ development data and is excluded from all later formal schedules.
 
 ## Formal route and nonclaims
 
-A nomination consumes no alpha. Before any formal game, write and countersign
-a separate V3 candidate-02 sheet against promoted(2), assign its initial and
-confirmation schedules, size `max_N` at the ledger's actual `0.00875` alpha,
-and bind the fixed nominated Store. Initial and confirmation success are both
-required. Candidate slots 03 and 04 remain unassigned.
+A nomination consumes no alpha. Candidate slots 02, 03, and 04 remain equally
+unassigned until a concrete sheet is countersigned. Before any formal game,
+write and countersign a separate V3 sheet assigning the nomination to the
+lowest still-unassigned slot, presently candidate 02, against promoted(2).
+Assign its initial and confirmation schedules, size `max_N` at the ledger's
+actual `0.00875` alpha, and bind the fixed nominated Store. Initial and
+confirmation success are both required.
 
 On formal success, open the V3 accumulation chain on that lineage. Do not run
 CP7 in this causal retest. CP7 response was the question V4 just closed.
