@@ -69,6 +69,20 @@ def _version(command: list[str], cwd: Path | None = None) -> str:
     return lines[0] if lines else ""
 
 
+def _git_commit(repo: Path) -> str:
+    return _version(
+        [
+            "git",
+            "-c",
+            "safe.directory=" + repo.as_posix(),
+            "-C",
+            str(repo),
+            "rev-parse",
+            "HEAD",
+        ]
+    )
+
+
 def _load_package(root: Path) -> dict[str, Any]:
     files = sorted(path.name for path in root.iterdir())
     if files != ["checkpoint.state.f32le", "fixed_native_state.json"]:
@@ -607,7 +621,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "scorer_exe": str(args.scorer_exe),
             "scorer_sha256": _sha256(args.scorer_exe),
             "mage_repo": str(args.mage_repo),
-            "mage_commit": _version(["git", "rev-parse", "HEAD"], args.mage_repo),
+            "mage_commit": _git_commit(args.mage_repo),
             "source_database": str(args.source_database),
             "source_database_sha256": _sha256(args.source_database),
             "gpu_ordinal_reserved": 1,
