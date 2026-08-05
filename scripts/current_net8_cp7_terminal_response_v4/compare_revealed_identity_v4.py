@@ -140,6 +140,10 @@ def compare(
     report = {
         "schema": REPORT_SCHEMA,
         "status": "pass",
+        "tool": {
+            "path": str(Path(__file__).resolve()),
+            "sha256": sha256(Path(__file__).resolve()),
+        },
         "comparison": "all outcome-v2 fields except shard-local ordinal offsets",
         "base_seed": base_seed,
         "first_pair": first_pair,
@@ -147,6 +151,24 @@ def compare(
         "episode_count": pair_count * 2,
         "baseline_root": str(baseline_root.resolve()),
         "candidate_root": str(candidate_root.resolve()),
+        "collection_reports": {
+            "baseline": (
+                None
+                if not (baseline_root.resolve().parent / "report.json").is_file()
+                else {
+                    "path": str(baseline_root.resolve().parent / "report.json"),
+                    "sha256": sha256(baseline_root.resolve().parent / "report.json"),
+                }
+            ),
+            "candidate": (
+                None
+                if not (candidate_root.resolve().parent / "report.json").is_file()
+                else {
+                    "path": str(candidate_root.resolve().parent / "report.json"),
+                    "sha256": sha256(candidate_root.resolve().parent / "report.json"),
+                }
+            ),
+        },
         "baseline_shards": baseline_reports,
         "candidate_shards": candidate_reports,
         "pairs": pair_evidence,
