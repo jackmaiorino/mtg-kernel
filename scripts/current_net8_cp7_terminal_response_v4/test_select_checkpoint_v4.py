@@ -303,6 +303,42 @@ class SelectorV4Tests(unittest.TestCase):
                 b"payload-beta-0.3-update-4",
             )
 
+    def test_publication_retry_binds_void_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arms = {
+                "beta-0.3": self.make_arm(root, "beta-0.3", [0.012, 0.025, 0.020, 0.018]),
+                "beta-1.0": self.make_arm(root, "beta-1.0", [0.011, 0.012, 0.013, 0.014]),
+            }
+            prior_report = root / "selection-attempt-01.json"
+            prior_report.write_text('{"status":"selected"}\n', encoding="utf-8")
+            prior_final = root / "selected-final-attempt-01"
+            prior_final.mkdir()
+            prior_manifest = prior_final / SELECTOR.PACKAGE_MANIFEST_FILENAME
+            prior_manifest.write_text('{"invalid_order":true}\n', encoding="utf-8")
+            selection_report = root / "selection-attempt-02.json"
+            final_package = root / "selected-final-attempt-02"
+            manifest_path = self.make_manifest(root, arms, selection_report, final_package)
+            manifest = json.loads(manifest_path.read_text())
+            manifest["supersedes"] = {
+                "status": "void-publication-only",
+                "reason": "noncanonical-final-manifest-key-order",
+                "selection_report_path": str(prior_report),
+                "selection_report_sha256": SELECTOR.sha256(prior_report),
+                "final_package_root": str(prior_final),
+                "final_manifest_sha256": SELECTOR.sha256(prior_manifest),
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            SELECTOR.authorize(
+                manifest_path,
+                {name: paths[0] for name, paths in arms.items()},
+                {name: paths[1] for name, paths in arms.items()},
+                selection_report,
+                final_package,
+            )
+            published = json.loads(selection_report.read_text())
+            self.assertEqual(published["supersedes"], manifest["supersedes"])
+
     def test_both_ineligible_stops_without_package(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

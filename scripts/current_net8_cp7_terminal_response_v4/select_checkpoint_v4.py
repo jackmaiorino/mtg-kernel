@@ -223,7 +223,44 @@ def validate_manifest(
         final_package_root,
     ):
         raise ValueError("screen manifest output binding mismatch")
-    return {"manifest": manifest, "corpus": corpus}
+
+    supersedes = manifest.get("supersedes")
+    normalized_supersedes = None
+    if supersedes is not None:
+        if not isinstance(supersedes, dict) or set(supersedes) != {
+            "status",
+            "reason",
+            "selection_report_path",
+            "selection_report_sha256",
+            "final_package_root",
+            "final_manifest_sha256",
+        }:
+            raise ValueError("screen manifest superseded publication binding is malformed")
+        prior_report = _bound_path(
+            supersedes.get("selection_report_path"), manifest_path, "superseded selection report"
+        )
+        prior_final_root = _bound_path(
+            supersedes.get("final_package_root"), manifest_path, "superseded final package"
+        )
+        prior_final_manifest = prior_final_root / PACKAGE_MANIFEST_FILENAME
+        if (
+            supersedes.get("status") != "void-publication-only"
+            or supersedes.get("reason") != "noncanonical-final-manifest-key-order"
+            or not prior_report.is_file()
+            or not prior_final_manifest.is_file()
+            or supersedes.get("selection_report_sha256") != sha256(prior_report)
+            or supersedes.get("final_manifest_sha256") != sha256(prior_final_manifest)
+        ):
+            raise ValueError("screen manifest superseded publication evidence mismatch")
+        normalized_supersedes = {
+            "status": supersedes["status"],
+            "reason": supersedes["reason"],
+            "selection_report_path": str(prior_report),
+            "selection_report_sha256": supersedes["selection_report_sha256"],
+            "final_package_root": str(prior_final_root),
+            "final_manifest_sha256": supersedes["final_manifest_sha256"],
+        }
+    return {"manifest": manifest, "corpus": corpus, "supersedes": normalized_supersedes}
 
 
 def _checkpoint_gate(checkpoint: dict[str, Any]) -> tuple[bool, bool, float]:
@@ -542,6 +579,8 @@ def authorize(
             "terminal win/loss/draw remains the only promotion measure",
         ],
     }
+    if validated_manifest["supersedes"] is not None:
+        selection_report["supersedes"] = validated_manifest["supersedes"]
     selection_sha = write_new_json(selection_report_path, selection_report)
     final_manifest_sha = None
     if selected is not None:
