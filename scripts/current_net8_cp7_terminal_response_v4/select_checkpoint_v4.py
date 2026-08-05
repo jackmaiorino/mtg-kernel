@@ -460,9 +460,11 @@ def select(arms: list[dict[str, Any]]) -> str | None:
     )["arm"]
 
 
-def write_new_json(path: Path, value: dict[str, Any]) -> str:
+def write_new_json(path: Path, value: dict[str, Any], *, sort_keys: bool = True) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = (json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+    data = (
+        json.dumps(value, indent=2, sort_keys=sort_keys, allow_nan=False) + "\n"
+    ).encode("utf-8")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
     descriptor = os.open(path, flags)
     try:
@@ -570,6 +572,7 @@ def authorize(
         final_manifest_sha = write_new_json(
             final_package_root / PACKAGE_MANIFEST_FILENAME,
             final_manifest,
+            sort_keys=False,
         )
     return {
         "schema": SUMMARY_SCHEMA,

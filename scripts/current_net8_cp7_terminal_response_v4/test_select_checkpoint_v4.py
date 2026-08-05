@@ -248,8 +248,31 @@ class SelectorV4Tests(unittest.TestCase):
             )
             self.assertEqual(summary["selected_arm"], "beta-1.0")
             self.assertEqual(summary["selected_update"], 2)
-            final_manifest = json.loads(
-                (final_package / SELECTOR.PACKAGE_MANIFEST_FILENAME).read_text()
+            final_manifest_path = final_package / SELECTOR.PACKAGE_MANIFEST_FILENAME
+            final_manifest_text = final_manifest_path.read_text()
+            final_manifest = json.loads(final_manifest_text)
+            self.assertEqual(
+                list(final_manifest),
+                ["schema", "authority_kind", "source_result_sha256", "payload", "non_claims"],
+            )
+            self.assertEqual(
+                list(final_manifest["payload"]),
+                [
+                    "filename",
+                    "byte_count",
+                    "adam_step",
+                    "scorer_bias_anchor_f32_bits",
+                    "payload_sha256",
+                    "parameters_sha256",
+                    "first_moments_sha256",
+                    "second_moments_sha256",
+                    "model_parameter_sha256",
+                    "native_state_sha256",
+                ],
+            )
+            self.assertEqual(
+                final_manifest_text,
+                json.dumps(final_manifest, indent=2, sort_keys=False, allow_nan=False) + "\n",
             )
             self.assertEqual(
                 final_manifest["authority_kind"],
