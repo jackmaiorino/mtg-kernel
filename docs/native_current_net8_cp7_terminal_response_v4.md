@@ -1,7 +1,7 @@
 # Current Net8 CP7 terminal response v4
 
-Status: combined design and implementation review. No v4 collection or
-training arm has run.
+Status: bounded throughput and identity screens complete. The formal v4
+collection and both training arms have not run.
 
 ## Question
 
@@ -36,11 +36,17 @@ output identity. The prior eight-worker candidate-state collector sustained
 `0.875` games/s with CPU near saturation while doing extra shadow queries, so
 eight workers are the default. If the screen is below `0.60` games/s or shows
 resource pressure, test at most one alternative topology before choosing.
+The `0.60` rate is the trigger for exactly one alternative, not a campaign
+stop. After that single alternative, choose the resource-safe,
+identity-passing topology with the higher measured rate; an exact tie goes to
+fewer workers. No third topology is authorized.
 For the mechanical gate, resource pressure means minimum available system
 memory below `16 GiB`, maximum system-memory use above `90%`, or GPU 1 memory
 use above `512 MiB`. The formal collector accepts only the exact declared panel
-and requires the passing screen and revealed-identity report hashes in its own
-manifest.
+and requires the selected screen, revealed-identity, and, when the trigger
+fired, topology selection report hashes in its own manifest. It independently
+revalidates the identity tool, baseline and candidate report hashes, complete
+shard inventory, and every normalized per-pair digest.
 
 The fixed collection starts only after a small manifest binds the git commit,
 scorer and runner hashes, toolchain including linker, source package and card
@@ -117,10 +123,12 @@ confirmation, not automatic promotion.
 
 ## Compute and nonclaims
 
-At the prior measured eight-worker rate, the 512-game collection projects to
-about 9.8 minutes. The bounded screen, collection, corpus merge, two CPU
-training arms, selection, and verification should fit comfortably within one
-hour. Actual timing is reported from the throughput screen before collection.
+The completed eight-worker screen measured `0.440188` games/s, while the one
+authorized sixteen-worker alternative measured `0.323490` games/s. Both were
+resource-safe and exactly identical to the revealed baseline after removal of
+only the three shard-local ordinal fields. The selected eight-worker topology
+projects the 512-game collection at about 19.4 minutes. Actual collection and
+training timing will be reported from their run artifacts.
 
 This is a versus-CP7 skill-7 response experiment. It does not establish broad,
 human, professional, or metagame-wide strength. CP7 is part of the training
