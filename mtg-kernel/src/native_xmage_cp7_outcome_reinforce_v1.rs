@@ -20,9 +20,9 @@ use crate::native_flat_tensorizer_v2::{
 };
 use crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_ref_v1;
 use crate::native_policy_train_step_v1::{
-    NativePolicyForwardInputV1, NativePolicyFrozenObjectiveTermV1, NativePolicyPhysicalDecisionV1,
-    NativePolicySubstepV1, NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
-    TRAINER_ALGORITHM_V1,
+    NativePolicyForwardInputV1, NativePolicyFrozenAnchorGroupV1, NativePolicyFrozenAnchorSubstepV1,
+    NativePolicyFrozenObjectiveTermV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
+    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, TRAINER_ALGORITHM_V1,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativePolicyValueModelConfigV1,
@@ -92,6 +92,18 @@ const CURRENT_NET8_CP7_RESPONSE_V2_LOW_VALUE_AUTHORITY_KIND_V1: &str =
     "current-net8-cp7-terminal-response-v2-low-value";
 const CURRENT_NET8_CP7_RESPONSE_V2_POLICY_ONLY_VALUE_COEFFICIENT_V1: f32 = 0.0;
 const CURRENT_NET8_CP7_RESPONSE_V2_LOW_VALUE_COEFFICIENT_V1: f32 = 0.1;
+const CURRENT_NET8_CP7_RESPONSE_V3_KL_0_3_AUTHORITY_KIND_V1: &str =
+    "current-net8-cp7-terminal-response-v3-kl-0.3";
+const CURRENT_NET8_CP7_RESPONSE_V3_KL_1_0_AUTHORITY_KIND_V1: &str =
+    "current-net8-cp7-terminal-response-v3-kl-1.0";
+const CURRENT_NET8_CP7_RESPONSE_V3_KL_3_0_AUTHORITY_KIND_V1: &str =
+    "current-net8-cp7-terminal-response-v3-kl-3.0";
+const CURRENT_NET8_CP7_RESPONSE_V3_KL_10_0_AUTHORITY_KIND_V1: &str =
+    "current-net8-cp7-terminal-response-v3-kl-10.0";
+const OLD_POLICY_FORWARD_KL_ANCHOR_IDENTITY_V1: &str =
+    "old-policy-forward-kl-every-legal-action-distribution/v1";
+const CURRENT_NET8_CP7_RESPONSE_V3_P99_GROUP_LOG_RATIO_CAP_V1: f64 = 0.75;
+const CURRENT_NET8_CP7_RESPONSE_V3_P99_ROW_TV_CAP_V1: f64 = 0.15;
 const FIXED_NATIVE_STATE_SCHEMA_V1: &str = "mtg-kernel-xmage-fixed-native-state/v1";
 const FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1: &str = "fixed_native_state.json";
 const FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1: &str = "checkpoint.state.f32le";
@@ -2256,6 +2268,35 @@ fn train_frozen_batch_v1(
     learning_rate: f32,
     value_coefficient: f32,
 ) -> DynResultV1<()> {
+    train_frozen_batch_inner_v1(state, batch, terms, learning_rate, value_coefficient, None)
+}
+
+fn train_frozen_anchored_batch_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    batch: &[OutcomePhysicalDecisionV1],
+    terms: &[NativePolicyFrozenObjectiveTermV1],
+    learning_rate: f32,
+    value_coefficient: f32,
+    policy_anchor_coefficient: f32,
+) -> DynResultV1<()> {
+    train_frozen_batch_inner_v1(
+        state,
+        batch,
+        terms,
+        learning_rate,
+        value_coefficient,
+        Some(policy_anchor_coefficient),
+    )
+}
+
+fn train_frozen_batch_inner_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    batch: &[OutcomePhysicalDecisionV1],
+    terms: &[NativePolicyFrozenObjectiveTermV1],
+    learning_rate: f32,
+    value_coefficient: f32,
+    policy_anchor_coefficient: Option<f32>,
+) -> DynResultV1<()> {
     if batch.len() != terms.len() {
         return Err(invalid_data_v1("frozen outcome train batch cardinality mismatch").into());
     }
@@ -2302,12 +2343,44 @@ fn train_frozen_batch_v1(
             terminal_return: group.terminal_return,
         })
         .collect::<Vec<_>>();
-    let result = state.train_step_with_frozen_objective_v1(
-        &physical,
-        terms,
-        value_coefficient,
-        learning_rate,
-    )?;
+    let anchor_substeps = policy_anchor_coefficient.map(|_| {
+        batch
+            .iter()
+            .map(|group| {
+                group
+                    .examples
+                    .iter()
+                    .map(|example| NativePolicyFrozenAnchorSubstepV1 {
+                        target_logits_f32_bits: &example.old_policy_logits_f32_bits,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    });
+    let anchors = anchor_substeps.as_ref().map(|groups| {
+        groups
+            .iter()
+            .map(|substeps| NativePolicyFrozenAnchorGroupV1 { substeps })
+            .collect::<Vec<_>>()
+    });
+    let result = match (policy_anchor_coefficient, anchors.as_deref()) {
+        (Some(coefficient), Some(anchors)) => state
+            .train_step_with_frozen_objective_and_policy_anchor_v1(
+                &physical,
+                terms,
+                anchors,
+                coefficient,
+                value_coefficient,
+                learning_rate,
+            )?,
+        (None, None) => state.train_step_with_frozen_objective_v1(
+            &physical,
+            terms,
+            value_coefficient,
+            learning_rate,
+        )?,
+        _ => unreachable!("anchor coefficient and payload are constructed together"),
+    };
     if result.physical_terms.len() != physical.len()
         || result.adam_step != state.adam_step_v1()
         || !result.loss.is_finite()
@@ -2500,6 +2573,7 @@ struct FixedNativeTrainConfigV1 {
     value_coefficient: f32,
     epochs: u32,
     ppo_clip_epsilon: f32,
+    policy_anchor_coefficient: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2507,6 +2581,10 @@ enum FixedNativeRecipeV1 {
     ResponseV1,
     ResponseV2PolicyOnly,
     ResponseV2LowValue,
+    ResponseV3Kl03,
+    ResponseV3Kl10,
+    ResponseV3Kl30,
+    ResponseV3Kl100,
 }
 
 impl FixedNativeRecipeV1 {
@@ -2517,7 +2595,31 @@ impl FixedNativeRecipeV1 {
                 CURRENT_NET8_CP7_RESPONSE_V2_POLICY_ONLY_VALUE_COEFFICIENT_V1
             }
             Self::ResponseV2LowValue => CURRENT_NET8_CP7_RESPONSE_V2_LOW_VALUE_COEFFICIENT_V1,
+            Self::ResponseV3Kl03
+            | Self::ResponseV3Kl10
+            | Self::ResponseV3Kl30
+            | Self::ResponseV3Kl100 => 0.0,
         }
+    }
+
+    fn policy_anchor_coefficient_v1(self) -> Option<f32> {
+        match self {
+            Self::ResponseV3Kl03 => Some(0.3),
+            Self::ResponseV3Kl10 => Some(1.0),
+            Self::ResponseV3Kl30 => Some(3.0),
+            Self::ResponseV3Kl100 => Some(10.0),
+            _ => None,
+        }
+    }
+
+    fn is_response_v3_v1(self) -> bool {
+        matches!(
+            self,
+            Self::ResponseV3Kl03
+                | Self::ResponseV3Kl10
+                | Self::ResponseV3Kl30
+                | Self::ResponseV3Kl100
+        )
     }
 
     fn authority_kind_v1(self) -> &'static str {
@@ -2527,6 +2629,10 @@ impl FixedNativeRecipeV1 {
                 CURRENT_NET8_CP7_RESPONSE_V2_POLICY_ONLY_AUTHORITY_KIND_V1
             }
             Self::ResponseV2LowValue => CURRENT_NET8_CP7_RESPONSE_V2_LOW_VALUE_AUTHORITY_KIND_V1,
+            Self::ResponseV3Kl03 => CURRENT_NET8_CP7_RESPONSE_V3_KL_0_3_AUTHORITY_KIND_V1,
+            Self::ResponseV3Kl10 => CURRENT_NET8_CP7_RESPONSE_V3_KL_1_0_AUTHORITY_KIND_V1,
+            Self::ResponseV3Kl30 => CURRENT_NET8_CP7_RESPONSE_V3_KL_3_0_AUTHORITY_KIND_V1,
+            Self::ResponseV3Kl100 => CURRENT_NET8_CP7_RESPONSE_V3_KL_10_0_AUTHORITY_KIND_V1,
         }
     }
 
@@ -2538,6 +2644,18 @@ impl FixedNativeRecipeV1 {
             }
             Self::ResponseV2LowValue => {
                 "mtg-kernel-current-net8-cp7-terminal-response-v2-low-value-training/v1"
+            }
+            Self::ResponseV3Kl03 => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v3-kl-0.3-training/v1"
+            }
+            Self::ResponseV3Kl10 => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v3-kl-1.0-training/v1"
+            }
+            Self::ResponseV3Kl30 => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v3-kl-3.0-training/v1"
+            }
+            Self::ResponseV3Kl100 => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v3-kl-10.0-training/v1"
             }
         }
     }
@@ -2551,6 +2669,18 @@ impl FixedNativeRecipeV1 {
             Self::ResponseV2LowValue => {
                 "mtg-kernel-current-net8-cp7-terminal-response-v2-low-value-summary/v1"
             }
+            Self::ResponseV3Kl03 => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v3-kl-0.3-summary/v1"
+            }
+            Self::ResponseV3Kl10 => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v3-kl-1.0-summary/v1"
+            }
+            Self::ResponseV3Kl30 => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v3-kl-3.0-summary/v1"
+            }
+            Self::ResponseV3Kl100 => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v3-kl-10.0-summary/v1"
+            }
         }
     }
 
@@ -2562,6 +2692,8 @@ impl FixedNativeRecipeV1 {
             && config.epochs == CURRENT_NET8_CP7_RESPONSE_EPOCHS_V1
             && config.ppo_clip_epsilon.to_bits()
                 == CURRENT_NET8_CP7_RESPONSE_PPO_CLIP_EPSILON_V1.to_bits()
+            && config.policy_anchor_coefficient.map(f32::to_bits)
+                == self.policy_anchor_coefficient_v1().map(f32::to_bits)
     }
 }
 
@@ -2577,6 +2709,7 @@ impl Default for FixedNativeTrainConfigV1 {
             value_coefficient: f32::NAN,
             epochs: 0,
             ppo_clip_epsilon: f32::NAN,
+            policy_anchor_coefficient: None,
         }
     }
 }
@@ -4389,9 +4522,19 @@ where
                     .ok_or_else(|| invalid_data_v1("PPO clip epsilon is not UTF-8"))?
                     .parse()?;
             }
+            "--policy-anchor-coefficient" => {
+                config.policy_anchor_coefficient = Some(
+                    next_arg_v1(&mut iterator, flag)?
+                        .to_str()
+                        .ok_or_else(|| {
+                            invalid_data_v1("policy anchor coefficient is not UTF-8")
+                        })?
+                        .parse()?,
+                );
+            }
             "--help" | "-h" => {
                 return Err(invalid_data_v1(
-                    "usage: xmage_cp7_outcome_reinforce_v1 train-fixed --outcome-jsonl PATH --outcome-jsonl-sha256 HEX64 --source-fixed-root PATH --output-dir NEW_PATH --report-path NEW_PATH --learning-rate FLOAT --value-coefficient FLOAT --epochs U32 --ppo-clip-epsilon FLOAT",
+                    "usage: xmage_cp7_outcome_reinforce_v1 train-fixed[-v2|-v3] --outcome-jsonl PATH --outcome-jsonl-sha256 HEX64 --source-fixed-root PATH --output-dir NEW_PATH --report-path NEW_PATH --learning-rate FLOAT --value-coefficient FLOAT --epochs U32 --ppo-clip-epsilon FLOAT [--policy-anchor-coefficient FLOAT]",
                 )
                 .into())
             }
@@ -4452,6 +4595,40 @@ where
         "policy-only" => FixedNativeRecipeV1::ResponseV2PolicyOnly,
         "low-value" => FixedNativeRecipeV1::ResponseV2LowValue,
         _ => return Err(invalid_data_v1("train-fixed-v2 arm is not pinned").into()),
+    };
+    arguments.drain(arm_index..=arm_index + 1);
+    let config = parse_fixed_native_train_config_for_recipe_v1(arguments, recipe)?;
+    Ok((recipe, config))
+}
+
+fn parse_fixed_native_v3_train_config_v1<I>(
+    arguments: I,
+) -> DynResultV1<(FixedNativeRecipeV1, FixedNativeTrainConfigV1)>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut arguments = arguments.into_iter().collect::<Vec<_>>();
+    let arm_index = arguments
+        .iter()
+        .position(|argument| argument == "--arm")
+        .ok_or_else(|| invalid_data_v1("train-fixed-v3 requires --arm"))?;
+    if arguments
+        .iter()
+        .skip(arm_index + 1)
+        .any(|argument| argument == "--arm")
+        || arm_index + 1 >= arguments.len()
+    {
+        return Err(invalid_data_v1("train-fixed-v3 requires exactly one --arm value").into());
+    }
+    let arm = arguments[arm_index + 1]
+        .to_str()
+        .ok_or_else(|| invalid_data_v1("train-fixed-v3 arm is not UTF-8"))?;
+    let recipe = match arm {
+        "kl-0.3" => FixedNativeRecipeV1::ResponseV3Kl03,
+        "kl-1.0" => FixedNativeRecipeV1::ResponseV3Kl10,
+        "kl-3.0" => FixedNativeRecipeV1::ResponseV3Kl30,
+        "kl-10.0" => FixedNativeRecipeV1::ResponseV3Kl100,
+        _ => return Err(invalid_data_v1("train-fixed-v3 arm is not pinned").into()),
     };
     arguments.drain(arm_index..=arm_index + 1);
     let config = parse_fixed_native_train_config_for_recipe_v1(arguments, recipe)?;
@@ -4750,13 +4927,23 @@ fn run_fixed_native_training_v1(
     for epoch_index in 1..=config.epochs {
         let adam_step_before = state.adam_step_v1();
         let before_update = current.ratio_metrics.clone();
-        train_frozen_batch_v1(
-            &mut state,
-            &dataset.groups,
-            &current.terms,
-            config.learning_rate,
-            config.value_coefficient,
-        )?;
+        match config.policy_anchor_coefficient {
+            Some(coefficient) => train_frozen_anchored_batch_v1(
+                &mut state,
+                &dataset.groups,
+                &current.terms,
+                config.learning_rate,
+                config.value_coefficient,
+                coefficient,
+            )?,
+            None => train_frozen_batch_v1(
+                &mut state,
+                &dataset.groups,
+                &current.terms,
+                config.learning_rate,
+                config.value_coefficient,
+            )?,
+        }
         if state.adam_step_v1() != adam_step_before + 1 {
             return Err(invalid_data_v1("fixed-native Adam step did not advance once").into());
         }
@@ -4784,6 +4971,7 @@ fn run_fixed_native_training_v1(
     let parameter_l2 = parameter_l2_distance_v1(&source_snapshot, &final_snapshot)?;
     let encoded = encode_native_train_state_payload_v1(&final_snapshot)?;
     let movement = &current.ratio_metrics;
+    let tail_shape = &current.tail_shape;
     let finite = movement.minimum_likelihood_ratio.is_finite()
         && movement.maximum_likelihood_ratio.is_finite()
         && movement.mean_likelihood_ratio.is_finite()
@@ -4794,12 +4982,26 @@ fn run_fixed_native_training_v1(
         && movement.mean_old_to_current_forward_kl.is_finite()
         && movement.mean_action_total_variation.is_finite()
         && movement.p90_action_total_variation_nearest_rank.is_finite()
-        && movement.mean_policy_surrogate.is_finite();
+        && movement.mean_policy_surrogate.is_finite()
+        && tail_shape
+            .p99_action_total_variation_nearest_rank
+            .is_finite()
+        && tail_shape.maximum_action_total_variation.is_finite()
+        && tail_shape
+            .p99_absolute_joint_log_likelihood_ratio_nearest_rank
+            .is_finite();
+    let v3_tail_pass = !recipe.is_response_v3_v1()
+        || (tail_shape.p99_absolute_joint_log_likelihood_ratio_nearest_rank
+            <= CURRENT_NET8_CP7_RESPONSE_V3_P99_GROUP_LOG_RATIO_CAP_V1
+            && tail_shape.p99_action_total_variation_nearest_rank
+                <= CURRENT_NET8_CP7_RESPONSE_V3_P99_ROW_TV_CAP_V1
+            && tail_shape.above_absolute_joint_log_ratio_1_count == 0);
     let publication_pass = finite
         && parameter_l2 <= 0.75
         && (0.010..=0.050).contains(&movement.mean_action_total_variation)
         && movement.p90_action_total_variation_nearest_rank <= 0.150
-        && movement.maximum_absolute_joint_log_likelihood_ratio <= 1.0;
+        && movement.maximum_absolute_joint_log_likelihood_ratio <= 1.0
+        && v3_tail_pass;
 
     let report = serde_json::json!({
         "schema": recipe.report_schema_v1(),
@@ -4829,6 +5031,14 @@ fn run_fixed_native_training_v1(
             "learning_rate_f32_bits": config.learning_rate.to_bits(),
             "value_coefficient": config.value_coefficient,
             "value_coefficient_f32_bits": config.value_coefficient.to_bits(),
+            "policy_anchor": config.policy_anchor_coefficient.map(|coefficient| serde_json::json!({
+                "identity": OLD_POLICY_FORWARD_KL_ANCHOR_IDENTITY_V1,
+                "direction": "old_to_current",
+                "old_policy_source": PPO_OLD_POLICY_SOURCE_V1,
+                "scope": "every_legal_action_distribution",
+                "coefficient": coefficient,
+                "coefficient_f32_bits": coefficient.to_bits(),
+            })),
             "ppo_clip_epsilon": config.ppo_clip_epsilon,
             "ppo_clip_epsilon_f32_bits": config.ppo_clip_epsilon.to_bits(),
             "epochs": config.epochs,
@@ -4862,6 +5072,16 @@ fn run_fixed_native_training_v1(
             "mean_action_total_variation_cap": 0.050,
             "p90_action_total_variation_cap": 0.150,
             "maximum_absolute_joint_log_likelihood_ratio_cap": 1.0,
+            "v3_tail_caps_required": recipe.is_response_v3_v1(),
+            "p99_absolute_joint_log_likelihood_ratio_cap": recipe
+                .is_response_v3_v1()
+                .then_some(CURRENT_NET8_CP7_RESPONSE_V3_P99_GROUP_LOG_RATIO_CAP_V1),
+            "p99_action_total_variation_cap": recipe
+                .is_response_v3_v1()
+                .then_some(CURRENT_NET8_CP7_RESPONSE_V3_P99_ROW_TV_CAP_V1),
+            "above_absolute_joint_log_ratio_1_count_cap": recipe
+                .is_response_v3_v1()
+                .then_some(0_u64),
             "pass": publication_pass,
         },
         "nonclaims": [
@@ -4940,7 +5160,12 @@ fn run_fixed_native_training_v1(
         "parameter_l2_from_gae8": parameter_l2,
         "mean_action_total_variation": movement.mean_action_total_variation,
         "p90_action_total_variation": movement.p90_action_total_variation_nearest_rank,
+        "p99_action_total_variation": tail_shape.p99_action_total_variation_nearest_rank,
+        "maximum_action_total_variation": tail_shape.maximum_action_total_variation,
+        "p99_absolute_joint_log_likelihood_ratio": tail_shape.p99_absolute_joint_log_likelihood_ratio_nearest_rank,
+        "above_absolute_joint_log_ratio_1_count": tail_shape.above_absolute_joint_log_ratio_1_count,
         "maximum_absolute_joint_log_likelihood_ratio": movement.maximum_absolute_joint_log_likelihood_ratio,
+        "policy_anchor_coefficient": config.policy_anchor_coefficient,
     }))
 }
 
@@ -4952,36 +5177,39 @@ where
     let (command, tail) = arguments
         .split_first()
         .ok_or_else(|| invalid_data_v1("expected train or verify command"))?;
-    let summary = match command.to_str() {
-        Some("train") => serde_json::to_value(run_training_v1(parse_train_config_v1(
-            tail.iter().cloned(),
-        )?)?)?,
-        Some("train-fixed") => run_fixed_native_training_v1(
-            parse_fixed_native_train_config_v1(tail.iter().cloned())?,
-            FixedNativeRecipeV1::ResponseV1,
-        )?,
-        Some("train-fixed-v2") => {
-            let (recipe, config) = parse_fixed_native_v2_train_config_v1(tail.iter().cloned())?;
-            run_fixed_native_training_v1(config, recipe)?
-        }
-        Some("verify") => {
-            if tail.len() != 2 || tail[0] != "--output-dir" {
-                return Err(invalid_data_v1(
-                    "usage: xmage_cp7_outcome_reinforce_v1 verify --output-dir PATH",
-                )
-                .into());
+    let summary =
+        match command.to_str() {
+            Some("train") => serde_json::to_value(run_training_v1(parse_train_config_v1(
+                tail.iter().cloned(),
+            )?)?)?,
+            Some("train-fixed") => run_fixed_native_training_v1(
+                parse_fixed_native_train_config_v1(tail.iter().cloned())?,
+                FixedNativeRecipeV1::ResponseV1,
+            )?,
+            Some("train-fixed-v2") => {
+                let (recipe, config) = parse_fixed_native_v2_train_config_v1(tail.iter().cloned())?;
+                run_fixed_native_training_v1(config, recipe)?
             }
-            serde_json::to_value(verify_xmage_cp7_outcome_checkpoint_v1(PathBuf::from(
-                &tail[1],
-            ))?)?
-        }
-        _ => {
-            return Err(invalid_data_v1(
-                "expected train, train-fixed, train-fixed-v2, or verify command",
+            Some("train-fixed-v3") => {
+                let (recipe, config) = parse_fixed_native_v3_train_config_v1(tail.iter().cloned())?;
+                run_fixed_native_training_v1(config, recipe)?
+            }
+            Some("verify") => {
+                if tail.len() != 2 || tail[0] != "--output-dir" {
+                    return Err(invalid_data_v1(
+                        "usage: xmage_cp7_outcome_reinforce_v1 verify --output-dir PATH",
+                    )
+                    .into());
+                }
+                serde_json::to_value(verify_xmage_cp7_outcome_checkpoint_v1(PathBuf::from(
+                    &tail[1],
+                ))?)?
+            }
+            _ => return Err(invalid_data_v1(
+                "expected train, train-fixed, train-fixed-v2, train-fixed-v3, or verify command",
             )
-            .into())
-        }
-    };
+            .into()),
+        };
     println!("{}", serde_json::to_string(&summary)?);
     Ok(())
 }
@@ -5216,6 +5444,83 @@ mod tests {
             }
             assert!(parse_fixed_native_v2_train_config_v1(wrong).is_err());
         }
+    }
+
+    #[test]
+    fn current_gae8_v3_forward_kl_arms_are_distinct_and_exact_v1() {
+        let base = [
+            "--outcome-jsonl",
+            "outcomes.jsonl",
+            "--outcome-jsonl-sha256",
+            CURRENT_GAE8_CP7_CORPUS_SHA256_V1,
+            "--source-fixed-root",
+            "source",
+            "--output-dir",
+            "candidate",
+            "--report-path",
+            "report.json",
+            "--learning-rate",
+            "0.001",
+            "--value-coefficient",
+            "0.0",
+            "--epochs",
+            "4",
+            "--ppo-clip-epsilon",
+            "0.1",
+            "--policy-anchor-coefficient",
+            "0.3",
+            "--arm",
+            "kl-0.3",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+        let coefficient_index = base
+            .iter()
+            .position(|value| value == "--policy-anchor-coefficient")
+            .unwrap();
+        let arm_index = base.iter().position(|value| value == "--arm").unwrap();
+        for (arm, coefficient, expected) in [
+            ("kl-0.3", "0.3", FixedNativeRecipeV1::ResponseV3Kl03),
+            ("kl-1.0", "1.0", FixedNativeRecipeV1::ResponseV3Kl10),
+            ("kl-3.0", "3.0", FixedNativeRecipeV1::ResponseV3Kl30),
+            ("kl-10.0", "10.0", FixedNativeRecipeV1::ResponseV3Kl100),
+        ] {
+            let mut arguments = base.clone();
+            arguments[coefficient_index + 1] = coefficient.into();
+            arguments[arm_index + 1] = arm.into();
+            let (recipe, config) =
+                parse_fixed_native_v3_train_config_v1(arguments.clone()).unwrap();
+            assert_eq!(recipe, expected);
+            assert!(recipe.is_response_v3_v1());
+            assert_eq!(
+                config.policy_anchor_coefficient.map(f32::to_bits),
+                expected.policy_anchor_coefficient_v1().map(f32::to_bits)
+            );
+
+            let mut mismatch = arguments;
+            mismatch[coefficient_index + 1] = "0.3".into();
+            if coefficient != "0.3" {
+                assert!(parse_fixed_native_v3_train_config_v1(mismatch).is_err());
+            }
+        }
+
+        assert!(parse_fixed_native_train_config_v1(
+            base.iter()
+                .take(base.len() - 2)
+                .cloned()
+                .collect::<Vec<_>>()
+        )
+        .is_err());
+        assert!(parse_fixed_native_v2_train_config_v1(base.clone()).is_err());
+
+        let mut wrong_arm = base.clone();
+        wrong_arm[arm_index + 1] = "kl-0.1".into();
+        assert!(parse_fixed_native_v3_train_config_v1(wrong_arm).is_err());
+
+        let mut duplicate_coefficient = base;
+        duplicate_coefficient.extend(["--policy-anchor-coefficient".into(), "0.3".into()]);
+        assert!(parse_fixed_native_v3_train_config_v1(duplicate_coefficient).is_err());
     }
 
     fn scorer_scope_test_tensor_v1() -> OwnedDecisionTensorV1 {

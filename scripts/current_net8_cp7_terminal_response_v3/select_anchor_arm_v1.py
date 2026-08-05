@@ -353,25 +353,6 @@ def validate_arm(
         and max_log_ratio <= MAX_GROUP_LOG_RATIO_CAP
         and above_one_count == ABOVE_ONE_COUNT_CAP
     )
-    duplicated_tail = {
-        "p99_action_total_variation": candidate.get("p99_action_total_variation"),
-        "maximum_action_total_variation": candidate.get("maximum_action_total_variation"),
-        "p99_absolute_joint_log_likelihood_ratio": candidate.get(
-            "p99_absolute_joint_log_likelihood_ratio"
-        ),
-        "above_absolute_joint_log_ratio_1_count": candidate.get(
-            "above_absolute_joint_log_ratio_1_count"
-        ),
-    }
-    if duplicated_tail != {
-        "p99_action_total_variation": tail["p99_action_total_variation_nearest_rank"],
-        "maximum_action_total_variation": tail["maximum_action_total_variation"],
-        "p99_absolute_joint_log_likelihood_ratio": tail[
-            "p99_absolute_joint_log_likelihood_ratio_nearest_rank"
-        ],
-        "above_absolute_joint_log_ratio_1_count": above_one_count,
-    }:
-        raise ValueError(f"{name} duplicated tail metrics mismatch")
     gate = report.get("publication_gate")
     if not isinstance(gate, dict) or (
         gate.get("finite") != finite

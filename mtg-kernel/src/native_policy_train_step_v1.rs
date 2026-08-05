@@ -718,6 +718,16 @@ pub(crate) struct NativePolicyFrozenObjectiveTermV1 {
     pub(crate) value_weight: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativePolicyFrozenAnchorSubstepV1<'a> {
+    pub(crate) target_logits_f32_bits: &'a [u32],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativePolicyFrozenAnchorGroupV1<'a> {
+    pub(crate) substeps: &'a [NativePolicyFrozenAnchorSubstepV1<'a>],
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NativeSelectedOutputV1 {
     pub(crate) group_index: usize,
@@ -801,6 +811,26 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     InvalidFrozenObjectiveTerm {
         group_index: usize,
     },
+    FrozenPolicyAnchorGroupCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    FrozenPolicyAnchorSubstepCountMismatch {
+        group_index: usize,
+        expected: usize,
+        actual: usize,
+    },
+    FrozenPolicyAnchorLogitCountMismatch {
+        group_index: usize,
+        substep_index: usize,
+        expected: usize,
+        actual: usize,
+    },
+    InvalidFrozenPolicyAnchor {
+        group_index: usize,
+        substep_index: usize,
+    },
+    AnchoredObjectiveRequiresSequential,
     SelectedActionOutOfRange {
         group_index: usize,
         substep_index: usize,
@@ -934,6 +964,11 @@ enum TrainingObjectiveV1<'a> {
     TerminalReinforceValue,
     BehaviorClone,
     FrozenWeighted(&'a [NativePolicyFrozenObjectiveTermV1]),
+    FrozenWeightedAnchored {
+        terms: &'a [NativePolicyFrozenObjectiveTermV1],
+        anchors: &'a [NativePolicyFrozenAnchorGroupV1<'a>],
+        coefficient: f32,
+    },
 }
 
 impl NativePolicyValueTrainStateV1 {
@@ -1309,6 +1344,31 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    pub(crate) fn train_step_with_frozen_objective_and_policy_anchor_v1<'a>(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'a>],
+        terms: &'a [NativePolicyFrozenObjectiveTermV1],
+        anchors: &'a [NativePolicyFrozenAnchorGroupV1<'a>],
+        policy_anchor_coefficient: f32,
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let mut phase_recorder = NativeTrainingPhaseRecorderV1::disabled_v1();
+        self.train_step_with_recompute_workers_inner_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            1,
+            BackwardExecutionV1::Sequential,
+            TrainingObjectiveV1::FrozenWeightedAnchored {
+                terms,
+                anchors,
+                coefficient: policy_anchor_coefficient,
+            },
+            &mut phase_recorder,
+        )
+    }
+
     /// Profiled live-training sibling of [`Self::train_step_with_frozen_objective_v1`].
     /// The caller still freezes every policy coefficient and value target; this
     /// entry point only admits the ordinary packed-forward recompute topology and
@@ -1350,11 +1410,24 @@ impl NativePolicyValueTrainStateV1 {
         ) {
             return Err(NativePolicyTrainErrorV1::FixedPartitionBackwardWorkerLimitZero);
         }
+        if matches!(
+            (backward_execution, objective),
+            (
+                BackwardExecutionV1::FixedPartitions { .. },
+                TrainingObjectiveV1::FrozenWeightedAnchored { .. }
+            )
+        ) {
+            return Err(NativePolicyTrainErrorV1::AnchoredObjectiveRequiresSequential);
+        }
         if groups.is_empty() {
             return Err(NativePolicyTrainErrorV1::EmptyBatch);
         }
         let zero_value_frozen_objective = value_coefficient.to_bits() == 0
-            && matches!(objective, TrainingObjectiveV1::FrozenWeighted(_));
+            && matches!(
+                objective,
+                TrainingObjectiveV1::FrozenWeighted(_)
+                    | TrainingObjectiveV1::FrozenWeightedAnchored { .. }
+            );
         if !value_coefficient.is_finite()
             || (value_coefficient <= 0.0 && !zero_value_frozen_objective)
         {
@@ -1363,7 +1436,12 @@ impl NativePolicyValueTrainStateV1 {
         if !learning_rate.is_finite() || learning_rate <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidLearningRate);
         }
-        if let TrainingObjectiveV1::FrozenWeighted(terms) = objective {
+        let frozen_terms = match objective {
+            TrainingObjectiveV1::FrozenWeighted(terms)
+            | TrainingObjectiveV1::FrozenWeightedAnchored { terms, .. } => Some(terms),
+            _ => None,
+        };
+        if let Some(terms) = frozen_terms {
             if terms.len() != groups.len() {
                 return Err(NativePolicyTrainErrorV1::FrozenObjectiveTermCountMismatch {
                     expected: groups.len(),
@@ -1377,6 +1455,64 @@ impl NativePolicyValueTrainStateV1 {
                     || term.value_weight <= 0.0
             }) {
                 return Err(NativePolicyTrainErrorV1::InvalidFrozenObjectiveTerm { group_index });
+            }
+        }
+        if let TrainingObjectiveV1::FrozenWeightedAnchored {
+            anchors,
+            coefficient,
+            ..
+        } = objective
+        {
+            if !coefficient.is_finite() || coefficient <= 0.0 {
+                return Err(NativePolicyTrainErrorV1::InvalidFrozenPolicyAnchor {
+                    group_index: 0,
+                    substep_index: 0,
+                });
+            }
+            if anchors.len() != groups.len() {
+                return Err(
+                    NativePolicyTrainErrorV1::FrozenPolicyAnchorGroupCountMismatch {
+                        expected: groups.len(),
+                        actual: anchors.len(),
+                    },
+                );
+            }
+            for (group_index, (group, anchor)) in groups.iter().zip(anchors).enumerate() {
+                if anchor.substeps.len() != group.substeps.len() {
+                    return Err(
+                        NativePolicyTrainErrorV1::FrozenPolicyAnchorSubstepCountMismatch {
+                            group_index,
+                            expected: group.substeps.len(),
+                            actual: anchor.substeps.len(),
+                        },
+                    );
+                }
+                for (substep_index, (substep, anchor_substep)) in
+                    group.substeps.iter().zip(anchor.substeps).enumerate()
+                {
+                    if anchor_substep.target_logits_f32_bits.len()
+                        != substep.expected_raw_action_logit_bits.len()
+                    {
+                        return Err(
+                            NativePolicyTrainErrorV1::FrozenPolicyAnchorLogitCountMismatch {
+                                group_index,
+                                substep_index,
+                                expected: substep.expected_raw_action_logit_bits.len(),
+                                actual: anchor_substep.target_logits_f32_bits.len(),
+                            },
+                        );
+                    }
+                    if anchor_substep
+                        .target_logits_f32_bits
+                        .iter()
+                        .any(|bits| !f32::from_bits(*bits).is_finite())
+                    {
+                        return Err(NativePolicyTrainErrorV1::InvalidFrozenPolicyAnchor {
+                            group_index,
+                            substep_index,
+                        });
+                    }
+                }
             }
         }
 
@@ -1444,6 +1580,7 @@ impl NativePolicyValueTrainStateV1 {
 
             let mut tapes = Vec::with_capacity(group.substeps.len());
             let mut joint_log_probability = None;
+            let mut anchor_forward_kl = 0.0_f32;
             for (substep_index, substep) in group.substeps.iter().enumerate() {
                 let tape = match &substep.forward {
                     NativePolicyForwardInputV1::Encoded(encoded) => {
@@ -1508,6 +1645,35 @@ impl NativePolicyValueTrainStateV1 {
                 }
                 let (selected_log_probability, log_probabilities) =
                     selected_log_softmax(tape.logits_v1(), substep.selected_action_index)?;
+                let anchor_target_probabilities = match objective {
+                    TrainingObjectiveV1::FrozenWeightedAnchored { anchors, .. } => {
+                        let target_logits = anchors[group_index].substeps[substep_index]
+                            .target_logits_f32_bits
+                            .iter()
+                            .copied()
+                            .map(f32::from_bits)
+                            .collect::<Vec<_>>();
+                        let (_, target_log_probabilities) =
+                            selected_log_softmax(&target_logits, 0)?;
+                        let target_probabilities = target_log_probabilities
+                            .iter()
+                            .map(|value| value.exp())
+                            .collect::<Vec<_>>();
+                        for (
+                            (target_probability, target_log_probability),
+                            current_log_probability,
+                        ) in target_probabilities
+                            .iter()
+                            .zip(&target_log_probabilities)
+                            .zip(&log_probabilities)
+                        {
+                            anchor_forward_kl += *target_probability
+                                * (*target_log_probability - *current_log_probability);
+                        }
+                        Some(target_probabilities)
+                    }
+                    _ => None,
+                };
                 joint_log_probability = Some(match joint_log_probability {
                     None => selected_log_probability,
                     Some(active) => active + selected_log_probability,
@@ -1524,6 +1690,7 @@ impl NativePolicyValueTrainStateV1 {
                     tape,
                     selected_action_index: substep.selected_action_index,
                     log_probabilities,
+                    anchor_target_probabilities,
                 });
             }
 
@@ -1546,6 +1713,19 @@ impl NativePolicyValueTrainStateV1 {
                         term.policy_advantage,
                         value_delta * term.value_weight,
                         -joint_log_probability * term.policy_advantage,
+                        value_delta * value_delta * term.value_weight,
+                    )
+                }
+                TrainingObjectiveV1::FrozenWeightedAnchored {
+                    terms, coefficient, ..
+                } => {
+                    let term = terms[group_index];
+                    let value_delta = value - term.value_target;
+                    (
+                        term.policy_advantage,
+                        value_delta * term.value_weight,
+                        -joint_log_probability * term.policy_advantage
+                            + coefficient * anchor_forward_kl,
                         value_delta * value_delta * term.value_weight,
                     )
                 }
@@ -1576,6 +1756,10 @@ impl NativePolicyValueTrainStateV1 {
         phase_recorder.finish_v1(forward_loss_timer);
 
         let backward_gauge_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::BackwardGauge);
+        let policy_anchor_coefficient = match objective {
+            TrainingObjectiveV1::FrozenWeightedAnchored { coefficient, .. } => coefficient,
+            _ => 0.0,
+        };
         let (mut gradients, gauge_accumulator, reverse_workspace) = match backward_execution {
             BackwardExecutionV1::Sequential => {
                 let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
@@ -1617,10 +1801,27 @@ impl NativePolicyValueTrainStateV1 {
                                 .d_logits
                                 .push(*gradient - log_probability.exp() * grad_output_sum);
                         }
-                        gauge_accumulator.observe(
+                        if let Some(target_probabilities) =
+                            selected.anchor_target_probabilities.as_deref()
+                        {
+                            let scale = policy_anchor_coefficient / group_count;
+                            for ((gradient, current_log_probability), target_probability) in
+                                reverse_workspace
+                                    .d_logits
+                                    .iter_mut()
+                                    .zip(&selected.log_probabilities)
+                                    .zip(target_probabilities)
+                            {
+                                *gradient +=
+                                    scale * (current_log_probability.exp() - *target_probability);
+                            }
+                        }
+                        gauge_accumulator.observe_with_anchor_v1(
                             selected.tape.logits_v1(),
                             selected.selected_action_index,
                             d_joint_log_probability,
+                            selected.anchor_target_probabilities.as_deref(),
+                            policy_anchor_coefficient / group_count,
                         )?;
                         reverse_decision(
                             &parameters,
@@ -2242,13 +2443,25 @@ impl ScorerBiasGaugeAccumulatorV1 {
         selected_action_index: usize,
         policy_coefficient: f32,
     ) -> Result<(), NativePolicyTrainErrorV1> {
+        self.observe_with_anchor_v1(logits, selected_action_index, policy_coefficient, None, 0.0)
+    }
+
+    pub(crate) fn observe_with_anchor_v1(
+        &mut self,
+        logits: &[f32],
+        selected_action_index: usize,
+        policy_coefficient: f32,
+        anchor_target_probabilities: Option<&[f32]>,
+        anchor_coefficient: f32,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
         let operation_count = logits
             .len()
-            .checked_mul(8)
-            .and_then(|value| value.checked_add(8))
+            .checked_mul(12)
+            .and_then(|value| value.checked_add(12))
             .ok_or(NativePolicyTrainErrorV1::GaugeBoundOverflow)?;
         let coefficient = f64::from(policy_coefficient);
-        let abs_policy_coefficient = coefficient.abs();
+        let anchor_coefficient = f64::from(anchor_coefficient);
+        let abs_policy_coefficient = coefficient.abs() + 2.0 * anchor_coefficient.abs();
         let gamma = f32_gamma(operation_count)?;
         let bound_component = abs_policy_coefficient * gamma;
         self.per_substep_bound_sum += bound_component;
@@ -2286,12 +2499,17 @@ impl ScorerBiasGaugeAccumulatorV1 {
         // normalization and backward in f64 from the same stored f32 logits.
         for action in (0..logits.len()).rev() {
             let log_probability = (f64::from(logits[action]) - maximum) - log_sum;
+            let probability = log_probability.exp();
             let grad_output = if action == selected_action_index {
                 coefficient
             } else {
                 0.0
             };
-            self.high_precision_residual += grad_output - log_probability.exp() * coefficient;
+            let anchor_gradient = anchor_target_probabilities
+                .map(|target| anchor_coefficient * (probability - f64::from(target[action])))
+                .unwrap_or(0.0);
+            self.high_precision_residual +=
+                grad_output - probability * coefficient + anchor_gradient;
         }
         Ok(())
     }
@@ -2856,6 +3074,7 @@ struct SelectedDecisionTapeV1<'a> {
     tape: DecisionTapeSourceV1<'a>,
     selected_action_index: usize,
     log_probabilities: Vec<f32>,
+    anchor_target_probabilities: Option<Vec<f32>>,
 }
 
 struct GroupTapeV1<'a> {
@@ -8002,6 +8221,90 @@ mod tests {
         );
         assert_eq!(zero_value_result.adam_step, 1);
         assert_eq!(zero_value_state.adam_step_v1(), 1);
+
+        let anchor_only_terms = [NativePolicyFrozenObjectiveTermV1 {
+            policy_advantage: 0.0,
+            value_target: output.value,
+            value_weight: 1.0,
+        }];
+        let matching_anchor_logit_bits = output
+            .logits
+            .iter()
+            .copied()
+            .map(f32::to_bits)
+            .collect::<Vec<_>>();
+        let matching_anchor_substeps = [NativePolicyFrozenAnchorSubstepV1 {
+            target_logits_f32_bits: &matching_anchor_logit_bits,
+        }];
+        let matching_anchors = [NativePolicyFrozenAnchorGroupV1 {
+            substeps: &matching_anchor_substeps,
+        }];
+        let matching_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut matching_state = NativePolicyValueTrainStateV1::new_v1(matching_model).unwrap();
+        let matching_before = matching_state.model_v1().parameter_snapshot_v1();
+        matching_state
+            .train_step_with_frozen_objective_and_policy_anchor_v1(
+                &groups,
+                &anchor_only_terms,
+                &matching_anchors,
+                0.5,
+                0.0,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        assert_eq!(
+            matching_state.model_v1().parameter_snapshot_v1(),
+            matching_before,
+            "an exact old-policy anchor has zero gradient at the source policy"
+        );
+
+        let mut anchor_logit_bits = matching_anchor_logit_bits;
+        anchor_logit_bits[0] = (f32::from_bits(anchor_logit_bits[0]) + 1.0).to_bits();
+        let anchor_substeps = [NativePolicyFrozenAnchorSubstepV1 {
+            target_logits_f32_bits: &anchor_logit_bits,
+        }];
+        let anchors = [NativePolicyFrozenAnchorGroupV1 {
+            substeps: &anchor_substeps,
+        }];
+        let anchored_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut anchored_state = NativePolicyValueTrainStateV1::new_v1(anchored_model).unwrap();
+        let anchored_before = anchored_state.model_v1().parameter_snapshot_v1();
+        let anchored_result = anchored_state
+            .train_step_with_frozen_objective_and_policy_anchor_v1(
+                &groups,
+                &anchor_only_terms,
+                &anchors,
+                0.5,
+                0.0,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        assert_eq!(anchored_result.adam_step, 1);
+        assert_eq!(anchored_state.adam_step_v1(), 1);
+        let target_logits = anchor_logit_bits
+            .iter()
+            .copied()
+            .map(f32::from_bits)
+            .collect::<Vec<_>>();
+        let (_, target_log_probabilities) = selected_log_softmax(&target_logits, 0).unwrap();
+        let (_, current_log_probabilities) = selected_log_softmax(&output.logits, 0).unwrap();
+        let expected_anchor_forward_kl = target_log_probabilities
+            .iter()
+            .zip(&current_log_probabilities)
+            .map(|(target, current)| target.exp() * (target - current))
+            .sum::<f32>();
+        assert_eq!(
+            anchored_result.policy_sum.to_bits(),
+            (0.5 * expected_anchor_forward_kl).to_bits()
+        );
+        assert_ne!(
+            anchored_state.model_v1().parameter_snapshot_v1(),
+            anchored_before
+        );
     }
 
     #[test]
