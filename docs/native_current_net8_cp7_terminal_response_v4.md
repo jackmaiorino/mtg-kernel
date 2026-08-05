@@ -36,6 +36,11 @@ output identity. The prior eight-worker candidate-state collector sustained
 `0.875` games/s with CPU near saturation while doing extra shadow queries, so
 eight workers are the default. If the screen is below `0.60` games/s or shows
 resource pressure, test at most one alternative topology before choosing.
+For the mechanical gate, resource pressure means minimum available system
+memory below `16 GiB`, maximum system-memory use above `90%`, or GPU 1 memory
+use above `512 MiB`. The formal collector accepts only the exact declared panel
+and requires the passing screen and revealed-identity report hashes in its own
+manifest.
 
 The fixed collection starts only after a small manifest binds the git commit,
 scorer and runner hashes, toolchain including linker, source package and card
