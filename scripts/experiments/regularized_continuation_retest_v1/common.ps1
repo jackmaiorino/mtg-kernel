@@ -593,7 +593,7 @@ function Wait-NativeLane {
         wall_seconds = ($finished - $Lane.started).TotalSeconds
         exit_code = 0
         process_exit_code_observed = $Lane.process.ExitCode
-        resource_samples = @($samples)
+        resource_samples = @($samples | ForEach-Object { $_ })
     }
 }
 
