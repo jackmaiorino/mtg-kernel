@@ -819,6 +819,9 @@ mod fixed_native_state_tests_v1 {
         assert!(!fixed_native_authority_kind_is_valid_v1(
             "current-net8-cp7-terminal-response-v4-kl-.3-arm-candidate"
         ));
+        assert!(!fixed_native_authority_kind_is_valid_v1(
+            "current-net8-cp7-terminal-response-v4-kl-0.3."
+        ));
         let model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
                 .unwrap();
