@@ -682,7 +682,7 @@ function Get-PassedIdentityPrerequisite {
         )
         $sortedTransferFiles = @($transferFiles | Sort-Object)
         if ($sortedTransferFiles.Count -ne $approvedTransferFiles.Count -or
-            (Compare-Object -ReferenceObject $approvedTransferFiles -DifferenceObject $sortedTransferFiles).Count -ne 0) {
+            @(Compare-Object -ReferenceObject $approvedTransferFiles -DifferenceObject $sortedTransferFiles).Count -ne 0) {
             throw "identity prerequisite commit differs outside the approved harness-only fix and transfer wiring: $($transferFiles -join ', ')"
         }
         if ($sourceExecutableSha256 -ne $CandidateExecutableSha256) {
