@@ -19,9 +19,9 @@ function Get-LaneManifestRecord {
             [ordered]@{
                 ordinal = $ordinal
                 sample_count = $rows.Count
-                utilization_mean_percent = ($rows | Measure-Object -Property utilization_percent -Average).Average
-                utilization_peak_percent = ($rows | Measure-Object -Property utilization_percent -Maximum).Maximum
-                memory_peak_mib = ($rows | Measure-Object -Property memory_used_mib -Maximum).Maximum
+                utilization_mean_percent = ($rows | ForEach-Object { [double]$_['utilization_percent'] } | Measure-Object -Average).Average
+                utilization_peak_percent = ($rows | ForEach-Object { [double]$_['utilization_percent'] } | Measure-Object -Maximum).Maximum
+                memory_peak_mib = ($rows | ForEach-Object { [double]$_['memory_used_mib'] } | Measure-Object -Maximum).Maximum
             }
         }
     }
