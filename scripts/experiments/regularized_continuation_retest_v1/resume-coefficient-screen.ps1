@@ -173,35 +173,45 @@ try {
     $stoppedText = Get-Content -LiteralPath $stoppedPath -Raw
     $priorEvaluatorFailures = @()
     if ($EvaluationAttempt -gt 1) {
-        $priorAttempt = $EvaluationAttempt - 1
-        $priorSuffix = if ($priorAttempt -eq 1) { '' } else { '-attempt-{0:d3}' -f $priorAttempt }
-        $priorRequestPath = Join-Path $AttemptRoot "terminal-blind-request$priorSuffix.json"
-        $priorReportPath = Join-Path $AttemptRoot "terminal-blind-report$priorSuffix.json"
-        $priorLogPath = Join-Path $AttemptRoot "terminal-blind-evaluator$priorSuffix.log"
-        $priorStoppedPath = Join-Path $AttemptRoot "resume-stopped$priorSuffix.log"
-        foreach ($path in @($priorRequestPath, $priorLogPath, $priorStoppedPath)) {
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-                throw "prior evaluator failure artifact is missing: $path"
+        for ($priorAttempt = 1; $priorAttempt -lt $EvaluationAttempt; $priorAttempt++) {
+            $priorSuffix = if ($priorAttempt -eq 1) { '' } else { '-attempt-{0:d3}' -f $priorAttempt }
+            $priorRequestPath = Join-Path $AttemptRoot "terminal-blind-request$priorSuffix.json"
+            $priorReportPath = Join-Path $AttemptRoot "terminal-blind-report$priorSuffix.json"
+            $priorLogPath = Join-Path $AttemptRoot "terminal-blind-evaluator$priorSuffix.log"
+            $priorStoppedPath = Join-Path $AttemptRoot "resume-stopped$priorSuffix.log"
+            foreach ($path in @($priorRequestPath, $priorLogPath, $priorStoppedPath)) {
+                if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                    throw "prior evaluator failure artifact is missing: $path"
+                }
+            }
+            if (Test-Path -LiteralPath $priorReportPath) {
+                throw 'prior evaluator attempt created a report and is not eligible for transport recovery'
+            }
+            $priorBytes = [IO.File]::ReadAllBytes($priorRequestPath)
+            $priorLogText = Get-Content -LiteralPath $priorLogPath -Raw
+            $hasUtf8Bom = $priorBytes.Length -ge 3 -and
+                $priorBytes[0] -eq 0xEF -and $priorBytes[1] -eq 0xBB -and $priorBytes[2] -eq 0xBF
+            $disposition = if ($hasUtf8Bom -and
+                $priorLogText.Contains('Gate 3 request JSON must validate: Error("expected value", line: 1, column: 1)')) {
+                'INPUT-UTF8-BOM-FAILURE-BEFORE-DESERIALIZATION'
+            }
+            elseif (-not $hasUtf8Bom -and
+                $priorLogText.Contains('Gate 3 request JSON must validate: Error("invalid type: string \"0\", expected f64", line: 12, column: 33)')) {
+                'INPUT-BETA-TYPE-FAILURE-BEFORE-CORPUS-CONSTRUCTION'
+            }
+            else {
+                throw "prior evaluator attempt $priorAttempt is not an approved pre-corpus request-transport failure"
+            }
+            $priorEvaluatorFailures += [ordered]@{
+                attempt = $priorAttempt
+                disposition = $disposition
+                request = [ordered]@{ path = $priorRequestPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorRequestPath).Hash.ToLowerInvariant() }
+                evaluator_log = [ordered]@{ path = $priorLogPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorLogPath).Hash.ToLowerInvariant() }
+                stopped_log = [ordered]@{ path = $priorStoppedPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorStoppedPath).Hash.ToLowerInvariant() }
+                report_created = $false
+                corpus_constructed = $false
             }
         }
-        if (Test-Path -LiteralPath $priorReportPath) {
-            throw 'prior evaluator attempt created a report and is not eligible for transport recovery'
-        }
-        $priorBytes = [IO.File]::ReadAllBytes($priorRequestPath)
-        $priorLogText = Get-Content -LiteralPath $priorLogPath -Raw
-        if ($priorBytes.Length -lt 3 -or
-            $priorBytes[0] -ne 0xEF -or $priorBytes[1] -ne 0xBB -or $priorBytes[2] -ne 0xBF -or
-            $priorLogText -notmatch 'Gate 3 request JSON must validate: Error\("expected value", line: 1, column: 1\)') {
-            throw 'prior evaluator attempt is not the bound UTF-8 BOM request-transport failure'
-        }
-        $priorEvaluatorFailures = @([ordered]@{
-            attempt = $priorAttempt
-            disposition = 'INPUT-TRANSPORT-FAILURE-BEFORE-CORPUS-CONSTRUCTION'
-            request = [ordered]@{ path = $priorRequestPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorRequestPath).Hash.ToLowerInvariant() }
-            evaluator_log = [ordered]@{ path = $priorLogPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorLogPath).Hash.ToLowerInvariant() }
-            stopped_log = [ordered]@{ path = $priorStoppedPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorStoppedPath).Hash.ToLowerInvariant() }
-            report_created = $false
-        })
     }
     if ([string]$plan.schema -ne 'regularized-continuation-coefficient-plan/v1' -or
         [string]$formalStart.schema -ne 'regularized-continuation-formal-start/v1' -or
@@ -268,7 +278,7 @@ try {
         pair_count = [uint64]$plan.validation_pairs
         arms = @($arms | ForEach-Object {
             [ordered]@{
-                beta = $_.beta
+                beta = [double]$_.beta
                 store_root = $_.store_root
                 generations = $script:CoefficientGenerations
             }

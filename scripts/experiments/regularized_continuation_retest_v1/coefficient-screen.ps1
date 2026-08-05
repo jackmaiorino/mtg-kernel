@@ -247,7 +247,7 @@ try {
         pair_count = 512
         arms = @($armRecords | ForEach-Object {
             [ordered]@{
-                beta = $_.beta
+                beta = [double]$_.beta
                 store_root = $_.store_root
                 generations = $script:CoefficientGenerations
             }
