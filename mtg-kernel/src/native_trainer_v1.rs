@@ -5061,6 +5061,9 @@ mod tests {
         common_model_snapshot_paths_v1, BASE_SEED_V1 as SNAPSHOT_AUTHORITY_BASE_SEED_V1,
         MODEL_INIT_SEED_V1 as SNAPSHOT_MODEL_INIT_SEED_V1, SNAPSHOT_IDENTITY_V1,
     };
+    use crate::native_checkpoint_inference_v1::{
+        NativeCheckpointInferenceDiagnosticProvenanceV1, NativeCheckpointInferenceV1,
+    };
     use crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1;
     use crate::native_policy_value_net_v1::{
         NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
@@ -5343,6 +5346,7 @@ mod tests {
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     struct H4CanarySourceV1 {
+        base_seed: u64,
         train_state: NativePolicyValueTrainStateV1,
         progress: NativeTrainerProgressV2,
         ladder: Arc<LadderOpponentEngineV1>,
@@ -5373,6 +5377,88 @@ mod tests {
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn h4_canary_hex_v1(value: [u8; 32]) -> String {
         crate::native_training_store_digest_v1::lower_hex_raw32_v1(value)
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn population_response_inference_from_state_v1(
+        label: &'static str,
+        state: &NativePolicyValueTrainStateV1,
+    ) -> NativeCheckpointInferenceV1 {
+        let native_state_sha256 = state
+            .state_sha256_v1()
+            .expect("population response state digest");
+        let model_parameter_sha256 =
+            crate::native_training_store_digest_v1::parse_lower_hex_raw32_v1(
+                &state.model_v1().parameter_manifest_sha256_v1(),
+            )
+            .expect("population response model digest");
+        NativeCheckpointInferenceV1::development_only_from_model_v1(
+            state.model_v1().clone(),
+            NativeCheckpointInferenceDiagnosticProvenanceV1 {
+                label,
+                native_state_sha256,
+                model_parameter_sha256,
+            },
+            state.adam_step_v1(),
+        )
+        .expect("population response diagnostic inference")
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn load_retained_pool_primary_inference_v1(pool_root: &Path) -> NativeCheckpointInferenceV1 {
+        let pool_bytes = fs::read(pool_root.join("pool.json")).expect("retained Pool3 document");
+        assert_eq!(
+            h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(
+                &pool_bytes,
+            )),
+            "6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71"
+        );
+        let pool: crate::native_training_store_run_v2::OpponentLadderPoolContractV1 =
+            serde_json::from_slice(&pool_bytes).expect("retained Pool3 document must decode");
+        let (primary, _predecessor_a, _predecessor_b) =
+            crate::native_ladder_pool_resolution_v1::resolve_ladder_pool_v1(
+                &pool,
+                &pool_root.join("primary"),
+                &pool_root.join("pred-a"),
+                &pool_root.join("pred-b"),
+            )
+            .expect("retained Pool3 authorities must resolve for population response");
+        assert_eq!(
+            h4_canary_hex_v1(primary.train_state_sha256()),
+            "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99"
+        );
+        primary
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn population_response_ladder_v1(
+        gae8: &NativePolicyValueTrainStateV1,
+        parent: &NativePolicyValueTrainStateV1,
+        pool_root: &Path,
+    ) -> Arc<LadderOpponentEngineV1> {
+        Arc::new(LadderOpponentEngineV1::development_population_v1([
+            (
+                "current_gae8",
+                population_response_inference_from_state_v1("current_gae8", gae8),
+            ),
+            (
+                "historical_update512",
+                population_response_inference_from_state_v1("historical_update512", parent),
+            ),
+            (
+                "retained_pool3_primary",
+                load_retained_pool_primary_inference_v1(pool_root),
+            ),
+        ]))
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn pure_gae8_ladder_v1(gae8: &NativePolicyValueTrainStateV1) -> Arc<LadderOpponentEngineV1> {
+        Arc::new(LadderOpponentEngineV1::head_to_head_eval_v1(
+            population_response_inference_from_state_v1("pure_gae8_primary", gae8),
+            population_response_inference_from_state_v1("pure_gae8_predecessor_a", gae8),
+            population_response_inference_from_state_v1("pure_gae8_predecessor_b", gae8),
+        ))
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -5470,6 +5556,7 @@ mod tests {
                 .expect("retained Pool3 engine"),
         );
         H4CanarySourceV1 {
+            base_seed: 970_001,
             train_state,
             progress,
             ladder,
@@ -5550,7 +5637,7 @@ mod tests {
         sessions_per_worker: usize,
     ) -> H4CanaryArmRunV1 {
         let mut trainer = NativeTrainerStateV2::from_resumed_parts_v2(
-            970_001,
+            source.base_seed,
             64,
             &source.train_state,
             source.progress,
@@ -6180,7 +6267,7 @@ mod tests {
     ) -> (serde_json::Value, NativePolicyValueTrainStateV1) {
         assert!(update_count > 0);
         let mut trainer = NativeTrainerStateV2::from_resumed_parts_v2(
-            970_001,
+            source.base_seed,
             64,
             &source.train_state,
             source.progress,
@@ -6220,6 +6307,15 @@ mod tests {
             let mut update_outcomes = [0_u64; 3];
             let mut update_outcomes_by_seat = [[0_u64; 3]; 2];
             for episode in &evidence.episodes {
+                let expected_schedule =
+                    native_trainer_episode_schedule_v1(source.base_seed, episode.episode_index)
+                        .expect("development episode schedule");
+                assert_eq!(episode.learner_seat, expected_schedule.learner_seat);
+                assert_eq!(
+                    episode.full_trajectory_receipt.environment_seed(),
+                    expected_schedule.environment_seed,
+                    "development rollout used a different base seed than its source"
+                );
                 let outcome_index = match episode.learner_return {
                     1 => 0,
                     0 => 1,
@@ -6281,11 +6377,11 @@ mod tests {
         assert_eq!(cumulative_outcomes.iter().sum::<u64>(), update_count * 64);
         assert_eq!(
             trainer.progress_v2().successful_update_count,
-            512 + update_count
+            source.progress.successful_update_count + update_count
         );
         assert_eq!(
             trainer.progress_v2().next_episode_index,
-            32_768 + update_count * 64
+            source.progress.next_episode_index + update_count * 64
         );
         let final_train_state_sha256 = h4_canary_hex_v1(
             trainer
@@ -6294,6 +6390,7 @@ mod tests {
                 .expect("final development state digest"),
         );
         let report = serde_json::json!({
+            "base_seed": source.base_seed,
             "policy_reduction_identity": policy_reduction.identity_v1(),
             "update_count": update_count,
             "terminal_outcomes": {"win": cumulative_outcomes[0], "draw": cumulative_outcomes[1], "loss": cumulative_outcomes[2]},
@@ -6325,6 +6422,78 @@ mod tests {
             update_count,
         )
         .0
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn load_population_response_gae8_v1() -> (serde_json::Value, NativePolicyValueTrainStateV1) {
+        let path = h4_canary_path_v1(
+            "MTG_KERNEL_GAE_V3_CANDIDATE_STATE",
+            GAE_V3_CANDIDATE_STATE_PATH_V1,
+        );
+        let state = load_gae_v3_candidate_state_v1();
+        assert_eq!(
+            h4_canary_hex_v1(
+                state
+                    .state_sha256_v1()
+                    .expect("population response GAE8 state digest"),
+            ),
+            GAE_V3_CANDIDATE_NATIVE_STATE_SHA256_V1
+        );
+        assert_eq!(state.adam_step_v1(), 520);
+        let report = serde_json::json!({
+            "loaded_without_retraining": true,
+            "path": path,
+            "payload_sha256": GAE_V3_CANDIDATE_FILE_SHA256_V1,
+            "native_state_sha256": GAE_V3_CANDIDATE_NATIVE_STATE_SHA256_V1,
+            "model_parameter_sha256": GAE_V3_CANDIDATE_MODEL_SHA256_V1,
+            "adam_step": state.adam_step_v1(),
+        });
+        (report, state)
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn population_response_preflight_manifest_v1() -> (PathBuf, String, serde_json::Value) {
+        let path = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_POPULATION_RESPONSE_MANIFEST")
+                .expect("population response preflight manifest path"),
+        );
+        let bytes = fs::read(&path).expect("read population response preflight manifest");
+        let sha256 = h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(&bytes));
+        assert_eq!(
+            std::env::var("MTG_KERNEL_POPULATION_RESPONSE_MANIFEST_SHA256").as_deref(),
+            Ok(sha256.as_str()),
+            "population response preflight manifest digest drift"
+        );
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("parse population response preflight manifest");
+        assert_eq!(
+            manifest["schema"].as_str(),
+            Some("mtg-kernel-current-net8-population-response-preflight/v1")
+        );
+        assert_eq!(manifest["status"].as_str(), Some("ready-not-launched"));
+        (path, sha256, manifest)
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn population_response_source_v1(
+        retained: &H4CanarySourceV1,
+        gae8: &NativePolicyValueTrainStateV1,
+        base_seed: u64,
+    ) -> H4CanarySourceV1 {
+        H4CanarySourceV1 {
+            base_seed,
+            train_state: gae8.clone(),
+            progress: NativeTrainerProgressV2 {
+                next_episode_index: 33_280,
+                successful_update_count: 520,
+                completed_episode_count: 33_280,
+                learner_physical_decision_count: 0,
+                learner_policy_step_count: 0,
+            },
+            ladder: population_response_ladder_v1(gae8, &retained.train_state, &retained.pool_root),
+            store_root: retained.store_root.clone(),
+            pool_root: retained.pool_root.clone(),
+        }
     }
 
     #[test]
@@ -6498,6 +6667,113 @@ mod tests {
         println!("{}", String::from_utf8(output).unwrap());
     }
 
+    #[test]
+    #[ignore = "requires retained campaign stores, qualified critic, and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn current_net8_population_response_throughput_v1() {
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let critic_root = std::env::var_os(NATIVE_HISTORY_VALUE_CRITIC_ROOT_ENV_V1)
+            .expect("qualified critic root environment authority");
+        let critic = load_native_structured_policy_residual_inference_v1(Path::new(&critic_root))
+            .expect("qualified history-value critic package");
+        assert_eq!(
+            h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
+            "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
+        );
+        let (preflight_manifest_path, preflight_manifest_sha256, _) =
+            population_response_preflight_manifest_v1();
+
+        let retained = load_h4_canary_source_v1();
+        let (_, gae8) = load_population_response_gae8_v1();
+        let response_source = population_response_source_v1(&retained, &gae8, 980_000);
+        let topologies = [(1_usize, 32_usize), (2, 32), (4, 16)];
+        let mut rows = Vec::with_capacity(topologies.len());
+        let mut common_final_state = None;
+        for (worker_count, sessions_per_worker) in topologies {
+            let (run, state) = run_h4_development_arm_with_state_v1(
+                &response_source,
+                NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae,
+                worker_count,
+                sessions_per_worker,
+                1,
+            );
+            let final_state = h4_canary_hex_v1(
+                state
+                    .state_sha256_v1()
+                    .expect("population response throughput state digest"),
+            );
+            if let Some(expected) = &common_final_state {
+                assert_eq!(
+                    &final_state, expected,
+                    "topology changed exact update state"
+                );
+            } else {
+                common_final_state = Some(final_state.clone());
+            }
+            rows.push(serde_json::json!({
+                "worker_count": worker_count,
+                "sessions_per_worker": sessions_per_worker,
+                "logical_actor_count": worker_count * sessions_per_worker,
+                "games_per_second": run["aggregate_games_per_second"],
+                "update_elapsed_ns": run["total_update_elapsed_ns"],
+                "final_train_state_sha256": final_state,
+                "update": run["updates"][0],
+            }));
+        }
+        let selected_index = rows
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, row)| row["update_elapsed_ns"].as_u64().unwrap())
+            .unwrap()
+            .0;
+        let selected = rows[selected_index].clone();
+        let selected_rate = selected["games_per_second"].as_f64().unwrap();
+        let projected_training_seconds = 512.0 / selected_rate;
+        let projected_evaluation_seconds = 6_144.0 / selected_rate;
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-current-net8-population-response-throughput/v1",
+            "status": "complete",
+            "reward": "natural-terminal-win-loss-draw-only/v1",
+            "preflight_manifest": {
+                "path": preflight_manifest_path,
+                "sha256": preflight_manifest_sha256,
+            },
+            "base_seed": 980000_u64,
+            "first_episode_index": 33280_u64,
+            "episode_count_per_topology": 64_u64,
+            "topology_only_roots_excluded_from_development": true,
+            "bit_identical_final_state_across_topologies": true,
+            "rows": rows,
+            "selected": selected,
+            "projection": {
+                "training_episode_count": 512_u64,
+                "evaluation_episode_count_across_six_arms": 6144_u64,
+                "training_seconds_at_selected_rate": projected_training_seconds,
+                "evaluation_seconds_at_selected_rate": projected_evaluation_seconds,
+                "total_seconds_excluding_setup": projected_training_seconds + projected_evaluation_seconds,
+            },
+            "nonclaims": ["development-throughput-only", "not-strength-evidence", "not-promotable"],
+        });
+        let output_root = h4_canary_path_v1(
+            "MTG_KERNEL_POPULATION_RESPONSE_OUTPUT_ROOT",
+            "D:\\mtg-kernel-composed-factorial-v1\\population-response-cycle-v1",
+        );
+        fs::create_dir_all(&output_root).expect("create population response output root");
+        let output_path = output_root.join("throughput-screen.json");
+        let output = serde_json::to_vec_pretty(&report)
+            .expect("serialize population response throughput report");
+        write_gae_v3_atomic_file_v1(&output_path, &output);
+        println!(
+            "POPULATION_RESPONSE_THROUGHPUT_RESULT {}",
+            output_path.display()
+        );
+        println!("{}", String::from_utf8(output).unwrap());
+    }
+
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     struct ComposedFixedPolicyEvalArmV1 {
         report: serde_json::Value,
@@ -6615,10 +6891,12 @@ mod tests {
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    fn run_composed_fixed_policy_eval_arm_v1(
+    fn run_composed_fixed_policy_eval_arm_with_ladder_v1(
         label: &str,
         state: &NativePolicyValueTrainStateV1,
-        source: &H4CanarySourceV1,
+        ladder: &Arc<LadderOpponentEngineV1>,
+        base_seed: u64,
+        member_labels: [&str; 4],
         worker_count: usize,
         sessions_per_worker: usize,
         first_eval_update: u64,
@@ -6680,13 +6958,13 @@ mod tests {
                 learner_policy_step_count: 0,
             };
             let mut trainer = NativeTrainerStateV2::from_resumed_parts_v2(
-                970_001,
+                base_seed,
                 BATCH_EPISODES,
                 &eval_state,
                 progress,
             )
             .expect("fixed-policy evaluation trainer");
-            trainer.set_ladder_opponent_v1(Some(Arc::clone(&source.ladder)));
+            trainer.set_ladder_opponent_v1(Some(Arc::clone(ladder)));
             let evidence = trainer
                 .run_even_batch_update_live_seat_credit_canary_v1(
                     &config,
@@ -6700,21 +6978,31 @@ mod tests {
             let mut outcomes_by_seat = [[0_u64; 3]; 2];
             for episode in &evidence.episodes {
                 let expected_schedule =
-                    native_trainer_episode_schedule_v1(970_001, episode.episode_index)
+                    native_trainer_episode_schedule_v1(base_seed, episode.episode_index)
                         .expect("fixed-policy evaluation schedule");
                 assert_eq!(episode.learner_seat, expected_schedule.learner_seat);
                 assert_eq!(
                     episode.full_trajectory_receipt.environment_seed(),
                     expected_schedule.environment_seed,
                 );
-                let opponent_component =
-                    crate::native_ladder_opponent_v1::ladder_pool_member_for_episode_v1(
-                        970_001,
-                        episode.episode_index,
-                    )
+                let opponent_component = ladder
+                    .pool_member_for_episode_v1(base_seed, episode.episode_index)
                     .expect("fixed-policy evaluation Pool3 member");
-                let opponent_component_label =
-                    gae_v3_pool_member_label_v1(opponent_component).to_owned();
+                let opponent_component_label = match opponent_component {
+                    crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2::Primary => {
+                        member_labels[0]
+                    }
+                    crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2::PredecessorA => {
+                        member_labels[1]
+                    }
+                    crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2::PredecessorB => {
+                        member_labels[2]
+                    }
+                    crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2::UniformFloor => {
+                        member_labels[3]
+                    }
+                }
+                .to_owned();
                 let outcome_index = match episode.learner_return {
                     1 => 0,
                     0 => 1,
@@ -6770,7 +7058,7 @@ mod tests {
         assert_eq!(p1_episode_count, expected_episode_count / 2);
         let first_episode_index = first_eval_update * BATCH_EPISODES;
         let schedule_sha256 =
-            gae_v3_schedule_sha256_v1(970_001, first_episode_index, expected_episode_count / 2);
+            gae_v3_schedule_sha256_v1(base_seed, first_episode_index, expected_episode_count / 2);
         ComposedFixedPolicyEvalArmV1 {
             report: serde_json::json!({
                 "label": label,
@@ -6784,7 +7072,7 @@ mod tests {
                     "p1": {"win": aggregate_by_seat[1][0], "draw": aggregate_by_seat[1][1], "loss": aggregate_by_seat[1][2]},
                 },
                 "schedule": {
-                    "base_seed": 970001_u64,
+                    "base_seed": base_seed,
                     "first_episode_index": first_episode_index,
                     "last_episode_index": first_episode_index + expected_episode_count - 1,
                     "cluster_count": expected_episode_count / 2,
@@ -6803,6 +7091,27 @@ mod tests {
             opponent_components,
             terminal_returns,
         }
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_composed_fixed_policy_eval_arm_v1(
+        label: &str,
+        state: &NativePolicyValueTrainStateV1,
+        source: &H4CanarySourceV1,
+        worker_count: usize,
+        sessions_per_worker: usize,
+        first_eval_update: u64,
+    ) -> ComposedFixedPolicyEvalArmV1 {
+        run_composed_fixed_policy_eval_arm_with_ladder_v1(
+            label,
+            state,
+            &source.ladder,
+            source.base_seed,
+            ["primary", "predecessor_a", "predecessor_b", "uniform_floor"],
+            worker_count,
+            sessions_per_worker,
+            first_eval_update,
+        )
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -8075,6 +8384,337 @@ mod tests {
             .expect("atomically publish GAE 16-update development artifact directory");
         println!(
             "CURRENT_NET8_GAE_16_UPDATE_DEVELOPMENT_RESULT {}",
+            report_published_path.display()
+        );
+        println!("{}", String::from_utf8(output).unwrap());
+    }
+
+    #[test]
+    #[ignore = "requires reviewed throughput report, retained campaign stores, qualified critic, and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn current_net8_population_response_development_v1() {
+        const TRAIN_BASE_SEED: u64 = 980_001;
+        const ORIGINAL_POOL_FIRST_EVAL_UPDATE: u64 = 1_024;
+        const PURE_GAE8_FIRST_EVAL_UPDATE: u64 = 1_040;
+        const EXPECTED_GAE8_STATE_SHA256: &str =
+            "ab7dd25ca6619a4a613ca089e1eb8e75981f8e5cfc0bae8535b78cddd7efa952";
+
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let critic_root = std::env::var_os(NATIVE_HISTORY_VALUE_CRITIC_ROOT_ENV_V1)
+            .expect("qualified critic root environment authority");
+        let critic = load_native_structured_policy_residual_inference_v1(Path::new(&critic_root))
+            .expect("qualified history-value critic package");
+        assert_eq!(
+            h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
+            "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
+        );
+        let (preflight_manifest_path, preflight_manifest_sha256, _) =
+            population_response_preflight_manifest_v1();
+
+        let output_root = h4_canary_path_v1(
+            "MTG_KERNEL_POPULATION_RESPONSE_OUTPUT_ROOT",
+            "D:\\mtg-kernel-composed-factorial-v1\\population-response-cycle-v1",
+        );
+        let throughput_path = output_root.join("throughput-screen.json");
+        let throughput_bytes =
+            fs::read(&throughput_path).expect("reviewed population response throughput report");
+        let throughput_sha256 = h4_canary_hex_v1(
+            crate::native_training_store_digest_v1::sha256_v1(&throughput_bytes),
+        );
+        let throughput: serde_json::Value = serde_json::from_slice(&throughput_bytes)
+            .expect("parse population response throughput report");
+        assert_eq!(
+            throughput["schema"].as_str(),
+            Some("mtg-kernel-current-net8-population-response-throughput/v1")
+        );
+        assert_eq!(throughput["status"].as_str(), Some("complete"));
+        assert_eq!(
+            throughput["bit_identical_final_state_across_topologies"].as_bool(),
+            Some(true)
+        );
+        let worker_count = throughput["selected"]["worker_count"]
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .expect("selected population response worker count");
+        let sessions_per_worker = throughput["selected"]["sessions_per_worker"]
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .expect("selected population response sessions per worker");
+        assert!(matches!(
+            (worker_count, sessions_per_worker),
+            (1, 32) | (2, 32) | (4, 16)
+        ));
+
+        let retained = load_h4_canary_source_v1();
+        let (initializer_load, gae8) = load_population_response_gae8_v1();
+        assert_eq!(
+            h4_canary_hex_v1(
+                gae8.state_sha256_v1()
+                    .expect("population response reproduced GAE8 state"),
+            ),
+            EXPECTED_GAE8_STATE_SHA256
+        );
+        let response_source = population_response_source_v1(&retained, &gae8, TRAIN_BASE_SEED);
+        let (training, candidate) = run_h4_development_arm_with_state_v1(
+            &response_source,
+            NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae,
+            worker_count,
+            sessions_per_worker,
+            8,
+        );
+
+        let standard_labels = ["primary", "predecessor_a", "predecessor_b", "uniform_floor"];
+        let original_parent = run_composed_fixed_policy_eval_arm_with_ladder_v1(
+            "historical-update512-parent",
+            &retained.train_state,
+            &retained.ladder,
+            TRAIN_BASE_SEED,
+            standard_labels,
+            worker_count,
+            sessions_per_worker,
+            ORIGINAL_POOL_FIRST_EVAL_UPDATE,
+        );
+        let original_gae8 = run_composed_fixed_policy_eval_arm_with_ladder_v1(
+            "current-gae8",
+            &gae8,
+            &retained.ladder,
+            TRAIN_BASE_SEED,
+            standard_labels,
+            worker_count,
+            sessions_per_worker,
+            ORIGINAL_POOL_FIRST_EVAL_UPDATE,
+        );
+        let original_candidate = run_composed_fixed_policy_eval_arm_with_ladder_v1(
+            "population-response-candidate",
+            &candidate,
+            &retained.ladder,
+            TRAIN_BASE_SEED,
+            standard_labels,
+            worker_count,
+            sessions_per_worker,
+            ORIGINAL_POOL_FIRST_EVAL_UPDATE,
+        );
+
+        let pure_gae8_ladder = pure_gae8_ladder_v1(&gae8);
+        let pure_labels = ["pure_current_gae8", "unused", "unused", "unused"];
+        let pure_parent = run_composed_fixed_policy_eval_arm_with_ladder_v1(
+            "historical-update512-parent",
+            &retained.train_state,
+            &pure_gae8_ladder,
+            TRAIN_BASE_SEED,
+            pure_labels,
+            worker_count,
+            sessions_per_worker,
+            PURE_GAE8_FIRST_EVAL_UPDATE,
+        );
+        let pure_gae8 = run_composed_fixed_policy_eval_arm_with_ladder_v1(
+            "current-gae8",
+            &gae8,
+            &pure_gae8_ladder,
+            TRAIN_BASE_SEED,
+            pure_labels,
+            worker_count,
+            sessions_per_worker,
+            PURE_GAE8_FIRST_EVAL_UPDATE,
+        );
+        let pure_candidate = run_composed_fixed_policy_eval_arm_with_ladder_v1(
+            "population-response-candidate",
+            &candidate,
+            &pure_gae8_ladder,
+            TRAIN_BASE_SEED,
+            pure_labels,
+            worker_count,
+            sessions_per_worker,
+            PURE_GAE8_FIRST_EVAL_UPDATE,
+        );
+
+        let original_candidate_vs_gae8 =
+            composed_paired_terminal_order_summary_v1(&original_candidate, &original_gae8);
+        let original_candidate_vs_parent =
+            composed_paired_terminal_order_summary_v1(&original_candidate, &original_parent);
+        let original_gae8_vs_parent =
+            composed_paired_terminal_order_summary_v1(&original_gae8, &original_parent);
+        let pure_candidate_vs_gae8 =
+            composed_paired_terminal_order_summary_v1(&pure_candidate, &pure_gae8);
+        let pure_candidate_vs_parent =
+            composed_paired_terminal_order_summary_v1(&pure_candidate, &pure_parent);
+        let pure_gae8_vs_parent =
+            composed_paired_terminal_order_summary_v1(&pure_gae8, &pure_parent);
+        let original_candidate_vs_gae8_win =
+            composed_paired_win_summary_v1(&original_candidate, &original_gae8);
+        let original_candidate_vs_parent_win =
+            composed_paired_win_summary_v1(&original_candidate, &original_parent);
+        let pure_candidate_vs_gae8_win =
+            composed_paired_win_summary_v1(&pure_candidate, &pure_gae8);
+
+        let paired_net = |summary: &serde_json::Value| -> i64 {
+            summary["treatment_better"].as_u64().unwrap() as i64
+                - summary["control_better"].as_u64().unwrap() as i64
+        };
+        let paired_seat_net = |summary: &serde_json::Value, seat: &str| -> i64 {
+            summary["by_seat"][seat]["treatment_better"]
+                .as_u64()
+                .unwrap() as i64
+                - summary["by_seat"][seat]["control_better"].as_u64().unwrap() as i64
+        };
+        let original_candidate_vs_gae8_net = paired_net(&original_candidate_vs_gae8);
+        let original_candidate_vs_parent_net = paired_net(&original_candidate_vs_parent);
+        let pure_candidate_vs_gae8_net = paired_net(&pure_candidate_vs_gae8);
+        let original_parent_p0_net = paired_seat_net(&original_candidate_vs_parent, "p0");
+        let original_parent_p1_net = paired_seat_net(&original_candidate_vs_parent, "p1");
+        let pure_gae8_p0_net = paired_seat_net(&pure_candidate_vs_gae8, "p0");
+        let pure_gae8_p1_net = paired_seat_net(&pure_candidate_vs_gae8, "p1");
+
+        let updates = training["updates"]
+            .as_array()
+            .expect("response update rows");
+        assert_eq!(updates.len(), 8);
+        let update_numerics_stable = updates.iter().all(|update| {
+            update["sampled_policy_entropy_estimate_nats"]
+                .as_f64()
+                .is_some_and(|value| value.is_finite() && value >= 0.10)
+                && update["gradient_l2_norm"]
+                    .as_f64()
+                    .is_some_and(|value| value.is_finite() && value <= 5.0)
+                && update["parameter_movement_l2_from_initial"]
+                    .as_f64()
+                    .is_some_and(f64::is_finite)
+                && update["value_mse"]
+                    .as_f64()
+                    .is_some_and(|value| value.is_finite() && value >= 0.0)
+        });
+        let final_movement_l2 = updates.last().unwrap()["parameter_movement_l2_from_initial"]
+            .as_f64()
+            .unwrap();
+        let final_movement_within_bound = final_movement_l2 <= 0.75;
+        let original_parent_seat_nonregression =
+            original_parent_p0_net >= 0 && original_parent_p1_net >= 0;
+        let pure_gae8_seat_nonregression = pure_gae8_p0_net >= 0 && pure_gae8_p1_net >= 0;
+        let advance = update_numerics_stable
+            && final_movement_within_bound
+            && original_candidate_vs_gae8_net >= 8
+            && original_candidate_vs_parent_net >= 16
+            && original_parent_seat_nonregression
+            && pure_candidate_vs_gae8_net >= 8
+            && pure_gae8_seat_nonregression;
+
+        let mut training_schedule_receipts = Vec::with_capacity(512);
+        for episode_index in 33_280_u64..33_792 {
+            let schedule = native_trainer_episode_schedule_v1(TRAIN_BASE_SEED, episode_index)
+                .expect("population response training schedule");
+            let member = response_source
+                .ladder
+                .pool_member_for_episode_v1(TRAIN_BASE_SEED, episode_index)
+                .expect("population response training member");
+            let member_label = response_source
+                .ladder
+                .diagnostic_member_label_v1(member)
+                .expect("population response diagnostic member label");
+            training_schedule_receipts.push(serde_json::json!({
+                "episode_index": episode_index,
+                "learner_seat": match schedule.learner_seat { PlayerSeatV1::P0 => "p0", PlayerSeatV1::P1 => "p1" },
+                "pair_environment_seed": schedule.environment_seed,
+                "opponent_member": member_label,
+            }));
+        }
+
+        let (staging_root, published_root) =
+            create_composed_named_artifact_staging_root_v1(&output_root, "development-v1");
+        let candidate_staging_path = staging_root.join("population-response.state.f32le");
+        let candidate_published_path = published_root.join("population-response.state.f32le");
+        let report_staging_path = staging_root.join("report.json");
+        let report_published_path = published_root.join("report.json");
+        let candidate_artifact = persist_composed_train_state_v1(
+            &candidate,
+            &candidate_staging_path,
+            &candidate_published_path,
+        );
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-current-net8-population-response-development/v1",
+            "status": "complete",
+            "decision": if advance { "ADVANCE_TO_CANDIDATE_02_V3_DESIGN" } else { "STOP_POPULATION_RESPONSE_CYCLE_V1" },
+            "reward": "natural-terminal-win-loss-draw-only/v1",
+            "nonclaims": ["development-strength-screen", "not-formal-strength-evidence", "not-promotable", "no-pro-level-claim"],
+            "preflight_manifest": {
+                "path": preflight_manifest_path,
+                "sha256": preflight_manifest_sha256,
+            },
+            "throughput": {"path": throughput_path, "sha256": throughput_sha256, "selected": throughput["selected"]},
+            "fixed": {
+                "initializer_native_state_sha256": EXPECTED_GAE8_STATE_SHA256,
+                "historical_parent_native_state_sha256": "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0",
+                "retained_pool3_primary_state_sha256": "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99",
+                "critic_composite_model_parameter_sha256": "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22",
+                "population_weights": {"current_gae8": 40, "historical_update512": 20, "retained_pool3_primary": 20, "uniform_floor": 20},
+                "training_base_seed": TRAIN_BASE_SEED,
+                "training_first_episode_index": 33280_u64,
+                "training_last_episode_index": 33791_u64,
+                "worker_count": worker_count,
+                "sessions_per_worker": sessions_per_worker,
+            },
+            "initializer_load": initializer_load,
+            "training": training,
+            "training_schedule_receipts": training_schedule_receipts,
+            "state_artifact": candidate_artifact,
+            "fresh_evaluation": {
+                "original_pool3": {
+                    "base_seed": TRAIN_BASE_SEED,
+                    "first_episode_index": ORIGINAL_POOL_FIRST_EVAL_UPDATE * 64,
+                    "arms": {"parent": original_parent.report, "gae8": original_gae8.report, "candidate": original_candidate.report},
+                    "paired_terminal_order": {
+                        "candidate_vs_gae8": original_candidate_vs_gae8,
+                        "candidate_vs_parent": original_candidate_vs_parent,
+                        "gae8_vs_parent": original_gae8_vs_parent,
+                    },
+                    "win_only_diagnostic": {"candidate_vs_gae8": original_candidate_vs_gae8_win, "candidate_vs_parent": original_candidate_vs_parent_win},
+                },
+                "pure_gae8_opponent": {
+                    "base_seed": TRAIN_BASE_SEED,
+                    "first_episode_index": PURE_GAE8_FIRST_EVAL_UPDATE * 64,
+                    "arms": {"parent": pure_parent.report, "gae8": pure_gae8.report, "candidate": pure_candidate.report},
+                    "paired_terminal_order": {
+                        "candidate_vs_gae8": pure_candidate_vs_gae8,
+                        "candidate_vs_parent": pure_candidate_vs_parent,
+                        "gae8_vs_parent": pure_gae8_vs_parent,
+                    },
+                    "win_only_diagnostic": {"candidate_vs_gae8": pure_candidate_vs_gae8_win},
+                },
+            },
+            "development_gate": {
+                "estimand": "paired-terminal-order-W>D>L/v1",
+                "thresholds_are_selection_heuristics_not_confidence_claims": true,
+                "update_numerics_stable": update_numerics_stable,
+                "minimum_entropy": 0.10,
+                "maximum_gradient_l2": 5.0,
+                "final_movement_l2": final_movement_l2,
+                "maximum_final_movement_l2": 0.75,
+                "final_movement_within_bound": final_movement_within_bound,
+                "original_pool_candidate_vs_gae8_net": original_candidate_vs_gae8_net,
+                "required_original_pool_candidate_vs_gae8_net": 8_i64,
+                "original_pool_candidate_vs_parent_net": original_candidate_vs_parent_net,
+                "required_original_pool_candidate_vs_parent_net": 16_i64,
+                "original_pool_candidate_vs_parent_p0_net": original_parent_p0_net,
+                "original_pool_candidate_vs_parent_p1_net": original_parent_p1_net,
+                "original_pool_parent_seat_nonregression": original_parent_seat_nonregression,
+                "pure_gae8_candidate_vs_gae8_net": pure_candidate_vs_gae8_net,
+                "required_pure_gae8_candidate_vs_gae8_net": 8_i64,
+                "pure_gae8_candidate_vs_gae8_p0_net": pure_gae8_p0_net,
+                "pure_gae8_candidate_vs_gae8_p1_net": pure_gae8_p1_net,
+                "pure_gae8_seat_nonregression": pure_gae8_seat_nonregression,
+                "advance": advance,
+            },
+        });
+        let output = serde_json::to_vec_pretty(&report)
+            .expect("serialize population response development report");
+        write_composed_staged_file_v1(&report_staging_path, &output);
+        fs::rename(&staging_root, &published_root)
+            .expect("atomically publish population response development directory");
+        println!(
+            "POPULATION_RESPONSE_DEVELOPMENT_RESULT {}",
             report_published_path.display()
         );
         println!("{}", String::from_utf8(output).unwrap());

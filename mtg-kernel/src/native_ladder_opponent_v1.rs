@@ -224,6 +224,10 @@ pub(crate) fn softmax_sample_temperature_one_v1(
 const HEAD_TO_HEAD_EVAL_POOL_IDENTITY_V1: &str =
     "mtg-kernel-opponent-ladder-pool-head-to-head-eval-only-v1-not-a-production-pool";
 
+#[cfg(test)]
+const DEVELOPMENT_POPULATION_IDENTITY_V1: &str =
+    "mtg-kernel-opponent-ladder-development-population-v1-not-a-production-pool";
+
 /// Builds the placeholder [`OpponentLadderPoolContractV1`] stored on a
 /// [`LadderOpponentEngineV1`] built via
 /// [`LadderOpponentEngineV1::head_to_head_eval_v1`]. Never validated against
@@ -268,6 +272,17 @@ fn head_to_head_eval_pool_placeholder_v1() -> OpponentLadderPoolContractV1 {
     }
 }
 
+#[cfg(test)]
+fn development_population_pool_placeholder_v1() -> OpponentLadderPoolContractV1 {
+    let mut pool = head_to_head_eval_pool_placeholder_v1();
+    pool.identity = DEVELOPMENT_POPULATION_IDENTITY_V1.to_owned();
+    pool.weight_primary = OPPONENT_LADDER_POOL_WEIGHT_PRIMARY_V2;
+    pool.weight_predecessor_a = OPPONENT_LADDER_POOL_WEIGHT_PREDECESSOR_A_V2;
+    pool.weight_predecessor_b = OPPONENT_LADDER_POOL_WEIGHT_PREDECESSOR_B_V2;
+    pool.weight_uniform_floor = OPPONENT_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2;
+    pool
+}
+
 /// Pure literal check: does `pool` match the frozen ladder
 /// identity/size/weights/sampling-rule constants? Factored out of
 /// `LadderOpponentEngineV1::new_v1` so it is directly testable without
@@ -301,18 +316,22 @@ pub(crate) struct LadderOpponentEngineV1 {
     /// construction of it are the entire production-safety argument: no
     /// training run can ever observe `true` here.
     force_policy_member_v1: bool,
+    #[cfg(test)]
+    diagnostic_slot_labels_v1: Option<[&'static str; 3]>,
 }
 
 impl fmt::Debug for LadderOpponentEngineV1 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("LadderOpponentEngineV1")
+        let mut debug = formatter.debug_struct("LadderOpponentEngineV1");
+        debug
             .field("pool_identity", &self.pool.identity)
             .field("primary", &self.primary)
             .field("predecessor_a", &self.predecessor_a)
             .field("predecessor_b", &self.predecessor_b)
-            .field("force_policy_member_v1", &self.force_policy_member_v1)
-            .finish()
+            .field("force_policy_member_v1", &self.force_policy_member_v1);
+        #[cfg(test)]
+        debug.field("diagnostic_slot_labels_v1", &self.diagnostic_slot_labels_v1);
+        debug.finish()
     }
 }
 
@@ -345,6 +364,8 @@ impl LadderOpponentEngineV1 {
             predecessor_a,
             predecessor_b,
             force_policy_member_v1: false,
+            #[cfg(test)]
+            diagnostic_slot_labels_v1: None,
         })
     }
 
@@ -389,7 +410,47 @@ impl LadderOpponentEngineV1 {
             predecessor_a,
             predecessor_b,
             force_policy_member_v1: true,
+            diagnostic_slot_labels_v1: None,
         }
+    }
+
+    /// DEVELOPMENT-ONLY population constructor. It preserves the production
+    /// 40/20/20/20 member-selection schedule and the existing per-member
+    /// policy samplers while allowing a test-gated experiment to bind three
+    /// explicit in-memory policy handles. The placeholder pool is marked as
+    /// non-production and is never accepted by [`Self::new_v1`].
+    #[cfg(test)]
+    pub(crate) fn development_population_v1(
+        slots: [(&'static str, NativeCheckpointInferenceV1); 3],
+    ) -> Self {
+        let [(primary_label, primary), (predecessor_a_label, predecessor_a), (predecessor_b_label, predecessor_b)] =
+            slots;
+        Self {
+            pool: development_population_pool_placeholder_v1(),
+            primary,
+            predecessor_a,
+            predecessor_b,
+            force_policy_member_v1: false,
+            diagnostic_slot_labels_v1: Some([
+                primary_label,
+                predecessor_a_label,
+                predecessor_b_label,
+            ]),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn diagnostic_member_label_v1(
+        &self,
+        member: OpponentLadderPoolMemberV2,
+    ) -> Option<&'static str> {
+        let labels = self.diagnostic_slot_labels_v1?;
+        Some(match member {
+            OpponentLadderPoolMemberV2::Primary => labels[0],
+            OpponentLadderPoolMemberV2::PredecessorA => labels[1],
+            OpponentLadderPoolMemberV2::PredecessorB => labels[2],
+            OpponentLadderPoolMemberV2::UniformFloor => "uniform_floor",
+        })
     }
 
     pub(crate) fn pool(&self) -> &OpponentLadderPoolContractV1 {
@@ -762,7 +823,11 @@ mod tests {
             &snapshot_payload,
         )
         .unwrap();
-        let payload = executor.checkpoint_candidate_v1().unwrap().payload().to_vec();
+        let payload = executor
+            .checkpoint_candidate_v1()
+            .unwrap()
+            .payload()
+            .to_vec();
         let checkpoint = build_genesis_checkpoint_manifest_v3(&run, &payload).unwrap();
         load_native_checkpoint_inference_v1(&run, &checkpoint, &payload).unwrap()
     }
@@ -793,12 +858,49 @@ mod tests {
         // end-to-end through the eval-only engine.
         let (globals, actions) = determinism_decision_view_parts_v1();
         let view = FlatScoringDecisionViewV2::new(
-            &globals, &[], &[], &[], &[], &[], &[], &[], &[], &actions, &[],
+            &globals,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &actions,
+            &[],
         );
         let action = engine
             .select_policy_action_v1(OpponentLadderPoolMemberV2::Primary, view, 12_345)
             .unwrap();
         assert_eq!(action, 0);
+    }
+
+    #[test]
+    fn development_population_preserves_schedule_and_retains_explicit_labels() {
+        let engine = LadderOpponentEngineV1::development_population_v1([
+            ("current", one_genesis_checkpoint_handle_v1()),
+            ("historical", one_genesis_checkpoint_handle_v1()),
+            ("retained-primary", one_genesis_checkpoint_handle_v1()),
+        ]);
+        let base_seed = 71_501_u64;
+        let mut observed = [false; 4];
+        for episode_index in 0_u64..512 {
+            let expected = ladder_pool_member_for_episode_v1(base_seed, episode_index).unwrap();
+            let actual = engine
+                .pool_member_for_episode_v1(base_seed, episode_index)
+                .unwrap();
+            assert_eq!(actual, expected);
+            let (index, label) = match actual {
+                OpponentLadderPoolMemberV2::Primary => (0, "current"),
+                OpponentLadderPoolMemberV2::PredecessorA => (1, "historical"),
+                OpponentLadderPoolMemberV2::PredecessorB => (2, "retained-primary"),
+                OpponentLadderPoolMemberV2::UniformFloor => (3, "uniform_floor"),
+            };
+            observed[index] = true;
+            assert_eq!(engine.diagnostic_member_label_v1(actual), Some(label));
+        }
+        assert!(observed.into_iter().all(|value| value));
     }
 
     // ------------------------------------------------------------------

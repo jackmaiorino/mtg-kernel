@@ -167,6 +167,14 @@ impl NativeCheckpointInferenceOutputV1 {
 ///     let _ = handle.first_moments_v1();
 /// }
 /// ```
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NativeCheckpointInferenceDiagnosticProvenanceV1 {
+    pub(crate) label: &'static str,
+    pub(crate) native_state_sha256: [u8; 32],
+    pub(crate) model_parameter_sha256: [u8; 32],
+}
+
 pub struct NativeCheckpointInferenceV1 {
     model: NativePolicyValueNetV1,
     run_sha256: [u8; 32],
@@ -175,10 +183,20 @@ pub struct NativeCheckpointInferenceV1 {
     train_state_sha256: [u8; 32],
     model_parameter_sha256: [u8; 32],
     generation_index: u64,
+    #[cfg(test)]
+    diagnostic_provenance: Option<NativeCheckpointInferenceDiagnosticProvenanceV1>,
 }
 
 impl Debug for NativeCheckpointInferenceV1 {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        #[cfg(test)]
+        if let Some(provenance) = self.diagnostic_provenance {
+            return formatter
+                .debug_struct("NativeCheckpointInferenceV1")
+                .field("diagnostic_provenance", &provenance)
+                .field("generation_index", &self.generation_index)
+                .finish_non_exhaustive();
+        }
         formatter
             .debug_struct("NativeCheckpointInferenceV1")
             .field("run_sha256", &lower_hex_raw32_v1(self.run_sha256))
@@ -204,6 +222,52 @@ impl Debug for NativeCheckpointInferenceV1 {
 }
 
 impl NativeCheckpointInferenceV1 {
+    /// DEVELOPMENT-ONLY bridge for test-gated native experiments whose model
+    /// exists as an in-memory, digest-attested train state rather than a
+    /// published Store checkpoint. Production callers must continue through
+    /// [`load_native_checkpoint_inference_v1`]. The three artifact-authority
+    /// digests are absent and must never be reported as checkpoint provenance.
+    #[cfg(test)]
+    pub(crate) fn development_only_from_model_v1(
+        model: NativePolicyValueNetV1,
+        provenance: NativeCheckpointInferenceDiagnosticProvenanceV1,
+        generation_index: u64,
+    ) -> Result<Self> {
+        if model.parameter_count_v1() != PARAMETER_COUNT_V1 {
+            return Err(NativeCheckpointInferenceErrorV1::new(
+                NativeCheckpointInferenceErrorKindV1::ModelInvalid,
+            ));
+        }
+        let model_parameter_sha256 =
+            parse_lower_hex_raw32_v1(&model.parameter_manifest_sha256_v1()).map_err(|_| {
+                NativeCheckpointInferenceErrorV1::new(
+                    NativeCheckpointInferenceErrorKindV1::ModelInvalid,
+                )
+            })?;
+        if model_parameter_sha256 != provenance.model_parameter_sha256 {
+            return Err(NativeCheckpointInferenceErrorV1::new(
+                NativeCheckpointInferenceErrorKindV1::ModelInvalid,
+            ));
+        }
+        Ok(Self {
+            model,
+            run_sha256: [0; 32],
+            checkpoint_manifest_sha256: [0; 32],
+            checkpoint_payload_sha256: [0; 32],
+            train_state_sha256: provenance.native_state_sha256,
+            model_parameter_sha256,
+            generation_index,
+            diagnostic_provenance: Some(provenance),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn diagnostic_provenance_v1(
+        &self,
+    ) -> Option<NativeCheckpointInferenceDiagnosticProvenanceV1> {
+        self.diagnostic_provenance
+    }
+
     pub const fn run_sha256(&self) -> [u8; 32] {
         self.run_sha256
     }
@@ -505,6 +569,8 @@ pub fn load_native_checkpoint_inference_v1(
         train_state_sha256: checkpoint.train_state_sha256(),
         model_parameter_sha256,
         generation_index: checkpoint.generation_index(),
+        #[cfg(test)]
+        diagnostic_provenance: None,
     })
 }
 
@@ -1430,6 +1496,33 @@ mod tests {
             self.call_count += 1;
             Ok(())
         }
+    }
+
+    #[test]
+    fn development_only_inference_retains_typed_diagnostic_provenance() {
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let model_parameter_sha256 =
+            parse_lower_hex_raw32_v1(&model.parameter_manifest_sha256_v1()).unwrap();
+        let provenance = NativeCheckpointInferenceDiagnosticProvenanceV1 {
+            label: "diagnostic-policy",
+            native_state_sha256: [7; 32],
+            model_parameter_sha256,
+        };
+        let handle =
+            NativeCheckpointInferenceV1::development_only_from_model_v1(model, provenance, 520)
+                .unwrap();
+        assert_eq!(handle.diagnostic_provenance_v1(), Some(provenance));
+        assert_eq!(handle.train_state_sha256(), provenance.native_state_sha256);
+        assert_eq!(
+            handle.model_parameter_sha256(),
+            provenance.model_parameter_sha256
+        );
+        assert_eq!(handle.generation_index(), 520);
+        assert_eq!(handle.run_sha256(), [0; 32]);
+        assert_eq!(handle.checkpoint_manifest_sha256(), [0; 32]);
+        assert_eq!(handle.checkpoint_payload_sha256(), [0; 32]);
     }
 
     #[test]
