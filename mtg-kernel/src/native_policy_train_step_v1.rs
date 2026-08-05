@@ -1032,6 +1032,13 @@ impl NativePolicyValueTrainStateV1 {
         &self.model
     }
 
+    /// Starts a new Adam trajectory from the exact current model parameters.
+    /// The model and scorer-bias gauge anchor are preserved bit-for-bit while
+    /// the optimizer step and every first and second moment are reset to zero.
+    pub(crate) fn reset_adam_v1(&self) -> Result<Self, NativePolicyTrainErrorV1> {
+        Self::new_v1(self.model.clone())
+    }
+
     pub(crate) fn adam_step_v1(&self) -> u64 {
         self.adam_step
     }

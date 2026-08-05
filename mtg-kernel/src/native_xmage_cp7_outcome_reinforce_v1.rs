@@ -100,6 +100,17 @@ const CURRENT_NET8_CP7_RESPONSE_V3_KL_3_0_AUTHORITY_KIND_V1: &str =
     "current-net8-cp7-terminal-response-v3-kl-3.0";
 const CURRENT_NET8_CP7_RESPONSE_V3_KL_10_0_AUTHORITY_KIND_V1: &str =
     "current-net8-cp7-terminal-response-v3-kl-10.0";
+const CURRENT_NET8_CP7_RESPONSE_V4_KL_0_3_AUTHORITY_KIND_V1: &str =
+    "current-net8-cp7-terminal-response-v4-kl-0.3";
+const CURRENT_NET8_CP7_RESPONSE_V4_KL_1_0_AUTHORITY_KIND_V1: &str =
+    "current-net8-cp7-terminal-response-v4-kl-1.0";
+const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_BASE_SEED_HEX_V1: &str = "00000000001d7311";
+const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_PAIR_COUNT_V1: usize = 256;
+const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_EPISODE_COUNT_V1: usize = 512;
+const CURRENT_NET8_CP7_RESPONSE_V4_LEARNING_RATES_V1: [f32; 8] = [
+    0.0005, 0.0004, 0.0003, 0.0002, 0.00015, 0.0001, 0.000075, 0.00005,
+];
+const CURRENT_NET8_CP7_RESPONSE_V4_CHECKPOINT_UPDATES_V1: [u64; 4] = [2, 4, 6, 8];
 const OLD_POLICY_FORWARD_KL_ANCHOR_IDENTITY_V1: &str =
     "old-policy-forward-kl-every-legal-action-distribution/v1";
 const CURRENT_NET8_CP7_RESPONSE_V3_P99_GROUP_LOG_RATIO_CAP_V1: f64 = 0.75;
@@ -2576,6 +2587,51 @@ struct FixedNativeTrainConfigV1 {
     policy_anchor_coefficient: Option<f32>,
 }
 
+#[derive(Clone, Debug)]
+struct FixedNativeV4TrainConfigV1 {
+    outcome_jsonl: PathBuf,
+    outcome_jsonl_sha256: String,
+    source_fixed_root: PathBuf,
+    output_dir: PathBuf,
+    report_path: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FixedNativeV4RecipeV1 {
+    Kl03,
+    Kl10,
+}
+
+impl FixedNativeV4RecipeV1 {
+    fn policy_anchor_coefficient_v1(self) -> f32 {
+        match self {
+            Self::Kl03 => 0.3,
+            Self::Kl10 => 1.0,
+        }
+    }
+
+    fn authority_kind_v1(self) -> &'static str {
+        match self {
+            Self::Kl03 => CURRENT_NET8_CP7_RESPONSE_V4_KL_0_3_AUTHORITY_KIND_V1,
+            Self::Kl10 => CURRENT_NET8_CP7_RESPONSE_V4_KL_1_0_AUTHORITY_KIND_V1,
+        }
+    }
+
+    fn report_schema_v1(self) -> &'static str {
+        match self {
+            Self::Kl03 => "mtg-kernel-current-net8-cp7-terminal-response-v4-kl-0.3-training/v1",
+            Self::Kl10 => "mtg-kernel-current-net8-cp7-terminal-response-v4-kl-1.0-training/v1",
+        }
+    }
+
+    fn summary_schema_v1(self) -> &'static str {
+        match self {
+            Self::Kl03 => "mtg-kernel-current-net8-cp7-terminal-response-v4-kl-0.3-summary/v1",
+            Self::Kl10 => "mtg-kernel-current-net8-cp7-terminal-response-v4-kl-1.0-summary/v1",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FixedNativeRecipeV1 {
     ResponseV1,
@@ -4635,6 +4691,74 @@ where
     Ok((recipe, config))
 }
 
+fn parse_fixed_native_v4_train_config_v1<I>(
+    arguments: I,
+) -> DynResultV1<(FixedNativeV4RecipeV1, FixedNativeV4TrainConfigV1)>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut config = FixedNativeV4TrainConfigV1 {
+        outcome_jsonl: PathBuf::new(),
+        outcome_jsonl_sha256: String::new(),
+        source_fixed_root: PathBuf::new(),
+        output_dir: PathBuf::new(),
+        report_path: PathBuf::new(),
+    };
+    let mut recipe = None;
+    let mut iterator = arguments.into_iter();
+    let mut seen = BTreeSet::new();
+    while let Some(argument) = iterator.next() {
+        let flag = argument
+            .to_str()
+            .ok_or_else(|| invalid_data_v1("CLI flag is not UTF-8"))?;
+        if !seen.insert(flag.to_owned()) {
+            return Err(invalid_data_v1(format!("duplicate CLI flag {flag}")).into());
+        }
+        match flag {
+            "--arm" => {
+                let arm = next_arg_v1(&mut iterator, flag)?;
+                recipe = Some(match arm.to_str() {
+                    Some("kl-0.3") => FixedNativeV4RecipeV1::Kl03,
+                    Some("kl-1.0") => FixedNativeV4RecipeV1::Kl10,
+                    _ => return Err(invalid_data_v1("train-fixed-v4 arm is not pinned").into()),
+                });
+            }
+            "--outcome-jsonl" => config.outcome_jsonl = next_arg_v1(&mut iterator, flag)?.into(),
+            "--outcome-jsonl-sha256" => {
+                config.outcome_jsonl_sha256 = next_arg_v1(&mut iterator, flag)?
+                    .to_str()
+                    .ok_or_else(|| invalid_data_v1("outcome JSONL SHA-256 is not UTF-8"))?
+                    .to_owned();
+            }
+            "--source-fixed-root" => {
+                config.source_fixed_root = next_arg_v1(&mut iterator, flag)?.into()
+            }
+            "--output-dir" => config.output_dir = next_arg_v1(&mut iterator, flag)?.into(),
+            "--report-path" => config.report_path = next_arg_v1(&mut iterator, flag)?.into(),
+            "--help" | "-h" => {
+                return Err(invalid_data_v1(
+                    "usage: xmage_cp7_outcome_reinforce_v1 train-fixed-v4 --arm kl-0.3|kl-1.0 --outcome-jsonl PATH --outcome-jsonl-sha256 HEX64 --source-fixed-root PATH --output-dir NEW_PATH --report-path NEW_PATH",
+                )
+                .into())
+            }
+            _ => return Err(invalid_data_v1(format!("unknown CLI flag {flag}")).into()),
+        }
+    }
+    let recipe = recipe.ok_or_else(|| invalid_data_v1("train-fixed-v4 requires --arm"))?;
+    if config.outcome_jsonl.as_os_str().is_empty()
+        || config.outcome_jsonl_sha256.is_empty()
+        || config.source_fixed_root.as_os_str().is_empty()
+        || config.output_dir.as_os_str().is_empty()
+        || config.report_path.as_os_str().is_empty()
+    {
+        return Err(
+            invalid_data_v1("train-fixed-v4 requires every documented path and hash").into(),
+        );
+    }
+    parse_lower_hex_raw32_v1(&config.outcome_jsonl_sha256)?;
+    Ok((recipe, config))
+}
+
 fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpointSummaryV1> {
     ensure_output_absent_v1(&config.output_dir)?;
     let dataset = load_outcome_dataset_v1(&config.outcome_jsonl)?;
@@ -5169,6 +5293,407 @@ fn run_fixed_native_training_v1(
     }))
 }
 
+fn fixed_native_v4_checkpoint_gate_v1(
+    parameter_l2: f64,
+    movement: &PpoRatioMetricsManifestV1,
+    tail_shape: &PpoTailShapeManifestV1,
+) -> (bool, bool) {
+    let finite = parameter_l2.is_finite()
+        && movement.minimum_likelihood_ratio.is_finite()
+        && movement.maximum_likelihood_ratio.is_finite()
+        && movement.mean_likelihood_ratio.is_finite()
+        && movement.mean_absolute_log_likelihood_ratio.is_finite()
+        && movement
+            .maximum_absolute_joint_log_likelihood_ratio
+            .is_finite()
+        && movement.mean_old_to_current_forward_kl.is_finite()
+        && movement.mean_action_total_variation.is_finite()
+        && movement.p90_action_total_variation_nearest_rank.is_finite()
+        && movement.mean_policy_surrogate.is_finite()
+        && tail_shape
+            .p99_action_total_variation_nearest_rank
+            .is_finite()
+        && tail_shape.maximum_action_total_variation.is_finite()
+        && tail_shape
+            .p99_absolute_joint_log_likelihood_ratio_nearest_rank
+            .is_finite()
+        && tail_shape
+            .worst_group
+            .signed_joint_log_likelihood_ratio
+            .is_finite()
+        && tail_shape
+            .worst_group
+            .absolute_joint_log_likelihood_ratio
+            .is_finite()
+        && tail_shape.worst_group.likelihood_ratio.is_finite();
+    let pass = finite
+        && parameter_l2 <= 0.75
+        && (0.010..=0.050).contains(&movement.mean_action_total_variation)
+        && movement.p90_action_total_variation_nearest_rank <= 0.150
+        && tail_shape.p99_action_total_variation_nearest_rank
+            <= CURRENT_NET8_CP7_RESPONSE_V3_P99_ROW_TV_CAP_V1
+        && tail_shape.p99_absolute_joint_log_likelihood_ratio_nearest_rank
+            <= CURRENT_NET8_CP7_RESPONSE_V3_P99_GROUP_LOG_RATIO_CAP_V1
+        && movement.maximum_absolute_joint_log_likelihood_ratio <= 1.0
+        && tail_shape.above_absolute_joint_log_ratio_1_count == 0;
+    (finite, pass)
+}
+
+fn run_fixed_native_v4_training_v1(
+    config: FixedNativeV4TrainConfigV1,
+    recipe: FixedNativeV4RecipeV1,
+) -> DynResultV1<serde_json::Value> {
+    ensure_output_absent_v1(&config.output_dir)?;
+    if config.report_path.try_exists()? {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "fixed-native v4 training report already exists",
+        )
+        .into());
+    }
+    let dataset = load_outcome_dataset_v1(&config.outcome_jsonl)?;
+    if dataset.jsonl_sha256 != config.outcome_jsonl_sha256
+        || dataset.schema_version != 2
+        || dataset.export_contract != XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
+        || !current_gae8_checkpoint_v1(&dataset.policy_checkpoint)
+        || dataset.policy_checkpoint.environment_trajectory_contract
+            != FIXED_NATIVE_STATE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1
+        || dataset.base_seed_u64_hex != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_BASE_SEED_HEX_V1
+        || dataset.pair_indices
+            != (0..CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_PAIR_COUNT_V1 as u64).collect::<Vec<_>>()
+        || dataset.episode_count != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_EPISODE_COUNT_V1
+        || dataset.terminal_row_count != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_EPISODE_COUNT_V1
+        || dataset.terminal_return_counts.iter().sum::<u64>()
+            != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_EPISODE_COUNT_V1 as u64
+    {
+        return Err(invalid_data_v1("fixed-native v4 outcome corpus authority mismatch").into());
+    }
+
+    let source = load_fixed_native_training_source_v1(&config.source_fixed_root)?;
+    if source.authority_kind != CURRENT_GAE8_AUTHORITY_KIND_V1
+        || lower_hex_raw32_v1(source.source_result_sha256) != CURRENT_GAE8_SOURCE_RESULT_SHA256_V1
+        || lower_hex_raw32_v1(source.manifest_sha256) != CURRENT_GAE8_MANIFEST_SHA256_V1
+        || lower_hex_raw32_v1(source.payload_sha256) != CURRENT_GAE8_PAYLOAD_SHA256_V1
+        || lower_hex_raw32_v1(source.native_state_sha256) != CURRENT_GAE8_NATIVE_STATE_SHA256_V1
+        || lower_hex_raw32_v1(source.model_parameter_sha256)
+            != CURRENT_GAE8_MODEL_PARAMETER_SHA256_V1
+        || source.adam_step != CURRENT_GAE8_ADAM_STEP_V1
+        || source.state.adam_step_v1() != CURRENT_GAE8_ADAM_STEP_V1
+        || lower_hex_raw32_v1(source.state.state_sha256_v1()?)
+            != CURRENT_GAE8_NATIVE_STATE_SHA256_V1
+    {
+        return Err(invalid_data_v1("fixed-native v4 source is not exact retained GAE8").into());
+    }
+
+    let source_snapshot = source.state.snapshot_v1()?;
+    let mut state = source.state.reset_adam_v1()?;
+    let reset_snapshot = state.snapshot_v1()?;
+    let reset_is_exact = reset_snapshot.adam_step == 0
+        && reset_snapshot.scorer_bias_anchor_bits == source_snapshot.scorer_bias_anchor_bits
+        && reset_snapshot.parameters == source_snapshot.parameters
+        && reset_snapshot
+            .first_moments
+            .iter()
+            .all(|parameter| parameter.values.iter().all(|value| value.to_bits() == 0))
+        && reset_snapshot
+            .second_moments
+            .iter()
+            .all(|parameter| parameter.values.iter().all(|value| value.to_bits() == 0));
+    if !reset_is_exact {
+        return Err(invalid_data_v1(
+            "fixed-native v4 Adam reset changed parameters or retained optimizer state",
+        )
+        .into());
+    }
+    let reset_encoded = encode_native_train_state_payload_v1(&reset_snapshot)?;
+    let transport = audit_source_transport_v1(state.model_v1(), &dataset.groups, true)?;
+    let prepared = prepare_seat_standardized_dataset_advantages_v1(&dataset)?;
+    let mut current = prepare_ppo_epoch_v1(
+        state.model_v1(),
+        &dataset.groups,
+        &prepared.terms,
+        CURRENT_NET8_CP7_RESPONSE_PPO_CLIP_EPSILON_V1,
+        0.0,
+    )?;
+    if current
+        .ratio_metrics
+        .maximum_absolute_joint_log_likelihood_ratio
+        > PPO_INITIAL_MAX_ABSOLUTE_JOINT_LOG_RATIO_V1
+    {
+        return Err(invalid_data_v1(
+            "fixed-native v4 initial joint likelihood ratio exceeds transport gate",
+        )
+        .into());
+    }
+    let initial_objective = current.objective_metrics.clone();
+    let initial_ratio = current.ratio_metrics.clone();
+    let mut updates = Vec::with_capacity(CURRENT_NET8_CP7_RESPONSE_V4_LEARNING_RATES_V1.len());
+    let mut checkpoints =
+        Vec::with_capacity(CURRENT_NET8_CP7_RESPONSE_V4_CHECKPOINT_UPDATES_V1.len());
+    let mut selected: Option<(
+        NativePolicyValueTrainStateV1,
+        u64,
+        f64,
+        PpoRatioMetricsManifestV1,
+        PpoTailShapeManifestV1,
+    )> = None;
+    for (update_index, learning_rate) in CURRENT_NET8_CP7_RESPONSE_V4_LEARNING_RATES_V1
+        .iter()
+        .copied()
+        .enumerate()
+    {
+        let update = u64::try_from(update_index)? + 1;
+        let adam_step_before = state.adam_step_v1();
+        let before_update = current.ratio_metrics.clone();
+        train_frozen_anchored_batch_v1(
+            &mut state,
+            &dataset.groups,
+            &current.terms,
+            learning_rate,
+            0.0,
+            recipe.policy_anchor_coefficient_v1(),
+        )?;
+        if state.adam_step_v1() != update || adam_step_before + 1 != update {
+            return Err(invalid_data_v1("fixed-native v4 Adam step sequence mismatch").into());
+        }
+        let next = prepare_ppo_epoch_v1(
+            state.model_v1(),
+            &dataset.groups,
+            &prepared.terms,
+            CURRENT_NET8_CP7_RESPONSE_PPO_CLIP_EPSILON_V1,
+            0.0,
+        )?;
+        updates.push(serde_json::json!({
+            "update": update,
+            "learning_rate": learning_rate,
+            "learning_rate_f32_bits": learning_rate.to_bits(),
+            "adam_step_before": adam_step_before,
+            "adam_step_after": state.adam_step_v1(),
+            "before_update": before_update,
+            "after_update": &next.ratio_metrics,
+        }));
+        if CURRENT_NET8_CP7_RESPONSE_V4_CHECKPOINT_UPDATES_V1.contains(&update) {
+            let snapshot = state.snapshot_v1()?;
+            let parameter_l2 = parameter_l2_distance_v1(&source_snapshot, &snapshot)?;
+            let (finite, pass) = fixed_native_v4_checkpoint_gate_v1(
+                parameter_l2,
+                &next.ratio_metrics,
+                &next.tail_shape,
+            );
+            checkpoints.push(serde_json::json!({
+                "update": update,
+                "parameter_l2_from_gae8": parameter_l2,
+                "movement": &next.ratio_metrics,
+                "tail_shape": &next.tail_shape,
+                "gate": {
+                    "finite": finite,
+                    "pass": pass,
+                },
+            }));
+            let replace = pass
+                && selected
+                    .as_ref()
+                    .is_none_or(|(_, selected_update, _, selected_movement, _)| {
+                        next.ratio_metrics.mean_action_total_variation
+                            > selected_movement.mean_action_total_variation
+                            || (next.ratio_metrics.mean_action_total_variation
+                                == selected_movement.mean_action_total_variation
+                                && update < *selected_update)
+                    });
+            if replace {
+                selected = Some((
+                    state.clone(),
+                    update,
+                    parameter_l2,
+                    next.ratio_metrics.clone(),
+                    next.tail_shape.clone(),
+                ));
+            }
+        }
+        current = next;
+    }
+    if state.adam_step_v1() != CURRENT_NET8_CP7_RESPONSE_V4_LEARNING_RATES_V1.len() as u64
+        || checkpoints.len() != CURRENT_NET8_CP7_RESPONSE_V4_CHECKPOINT_UPDATES_V1.len()
+    {
+        return Err(invalid_data_v1("fixed-native v4 did not complete the exact schedule").into());
+    }
+
+    let encoded_selected = selected
+        .as_ref()
+        .map(|(selected_state, _, _, _, _)| selected_state.snapshot_v1())
+        .transpose()?
+        .as_ref()
+        .map(encode_native_train_state_payload_v1)
+        .transpose()?;
+    let candidate = match (&selected, &encoded_selected) {
+        (Some((selected_state, update, parameter_l2, movement, tail_shape)), Some(encoded)) => {
+            serde_json::json!({
+                "selected_update": update,
+                "payload_byte_count": encoded.bytes.len(),
+                "payload_sha256": lower_hex_raw32_v1(encoded.digests.payload_sha256),
+                "parameters_sha256": lower_hex_raw32_v1(encoded.digests.parameters_sha256),
+                "first_moments_sha256": lower_hex_raw32_v1(encoded.digests.first_moments_sha256),
+                "second_moments_sha256": lower_hex_raw32_v1(encoded.digests.second_moments_sha256),
+                "model_parameter_sha256": lower_hex_raw32_v1(encoded.digests.model_parameter_sha256),
+                "native_state_sha256": lower_hex_raw32_v1(encoded.digests.native_state_sha256),
+                "adam_step": selected_state.adam_step_v1(),
+                "scorer_bias_anchor_f32_bits": selected_state.scorer_bias_anchor_f32_bits_v1(),
+                "parameter_l2_from_gae8": parameter_l2,
+                "movement": movement,
+                "tail_shape": tail_shape,
+            })
+        }
+        (None, None) => serde_json::Value::Null,
+        _ => {
+            return Err(invalid_data_v1("fixed-native v4 selected-state encoding mismatch").into())
+        }
+    };
+    let report = serde_json::json!({
+        "schema": recipe.report_schema_v1(),
+        "source": {
+            "authority_kind": CURRENT_GAE8_AUTHORITY_KIND_V1,
+            "source_result_sha256": CURRENT_GAE8_SOURCE_RESULT_SHA256_V1,
+            "manifest_sha256": CURRENT_GAE8_MANIFEST_SHA256_V1,
+            "payload_sha256": CURRENT_GAE8_PAYLOAD_SHA256_V1,
+            "native_state_sha256": CURRENT_GAE8_NATIVE_STATE_SHA256_V1,
+            "model_parameter_sha256": CURRENT_GAE8_MODEL_PARAMETER_SHA256_V1,
+            "adam_step": CURRENT_GAE8_ADAM_STEP_V1,
+        },
+        "corpus": {
+            "path": config.outcome_jsonl,
+            "sha256": dataset.jsonl_sha256,
+            "base_seed_u64_hex": dataset.base_seed_u64_hex,
+            "pair_indices": dataset.pair_indices,
+            "pair_count": dataset.pair_indices.len(),
+            "episode_count": dataset.episode_count,
+            "decision_row_count": dataset.decision_row_count,
+            "physical_group_count": dataset.groups.len(),
+            "terminal_return_counts_loss_draw_win": dataset.terminal_return_counts,
+        },
+        "training": {
+            "reward": "natural_terminal_win_draw_loss_only",
+            "objective": PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1,
+            "value_coefficient": 0.0,
+            "value_coefficient_f32_bits": 0.0_f32.to_bits(),
+            "ppo_clip_epsilon": CURRENT_NET8_CP7_RESPONSE_PPO_CLIP_EPSILON_V1,
+            "ppo_clip_epsilon_f32_bits": CURRENT_NET8_CP7_RESPONSE_PPO_CLIP_EPSILON_V1.to_bits(),
+            "policy_anchor": {
+                "identity": OLD_POLICY_FORWARD_KL_ANCHOR_IDENTITY_V1,
+                "direction": "old_to_current",
+                "old_policy_source": PPO_OLD_POLICY_SOURCE_V1,
+                "scope": "every_legal_action_distribution",
+                "coefficient": recipe.policy_anchor_coefficient_v1(),
+                "coefficient_f32_bits": recipe.policy_anchor_coefficient_v1().to_bits(),
+            },
+            "learning_rate_schedule": CURRENT_NET8_CP7_RESPONSE_V4_LEARNING_RATES_V1,
+            "learning_rate_schedule_f32_bits": CURRENT_NET8_CP7_RESPONSE_V4_LEARNING_RATES_V1.map(f32::to_bits),
+            "checkpoint_updates": CURRENT_NET8_CP7_RESPONSE_V4_CHECKPOINT_UPDATES_V1,
+            "optimizer_reset": {
+                "source_adam_step": CURRENT_GAE8_ADAM_STEP_V1,
+                "starting_adam_step": 0,
+                "parameters_preserved_bit_exact": true,
+                "first_and_second_moments_all_positive_zero": true,
+                "reset_payload_sha256": lower_hex_raw32_v1(reset_encoded.digests.payload_sha256),
+                "reset_first_moments_sha256": lower_hex_raw32_v1(reset_encoded.digests.first_moments_sha256),
+                "reset_second_moments_sha256": lower_hex_raw32_v1(reset_encoded.digests.second_moments_sha256),
+            },
+            "advantage_transform": prepared.manifest,
+            "source_transport_audit": transport,
+            "initial_objective_metrics": initial_objective,
+            "initial_ratio_metrics": initial_ratio,
+            "updates": updates,
+        },
+        "checkpoint_gate": {
+            "parameter_l2_cap": 0.75,
+            "mean_action_total_variation_floor": 0.010,
+            "mean_action_total_variation_cap": 0.050,
+            "p90_action_total_variation_cap": 0.150,
+            "p99_action_total_variation_cap": CURRENT_NET8_CP7_RESPONSE_V3_P99_ROW_TV_CAP_V1,
+            "p99_absolute_joint_log_likelihood_ratio_cap": CURRENT_NET8_CP7_RESPONSE_V3_P99_GROUP_LOG_RATIO_CAP_V1,
+            "maximum_absolute_joint_log_likelihood_ratio_cap": 1.0,
+            "above_absolute_joint_log_ratio_1_count_cap": 0,
+            "selection": "highest eligible mean action TV; exact tie to earlier update",
+        },
+        "checkpoints": checkpoints,
+        "candidate": candidate,
+        "publication_pass": selected.is_some(),
+        "nonclaims": [
+            "development training metrics are not playing-strength evidence",
+            "terminal win/loss/draw remains the only promotion measure",
+        ],
+    });
+    let mut report_bytes = serde_json::to_vec_pretty(&report)?;
+    report_bytes.push(b'\n');
+    if let Some(parent) = config.report_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    atomic_write_v1(&config.report_path, &report_bytes)?;
+    let report_sha256 = sha256_v1(&report_bytes);
+
+    let mut manifest_sha256 = None;
+    if let (Some((selected_state, _, _, _, _)), Some(encoded)) = (&selected, &encoded_selected) {
+        fs::create_dir(&config.output_dir)?;
+        atomic_write_v1(
+            &config
+                .output_dir
+                .join(FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1),
+            &encoded.bytes,
+        )?;
+        let manifest = FixedNativeOutputManifestV1 {
+            schema: FIXED_NATIVE_STATE_SCHEMA_V1.to_owned(),
+            authority_kind: recipe.authority_kind_v1().to_owned(),
+            source_result_sha256: lower_hex_raw32_v1(report_sha256),
+            payload: FixedNativeOutputPayloadManifestV1 {
+                filename: FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1.to_owned(),
+                byte_count: encoded.bytes.len(),
+                adam_step: selected_state.adam_step_v1(),
+                scorer_bias_anchor_f32_bits: selected_state.scorer_bias_anchor_f32_bits_v1(),
+                payload_sha256: lower_hex_raw32_v1(encoded.digests.payload_sha256),
+                parameters_sha256: lower_hex_raw32_v1(encoded.digests.parameters_sha256),
+                first_moments_sha256: lower_hex_raw32_v1(encoded.digests.first_moments_sha256),
+                second_moments_sha256: lower_hex_raw32_v1(encoded.digests.second_moments_sha256),
+                model_parameter_sha256: lower_hex_raw32_v1(encoded.digests.model_parameter_sha256),
+                native_state_sha256: lower_hex_raw32_v1(encoded.digests.native_state_sha256),
+            },
+            non_claims: vec![
+                "external software anchor is not professional-level evidence".to_owned(),
+                "terminal win/loss/draw is the only playing-strength outcome".to_owned(),
+            ],
+        };
+        let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
+        manifest_bytes.push(b'\n');
+        atomic_write_v1(
+            &config
+                .output_dir
+                .join(FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1),
+            &manifest_bytes,
+        )?;
+        let reloaded = load_fixed_native_training_source_v1(&config.output_dir)?;
+        if reloaded.authority_kind != recipe.authority_kind_v1()
+            || reloaded.source_result_sha256 != report_sha256
+            || reloaded.payload_sha256 != encoded.digests.payload_sha256
+            || reloaded.native_state_sha256 != encoded.digests.native_state_sha256
+            || reloaded.model_parameter_sha256 != encoded.digests.model_parameter_sha256
+            || reloaded.adam_step != selected_state.adam_step_v1()
+        {
+            return Err(
+                invalid_data_v1("published fixed-native v4 package reload mismatch").into(),
+            );
+        }
+        manifest_sha256 = Some(lower_hex_raw32_v1(reloaded.manifest_sha256));
+    }
+
+    Ok(serde_json::json!({
+        "schema": recipe.summary_schema_v1(),
+        "publication_pass": selected.is_some(),
+        "report_sha256": lower_hex_raw32_v1(report_sha256),
+        "manifest_sha256": manifest_sha256,
+        "selected_update": selected.as_ref().map(|(_, update, _, _, _)| update),
+        "mean_action_total_variation": selected.as_ref().map(|(_, _, _, movement, _)| movement.mean_action_total_variation),
+        "policy_anchor_coefficient": recipe.policy_anchor_coefficient_v1(),
+    }))
+}
+
 pub fn run_xmage_cp7_outcome_reinforce_cli_v1<I>(arguments: I) -> DynResultV1<()>
 where
     I: IntoIterator<Item = OsString>,
@@ -5194,6 +5719,10 @@ where
                 let (recipe, config) = parse_fixed_native_v3_train_config_v1(tail.iter().cloned())?;
                 run_fixed_native_training_v1(config, recipe)?
             }
+            Some("train-fixed-v4") => {
+                let (recipe, config) = parse_fixed_native_v4_train_config_v1(tail.iter().cloned())?;
+                run_fixed_native_v4_training_v1(config, recipe)?
+            }
             Some("verify") => {
                 if tail.len() != 2 || tail[0] != "--output-dir" {
                     return Err(invalid_data_v1(
@@ -5206,7 +5735,7 @@ where
                 ))?)?
             }
             _ => return Err(invalid_data_v1(
-                "expected train, train-fixed, train-fixed-v2, train-fixed-v3, or verify command",
+                "expected train, train-fixed, train-fixed-v2, train-fixed-v3, train-fixed-v4, or verify command",
             )
             .into()),
         };
@@ -5521,6 +6050,204 @@ mod tests {
         let mut duplicate_coefficient = base;
         duplicate_coefficient.extend(["--policy-anchor-coefficient".into(), "0.3".into()]);
         assert!(parse_fixed_native_v3_train_config_v1(duplicate_coefficient).is_err());
+    }
+
+    #[test]
+    fn current_gae8_v4_recipe_parser_and_schedule_are_exact_v1() {
+        let base = [
+            "--arm",
+            "kl-0.3",
+            "--outcome-jsonl",
+            "outcomes.jsonl",
+            "--outcome-jsonl-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--source-fixed-root",
+            "source",
+            "--output-dir",
+            "candidate",
+            "--report-path",
+            "report.json",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+        let (recipe, config) = parse_fixed_native_v4_train_config_v1(base.clone()).unwrap();
+        assert_eq!(recipe, FixedNativeV4RecipeV1::Kl03);
+        assert_eq!(
+            recipe.policy_anchor_coefficient_v1().to_bits(),
+            0.3_f32.to_bits()
+        );
+        assert_eq!(
+            recipe.authority_kind_v1(),
+            CURRENT_NET8_CP7_RESPONSE_V4_KL_0_3_AUTHORITY_KIND_V1
+        );
+        assert_eq!(
+            config.outcome_jsonl_sha256,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        );
+        assert_eq!(
+            CURRENT_NET8_CP7_RESPONSE_V4_LEARNING_RATES_V1.map(f32::to_bits),
+            [
+                0.0005_f32.to_bits(),
+                0.0004_f32.to_bits(),
+                0.0003_f32.to_bits(),
+                0.0002_f32.to_bits(),
+                0.00015_f32.to_bits(),
+                0.0001_f32.to_bits(),
+                0.000075_f32.to_bits(),
+                0.00005_f32.to_bits(),
+            ]
+        );
+        assert_eq!(
+            CURRENT_NET8_CP7_RESPONSE_V4_CHECKPOINT_UPDATES_V1,
+            [2, 4, 6, 8]
+        );
+
+        let arm_index = base.iter().position(|value| value == "--arm").unwrap();
+        let mut second = base.clone();
+        second[arm_index + 1] = "kl-1.0".into();
+        let (recipe, _) = parse_fixed_native_v4_train_config_v1(second).unwrap();
+        assert_eq!(recipe, FixedNativeV4RecipeV1::Kl10);
+        assert_eq!(
+            recipe.policy_anchor_coefficient_v1().to_bits(),
+            1.0_f32.to_bits()
+        );
+        assert_eq!(
+            recipe.authority_kind_v1(),
+            CURRENT_NET8_CP7_RESPONSE_V4_KL_1_0_AUTHORITY_KIND_V1
+        );
+
+        for extra in [
+            vec!["--learning-rate", "0.001"],
+            vec!["--epochs", "4"],
+            vec!["--policy-anchor-coefficient", "0.3"],
+            vec!["--value-coefficient", "0.0"],
+        ] {
+            let mut wrong = base.clone();
+            wrong.extend(extra.into_iter().map(OsString::from));
+            assert!(parse_fixed_native_v4_train_config_v1(wrong).is_err());
+        }
+        let mut wrong_arm = base.clone();
+        wrong_arm[arm_index + 1] = "kl-3.0".into();
+        assert!(parse_fixed_native_v4_train_config_v1(wrong_arm).is_err());
+        let mut duplicate_arm = base;
+        duplicate_arm.extend(["--arm".into(), "kl-0.3".into()]);
+        assert!(parse_fixed_native_v4_train_config_v1(duplicate_arm).is_err());
+    }
+
+    #[test]
+    fn current_gae8_v4_checkpoint_gate_exercises_each_tail_cap_v1() {
+        let movement = PpoRatioMetricsManifestV1 {
+            physical_group_count: 4,
+            observed_row_count: 4,
+            clipped_group_count: 0,
+            minimum_likelihood_ratio: 0.9,
+            maximum_likelihood_ratio: 1.1,
+            mean_likelihood_ratio: 1.0,
+            mean_absolute_log_likelihood_ratio: 0.02,
+            maximum_absolute_joint_log_likelihood_ratio: 0.8,
+            mean_old_to_current_forward_kl: 0.001,
+            mean_action_total_variation: 0.02,
+            p90_action_total_variation_nearest_rank: 0.08,
+            mean_policy_surrogate: 0.01,
+        };
+        let tail = PpoTailShapeManifestV1 {
+            p99_action_total_variation_nearest_rank: 0.10,
+            maximum_action_total_variation: 0.12,
+            p99_absolute_joint_log_likelihood_ratio_nearest_rank: 0.70,
+            above_absolute_joint_log_ratio_1_count: 0,
+            above_absolute_joint_log_ratio_1_5_count: 0,
+            above_absolute_joint_log_ratio_2_count: 0,
+            worst_group: PpoWorstGroupManifestV1 {
+                pair_index: 0,
+                episode_id: 0,
+                candidate_seat: "p0".to_owned(),
+                decision_kind: "surface".to_owned(),
+                substep_count: 1,
+                signed_joint_log_likelihood_ratio: 0.8,
+                absolute_joint_log_likelihood_ratio: 0.8,
+                likelihood_ratio: 0.8_f64.exp(),
+            },
+        };
+        assert_eq!(
+            fixed_native_v4_checkpoint_gate_v1(0.3, &movement, &tail),
+            (true, true)
+        );
+
+        let mut failing = movement.clone();
+        failing.mean_action_total_variation = 0.009;
+        assert_eq!(
+            fixed_native_v4_checkpoint_gate_v1(0.3, &failing, &tail),
+            (true, false)
+        );
+        let mut failing = movement.clone();
+        failing.p90_action_total_variation_nearest_rank = 0.151;
+        assert_eq!(
+            fixed_native_v4_checkpoint_gate_v1(0.3, &failing, &tail),
+            (true, false)
+        );
+        let mut failing = movement.clone();
+        failing.maximum_absolute_joint_log_likelihood_ratio = 1.001;
+        assert_eq!(
+            fixed_native_v4_checkpoint_gate_v1(0.3, &failing, &tail),
+            (true, false)
+        );
+
+        let mut failing = tail.clone();
+        failing.p99_action_total_variation_nearest_rank = 0.151;
+        assert_eq!(
+            fixed_native_v4_checkpoint_gate_v1(0.3, &movement, &failing),
+            (true, false)
+        );
+        let mut failing = tail.clone();
+        failing.p99_absolute_joint_log_likelihood_ratio_nearest_rank = 0.751;
+        assert_eq!(
+            fixed_native_v4_checkpoint_gate_v1(0.3, &movement, &failing),
+            (true, false)
+        );
+        let mut failing = tail.clone();
+        failing.above_absolute_joint_log_ratio_1_count = 1;
+        assert_eq!(
+            fixed_native_v4_checkpoint_gate_v1(0.3, &movement, &failing),
+            (true, false)
+        );
+        let mut nonfinite = movement;
+        nonfinite.mean_policy_surrogate = f64::NAN;
+        assert_eq!(
+            fixed_native_v4_checkpoint_gate_v1(0.3, &nonfinite, &tail),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn current_gae8_v4_adam_reset_preserves_every_parameter_bit_v1() {
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        state.mutate_optimizer_moment_for_preclone_test_v2();
+        let before = state.snapshot_v1().unwrap();
+        assert!(before.first_moments.iter().any(|parameter| {
+            parameter
+                .values
+                .iter()
+                .any(|value| value.to_bits() & 0x7fff_ffff != 0)
+        }));
+        let reset = state.reset_adam_v1().unwrap().snapshot_v1().unwrap();
+        assert_eq!(reset.adam_step, 0);
+        assert_eq!(
+            reset.scorer_bias_anchor_bits,
+            before.scorer_bias_anchor_bits
+        );
+        assert_eq!(reset.parameters, before.parameters);
+        assert!(reset
+            .first_moments
+            .iter()
+            .all(|parameter| { parameter.values.iter().all(|value| value.to_bits() == 0) }));
+        assert!(reset
+            .second_moments
+            .iter()
+            .all(|parameter| { parameter.values.iter().all(|value| value.to_bits() == 0) }));
     }
 
     fn scorer_scope_test_tensor_v1() -> OwnedDecisionTensorV1 {
