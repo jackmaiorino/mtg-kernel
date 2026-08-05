@@ -1,6 +1,7 @@
 param(
     [string]$AttemptRoot = 'D:\mtg-kernel-regularized-continuation-retest-v1\development\seed-1940001\coefficient-screen\attempt-002',
     [string]$EvaluatorTest = 'native_gate3_terminal_blind_coefficient_screen_v1::gate3_terminal_blind_coefficient_screen_v1',
+    [ValidateRange(1, 999)][int]$EvaluationAttempt = 1,
     [switch]$ValidateOnly
 )
 
@@ -150,14 +151,19 @@ try {
     $planPath = Join-Path $AttemptRoot 'coefficient-plan.json'
     $formalStartPath = Join-Path $AttemptRoot 'formal-start.json'
     $stoppedPath = Join-Path $AttemptRoot 'stopped.log'
+    $evaluationSuffix = if ($EvaluationAttempt -eq 1) { '' } else { '-attempt-{0:d3}' -f $EvaluationAttempt }
+    $requestPath = Join-Path $AttemptRoot "terminal-blind-request$evaluationSuffix.json"
+    $reportPath = Join-Path $AttemptRoot "terminal-blind-report$evaluationSuffix.json"
+    $evaluationLog = Join-Path $AttemptRoot "terminal-blind-evaluator$evaluationSuffix.log"
+    $resumeStoppedPath = Join-Path $AttemptRoot "resume-stopped$evaluationSuffix.log"
     foreach ($path in @($planPath, $formalStartPath, $stoppedPath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "required recovery input is missing: $path"
         }
     }
-    foreach ($name in @('terminal-blind-request.json', 'terminal-blind-report.json', 'terminal-blind-evaluator.log', 'coefficient-manifest.json')) {
-        if (Test-Path -LiteralPath (Join-Path $AttemptRoot $name)) {
-            throw "recovery output is not create-new: $name"
+    foreach ($path in @($requestPath, $reportPath, $evaluationLog, $resumeStoppedPath, (Join-Path $AttemptRoot 'coefficient-manifest.json'))) {
+        if (Test-Path -LiteralPath $path) {
+            throw "recovery output is not create-new: $path"
         }
     }
     $plan = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json
@@ -165,6 +171,38 @@ try {
     $planSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $planPath).Hash.ToLowerInvariant()
     $stoppedSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $stoppedPath).Hash.ToLowerInvariant()
     $stoppedText = Get-Content -LiteralPath $stoppedPath -Raw
+    $priorEvaluatorFailures = @()
+    if ($EvaluationAttempt -gt 1) {
+        $priorAttempt = $EvaluationAttempt - 1
+        $priorSuffix = if ($priorAttempt -eq 1) { '' } else { '-attempt-{0:d3}' -f $priorAttempt }
+        $priorRequestPath = Join-Path $AttemptRoot "terminal-blind-request$priorSuffix.json"
+        $priorReportPath = Join-Path $AttemptRoot "terminal-blind-report$priorSuffix.json"
+        $priorLogPath = Join-Path $AttemptRoot "terminal-blind-evaluator$priorSuffix.log"
+        $priorStoppedPath = Join-Path $AttemptRoot "resume-stopped$priorSuffix.log"
+        foreach ($path in @($priorRequestPath, $priorLogPath, $priorStoppedPath)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                throw "prior evaluator failure artifact is missing: $path"
+            }
+        }
+        if (Test-Path -LiteralPath $priorReportPath) {
+            throw 'prior evaluator attempt created a report and is not eligible for transport recovery'
+        }
+        $priorBytes = [IO.File]::ReadAllBytes($priorRequestPath)
+        $priorLogText = Get-Content -LiteralPath $priorLogPath -Raw
+        if ($priorBytes.Length -lt 3 -or
+            $priorBytes[0] -ne 0xEF -or $priorBytes[1] -ne 0xBB -or $priorBytes[2] -ne 0xBF -or
+            $priorLogText -notmatch 'Gate 3 request JSON must validate: Error\("expected value", line: 1, column: 1\)') {
+            throw 'prior evaluator attempt is not the bound UTF-8 BOM request-transport failure'
+        }
+        $priorEvaluatorFailures = @([ordered]@{
+            attempt = $priorAttempt
+            disposition = 'INPUT-TRANSPORT-FAILURE-BEFORE-CORPUS-CONSTRUCTION'
+            request = [ordered]@{ path = $priorRequestPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorRequestPath).Hash.ToLowerInvariant() }
+            evaluator_log = [ordered]@{ path = $priorLogPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorLogPath).Hash.ToLowerInvariant() }
+            stopped_log = [ordered]@{ path = $priorStoppedPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorStoppedPath).Hash.ToLowerInvariant() }
+            report_created = $false
+        })
+    }
     if ([string]$plan.schema -ne 'regularized-continuation-coefficient-plan/v1' -or
         [string]$formalStart.schema -ne 'regularized-continuation-formal-start/v1' -or
         [string]$formalStart.plan_sha256 -ne $planSha256 -or
@@ -236,10 +274,7 @@ try {
             }
         })
     }
-    $requestPath = Join-Path $AttemptRoot 'terminal-blind-request.json'
-    $reportPath = Join-Path $AttemptRoot 'terminal-blind-report.json'
-    $evaluationLog = Join-Path $AttemptRoot 'terminal-blind-evaluator.log'
-    Write-JsonFile -Value $request -Path $requestPath
+    Write-Utf8NoBomJsonFile -Value $request -Path $requestPath
 
     $phase = 'formal-terminal-blind-evaluation'
     $savedInput = [Environment]::GetEnvironmentVariable('REGCONT_SCREEN_INPUT_JSON', 'Process')
@@ -296,6 +331,8 @@ try {
         prerequisite_throughput = $plan.prerequisite_throughput
         recovery = [ordered]@{
             reason = 'post-training OrderedDictionary resource-summary failure before evaluator launch'
+            evaluator_attempt = $EvaluationAttempt
+            prior_evaluator_failures = @($priorEvaluatorFailures)
             original_stopped_log = [ordered]@{ path = $stoppedPath; sha256 = $stoppedSha256 }
             recovery_git = $recoveryGit
             recovery_script = [ordered]@{
@@ -303,7 +340,7 @@ try {
                 sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
             }
             missing_evidence = @('per-second in-memory resource samples and exact wave wall seconds')
-            scientific_effect = 'none; all five Stores and launch completions are hash-bound, and the frozen terminal-blind evaluator had not launched'
+            scientific_effect = 'none; training is hash-bound, and every prior recovery failure occurred before request deserialization or corpus construction'
         }
         training_waves = @(
             for ($index = 0; $index -lt @($plan.waves).Count; $index++) {
@@ -339,6 +376,6 @@ try {
 catch {
     $message = $_.Exception.Message -replace "[\r\n]+", ' '
     "$( [DateTimeOffset]::UtcNow.ToString('O') ) phase=$phase stopped=$message" |
-        Set-Content -LiteralPath (Join-Path $AttemptRoot 'resume-stopped.log') -Encoding utf8
+        Set-Content -LiteralPath $resumeStoppedPath -Encoding utf8
     throw
 }

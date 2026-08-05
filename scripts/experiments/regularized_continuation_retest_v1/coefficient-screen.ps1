@@ -255,7 +255,7 @@ try {
     }
     $requestPath = Join-Path $root 'terminal-blind-request.json'
     $reportPath = Join-Path $root 'terminal-blind-report.json'
-    Write-JsonFile -Value $request -Path $requestPath
+    Write-Utf8NoBomJsonFile -Value $request -Path $requestPath
     if (Test-Path -LiteralPath $reportPath) {
         throw 'terminal-blind evaluator output path is not create-new'
     }

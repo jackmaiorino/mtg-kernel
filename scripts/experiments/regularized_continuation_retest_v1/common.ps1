@@ -626,6 +626,12 @@ function Write-JsonFile {
     $Value | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $Path -Encoding utf8
 }
 
+function Write-Utf8NoBomJsonFile {
+    param([Parameter(Mandatory = $true)]$Value, [Parameter(Mandatory = $true)][string]$Path)
+    $json = $Value | ConvertTo-Json -Depth 12
+    [IO.File]::WriteAllText($Path, $json, [Text.UTF8Encoding]::new($false))
+}
+
 function New-UniqueAttemptRoot {
     param(
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
