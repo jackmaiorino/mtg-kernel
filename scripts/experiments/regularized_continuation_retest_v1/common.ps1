@@ -496,10 +496,12 @@ function Start-NativeLane {
     $logLabel = [IO.Path]::GetFileNameWithoutExtension($LogPath)
     $stdout = Join-Path $EvidenceRoot "$logLabel.stdout.log"
     $stderr = Join-Path $EvidenceRoot "$logLabel.stderr.log"
+    $completion = Join-Path $EvidenceRoot "$logLabel.completion.json"
     $childArgs = @('-NoProfile', '-WindowStyle', 'Hidden', '-File', $laneScript,
         '-Executable', $Executable, '-Seed', $Seed, '-Updates', $Updates,
         '-StoreParent', $StoreParent, '-GpuOrdinal', $GpuOrdinal,
-        '-PolicyAnchorBeta', $PolicyAnchorBeta, '-LogPath', $LogPath)
+        '-PolicyAnchorBeta', $PolicyAnchorBeta, '-LogPath', $LogPath,
+        '-CompletionPath', $completion)
     $argText = ($childArgs | ForEach-Object { '"' + ([string]$_).Replace('"', '\"') + '"' }) -join ' '
     $started = [DateTimeOffset]::UtcNow
     $process = Start-Process -FilePath $pwsh -ArgumentList $argText -WorkingDirectory $script:RepoRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -510,8 +512,52 @@ function Start-NativeLane {
         log = $LogPath
         stdout = $stdout
         stderr = $stderr
+        completion = $completion
+        executable = $Executable
+        seed = $Seed
+        updates = $Updates
+        policy_anchor_beta = $PolicyAnchorBeta
         started_utc = $started.ToString('O')
         started = $started
+    }
+}
+
+function Get-VerifiedNativeLaneCompletion {
+    param(
+        [Parameter(Mandatory = $true)]$Lane,
+        [Parameter(Mandatory = $true)][int]$ProcessId
+    )
+    if ((Get-Item -LiteralPath $Lane.stderr).Length -ne 0) {
+        throw "GPU $($Lane.gpu_ordinal) lane wrote child stderr; see $($Lane.stderr)"
+    }
+    if (-not (Test-Path -LiteralPath $Lane.completion -PathType Leaf)) {
+        throw "GPU $($Lane.gpu_ordinal) lane has no verified child-completion record; see $($Lane.stderr)"
+    }
+    $completion = Get-Content -LiteralPath $Lane.completion -Raw | ConvertFrom-Json
+    if ([string]$completion.schema -ne 'regularized-continuation-native-lane-completion/v1' -or
+        $completion.success -ne $true -or
+        [int]$completion.process_id -ne $ProcessId -or
+        [uint64]$completion.seed -ne [uint64]$Lane.seed -or
+        [uint64]$completion.updates -ne [uint64]$Lane.updates -or
+        [int]$completion.gpu_ordinal -ne [int]$Lane.gpu_ordinal -or
+        [string]$completion.policy_anchor_beta -ne [string]$Lane.policy_anchor_beta -or
+        [string]$completion.store_parent -ne [string]$Lane.store_parent -or
+        [string]$completion.log_path -ne [string]$Lane.log) {
+        throw "GPU $($Lane.gpu_ordinal) lane child-completion record does not match its launch"
+    }
+    $expectedExecutableHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Lane.executable).Hash.ToLowerInvariant()
+    $expectedLogHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Lane.log).Hash.ToLowerInvariant()
+    if ([string]$completion.executable_sha256 -ne $expectedExecutableHash -or
+        [string]$completion.log_sha256 -ne $expectedLogHash) {
+        throw "GPU $($Lane.gpu_ordinal) lane child-completion hashes do not match"
+    }
+    $logText = Get-Content -LiteralPath $Lane.log -Raw
+    if ($logText -notmatch 'test result: ok\.') {
+        throw "GPU $($Lane.gpu_ordinal) lane native test-success marker is absent"
+    }
+    return [ordered]@{
+        path = $Lane.completion
+        sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $Lane.completion).Hash.ToLowerInvariant()
     }
 }
 
@@ -524,6 +570,7 @@ function Wait-NativeLane {
             Start-Sleep -Seconds 1
         }
         $Lane.process.WaitForExit()
+        $Lane.process.Refresh()
         $samples.Add((Get-ResourceSample))
     }
     catch {
@@ -532,9 +579,7 @@ function Wait-NativeLane {
         }
         throw
     }
-    if ($Lane.process.ExitCode -ne 0) {
-        throw "GPU $($Lane.gpu_ordinal) lane failed with exit code $($Lane.process.ExitCode); see $($Lane.stderr)"
-    }
+    $verifiedCompletion = Get-VerifiedNativeLaneCompletion -Lane $Lane -ProcessId $Lane.process.Id
     $finished = [DateTimeOffset]::UtcNow
     return [ordered]@{
         gpu_ordinal = $Lane.gpu_ordinal
@@ -542,10 +587,12 @@ function Wait-NativeLane {
         log = $Lane.log
         stdout = $Lane.stdout
         stderr = $Lane.stderr
+        completion = $verifiedCompletion
         started_utc = $Lane.started_utc
         completed_utc = $finished.ToString('O')
         wall_seconds = ($finished - $Lane.started).TotalSeconds
-        exit_code = $Lane.process.ExitCode
+        exit_code = 0
+        process_exit_code_observed = $Lane.process.ExitCode
         resource_samples = @($samples)
     }
 }
@@ -625,4 +672,47 @@ function Get-PassedIdentityPrerequisite {
         candidate_commit = [string]$manifest.git.candidate.commit
         store_tree_sha256 = [string]$manifest.outputs.candidate.store_tree_sha256
     }
+}
+
+function Get-PassedThroughputPrerequisite {
+    param(
+        [Parameter(Mandatory = $true)][string]$EvidenceRoot,
+        [Parameter(Mandatory = $true)][string]$CandidateCommit,
+        [Parameter(Mandatory = $true)][string]$IdentityManifestSha256
+    )
+    $candidates = @(
+        foreach ($gateName in @('throughput-screen', 'throughput-screen-hotfix-v1')) {
+            $gateRoot = Join-Path $EvidenceRoot $gateName
+            if (Test-Path -LiteralPath $gateRoot -PathType Container) {
+                Get-ChildItem -LiteralPath $gateRoot -Directory -ErrorAction Stop |
+                    ForEach-Object {
+                        $manifestPath = Join-Path $_.FullName 'throughput-manifest.json'
+                        if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+                            [pscustomobject]@{
+                                path = $manifestPath
+                                item = Get-Item -LiteralPath $manifestPath
+                            }
+                        }
+                    }
+            }
+        }
+    )
+    foreach ($candidate in ($candidates | Sort-Object { $_.item.LastWriteTimeUtc } -Descending)) {
+        $manifest = Get-Content -LiteralPath $candidate.path -Raw | ConvertFrom-Json
+        if ($manifest.passed -eq $true -and
+            $manifest.same_device_repeat_bit_identical -eq $true -and
+            [string]$manifest.git.commit -eq $CandidateCommit -and
+            [string]$manifest.prerequisite_identity.manifest_sha256 -eq $IdentityManifestSha256 -and
+            [string]$manifest.selected_topology -in @('gpu0+gpu1', 'gpu1-only')) {
+            return [ordered]@{
+                manifest_path = $candidate.path
+                manifest_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $candidate.path).Hash.ToLowerInvariant()
+                candidate_commit = [string]$manifest.git.commit
+                identity_manifest_sha256 = [string]$manifest.prerequisite_identity.manifest_sha256
+                selected_topology = [string]$manifest.selected_topology
+                aggregate_speedup = [double]$manifest.aggregate_speedup
+            }
+        }
+    }
+    throw "coefficient screen requires a passed throughput manifest for candidate commit $CandidateCommit and the current identity prerequisite"
 }
