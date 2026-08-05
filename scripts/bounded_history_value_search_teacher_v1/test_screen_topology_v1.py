@@ -180,6 +180,42 @@ class ScreenTopologyTests(unittest.TestCase):
                 monotonic=lambda: next(clock),
             )
 
+    def test_monitor_accepts_rss_disappearance_only_after_child_exit(self) -> None:
+        class GoneProcess(Exception):
+            pass
+
+        class VanishedProcess(_FakeProcess):
+            def children(self, recursive: bool = False) -> list[_FakeProcess]:
+                assert recursive
+                raise GoneProcess("pid vanished")
+
+        class RacePsutil(_FakePsutil):
+            process_calls = 0
+
+            @classmethod
+            def Process(cls, pid: int) -> _FakeProcess:
+                cls.process_calls += 1
+                return _FakeProcess(4_000) if cls.process_calls == 1 else VanishedProcess(0)
+
+        class RaceChild:
+            pid = 789
+
+            def __init__(self) -> None:
+                self.polls = iter((None, None, None, None, 0))
+
+            def poll(self) -> int | None:
+                return next(self.polls, 0)
+
+        samples = screen._monitor_process(
+            RaceChild(),
+            RacePsutil,
+            poll_seconds=0.1,
+            runner=_FakeRunner(),
+            sleep=lambda _: None,
+        )
+        self.assertEqual(len(samples), 1)
+        self.assertEqual(samples[0]["process_tree_rss_bytes"], 4_000.0)
+
     def test_terminate_fails_closed_when_process_remains_live(self) -> None:
         failed_taskkill = type("Completed", (), {"returncode": 1})()
         with (

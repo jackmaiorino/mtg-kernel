@@ -289,7 +289,7 @@ def _query_gpu(
 def _process_tree_rss_bytes(process: Any) -> int:
     try:
         processes = [process, *process.children(recursive=True)]
-    except (AttributeError, OSError) as error:
+    except Exception as error:
         _fail(f"process-tree RSS sample unavailable: {error}")
     rss = 0
     sampled = 0
