@@ -2012,6 +2012,7 @@ mod windows_science_loop_tests {
         let mut seat_wins = [0_u64; 2];
         let mut seat_losses = [0_u64; 2];
         let mut seat_draws = [0_u64; 2];
+        let mut outcome_rows = Vec::with_capacity(episodes.len());
         // PAIR-level win count: Amendment 1 / Section 8A point 1 REJECTS
         // this net-positive-per-pair metric as the gate quantity ("at true
         // parity under CRN seat symmetry, winning both legs of a pair is
@@ -2051,6 +2052,14 @@ mod windows_science_loop_tests {
                     }
                     other => panic!("unexpected learner reward {other} at a natural terminal"),
                 }
+                outcome_rows.push(serde_json::json!({
+                    "episode_index": binding.episode_index(),
+                    "pair_index": pair_offset,
+                    "environment_seed": binding.environment_seed(),
+                    "learner_seat": if seat_index == 0 { "P0" } else { "P1" },
+                    "deck_hashes_u64": binding.deck_hashes(),
+                    "terminal_order_rank": reward,
+                }));
                 pair_reward += reward;
             }
             if pair_reward > 0 {
@@ -2096,6 +2105,70 @@ mod windows_science_loop_tests {
             "H2H candidate_gen={candidate_gen} wide={wide} win_rate_sub_check game_wins={wins}/{total}={:.4} passes={win_rate_passes}",
             wins as f64 / total as f64
         );
+
+        // Optional eval-only machine-readable terminal stream. The file is
+        // create-new so an interrupted or repeated measurement can never
+        // replace earlier outcomes. It contains only terminal W/D/L rank and
+        // the already-validated CRN binding needed to compare two independently
+        // completed arms. No nonterminal reward or gameplay proxy is emitted.
+        if let Some(outcome_path) = std::env::var_os("H2H_OUTCOME_JSON") {
+            use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
+            use std::fs::OpenOptions;
+            use std::io::Write;
+
+            assert!(result.rollout().all_natural());
+            let artifact = serde_json::json!({
+                "schema": "mtg-kernel-head-to-head-terminal-stream/v1",
+                "evaluation_base_seed": eval_seed,
+                "pair_count": pairs,
+                "episode_count": episode_count,
+                "candidate": {
+                    "run_sha256": lower_hex_raw32_v1(result.run_sha256()),
+                    "identity_bundle_sha256": lower_hex_raw32_v1(result.identity_bundle_sha256()),
+                    "generation": candidate_gen,
+                    "checkpoint_manifest_sha256": lower_hex_raw32_v1(result.checkpoint_manifest_sha256()),
+                    "checkpoint_payload_sha256": lower_hex_raw32_v1(candidate_boundary.checkpoint().checkpoint_payload_sha256()),
+                    "model_parameter_sha256": lower_hex_raw32_v1(candidate_boundary.checkpoint().model_parameter_sha256()),
+                },
+                "opponent": {
+                    "run_sha256": opponent_checkpoint.run_sha256(),
+                    "generation": opponent_checkpoint.generation_index(),
+                    "checkpoint_manifest_sha256": lower_hex_raw32_v1(opponent_checkpoint.checkpoint_manifest_sha256()),
+                    "checkpoint_payload_sha256": lower_hex_raw32_v1(opponent_checkpoint.checkpoint_payload_sha256()),
+                    "model_parameter_sha256": lower_hex_raw32_v1(opponent_checkpoint.model_parameter_sha256()),
+                },
+                "runtime": {
+                    "worker_count": result.worker_count(),
+                    "sessions_per_worker": result.sessions_per_worker(),
+                    "broker_batch_target": result.broker_batch_target(),
+                    "environment_randomization_v2": environment_randomization_v2,
+                    "all_natural": true,
+                },
+                "learner_outcomes": {
+                    "overall": {"wins": wins, "losses": losses, "draws": draws},
+                    "P0": {"wins": seat_wins[0], "losses": seat_losses[0], "draws": seat_draws[0]},
+                    "P1": {"wins": seat_wins[1], "losses": seat_losses[1], "draws": seat_draws[1]},
+                },
+                "episodes": outcome_rows,
+            });
+            let mut bytes = serde_json::to_vec_pretty(&artifact)
+                .expect("head-to-head terminal stream must serialize");
+            bytes.push(b'\n');
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&outcome_path)
+                .expect("H2H_OUTCOME_JSON must name a create-new file");
+            file.write_all(&bytes)
+                .expect("head-to-head terminal stream must write completely");
+            file.sync_all()
+                .expect("head-to-head terminal stream must reach the filesystem");
+            println!(
+                "H2H outcome_artifact={} sha256={}",
+                std::path::Path::new(&outcome_path).display(),
+                lower_hex_raw32_v1(sha256_v1(&bytes))
+            );
+        }
     }
 
     /// per generation. Non-banked diagnostic; the store root arrives via

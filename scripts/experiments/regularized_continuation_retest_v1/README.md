@@ -1,12 +1,15 @@
 # Regularized continuation retest v1 gates
 
-These scripts implement the first three ordered gates. They do not interpret gameplay outcomes.
+These scripts implement the first four ordered gates. Gates 1 through 3 do not
+interpret gameplay outcomes. Gate 4 is the predeclared gross-safety terminal
+comparison and runs only after Gate 3 selects a coefficient.
 Run them from the repository root after the native implementation is ready:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/beta-zero-identity.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/throughput-screen.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/coefficient-screen.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/gross-safety.ps1
 ```
 
 The identity gate builds the exact original macro commit and the clean candidate
@@ -31,6 +34,17 @@ any report containing a terminal outcome property. The smallest eligible beta
 is selected; no eligible beta records the predeclared stop without trying a
 new coefficient.
 
+The gross-safety gate first runs one bounded CPU topology screen on revealed
+seed `969999`. It compares one arm with two concurrent arms, requires a
+bit-identical repeated control stream and at least 4 GiB free host memory, and
+uses concurrent arms only at `1.20x` or greater aggregate speedup. The formal
+panel then evaluates the selected update-32 checkpoint and beta-zero update-32
+control against promoted(2) generation 384 on 512 fresh seat-swapped pairs at
+seed `1942001`. Both terminal streams must complete before either is parsed.
+The terminal-order classifier requires selected-minus-control net at least
+`-26` overall and `-18` in each selected seat. Failure is the frozen
+`GROSS-SAFETY-STOP`; it cannot select another beta.
+
 Both gates bind the base commit, clean candidate commit, original `2/32/16`
 topology, revealed preflight seed `969999`, Pool3 generation-384 inputs,
 Rust/Cargo/linker/CUDA/driver identity, executable hashes, GPU identity,
@@ -42,6 +56,7 @@ Run the pure harness checks before a release build:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/common-tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/coefficient-selector-tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/gross-safety-classifier-tests.ps1
 ```
 
 Each child process receives exactly one physical GPU UUID through
