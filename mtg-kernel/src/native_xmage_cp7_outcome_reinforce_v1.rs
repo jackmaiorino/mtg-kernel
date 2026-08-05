@@ -86,6 +86,12 @@ const CURRENT_NET8_CP7_RESPONSE_EPOCHS_V1: u32 = 4;
 const CURRENT_NET8_CP7_RESPONSE_PPO_CLIP_EPSILON_V1: f32 = 0.1;
 const CURRENT_NET8_CP7_RESPONSE_ENDING_ADAM_STEP_V1: u64 = 524;
 const CURRENT_NET8_CP7_RESPONSE_AUTHORITY_KIND_V1: &str = "current-net8-cp7-terminal-response-v1";
+const CURRENT_NET8_CP7_RESPONSE_V2_POLICY_ONLY_AUTHORITY_KIND_V1: &str =
+    "current-net8-cp7-terminal-response-v2-policy-only";
+const CURRENT_NET8_CP7_RESPONSE_V2_LOW_VALUE_AUTHORITY_KIND_V1: &str =
+    "current-net8-cp7-terminal-response-v2-low-value";
+const CURRENT_NET8_CP7_RESPONSE_V2_POLICY_ONLY_VALUE_COEFFICIENT_V1: f32 = 0.0;
+const CURRENT_NET8_CP7_RESPONSE_V2_LOW_VALUE_COEFFICIENT_V1: f32 = 0.1;
 const FIXED_NATIVE_STATE_SCHEMA_V1: &str = "mtg-kernel-xmage-fixed-native-state/v1";
 const FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1: &str = "fixed_native_state.json";
 const FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1: &str = "checkpoint.state.f32le";
@@ -2432,6 +2438,69 @@ struct FixedNativeTrainConfigV1 {
     ppo_clip_epsilon: f32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FixedNativeRecipeV1 {
+    ResponseV1,
+    ResponseV2PolicyOnly,
+    ResponseV2LowValue,
+}
+
+impl FixedNativeRecipeV1 {
+    fn value_coefficient_v1(self) -> f32 {
+        match self {
+            Self::ResponseV1 => CURRENT_NET8_CP7_RESPONSE_VALUE_COEFFICIENT_V1,
+            Self::ResponseV2PolicyOnly => {
+                CURRENT_NET8_CP7_RESPONSE_V2_POLICY_ONLY_VALUE_COEFFICIENT_V1
+            }
+            Self::ResponseV2LowValue => CURRENT_NET8_CP7_RESPONSE_V2_LOW_VALUE_COEFFICIENT_V1,
+        }
+    }
+
+    fn authority_kind_v1(self) -> &'static str {
+        match self {
+            Self::ResponseV1 => CURRENT_NET8_CP7_RESPONSE_AUTHORITY_KIND_V1,
+            Self::ResponseV2PolicyOnly => {
+                CURRENT_NET8_CP7_RESPONSE_V2_POLICY_ONLY_AUTHORITY_KIND_V1
+            }
+            Self::ResponseV2LowValue => CURRENT_NET8_CP7_RESPONSE_V2_LOW_VALUE_AUTHORITY_KIND_V1,
+        }
+    }
+
+    fn report_schema_v1(self) -> &'static str {
+        match self {
+            Self::ResponseV1 => "mtg-kernel-current-net8-cp7-terminal-response-training/v1",
+            Self::ResponseV2PolicyOnly => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v2-policy-only-training/v1"
+            }
+            Self::ResponseV2LowValue => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v2-low-value-training/v1"
+            }
+        }
+    }
+
+    fn summary_schema_v1(self) -> &'static str {
+        match self {
+            Self::ResponseV1 => "mtg-kernel-current-net8-cp7-terminal-response-summary/v1",
+            Self::ResponseV2PolicyOnly => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v2-policy-only-summary/v1"
+            }
+            Self::ResponseV2LowValue => {
+                "mtg-kernel-current-net8-cp7-terminal-response-v2-low-value-summary/v1"
+            }
+        }
+    }
+
+    fn config_matches_v1(self, config: &FixedNativeTrainConfigV1) -> bool {
+        config.outcome_jsonl_sha256 == CURRENT_GAE8_CP7_CORPUS_SHA256_V1
+            && config.learning_rate.to_bits()
+                == CURRENT_NET8_CP7_RESPONSE_LEARNING_RATE_V1.to_bits()
+            && config.value_coefficient.to_bits() == self.value_coefficient_v1().to_bits()
+            && config.epochs == CURRENT_NET8_CP7_RESPONSE_EPOCHS_V1
+            && config.ppo_clip_epsilon.to_bits()
+                == CURRENT_NET8_CP7_RESPONSE_PPO_CLIP_EPSILON_V1.to_bits()
+    }
+}
+
 impl Default for FixedNativeTrainConfigV1 {
     fn default() -> Self {
         Self {
@@ -4179,7 +4248,10 @@ where
     Ok(config)
 }
 
-fn parse_fixed_native_train_config_v1<I>(arguments: I) -> DynResultV1<FixedNativeTrainConfigV1>
+fn parse_fixed_native_train_config_for_recipe_v1<I>(
+    arguments: I,
+    recipe: FixedNativeRecipeV1,
+) -> DynResultV1<FixedNativeTrainConfigV1>
 where
     I: IntoIterator<Item = OsString>,
 {
@@ -4251,19 +4323,52 @@ where
     if config.outcome_jsonl_sha256 != CURRENT_GAE8_CP7_CORPUS_SHA256_V1 {
         return Err(invalid_data_v1("train-fixed requires the exact pinned GAE8 corpus").into());
     }
-    if config.learning_rate.to_bits() != CURRENT_NET8_CP7_RESPONSE_LEARNING_RATE_V1.to_bits()
-        || config.value_coefficient.to_bits()
-            != CURRENT_NET8_CP7_RESPONSE_VALUE_COEFFICIENT_V1.to_bits()
-        || config.epochs != CURRENT_NET8_CP7_RESPONSE_EPOCHS_V1
-        || config.ppo_clip_epsilon.to_bits()
-            != CURRENT_NET8_CP7_RESPONSE_PPO_CLIP_EPSILON_V1.to_bits()
-    {
+    if !recipe.config_matches_v1(&config) {
         return Err(invalid_data_v1(
             "train-fixed requires the exact current Net8 CP7 response recipe",
         )
         .into());
     }
     Ok(config)
+}
+
+fn parse_fixed_native_train_config_v1<I>(arguments: I) -> DynResultV1<FixedNativeTrainConfigV1>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    parse_fixed_native_train_config_for_recipe_v1(arguments, FixedNativeRecipeV1::ResponseV1)
+}
+
+fn parse_fixed_native_v2_train_config_v1<I>(
+    arguments: I,
+) -> DynResultV1<(FixedNativeRecipeV1, FixedNativeTrainConfigV1)>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut arguments = arguments.into_iter().collect::<Vec<_>>();
+    let arm_index = arguments
+        .iter()
+        .position(|argument| argument == "--arm")
+        .ok_or_else(|| invalid_data_v1("train-fixed-v2 requires --arm"))?;
+    if arguments
+        .iter()
+        .skip(arm_index + 1)
+        .any(|argument| argument == "--arm")
+        || arm_index + 1 >= arguments.len()
+    {
+        return Err(invalid_data_v1("train-fixed-v2 requires exactly one --arm value").into());
+    }
+    let arm = arguments[arm_index + 1]
+        .to_str()
+        .ok_or_else(|| invalid_data_v1("train-fixed-v2 arm is not UTF-8"))?;
+    let recipe = match arm {
+        "policy-only" => FixedNativeRecipeV1::ResponseV2PolicyOnly,
+        "low-value" => FixedNativeRecipeV1::ResponseV2LowValue,
+        _ => return Err(invalid_data_v1("train-fixed-v2 arm is not pinned").into()),
+    };
+    arguments.drain(arm_index..=arm_index + 1);
+    let config = parse_fixed_native_train_config_for_recipe_v1(arguments, recipe)?;
+    Ok((recipe, config))
 }
 
 fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpointSummaryV1> {
@@ -4483,6 +4588,7 @@ fn parameter_l2_distance_v1(
 
 fn run_fixed_native_training_v1(
     config: FixedNativeTrainConfigV1,
+    recipe: FixedNativeRecipeV1,
 ) -> DynResultV1<serde_json::Value> {
     ensure_output_absent_v1(&config.output_dir)?;
     if config.report_path.try_exists()? {
@@ -4491,6 +4597,9 @@ fn run_fixed_native_training_v1(
             "fixed-native training report already exists",
         )
         .into());
+    }
+    if !recipe.config_matches_v1(&config) {
+        return Err(invalid_data_v1("fixed-native runtime recipe mismatch").into());
     }
     let dataset = load_outcome_dataset_v1(&config.outcome_jsonl)?;
     if config.outcome_jsonl_sha256 != CURRENT_GAE8_CP7_CORPUS_SHA256_V1
@@ -4606,7 +4715,7 @@ fn run_fixed_native_training_v1(
         && movement.maximum_absolute_joint_log_likelihood_ratio <= 1.0;
 
     let report = serde_json::json!({
-        "schema": "mtg-kernel-current-net8-cp7-terminal-response-training/v1",
+        "schema": recipe.report_schema_v1(),
         "source": {
             "authority_kind": CURRENT_GAE8_AUTHORITY_KIND_V1,
             "source_result_sha256": CURRENT_GAE8_SOURCE_RESULT_SHA256_V1,
@@ -4691,7 +4800,7 @@ fn run_fixed_native_training_v1(
         )?;
         let manifest = FixedNativeOutputManifestV1 {
             schema: FIXED_NATIVE_STATE_SCHEMA_V1.to_owned(),
-            authority_kind: CURRENT_NET8_CP7_RESPONSE_AUTHORITY_KIND_V1.to_owned(),
+            authority_kind: recipe.authority_kind_v1().to_owned(),
             source_result_sha256: lower_hex_raw32_v1(report_sha256),
             payload: FixedNativeOutputPayloadManifestV1 {
                 filename: FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1.to_owned(),
@@ -4719,7 +4828,7 @@ fn run_fixed_native_training_v1(
             &manifest_bytes,
         )?;
         let reloaded = load_fixed_native_training_source_v1(&config.output_dir)?;
-        if reloaded.authority_kind != CURRENT_NET8_CP7_RESPONSE_AUTHORITY_KIND_V1
+        if reloaded.authority_kind != recipe.authority_kind_v1()
             || reloaded.source_result_sha256 != report_sha256
             || reloaded.payload_sha256 != encoded.digests.payload_sha256
             || reloaded.native_state_sha256 != encoded.digests.native_state_sha256
@@ -4732,7 +4841,7 @@ fn run_fixed_native_training_v1(
     }
 
     Ok(serde_json::json!({
-        "schema": "mtg-kernel-current-net8-cp7-terminal-response-summary/v1",
+        "schema": recipe.summary_schema_v1(),
         "publication_pass": publication_pass,
         "report_sha256": lower_hex_raw32_v1(report_sha256),
         "manifest_sha256": manifest_sha256,
@@ -4759,8 +4868,13 @@ where
         Some("train") => serde_json::to_value(run_training_v1(parse_train_config_v1(
             tail.iter().cloned(),
         )?)?)?,
-        Some("train-fixed") => {
-            run_fixed_native_training_v1(parse_fixed_native_train_config_v1(tail.iter().cloned())?)?
+        Some("train-fixed") => run_fixed_native_training_v1(
+            parse_fixed_native_train_config_v1(tail.iter().cloned())?,
+            FixedNativeRecipeV1::ResponseV1,
+        )?,
+        Some("train-fixed-v2") => {
+            let (recipe, config) = parse_fixed_native_v2_train_config_v1(tail.iter().cloned())?;
+            run_fixed_native_training_v1(config, recipe)?
         }
         Some("verify") => {
             if tail.len() != 2 || tail[0] != "--output-dir" {
@@ -4773,7 +4887,12 @@ where
                 &tail[1],
             ))?)?
         }
-        _ => return Err(invalid_data_v1("expected train, train-fixed, or verify command").into()),
+        _ => {
+            return Err(invalid_data_v1(
+                "expected train, train-fixed, train-fixed-v2, or verify command",
+            )
+            .into())
+        }
     };
     println!("{}", serde_json::to_string(&summary)?);
     Ok(())
@@ -4938,6 +5057,76 @@ mod tests {
                 .expect("test flag exists");
             wrong[index + 1] = OsString::from(wrong_value);
             assert!(parse_fixed_native_train_config_v1(wrong).is_err());
+        }
+    }
+
+    #[test]
+    fn current_gae8_v2_fixed_training_arms_are_distinct_and_exact_v1() {
+        let base = [
+            "--outcome-jsonl",
+            "outcomes.jsonl",
+            "--outcome-jsonl-sha256",
+            CURRENT_GAE8_CP7_CORPUS_SHA256_V1,
+            "--source-fixed-root",
+            "source",
+            "--output-dir",
+            "candidate",
+            "--report-path",
+            "report.json",
+            "--learning-rate",
+            "0.001",
+            "--value-coefficient",
+            "0.0",
+            "--epochs",
+            "4",
+            "--ppo-clip-epsilon",
+            "0.1",
+            "--arm",
+            "policy-only",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+        let (recipe, config) = parse_fixed_native_v2_train_config_v1(base.clone()).unwrap();
+        assert_eq!(recipe, FixedNativeRecipeV1::ResponseV2PolicyOnly);
+        assert_eq!(config.value_coefficient.to_bits(), 0.0_f32.to_bits());
+        assert_eq!(
+            recipe.authority_kind_v1(),
+            CURRENT_NET8_CP7_RESPONSE_V2_POLICY_ONLY_AUTHORITY_KIND_V1
+        );
+        assert!(parse_fixed_native_train_config_v1(
+            base.iter()
+                .take(base.len() - 2)
+                .cloned()
+                .collect::<Vec<_>>()
+        )
+        .is_err());
+
+        let mut low_value = base.clone();
+        let coefficient = low_value
+            .iter()
+            .position(|value| value == "--value-coefficient")
+            .unwrap();
+        low_value[coefficient + 1] = "0.1".into();
+        let arm = low_value.iter().position(|value| value == "--arm").unwrap();
+        low_value[arm + 1] = "low-value".into();
+        let (recipe, config) = parse_fixed_native_v2_train_config_v1(low_value.clone()).unwrap();
+        assert_eq!(recipe, FixedNativeRecipeV1::ResponseV2LowValue);
+        assert_eq!(config.value_coefficient.to_bits(), 0.1_f32.to_bits());
+        assert_eq!(
+            recipe.authority_kind_v1(),
+            CURRENT_NET8_CP7_RESPONSE_V2_LOW_VALUE_AUTHORITY_KIND_V1
+        );
+
+        for mutate in ["wrong-coefficient", "wrong-arm", "duplicate-arm"] {
+            let mut wrong = low_value.clone();
+            match mutate {
+                "wrong-coefficient" => wrong[coefficient + 1] = "0.0".into(),
+                "wrong-arm" => wrong[arm + 1] = "other".into(),
+                "duplicate-arm" => wrong.extend(["--arm".into(), "low-value".into()]),
+                _ => unreachable!(),
+            }
+            assert!(parse_fixed_native_v2_train_config_v1(wrong).is_err());
         }
     }
 

@@ -2032,6 +2032,8 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             || checkpoint.authority_kind == "current-net8-gae8-v1"
             || checkpoint.authority_kind == "current-net8-gae16-v1"
             || checkpoint.authority_kind == "current-net8-cp7-terminal-response-v1"
+            || checkpoint.authority_kind == "current-net8-cp7-terminal-response-v2-policy-only"
+            || checkpoint.authority_kind == "current-net8-cp7-terminal-response-v2-low-value"
             || checkpoint
                 .authority_kind
                 .starts_with("xmage-cp7-outcome-structured-policy-successor-v"))

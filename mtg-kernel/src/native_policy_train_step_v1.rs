@@ -1353,7 +1353,11 @@ impl NativePolicyValueTrainStateV1 {
         if groups.is_empty() {
             return Err(NativePolicyTrainErrorV1::EmptyBatch);
         }
-        if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
+        let zero_value_frozen_objective = value_coefficient.to_bits() == 0
+            && matches!(objective, TrainingObjectiveV1::FrozenWeighted(_));
+        if !value_coefficient.is_finite()
+            || (value_coefficient <= 0.0 && !zero_value_frozen_objective)
+        {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
         }
         if !learning_rate.is_finite() || learning_rate <= 0.0 {
@@ -7975,6 +7979,29 @@ mod tests {
         assert_eq!(result.value_sum.to_bits(), expected_value_sum.to_bits());
         assert_eq!(result.adam_step, 1);
         assert_eq!(state.adam_step_v1(), 1);
+
+        let zero_value_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut zero_value_state = NativePolicyValueTrainStateV1::new_v1(zero_value_model).unwrap();
+        let zero_value_result = zero_value_state
+            .train_step_with_frozen_objective_v1(
+                &groups,
+                &terms,
+                0.0,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        assert_eq!(
+            zero_value_result.loss.to_bits(),
+            expected_policy_sum.to_bits()
+        );
+        assert_eq!(
+            zero_value_result.value_sum.to_bits(),
+            expected_value_sum.to_bits()
+        );
+        assert_eq!(zero_value_result.adam_step, 1);
+        assert_eq!(zero_value_state.adam_step_v1(), 1);
     }
 
     #[test]
