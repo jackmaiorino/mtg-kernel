@@ -2,6 +2,8 @@ param(
     [string]$AttemptRoot = 'D:\mtg-kernel-regularized-continuation-retest-v1\development\seed-1940001\coefficient-screen\attempt-002',
     [string]$EvaluatorTest = 'native_gate3_terminal_blind_coefficient_screen_v1::gate3_terminal_blind_coefficient_screen_v1',
     [string]$EvaluatorExecutable = '',
+    [string]$ExpectedEvaluatorSha256 = '',
+    [string]$ExpectedEvaluatorSourceCommit = '',
     [ValidateRange(1, 999)][int]$EvaluationAttempt = 1,
     [switch]$ValidateOnly
 )
@@ -237,15 +239,44 @@ try {
     Assert-Gpu1Idle | Out-Null
     Assert-NoForeignGpu1ComputeProcesses
     $recoveryGit = Get-GitRecord -RepoRoot $script:RepoRoot
-    $trainingExecutable = [string]$plan.executable.path
-    Assert-FileSha256 -Path $trainingExecutable -Expected ([string]$plan.executable.sha256) -Label 'frozen training executable'
+    $trainingExecutableOriginalPath = [string]$plan.executable.path
+    $trainingExecutableArchive = Join-Path $AttemptRoot "training-executable-$([string]$plan.executable.sha256).exe"
+    Assert-FileSha256 -Path $trainingExecutableArchive -Expected ([string]$plan.executable.sha256) -Label 'archived frozen training executable'
     if ([string]::IsNullOrWhiteSpace($EvaluatorExecutable)) {
-        $EvaluatorExecutable = $trainingExecutable
+        $EvaluatorExecutable = $trainingExecutableOriginalPath
     }
     else {
         $EvaluatorExecutable = (Resolve-Path -LiteralPath $EvaluatorExecutable).Path
     }
     $evaluatorExecutableSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $EvaluatorExecutable).Hash.ToLowerInvariant()
+    $evaluatorToolchain = Get-ToolchainRecord
+    foreach ($field in @('rustc_vv', 'cargo_vv', 'linker_path', 'linker_file_version', 'linker_sha256', 'linker_banner')) {
+        if ([string]$evaluatorToolchain[$field] -ne [string]$plan.toolchain.$field) {
+            throw "evaluator toolchain differs from the frozen training toolchain: $field"
+        }
+    }
+    $evaluatorSourceCommit = [string]$plan.git.commit
+    $evaluatorSourceToRecoveryDiffFiles = @()
+    if ($evaluatorExecutableSha256 -ne [string]$plan.executable.sha256) {
+        if ($ExpectedEvaluatorSha256 -notmatch '^[0-9a-f]{64}$' -or
+            $ExpectedEvaluatorSourceCommit -notmatch '^[0-9a-f]{40}$' -or
+            $evaluatorExecutableSha256 -ne $ExpectedEvaluatorSha256) {
+            throw 'corrected evaluator requires its exact expected SHA-256 and source commit'
+        }
+        $safe = $script:RepoRoot.Replace('\', '/')
+        & git -c "safe.directory=$safe" -C $script:RepoRoot cat-file -e "$ExpectedEvaluatorSourceCommit^{commit}"
+        Assert-LastExitCode $LASTEXITCODE 'corrected evaluator source commit lookup'
+        & git -c "safe.directory=$safe" -C $script:RepoRoot merge-base --is-ancestor $ExpectedEvaluatorSourceCommit ([string]$recoveryGit.commit)
+        Assert-LastExitCode $LASTEXITCODE 'corrected evaluator source ancestry'
+        $evaluatorSourceToRecoveryDiffFiles = @(& git -c "safe.directory=$safe" -C $script:RepoRoot diff --name-only $ExpectedEvaluatorSourceCommit ([string]$recoveryGit.commit))
+        Assert-LastExitCode $LASTEXITCODE 'corrected evaluator source-to-recovery diff'
+        $allowedPostBuildFile = 'scripts/experiments/regularized_continuation_retest_v1/resume-coefficient-screen.ps1'
+        if ($evaluatorSourceToRecoveryDiffFiles.Count -ne 1 -or
+            [string]$evaluatorSourceToRecoveryDiffFiles[0] -ne $allowedPostBuildFile) {
+            throw "corrected evaluator source differs from recovery HEAD outside its recovery script: $($evaluatorSourceToRecoveryDiffFiles -join ', ')"
+        }
+        $evaluatorSourceCommit = $ExpectedEvaluatorSourceCommit
+    }
     Assert-FileSha256 -Path ([string]$plan.prerequisite_identity.manifest_path) -Expected ([string]$plan.prerequisite_identity.manifest_sha256) -Label 'identity prerequisite manifest'
     Assert-FileSha256 -Path ([string]$plan.prerequisite_throughput.manifest_path) -Expected ([string]$plan.prerequisite_throughput.manifest_sha256) -Label 'throughput prerequisite manifest'
     foreach ($binding in @(
@@ -347,11 +378,14 @@ try {
         request = [ordered]@{ path = $requestPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $requestPath).Hash.ToLowerInvariant() }
         terminal_blind_report = [ordered]@{ path = $reportPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $reportPath).Hash.ToLowerInvariant() }
         evaluator_log = [ordered]@{ path = $evaluationLog; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $evaluationLog).Hash.ToLowerInvariant() }
-        executable = $plan.executable
+        executable = [ordered]@{ path = $trainingExecutableArchive; sha256 = [string]$plan.executable.sha256 }
+        training_executable_plan_binding = $plan.executable
         evaluator_executable = [ordered]@{
             path = $EvaluatorExecutable
             sha256 = $evaluatorExecutableSha256
-            git = $recoveryGit
+            source_commit = $evaluatorSourceCommit
+            source_to_recovery_diff_files = @($evaluatorSourceToRecoveryDiffFiles)
+            toolchain = $evaluatorToolchain
         }
         git = $plan.git
         prerequisite_identity = $plan.prerequisite_identity
