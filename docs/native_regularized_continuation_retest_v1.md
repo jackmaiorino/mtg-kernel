@@ -1,7 +1,8 @@
 # Native regularized continuation retest v1
 
-Status: draft for combined design and implementation review. No retest arm has
-run.
+Status: amended after Fable conditional countersign `CLAUDE #182`.
+Implementation, focused tests, the extended beta-zero identity check, and the
+throughput screen are authorized. No outcome-bearing retest arm has run.
 
 ## Question
 
@@ -42,7 +43,10 @@ The KL term uses the same complete physical-group denominator as the policy
 term. It is an estimator regularizer, never a reward or strength signal.
 
 The beta-zero branch must bypass all anchor work and reproduce the original
-four-update Store tree bit for bit at revealed seed `969999` before any screen.
+64-update Store tree bit for bit at revealed seed `969999` before any screen.
+The comparison crosses the generation-64 diagnostic checkpoint boundary and
+includes one Store close and reopen before continuing. It binds every Store
+file, parameter, Adam moment, generation, receipt, and run-record hash.
 
 ## Implementation boundary
 
@@ -61,7 +65,7 @@ train function directly.
 Focused tests cover legal masks, singleton zero, exact forward-KL value,
 `beta * (pi_current - pi_parent)` logit gradients, complete-group
 normalization, CPU/CUDA agreement, coefficient parsing, parent identity, and
-beta-zero bit identity through a complete update.
+beta-zero bit identity through update 64 and a Store close/reopen.
 
 ## Bounded coefficient screen
 
@@ -85,9 +89,10 @@ A positive-beta arm is eligible only if:
 - every Store, parameter, moment, and metric is finite and complete;
 - mean forward KL is at most `75%` of beta-zero at updates 16, 24, and 32;
 - update-32 mean TV is at least `25%` of beta-zero and at least `0.005`;
-- update-32 p99 row TV is at most `0.150`;
-- maximum absolute selected physical-group log-ratio is at most `1.0` and zero
-  groups exceed `1.0`;
+- update-32 p99 row TV is at most
+  `max(0.150, 0.60 * beta_zero_update_32_p99_row_TV)`;
+- update-32 maximum absolute selected physical-group log-ratio is at most
+  `max(1.0, 0.75 * beta_zero_update_32_maximum)`;
 - neither seat violates any preceding condition.
 
 The smallest eligible beta is selected. This chooses the least intervention
@@ -109,13 +114,16 @@ revealed seed `969999`:
 1. one original `2/32/16` worker/session/broker run on GPU 1;
 2. two simultaneous original-topology runs, one on GPU 0 and one on GPU 1.
 
-Each point uses eight updates and separate create-new roots. The same-seed
+Each point uses eight updates and separate create-new roots in an exclusive
+campaign window with no other trainer or evaluator process. The same-seed
 stores must be bit-identical across attempts and devices. Record wall time,
-episodes per second, CPU, host memory, per-GPU memory and utilization, and
-process count. The two-device topology is selected only if it is resource-safe,
-bit-identical, and at least `1.5x` faster in aggregate. Otherwise use GPU 1
-only. No third topology is tested. Formal V3 measurement, if later authorized,
-remains exclusive to headless GPU 1.
+episodes per second, CPU, host memory, per-GPU memory and utilization, process
+count, and GPU 0 desktop load. Cross-device nonidentity is a legitimate
+GPU-heterogeneity result and selects the GPU-1-only fallback. The two-device
+topology is selected only if it is resource-safe, bit-identical, and at least
+`1.5x` faster in aggregate. Otherwise use GPU 1 only. No third topology is
+tested. Formal V3 measurement, if later authorized, remains exclusive to
+headless GPU 1.
 
 ## Full-horizon causal retest
 
@@ -129,20 +137,73 @@ bindings.
 Generation 512 is the only candidate endpoint. Checkpoints 64, 128, 256, and
 384 are diagnostic and cannot rescue or replace a failed endpoint.
 
-On revealed development base seed `982001`, each regularized checkpoint and
-its same-training-seed beta-zero control plays 512 seat-swapped pairs against
-promoted(2). The report retains per-leg terminal outcomes and computes:
+On revealed development base seed `982001`, each regularized generation-384
+and generation-512 checkpoint, each matched beta-zero generation-384 control,
+and each beta-zero generation-512 control plays 2,048 seat-swapped pairs
+against promoted(2). Regularized generations 64, 128, and 256 play the first
+512-pair prefix as diagnostics only. All arms use common random numbers. The
+report retains per-leg terminal outcomes and computes:
 
 - regularized-minus-control cluster scores using only terminal ordering;
 - regularized and control W/L/D against promoted(2), overall and by seat;
 - generation-512 versus generation-384 terminal order for each regularized
   seed, overall and by seat;
-- one V3 reference confidence sequence for each fixed training seed's 512
+- one V3 reference confidence sequence for each fixed training seed's 2,048
   endpoint clusters, labeled development-only, with `ACCUMULATION`,
   `delta_worthwhile=0.003`, `delta_promote=0`, `alpha=0.05`, `c=0.5`,
-  `max_N=512`, and exact per-leg Pool3 component retention. Training seeds are
-  not pooled into one confidence sequence because their fixed policies may
-  have different conditional means.
+  `max_N=2048`, and exact per-leg Pool3 component retention. Effects and
+  tolerances are on the cluster-score probability scale, where `0.01` is one
+  percentage point. Training seeds are not pooled into one confidence
+  sequence because their fixed policies may have different conditional means.
+
+Terminal order is `W > D > L`. A paired leg is `+1`, `0`, or `-1` according
+to that ordering, and a cluster is the mean of its two seat legs. Direct score
+against promoted(2) uses `W=1`, `D=0.5`, and `L=0`; this defines the `50%`
+criterion below. No nonterminal statistic enters any strength decision.
+
+## Reference magnitude, noise, and power
+
+The phenomenon under test is the recorded 98,304-episode macro result:
+generation 512 scored `46.18%` pooled and `41.18%` as P1 against promoted(2),
+with no better intermediate checkpoint and an approximately five-sigma
+game-level negative. On the smaller common 256-pair checkpoint panel,
+generation 512 minus generation 384 win-score effects were `-0.0742`,
+`+0.0156`, and `-0.0410` for training seeds 970001 through 970003. The target
+restoration scale is therefore `0.0382` pooled, with the weakest of the two
+historically collapsing seeds requiring about `0.0239` restoration to reach
+50 percent.
+
+The candidate-01 formal stream supplies a conservative planning law without
+new gameplay: at 16,384 clusters its score counts were
+`{-1:24, -0.5:925, 0:14151, +0.5:1250, +1:34}`, variance `0.036617`, and
+nonzero-cluster rate `13.63%`. Fixed-seed Monte Carlo using the exact V3
+recursion, `alpha=0.05`, and only a sign tilt of that empirical law gave, in
+5,000 replications:
+
+- at `max_N=512`, `64.6%` per-seed SUCCESS power for effect `0.0382` and
+  `8.66%` for effect `0.0239`;
+- at `max_N=2048`, `100%` per-seed SUCCESS power for effect `0.0382` and
+  `98.14%` for effect `0.0239`; the latter gives `99.90%` probability that at
+  least two of three independent planning replicates succeed.
+
+The simulation seed is `20260805`. It sizes the development read and has no
+inferential authority. The measured candidate-01 null variances imply, at
+2,048 clusters, overall leg-net SD `17.32`, P0 net SD `12.33`, and P1 net SD
+`12.15`. Floors `-44`, `-31`, and `-31` are respectively `2.54`, `2.51`, and
+`2.55` null SD below zero, for approximate one-sided false-stop rates
+`0.55%`, `0.60%`, and `0.54%`. Pooling three P1 reads gives SE `0.00342`; a
+`-0.01` tolerance is `2.92` SD below true zero, about `0.17%` false-stop.
+
+## Causal prerequisite and advancement
+
+Before interpreting the regularized comparison, the control must reproduce
+the phenomenon on this exact panel. At least two of the three beta-zero seeds
+must have generation-512 minus generation-384 cluster effect at or below
+`-0.025` overall. This threshold is below zero but more permissive than the
+two historical collapsing effects, `-0.0742` and `-0.0410`. If it fails, the
+fixed outcome is `COLLAPSE-NOT-REPRODUCED`: the causal read is void in both
+directions, no candidate is nominated, and the route is panel or seed
+diagnosis rather than a claim that regularization failed.
 
 The retest advances to candidate nomination only if all of the following hold:
 
@@ -151,15 +212,27 @@ The retest advances to candidate nomination only if all of the following hold:
 2. the remaining seed is not `HARM` and its endpoint effect is not below
    `-0.01`;
 3. every regularized seed has generation-512 minus generation-384 net at least
-   `-16` overall and `-12` in each seat;
-4. pooled regularized P1 effect over beta-zero is nonnegative;
-5. at least one generation-512 regularized policy scores at least `50%`
-   against promoted(2) on the fixed development panel.
+   `-44` overall and `-31` in each seat, measured as terminal-order leg net;
+4. pooled regularized P1 effect over beta-zero is at least `-0.01`;
+5. at least one generation-512 regularized policy has
+   `(wins + 0.5 * draws) / games >= 0.50` against promoted(2) on the fixed
+   development panel.
 
 If the late-stability checks pass but the endpoint strength checks do not, the
 result is `STABLE-NO-STRENGTH` and does not nominate. If seat-linked drift
-persists after regularization, the previously frozen H4 reopening condition
-routes a longer-horizon seat-credit retest. Any other failure stops this lane.
+persists after regularization, mechanically defined as a repeated negative P1
+generation-512 versus generation-384 net beyond the `-31` floor while P0 stays
+within its floor, the previously frozen H4 condition routes a longer-horizon
+seat-credit retest.
+
+Exactly one full-horizon anchor escalation is predeclared. If the first
+selected-beta result does not advance and its generation-512 mean parent KL is
+at least `75%` of the matched beta-zero control's generation-512 mean parent
+KL, the next-larger coefficient that was already screen-eligible runs once on
+the same three training seeds and fixed development panel. If no larger beta
+was eligible, or if KL remained below `75%` and strength still failed, there
+is no escalation. The second result is final for this lane. No third beta,
+optimizer, schedule, threshold, seed, or endpoint retry is allowed.
 
 Among advancing generation-512 policies, highest fixed-panel score nominates
 the candidate, ties broken by lower training seed. This selection panel is
