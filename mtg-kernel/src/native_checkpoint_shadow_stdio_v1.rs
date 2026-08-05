@@ -651,6 +651,17 @@ struct LoadedFixedNativeStateV1 {
     adam_step: u64,
 }
 
+pub(crate) struct FixedNativeTrainingSourceV1 {
+    pub(crate) state: NativePolicyValueTrainStateV1,
+    pub(crate) authority_kind: String,
+    pub(crate) source_result_sha256: [u8; 32],
+    pub(crate) manifest_sha256: [u8; 32],
+    pub(crate) payload_sha256: [u8; 32],
+    pub(crate) native_state_sha256: [u8; 32],
+    pub(crate) model_parameter_sha256: [u8; 32],
+    pub(crate) adam_step: u64,
+}
+
 fn load_fixed_native_state_v1(
     root: &Path,
 ) -> Result<LoadedFixedNativeStateV1, ShadowScorerStartupErrorV1> {
@@ -761,6 +772,22 @@ fn load_fixed_native_state_v1(
         native_state_sha256: expected.native_state_sha256,
         model_parameter_sha256: expected.model_parameter_sha256,
         adam_step: manifest.payload.adam_step,
+    })
+}
+
+pub(crate) fn load_fixed_native_training_source_v1(
+    root: &Path,
+) -> Result<FixedNativeTrainingSourceV1, ShadowScorerStartupErrorV1> {
+    let loaded = load_fixed_native_state_v1(root)?;
+    Ok(FixedNativeTrainingSourceV1 {
+        state: loaded.scorer.state,
+        authority_kind: loaded.authority_kind,
+        source_result_sha256: loaded.source_result_sha256,
+        manifest_sha256: loaded.manifest_sha256,
+        payload_sha256: loaded.payload_sha256,
+        native_state_sha256: loaded.native_state_sha256,
+        model_parameter_sha256: loaded.model_parameter_sha256,
+        adam_step: loaded.adam_step,
     })
 }
 
@@ -2004,6 +2031,7 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             || checkpoint.authority_kind == "qualified-policy-bounded-value-search-v1"
             || checkpoint.authority_kind == "current-net8-gae8-v1"
             || checkpoint.authority_kind == "current-net8-gae16-v1"
+            || checkpoint.authority_kind == "current-net8-cp7-terminal-response-v1"
             || checkpoint
                 .authority_kind
                 .starts_with("xmage-cp7-outcome-structured-policy-successor-v"))

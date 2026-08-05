@@ -1,6 +1,7 @@
 # Current Net8 CP7 terminal response v1
 
-Status: frozen design; implementation preflight pending.
+Status: Fable countersigned for implementation preflight; amendments folded
+before the fixed update.
 
 ## Question
 
@@ -32,8 +33,11 @@ reference and is not touched in this experiment.
   physical-decision mass within each episode.
 - Objective: physical-decision joint-ratio PPO, clip `0.10`, four full-batch
   epochs, learning rate `0.001`, value coefficient `0.5`, unchanged Adam
-  state, and full-network updates. No epoch, coefficient, checkpoint, or
-  hyperparameter is selected from this corpus.
+  state, and full-network updates. Every epoch computes the ratio and clip
+  against the fixed step-520 GAE8 behavior policy; `pi_old` is not rolled
+  forward between epochs. The active value loss targets the same natural
+  terminal result. No epoch, coefficient, checkpoint, or hyperparameter is
+  selected from this corpus.
 
 The candidate is publishable only if every tensor is finite, Adam ends at
 step `524`, parameter L2 movement from GAE8 is at most `0.75`, mean policy TV
@@ -41,12 +45,25 @@ on the training corpus is in `[0.010, 0.050]`, p90 TV is at most `0.150`, and
 maximum absolute selected physical-decision log ratio is at most `1.0`.
 Failure stops this exact update before any fresh gameplay.
 
+The `1.0` final selected-log-ratio cap is intentionally looser than the
+`0.49` to `0.50` caps in the DAgger and search-teacher sheets. This update also
+has a fixed-parent PPO clip of `0.10` at every epoch, while those supervised
+trainers lacked that complementary clipped objective. The final cap still
+stops cumulative drift that the per-update objective does not itself bound.
+
 The `0.010` activity floor addresses the repeated absorption failure under
 tighter envelopes. The historical Pool3 planning range of 1.46 to 2.91 times
 mean TV suggests roughly 1.5 to 2.9 percent discordance at that floor. On the
 256-game fresh CP7 panel below, that is about 4 to 7 discordant outcomes, so a
 `+4` gate is arithmetically feasible but remains a noisy rapid selector. The
-range is a cross-mechanism planning heuristic, not a bound.
+range is a cross-mechanism planning heuristic, not a bound. At exactly `D=4`,
+the one-sided null probability of `+4` is `1/16 = 6.25%`; at `D=6`, it is
+`7/64 = 10.94%`. Parity makes the exact small-`D` probability non-monotonic.
+This is feasibility arithmetic at the movement floor, not an expected
+discordance forecast. At 10 percent discordance, `D` is about 26, null SD is
+about `sqrt(26) = 5.1`, and `+4` is only about 0.8 SD. For context, the
+depth-8 live v3 screen saw roughly 31 percent discordance between genuinely
+diverged policies.
 
 ## Ordered development gates
 
@@ -61,7 +78,8 @@ range is a cross-mechanism planning heuristic, not a bound.
    Candidate terminal-order net must be at least `-16` overall and at least
    `-12` at each seat. A DAgger-scale 10 percentage-point regression would be
    about `-102/1024`, far beyond these floors. This is a hard transport check,
-   not a strength claim.
+   not a strength claim. No outcome is inspected before the complete gate-2
+   panel finishes.
 3. Only after steps 1 and 2 pass, compare candidate and GAE8 against XMage CP7
    skill 7 on 128 fresh seat-swapped pairs, 256 natural games per arm, at base
    seed `1840001`. Require candidate-better minus GAE8-better terminal outcomes

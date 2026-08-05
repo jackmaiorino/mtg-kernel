@@ -13,6 +13,7 @@ use crate::fast_sampler::{
     FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
 };
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
+use crate::native_checkpoint_shadow_stdio_v1::load_fixed_native_training_source_v1;
 use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorizerV2,
     NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2, NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
@@ -58,7 +59,24 @@ pub const XMAGE_CP7_OUTCOME_DERIVATIVE_SCHEMA_V1: &str =
 const MODEL_INPUT_COMMITMENT_V1: &str = "mtg-kernel-checkpoint-shadow-model-input-framed-sha256/v1";
 const RANDOMIZATION_IDENTITY_V1: &str = "legacy_v1";
 const ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str = "legacy-v1";
+const FIXED_NATIVE_STATE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str = "environment-randomization-v2";
 const AUTHORITY_KIND_V1: &str = "original-promoted2-generation384-store";
+const CURRENT_GAE8_AUTHORITY_KIND_V1: &str = "current-net8-gae8-v1";
+const CURRENT_GAE8_MANIFEST_SHA256_V1: &str =
+    "d86a430298a5a91be324e22d798c7cdc7f9f5e61e7ffa255a559ff68287e5ab1";
+const CURRENT_GAE8_PAYLOAD_SHA256_V1: &str =
+    "a0b7752181a562f8e5a0821a490ce20b777b509855d754283536e8242f489b98";
+const CURRENT_GAE8_NATIVE_STATE_SHA256_V1: &str =
+    "ab7dd25ca6619a4a613ca089e1eb8e75981f8e5cfc0bae8535b78cddd7efa952";
+const CURRENT_GAE8_MODEL_PARAMETER_SHA256_V1: &str =
+    "5efe2f167045bde379da3be8af6c480b6702f5d7a849ff8435d8ac6b1d91daa8";
+const CURRENT_GAE8_SOURCE_RESULT_SHA256_V1: &str =
+    "dc581e2bd6548c5fa9c05d9d8ab70a2bd6f213b20dd82a042109ee9a500b628e";
+const CURRENT_GAE8_ADAM_STEP_V1: u64 = 520;
+const CURRENT_NET8_CP7_RESPONSE_AUTHORITY_KIND_V1: &str = "current-net8-cp7-terminal-response-v1";
+const FIXED_NATIVE_STATE_SCHEMA_V1: &str = "mtg-kernel-xmage-fixed-native-state/v1";
+const FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1: &str = "fixed_native_state.json";
+const FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1: &str = "checkpoint.state.f32le";
 const DERIVATIVE_PAYLOAD_FILENAME_V1: &str = "checkpoint.state.f32le";
 const DERIVATIVE_MANIFEST_FILENAME_V1: &str = "checkpoint.json";
 const TRAINING_ORDER_V1: &str = "jsonl-record-order-epoch-major-contiguous-batches/v1";
@@ -513,6 +531,22 @@ fn outcome_parent_checkpoint_v1(checkpoint: &CheckpointIdentityWireV1) -> bool {
         && valid_lower_hex_v1(&checkpoint.model_parameter_sha256, 64)
 }
 
+fn current_gae8_checkpoint_v1(checkpoint: &CheckpointIdentityWireV1) -> bool {
+    checkpoint.authority_kind == CURRENT_GAE8_AUTHORITY_KIND_V1
+        && checkpoint.source_run_sha256 == SOURCE_RUN_SHA256_V1
+        && checkpoint.source_generation == SOURCE_GENERATION_V1
+        && checkpoint.source_checkpoint_sha256 == SOURCE_CHECKPOINT_SHA256_V1
+        && checkpoint.source_sidecar_sha256 == SOURCE_SIDECAR_SHA256_V1
+        && checkpoint.source_payload_sha256 == SOURCE_PAYLOAD_SHA256_V1
+        && checkpoint.source_train_state_sha256 == SOURCE_TRAIN_STATE_SHA256_V1
+        && checkpoint.loaded_run_sha256 == SOURCE_RUN_SHA256_V1
+        && checkpoint.loaded_generation == CURRENT_GAE8_ADAM_STEP_V1
+        && checkpoint.loaded_checkpoint_sha256 == CURRENT_GAE8_MANIFEST_SHA256_V1
+        && checkpoint.loaded_payload_sha256 == CURRENT_GAE8_PAYLOAD_SHA256_V1
+        && checkpoint.loaded_train_state_sha256 == CURRENT_GAE8_NATIVE_STATE_SHA256_V1
+        && checkpoint.model_parameter_sha256 == CURRENT_GAE8_MODEL_PARAMETER_SHA256_V1
+}
+
 fn validate_header_v1(header: &HeaderWireV1) -> DynResultV1<()> {
     let checkpoint = &header.checkpoint;
     let common_valid = header.record_type == "header"
@@ -522,12 +556,20 @@ fn validate_header_v1(header: &HeaderWireV1) -> DynResultV1<()> {
         && header.tensorizer_features_source_sha256
             == NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2
         && header.model_input_commitment == MODEL_INPUT_COMMITMENT_V1
-        && checkpoint.environment_trajectory_contract == ENVIRONMENT_TRAJECTORY_CONTRACT_V1
         && checkpoint.sampler_identity == FAST_CATEGORICAL_SAMPLER_VERSION
         && checkpoint.sampler_contract_sha256 == FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256;
     let authority_valid = match (header.schema_version, header.export_contract.as_str()) {
-        (1, XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1) => exact_g384_checkpoint_v1(checkpoint),
-        (2, XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2) => outcome_parent_checkpoint_v1(checkpoint),
+        (1, XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1) => {
+            exact_g384_checkpoint_v1(checkpoint)
+                && checkpoint.environment_trajectory_contract == ENVIRONMENT_TRAJECTORY_CONTRACT_V1
+        }
+        (2, XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2) => {
+            (outcome_parent_checkpoint_v1(checkpoint)
+                && checkpoint.environment_trajectory_contract == ENVIRONMENT_TRAJECTORY_CONTRACT_V1)
+                || (current_gae8_checkpoint_v1(checkpoint)
+                    && checkpoint.environment_trajectory_contract
+                        == FIXED_NATIVE_STATE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1)
+        }
         _ => false,
     };
     if !common_valid || !authority_valid {
@@ -543,7 +585,10 @@ fn row_checkpoint_binding_valid_v1(
 ) -> bool {
     match schema_version {
         1 => actual.is_none() && exact_g384_checkpoint_v1(expected),
-        2 => actual == Some(expected) && outcome_parent_checkpoint_v1(expected),
+        2 => {
+            actual == Some(expected)
+                && (outcome_parent_checkpoint_v1(expected) || current_gae8_checkpoint_v1(expected))
+        }
         _ => false,
     }
 }
@@ -2121,6 +2166,60 @@ impl Default for TrainConfigV1 {
             batch_groups: BatchGroupsV1::All,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct FixedNativeTrainConfigV1 {
+    outcome_jsonl: PathBuf,
+    outcome_jsonl_sha256: String,
+    source_fixed_root: PathBuf,
+    output_dir: PathBuf,
+    report_path: PathBuf,
+    learning_rate: f32,
+    value_coefficient: f32,
+    epochs: u32,
+    ppo_clip_epsilon: f32,
+}
+
+impl Default for FixedNativeTrainConfigV1 {
+    fn default() -> Self {
+        Self {
+            outcome_jsonl: PathBuf::new(),
+            outcome_jsonl_sha256: String::new(),
+            source_fixed_root: PathBuf::new(),
+            output_dir: PathBuf::new(),
+            report_path: PathBuf::new(),
+            learning_rate: f32::NAN,
+            value_coefficient: f32::NAN,
+            epochs: 0,
+            ppo_clip_epsilon: f32::NAN,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FixedNativeOutputPayloadManifestV1 {
+    filename: String,
+    byte_count: usize,
+    adam_step: u64,
+    scorer_bias_anchor_f32_bits: u32,
+    payload_sha256: String,
+    parameters_sha256: String,
+    first_moments_sha256: String,
+    second_moments_sha256: String,
+    model_parameter_sha256: String,
+    native_state_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FixedNativeOutputManifestV1 {
+    schema: String,
+    authority_kind: String,
+    source_result_sha256: String,
+    payload: FixedNativeOutputPayloadManifestV1,
+    non_claims: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -3829,6 +3928,94 @@ where
     Ok(config)
 }
 
+fn parse_fixed_native_train_config_v1<I>(arguments: I) -> DynResultV1<FixedNativeTrainConfigV1>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut config = FixedNativeTrainConfigV1::default();
+    let mut iterator = arguments.into_iter();
+    let mut seen = BTreeSet::new();
+    while let Some(argument) = iterator.next() {
+        let flag = argument
+            .to_str()
+            .ok_or_else(|| invalid_data_v1("CLI flag is not UTF-8"))?;
+        if !seen.insert(flag.to_owned()) {
+            return Err(invalid_data_v1(format!("duplicate CLI flag {flag}")).into());
+        }
+        match flag {
+            "--outcome-jsonl" => config.outcome_jsonl = next_arg_v1(&mut iterator, flag)?.into(),
+            "--outcome-jsonl-sha256" => {
+                config.outcome_jsonl_sha256 = next_arg_v1(&mut iterator, flag)?
+                    .to_str()
+                    .ok_or_else(|| invalid_data_v1("outcome JSONL SHA-256 is not UTF-8"))?
+                    .to_owned()
+            }
+            "--source-fixed-root" => {
+                config.source_fixed_root = next_arg_v1(&mut iterator, flag)?.into()
+            }
+            "--output-dir" => config.output_dir = next_arg_v1(&mut iterator, flag)?.into(),
+            "--report-path" => config.report_path = next_arg_v1(&mut iterator, flag)?.into(),
+            "--learning-rate" => {
+                config.learning_rate = next_arg_v1(&mut iterator, flag)?
+                    .to_str()
+                    .ok_or_else(|| invalid_data_v1("learning rate is not UTF-8"))?
+                    .parse()?;
+            }
+            "--value-coefficient" => {
+                config.value_coefficient = next_arg_v1(&mut iterator, flag)?
+                    .to_str()
+                    .ok_or_else(|| invalid_data_v1("value coefficient is not UTF-8"))?
+                    .parse()?;
+            }
+            "--epochs" => {
+                config.epochs = next_arg_v1(&mut iterator, flag)?
+                    .to_str()
+                    .ok_or_else(|| invalid_data_v1("epochs is not UTF-8"))?
+                    .parse()?;
+            }
+            "--ppo-clip-epsilon" => {
+                config.ppo_clip_epsilon = next_arg_v1(&mut iterator, flag)?
+                    .to_str()
+                    .ok_or_else(|| invalid_data_v1("PPO clip epsilon is not UTF-8"))?
+                    .parse()?;
+            }
+            "--help" | "-h" => {
+                return Err(invalid_data_v1(
+                    "usage: xmage_cp7_outcome_reinforce_v1 train-fixed --outcome-jsonl PATH --outcome-jsonl-sha256 HEX64 --source-fixed-root PATH --output-dir NEW_PATH --report-path NEW_PATH --learning-rate FLOAT --value-coefficient FLOAT --epochs U32 --ppo-clip-epsilon FLOAT",
+                )
+                .into())
+            }
+            _ => return Err(invalid_data_v1(format!("unknown CLI flag {flag}")).into()),
+        }
+    }
+    if config.outcome_jsonl.as_os_str().is_empty()
+        || config.outcome_jsonl_sha256.is_empty()
+        || config.source_fixed_root.as_os_str().is_empty()
+        || config.output_dir.as_os_str().is_empty()
+        || config.report_path.as_os_str().is_empty()
+    {
+        return Err(invalid_data_v1("train-fixed requires every documented path and hash").into());
+    }
+    parse_lower_hex_raw32_v1(&config.outcome_jsonl_sha256)?;
+    if !config.learning_rate.is_finite()
+        || config.learning_rate <= 0.0
+        || config.learning_rate > 1.0e-3
+        || !config.value_coefficient.is_finite()
+        || config.value_coefficient <= 0.0
+        || config.value_coefficient > 10.0
+        || config.epochs < 2
+        || !config.ppo_clip_epsilon.is_finite()
+        || config.ppo_clip_epsilon <= 0.0
+        || config.ppo_clip_epsilon >= 1.0
+    {
+        return Err(invalid_data_v1(
+            "train-fixed requires bounded positive learning/value settings, epochs >= 2, and 0 < PPO clip < 1",
+        )
+        .into());
+    }
+    Ok(config)
+}
+
 fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpointSummaryV1> {
     ensure_output_absent_v1(&config.output_dir)?;
     let dataset = load_outcome_dataset_v1(&config.outcome_jsonl)?;
@@ -4017,6 +4204,294 @@ fn run_training_v1(config: TrainConfigV1) -> DynResultV1<XmageCp7OutcomeCheckpoi
     verify_xmage_cp7_outcome_checkpoint_v1(&config.output_dir)
 }
 
+fn parameter_l2_distance_v1(
+    before: &NativePolicyValueTrainSnapshotV1,
+    after: &NativePolicyValueTrainSnapshotV1,
+) -> DynResultV1<f64> {
+    if before.parameters.len() != after.parameters.len() {
+        return Err(invalid_data_v1("parameter snapshot cardinality mismatch").into());
+    }
+    let mut sum_squares = 0.0_f64;
+    for (before, after) in before.parameters.iter().zip(&after.parameters) {
+        if before.name != after.name
+            || before.shape != after.shape
+            || before.values.len() != after.values.len()
+        {
+            return Err(invalid_data_v1("parameter snapshot manifest mismatch").into());
+        }
+        for (before, after) in before.values.iter().zip(&after.values) {
+            let delta = f64::from(*after) - f64::from(*before);
+            sum_squares += delta * delta;
+        }
+    }
+    let distance = sum_squares.sqrt();
+    if !distance.is_finite() {
+        return Err(invalid_data_v1("parameter L2 distance is not finite").into());
+    }
+    Ok(distance)
+}
+
+fn run_fixed_native_training_v1(
+    config: FixedNativeTrainConfigV1,
+) -> DynResultV1<serde_json::Value> {
+    ensure_output_absent_v1(&config.output_dir)?;
+    if config.report_path.try_exists()? {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "fixed-native training report already exists",
+        )
+        .into());
+    }
+    let dataset = load_outcome_dataset_v1(&config.outcome_jsonl)?;
+    if dataset.jsonl_sha256 != config.outcome_jsonl_sha256
+        || dataset.schema_version != 2
+        || dataset.export_contract != XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
+        || !current_gae8_checkpoint_v1(&dataset.policy_checkpoint)
+        || dataset.policy_checkpoint.environment_trajectory_contract
+            != FIXED_NATIVE_STATE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1
+    {
+        return Err(invalid_data_v1("fixed-native outcome corpus authority mismatch").into());
+    }
+
+    let source = load_fixed_native_training_source_v1(&config.source_fixed_root)?;
+    if source.authority_kind != CURRENT_GAE8_AUTHORITY_KIND_V1
+        || lower_hex_raw32_v1(source.source_result_sha256) != CURRENT_GAE8_SOURCE_RESULT_SHA256_V1
+        || lower_hex_raw32_v1(source.manifest_sha256) != CURRENT_GAE8_MANIFEST_SHA256_V1
+        || lower_hex_raw32_v1(source.payload_sha256) != CURRENT_GAE8_PAYLOAD_SHA256_V1
+        || lower_hex_raw32_v1(source.native_state_sha256) != CURRENT_GAE8_NATIVE_STATE_SHA256_V1
+        || lower_hex_raw32_v1(source.model_parameter_sha256)
+            != CURRENT_GAE8_MODEL_PARAMETER_SHA256_V1
+        || source.adam_step != CURRENT_GAE8_ADAM_STEP_V1
+        || source.state.adam_step_v1() != source.adam_step
+        || lower_hex_raw32_v1(source.state.state_sha256_v1()?)
+            != CURRENT_GAE8_NATIVE_STATE_SHA256_V1
+    {
+        return Err(invalid_data_v1("fixed-native source is not exact retained GAE8").into());
+    }
+
+    let source_snapshot = source.state.snapshot_v1()?;
+    let mut state = source.state;
+    let transport = audit_source_transport_v1(state.model_v1(), &dataset.groups, true)?;
+    let prepared = prepare_dataset_advantages_v1(&dataset, 1.0, true)?;
+    let mut current = prepare_ppo_epoch_v1(
+        state.model_v1(),
+        &dataset.groups,
+        &prepared.terms,
+        config.ppo_clip_epsilon,
+        config.value_coefficient,
+    )?;
+    if current
+        .ratio_metrics
+        .maximum_absolute_joint_log_likelihood_ratio
+        > PPO_INITIAL_MAX_ABSOLUTE_JOINT_LOG_RATIO_V1
+    {
+        return Err(invalid_data_v1(
+            "fixed-native PPO initial joint likelihood ratio exceeds transport gate",
+        )
+        .into());
+    }
+    let initial_objective = current.objective_metrics.clone();
+    let initial_ratio = current.ratio_metrics.clone();
+    let mut epochs = Vec::with_capacity(config.epochs as usize);
+    for epoch_index in 1..=config.epochs {
+        let adam_step_before = state.adam_step_v1();
+        let before_update = current.ratio_metrics.clone();
+        train_frozen_batch_v1(
+            &mut state,
+            &dataset.groups,
+            &current.terms,
+            config.learning_rate,
+            config.value_coefficient,
+        )?;
+        if state.adam_step_v1() != adam_step_before + 1 {
+            return Err(invalid_data_v1("fixed-native Adam step did not advance once").into());
+        }
+        let next = prepare_ppo_epoch_v1(
+            state.model_v1(),
+            &dataset.groups,
+            &prepared.terms,
+            config.ppo_clip_epsilon,
+            config.value_coefficient,
+        )?;
+        epochs.push(PpoClipEpochManifestV1 {
+            epoch_index,
+            adam_step_before,
+            adam_step_after: state.adam_step_v1(),
+            before_update,
+            after_update: next.ratio_metrics.clone(),
+        });
+        current = next;
+    }
+    let expected_adam_step = CURRENT_GAE8_ADAM_STEP_V1
+        .checked_add(u64::from(config.epochs))
+        .ok_or_else(|| invalid_data_v1("fixed-native ending Adam step overflow"))?;
+    if state.adam_step_v1() != expected_adam_step {
+        return Err(invalid_data_v1("fixed-native ending Adam step mismatch").into());
+    }
+
+    let final_snapshot = state.snapshot_v1()?;
+    let parameter_l2 = parameter_l2_distance_v1(&source_snapshot, &final_snapshot)?;
+    let encoded = encode_native_train_state_payload_v1(&final_snapshot)?;
+    let movement = &current.ratio_metrics;
+    let finite = movement.minimum_likelihood_ratio.is_finite()
+        && movement.maximum_likelihood_ratio.is_finite()
+        && movement.mean_likelihood_ratio.is_finite()
+        && movement.mean_absolute_log_likelihood_ratio.is_finite()
+        && movement
+            .maximum_absolute_joint_log_likelihood_ratio
+            .is_finite()
+        && movement.mean_old_to_current_forward_kl.is_finite()
+        && movement.mean_action_total_variation.is_finite()
+        && movement.p90_action_total_variation_nearest_rank.is_finite()
+        && movement.mean_policy_surrogate.is_finite();
+    let publication_pass = finite
+        && parameter_l2 <= 0.75
+        && (0.010..=0.050).contains(&movement.mean_action_total_variation)
+        && movement.p90_action_total_variation_nearest_rank <= 0.150
+        && movement.maximum_absolute_joint_log_likelihood_ratio <= 1.0;
+
+    let report = serde_json::json!({
+        "schema": "mtg-kernel-current-net8-cp7-terminal-response-training/v1",
+        "source": {
+            "authority_kind": CURRENT_GAE8_AUTHORITY_KIND_V1,
+            "source_result_sha256": CURRENT_GAE8_SOURCE_RESULT_SHA256_V1,
+            "manifest_sha256": CURRENT_GAE8_MANIFEST_SHA256_V1,
+            "payload_sha256": CURRENT_GAE8_PAYLOAD_SHA256_V1,
+            "native_state_sha256": CURRENT_GAE8_NATIVE_STATE_SHA256_V1,
+            "model_parameter_sha256": CURRENT_GAE8_MODEL_PARAMETER_SHA256_V1,
+            "adam_step": CURRENT_GAE8_ADAM_STEP_V1,
+        },
+        "corpus": {
+            "path": config.outcome_jsonl,
+            "sha256": dataset.jsonl_sha256,
+            "pair_indices": dataset.pair_indices,
+            "pair_count": dataset.pair_indices.len(),
+            "episode_count": dataset.episode_count,
+            "decision_row_count": dataset.decision_row_count,
+            "physical_group_count": dataset.groups.len(),
+            "terminal_return_counts_loss_draw_win": dataset.terminal_return_counts,
+        },
+        "training": {
+            "reward": "natural_terminal_win_draw_loss_only",
+            "objective": PPO_CLIP_STANDARDIZED_EPISODE_BALANCED_OBJECTIVE_V1,
+            "learning_rate": config.learning_rate,
+            "learning_rate_f32_bits": config.learning_rate.to_bits(),
+            "value_coefficient": config.value_coefficient,
+            "value_coefficient_f32_bits": config.value_coefficient.to_bits(),
+            "ppo_clip_epsilon": config.ppo_clip_epsilon,
+            "ppo_clip_epsilon_f32_bits": config.ppo_clip_epsilon.to_bits(),
+            "epochs": config.epochs,
+            "starting_adam_step": CURRENT_GAE8_ADAM_STEP_V1,
+            "ending_adam_step": state.adam_step_v1(),
+            "advantage_transform": prepared.manifest,
+            "source_transport_audit": transport,
+            "initial_objective_metrics": initial_objective,
+            "initial_ratio_metrics": initial_ratio,
+            "epoch_metrics": epochs,
+            "final_objective_metrics": current.objective_metrics,
+        },
+        "candidate": {
+            "payload_byte_count": encoded.bytes.len(),
+            "payload_sha256": lower_hex_raw32_v1(encoded.digests.payload_sha256),
+            "parameters_sha256": lower_hex_raw32_v1(encoded.digests.parameters_sha256),
+            "first_moments_sha256": lower_hex_raw32_v1(encoded.digests.first_moments_sha256),
+            "second_moments_sha256": lower_hex_raw32_v1(encoded.digests.second_moments_sha256),
+            "model_parameter_sha256": lower_hex_raw32_v1(encoded.digests.model_parameter_sha256),
+            "native_state_sha256": lower_hex_raw32_v1(encoded.digests.native_state_sha256),
+            "adam_step": state.adam_step_v1(),
+            "scorer_bias_anchor_f32_bits": state.scorer_bias_anchor_f32_bits_v1(),
+            "parameter_l2_from_gae8": parameter_l2,
+            "movement": movement,
+        },
+        "publication_gate": {
+            "finite": finite,
+            "parameter_l2_cap": 0.75,
+            "mean_action_total_variation_floor": 0.010,
+            "mean_action_total_variation_cap": 0.050,
+            "p90_action_total_variation_cap": 0.150,
+            "maximum_absolute_joint_log_likelihood_ratio_cap": 1.0,
+            "pass": publication_pass,
+        },
+        "nonclaims": [
+            "development training metrics are not playing-strength evidence",
+            "terminal win/loss/draw remains the only promotion measure",
+        ],
+    });
+    let mut report_bytes = serde_json::to_vec_pretty(&report)?;
+    report_bytes.push(b'\n');
+    if let Some(parent) = config.report_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    atomic_write_v1(&config.report_path, &report_bytes)?;
+    let report_sha256 = sha256_v1(&report_bytes);
+
+    let mut manifest_sha256 = None;
+    if publication_pass {
+        fs::create_dir(&config.output_dir)?;
+        atomic_write_v1(
+            &config
+                .output_dir
+                .join(FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1),
+            &encoded.bytes,
+        )?;
+        let manifest = FixedNativeOutputManifestV1 {
+            schema: FIXED_NATIVE_STATE_SCHEMA_V1.to_owned(),
+            authority_kind: CURRENT_NET8_CP7_RESPONSE_AUTHORITY_KIND_V1.to_owned(),
+            source_result_sha256: lower_hex_raw32_v1(report_sha256),
+            payload: FixedNativeOutputPayloadManifestV1 {
+                filename: FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1.to_owned(),
+                byte_count: encoded.bytes.len(),
+                adam_step: state.adam_step_v1(),
+                scorer_bias_anchor_f32_bits: state.scorer_bias_anchor_f32_bits_v1(),
+                payload_sha256: lower_hex_raw32_v1(encoded.digests.payload_sha256),
+                parameters_sha256: lower_hex_raw32_v1(encoded.digests.parameters_sha256),
+                first_moments_sha256: lower_hex_raw32_v1(encoded.digests.first_moments_sha256),
+                second_moments_sha256: lower_hex_raw32_v1(encoded.digests.second_moments_sha256),
+                model_parameter_sha256: lower_hex_raw32_v1(encoded.digests.model_parameter_sha256),
+                native_state_sha256: lower_hex_raw32_v1(encoded.digests.native_state_sha256),
+            },
+            non_claims: vec![
+                "external software anchor is not professional-level evidence".to_owned(),
+                "terminal win/loss/draw is the only playing-strength outcome".to_owned(),
+            ],
+        };
+        let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
+        manifest_bytes.push(b'\n');
+        atomic_write_v1(
+            &config
+                .output_dir
+                .join(FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1),
+            &manifest_bytes,
+        )?;
+        let reloaded = load_fixed_native_training_source_v1(&config.output_dir)?;
+        if reloaded.authority_kind != CURRENT_NET8_CP7_RESPONSE_AUTHORITY_KIND_V1
+            || reloaded.source_result_sha256 != report_sha256
+            || reloaded.payload_sha256 != encoded.digests.payload_sha256
+            || reloaded.native_state_sha256 != encoded.digests.native_state_sha256
+            || reloaded.model_parameter_sha256 != encoded.digests.model_parameter_sha256
+            || reloaded.adam_step != state.adam_step_v1()
+        {
+            return Err(invalid_data_v1("published fixed-native package reload mismatch").into());
+        }
+        manifest_sha256 = Some(lower_hex_raw32_v1(reloaded.manifest_sha256));
+    }
+
+    Ok(serde_json::json!({
+        "schema": "mtg-kernel-current-net8-cp7-terminal-response-summary/v1",
+        "publication_pass": publication_pass,
+        "report_sha256": lower_hex_raw32_v1(report_sha256),
+        "manifest_sha256": manifest_sha256,
+        "payload_sha256": lower_hex_raw32_v1(encoded.digests.payload_sha256),
+        "native_state_sha256": lower_hex_raw32_v1(encoded.digests.native_state_sha256),
+        "model_parameter_sha256": lower_hex_raw32_v1(encoded.digests.model_parameter_sha256),
+        "adam_step": state.adam_step_v1(),
+        "parameter_l2_from_gae8": parameter_l2,
+        "mean_action_total_variation": movement.mean_action_total_variation,
+        "p90_action_total_variation": movement.p90_action_total_variation_nearest_rank,
+        "maximum_absolute_joint_log_likelihood_ratio": movement.maximum_absolute_joint_log_likelihood_ratio,
+    }))
+}
+
 pub fn run_xmage_cp7_outcome_reinforce_cli_v1<I>(arguments: I) -> DynResultV1<()>
 where
     I: IntoIterator<Item = OsString>,
@@ -4026,7 +4501,12 @@ where
         .split_first()
         .ok_or_else(|| invalid_data_v1("expected train or verify command"))?;
     let summary = match command.to_str() {
-        Some("train") => run_training_v1(parse_train_config_v1(tail.iter().cloned())?)?,
+        Some("train") => serde_json::to_value(run_training_v1(parse_train_config_v1(
+            tail.iter().cloned(),
+        )?)?)?,
+        Some("train-fixed") => {
+            run_fixed_native_training_v1(parse_fixed_native_train_config_v1(tail.iter().cloned())?)?
+        }
         Some("verify") => {
             if tail.len() != 2 || tail[0] != "--output-dir" {
                 return Err(invalid_data_v1(
@@ -4034,9 +4514,11 @@ where
                 )
                 .into());
             }
-            verify_xmage_cp7_outcome_checkpoint_v1(PathBuf::from(&tail[1]))?
+            serde_json::to_value(verify_xmage_cp7_outcome_checkpoint_v1(PathBuf::from(
+                &tail[1],
+            ))?)?
         }
-        _ => return Err(invalid_data_v1("expected train or verify command").into()),
+        _ => return Err(invalid_data_v1("expected train, train-fixed, or verify command").into()),
     };
     println!("{}", serde_json::to_string(&summary)?);
     Ok(())
@@ -4065,6 +4547,19 @@ mod tests {
             sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION.to_owned(),
             sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256.to_owned(),
         }
+    }
+
+    fn exact_current_gae8_checkpoint_wire_v1() -> CheckpointIdentityWireV1 {
+        let mut checkpoint = exact_g384_checkpoint_wire_v1();
+        checkpoint.authority_kind = CURRENT_GAE8_AUTHORITY_KIND_V1.to_owned();
+        checkpoint.loaded_generation = CURRENT_GAE8_ADAM_STEP_V1;
+        checkpoint.loaded_checkpoint_sha256 = CURRENT_GAE8_MANIFEST_SHA256_V1.to_owned();
+        checkpoint.loaded_payload_sha256 = CURRENT_GAE8_PAYLOAD_SHA256_V1.to_owned();
+        checkpoint.loaded_train_state_sha256 = CURRENT_GAE8_NATIVE_STATE_SHA256_V1.to_owned();
+        checkpoint.model_parameter_sha256 = CURRENT_GAE8_MODEL_PARAMETER_SHA256_V1.to_owned();
+        checkpoint.environment_trajectory_contract =
+            FIXED_NATIVE_STATE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1.to_owned();
+        checkpoint
     }
 
     fn parent_binding_and_checkpoint_v1() -> (ParentBindingManifestV1, CheckpointIdentityWireV1) {
@@ -4125,6 +4620,54 @@ mod tests {
             "0.2".into(),
         ]);
         arguments
+    }
+
+    #[test]
+    fn current_gae8_header_and_fixed_training_cli_are_exact_v1() {
+        let checkpoint = exact_current_gae8_checkpoint_wire_v1();
+        assert!(current_gae8_checkpoint_v1(&checkpoint));
+        let header = HeaderWireV1 {
+            record_type: "header".to_owned(),
+            schema_version: 2,
+            record_ordinal: 0,
+            export_contract: XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2.to_owned(),
+            selection_source: XMAGE_CP7_OUTCOME_SELECTION_SOURCE_V1.to_owned(),
+            tensorizer_identity: NATIVE_FLAT_TENSORIZER_IDENTITY_V2.to_owned(),
+            tensorizer_features_source_sha256: NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2
+                .to_owned(),
+            model_input_commitment: MODEL_INPUT_COMMITMENT_V1.to_owned(),
+            checkpoint,
+        };
+        validate_header_v1(&header).unwrap();
+
+        let arguments = [
+            "--outcome-jsonl",
+            "outcomes.jsonl",
+            "--outcome-jsonl-sha256",
+            &"0".repeat(64),
+            "--source-fixed-root",
+            "source",
+            "--output-dir",
+            "candidate",
+            "--report-path",
+            "report.json",
+            "--learning-rate",
+            "0.001",
+            "--value-coefficient",
+            "0.5",
+            "--epochs",
+            "4",
+            "--ppo-clip-epsilon",
+            "0.1",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+        let config = parse_fixed_native_train_config_v1(arguments).unwrap();
+        assert_eq!(config.epochs, 4);
+        assert_eq!(config.learning_rate.to_bits(), 0.001_f32.to_bits());
+        assert_eq!(config.value_coefficient.to_bits(), 0.5_f32.to_bits());
+        assert_eq!(config.ppo_clip_epsilon.to_bits(), 0.1_f32.to_bits());
     }
 
     fn scorer_scope_test_tensor_v1() -> OwnedDecisionTensorV1 {
@@ -4817,6 +5360,54 @@ mod tests {
         assert!(!dataset.groups.is_empty());
         assert_eq!(dataset.episode_count, dataset.terminal_row_count);
         assert_eq!(dataset.episode_count, dataset.pair_indices.len() * 2);
+    }
+
+    #[test]
+    #[ignore = "requires current GAE8 fixed root and exact XMage CP7 outcome JSONL"]
+    fn external_current_gae8_fixed_source_transport_passes_v1() {
+        let corpus_path = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL")
+                .expect("MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL is set"),
+        );
+        let source_root = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_CURRENT_GAE8_FIXED_ROOT")
+                .expect("MTG_KERNEL_CURRENT_GAE8_FIXED_ROOT is set"),
+        );
+        let dataset = load_outcome_dataset_v1(&corpus_path).unwrap();
+        assert!(current_gae8_checkpoint_v1(&dataset.policy_checkpoint));
+        let source = load_fixed_native_training_source_v1(&source_root).unwrap();
+        assert_eq!(source.authority_kind, CURRENT_GAE8_AUTHORITY_KIND_V1);
+        assert_eq!(
+            lower_hex_raw32_v1(source.manifest_sha256),
+            CURRENT_GAE8_MANIFEST_SHA256_V1
+        );
+        assert_eq!(
+            lower_hex_raw32_v1(source.native_state_sha256),
+            CURRENT_GAE8_NATIVE_STATE_SHA256_V1
+        );
+        assert_eq!(source.adam_step, CURRENT_GAE8_ADAM_STEP_V1);
+        let transport = audit_source_transport_v1(source.state.model_v1(), &dataset.groups, true)
+            .expect("exact GAE8 source must transport to every exported row");
+        assert_eq!(
+            transport.decision_row_count,
+            dataset.decision_row_count as u64
+        );
+        assert_eq!(transport.mismatched_decision_row_count, 0);
+        let prepared = prepare_dataset_advantages_v1(&dataset, 1.0, true).unwrap();
+        let initial = prepare_ppo_epoch_v1(
+            source.state.model_v1(),
+            &dataset.groups,
+            &prepared.terms,
+            0.1,
+            0.5,
+        )
+        .unwrap();
+        assert!(
+            initial
+                .ratio_metrics
+                .maximum_absolute_joint_log_likelihood_ratio
+                <= PPO_INITIAL_MAX_ABSOLUTE_JOINT_LOG_RATIO_V1
+        );
     }
 
     #[test]
