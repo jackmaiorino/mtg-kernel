@@ -1,7 +1,7 @@
 # Bounded history-value search-teacher distillation v1
 
-Status: draft for Fable countersign. No compute launch is authorized by this
-draft.
+Status: complete, stopped at the frozen selection-residue gate. See
+`native_bounded_history_value_search_teacher_distillation_v1_result.md`.
 
 ## Question
 

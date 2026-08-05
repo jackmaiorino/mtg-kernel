@@ -46,6 +46,7 @@ select.
 | --- | --- | --- |
 | Current Net8 fixed GAE extension to 16 updates | stopped at `+7/1024` versus the frozen `+8` margin | exact extension closed; no candidate slot consumed |
 | Current Net8 population response cycle v1 | stopped: original Pool3 `+6` vs GAE8, `+7` vs parent with P0 `-4`; pure GAE8 `+17` | exact response cycle closed; no candidate slot consumed |
+| Bounded history-value search-teacher distillation v1 | stopped on residue 3: search-label NLL improved `1.8577%` versus the matched control and top-1 changed `-0.4208` points | exact teacher and fixed learner closed; no candidate slot consumed |
 
 Population response report SHA-256:
 `717c80fe855b9903baef19570119992fc43634d5d0809a69c38ded90c64ced6e`.
