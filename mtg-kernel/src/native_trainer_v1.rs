@@ -6570,8 +6570,13 @@ mod tests {
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    fn create_composed_artifact_staging_root_v1(output_root: &Path) -> (PathBuf, PathBuf) {
-        let published_root = output_root.join("current-row-fresh-eval-v1");
+    fn create_composed_named_artifact_staging_root_v1(
+        output_root: &Path,
+        directory_name: &str,
+    ) -> (PathBuf, PathBuf) {
+        assert!(!directory_name.is_empty());
+        assert_eq!(Path::new(directory_name).components().count(), 1);
+        let published_root = output_root.join(directory_name);
         assert!(
             !published_root.exists(),
             "refusing to overwrite {}",
@@ -6580,7 +6585,7 @@ mod tests {
         loop {
             let ordinal = COMPOSED_ARTIFACT_ORDINAL_V1.fetch_add(1, Ordering::Relaxed);
             let staging_root = output_root.join(format!(
-                ".current-row-fresh-eval-v1.staging-{}-{ordinal}",
+                ".{directory_name}.staging-{}-{ordinal}",
                 std::process::id()
             ));
             match fs::create_dir(&staging_root) {
@@ -6589,6 +6594,11 @@ mod tests {
                 Err(error) => panic!("create composed staging root: {error}"),
             }
         }
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn create_composed_artifact_staging_root_v1(output_root: &Path) -> (PathBuf, PathBuf) {
+        create_composed_named_artifact_staging_root_v1(output_root, "current-row-fresh-eval-v1")
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -6609,10 +6619,11 @@ mod tests {
         source: &H4CanarySourceV1,
         worker_count: usize,
         sessions_per_worker: usize,
+        first_eval_update: u64,
     ) -> ComposedFixedPolicyEvalArmV1 {
-        const FIRST_EVAL_UPDATE: u64 = 1_024;
         const EVAL_CLUSTER_COUNT: u64 = 16;
         const BATCH_EPISODES: u64 = 64;
+        assert!(first_eval_update > 0);
         let source_encoded = encode_native_train_state_payload_v1(
             &state
                 .snapshot_v1()
@@ -6638,7 +6649,7 @@ mod tests {
         let mut clusters = Vec::with_capacity(EVAL_CLUSTER_COUNT as usize);
         let mut total_elapsed_ns = 0_u64;
         for cluster_index in 0..EVAL_CLUSTER_COUNT {
-            let update_index = FIRST_EVAL_UPDATE + cluster_index;
+            let update_index = first_eval_update + cluster_index;
             let eval_state = composed_eval_state_at_update_v1(state, update_index);
             let eval_encoded = encode_native_train_state_payload_v1(
                 &eval_state
@@ -7583,6 +7594,7 @@ mod tests {
             &source,
             worker_count,
             sessions_per_worker,
+            1_024,
         );
         let monte_carlo_eval = run_composed_fixed_policy_eval_arm_v1(
             "current-net8-monte-carlo-8-update",
@@ -7590,6 +7602,7 @@ mod tests {
             &source,
             worker_count,
             sessions_per_worker,
+            1_024,
         );
         let history_value_gae_eval = run_composed_fixed_policy_eval_arm_v1(
             "current-net8-history-value-gae-8-update",
@@ -7597,6 +7610,7 @@ mod tests {
             &source,
             worker_count,
             sessions_per_worker,
+            1_024,
         );
         let gae_vs_mc = composed_paired_win_summary_v1(&history_value_gae_eval, &monte_carlo_eval);
         let gae_vs_parent = composed_paired_win_summary_v1(&history_value_gae_eval, &parent_eval);
@@ -7669,6 +7683,240 @@ mod tests {
             .expect("atomically publish composed factorial artifact directory");
         println!(
             "COMPOSED_FACTORIAL_CURRENT_ROW_FRESH_EVAL_RESULT {}",
+            report_published_path.display()
+        );
+        println!("{}", String::from_utf8(output).unwrap());
+    }
+
+    #[test]
+    #[ignore = "requires retained campaign stores, qualified critic, and exclusive CUDA GPU 1"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn current_net8_gae_16_update_development_v1() {
+        const REPRODUCED_UPDATE_COUNT: u64 = 8;
+        const CANDIDATE_UPDATE_COUNT: u64 = 16;
+        const FIRST_EVAL_UPDATE: u64 = 1_536;
+        const EXPECTED_REPRODUCED_STATE_SHA256: &str =
+            "ab7dd25ca6619a4a613ca089e1eb8e75981f8e5cfc0bae8535b78cddd7efa952";
+
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        assert_eq!(
+            std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL").as_deref(),
+            Ok("1")
+        );
+        let critic_root = std::env::var_os(NATIVE_HISTORY_VALUE_CRITIC_ROOT_ENV_V1)
+            .expect("qualified critic root environment authority");
+        let critic = load_native_structured_policy_residual_inference_v1(Path::new(&critic_root))
+            .expect("qualified history-value critic package");
+        assert!(critic.is_history_aware_v1());
+        assert_eq!(
+            h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
+            "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
+        );
+
+        let source = load_h4_canary_source_v1();
+        let (worker_count, sessions_per_worker) = (4_usize, 16_usize);
+        let (reproduced_training, reproduced_state) = run_h4_development_arm_with_state_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae,
+            worker_count,
+            sessions_per_worker,
+            REPRODUCED_UPDATE_COUNT,
+        );
+        let reproduced_state_sha256 = h4_canary_hex_v1(
+            reproduced_state
+                .state_sha256_v1()
+                .expect("reproduced eight-update state digest"),
+        );
+        assert_eq!(
+            reproduced_state_sha256, EXPECTED_REPRODUCED_STATE_SHA256,
+            "eight-update reproduction drift"
+        );
+
+        let (candidate_training, candidate_state) = run_h4_development_arm_with_state_v1(
+            &source,
+            NativeLiveSeatCreditPolicyReductionV1::HistoryValueGae,
+            worker_count,
+            sessions_per_worker,
+            CANDIDATE_UPDATE_COUNT,
+        );
+        let candidate_updates = candidate_training["updates"]
+            .as_array()
+            .expect("candidate update rows");
+        assert_eq!(candidate_updates.len(), CANDIDATE_UPDATE_COUNT as usize);
+        assert_eq!(
+            candidate_updates[REPRODUCED_UPDATE_COUNT as usize - 1]["train_state_sha256"].as_str(),
+            Some(EXPECTED_REPRODUCED_STATE_SHA256),
+            "sixteen-update run must share the exact first eight updates"
+        );
+        let update_numerics_stable = candidate_updates.iter().all(|update| {
+            let entropy = update["sampled_policy_entropy_estimate_nats"]
+                .as_f64()
+                .expect("candidate entropy");
+            let gradient_l2 = update["gradient_l2_norm"]
+                .as_f64()
+                .expect("candidate gradient norm");
+            let movement = update["parameter_movement_l2_from_initial"]
+                .as_f64()
+                .expect("candidate movement");
+            let value_mse = update["value_mse"].as_f64().expect("candidate value MSE");
+            entropy.is_finite()
+                && entropy >= 0.10
+                && gradient_l2.is_finite()
+                && gradient_l2 <= 5.0
+                && movement.is_finite()
+                && value_mse.is_finite()
+        });
+        let final_movement_l2 = candidate_updates.last().unwrap()
+            ["parameter_movement_l2_from_initial"]
+            .as_f64()
+            .unwrap();
+        let final_movement_within_bound = final_movement_l2 <= 1.25;
+
+        let output_root = h4_canary_path_v1(
+            "MTG_KERNEL_GAE_16_DEVELOPMENT_OUTPUT_ROOT",
+            "D:\\mtg-kernel-composed-factorial-v1\\gae-16-update-development-v1",
+        );
+        fs::create_dir_all(&output_root).expect("create GAE 16-update output root");
+        let (staging_root, published_root) =
+            create_composed_named_artifact_staging_root_v1(&output_root, "fresh-eval-v1");
+        let reproduced_state_staging_path = staging_root.join("gae-8-update.state.f32le");
+        let candidate_state_staging_path = staging_root.join("gae-16-update.state.f32le");
+        let report_staging_path = staging_root.join("report.json");
+        let reproduced_state_published_path = published_root.join("gae-8-update.state.f32le");
+        let candidate_state_published_path = published_root.join("gae-16-update.state.f32le");
+        let report_published_path = published_root.join("report.json");
+
+        let parent_eval = run_composed_fixed_policy_eval_arm_v1(
+            "update-512-parent",
+            &source.train_state,
+            &source,
+            worker_count,
+            sessions_per_worker,
+            FIRST_EVAL_UPDATE,
+        );
+        let reproduced_eval = run_composed_fixed_policy_eval_arm_v1(
+            "current-net8-history-value-gae-8-update-reproduced",
+            &reproduced_state,
+            &source,
+            worker_count,
+            sessions_per_worker,
+            FIRST_EVAL_UPDATE,
+        );
+        let candidate_eval = run_composed_fixed_policy_eval_arm_v1(
+            "current-net8-history-value-gae-16-update",
+            &candidate_state,
+            &source,
+            worker_count,
+            sessions_per_worker,
+            FIRST_EVAL_UPDATE,
+        );
+        let candidate_vs_parent = composed_paired_win_summary_v1(&candidate_eval, &parent_eval);
+        let candidate_vs_reproduced =
+            composed_paired_win_summary_v1(&candidate_eval, &reproduced_eval);
+        let reproduced_vs_parent = composed_paired_win_summary_v1(&reproduced_eval, &parent_eval);
+        let paired_net = |summary: &serde_json::Value| -> i64 {
+            summary["treatment_only_wins"].as_u64().unwrap() as i64
+                - summary["control_only_wins"].as_u64().unwrap() as i64
+        };
+        let paired_seat_net = |summary: &serde_json::Value, seat: &str| -> i64 {
+            summary["by_seat"][seat]["treatment_only_wins"]
+                .as_u64()
+                .unwrap() as i64
+                - summary["by_seat"][seat]["control_only_wins"]
+                    .as_u64()
+                    .unwrap() as i64
+        };
+        let candidate_vs_parent_net = paired_net(&candidate_vs_parent);
+        let candidate_vs_reproduced_net = paired_net(&candidate_vs_reproduced);
+        let candidate_vs_parent_p0_net = paired_seat_net(&candidate_vs_parent, "p0");
+        let candidate_vs_parent_p1_net = paired_seat_net(&candidate_vs_parent, "p1");
+        let candidate_vs_parent_margin = candidate_vs_parent_net >= 16;
+        let candidate_vs_reproduced_margin = candidate_vs_reproduced_net >= 8;
+        let seat_nonregression = candidate_vs_parent_p0_net >= 0 && candidate_vs_parent_p1_net >= 0;
+        let advance = update_numerics_stable
+            && final_movement_within_bound
+            && candidate_vs_parent_margin
+            && candidate_vs_reproduced_margin
+            && seat_nonregression;
+
+        let reproduced_state_artifact = persist_composed_train_state_v1(
+            &reproduced_state,
+            &reproduced_state_staging_path,
+            &reproduced_state_published_path,
+        );
+        let candidate_state_artifact = persist_composed_train_state_v1(
+            &candidate_state,
+            &candidate_state_staging_path,
+            &candidate_state_published_path,
+        );
+        let report = serde_json::json!({
+            "schema": "mtg-kernel-current-net8-gae-16-update-development/v1",
+            "status": "complete",
+            "reward": "natural-terminal-win-loss-draw-only/v1",
+            "decision": if advance {
+                "ADVANCE_TO_CANDIDATE_02_V3_DESIGN"
+            } else {
+                "STOP_FIXED_GAE_16_UPDATE_EXTENSION"
+            },
+            "nonclaims": ["development-strength-screen", "not-formal-strength-evidence", "not-promotable", "no-pro-level-claim"],
+            "fixed": {
+                "source_checkpoint_state_sha256": "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0",
+                "critic_composite_model_parameter_sha256": "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22",
+                "base_seed": 970001_u64,
+                "training_first_episode_index": 32768_u64,
+                "training_last_episode_index": 33791_u64,
+                "evaluation_first_episode_index": FIRST_EVAL_UPDATE * 64,
+                "evaluation_episode_count_per_arm": 1024_u64,
+                "worker_count": worker_count,
+                "sessions_per_worker": sessions_per_worker,
+            },
+            "training": {
+                "reproduced_8_update": reproduced_training,
+                "candidate_16_update": candidate_training,
+            },
+            "state_artifacts": {
+                "reproduced_8_update": reproduced_state_artifact,
+                "candidate_16_update": candidate_state_artifact,
+            },
+            "fresh_evaluation": {
+                "common_roots": true,
+                "fixed_policy_during_each_rollout": true,
+                "post_rollout_updates_discarded": true,
+                "arms": {
+                    "parent": parent_eval.report,
+                    "reproduced_8_update": reproduced_eval.report,
+                    "candidate_16_update": candidate_eval.report,
+                },
+                "paired": {
+                    "candidate_16_update_vs_parent": candidate_vs_parent,
+                    "candidate_16_update_vs_reproduced_8_update": candidate_vs_reproduced,
+                    "reproduced_8_update_vs_parent": reproduced_vs_parent,
+                },
+            },
+            "development_gate": {
+                "update_numerics_stable": update_numerics_stable,
+                "minimum_entropy": 0.10,
+                "maximum_gradient_l2": 5.0,
+                "final_movement_l2": final_movement_l2,
+                "maximum_final_movement_l2": 1.25,
+                "final_movement_within_bound": final_movement_within_bound,
+                "candidate_vs_parent_net": candidate_vs_parent_net,
+                "required_candidate_vs_parent_net": 16_i64,
+                "candidate_vs_reproduced_8_update_net": candidate_vs_reproduced_net,
+                "required_candidate_vs_reproduced_8_update_net": 8_i64,
+                "candidate_vs_parent_p0_net": candidate_vs_parent_p0_net,
+                "candidate_vs_parent_p1_net": candidate_vs_parent_p1_net,
+                "seat_nonregression": seat_nonregression,
+                "advance": advance,
+            },
+        });
+        let output =
+            serde_json::to_vec_pretty(&report).expect("serialize GAE 16-update development report");
+        write_composed_staged_file_v1(&report_staging_path, &output);
+        fs::rename(&staging_root, &published_root)
+            .expect("atomically publish GAE 16-update development artifact directory");
+        println!(
+            "CURRENT_NET8_GAE_16_UPDATE_DEVELOPMENT_RESULT {}",
             report_published_path.display()
         );
         println!("{}", String::from_utf8(output).unwrap());
