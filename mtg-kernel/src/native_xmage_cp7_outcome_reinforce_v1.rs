@@ -5685,7 +5685,6 @@ fn run_fixed_native_v4_training_v1(
                 native_state_sha256: lower_hex_raw32_v1(encoded.digests.native_state_sha256),
             },
             non_claims: vec![
-                "arm candidate authority cannot enter terminal gameplay gates".to_owned(),
                 "external software anchor is not professional-level evidence".to_owned(),
                 "terminal win/loss/draw is the only playing-strength outcome".to_owned(),
             ],

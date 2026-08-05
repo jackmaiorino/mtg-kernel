@@ -11,6 +11,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -37,11 +38,18 @@ from outcome_v2 import (
 
 SCHEMA = "mtg-kernel-current-net8-cp7-terminal-response-v4-collection/v1"
 MANIFEST_SCHEMA = "mtg-kernel-current-net8-cp7-terminal-response-v4-manifest/v1"
+IDENTITY_SCHEMA = "mtg-kernel-current-net8-cp7-terminal-response-v4-revealed-identity/v1"
 CARD_DATABASE_SHA256 = "b833d6a7b44ad1f7bd6aef9a21d1f2498136ef61e44db0e48e60e5ec471ce09d"
 PAIR_PREFIX = "XMAGE_RALLY_ANCHOR_PAIR PASS "
 FINAL_PREFIX = "XMAGE_RALLY_ANCHOR_SPIKE PASS "
 MARKER_FIELDS = re.compile(r"([a-z0-9_]+)=([^ ]+)")
 DEFAULT_MAGE_REPO = Path(r"C:\Users\Jack\IdeaProjects\mage-kernel-anchor-spike-v1")
+SCREEN_PANEL = (1_820_001, 0, 32)
+FORMAL_COLLECTION_PANEL = (1_930_001, 0, 256)
+MINIMUM_SCREEN_GAMES_PER_SECOND = 0.60
+MINIMUM_AVAILABLE_MEMORY_BYTES = 16 * 1024**3
+MAXIMUM_SYSTEM_MEMORY_USED_PERCENT = 90.0
+MAXIMUM_GPU_1_MEMORY_USED_MIB = 512.0
 
 
 def fail(message: str) -> None:
@@ -74,6 +82,103 @@ def _git_commit(repo: Path) -> str:
             "HEAD",
         ]
     )
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        value = json.load(handle)
+    if not isinstance(value, dict):
+        fail(f"JSON evidence is not an object: {path}")
+    return value
+
+
+def _same_path(left: str, right: Path) -> bool:
+    return Path(left).resolve(strict=False) == right.resolve(strict=False)
+
+
+def _validate_collection_prerequisites(args: argparse.Namespace) -> dict[str, Any] | None:
+    panel = (args.base_seed, args.pair_start, args.pairs)
+    if panel == SCREEN_PANEL:
+        if args.throughput_screen_report is not None or args.revealed_identity_report is not None:
+            fail("the revealed throughput screen may not claim prior gate evidence")
+        return None
+    if panel != FORMAL_COLLECTION_PANEL:
+        fail("collector panel must be the exact revealed screen or formal V4 collection")
+    if args.throughput_screen_report is None or args.revealed_identity_report is None:
+        fail("formal V4 collection requires throughput-screen and revealed-identity reports")
+
+    screen_path = args.throughput_screen_report.resolve(strict=True)
+    identity_path = args.revealed_identity_report.resolve(strict=True)
+    screen = _load_json(screen_path)
+    identity = _load_json(identity_path)
+    screen_panel = screen.get("panel")
+    resources = screen.get("resource_usage")
+    screen_manifest = screen.get("manifest")
+    if (
+        screen.get("schema") != SCHEMA
+        or screen.get("status") != "complete"
+        or not isinstance(screen_panel, dict)
+        or screen_panel.get("arm") != "gae8"
+        or screen_panel.get("opponent") != "xmage-cp7"
+        or screen_panel.get("cp7_skill") != 7
+        or screen_panel.get("base_seed") != SCREEN_PANEL[0]
+        or screen_panel.get("pair_start") != SCREEN_PANEL[1]
+        or screen_panel.get("pair_count") != SCREEN_PANEL[2]
+        or screen_panel.get("episode_count") != SCREEN_PANEL[2] * 2
+        or screen_panel.get("workers") != args.workers
+        or not isinstance(screen.get("games_per_second"), (int, float))
+        or isinstance(screen.get("games_per_second"), bool)
+        or not math.isfinite(float(screen["games_per_second"]))
+        or float(screen["games_per_second"]) < MINIMUM_SCREEN_GAMES_PER_SECOND
+        or not isinstance(resources, dict)
+        or resources.get("system_memory_available_bytes_minimum", 0)
+        < MINIMUM_AVAILABLE_MEMORY_BYTES
+        or resources.get("system_memory_used_percent", {}).get("maximum", 100.0)
+        > MAXIMUM_SYSTEM_MEMORY_USED_PERCENT
+        or resources.get("gpu_1_memory_used_mib", {}).get("maximum", float("inf"))
+        > MAXIMUM_GPU_1_MEMORY_USED_MIB
+        or not isinstance(screen_manifest, dict)
+        or not isinstance(screen_manifest.get("path"), str)
+        or not isinstance(screen_manifest.get("sha256"), str)
+    ):
+        fail("throughput-screen report does not satisfy the formal collection gate")
+    screen_manifest_path = Path(screen_manifest["path"]).resolve(strict=True)
+    if sha256(screen_manifest_path) != screen_manifest["sha256"]:
+        fail("throughput-screen manifest hash mismatch")
+
+    identity_candidate = identity.get("collection_reports", {}).get("candidate")
+    expected_candidate_root = screen_path.parent / "tasks"
+    if (
+        identity.get("schema") != IDENTITY_SCHEMA
+        or identity.get("status") != "pass"
+        or identity.get("base_seed") != SCREEN_PANEL[0]
+        or identity.get("first_pair") != SCREEN_PANEL[1]
+        or identity.get("pair_count") != SCREEN_PANEL[2]
+        or identity.get("episode_count") != SCREEN_PANEL[2] * 2
+        or identity.get("comparison")
+        != "all outcome-v2 fields except shard-local ordinal offsets"
+        or not isinstance(identity.get("candidate_root"), str)
+        or not _same_path(identity["candidate_root"], expected_candidate_root)
+        or not isinstance(identity_candidate, dict)
+        or identity_candidate.get("sha256") != sha256(screen_path)
+        or not isinstance(identity_candidate.get("path"), str)
+        or not _same_path(identity_candidate["path"], screen_path)
+        or not isinstance(identity.get("pairs"), list)
+        or len(identity["pairs"]) != SCREEN_PANEL[2]
+    ):
+        fail("revealed-identity report does not satisfy the formal collection gate")
+    return {
+        "throughput_screen_report": {
+            "path": str(screen_path),
+            "sha256": sha256(screen_path),
+            "games_per_second": screen["games_per_second"],
+            "workers": screen_panel["workers"],
+        },
+        "revealed_identity_report": {
+            "path": str(identity_path),
+            "sha256": sha256(identity_path),
+        },
+    }
 
 
 def _chunk_ranges(pair_start: int, pairs: int, task_pairs: int) -> list[tuple[int, int]]:
@@ -481,6 +586,7 @@ def _manifest(
     package: dict[str, Any],
     input_hashes: dict[str, str],
     toolchain: dict[str, Any],
+    prerequisites: dict[str, Any] | None,
 ) -> dict[str, Any]:
     kernel_repo = Path(__file__).resolve().parents[2]
     script_root = Path(__file__).resolve().parent
@@ -515,6 +621,7 @@ def _manifest(
             "workload_device": "cpu",
         },
         "output_root": str(args.evidence_root),
+        "collection_prerequisites": prerequisites,
         "toolchain": toolchain,
         "analysis_policy": {
             "outcome_based_early_analysis": False,
@@ -524,6 +631,7 @@ def _manifest(
 
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
+    prerequisites = _validate_collection_prerequisites(args)
     package = load_exact_gae8_package(args.gae8_root)
     scorer_hash = sha256(args.scorer_exe)
     database_hash = sha256(args.source_database)
@@ -537,6 +645,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         package,
         {"scorer": scorer_hash, "database": database_hash},
         toolchain,
+        prerequisites,
     )
     exclusive_write(manifest_path, canonical_json_bytes(manifest, indent=2))
     (args.evidence_root / "tasks").mkdir()
@@ -680,6 +789,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--task-pairs", type=int, default=32)
     parser.add_argument("--task-timeout-seconds", type=int, default=7_200)
+    parser.add_argument("--throughput-screen-report", type=Path)
+    parser.add_argument("--revealed-identity-report", type=Path)
     parser.add_argument("--linker-file-version", default="14.50.35725.0")
     return parser
 

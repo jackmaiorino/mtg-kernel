@@ -47,6 +47,11 @@ class SelectorV4Tests(unittest.TestCase):
             "maximum_action_total_variation": 0.10,
             "p99_absolute_joint_log_likelihood_ratio_nearest_rank": 0.5,
             "above_absolute_joint_log_ratio_1_count": 0,
+            "worst_group": {
+                "signed_joint_log_likelihood_ratio": 0.5,
+                "absolute_joint_log_likelihood_ratio": 0.5,
+                "likelihood_ratio": 1.6487212707,
+            },
         }
         return {
             "update": update,
@@ -326,6 +331,18 @@ class SelectorV4Tests(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest))
             with self.assertRaisesRegex(ValueError, "candidate package binding mismatch"):
                 SELECTOR.validate_arm("beta-1.0", report_path, candidate_root, self.corpus())
+
+    def test_worst_group_nonfinite_or_absent_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report_path, candidate_root = self.make_arm(
+                root, "beta-0.3", [0.012, 0.020, 0.018, 0.017]
+            )
+            report = json.loads(report_path.read_text())
+            report["checkpoints"][1]["tail_shape"]["worst_group"]["likelihood_ratio"] = None
+            report_path.write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "gate disagreement"):
+                SELECTOR.validate_arm("beta-0.3", report_path, candidate_root, self.corpus())
 
 
 if __name__ == "__main__":

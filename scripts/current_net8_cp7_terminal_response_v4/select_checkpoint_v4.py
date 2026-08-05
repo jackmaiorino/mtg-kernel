@@ -229,7 +229,12 @@ def validate_manifest(
 def _checkpoint_gate(checkpoint: dict[str, Any]) -> tuple[bool, bool, float]:
     movement = checkpoint.get("movement")
     tail = checkpoint.get("tail_shape")
-    if not isinstance(movement, dict) or not isinstance(tail, dict):
+    worst_group = tail.get("worst_group") if isinstance(tail, dict) else None
+    if (
+        not isinstance(movement, dict)
+        or not isinstance(tail, dict)
+        or not isinstance(worst_group, dict)
+    ):
         raise ValueError("checkpoint movement metrics are absent")
     values = [
         checkpoint.get("parameter_l2_from_gae8"),
@@ -245,6 +250,9 @@ def _checkpoint_gate(checkpoint: dict[str, Any]) -> tuple[bool, bool, float]:
         tail.get("p99_action_total_variation_nearest_rank"),
         tail.get("maximum_action_total_variation"),
         tail.get("p99_absolute_joint_log_likelihood_ratio_nearest_rank"),
+        worst_group.get("signed_joint_log_likelihood_ratio"),
+        worst_group.get("absolute_joint_log_likelihood_ratio"),
+        worst_group.get("likelihood_ratio"),
     ]
     finite = all(_finite(value) for value in values)
     count = tail.get("above_absolute_joint_log_ratio_1_count")

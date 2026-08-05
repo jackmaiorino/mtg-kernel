@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -14,6 +16,7 @@ from collect_corpus_v4 import (
     _popen_group_options,
     _resource_summary,
     _terminate_process_tree,
+    _validate_collection_prerequisites,
     _validate_log_markers,
 )
 
@@ -73,6 +76,85 @@ class CollectCorpusV4Test(unittest.TestCase):
         self.assertIn("process_tree_rss_bytes", summary)
         self.assertIn("system_memory_available_bytes_minimum", summary)
         self.assertIn("gpu_1_utilization_percent", summary)
+
+    def test_formal_collection_requires_passing_screen_and_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            screen_root = root / "screen"
+            screen_root.mkdir()
+            (screen_root / "tasks").mkdir()
+            manifest_path = screen_root / "manifest.json"
+            manifest_path.write_text("{}\n", encoding="utf-8")
+            screen_path = screen_root / "report.json"
+            screen = {
+                "schema": "mtg-kernel-current-net8-cp7-terminal-response-v4-collection/v1",
+                "status": "complete",
+                "manifest": {
+                    "path": str(manifest_path),
+                    "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                },
+                "panel": {
+                    "arm": "gae8",
+                    "opponent": "xmage-cp7",
+                    "cp7_skill": 7,
+                    "base_seed": 1_820_001,
+                    "pair_start": 0,
+                    "pair_count": 32,
+                    "episode_count": 64,
+                    "workers": 8,
+                },
+                "games_per_second": 0.8,
+                "resource_usage": {
+                    "system_memory_available_bytes_minimum": 32 * 1024**3,
+                    "system_memory_used_percent": {"maximum": 50.0},
+                    "gpu_1_memory_used_mib": {"maximum": 9.0},
+                },
+            }
+            screen_path.write_text(json.dumps(screen), encoding="utf-8")
+            identity_path = root / "identity.json"
+            identity = {
+                "schema": "mtg-kernel-current-net8-cp7-terminal-response-v4-revealed-identity/v1",
+                "status": "pass",
+                "comparison": "all outcome-v2 fields except shard-local ordinal offsets",
+                "base_seed": 1_820_001,
+                "first_pair": 0,
+                "pair_count": 32,
+                "episode_count": 64,
+                "candidate_root": str(screen_root / "tasks"),
+                "collection_reports": {
+                    "candidate": {
+                        "path": str(screen_path),
+                        "sha256": hashlib.sha256(screen_path.read_bytes()).hexdigest(),
+                    }
+                },
+                "pairs": [{"pair_index": pair} for pair in range(32)],
+            }
+            identity_path.write_text(json.dumps(identity), encoding="utf-8")
+            args = argparse.Namespace(
+                base_seed=1_930_001,
+                pair_start=0,
+                pairs=256,
+                workers=8,
+                throughput_screen_report=screen_path,
+                revealed_identity_report=identity_path,
+            )
+            evidence = _validate_collection_prerequisites(args)
+            self.assertEqual(evidence["throughput_screen_report"]["games_per_second"], 0.8)
+
+            args.revealed_identity_report = None
+            with self.assertRaisesRegex(RuntimeError, "requires throughput-screen"):
+                _validate_collection_prerequisites(args)
+
+    def test_revealed_screen_cannot_claim_prior_gate_evidence(self) -> None:
+        args = argparse.Namespace(
+            base_seed=1_820_001,
+            pair_start=0,
+            pairs=32,
+            workers=8,
+            throughput_screen_report=None,
+            revealed_identity_report=None,
+        )
+        self.assertIsNone(_validate_collection_prerequisites(args))
 
     @unittest.skipUnless(os.name == "nt", "Windows process-tree contract")
     def test_windows_process_tree_termination_checks_descendant_liveness(self) -> None:
