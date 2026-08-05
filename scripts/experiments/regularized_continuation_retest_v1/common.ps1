@@ -646,7 +646,9 @@ function New-UniqueAttemptRoot {
 function Get-PassedIdentityPrerequisite {
     param(
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
-        [Parameter(Mandatory = $true)][string]$CandidateCommit
+        [Parameter(Mandatory = $true)][string]$CandidateCommit,
+        [Parameter(Mandatory = $true)][string]$CandidateExecutableSha256,
+        [Parameter(Mandatory = $true)][string]$RepoRoot
     )
     $gateRoot = Join-Path $EvidenceRoot 'beta-zero-identity'
     $latestAttempt = Get-ChildItem -LiteralPath $gateRoot -Directory -ErrorAction Stop |
@@ -663,13 +665,42 @@ function Get-PassedIdentityPrerequisite {
     if ($manifest.passed -ne $true -or $manifest.output_hashes_bit_identical -ne $true -or $manifest.close_reopen_observed -ne $true) {
         throw 'latest beta-zero identity attempt did not pass every prerequisite'
     }
-    if ([string]$manifest.git.candidate.commit -ne $CandidateCommit) {
-        throw "identity candidate commit does not match throughput commit: $($manifest.git.candidate.commit) versus $CandidateCommit"
+    $sourceCandidateCommit = [string]$manifest.git.candidate.commit
+    $sourceExecutableSha256 = [string]$manifest.executables.candidate.sha256
+    $transfer = $false
+    $transferFiles = @()
+    if ($sourceCandidateCommit -ne $CandidateCommit) {
+        $safe = $RepoRoot.Replace('\', '/')
+        & git -c "safe.directory=$safe" -C $RepoRoot merge-base --is-ancestor $sourceCandidateCommit $CandidateCommit
+        Assert-LastExitCode $LASTEXITCODE 'identity prerequisite commit ancestry'
+        $transferFiles = @(& git -c "safe.directory=$safe" -C $RepoRoot diff --name-only $sourceCandidateCommit $CandidateCommit 2>&1)
+        Assert-LastExitCode $LASTEXITCODE 'identity prerequisite transfer diff'
+        $approvedTransferFiles = @(
+            'scripts/experiments/regularized_continuation_retest_v1/coefficient-screen.ps1',
+            'scripts/experiments/regularized_continuation_retest_v1/common.ps1',
+            'scripts/experiments/regularized_continuation_retest_v1/throughput-screen.ps1'
+        )
+        $sortedTransferFiles = @($transferFiles | Sort-Object)
+        if ($sortedTransferFiles.Count -ne $approvedTransferFiles.Count -or
+            (Compare-Object -ReferenceObject $approvedTransferFiles -DifferenceObject $sortedTransferFiles).Count -ne 0) {
+            throw "identity prerequisite commit differs outside the approved harness-only fix and transfer wiring: $($transferFiles -join ', ')"
+        }
+        if ($sourceExecutableSha256 -ne $CandidateExecutableSha256) {
+            throw 'identity prerequisite transfer executable SHA mismatch'
+        }
+        $transfer = $true
+    }
+    elseif ($sourceExecutableSha256 -ne $CandidateExecutableSha256) {
+        throw 'identity prerequisite executable SHA mismatch'
     }
     return [ordered]@{
         manifest_path = $manifestPath
         manifest_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()
-        candidate_commit = [string]$manifest.git.candidate.commit
+        candidate_commit = $CandidateCommit
+        source_candidate_commit = $sourceCandidateCommit
+        candidate_executable_sha256 = $CandidateExecutableSha256
+        harness_only_transfer = $transfer
+        transfer_files = @($transferFiles)
         store_tree_sha256 = [string]$manifest.outputs.candidate.store_tree_sha256
     }
 }

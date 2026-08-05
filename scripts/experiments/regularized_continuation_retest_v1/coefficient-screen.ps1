@@ -139,8 +139,6 @@ $phase = 'preflight'
 try {
     Assert-ExclusiveWindow
     $git = Get-GitRecord -RepoRoot $script:RepoRoot
-    $identity = Get-PassedIdentityPrerequisite -EvidenceRoot $PrerequisiteRoot -CandidateCommit $git.commit
-    $throughput = Get-PassedThroughputPrerequisite -EvidenceRoot $PrerequisiteRoot -CandidateCommit $git.commit -IdentityManifestSha256 $identity.manifest_sha256
     $toolchain = Get-ToolchainRecord
     $cuda = Get-CudaRecord
     $inputs = Get-InputRecord
@@ -150,6 +148,8 @@ try {
     Assert-NoForeignGpu1ComputeProcesses
     $executable = Get-ReleaseTestExecutable -RepoRoot $script:RepoRoot -EvidenceRoot $root -Label 'coefficient-screen'
     $executableHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $executable).Hash.ToLowerInvariant()
+    $identity = Get-PassedIdentityPrerequisite -EvidenceRoot $PrerequisiteRoot -CandidateCommit $git.commit -CandidateExecutableSha256 $executableHash -RepoRoot $script:RepoRoot
+    $throughput = Get-PassedThroughputPrerequisite -EvidenceRoot $PrerequisiteRoot -CandidateCommit $git.commit -IdentityManifestSha256 $identity.manifest_sha256
 
     $armPlan = @(
         [ordered]@{ beta = '0'; ordinal = 0 },

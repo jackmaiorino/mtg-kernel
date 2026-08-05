@@ -9,12 +9,12 @@ $root = New-UniqueAttemptRoot -EvidenceRoot $EvidenceRoot -GateName 'throughput-
 
 Assert-ExclusiveWindow
 $git = Get-GitRecord -RepoRoot $script:RepoRoot
-$identityPrerequisite = Get-PassedIdentityPrerequisite -EvidenceRoot $EvidenceRoot -CandidateCommit $git.commit
 $toolchain = Get-ToolchainRecord
 $cuda = Get-CudaRecord
 $inputs = Get-InputRecord
 $executable = Get-ReleaseTestExecutable -RepoRoot $script:RepoRoot -EvidenceRoot $root -Label 'candidate'
 $executableHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $executable).Hash.ToLowerInvariant()
+$identityPrerequisite = Get-PassedIdentityPrerequisite -EvidenceRoot $EvidenceRoot -CandidateCommit $git.commit -CandidateExecutableSha256 $executableHash -RepoRoot $script:RepoRoot
 $gpu1 = Assert-Gpu1Idle
 $gpu0 = Assert-GpuIdentity -Ordinal 0
 $prelaunchResources = Assert-PrelaunchResourceWindow
