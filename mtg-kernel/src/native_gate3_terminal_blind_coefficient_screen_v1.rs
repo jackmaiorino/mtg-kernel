@@ -677,7 +677,10 @@ fn score_generation_v1(
     Ok((overall_report, reports, parameter_l2))
 }
 
-fn compatible_runs_v1(parent: &ValidatedTrainRunV2, candidate: &ValidatedTrainRunV2) -> bool {
+fn compatible_model_runtime_v1(
+    parent: &ValidatedTrainRunV2,
+    candidate: &ValidatedTrainRunV2,
+) -> bool {
     let parent_record = parent.record();
     let candidate_record = candidate.record();
     parent_record.environment().deck_ids() == candidate_record.environment().deck_ids()
@@ -691,8 +694,27 @@ fn compatible_runs_v1(parent: &ValidatedTrainRunV2, candidate: &ValidatedTrainRu
             == candidate_record.topology().sessions_per_worker()
         && parent_record.topology().broker_batch_target()
             == candidate_record.topology().broker_batch_target()
-        && parent.environment_trajectory_contract_v1()
-            == candidate.environment_trajectory_contract_v1()
+}
+
+fn validate_continuation_run_v1(
+    parent: &ValidatedTrainRunV2,
+    candidate: &ValidatedTrainRunV2,
+    pool: &OpponentLadderPoolContractV1,
+) -> Result<(), ScreenErrorV1> {
+    if candidate.record().contracts().opponent_ladder_pool.as_ref() != Some(pool) {
+        return Err(ScreenErrorV1::new("candidate and Pool3 identity mismatch"));
+    }
+    if candidate.environment_trajectory_contract_v1()
+        != crate::native_training_store_run_v2::NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+    {
+        return Err(ScreenErrorV1::new("candidate Store is not envrand-v2"));
+    }
+    if !compatible_model_runtime_v1(parent, candidate) {
+        return Err(ScreenErrorV1::new(
+            "candidate and parent model-runtime identity mismatch",
+        ));
+    }
+    Ok(())
 }
 
 fn build_ladder_v1(pool_directory: &Path) -> Result<Arc<LadderOpponentEngineV1>, ScreenErrorV1> {
@@ -716,15 +738,11 @@ fn build_ladder_v1(pool_directory: &Path) -> Result<Arc<LadderOpponentEngineV1>,
 
 fn build_corpus_v1(
     parent: &LoadedCheckpointV1,
+    environment_run: &ValidatedTrainRunV2,
     ladder: Arc<LadderOpponentEngineV1>,
     evaluation_seed: u64,
 ) -> Result<BlindCorpusV1, ScreenErrorV1> {
-    let record = parent.run.record();
-    if parent.run.environment_trajectory_contract_v1()
-        != crate::native_training_store_run_v2::NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
-    {
-        return Err(ScreenErrorV1::new("parent Store is not envrand-v2"));
-    }
+    let record = environment_run.record();
     let worker_count = usize::try_from(record.topology().worker_count())
         .map_err(|_| ScreenErrorV1::new("worker count overflow"))?;
     let sessions_per_worker = usize::try_from(record.topology().sessions_per_worker())
@@ -839,28 +857,30 @@ fn run_screen_v1(request: ScreenRequestV1) -> Result<ScreenOutputV1, ScreenError
         .map_err(|error| ScreenErrorV1::new(format!("Pool3 read failed: {error}")))?;
     let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
         .map_err(|error| ScreenErrorV1::new(format!("Pool3 decode failed: {error}")))?;
+    let first_arm = request
+        .arms
+        .first()
+        .ok_or_else(|| ScreenErrorV1::new("Gate 3 request has no continuation arm"))?;
+    let (_, environment_run) = read_validated_run_v1(&first_arm.store_root)?;
+    validate_continuation_run_v1(&parent.run, &environment_run, &pool)?;
     let pool_directory = request
         .pool_json_path
         .parent()
         .ok_or_else(|| ScreenErrorV1::new("Pool3 JSON parent is missing"))?;
     let ladder = build_ladder_v1(pool_directory)?;
     let parent_parameters = snapshot_parameters_v1(&parent.checkpoint, &parent.payload)?;
-    let mut corpus = build_corpus_v1(&parent, ladder, request.evaluation_base_seed)?;
+    let mut corpus = build_corpus_v1(
+        &parent,
+        &environment_run,
+        ladder,
+        request.evaluation_base_seed,
+    )?;
     corpus.report.evaluation_base_seed = request.evaluation_base_seed;
     corpus.report.parent_identity = checkpoint_identity_report_v1(&parent.run, &parent.checkpoint);
     let mut arms = Vec::with_capacity(request.arms.len());
     for arm_request in request.arms {
         let (_, arm_run) = read_validated_run_v1(&arm_request.store_root)?;
-        // The fixed parent predates the current Pool3 rotation. The continuation
-        // Stores, not the parent's historical run record, bind this evaluation pool.
-        if arm_run.record().contracts().opponent_ladder_pool.as_ref() != Some(&pool) {
-            return Err(ScreenErrorV1::new("candidate and Pool3 identity mismatch"));
-        }
-        if !compatible_runs_v1(&parent.run, &arm_run) {
-            return Err(ScreenErrorV1::new(
-                "candidate and parent runtime identity mismatch",
-            ));
-        }
+        validate_continuation_run_v1(&parent.run, &arm_run, &pool)?;
         let mut checkpoints = Vec::with_capacity(arm_request.generations.len());
         for generation in arm_request.generations {
             let candidate = load_checkpoint_v1(&arm_request.store_root, generation)?;

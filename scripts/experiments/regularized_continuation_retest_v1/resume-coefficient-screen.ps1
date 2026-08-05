@@ -206,15 +206,34 @@ try {
                 $priorLogText.Contains('Gate 3 terminal-blind screen failed: parent and Pool3 identity mismatch')) {
                 'EVALUATOR-PARENT-POOL-CHECK-FAILURE-BEFORE-CORPUS-CONSTRUCTION'
             }
+            elseif (-not $hasUtf8Bom -and
+                $priorLogText.Contains('Gate 3 terminal-blind screen failed: parent Store is not envrand-v2')) {
+                'EVALUATOR-PARENT-ENVIRONMENT-CHECK-FAILURE-BEFORE-CORPUS-CONSTRUCTION'
+            }
             else {
                 throw "prior evaluator attempt $priorAttempt is not an approved pre-corpus request-transport failure"
             }
+            if ($priorAttempt -le 3) {
+                $priorExecutablePath = Join-Path $AttemptRoot "training-executable-$([string]$plan.executable.sha256).exe"
+                $priorExecutableExpectedSha256 = [string]$plan.executable.sha256
+            }
+            else {
+                $priorExecutableMatches = @(Get-ChildItem -LiteralPath $AttemptRoot -File -Filter "evaluator-executable-attempt-$('{0:d3}' -f $priorAttempt)-*.exe")
+                if ($priorExecutableMatches.Count -ne 1 -or
+                    $priorExecutableMatches[0].Name -notmatch '-(?<sha>[0-9a-f]{64})\.exe$') {
+                    throw "prior evaluator attempt $priorAttempt has no unique hash-named executable archive"
+                }
+                $priorExecutablePath = $priorExecutableMatches[0].FullName
+                $priorExecutableExpectedSha256 = [string]$Matches.sha
+            }
+            Assert-FileSha256 -Path $priorExecutablePath -Expected $priorExecutableExpectedSha256 -Label "prior evaluator attempt $priorAttempt executable"
             $priorEvaluatorFailures += [ordered]@{
                 attempt = $priorAttempt
                 disposition = $disposition
                 request = [ordered]@{ path = $priorRequestPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorRequestPath).Hash.ToLowerInvariant() }
                 evaluator_log = [ordered]@{ path = $priorLogPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorLogPath).Hash.ToLowerInvariant() }
                 stopped_log = [ordered]@{ path = $priorStoppedPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorStoppedPath).Hash.ToLowerInvariant() }
+                executable = [ordered]@{ path = $priorExecutablePath; sha256 = $priorExecutableExpectedSha256 }
                 report_created = $false
                 corpus_constructed = $false
             }
@@ -271,8 +290,9 @@ try {
         $evaluatorSourceToRecoveryDiffFiles = @(& git -c "safe.directory=$safe" -C $script:RepoRoot diff --name-only $ExpectedEvaluatorSourceCommit ([string]$recoveryGit.commit))
         Assert-LastExitCode $LASTEXITCODE 'corrected evaluator source-to-recovery diff'
         $allowedPostBuildFile = 'scripts/experiments/regularized_continuation_retest_v1/resume-coefficient-screen.ps1'
-        if ($evaluatorSourceToRecoveryDiffFiles.Count -ne 1 -or
-            [string]$evaluatorSourceToRecoveryDiffFiles[0] -ne $allowedPostBuildFile) {
+        if ($evaluatorSourceToRecoveryDiffFiles.Count -gt 1 -or
+            ($evaluatorSourceToRecoveryDiffFiles.Count -eq 1 -and
+                [string]$evaluatorSourceToRecoveryDiffFiles[0] -ne $allowedPostBuildFile)) {
             throw "corrected evaluator source differs from recovery HEAD outside its recovery script: $($evaluatorSourceToRecoveryDiffFiles -join ', ')"
         }
         $evaluatorSourceCommit = $ExpectedEvaluatorSourceCommit
