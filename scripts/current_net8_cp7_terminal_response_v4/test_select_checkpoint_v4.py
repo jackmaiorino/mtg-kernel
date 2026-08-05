@@ -174,6 +174,7 @@ class SelectorV4Tests(unittest.TestCase):
                     "model_parameter_sha256": candidate["model_parameter_sha256"],
                     "native_state_sha256": candidate["native_state_sha256"],
                 },
+                "non_claims": SELECTOR.PACKAGE_NON_CLAIMS,
             }
             (candidate_root / SELECTOR.PACKAGE_MANIFEST_FILENAME).write_text(
                 json.dumps(package_manifest), encoding="utf-8"
@@ -251,24 +252,16 @@ class SelectorV4Tests(unittest.TestCase):
             final_manifest_path = final_package / SELECTOR.PACKAGE_MANIFEST_FILENAME
             final_manifest_text = final_manifest_path.read_text()
             final_manifest = json.loads(final_manifest_text)
+            selected_candidate_manifest = json.loads(
+                (arms["beta-1.0"][1] / SELECTOR.PACKAGE_MANIFEST_FILENAME).read_text()
+            )
             self.assertEqual(
                 list(final_manifest),
-                ["schema", "authority_kind", "source_result_sha256", "payload", "non_claims"],
+                list(selected_candidate_manifest),
             )
             self.assertEqual(
                 list(final_manifest["payload"]),
-                [
-                    "filename",
-                    "byte_count",
-                    "adam_step",
-                    "scorer_bias_anchor_f32_bits",
-                    "payload_sha256",
-                    "parameters_sha256",
-                    "first_moments_sha256",
-                    "second_moments_sha256",
-                    "model_parameter_sha256",
-                    "native_state_sha256",
-                ],
+                list(selected_candidate_manifest["payload"]),
             )
             self.assertEqual(
                 final_manifest_text,

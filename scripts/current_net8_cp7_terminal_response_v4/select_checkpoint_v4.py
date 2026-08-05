@@ -27,6 +27,10 @@ SUMMARY_SCHEMA = "mtg-kernel-current-net8-cp7-terminal-response-v4-selection-sum
 PACKAGE_SCHEMA = "mtg-kernel-xmage-fixed-native-state/v1"
 PAYLOAD_FILENAME = "checkpoint.state.f32le"
 PACKAGE_MANIFEST_FILENAME = "fixed_native_state.json"
+PACKAGE_NON_CLAIMS = [
+    "external software anchor is not professional-level evidence",
+    "terminal win/loss/draw is the only playing-strength outcome",
+]
 
 SOURCE = {
     "authority_kind": "current-net8-gae8-v1",
@@ -303,12 +307,14 @@ def _validate_candidate_package(
         or manifest.get("authority_kind") != ARMS[name]["candidate_authority"]
         or manifest.get("source_result_sha256") != report_sha256
         or payload != expected_payload
+        or manifest.get("non_claims") != PACKAGE_NON_CLAIMS
         or payload_path.stat().st_size != candidate.get("payload_byte_count")
         or sha256(payload_path) != candidate.get("payload_sha256")
     ):
         raise ValueError(f"{name} candidate package binding mismatch")
     return {
         "manifest_sha256": sha256(manifest_path),
+        "manifest_path": str(manifest_path.resolve()),
         "payload_path": str(payload_path.resolve()),
     }
 
@@ -548,27 +554,9 @@ def authorize(
             os.fsync(destination.fileno())
         if sha256(final_payload) != selected["candidate"]["payload_sha256"]:
             raise ValueError("final selected payload copy mismatch")
-        final_manifest = {
-            "schema": PACKAGE_SCHEMA,
-            "authority_kind": ARMS[selected["arm"]]["final_authority"],
-            "source_result_sha256": selection_sha,
-            "payload": {
-                "filename": PAYLOAD_FILENAME,
-                "byte_count": selected["candidate"]["payload_byte_count"],
-                "adam_step": selected["candidate"]["adam_step"],
-                "scorer_bias_anchor_f32_bits": selected["candidate"]["scorer_bias_anchor_f32_bits"],
-                "payload_sha256": selected["candidate"]["payload_sha256"],
-                "parameters_sha256": selected["candidate"]["parameters_sha256"],
-                "first_moments_sha256": selected["candidate"]["first_moments_sha256"],
-                "second_moments_sha256": selected["candidate"]["second_moments_sha256"],
-                "model_parameter_sha256": selected["candidate"]["model_parameter_sha256"],
-                "native_state_sha256": selected["candidate"]["native_state_sha256"],
-            },
-            "non_claims": [
-                "external software anchor is not professional-level evidence",
-                "terminal win/loss/draw is the only playing-strength outcome",
-            ],
-        }
+        final_manifest = load_json(Path(selected["candidate_package"]["manifest_path"]))
+        final_manifest["authority_kind"] = ARMS[selected["arm"]]["final_authority"]
+        final_manifest["source_result_sha256"] = selection_sha
         final_manifest_sha = write_new_json(
             final_package_root / PACKAGE_MANIFEST_FILENAME,
             final_manifest,
