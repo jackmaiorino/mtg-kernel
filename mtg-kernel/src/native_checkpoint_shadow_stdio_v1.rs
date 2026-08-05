@@ -592,6 +592,22 @@ struct FixedNativeStateManifestV1 {
     non_claims: Vec<String>,
 }
 
+fn fixed_native_authority_kind_is_valid_v1(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 96
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || *byte == b'-'
+                || (*byte == b'.'
+                    && index > 0
+                    && index + 1 < bytes.len()
+                    && bytes[index - 1].is_ascii_digit()
+                    && bytes[index + 1].is_ascii_digit())
+        })
+}
+
 struct FixedNativeStateShadowModelScorerV1 {
     state: NativePolicyValueTrainStateV1,
 }
@@ -703,12 +719,7 @@ fn load_fixed_native_state_v1(
     canonical.push(b'\n');
     if canonical != manifest_bytes
         || manifest.schema != FIXED_NATIVE_STATE_SCHEMA_V1
-        || manifest.authority_kind.is_empty()
-        || manifest.authority_kind.len() > 96
-        || !manifest
-            .authority_kind
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        || !fixed_native_authority_kind_is_valid_v1(&manifest.authority_kind)
         || manifest.payload.filename != FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1
         || manifest.payload.byte_count != NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
         || manifest.non_claims
@@ -798,16 +809,25 @@ mod fixed_native_state_tests_v1 {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn fixed_native_state_package_loads_and_rejects_payload_tamper_v1() {
+    fn fixed_native_state_package_loads_dotted_authority_and_rejects_payload_tamper_v1() {
+        assert!(fixed_native_authority_kind_is_valid_v1(
+            "current-net8-cp7-terminal-response-v4-kl-0.3-arm-candidate"
+        ));
+        assert!(!fixed_native_authority_kind_is_valid_v1(
+            "current-net8-cp7-terminal-response-v4-kl-..-arm-candidate"
+        ));
+        assert!(!fixed_native_authority_kind_is_valid_v1(
+            "current-net8-cp7-terminal-response-v4-kl-.3-arm-candidate"
+        ));
         let model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
                 .unwrap();
         let state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
         let snapshot = state.snapshot_v1().unwrap();
         let encoded = encode_native_train_state_payload_v1(&snapshot).unwrap();
-        let manifest = FixedNativeStateManifestV1 {
+        let mut manifest = FixedNativeStateManifestV1 {
             schema: FIXED_NATIVE_STATE_SCHEMA_V1.to_owned(),
-            authority_kind: "current-net8-gae8-v1".to_owned(),
+            authority_kind: "current-net8-cp7-terminal-response-v4-kl-0.3-arm-candidate".to_owned(),
             source_result_sha256: lower_hex_raw32_v1([7; 32]),
             payload: FixedNativeStatePayloadManifestV1 {
                 filename: FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1.to_owned(),
@@ -849,6 +869,10 @@ mod fixed_native_state_tests_v1 {
         .unwrap();
 
         let loaded = load_fixed_native_state_v1(&root).unwrap();
+        assert_eq!(
+            loaded.authority_kind,
+            "current-net8-cp7-terminal-response-v4-kl-0.3-arm-candidate"
+        );
         assert_eq!(loaded.adam_step, state.adam_step_v1());
         assert_eq!(
             loaded.native_state_sha256,
@@ -858,6 +882,14 @@ mod fixed_native_state_tests_v1 {
             loaded.model_parameter_sha256,
             encoded.digests.model_parameter_sha256
         );
+        manifest.authority_kind = "current-net8-gae8-v1".to_owned();
+        let mut manifest_bytes = serde_json::to_vec_pretty(&manifest).unwrap();
+        manifest_bytes.push(b'\n');
+        fs::write(
+            root.join(FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1),
+            manifest_bytes,
+        )
+        .unwrap();
         let service = ShadowScorerServiceV1::load_v1(
             ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root: root.clone() },
         )
