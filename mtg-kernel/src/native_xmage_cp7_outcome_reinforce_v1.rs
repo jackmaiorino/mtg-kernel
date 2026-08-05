@@ -111,6 +111,11 @@ const CURRENT_NET8_CP7_RESPONSE_V4_KL_1_0_ARM_CANDIDATE_AUTHORITY_KIND_V1: &str 
 const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_BASE_SEED_HEX_V1: &str = "00000000001d7311";
 const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_PAIR_COUNT_V1: usize = 256;
 const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_EPISODE_COUNT_V1: usize = 512;
+const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_SHA256_V1: &str =
+    "5b3ac6818c79be9ba0ff6f31e6fef897fa78cc1796b0013ffbcc33365338ed72";
+const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_DECISION_ROW_COUNT_V1: usize = 21_112;
+const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_PHYSICAL_GROUP_COUNT_V1: usize = 18_440;
+const CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_TERMINAL_RETURN_COUNTS_V1: [u64; 3] = [312, 0, 200];
 const CURRENT_NET8_CP7_RESPONSE_V4_LEARNING_RATES_V1: [f32; 8] = [
     0.0005, 0.0004, 0.0003, 0.0002, 0.00015, 0.0001, 0.000075, 0.00005,
 ];
@@ -5380,7 +5385,8 @@ fn run_fixed_native_v4_training_v1(
         .into());
     }
     let dataset = load_outcome_dataset_v1(&config.outcome_jsonl)?;
-    if dataset.jsonl_sha256 != config.outcome_jsonl_sha256
+    if config.outcome_jsonl_sha256 != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_SHA256_V1
+        || dataset.jsonl_sha256 != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_SHA256_V1
         || dataset.schema_version != 2
         || dataset.export_contract != XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
         || !current_gae8_checkpoint_v1(&dataset.policy_checkpoint)
@@ -5391,8 +5397,10 @@ fn run_fixed_native_v4_training_v1(
             != (0..CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_PAIR_COUNT_V1 as u64).collect::<Vec<_>>()
         || dataset.episode_count != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_EPISODE_COUNT_V1
         || dataset.terminal_row_count != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_EPISODE_COUNT_V1
-        || dataset.terminal_return_counts.iter().sum::<u64>()
-            != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_EPISODE_COUNT_V1 as u64
+        || dataset.decision_row_count != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_DECISION_ROW_COUNT_V1
+        || dataset.groups.len() != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_PHYSICAL_GROUP_COUNT_V1
+        || dataset.terminal_return_counts
+            != CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_TERMINAL_RETURN_COUNTS_V1
     {
         return Err(invalid_data_v1("fixed-native v4 outcome corpus authority mismatch").into());
     }
@@ -7222,9 +7230,55 @@ mod tests {
         let path = std::env::var_os("MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL")
             .expect("MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL is set");
         let dataset = load_outcome_dataset_v1(Path::new(&path)).unwrap();
+        eprintln!(
+            "strict outcome corpus: sha256={} base_seed={} pairs={} episodes={} rows={} physical_groups={} terminal_counts={:?}",
+            dataset.jsonl_sha256,
+            dataset.base_seed_u64_hex,
+            dataset.pair_indices.len(),
+            dataset.episode_count,
+            dataset.decision_row_count,
+            dataset.groups.len(),
+            dataset.terminal_return_counts,
+        );
         assert!(!dataset.groups.is_empty());
         assert_eq!(dataset.episode_count, dataset.terminal_row_count);
         assert_eq!(dataset.episode_count, dataset.pair_indices.len() * 2);
+    }
+
+    #[test]
+    #[ignore = "requires the exact current Net8 CP7 response v4 corpus"]
+    fn external_current_net8_cp7_response_v4_corpus_matches_pin_v1() {
+        let path = std::env::var_os("MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL")
+            .expect("MTG_KERNEL_XMAGE_CP7_OUTCOME_JSONL is set");
+        let dataset = load_outcome_dataset_v1(Path::new(&path)).unwrap();
+        assert_eq!(
+            dataset.jsonl_sha256,
+            CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_SHA256_V1
+        );
+        assert_eq!(
+            dataset.base_seed_u64_hex,
+            CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_BASE_SEED_HEX_V1
+        );
+        assert_eq!(
+            dataset.pair_indices,
+            (0..CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_PAIR_COUNT_V1 as u64).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            dataset.episode_count,
+            CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_EPISODE_COUNT_V1
+        );
+        assert_eq!(
+            dataset.decision_row_count,
+            CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_DECISION_ROW_COUNT_V1
+        );
+        assert_eq!(
+            dataset.groups.len(),
+            CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_PHYSICAL_GROUP_COUNT_V1
+        );
+        assert_eq!(
+            dataset.terminal_return_counts,
+            CURRENT_NET8_CP7_RESPONSE_V4_CORPUS_TERMINAL_RETURN_COUNTS_V1
+        );
     }
 
     #[test]
@@ -7264,7 +7318,7 @@ mod tests {
             .manifest
             .seats
             .iter()
-            .all(|seat| seat.contributing_episode_count == 64));
+            .all(|seat| seat.contributing_episode_count == dataset.episode_count / 2));
         assert!(prepared
             .manifest
             .seats

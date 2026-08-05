@@ -1,7 +1,7 @@
 # Current Net8 CP7 terminal response v4
 
-Status: bounded throughput and identity screens complete. The formal v4
-collection and both training arms have not run.
+Status: formal collection and merge complete. The exact corpus pin is pending
+review. Both training arms have not run.
 
 ## Question
 
@@ -73,10 +73,12 @@ Both arms run all eight updates. Candidate checkpoints are measured after
 updates `2`, `4`, `6`, and `8`. No terminal result, coefficient, learning rate,
 update count, or checkpoint is changed after collection begins.
 
-After collection and merge, the exact merged corpus SHA-256, decision count,
-physical-group count, and terminal-return counts are pinned into the trainer
-and screen manifest in one reviewed commit before either arm runs. A
-caller-supplied hash is only a consistency check until that pin is present.
+The merged corpus is pinned as SHA-256
+`5b3ac6818c79be9ba0ff6f31e6fef897fa78cc1796b0013ffbcc33365338ed72`,
+with 21,112 decision rows, 18,440 physical groups, and terminal-return counts
+`[312, 0, 200]` in loss, draw, win order. These exact values are compiled into
+the trainer and selector. The training arms remain held until this pin commit
+is reviewed.
 
 ## Movement-only eligibility and selection
 
@@ -128,7 +130,9 @@ authorized sixteen-worker alternative measured `0.323490` games/s. Both were
 resource-safe and exactly identical to the revealed baseline after removal of
 only the three shard-local ordinal fields. The selected eight-worker topology
 projects the 512-game collection at about 19.4 minutes. Actual collection and
-training timing will be reported from their run artifacts.
+training timing will be reported from their run artifacts. The formal
+collection completed in 567.36 seconds at `0.902428` games/s because the larger
+tasks amortized JVM startup.
 
 This is a versus-CP7 skill-7 response experiment. It does not establish broad,
 human, professional, or metagame-wide strength. CP7 is part of the training

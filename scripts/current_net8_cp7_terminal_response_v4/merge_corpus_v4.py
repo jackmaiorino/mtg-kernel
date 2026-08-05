@@ -26,11 +26,26 @@ from outcome_v2 import (
 
 
 REPORT_SCHEMA = "mtg-kernel-current-net8-cp7-terminal-response-v4-corpus/v1"
+COLLECTION_SCHEMA = "mtg-kernel-current-net8-cp7-terminal-response-v4-collection/v1"
+COLLECTION_MANIFEST_SCHEMA = "mtg-kernel-current-net8-cp7-terminal-response-v4-manifest/v1"
+FORMAL_PANEL = (1_930_001, 0, 256)
 SHARD_NAME = re.compile(r"gae8-p([0-9]{6,})-n([0-9]{3})\.outcome\.jsonl\Z")
 
 
 def fail(message: str) -> None:
     raise ValueError(message)
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        value = json.load(handle)
+    if not isinstance(value, dict):
+        fail(f"JSON evidence is not an object: {path}")
+    return value
+
+
+def _same_path(left: str, right: Path) -> bool:
+    return Path(left).resolve(strict=False) == right.resolve(strict=False)
 
 
 def _discover(input_root: Path) -> list[tuple[Path, int, int]]:
@@ -132,6 +147,87 @@ def _write_merged(
     return global_record_ordinal, decision_offset
 
 
+def _validate_collection_report(
+    collection_report_path: Path,
+    *,
+    input_root: Path,
+    reports: list[dict[str, Any]],
+    base_seed: int,
+    first_pair: int,
+    expected_pairs: int,
+) -> dict[str, str]:
+    report_path = collection_report_path.resolve(strict=True)
+    input_root = input_root.resolve(strict=True)
+    report = _load_json(report_path)
+    panel = report.get("panel")
+    manifest_record = report.get("manifest")
+    if (
+        report_path != (input_root.parent / "report.json").resolve(strict=True)
+        or input_root != (report_path.parent / "tasks").resolve(strict=True)
+        or report.get("schema") != COLLECTION_SCHEMA
+        or report.get("status") != "complete"
+        or not isinstance(panel, dict)
+        or panel.get("arm") != "gae8"
+        or panel.get("opponent") != "xmage-cp7"
+        or panel.get("cp7_skill") != 7
+        or panel.get("base_seed") != base_seed
+        or panel.get("pair_start") != first_pair
+        or panel.get("pair_count") != expected_pairs
+        or panel.get("episode_count") != expected_pairs * 2
+        or not isinstance(manifest_record, dict)
+        or not isinstance(manifest_record.get("path"), str)
+        or not isinstance(manifest_record.get("sha256"), str)
+    ):
+        fail("collection report does not bind the requested shard panel")
+    manifest_path = Path(manifest_record["path"]).resolve(strict=True)
+    manifest = _load_json(manifest_path)
+    collection_prerequisites = manifest.get("collection_prerequisites")
+    if (
+        manifest_path != (report_path.parent / "manifest.json").resolve(strict=True)
+        or sha256(manifest_path) != manifest_record["sha256"]
+        or manifest.get("schema") != COLLECTION_MANIFEST_SCHEMA
+        or manifest.get("panel") != panel
+        or not isinstance(manifest.get("output_root"), str)
+        or not _same_path(manifest["output_root"], report_path.parent)
+        or not isinstance(collection_prerequisites, dict)
+        or set(collection_prerequisites)
+        != {
+            "throughput_screen_report",
+            "revealed_identity_report",
+            "topology_selection_report",
+        }
+    ):
+        fail("formal collection manifest provenance mismatch")
+    tasks = report.get("tasks")
+    if not isinstance(tasks, list) or len(tasks) != len(reports):
+        fail("collection report task inventory mismatch")
+    tasks = sorted(tasks, key=lambda row: row.get("first_pair", -1) if isinstance(row, dict) else -1)
+    reports = sorted(reports, key=lambda row: row["first_pair"])
+    for task, source in zip(tasks, reports, strict=True):
+        outcome = task.get("outcome") if isinstance(task, dict) else None
+        if (
+            not isinstance(outcome, dict)
+            or task.get("first_pair") != source["first_pair"]
+            or task.get("pair_count") != source["pair_count"]
+            or not isinstance(outcome.get("path"), str)
+            or not _same_path(outcome["path"], Path(source["path"]))
+            or any(
+                outcome.get(field) != source[field]
+                for field in (
+                    "sha256",
+                    "byte_count",
+                    "decision_count",
+                    "episode_count",
+                    "first_pair",
+                    "pair_count",
+                    "record_count",
+                )
+            )
+        ):
+            fail("collection report task differs from a validated input shard")
+    return {"path": str(report_path), "sha256": sha256(report_path)}
+
+
 def merge(
     *,
     input_root: Path,
@@ -140,6 +236,7 @@ def merge(
     base_seed: int,
     first_pair: int,
     expected_pairs: int,
+    collection_report_path: Path,
 ) -> dict[str, Any]:
     if (
         not 0 <= base_seed <= 0x7FFF_FFFF_FFFF_FFFF
@@ -159,6 +256,14 @@ def merge(
         fail("outputs may not replace input shards")
     reports = _validate_inventory(
         shards,
+        base_seed=base_seed,
+        first_pair=first_pair,
+        expected_pairs=expected_pairs,
+    )
+    collection_report = _validate_collection_report(
+        collection_report_path,
+        input_root=input_root,
+        reports=reports,
         base_seed=base_seed,
         first_pair=first_pair,
         expected_pairs=expected_pairs,
@@ -189,6 +294,10 @@ def merge(
     report: dict[str, Any] = {
         "schema": REPORT_SCHEMA,
         "status": "complete",
+        "merger_tool": {
+            "path": str(Path(__file__).resolve()),
+            "sha256": sha256(Path(__file__).resolve()),
+        },
         "authority_kind": EXPECTED_CHECKPOINT["authority_kind"],
         "export_contract": OUTCOME_CONTRACT,
         "checkpoint_identity": EXPECTED_CHECKPOINT,
@@ -204,6 +313,8 @@ def merge(
             "byte_count": output_jsonl.stat().st_size,
         },
         "inputs": source_reports,
+        "source_collection": collection_report,
+        "source_phase": "formal-development-collection",
         "input_sha256_by_filename": {
             Path(source["path"]).name: source["sha256"] for source in source_reports
         },
@@ -235,6 +346,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--input-root", type=Path)
+    parser.add_argument("--collection-report", type=Path)
     parser.add_argument("--output-jsonl", type=Path)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--base-seed", type=int, default=1_930_001)
@@ -247,8 +359,15 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.self_test:
         return _self_test()
-    if args.input_root is None or args.output_jsonl is None or args.report is None:
-        fail("input root, output corpus, and report paths are required")
+    if (
+        args.input_root is None
+        or args.collection_report is None
+        or args.output_jsonl is None
+        or args.report is None
+    ):
+        fail("input root, collection report, output corpus, and report paths are required")
+    if (args.base_seed, args.first_pair, args.expected_pairs) != FORMAL_PANEL:
+        fail("CLI merger accepts only the exact formal V4 collection panel")
     report = merge(
         input_root=args.input_root,
         output_jsonl=args.output_jsonl,
@@ -256,6 +375,7 @@ def main(argv: list[str] | None = None) -> int:
         base_seed=args.base_seed,
         first_pair=args.first_pair,
         expected_pairs=args.expected_pairs,
+        collection_report_path=args.collection_report,
     )
     print(json.dumps(report, sort_keys=True, allow_nan=False))
     return 0

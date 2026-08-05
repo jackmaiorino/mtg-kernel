@@ -41,6 +41,10 @@ CORPUS_BASE_SEED_HEX = "00000000001d7311"
 CORPUS_PAIR_INDICES = list(range(256))
 CORPUS_PAIR_COUNT = 256
 CORPUS_EPISODE_COUNT = 512
+CORPUS_SHA256 = "5b3ac6818c79be9ba0ff6f31e6fef897fa78cc1796b0013ffbcc33365338ed72"
+CORPUS_DECISION_ROW_COUNT = 21_112
+CORPUS_PHYSICAL_GROUP_COUNT = 18_440
+CORPUS_TERMINAL_RETURN_COUNTS = [312, 0, 200]
 LEARNING_RATES = [0.0005, 0.0004, 0.0003, 0.0002, 0.00015, 0.0001, 0.000075, 0.00005]
 CHECKPOINT_UPDATES = [2, 4, 6, 8]
 OBJECTIVE = "ppo_clip_frozen_source_value_standardized_episode_balanced/v1"
@@ -146,29 +150,21 @@ def validate_manifest(
         raise ValueError("screen manifest source binding mismatch")
     corpus = inputs.get("corpus") if isinstance(inputs, dict) else None
     expected_static_corpus = {
+        "sha256": CORPUS_SHA256,
         "base_seed_u64_hex": CORPUS_BASE_SEED_HEX,
         "pair_indices": CORPUS_PAIR_INDICES,
         "pair_count": CORPUS_PAIR_COUNT,
         "episode_count": CORPUS_EPISODE_COUNT,
+        "decision_row_count": CORPUS_DECISION_ROW_COUNT,
+        "physical_group_count": CORPUS_PHYSICAL_GROUP_COUNT,
+        "terminal_return_counts_loss_draw_win": CORPUS_TERMINAL_RETURN_COUNTS,
     }
     if not isinstance(corpus, dict) or any(
         corpus.get(field) != value for field, value in expected_static_corpus.items()
     ):
         raise ValueError("screen manifest corpus panel mismatch")
-    for field in ("sha256", "path"):
-        if not isinstance(corpus.get(field), str) or not corpus[field]:
-            raise ValueError(f"screen manifest corpus {field} is absent")
-    for field in ("decision_row_count", "physical_group_count"):
-        if not isinstance(corpus.get(field), int) or isinstance(corpus[field], bool) or corpus[field] <= 0:
-            raise ValueError(f"screen manifest corpus {field} is invalid")
-    counts = corpus.get("terminal_return_counts_loss_draw_win")
-    if (
-        not isinstance(counts, list)
-        or len(counts) != 3
-        or any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in counts)
-        or sum(counts) != CORPUS_EPISODE_COUNT
-    ):
-        raise ValueError("screen manifest terminal counts are invalid")
+    if not isinstance(corpus.get("path"), str) or not corpus["path"]:
+        raise ValueError("screen manifest corpus path is absent")
 
     training = manifest.get("common_training")
     expected_training = {

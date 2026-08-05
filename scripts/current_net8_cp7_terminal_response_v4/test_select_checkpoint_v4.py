@@ -19,14 +19,14 @@ class SelectorV4Tests(unittest.TestCase):
     def corpus(self) -> dict:
         return {
             "path": "corpus.jsonl",
-            "sha256": "c" * 64,
+            "sha256": SELECTOR.CORPUS_SHA256,
             "base_seed_u64_hex": SELECTOR.CORPUS_BASE_SEED_HEX,
             "pair_indices": SELECTOR.CORPUS_PAIR_INDICES,
             "pair_count": SELECTOR.CORPUS_PAIR_COUNT,
             "episode_count": SELECTOR.CORPUS_EPISODE_COUNT,
-            "decision_row_count": 12345,
-            "physical_group_count": 10000,
-            "terminal_return_counts_loss_draw_win": [300, 0, 212],
+            "decision_row_count": SELECTOR.CORPUS_DECISION_ROW_COUNT,
+            "physical_group_count": SELECTOR.CORPUS_PHYSICAL_GROUP_COUNT,
+            "terminal_return_counts_loss_draw_win": SELECTOR.CORPUS_TERMINAL_RETURN_COUNTS,
         }
 
     def checkpoint(self, update: int, mean_tv: float, eligible: bool = True) -> dict:
@@ -343,6 +343,28 @@ class SelectorV4Tests(unittest.TestCase):
             report_path.write_text(json.dumps(report))
             with self.assertRaisesRegex(ValueError, "gate disagreement"):
                 SELECTOR.validate_arm("beta-0.3", report_path, candidate_root, self.corpus())
+
+    def test_manifest_rejects_exact_corpus_pin_tamper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arms = {
+                name: self.make_arm(root, name, [0.012, 0.020, 0.018, 0.017])
+                for name in SELECTOR.ARM_ORDER
+            }
+            selection_report = root / "selection.json"
+            final_package = root / "final"
+            manifest_path = self.make_manifest(root, arms, selection_report, final_package)
+            manifest = json.loads(manifest_path.read_text())
+            manifest["inputs"]["corpus"]["physical_group_count"] += 1
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "corpus panel mismatch"):
+                SELECTOR.validate_manifest(
+                    manifest_path,
+                    {name: paths[0] for name, paths in arms.items()},
+                    {name: paths[1] for name, paths in arms.items()},
+                    selection_report,
+                    final_package,
+                )
 
 
 if __name__ == "__main__":
