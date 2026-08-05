@@ -5891,7 +5891,6 @@ mod tests {
             h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
             "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
         );
-
         let source = load_h4_canary_source_v1();
         let control = run_h4_canary_arm_v1(
             &source,
@@ -6504,6 +6503,9 @@ mod tests {
         report: serde_json::Value,
         episode_indices: Vec<u64>,
         learner_seats: Vec<PlayerSeatV1>,
+        environment_seeds: Vec<u64>,
+        deck_hashes: Vec<SessionDeckHashesV1>,
+        opponent_components: Vec<String>,
         terminal_returns: Vec<i8>,
     }
 
@@ -6644,7 +6646,14 @@ mod tests {
         let mut episode_indices =
             Vec::with_capacity((EVAL_CLUSTER_COUNT * BATCH_EPISODES) as usize);
         let mut learner_seats = Vec::with_capacity((EVAL_CLUSTER_COUNT * BATCH_EPISODES) as usize);
+        let mut environment_seeds =
+            Vec::with_capacity((EVAL_CLUSTER_COUNT * BATCH_EPISODES) as usize);
+        let mut deck_hashes = Vec::with_capacity((EVAL_CLUSTER_COUNT * BATCH_EPISODES) as usize);
+        let mut opponent_components =
+            Vec::with_capacity((EVAL_CLUSTER_COUNT * BATCH_EPISODES) as usize);
         let mut terminal_returns =
+            Vec::with_capacity((EVAL_CLUSTER_COUNT * BATCH_EPISODES) as usize);
+        let mut schedule_receipts =
             Vec::with_capacity((EVAL_CLUSTER_COUNT * BATCH_EPISODES) as usize);
         let mut clusters = Vec::with_capacity(EVAL_CLUSTER_COUNT as usize);
         let mut total_elapsed_ns = 0_u64;
@@ -6690,6 +6699,22 @@ mod tests {
             let mut outcomes = [0_u64; 3];
             let mut outcomes_by_seat = [[0_u64; 3]; 2];
             for episode in &evidence.episodes {
+                let expected_schedule =
+                    native_trainer_episode_schedule_v1(970_001, episode.episode_index)
+                        .expect("fixed-policy evaluation schedule");
+                assert_eq!(episode.learner_seat, expected_schedule.learner_seat);
+                assert_eq!(
+                    episode.full_trajectory_receipt.environment_seed(),
+                    expected_schedule.environment_seed,
+                );
+                let opponent_component =
+                    crate::native_ladder_opponent_v1::ladder_pool_member_for_episode_v1(
+                        970_001,
+                        episode.episode_index,
+                    )
+                    .expect("fixed-policy evaluation Pool3 member");
+                let opponent_component_label =
+                    gae_v3_pool_member_label_v1(opponent_component).to_owned();
                 let outcome_index = match episode.learner_return {
                     1 => 0,
                     0 => 1,
@@ -6703,7 +6728,23 @@ mod tests {
                 aggregate_by_seat[seat_index][outcome_index] += 1;
                 episode_indices.push(episode.episode_index);
                 learner_seats.push(episode.learner_seat);
+                environment_seeds.push(episode.full_trajectory_receipt.environment_seed());
+                deck_hashes.push(episode.full_trajectory_receipt.deck_hashes());
+                opponent_components.push(opponent_component_label.clone());
                 terminal_returns.push(episode.learner_return);
+                schedule_receipts.push(serde_json::json!({
+                    "episode_index": episode.episode_index,
+                    "learner_seat": match episode.learner_seat {
+                        PlayerSeatV1::P0 => "p0",
+                        PlayerSeatV1::P1 => "p1",
+                    },
+                    "pair_environment_seed": episode.full_trajectory_receipt.environment_seed(),
+                    "deck_hashes_u64_hex": [
+                        format!("{:016x}", episode.full_trajectory_receipt.deck_hashes()[0]),
+                        format!("{:016x}", episode.full_trajectory_receipt.deck_hashes()[1]),
+                    ],
+                    "opponent_component": opponent_component_label,
+                }));
             }
             total_elapsed_ns = total_elapsed_ns
                 .checked_add(evidence.update_elapsed_ns)
@@ -6723,6 +6764,13 @@ mod tests {
         }
         let expected_episode_count = EVAL_CLUSTER_COUNT * BATCH_EPISODES;
         assert_eq!(episode_indices.len(), expected_episode_count as usize);
+        let p0_episode_count = aggregate_by_seat[0].iter().sum::<u64>();
+        let p1_episode_count = aggregate_by_seat[1].iter().sum::<u64>();
+        assert_eq!(p0_episode_count, expected_episode_count / 2);
+        assert_eq!(p1_episode_count, expected_episode_count / 2);
+        let first_episode_index = first_eval_update * BATCH_EPISODES;
+        let schedule_sha256 =
+            gae_v3_schedule_sha256_v1(970_001, first_episode_index, expected_episode_count / 2);
         ComposedFixedPolicyEvalArmV1 {
             report: serde_json::json!({
                 "label": label,
@@ -6735,11 +6783,24 @@ mod tests {
                     "p0": {"win": aggregate_by_seat[0][0], "draw": aggregate_by_seat[0][1], "loss": aggregate_by_seat[0][2]},
                     "p1": {"win": aggregate_by_seat[1][0], "draw": aggregate_by_seat[1][1], "loss": aggregate_by_seat[1][2]},
                 },
+                "schedule": {
+                    "base_seed": 970001_u64,
+                    "first_episode_index": first_episode_index,
+                    "last_episode_index": first_episode_index + expected_episode_count - 1,
+                    "cluster_count": expected_episode_count / 2,
+                    "p0_episode_count": p0_episode_count,
+                    "p1_episode_count": p1_episode_count,
+                    "canonical_schedule_sha256": schedule_sha256,
+                    "receipts": schedule_receipts,
+                },
                 "aggregate_games_per_second": expected_episode_count as f64 / (total_elapsed_ns as f64 / 1.0e9),
                 "clusters": clusters,
             }),
             episode_indices,
             learner_seats,
+            environment_seeds,
+            deck_hashes,
+            opponent_components,
             terminal_returns,
         }
     }
@@ -6751,6 +6812,9 @@ mod tests {
     ) -> serde_json::Value {
         assert_eq!(treatment.episode_indices, control.episode_indices);
         assert_eq!(treatment.learner_seats, control.learner_seats);
+        assert_eq!(treatment.environment_seeds, control.environment_seeds);
+        assert_eq!(treatment.deck_hashes, control.deck_hashes);
+        assert_eq!(treatment.opponent_components, control.opponent_components);
         let mut totals = [0_u64; 3];
         let mut by_seat = [[0_u64; 3]; 2];
         for ((treatment_return, control_return), seat) in treatment
@@ -6777,6 +6841,50 @@ mod tests {
             "by_seat": {
                 "p0": {"treatment_only_wins": by_seat[0][0], "control_only_wins": by_seat[0][1], "ties": by_seat[0][2]},
                 "p1": {"treatment_only_wins": by_seat[1][0], "control_only_wins": by_seat[1][1], "ties": by_seat[1][2]},
+            },
+        })
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn composed_paired_terminal_order_summary_v1(
+        treatment: &ComposedFixedPolicyEvalArmV1,
+        control: &ComposedFixedPolicyEvalArmV1,
+    ) -> serde_json::Value {
+        assert_eq!(treatment.episode_indices, control.episode_indices);
+        assert_eq!(treatment.learner_seats, control.learner_seats);
+        assert_eq!(treatment.environment_seeds, control.environment_seeds);
+        assert_eq!(treatment.deck_hashes, control.deck_hashes);
+        assert_eq!(treatment.opponent_components, control.opponent_components);
+        let mut totals = [0_u64; 3];
+        let mut by_seat = [[0_u64; 3]; 2];
+        for ((treatment_return, control_return), seat) in treatment
+            .terminal_returns
+            .iter()
+            .zip(&control.terminal_returns)
+            .zip(&treatment.learner_seats)
+        {
+            assert!(matches!(*treatment_return, -1..=1));
+            assert!(matches!(*control_return, -1..=1));
+            let outcome = match treatment_return.cmp(control_return) {
+                std::cmp::Ordering::Greater => 0,
+                std::cmp::Ordering::Less => 1,
+                std::cmp::Ordering::Equal => 2,
+            };
+            totals[outcome] += 1;
+            by_seat[live_seat_index_v1(*seat)][outcome] += 1;
+        }
+        let episode_count = treatment.terminal_returns.len() as u64;
+        serde_json::json!({
+            "estimand": "paired-terminal-order-W>D>L/v1",
+            "episode_count": episode_count,
+            "treatment_better": totals[0],
+            "control_better": totals[1],
+            "terminal_ties": totals[2],
+            "paired_terminal_effect": (totals[0] as f64 - totals[1] as f64) / episode_count as f64,
+            "paired_terminal_effect_percentage_points": 100.0 * (totals[0] as f64 - totals[1] as f64) / episode_count as f64,
+            "by_seat": {
+                "p0": {"treatment_better": by_seat[0][0], "control_better": by_seat[0][1], "terminal_ties": by_seat[0][2]},
+                "p1": {"treatment_better": by_seat[1][0], "control_better": by_seat[1][1], "terminal_ties": by_seat[1][2]},
             },
         })
     }
@@ -7712,6 +7820,31 @@ mod tests {
             h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
             "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
         );
+        let preflight_manifest_path = PathBuf::from(
+            std::env::var_os("MTG_KERNEL_GAE_16_DEVELOPMENT_MANIFEST")
+                .expect("GAE 16-update preflight manifest path"),
+        );
+        let preflight_manifest_bytes =
+            fs::read(&preflight_manifest_path).expect("read GAE 16-update preflight manifest");
+        let preflight_manifest_sha256 = h4_canary_hex_v1(
+            crate::native_training_store_digest_v1::sha256_v1(&preflight_manifest_bytes),
+        );
+        assert_eq!(
+            std::env::var("MTG_KERNEL_GAE_16_DEVELOPMENT_MANIFEST_SHA256").as_deref(),
+            Ok(preflight_manifest_sha256.as_str()),
+            "GAE 16-update preflight manifest digest drift"
+        );
+        let preflight_manifest: serde_json::Value =
+            serde_json::from_slice(&preflight_manifest_bytes)
+                .expect("parse GAE 16-update preflight manifest");
+        assert_eq!(
+            preflight_manifest["schema"].as_str(),
+            Some("mtg-kernel-current-net8-gae-16-update-preflight/v1")
+        );
+        assert_eq!(
+            preflight_manifest["status"].as_str(),
+            Some("ready-not-launched")
+        );
 
         let source = load_h4_canary_source_v1();
         let (worker_count, sessions_per_worker) = (4_usize, 16_usize);
@@ -7810,21 +7943,27 @@ mod tests {
             sessions_per_worker,
             FIRST_EVAL_UPDATE,
         );
-        let candidate_vs_parent = composed_paired_win_summary_v1(&candidate_eval, &parent_eval);
+        let candidate_vs_parent =
+            composed_paired_terminal_order_summary_v1(&candidate_eval, &parent_eval);
         let candidate_vs_reproduced =
+            composed_paired_terminal_order_summary_v1(&candidate_eval, &reproduced_eval);
+        let reproduced_vs_parent =
+            composed_paired_terminal_order_summary_v1(&reproduced_eval, &parent_eval);
+        let candidate_vs_parent_win_only =
+            composed_paired_win_summary_v1(&candidate_eval, &parent_eval);
+        let candidate_vs_reproduced_win_only =
             composed_paired_win_summary_v1(&candidate_eval, &reproduced_eval);
-        let reproduced_vs_parent = composed_paired_win_summary_v1(&reproduced_eval, &parent_eval);
+        let reproduced_vs_parent_win_only =
+            composed_paired_win_summary_v1(&reproduced_eval, &parent_eval);
         let paired_net = |summary: &serde_json::Value| -> i64 {
-            summary["treatment_only_wins"].as_u64().unwrap() as i64
-                - summary["control_only_wins"].as_u64().unwrap() as i64
+            summary["treatment_better"].as_u64().unwrap() as i64
+                - summary["control_better"].as_u64().unwrap() as i64
         };
         let paired_seat_net = |summary: &serde_json::Value, seat: &str| -> i64 {
-            summary["by_seat"][seat]["treatment_only_wins"]
+            summary["by_seat"][seat]["treatment_better"]
                 .as_u64()
                 .unwrap() as i64
-                - summary["by_seat"][seat]["control_only_wins"]
-                    .as_u64()
-                    .unwrap() as i64
+                - summary["by_seat"][seat]["control_better"].as_u64().unwrap() as i64
         };
         let candidate_vs_parent_net = paired_net(&candidate_vs_parent);
         let candidate_vs_reproduced_net = paired_net(&candidate_vs_reproduced);
@@ -7859,6 +7998,10 @@ mod tests {
                 "STOP_FIXED_GAE_16_UPDATE_EXTENSION"
             },
             "nonclaims": ["development-strength-screen", "not-formal-strength-evidence", "not-promotable", "no-pro-level-claim"],
+            "preflight_manifest": {
+                "path": preflight_manifest_path,
+                "sha256": preflight_manifest_sha256,
+            },
             "fixed": {
                 "source_checkpoint_state_sha256": "00333d987584d5cf7f9a37f1ba2b558cfd22a60388f2487c1bf1623fcc6686a0",
                 "critic_composite_model_parameter_sha256": "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22",
@@ -7867,6 +8010,12 @@ mod tests {
                 "training_last_episode_index": 33791_u64,
                 "evaluation_first_episode_index": FIRST_EVAL_UPDATE * 64,
                 "evaluation_episode_count_per_arm": 1024_u64,
+                "evaluation_cluster_count": 512_u64,
+                "evaluation_schedule_sha256": gae_v3_schedule_sha256_v1(
+                    970_001,
+                    FIRST_EVAL_UPDATE * 64,
+                    512,
+                ),
                 "worker_count": worker_count,
                 "sessions_per_worker": sessions_per_worker,
             },
@@ -7888,12 +8037,21 @@ mod tests {
                     "candidate_16_update": candidate_eval.report,
                 },
                 "paired": {
-                    "candidate_16_update_vs_parent": candidate_vs_parent,
-                    "candidate_16_update_vs_reproduced_8_update": candidate_vs_reproduced,
-                    "reproduced_8_update_vs_parent": reproduced_vs_parent,
+                    "terminal_order": {
+                        "candidate_16_update_vs_parent": candidate_vs_parent,
+                        "candidate_16_update_vs_reproduced_8_update": candidate_vs_reproduced,
+                        "reproduced_8_update_vs_parent": reproduced_vs_parent,
+                    },
+                    "win_only_diagnostic": {
+                        "candidate_16_update_vs_parent": candidate_vs_parent_win_only,
+                        "candidate_16_update_vs_reproduced_8_update": candidate_vs_reproduced_win_only,
+                        "reproduced_8_update_vs_parent": reproduced_vs_parent_win_only,
+                    },
                 },
             },
             "development_gate": {
+                "estimand": "paired-terminal-order-W>D>L/v1",
+                "thresholds_are_selection_heuristics_not_confidence_claims": true,
                 "update_numerics_stable": update_numerics_stable,
                 "minimum_entropy": 0.10,
                 "maximum_gradient_l2": 5.0,

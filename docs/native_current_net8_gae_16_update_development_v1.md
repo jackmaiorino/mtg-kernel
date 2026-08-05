@@ -35,11 +35,19 @@ architecture, or opponent mixture.
   16-update state on common episodes `98304..99327`, base seed `970001`.
   These roots are disjoint from training, candidate-01 development, and both
   candidate-01 formal schedules.
+- Every arm retains the episode index, physical seat, pair environment seed,
+  deck hashes, and Pool3 component. These receipts, the exact 512/512 seat
+  counts, and the canonical schedule SHA-256 must match before pairing.
 
 The established 4-worker by 16-session topology is retained. It was the
 winner of the exact 1/2/4-worker screen for this native rollout path. This
 bounded screen is expected to finish in a few minutes. Any later candidate-02
 formal run requires its own candidate-bound throughput replay before launch.
+Before this development launch, one manifest binds the git commit, Rust/Cargo/
+LLVM and linker versions, release executable, GPU identity, input hashes,
+critic package, exact training and evaluation ranges, topology, and canonical
+evaluation schedule hash. The harness requires the manifest SHA-256 and
+retains that binding in the result.
 
 ## Development gate
 
@@ -50,15 +58,19 @@ hold:
 2. Every update is finite, sampled policy entropy is at least `0.10`, gradient
    L2 norm is at most `5.0`, and final 16-update movement from the parent is at
    most `1.25`.
-3. On the 1,024 fresh common episodes, the 16-update state has paired
-   treatment-only wins minus parent-only wins of at least `16`.
-4. The 16-update state has paired treatment-only wins minus 8-update-only
-   wins of at least `8`.
-5. The 16-update versus parent paired win net is nonnegative separately for
-   candidate P0 and candidate P1.
+3. On the 1,024 fresh common episodes, the 16-update state has V3-compatible
+   paired terminal-order better outcomes minus parent-better outcomes of at
+   least `16`, where win is better than draw and draw is better than loss.
+4. The 16-update state has terminal-order better outcomes minus reproduced
+   8-update-better outcomes of at least `8`.
+5. The 16-update versus parent terminal-order net is nonnegative separately
+   for candidate P0 and candidate P1.
 
-The `16/1024` threshold is a selection margin above the later `1%` formal
-effect threshold. It is not a confidence claim and cannot promote a policy.
+The `16/1024` and `8/1024` thresholds are heuristic selection margins. The
+first is above the later `1%` formal effect threshold; the second only demands
+incremental evidence over the reproduced state. Neither is a confidence claim
+or a promotion rule. Win-only summaries remain diagnostics, while every gate
+condition uses the ordered natural terminal result.
 Failure closes this fixed sixteen-update extension without changing any
 threshold on the revealed panel. The next branch is a genuinely distinct
 population or response-oracle mechanism. A pass only authorizes fresh,
