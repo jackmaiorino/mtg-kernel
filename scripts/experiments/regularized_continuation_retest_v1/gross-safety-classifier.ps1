@@ -5,7 +5,9 @@ param(
     [uint64]$ExpectedSeed = 1942001,
     [uint64]$ExpectedPairs = 512,
     [int]$OverallFloor = -26,
-    [int]$SeatFloor = -18
+    [int]$SeatFloor = -18,
+    [string]$ExpectedOpponentRunSha256 = '2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae',
+    [string]$ExpectedOpponentCheckpointSha256 = '4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -95,6 +97,13 @@ foreach ($field in @('run_sha256', 'checkpoint_manifest_sha256', 'checkpoint_pay
 foreach ($field in @('worker_count', 'sessions_per_worker', 'broker_batch_target')) {
     Assert-Equal ([uint64]$control.runtime.$field) ([uint64]$selected.runtime.$field) "runtime $field"
 }
+foreach ($artifact in @($control, $selected)) {
+    Assert-Equal ([uint64]$artifact.runtime.worker_count) 2 'frozen worker count'
+    Assert-Equal ([uint64]$artifact.runtime.sessions_per_worker) 32 'frozen sessions per worker'
+    Assert-Equal ([uint64]$artifact.runtime.broker_batch_target) 16 'frozen broker batch target'
+    Assert-Equal ([string]$artifact.opponent.run_sha256) $ExpectedOpponentRunSha256 'promoted(2) run SHA-256'
+    Assert-Equal ([string]$artifact.opponent.checkpoint_manifest_sha256) $ExpectedOpponentCheckpointSha256 'promoted(2) checkpoint SHA-256'
+}
 if ([string]$control.candidate.checkpoint_manifest_sha256 -eq [string]$selected.candidate.checkpoint_manifest_sha256 -or
     [string]$control.candidate.model_parameter_sha256 -eq [string]$selected.candidate.model_parameter_sha256) {
     throw 'selected and control checkpoints must be distinct'
@@ -129,6 +138,9 @@ for ($index = 0; $index -lt $expectedEpisodes; $index++) {
     if ($controlRank -notin @(-1, 0, 1) -or $selectedRank -notin @(-1, 0, 1)) {
         throw "noncanonical terminal-order rank at episode $index"
     }
+    # The frozen estimand is one selected-better or control-better event per
+    # matched leg under W > D > L. In particular, W versus L contributes one
+    # better event, not an arithmetic reward delta of two.
     $bucket = if ($selectedRank -gt $controlRank) {
         'selected_better'
     }

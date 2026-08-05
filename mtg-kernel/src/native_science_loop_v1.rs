@@ -1752,7 +1752,9 @@ mod windows_science_loop_tests {
             test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2,
             OpponentLadderPoolContractV1,
         };
-        use crate::rl::PlayerSeatV1;
+        use crate::rl::{
+            terminal_tuple_is_valid_v1, PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2,
+        };
 
         fn required_env_v1(name: &str) -> String {
             std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
@@ -2032,6 +2034,20 @@ mod windows_science_loop_tests {
                 let index = usize::try_from(pair_offset * 2 + leg).unwrap();
                 let binding = &bindings[index];
                 let episode = &episodes[index];
+                assert_eq!(
+                    episode.terminal.terminal_classification,
+                    TerminalClassificationV1::Natural
+                );
+                assert_eq!(
+                    episode.terminal.terminal_code,
+                    TerminalSafeCodeV2::NaturalGameOver
+                );
+                assert!(terminal_tuple_is_valid_v1(
+                    episode.terminal.terminal_outcome,
+                    episode.terminal.terminal_classification,
+                    episode.terminal.winner,
+                    episode.terminal.terminal_reward,
+                ));
                 let seat_index = match binding.learner_seat() {
                     PlayerSeatV1::P0 => 0,
                     PlayerSeatV1::P1 => 1,

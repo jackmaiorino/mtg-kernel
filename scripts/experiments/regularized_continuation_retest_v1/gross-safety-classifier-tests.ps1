@@ -72,18 +72,20 @@ try {
     $controlPath = Join-Path $testRoot 'control.json'
     $selectedPath = Join-Path $testRoot 'selected.json'
     Write-NoBomJson (New-TerminalStream -Ranks @(-1, 0, 1, 1) -Checkpoint ('2' * 64) -Model ('3' * 64)) $controlPath
-    Write-NoBomJson (New-TerminalStream -Ranks @(0, 0, -1, 1) -Checkpoint ('4' * 64) -Model ('5' * 64)) $selectedPath
+    Write-NoBomJson (New-TerminalStream -Ranks @(1, 0, -1, 1) -Checkpoint ('4' * 64) -Model ('5' * 64)) $selectedPath
 
     $passPath = Join-Path $testRoot 'pass.json'
-    & $classifier -ControlPath $controlPath -SelectedPath $selectedPath -OutputPath $passPath -ExpectedSeed 42 -ExpectedPairs 2 -OverallFloor 0 -SeatFloor 0
+    & $classifier -ControlPath $controlPath -SelectedPath $selectedPath -OutputPath $passPath -ExpectedSeed 42 -ExpectedPairs 2 -OverallFloor 0 -SeatFloor 0 -ExpectedOpponentRunSha256 ('d' * 64) -ExpectedOpponentCheckpointSha256 ('e' * 64)
     $pass = Get-Content -LiteralPath $passPath -Raw | ConvertFrom-Json
     if ($pass.passed -ne $true -or [int]$pass.comparison.overall.net -ne 0 -or
-        [int]$pass.comparison.P0.net -ne 0 -or [int]$pass.comparison.P1.net -ne 0) {
+        [int]$pass.comparison.P0.net -ne 0 -or [int]$pass.comparison.P1.net -ne 0 -or
+        [int]$pass.comparison.overall.selected_better -ne 1 -or
+        [int]$pass.comparison.overall.control_better -ne 1) {
         throw 'balanced synthetic classification did not pass at the zero floors'
     }
 
     $stopPath = Join-Path $testRoot 'stop.json'
-    & $classifier -ControlPath $controlPath -SelectedPath $selectedPath -OutputPath $stopPath -ExpectedSeed 42 -ExpectedPairs 2 -OverallFloor 1 -SeatFloor 0
+    & $classifier -ControlPath $controlPath -SelectedPath $selectedPath -OutputPath $stopPath -ExpectedSeed 42 -ExpectedPairs 2 -OverallFloor 1 -SeatFloor 0 -ExpectedOpponentRunSha256 ('d' * 64) -ExpectedOpponentCheckpointSha256 ('e' * 64)
     $stop = Get-Content -LiteralPath $stopPath -Raw | ConvertFrom-Json
     if ($stop.passed -ne $false -or [string]$stop.disposition -ne 'GROSS-SAFETY-STOP') {
         throw 'synthetic floor failure did not stop'
@@ -96,13 +98,33 @@ try {
     $tamperedOutput = Join-Path $testRoot 'tampered-output.json'
     $rejected = $false
     try {
-        & $classifier -ControlPath $controlPath -SelectedPath $tamperedPath -OutputPath $tamperedOutput -ExpectedSeed 42 -ExpectedPairs 2 -OverallFloor 0 -SeatFloor 0
+        & $classifier -ControlPath $controlPath -SelectedPath $tamperedPath -OutputPath $tamperedOutput -ExpectedSeed 42 -ExpectedPairs 2 -OverallFloor 0 -SeatFloor 0 -ExpectedOpponentRunSha256 ('d' * 64) -ExpectedOpponentCheckpointSha256 ('e' * 64)
     }
     catch {
         $rejected = $true
     }
     if (-not $rejected -or (Test-Path -LiteralPath $tamperedOutput)) {
         throw 'pairing tamper was not rejected before publication'
+    }
+
+    $wrongTopologyControl = Get-Content -LiteralPath $controlPath -Raw | ConvertFrom-Json
+    $wrongTopologySelected = Get-Content -LiteralPath $selectedPath -Raw | ConvertFrom-Json
+    $wrongTopologyControl.runtime.worker_count = 4
+    $wrongTopologySelected.runtime.worker_count = 4
+    $wrongTopologyControlPath = Join-Path $testRoot 'wrong-topology-control.json'
+    $wrongTopologySelectedPath = Join-Path $testRoot 'wrong-topology-selected.json'
+    Write-NoBomJson $wrongTopologyControl $wrongTopologyControlPath
+    Write-NoBomJson $wrongTopologySelected $wrongTopologySelectedPath
+    $wrongTopologyOutput = Join-Path $testRoot 'wrong-topology-output.json'
+    $rejected = $false
+    try {
+        & $classifier -ControlPath $wrongTopologyControlPath -SelectedPath $wrongTopologySelectedPath -OutputPath $wrongTopologyOutput -ExpectedSeed 42 -ExpectedPairs 2 -OverallFloor 0 -SeatFloor 0 -ExpectedOpponentRunSha256 ('d' * 64) -ExpectedOpponentCheckpointSha256 ('e' * 64)
+    }
+    catch {
+        $rejected = $true
+    }
+    if (-not $rejected -or (Test-Path -LiteralPath $wrongTopologyOutput)) {
+        throw 'equal but wrong runtime topology was not rejected before publication'
     }
     Write-Host 'GROSS SAFETY CLASSIFIER TESTS PASS'
 }

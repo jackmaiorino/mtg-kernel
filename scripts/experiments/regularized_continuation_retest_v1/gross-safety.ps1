@@ -95,17 +95,33 @@ function Start-H2hArm {
 }
 
 function Wait-H2hArms {
-    param([Parameter(Mandatory = $true)]$Runs)
-    $started = [DateTimeOffset]::UtcNow
+    param(
+        [Parameter(Mandatory = $true)]$Runs,
+        [Parameter(Mandatory = $true)][uint64]$TimeoutSeconds
+    )
+    $started = @($Runs | ForEach-Object { [DateTimeOffset]::Parse([string]$_.launched_utc) } | Sort-Object | Select-Object -First 1)[0]
     $samples = @()
-    while (@($Runs | Where-Object { -not $_.process.HasExited }).Count -ne 0) {
-        $samples += Get-ResourceSample
-        Start-Sleep -Seconds 5
-        foreach ($run in $Runs) {
-            $run.process.Refresh()
+    try {
+        while (@($Runs | Where-Object { -not $_.process.HasExited }).Count -ne 0) {
+            if (([DateTimeOffset]::UtcNow - $started).TotalSeconds -gt $TimeoutSeconds) {
+                throw "head-to-head evaluator watchdog exceeded $TimeoutSeconds seconds"
+            }
+            $samples += Get-ResourceSample
+            Start-Sleep -Seconds 5
+            foreach ($run in $Runs) {
+                $run.process.Refresh()
+            }
         }
+        $samples += Get-ResourceSample
     }
-    $samples += Get-ResourceSample
+    catch {
+        foreach ($run in $Runs) {
+            if (-not $run.process.HasExited) {
+                Stop-Process -Id $run.process.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+        throw
+    }
     $completed = [DateTimeOffset]::UtcNow
     foreach ($run in $Runs) {
         $run.process.WaitForExit()
@@ -128,6 +144,15 @@ function Wait-H2hArms {
     }
 }
 
+function Stop-H2hArms {
+    param([Parameter(Mandatory = $true)]$Runs)
+    foreach ($run in $Runs) {
+        if ($null -ne $run -and -not $run.process.HasExited) {
+            Stop-Process -Id $run.process.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Get-ResourceSummary {
     param([Parameter(Mandatory = $true)]$Samples)
     $hostTotal = [double]$Samples[0].host_memory_total_mib
@@ -135,6 +160,8 @@ function Get-ResourceSummary {
     $cpu = @($Samples | ForEach-Object { [double]$_.cpu_total_percent })
     $gpu0 = @($Samples | ForEach-Object { [double]($_.gpus | Where-Object ordinal -eq 0 | Select-Object -First 1).utilization_percent })
     $gpu1 = @($Samples | ForEach-Object { [double]($_.gpus | Where-Object ordinal -eq 1 | Select-Object -First 1).utilization_percent })
+    $gpu0Memory = @($Samples | ForEach-Object { [double]($_.gpus | Where-Object ordinal -eq 0 | Select-Object -First 1).memory_used_mib })
+    $gpu1Memory = @($Samples | ForEach-Object { [double]($_.gpus | Where-Object ordinal -eq 1 | Select-Object -First 1).memory_used_mib })
     [ordered]@{
         sample_count = @($Samples).Count
         mean_cpu_percent = [math]::Round(($cpu | Measure-Object -Average).Average, 3)
@@ -143,6 +170,8 @@ function Get-ResourceSummary {
         minimum_host_memory_free_mib = [math]::Round($hostTotal - ($used | Measure-Object -Maximum).Maximum, 1)
         maximum_gpu0_utilization_percent = ($gpu0 | Measure-Object -Maximum).Maximum
         maximum_gpu1_utilization_percent = ($gpu1 | Measure-Object -Maximum).Maximum
+        maximum_gpu0_memory_used_mib = ($gpu0Memory | Measure-Object -Maximum).Maximum
+        maximum_gpu1_memory_used_mib = ($gpu1Memory | Measure-Object -Maximum).Maximum
     }
 }
 
@@ -178,6 +207,10 @@ if ($coefficient.passed -ne $true -or [string]$coefficient.disposition -ne 'SELE
 $selectedBeta = [string]$coefficient.selected_beta
 $controlArm = Get-ArmRecord -Manifest $coefficient -Beta '0'
 $selectedArm = Get-ArmRecord -Manifest $coefficient -Beta $selectedBeta
+$pool = Get-Content -LiteralPath $script:PoolJson -Raw | ConvertFrom-Json
+if ([uint64]$pool.primary.generation -ne 384) {
+    throw 'Pool3 primary is not pinned to promoted(2) generation 384'
+}
 
 $preflightEvidence = Join-Path $EvidenceRoot 'preflight\seed-969999'
 $preflightRoot = New-UniqueAttemptRoot -EvidenceRoot $preflightEvidence -GateName 'gross-safety-throughput'
@@ -193,10 +226,16 @@ $concurrentRoot = Join-Path $preflightRoot 'concurrent-arms'
 New-Item -ItemType Directory -Path $singleRoot | Out-Null
 New-Item -ItemType Directory -Path $concurrentRoot | Out-Null
 $singleRun = Start-H2hArm -Label 'control' -Executable $archivedExecutable -StoreRoot ([string]$controlArm.store_root) -RunRoot $singleRoot -EvaluationSeed 969999 -Pairs $PreflightPairs
-$singleMeasure = Wait-H2hArms -Runs @($singleRun)
+$singleMeasure = Wait-H2hArms -Runs @($singleRun) -TimeoutSeconds 900
 $concurrentControl = Start-H2hArm -Label 'control' -Executable $archivedExecutable -StoreRoot ([string]$controlArm.store_root) -RunRoot $concurrentRoot -EvaluationSeed 969999 -Pairs $PreflightPairs
-$concurrentSelected = Start-H2hArm -Label 'selected' -Executable $archivedExecutable -StoreRoot ([string]$selectedArm.store_root) -RunRoot $concurrentRoot -EvaluationSeed 969999 -Pairs $PreflightPairs
-$concurrentMeasure = Wait-H2hArms -Runs @($concurrentControl, $concurrentSelected)
+try {
+    $concurrentSelected = Start-H2hArm -Label 'selected' -Executable $archivedExecutable -StoreRoot ([string]$selectedArm.store_root) -RunRoot $concurrentRoot -EvaluationSeed 969999 -Pairs $PreflightPairs
+}
+catch {
+    Stop-H2hArms -Runs @($concurrentControl)
+    throw
+}
+$concurrentMeasure = Wait-H2hArms -Runs @($concurrentControl, $concurrentSelected) -TimeoutSeconds 900
 
 $singleControlHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $singleRun.outcome_path).Hash.ToLowerInvariant()
 $concurrentControlHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $concurrentControl.outcome_path).Hash.ToLowerInvariant()
@@ -230,8 +269,8 @@ $preflightManifest = [ordered]@{
     rates = [ordered]@{ single_arm_games_per_second = $singleRate; concurrent_aggregate_games_per_second = $concurrentRate }
     measurements = [ordered]@{
         prelaunch = $preflightPrelaunch
-        single = [ordered]@{ wall_seconds = $singleMeasure.wall_seconds; resources = $singleResources }
-        concurrent = [ordered]@{ wall_seconds = $concurrentMeasure.wall_seconds; resources = $concurrentResources }
+        single = [ordered]@{ wall_seconds = $singleMeasure.wall_seconds; resources = $singleResources; samples = @($singleMeasure.samples) }
+        concurrent = [ordered]@{ wall_seconds = $concurrentMeasure.wall_seconds; resources = $concurrentResources; samples = @($concurrentMeasure.samples) }
     }
     git = $git
     toolchain = $toolchain
@@ -261,16 +300,23 @@ Assert-ExclusiveWindow
 $formalPrelaunch = Assert-PrelaunchResourceWindow
 $formalControl = $null
 $formalSelected = $null
+$formalWallStarted = [DateTimeOffset]::UtcNow
 if ($selectedTopology -eq 'concurrent-arms') {
     $formalControl = Start-H2hArm -Label 'control' -Executable $archivedExecutable -StoreRoot ([string]$controlArm.store_root) -RunRoot $formalRoot -EvaluationSeed 1942001 -Pairs $FormalPairs
-    $formalSelected = Start-H2hArm -Label 'selected' -Executable $archivedExecutable -StoreRoot ([string]$selectedArm.store_root) -RunRoot $formalRoot -EvaluationSeed 1942001 -Pairs $FormalPairs
-    $formalMeasure = Wait-H2hArms -Runs @($formalControl, $formalSelected)
+    try {
+        $formalSelected = Start-H2hArm -Label 'selected' -Executable $archivedExecutable -StoreRoot ([string]$selectedArm.store_root) -RunRoot $formalRoot -EvaluationSeed 1942001 -Pairs $FormalPairs
+    }
+    catch {
+        Stop-H2hArms -Runs @($formalControl)
+        throw
+    }
+    $formalMeasure = Wait-H2hArms -Runs @($formalControl, $formalSelected) -TimeoutSeconds 3600
 }
 else {
     $formalControl = Start-H2hArm -Label 'control' -Executable $archivedExecutable -StoreRoot ([string]$controlArm.store_root) -RunRoot $formalRoot -EvaluationSeed 1942001 -Pairs $FormalPairs
-    $controlMeasure = Wait-H2hArms -Runs @($formalControl)
+    $controlMeasure = Wait-H2hArms -Runs @($formalControl) -TimeoutSeconds 3600
     $formalSelected = Start-H2hArm -Label 'selected' -Executable $archivedExecutable -StoreRoot ([string]$selectedArm.store_root) -RunRoot $formalRoot -EvaluationSeed 1942001 -Pairs $FormalPairs
-    $selectedMeasure = Wait-H2hArms -Runs @($formalSelected)
+    $selectedMeasure = Wait-H2hArms -Runs @($formalSelected) -TimeoutSeconds 3600
     $formalMeasure = [ordered]@{
         wall_seconds = [double]$controlMeasure.wall_seconds + [double]$selectedMeasure.wall_seconds
         started_utc = $controlMeasure.started_utc
@@ -278,11 +324,15 @@ else {
         samples = @($controlMeasure.samples) + @($selectedMeasure.samples)
     }
 }
+$formalWallCompleted = [DateTimeOffset]::UtcNow
+$formalMeasure.wall_seconds = ($formalWallCompleted - $formalWallStarted).TotalSeconds
+$formalMeasure.started_utc = $formalWallStarted.ToString('O')
+$formalMeasure.completed_utc = $formalWallCompleted.ToString('O')
 
 # Both complete terminal streams exist before the first outcome is parsed here.
 $classificationPath = Join-Path $formalRoot 'gross-safety-classification.json'
 $classifier = Join-Path $PSScriptRoot 'gross-safety-classifier.ps1'
-& $classifier -ControlPath $formalControl.outcome_path -SelectedPath $formalSelected.outcome_path -OutputPath $classificationPath -ExpectedSeed 1942001 -ExpectedPairs $FormalPairs -OverallFloor -26 -SeatFloor -18
+& $classifier -ControlPath $formalControl.outcome_path -SelectedPath $formalSelected.outcome_path -OutputPath $classificationPath -ExpectedSeed 1942001 -ExpectedPairs $FormalPairs -OverallFloor -26 -SeatFloor -18 -ExpectedOpponentRunSha256 ([string]$pool.primary.source_run_sha256) -ExpectedOpponentCheckpointSha256 ([string]$pool.primary.checkpoint_sha256)
 $classification = Get-Content -LiteralPath $classificationPath -Raw | ConvertFrom-Json
 $formalResources = Get-ResourceSummary $formalMeasure.samples
 $formalManifest = [ordered]@{
@@ -299,6 +349,7 @@ $formalManifest = [ordered]@{
     aggregate_games_per_second = (2 * 2 * $FormalPairs) / [double]$formalMeasure.wall_seconds
     prelaunch = $formalPrelaunch
     resources = $formalResources
+    resource_samples = @($formalMeasure.samples)
     git = $git
     toolchain = $toolchain
     cuda = $cuda
