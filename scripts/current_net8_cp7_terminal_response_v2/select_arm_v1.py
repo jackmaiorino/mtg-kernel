@@ -149,11 +149,21 @@ def validate_arm(
             or manifest.get("authority_kind") != contract["authority"]
             or manifest.get("source_result_sha256") != report_sha256
             or payload.get("filename") != "checkpoint.state.f32le"
+            or payload.get("byte_count") != candidate.get("payload_byte_count")
             or payload.get("adam_step") != ENDING_ADAM_STEP
+            or payload.get("scorer_bias_anchor_f32_bits")
+            != candidate.get("scorer_bias_anchor_f32_bits")
             or payload.get("payload_sha256") != candidate.get("payload_sha256")
+            or payload.get("parameters_sha256") != candidate.get("parameters_sha256")
+            or payload.get("first_moments_sha256")
+            != candidate.get("first_moments_sha256")
+            or payload.get("second_moments_sha256")
+            != candidate.get("second_moments_sha256")
             or payload.get("native_state_sha256") != candidate.get("native_state_sha256")
             or payload.get("model_parameter_sha256")
             != candidate.get("model_parameter_sha256")
+            or (package_root / "checkpoint.state.f32le").stat().st_size
+            != candidate.get("payload_byte_count")
             or sha256(package_root / "checkpoint.state.f32le")
             != candidate.get("payload_sha256")
         ):

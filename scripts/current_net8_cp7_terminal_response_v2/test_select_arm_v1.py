@@ -58,7 +58,12 @@ class SelectorTests(unittest.TestCase):
             },
             "candidate": {
                 "adam_step": SELECTOR.ENDING_ADAM_STEP,
+                "payload_byte_count": len(payload_bytes),
+                "scorer_bias_anchor_f32_bits": 123,
                 "payload_sha256": payload_sha,
+                "parameters_sha256": "3" * 64,
+                "first_moments_sha256": "4" * 64,
+                "second_moments_sha256": "5" * 64,
                 "native_state_sha256": "1" * 64,
                 "model_parameter_sha256": "2" * 64,
                 "parameter_l2_from_gae8": 0.3,
@@ -94,8 +99,13 @@ class SelectorTests(unittest.TestCase):
                 "source_result_sha256": SELECTOR.sha256(report_path),
                 "payload": {
                     "filename": "checkpoint.state.f32le",
+                    "byte_count": len(payload_bytes),
                     "adam_step": SELECTOR.ENDING_ADAM_STEP,
+                    "scorer_bias_anchor_f32_bits": 123,
                     "payload_sha256": payload_sha,
+                    "parameters_sha256": "3" * 64,
+                    "first_moments_sha256": "4" * 64,
+                    "second_moments_sha256": "5" * 64,
                     "native_state_sha256": "1" * 64,
                     "model_parameter_sha256": "2" * 64,
                 },
@@ -134,6 +144,17 @@ class SelectorTests(unittest.TestCase):
             report_path.write_text(json.dumps(report), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "training recipe mismatch"):
                 SELECTOR.validate_arm("low-value", report_path, package_root)
+
+    def test_secondary_package_digest_tamper_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report_path, package_root = self.make_arm(root, "policy-only", 0.012)
+            manifest_path = package_root / "fixed_native_state.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["payload"]["first_moments_sha256"] = "9" * 64
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "package binding mismatch"):
+                SELECTOR.validate_arm("policy-only", report_path, package_root)
 
 
 if __name__ == "__main__":
