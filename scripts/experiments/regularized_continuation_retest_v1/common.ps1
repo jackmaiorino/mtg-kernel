@@ -257,11 +257,11 @@ function Get-HostResourceSample {
 
 function Get-ResourceSample {
     $gpus = Get-GpuSnapshot
-    $host = Get-HostResourceSample
+    $hostSample = Get-HostResourceSample
     $gpu0 = $gpus | Where-Object { $_.ordinal -eq 0 } | Select-Object -First 1
-    $host['gpus'] = @($gpus)
-    $host['gpu0_desktop_load_percent'] = if ($null -eq $gpu0) { $null } else { $gpu0.utilization_percent }
-    return $host
+    $hostSample['gpus'] = @($gpus)
+    $hostSample['gpu0_desktop_load_percent'] = if ($null -eq $gpu0) { $null } else { $gpu0.utilization_percent }
+    return $hostSample
 }
 
 function Get-StoreTreeHash {
