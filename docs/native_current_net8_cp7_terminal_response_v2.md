@@ -31,6 +31,10 @@ Natural terminal win, draw, or loss is the only reward.
 - Arm `low-value`: value coefficient `0.1`. The value target is the same
   natural terminal result.
 
+A value-head-only scoped arm is deferred as a later value-quality optimization
+and will be reconsidered only if a selected arm's downstream results show that
+retaining value accuracy matters.
+
 The arms run in fixed order, `policy-only` then `low-value`. Both run to
 completion before selection. No fit metric, epoch, coefficient, or checkpoint
 is selected from either arm.
