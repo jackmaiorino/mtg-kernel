@@ -38,6 +38,8 @@ use crate::native_train_state_payload_v1::{
     NativeTrainStatePayloadErrorV1,
 };
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
+#[cfg(test)]
+use crate::native_trainer_v1::NativePolicyAnchorRuntimeV1;
 use crate::native_trainer_v1::{
     validate_resumed_parts_v2, validate_resumed_parts_wide_v2, validate_update_config_v2,
     NativeTrainerBootstrapErrorV1, NativeTrainerErrorV1, NativeTrainerProgressV2,
@@ -1650,6 +1652,16 @@ impl NativeTrainingExecutorV1 {
         ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     ) {
         self.trainer.set_ladder_opponent_v1(ladder_opponent);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_policy_anchor_v1(
+        &mut self,
+        policy_anchor: Option<NativePolicyAnchorRuntimeV1>,
+    ) -> Result<(), NativeTrainingExecutorErrorV1> {
+        self.trainer
+            .set_policy_anchor_v1(policy_anchor)
+            .map_err(trainer_executor_error_v1)
     }
 
     #[cfg(test)]

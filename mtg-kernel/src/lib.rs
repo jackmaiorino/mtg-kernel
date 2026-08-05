@@ -97,6 +97,8 @@ pub mod native_opponent_sampler_v1;
 // frozen forever; this module owns only the new ladder identity strings.
 #[allow(dead_code)]
 pub mod native_opponent_policy_v2;
+#[cfg(test)]
+pub(crate) mod native_policy_anchor_v1;
 #[allow(dead_code)]
 pub(crate) mod native_policy_train_step_v1;
 // Headerless, deterministic full model/Adam state payload codec. Store and CLI

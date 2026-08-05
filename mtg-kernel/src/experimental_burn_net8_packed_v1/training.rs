@@ -670,6 +670,7 @@ impl ExperimentalDeviceTrainStateV1 {
         // storage but retain neither autodiff nodes nor a second graph.
         let logit_outputs = logits.clone().inner();
         let value_outputs = values.clone().inner();
+        #[cfg(not(test))]
         let loss = dense_group_loss_v1(
             logits,
             values,
@@ -677,6 +678,24 @@ impl ExperimentalDeviceTrainStateV1 {
             value_coefficient,
             normalization_group_count,
         )?;
+        #[cfg(test)]
+        let loss = match plan.policy_anchor_coefficient {
+            None => dense_group_loss_v1(
+                logits,
+                values,
+                plan,
+                value_coefficient,
+                normalization_group_count,
+            )?,
+            Some(coefficient) => dense_group_loss_with_policy_anchor_v1(
+                logits,
+                values,
+                plan,
+                value_coefficient,
+                normalization_group_count,
+                coefficient,
+            )?,
+        };
         let raw_gradients = loss.backward();
         let mut gradients = GradientsParams::from_grads(raw_gradients, &self.model);
         if gradients.len() != PARAMETER_TENSOR_COUNT_V1 {
@@ -1592,6 +1611,12 @@ impl ModuleMapper<CudaAutodiffBackendV1> for DeviceAdamMapperV1<'_> {
 pub(crate) struct DenseGroupLossPlanV1 {
     pad_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
     pad_mask: Tensor<CudaAutodiffBackendV1, 2>,
+    #[cfg(test)]
+    anchor_target_probabilities: Option<Tensor<CudaAutodiffBackendV1, 2>>,
+    #[cfg(test)]
+    anchor_target_p_log_p: Option<Tensor<CudaAutodiffBackendV1, 2>>,
+    #[cfg(test)]
+    policy_anchor_coefficient: Option<f32>,
     selected_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
     group_scatter: Tensor<CudaAutodiffBackendV1, 1, Int>,
     group_first_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
@@ -1608,6 +1633,8 @@ pub(crate) fn build_dense_group_loss_plan_v1(
     group_first_substeps: &[usize],
     terminal_returns: &[i8],
     device: &burn_cuda::CudaDevice,
+    #[cfg(test)] anchor_target_probability_rows: Option<&[&[f32]]>,
+    #[cfg(test)] policy_anchor_coefficient: Option<f32>,
 ) -> Result<DenseGroupLossPlanV1, Box<dyn Error>> {
     let substeps = selected_action_indices.len();
     let group_count = terminal_returns.len();
@@ -1629,6 +1656,34 @@ pub(crate) fn build_dense_group_loss_plan_v1(
     }
     let mut pad_gather = Vec::with_capacity(substeps * max_actions);
     let mut pad_mask = Vec::with_capacity(substeps * max_actions);
+    #[cfg(test)]
+    if anchor_target_probability_rows.is_some() != policy_anchor_coefficient.is_some() {
+        return Err(training_error(
+            "dense policy anchor plan has incomplete configuration",
+        ));
+    }
+    #[cfg(test)]
+    if let Some(coefficient) = policy_anchor_coefficient {
+        if !coefficient.is_finite() || coefficient <= 0.0 {
+            return Err(training_error(
+                "dense policy anchor coefficient is not positive finite",
+            ));
+        }
+    }
+    #[cfg(test)]
+    let mut anchor_probabilities =
+        anchor_target_probability_rows.map(|_| Vec::with_capacity(substeps * max_actions));
+    #[cfg(test)]
+    let mut anchor_target_p_log_p =
+        anchor_target_probability_rows.map(|_| Vec::with_capacity(substeps * max_actions));
+    #[cfg(test)]
+    if let Some(rows) = anchor_target_probability_rows {
+        if rows.len() != substeps {
+            return Err(training_error(
+                "dense policy anchor row cardinality mismatch",
+            ));
+        }
+    }
     let mut selected_gather = Vec::with_capacity(substeps);
     let mut group_scatter = Vec::with_capacity(substeps);
     for substep in 0..substeps {
@@ -1642,13 +1697,63 @@ pub(crate) fn build_dense_group_loss_plan_v1(
                 "dense group plan substep {substep} is invalid"
             )));
         }
+        #[cfg(test)]
+        if let Some(rows) = anchor_target_probability_rows {
+            if rows[substep].len() != count {
+                return Err(training_error(
+                    "dense policy anchor action cardinality mismatch",
+                ));
+            }
+        }
         for action in 0..max_actions {
             if action < count {
                 pad_gather.push(i32::try_from(begin + action)?);
                 pad_mask.push(0.0_f32);
+                #[cfg(test)]
+                if let Some(rows) = anchor_target_probability_rows {
+                    let probability = rows[substep][action];
+                    if !probability.is_finite() || probability < 0.0 {
+                        return Err(training_error("dense policy anchor probability is invalid"));
+                    }
+                    if anchor_probabilities.is_none() || anchor_target_p_log_p.is_none() {
+                        return Err(training_error("dense policy anchor storage is missing"));
+                    }
+                    anchor_probabilities
+                        .as_mut()
+                        .expect("anchor storage checked")
+                        .push(probability);
+                    anchor_target_p_log_p
+                        .as_mut()
+                        .expect("anchor storage checked")
+                        .push(if probability == 0.0 {
+                            0.0_f32
+                        } else {
+                            probability * probability.ln()
+                        });
+                }
             } else {
                 pad_gather.push(i32::try_from(begin)?);
                 pad_mask.push(DENSE_PAD_MASK_NEGATIVE_V1);
+                #[cfg(test)]
+                if anchor_target_probability_rows.is_some() {
+                    anchor_probabilities
+                        .as_mut()
+                        .expect("anchor storage checked")
+                        .push(0.0_f32);
+                    anchor_target_p_log_p
+                        .as_mut()
+                        .expect("anchor storage checked")
+                        .push(0.0_f32);
+                }
+            }
+        }
+        #[cfg(test)]
+        if let Some(rows) = anchor_target_probability_rows {
+            let sum = rows[substep].iter().copied().map(f64::from).sum::<f64>();
+            if !sum.is_finite() || (sum - 1.0).abs() > 1.0e-6_f64 {
+                return Err(training_error(
+                    "dense policy anchor probability row is not normalized",
+                ));
             }
         }
         selected_gather.push(i32::try_from(begin + selected)?);
@@ -1675,6 +1780,16 @@ pub(crate) fn build_dense_group_loss_plan_v1(
             device,
         ),
         pad_mask: Tensor::from_data(TensorData::new(pad_mask, [substeps, max_actions]), device),
+        #[cfg(test)]
+        anchor_target_probabilities: anchor_probabilities.map(|values| {
+            Tensor::from_data(TensorData::new(values, [substeps, max_actions]), device).detach()
+        }),
+        #[cfg(test)]
+        anchor_target_p_log_p: anchor_target_p_log_p.map(|values| {
+            Tensor::from_data(TensorData::new(values, [substeps, max_actions]), device).detach()
+        }),
+        #[cfg(test)]
+        policy_anchor_coefficient,
         selected_gather: Tensor::from_data(TensorData::new(selected_gather, [substeps]), device),
         group_scatter: Tensor::from_data(TensorData::new(group_scatter, [substeps]), device),
         group_first_gather: Tensor::from_data(
@@ -1760,6 +1875,79 @@ fn dense_group_loss_v1(
         (policy_sum + value_sum.mul_scalar(value_coefficient))
             .div_scalar(normalization_group_count),
     )
+}
+
+/// Test-only policy-anchor sibling of the production dense grouped loss.
+/// Parent probabilities and `p*ln(p)` are host-uploaded constants, so they
+/// cannot receive gradients. Current log probabilities remain differentiable;
+/// consequently the anchor contribution has the exact row gradient
+/// `beta * (pi_current - pi_parent)` before update-group normalization.
+#[cfg(test)]
+fn dense_group_loss_with_policy_anchor_v1(
+    logits: Tensor<CudaAutodiffBackendV1, 1>,
+    values: Tensor<CudaAutodiffBackendV1, 1>,
+    plan: &DenseGroupLossPlanV1,
+    value_coefficient: f32,
+    normalization_group_count: f32,
+    policy_anchor_coefficient: f32,
+) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
+    if values.dims()[0] != plan.substeps
+        || !value_coefficient.is_finite()
+        || value_coefficient <= 0.0
+        || !normalization_group_count.is_finite()
+        || normalization_group_count < plan.group_count as f32
+        || !policy_anchor_coefficient.is_finite()
+        || policy_anchor_coefficient <= 0.0
+    {
+        return Err(training_error(
+            "dense policy anchor group loss shape/parameter mismatch",
+        ));
+    }
+    let parent_probabilities = plan
+        .anchor_target_probabilities
+        .as_ref()
+        .ok_or_else(|| training_error("dense policy anchor probabilities are missing"))?
+        .clone()
+        .detach();
+    let parent_target_p_log_p = plan
+        .anchor_target_p_log_p
+        .as_ref()
+        .ok_or_else(|| training_error("dense policy anchor p log p is missing"))?
+        .clone()
+        .detach();
+    let padded = logits
+        .clone()
+        .select(0, plan.pad_gather.clone())
+        .reshape([plan.substeps, plan.max_actions])
+        + plan.pad_mask.clone();
+    let row_max = padded.clone().max_dim(1).detach();
+    let centered = padded - row_max.clone();
+    let log_normalizer = centered.clone().exp().sum_dim(1).log();
+    let log_sum_exp = log_normalizer.clone() + row_max;
+    let selected_logits = logits.select(0, plan.selected_gather.clone());
+    let selected_log_probabilities = selected_logits - log_sum_exp.squeeze_dim::<1>(1);
+    let joint_log_probabilities = Tensor::zeros([plan.group_count], &plan.targets.device())
+        .scatter(
+            0,
+            plan.group_scatter.clone(),
+            selected_log_probabilities,
+            IndexingUpdateOp::Add,
+        );
+    let group_values = values.select(0, plan.group_first_gather.clone());
+    let advantage = plan.targets.clone() - group_values.clone().detach();
+    let policy_sum = joint_log_probabilities
+        .mul(advantage)
+        .mul_scalar(-1.0)
+        .sum();
+    let value_error = group_values - plan.targets.clone();
+    let value_sum = value_error.clone().mul(value_error).sum();
+    let current_log_probabilities = centered - log_normalizer;
+    let forward_kl_sum =
+        (parent_target_p_log_p - parent_probabilities.mul(current_log_probabilities)).sum();
+    Ok((policy_sum
+        + value_sum.mul_scalar(value_coefficient)
+        + forward_kl_sum.mul_scalar(policy_anchor_coefficient))
+    .div_scalar(normalization_group_count))
 }
 
 /// Device-resident dense-padded loss plan, built once per packed batch. The
@@ -3579,6 +3767,218 @@ pub(super) fn run_cuda_training_v1() -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::*;
 
+    fn forward_kl_reference_v1(logits: &[f32], parent: &[f32]) -> (f64, Vec<f64>) {
+        assert_eq!(logits.len(), parent.len());
+        assert!(!logits.is_empty());
+        let maximum = logits
+            .iter()
+            .copied()
+            .map(f64::from)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let log_normalizer = logits
+            .iter()
+            .copied()
+            .map(|logit| (f64::from(logit) - maximum).exp())
+            .sum::<f64>()
+            .ln()
+            + maximum;
+        let probabilities = logits
+            .iter()
+            .copied()
+            .map(|logit| (f64::from(logit) - log_normalizer).exp())
+            .collect::<Vec<_>>();
+        let kl = parent
+            .iter()
+            .copied()
+            .zip(&probabilities)
+            .map(|(target, current)| {
+                let target = f64::from(target);
+                if target == 0.0 {
+                    0.0
+                } else {
+                    target * (target.ln() - current.ln())
+                }
+            })
+            .sum::<f64>();
+        assert!(kl.is_finite());
+        (kl, probabilities)
+    }
+
+    fn forward_kl_gradient_reference_v1(
+        logits: &[f32],
+        parent: &[f32],
+        beta: f64,
+        normalization_group_count: f64,
+    ) -> Vec<f64> {
+        let (_, current) = forward_kl_reference_v1(logits, parent);
+        current
+            .iter()
+            .zip(parent)
+            .map(|(current, parent)| {
+                beta * (*current - f64::from(*parent)) / normalization_group_count
+            })
+            .collect()
+    }
+
+    #[test]
+    fn policy_anchor_gradient_has_the_forward_kl_orientation() {
+        let logits = [2.0_f32, 0.0];
+        let parent = [0.2_f32, 0.8];
+        let gradient = forward_kl_gradient_reference_v1(&logits, &parent, 0.7, 1.0);
+        assert!(gradient[0] > 0.0);
+        assert!(gradient[1] < 0.0);
+        assert!((gradient[0] + gradient[1]).abs() <= 1.0e-7);
+    }
+
+    #[test]
+    fn policy_anchor_singleton_is_finite_zero_and_padding_is_ignored() {
+        let (singleton_kl, singleton_probability) = forward_kl_reference_v1(&[17.0], &[1.0]);
+        assert_eq!(singleton_kl.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(singleton_probability, vec![1.0]);
+
+        let padded = [2.0_f32, -1.0, 10_000.0];
+        let changed_padding = [2.0_f32, -1.0, -10_000.0];
+        let (padded_kl, _) = forward_kl_reference_v1(&padded[..2], &[0.75, 0.25]);
+        let (changed_padding_kl, _) = forward_kl_reference_v1(&changed_padding[..2], &[0.75, 0.25]);
+        assert_eq!(padded_kl.to_bits(), changed_padding_kl.to_bits());
+    }
+
+    #[test]
+    fn policy_anchor_uses_the_complete_physical_group_denominator() {
+        let first = forward_kl_reference_v1(&[1.0, -1.0], &[0.8, 0.2]).0;
+        let second = forward_kl_reference_v1(&[-1.0, 1.0], &[0.2, 0.8]).0;
+        let normalized = (first + second) / 2.0;
+        assert!(normalized.is_finite());
+        assert!(normalized > 0.0);
+        assert!(normalized < first + second);
+        assert!((normalized * 2.0 - (first + second)).abs() <= 1.0e-15);
+    }
+
+    #[test]
+    fn policy_anchor_has_exact_zero_gradient_when_parent_equals_current() {
+        let logits = [0.0_f32, 0.0];
+        let parent = [0.5_f32, 0.5];
+        let gradient = forward_kl_gradient_reference_v1(&logits, &parent, 3.0, 7.0);
+        assert!(gradient
+            .iter()
+            .all(|gradient| gradient.to_bits() == 0.0_f64.to_bits()));
+    }
+
+    #[test]
+    #[ignore = "requires a CUDA device, run explicitly"]
+    fn burn_policy_anchor_forward_kl_and_gradient_match_cpu_oracle_v1() {
+        const CUDA_ORACLE_ABSOLUTE_TOLERANCE_V1: f64 = 2.0e-6;
+        const POLICY_ANCHOR_COEFFICIENT_V1: f32 = 0.3;
+        const NORMALIZATION_GROUP_COUNT_V1: f32 = 3.0;
+
+        let device = burn_cuda::CudaDevice::new(1);
+        let singleton_logits = [17.0_f32];
+        let two_action_logits = [2.0_f32, -1.0];
+        let three_action_logits = [-0.5_f32, 0.25, 1.5];
+        let singleton_parent = [1.0_f32];
+        let two_action_parent = [0.25_f32, 0.75];
+        let three_action_parent = [0.1_f32, 0.3, 0.6];
+        let anchor_rows: [&[f32]; 3] =
+            [&singleton_parent, &two_action_parent, &three_action_parent];
+
+        let mut host = HostPackingWorkspace::default();
+        host.action_offsets = vec![0, 1, 3, 6];
+        let plan = build_dense_group_loss_plan_v1(
+            &host,
+            &[0, 0, 0],
+            &[0, 1, 2],
+            &[0, 1, 2],
+            &[0, 0, 0],
+            &device,
+            Some(&anchor_rows),
+            Some(POLICY_ANCHOR_COEFFICIENT_V1),
+        )
+        .unwrap();
+        let flat_logits = singleton_logits
+            .iter()
+            .chain(&two_action_logits)
+            .chain(&three_action_logits)
+            .copied()
+            .collect::<Vec<_>>();
+        let cuda_logits = Tensor::<CudaAutodiffBackendV1, 1>::from_data(
+            TensorData::new(flat_logits, [6]),
+            &device,
+        )
+        .require_grad();
+        let cuda_values = Tensor::<CudaAutodiffBackendV1, 1>::from_data(
+            TensorData::new(vec![0.0_f32; 3], [3]),
+            &device,
+        );
+        let cuda_loss = dense_group_loss_with_policy_anchor_v1(
+            cuda_logits.clone(),
+            cuda_values,
+            &plan,
+            VALUE_COEFFICIENT_V1,
+            NORMALIZATION_GROUP_COUNT_V1,
+            POLICY_ANCHOR_COEFFICIENT_V1,
+        )
+        .unwrap();
+        let cuda_loss_value = f64::from(cuda_loss.clone().into_data().to_vec::<f32>().unwrap()[0]);
+        let raw_gradients = cuda_loss.backward();
+        let cuda_gradient = cuda_logits
+            .grad(&raw_gradients)
+            .expect("policy-anchor logits gradient")
+            .into_data()
+            .to_vec::<f32>()
+            .unwrap();
+        CudaAutodiffBackendV1::sync(&device).unwrap();
+
+        let oracle_rows = [
+            forward_kl_reference_v1(&singleton_logits, &singleton_parent),
+            forward_kl_reference_v1(&two_action_logits, &two_action_parent),
+            forward_kl_reference_v1(&three_action_logits, &three_action_parent),
+        ];
+        let oracle_loss = f64::from(POLICY_ANCHOR_COEFFICIENT_V1)
+            * oracle_rows.iter().map(|(kl, _)| *kl).sum::<f64>()
+            / f64::from(NORMALIZATION_GROUP_COUNT_V1);
+        let oracle_gradient = [
+            forward_kl_gradient_reference_v1(
+                &singleton_logits,
+                &singleton_parent,
+                f64::from(POLICY_ANCHOR_COEFFICIENT_V1),
+                f64::from(NORMALIZATION_GROUP_COUNT_V1),
+            ),
+            forward_kl_gradient_reference_v1(
+                &two_action_logits,
+                &two_action_parent,
+                f64::from(POLICY_ANCHOR_COEFFICIENT_V1),
+                f64::from(NORMALIZATION_GROUP_COUNT_V1),
+            ),
+            forward_kl_gradient_reference_v1(
+                &three_action_logits,
+                &three_action_parent,
+                f64::from(POLICY_ANCHOR_COEFFICIENT_V1),
+                f64::from(NORMALIZATION_GROUP_COUNT_V1),
+            ),
+        ]
+        .concat();
+
+        assert!(
+            (cuda_loss_value - oracle_loss).abs() <= CUDA_ORACLE_ABSOLUTE_TOLERANCE_V1,
+            "CUDA loss {cuda_loss_value} differs from CPU oracle {oracle_loss}"
+        );
+        assert_eq!(cuda_gradient.len(), oracle_gradient.len());
+        for (action, (actual, expected)) in cuda_gradient
+            .iter()
+            .copied()
+            .zip(&oracle_gradient)
+            .enumerate()
+        {
+            assert!(
+                (f64::from(actual) - *expected).abs() <= CUDA_ORACLE_ABSOLUTE_TOLERANCE_V1,
+                "CUDA gradient action {action}: {actual} differs from CPU oracle {expected}"
+            );
+        }
+        assert_eq!(cuda_gradient[0].to_bits(), 0.0_f32.to_bits());
+        assert!(cuda_gradient[1] > 0.0);
+        assert!(cuda_gradient[2] < 0.0);
+    }
+
     #[test]
     fn all_native_parameter_layouts_round_trip_through_burn_order() {
         let model =
@@ -4136,6 +4536,8 @@ mod tests {
                     &group_first_substeps,
                     &terminal_returns,
                     &device,
+                    None,
+                    None,
                 )
                 .unwrap();
                 let chunk_batch =

@@ -38,6 +38,8 @@ use crate::native_full_episode_trajectory_v2::{
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 #[cfg(test)]
+use crate::native_policy_anchor_v1::native_policy_anchor_probabilities_v1;
+#[cfg(test)]
 use crate::native_policy_train_step_v1::{
     packed_actual_recompute_call_count_for_test_v1, FIXED_BACKWARD_PARTITION_COUNT_V1,
 };
@@ -1786,6 +1788,63 @@ pub(crate) struct NativeTrainerUpdateConfigV2 {
     pub(crate) backward_worker_limit: usize,
 }
 
+/// Test-harness-only authority for the regularized continuation retest. The
+/// beta-zero variant is an explicit dispatch value so callers can prove that
+/// it bypasses the anchor path and reaches the production CUDA function
+/// unchanged. Positive variants are exact f32 literals from the reviewed
+/// bounded screen.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativePolicyAnchorCoefficientV1 {
+    Zero,
+    Beta0p01,
+    Beta0p03,
+    Beta0p1,
+    Beta0p3,
+}
+
+#[cfg(test)]
+impl NativePolicyAnchorCoefficientV1 {
+    pub(crate) const fn bits_v1(self) -> u32 {
+        match self {
+            Self::Zero => 0x0000_0000,
+            Self::Beta0p01 => 0x3c23_d70a,
+            Self::Beta0p03 => 0x3cf5_c28f,
+            Self::Beta0p1 => 0x3dcc_cccd,
+            Self::Beta0p3 => 0x3e99_999a,
+        }
+    }
+
+    pub(crate) fn value_v1(self) -> f32 {
+        f32::from_bits(self.bits_v1())
+    }
+
+    pub(crate) fn from_bits_v1(bits: u32) -> Option<Self> {
+        match bits {
+            0x0000_0000 => Some(Self::Zero),
+            0x3c23_d70a => Some(Self::Beta0p01),
+            0x3cf5_c28f => Some(Self::Beta0p03),
+            0x3dcc_cccd => Some(Self::Beta0p1),
+            0x3e99_999a => Some(Self::Beta0p3),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn is_enabled_v1(self) -> bool {
+        !matches!(self, Self::Zero)
+    }
+}
+
+/// One immutable promoted(2) policy shared across reconstructed update
+/// executors in the test-only macro harness. The candidate and anchor are
+/// deliberately distinct objects; only the candidate owns optimizer state.
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub(crate) struct NativePolicyAnchorRuntimeV1 {
+    pub(crate) coefficient: NativePolicyAnchorCoefficientV1,
+    pub(crate) model: Arc<NativePolicyValueNetV1>,
+}
+
 #[derive(Clone, Copy)]
 struct NativeTrainerGroupedTrainConfigV1 {
     value_coefficient: f32,
@@ -1972,6 +2031,8 @@ pub(crate) struct NativeTrainerStateV2 {
     /// [`Self::set_ladder_opponent_v1`].
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     #[cfg(test)]
+    policy_anchor: Option<NativePolicyAnchorRuntimeV1>,
+    #[cfg(test)]
     pending_test_association_mutation: Option<NativePolicyAssociationTestMutationV1>,
     #[cfg(test)]
     pending_test_train_non_selected_logit_mutation: bool,
@@ -2076,6 +2137,8 @@ impl NativeTrainerStateV2 {
             progress,
             ladder_opponent: None,
             #[cfg(test)]
+            policy_anchor: None,
+            #[cfg(test)]
             pending_test_association_mutation: None,
             #[cfg(test)]
             pending_test_train_non_selected_logit_mutation: false,
@@ -2109,6 +2172,8 @@ impl NativeTrainerStateV2 {
             progress,
             ladder_opponent: None,
             #[cfg(test)]
+            policy_anchor: None,
+            #[cfg(test)]
             pending_test_association_mutation: None,
             #[cfg(test)]
             pending_test_train_non_selected_logit_mutation: false,
@@ -2140,6 +2205,8 @@ impl NativeTrainerStateV2 {
             progress,
             ladder_opponent: None,
             #[cfg(test)]
+            policy_anchor: None,
+            #[cfg(test)]
             pending_test_association_mutation: None,
             #[cfg(test)]
             pending_test_train_non_selected_logit_mutation: false,
@@ -2166,6 +2233,8 @@ impl NativeTrainerStateV2 {
             train_state: NativeTrainerModelStateV2::Wide(train_state.clone()),
             progress,
             ladder_opponent: None,
+            #[cfg(test)]
+            policy_anchor: None,
             #[cfg(test)]
             pending_test_association_mutation: None,
             #[cfg(test)]
@@ -2221,6 +2290,36 @@ impl NativeTrainerStateV2 {
         ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     ) {
         self.ladder_opponent = ladder_opponent;
+    }
+
+    /// Installs the immutable experiment-only parent policy on one
+    /// reconstructed executor. Positive zero is represented by `None`, so it
+    /// cannot accidentally enter a numerically equivalent but byte-different
+    /// training path.
+    #[cfg(test)]
+    pub(crate) fn set_policy_anchor_v1(
+        &mut self,
+        policy_anchor: Option<NativePolicyAnchorRuntimeV1>,
+    ) -> Result<(), NativeTrainerErrorV1> {
+        if let Some(anchor) = &policy_anchor {
+            if !anchor.coefficient.is_enabled_v1() {
+                return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                    "policy_anchor_positive_beta",
+                ));
+            }
+            if self.is_wide_v1() {
+                return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                    "policy_anchor_narrow_model_only",
+                ));
+            }
+            if anchor.model.config_v1() != self.train_state_v1().model_v1().config_v1() {
+                return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                    "policy_anchor_model_config",
+                ));
+            }
+        }
+        self.policy_anchor = policy_anchor;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -2333,6 +2432,14 @@ impl NativeTrainerStateV2 {
         let test_physical_substep_count_mutation =
             std::mem::take(&mut self.pending_test_physical_substep_count_mutation);
         validate_update_config_v2(config)?;
+        #[cfg(test)]
+        if self.policy_anchor.is_some()
+            && config.numerical_backend != NativeTrainingNumericalBackendV1::CudaBurnDense
+        {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "policy_anchor_requires_cuda_burn_dense",
+            ));
+        }
         if config.batch_episodes != self.batch_episodes {
             return Err(NativeTrainerErrorV1::InvalidUpdateConfig("batch_episodes"));
         }
@@ -2526,6 +2633,8 @@ impl NativeTrainerStateV2 {
                 numerical_backend: config.numerical_backend,
                 backward_worker_limit: config.backward_worker_limit,
             },
+            #[cfg(test)]
+            self.policy_anchor.as_ref(),
             #[cfg(test)]
             test_physical_substep_count_mutation,
             phase_recorder,
@@ -3390,6 +3499,7 @@ fn train_grouped_candidate_v1(
     grouped: &NativePolicyGroupedTrajectoryV1,
     full_trajectory_receipts: &[NativeTrainingTrajectoryReceiptV2],
     execution: NativeTrainerGroupedTrainConfigV1,
+    #[cfg(test)] policy_anchor: Option<&NativePolicyAnchorRuntimeV1>,
     #[cfg(test)] test_physical_substep_count_mutation: bool,
     phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
 ) -> Result<
@@ -3503,6 +3613,43 @@ fn train_grouped_candidate_v1(
             },
         )
         .collect::<Vec<_>>();
+    #[cfg(test)]
+    let _policy_anchor_target_probabilities = policy_anchor
+        .map(|anchor| {
+            source_groups
+                .iter()
+                .enumerate()
+                .map(|(group_index, group)| {
+                    group
+                        .substeps
+                        .iter()
+                        .enumerate()
+                        .map(|(substep_index, substep)| {
+                            let encoded =
+                                native_encoded_decision_view_v1(&substep.scoring_inputs.tensor);
+                            let output = anchor
+                                .model
+                                .forward_v1(encoded)
+                                .map_err(NativePolicyTrainErrorV1::from)
+                                .map_err(NativeTrainerErrorV1::Train)?;
+                            if output.logits.len() != substep.raw_action_logit_bits.len() {
+                                return Err(NativeTrainerErrorV1::RecomputedOutputMismatch {
+                                    field: "policy_anchor_action_count",
+                                    group_index,
+                                    substep_index,
+                                });
+                            }
+                            native_policy_anchor_probabilities_v1(&output.logits).map_err(|_| {
+                                NativeTrainerErrorV1::Train(NativePolicyTrainErrorV1::CudaBackend {
+                                    code: "policy-anchor-target-softmax",
+                                })
+                            })
+                        })
+                        .collect::<Result<Vec<_>, NativeTrainerErrorV1>>()
+                })
+                .collect::<Result<Vec<_>, NativeTrainerErrorV1>>()
+        })
+        .transpose()?;
     phase_recorder.finish_v1(grouping_timer);
     let result = match execution.numerical_backend {
         NativeTrainingNumericalBackendV1::Sequential => candidate
@@ -3527,12 +3674,35 @@ fn train_grouped_candidate_v1(
         // through the validating snapshot constructor.
         #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
         NativeTrainingNumericalBackendV1::CudaBurnDense => {
-            crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
-                candidate,
-                &borrowed_groups,
-                execution.value_coefficient,
-                execution.learning_rate,
-            )
+            #[cfg(test)]
+            if let (Some(anchor), Some(targets)) =
+                (policy_anchor, _policy_anchor_target_probabilities.as_ref())
+            {
+                crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_policy_anchor_v1(
+                    candidate,
+                    &borrowed_groups,
+                    targets,
+                    anchor.coefficient.value_v1(),
+                    execution.value_coefficient,
+                    execution.learning_rate,
+                )
+            } else {
+                crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
+                    candidate,
+                    &borrowed_groups,
+                    execution.value_coefficient,
+                    execution.learning_rate,
+                )
+            }
+            #[cfg(not(test))]
+            {
+                crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_v1(
+                    candidate,
+                    &borrowed_groups,
+                    execution.value_coefficient,
+                    execution.learning_rate,
+                )
+            }
         }
         #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
         NativeTrainingNumericalBackendV1::CudaBurnDense => {

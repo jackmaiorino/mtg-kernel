@@ -20,6 +20,12 @@ use crate::native_checkpoint_runner_v1::{
     NativeCheckpointRunnerConfigV1,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
+#[cfg(test)]
+use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
+#[cfg(test)]
+use crate::native_train_state_payload_v1::decode_native_train_state_payload_v1;
+#[cfg(test)]
+use crate::native_trainer_v1::{NativePolicyAnchorCoefficientV1, NativePolicyAnchorRuntimeV1};
 use crate::native_training_executor_v1::{
     NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1,
 };
@@ -47,6 +53,8 @@ use crate::native_training_store_v2::{
     publish_genesis_generation_v2, NativeTrainingStorePublisherV2ErrorKind,
 };
 use std::error::Error;
+#[cfg(test)]
+use std::ffi::OsStr;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -110,6 +118,76 @@ type Result<T> = std::result::Result<T, NativeScienceLoopV1Error>;
 
 const fn loop_error_v1(kind: NativeScienceLoopV1ErrorKind) -> NativeScienceLoopV1Error {
     NativeScienceLoopV1Error { kind }
+}
+
+#[cfg(test)]
+fn parse_policy_anchor_coefficient_v1(
+    raw: Option<&OsStr>,
+) -> std::result::Result<Option<NativePolicyAnchorCoefficientV1>, ()> {
+    match raw.and_then(OsStr::to_str) {
+        None => Ok(None),
+        Some("0") => Ok(None),
+        Some("0.01") => Ok(Some(NativePolicyAnchorCoefficientV1::Beta0p01)),
+        Some("0.03") => Ok(Some(NativePolicyAnchorCoefficientV1::Beta0p03)),
+        Some("0.1") => Ok(Some(NativePolicyAnchorCoefficientV1::Beta0p1)),
+        Some("0.3") => Ok(Some(NativePolicyAnchorCoefficientV1::Beta0p3)),
+        Some(_) => Err(()),
+    }
+}
+
+#[cfg(test)]
+fn parse_optional_generation_value_v1(raw: Option<&OsStr>) -> std::result::Result<Option<u64>, ()> {
+    match raw {
+        None => Ok(None),
+        Some(raw) => raw
+            .to_str()
+            .ok_or(())?
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|_| ()),
+    }
+}
+
+#[cfg(test)]
+fn parse_optional_generation_knob_v1(name: &str) -> std::result::Result<Option<u64>, ()> {
+    let raw = std::env::var_os(name);
+    parse_optional_generation_value_v1(raw.as_deref())
+}
+
+#[cfg(test)]
+fn policy_anchor_runtime_v1(
+    ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
+) -> std::result::Result<Option<NativePolicyAnchorRuntimeV1>, ()> {
+    let raw = std::env::var_os("MULTIRUN_POLICY_ANCHOR_BETA");
+    let Some(coefficient) = parse_policy_anchor_coefficient_v1(raw.as_deref())? else {
+        return Ok(None);
+    };
+    let reference = ladder_init_reference.ok_or(())?;
+    let train_state = reference.checkpoint.train_state();
+    let scorer_bias_anchor_bits =
+        u32::try_from(train_state.scorer_bias_anchor_f32_bits()).map_err(|_| ())?;
+    let decoded = decode_native_train_state_payload_v1(
+        &reference.payload,
+        train_state.adam_step(),
+        scorer_bias_anchor_bits,
+    )
+    .map_err(|_| ())?;
+    if decoded.digests.model_parameter_sha256 != reference.checkpoint.model_parameter_sha256() {
+        return Err(());
+    }
+    let mut model =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .map_err(|_| ())?;
+    model
+        .replace_parameter_snapshot_v1(&decoded.snapshot.parameters)
+        .map_err(|_| ())?;
+    if model.parameter_manifest_sha256_v1() != train_state.model_parameter_sha256() {
+        return Err(());
+    }
+    Ok(Some(NativePolicyAnchorRuntimeV1 {
+        coefficient,
+        model: Arc::new(model),
+    }))
 }
 
 fn map_busy_v1<K>(
@@ -262,6 +340,17 @@ pub fn run_native_science_loop_v1(
     validate_prepared_execution_config_v1(run, &execution_config)
         .map_err(|_| loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid))?;
 
+    #[cfg(test)]
+    let policy_anchor = policy_anchor_runtime_v1(ladder_init_reference)
+        .map_err(|_| loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid))?;
+    #[cfg(test)]
+    let stop_after_generation = parse_optional_generation_knob_v1("MULTIRUN_STOP_AFTER_GENERATION")
+        .map_err(|_| loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid))?;
+    #[cfg(test)]
+    let expected_resume_generation =
+        parse_optional_generation_knob_v1("MULTIRUN_EXPECT_RESUME_GENERATION")
+            .map_err(|_| loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid))?;
+
     // Bootstrap admits only the frozen B0 through B8 states.
     let bootstrapped = bootstrap_native_training_store_v2(parent.as_ref(), root_basename)
         .map_err(map_busy_v1(
@@ -276,6 +365,10 @@ pub fn run_native_science_loop_v1(
     // generation-zero finals or a latest stage). The publisher revalidates
     // the complete state under its own exclusive lock before any mutation.
     let genesis_required = !bootstrapped.latest_final_present();
+    #[cfg(test)]
+    if expected_resume_generation.is_some() && genesis_required {
+        return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
+    }
     let root: ValidatedNativeTrainingStoreRootV2 = bootstrapped.into_root();
 
     // Train-new bootstrap and interrupted-bootstrap recovery both reconstruct
@@ -351,6 +444,8 @@ pub fn run_native_science_loop_v1(
 
     // Train to the exact target: every window runs on a reconstructed
     // executor and commits only through the durable receipt.
+    #[cfg(test)]
+    let mut resume_generation_checked = expected_resume_generation.is_none();
     let latest_generation_index = loop {
         let resumed = resume_native_training_store_v2(&root, run, execution_config.clone())
             .map_err(map_busy_v1(
@@ -363,9 +458,35 @@ pub fn run_native_science_loop_v1(
         match resumed {
             NativeTrainingStoreResumeV2::Complete {
                 latest_generation_index,
-            } => break latest_generation_index,
+            } => {
+                #[cfg(test)]
+                if let Some(expected) = expected_resume_generation {
+                    if !resume_generation_checked && latest_generation_index != expected {
+                        return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
+                    }
+                    resume_generation_checked = true;
+                }
+                break latest_generation_index;
+            }
             NativeTrainingStoreResumeV2::Continue(mut continuation) => {
                 let train_error = loop_error_v1(NativeScienceLoopV1ErrorKind::TrainFailed);
+                #[cfg(test)]
+                {
+                    let parent_generation = continuation.parent_checkpoint.generation_index();
+                    if let Some(expected) = expected_resume_generation {
+                        if !resume_generation_checked {
+                            if parent_generation != expected {
+                                return Err(loop_error_v1(
+                                    NativeScienceLoopV1ErrorKind::InputInvalid,
+                                ));
+                            }
+                            resume_generation_checked = true;
+                        }
+                    }
+                    if stop_after_generation == Some(parent_generation) {
+                        break parent_generation;
+                    }
+                }
                 // Self-Play Ladder Design Contract S2, Section 5. Every
                 // window trains on a freshly reconstructed executor
                 // (`resume_native_training_store_v2`'s own design); the
@@ -374,6 +495,11 @@ pub fn run_native_science_loop_v1(
                 continuation
                     .executor
                     .set_ladder_opponent_v1(ladder_opponent.clone());
+                #[cfg(test)]
+                continuation
+                    .executor
+                    .set_policy_anchor_v1(policy_anchor.clone())
+                    .map_err(|_| train_error)?;
                 let prepared = prepare_segment_v2(
                     &mut continuation.executor,
                     run,
@@ -393,6 +519,10 @@ pub fn run_native_science_loop_v1(
             }
         }
     };
+    #[cfg(test)]
+    if !resume_generation_checked {
+        return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
+    }
 
     // Full-store currentness validation after training.
     let state = validate_native_training_store_v2(&root, run)
@@ -459,6 +589,51 @@ pub fn run_native_science_loop_v1(
         candidate_run,
         evaluation,
     })
+}
+
+#[cfg(test)]
+mod policy_anchor_parse_tests {
+    use super::*;
+
+    #[test]
+    fn policy_anchor_parser_accepts_only_frozen_exact_spellings() {
+        assert_eq!(parse_policy_anchor_coefficient_v1(None), Ok(None));
+        assert_eq!(
+            parse_policy_anchor_coefficient_v1(Some(OsStr::new("0"))),
+            Ok(None)
+        );
+        for (raw, expected) in [
+            ("0.01", NativePolicyAnchorCoefficientV1::Beta0p01),
+            ("0.03", NativePolicyAnchorCoefficientV1::Beta0p03),
+            ("0.1", NativePolicyAnchorCoefficientV1::Beta0p1),
+            ("0.3", NativePolicyAnchorCoefficientV1::Beta0p3),
+        ] {
+            assert_eq!(
+                parse_policy_anchor_coefficient_v1(Some(OsStr::new(raw))),
+                Ok(Some(expected))
+            );
+        }
+        for raw in ["0.0", "-0", "1e-2", "0.10", "0.300000", "nan", "1"] {
+            assert_eq!(
+                parse_policy_anchor_coefficient_v1(Some(OsStr::new(raw))),
+                Err(()),
+                "unexpectedly accepted {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn optional_generation_knob_parser_is_exact_u64() {
+        assert_eq!(parse_optional_generation_value_v1(None), Ok(None));
+        assert_eq!(
+            parse_optional_generation_value_v1(Some(OsStr::new("32"))),
+            Ok(Some(32))
+        );
+        assert_eq!(
+            parse_optional_generation_value_v1(Some(OsStr::new("-1"))),
+            Err(())
+        );
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -675,8 +850,10 @@ mod windows_science_loop_tests {
     ///
     /// Sweep knobs arrive via env so one binary serves every point:
     /// MULTIRUN_RUNS, MULTIRUN_UPDATES, MULTIRUN_WORKERS,
-    /// MULTIRUN_SESSIONS, MULTIRUN_BROKER_TARGET, and
-    /// MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2. The broker target is
+    /// MULTIRUN_SESSIONS, MULTIRUN_BROKER_TARGET,
+    /// MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2, and
+    /// MULTIRUN_POLICY_ANCHOR_BETA, MULTIRUN_STOP_AFTER_GENERATION, and
+    /// MULTIRUN_EXPECT_RESUME_GENERATION. The broker target is
     /// the contention knob: the trainer sizes its forward pool as
     /// min(broker_batch_target, actors, cores), so N runs partition the
     /// machine's scoring cores only when N * target <= cores.
@@ -739,6 +916,12 @@ mod windows_science_loop_tests {
         // by the validated record and its sealed executor-mode diagonal.
         let environment_randomization_v2 =
             env_knob_v1("MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2", 0) != 0;
+        let stop_after_generation =
+            parse_optional_generation_knob_v1("MULTIRUN_STOP_AFTER_GENERATION")
+                .expect("MULTIRUN_STOP_AFTER_GENERATION must be a u64");
+        let expected_resume_generation =
+            parse_optional_generation_knob_v1("MULTIRUN_EXPECT_RESUME_GENERATION")
+                .expect("MULTIRUN_EXPECT_RESUME_GENERATION must be a u64");
         let ladder_pool: Option<crate::native_training_store_run_v2::OpponentLadderPoolContractV1> =
             if ladder_enabled {
                 let pool_dir = std::env::var("MULTIRUN_LADDER_POOL_DIR")
@@ -867,8 +1050,13 @@ mod windows_science_loop_tests {
             "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
              broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset} \
              record_only={record_only} ladder={ladder_enabled} \
-             ladder_init={} wide={wide_enabled} envrand_v2={environment_randomization_v2}",
-            ladder_init_store.is_some()
+             ladder_init={} wide={wide_enabled} envrand_v2={environment_randomization_v2} \
+             policy_anchor_beta={} stop_after_generation={} expected_resume_generation={}",
+            ladder_init_store.is_some(),
+            std::env::var("MULTIRUN_POLICY_ANCHOR_BETA").unwrap_or_else(|_| "absent".to_owned()),
+            stop_after_generation.map_or_else(|| "absent".to_owned(), |value| value.to_string()),
+            expected_resume_generation
+                .map_or_else(|| "absent".to_owned(), |value| value.to_string())
         );
         let started = std::time::Instant::now();
         let handles: Vec<_> = (0..run_count)
@@ -1099,11 +1287,16 @@ mod windows_science_loop_tests {
         let mut total_episodes = 0_u64;
         for handle in handles {
             let (ordinal, generation, wall, wins, losses) = handle.join().expect("pilot thread");
-            assert_eq!(generation, updates);
-            total_episodes += 64 * updates;
+            let expected_generation = stop_after_generation.unwrap_or(updates);
+            assert_eq!(generation, expected_generation);
+            total_episodes +=
+                64 * generation.saturating_sub(expected_resume_generation.unwrap_or(0));
             println!(
                 "MULTIRUN run={ordinal} gen={generation} wall={wall:.1}s eval W/L {wins}/{losses}{wide_label}"
             );
+        }
+        if let Some(generation) = expected_resume_generation {
+            println!("STORE CLOSE_REOPEN resume_generation={generation}");
         }
         let aggregate_wall = started.elapsed().as_secs_f64();
         println!(

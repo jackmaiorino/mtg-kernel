@@ -40,6 +40,131 @@ const SCORER_SECOND_BIAS_ORDINAL_V1: usize = 28;
 /// while staying large enough that dense-kernel launch overhead is amortized.
 const BRIDGE_CHUNK_SUBSTEP_TARGET_V1: usize = 8_192;
 
+#[cfg(test)]
+fn validate_policy_anchor_rows_v1<'a>(
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    anchor_target_probabilities: &'a [Vec<Vec<f32>>],
+    policy_anchor_coefficient: f32,
+) -> Result<Vec<&'a [f32]>, NativePolicyTrainErrorV1> {
+    if !policy_anchor_coefficient.is_finite() || policy_anchor_coefficient <= 0.0 {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-policy-anchor-coefficient",
+        });
+    }
+    if anchor_target_probabilities.len() != groups.len() {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-policy-anchor-group-cardinality",
+        });
+    }
+    let mut flat_rows = Vec::new();
+    for (group, anchor_group) in groups.iter().zip(anchor_target_probabilities) {
+        if anchor_group.len() != group.substeps.len() {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-policy-anchor-substep-cardinality",
+            });
+        }
+        for (substep, row) in group.substeps.iter().zip(anchor_group) {
+            let action_count = substep.expected_raw_action_logit_bits.len();
+            if row.len() != action_count {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-policy-anchor-action-cardinality",
+                });
+            }
+            if row
+                .iter()
+                .any(|probability| !probability.is_finite() || *probability < 0.0)
+            {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-policy-anchor-probability",
+                });
+            }
+            let sum = row.iter().copied().map(f64::from).sum::<f64>();
+            if !sum.is_finite() || (sum - 1.0).abs() > 1.0e-6_f64 {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-policy-anchor-normalization",
+                });
+            }
+            if row.iter().any(|probability| {
+                *probability != 0.0 && !(*probability * probability.ln()).is_finite()
+            }) {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-policy-anchor-p-log-p",
+                });
+            }
+            flat_rows.push(row.as_slice());
+        }
+    }
+    Ok(flat_rows)
+}
+
+#[cfg(test)]
+fn stable_forward_kl_sum_f64_v1(
+    logits: &[f32],
+    action_offsets: &[usize],
+    anchor_rows: &[&[f32]],
+) -> Result<f64, NativePolicyTrainErrorV1> {
+    if action_offsets.len() != anchor_rows.len() + 1
+        || action_offsets.last().copied() != Some(logits.len())
+    {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-policy-anchor-row-slicing",
+        });
+    }
+    let mut total = 0.0_f64;
+    for (bounds, parent) in action_offsets.windows(2).zip(anchor_rows) {
+        let row = &logits[bounds[0]..bounds[1]];
+        if row.len() != parent.len() || row.iter().any(|value| !value.is_finite()) {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-policy-anchor-row-slicing",
+            });
+        }
+        let maximum = row
+            .iter()
+            .copied()
+            .map(f64::from)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let log_normalizer = row
+            .iter()
+            .copied()
+            .map(|value| (f64::from(value) - maximum).exp())
+            .sum::<f64>()
+            .ln()
+            + maximum;
+        let row_kl =
+            parent
+                .iter()
+                .copied()
+                .zip(row)
+                .try_fold(0.0_f64, |sum, (probability, logit)| {
+                    let probability = f64::from(probability);
+                    let term = if probability == 0.0 {
+                        0.0
+                    } else {
+                        probability * (probability.ln() - (f64::from(*logit) - log_normalizer))
+                    };
+                    if term.is_finite() {
+                        Ok(sum + term)
+                    } else {
+                        Err(NativePolicyTrainErrorV1::CudaBackend {
+                            code: "cuda-burn-dense-bridge-policy-anchor-objective-nonfinite",
+                        })
+                    }
+                })?;
+        if !row_kl.is_finite() {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-policy-anchor-objective-nonfinite",
+            });
+        }
+        total += row_kl;
+    }
+    if !total.is_finite() {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-policy-anchor-objective-nonfinite",
+        });
+    }
+    Ok(total)
+}
+
 fn bridge_error_v1(_error: Box<dyn Error>) -> NativePolicyTrainErrorV1 {
     NativePolicyTrainErrorV1::CudaBackend {
         code: "cuda-burn-dense-bridge-device-failure",
@@ -223,6 +348,8 @@ fn train_step_cuda_burn_dense_inner_v1(
     groups: &[NativePolicyPhysicalDecisionV1<'_>],
     value_coefficient: f32,
     learning_rate: f32,
+    #[cfg(test)] anchor_target_probability_rows: Option<&[&[f32]]>,
+    #[cfg(test)] policy_anchor_coefficient: Option<f32>,
     #[cfg(test)] capture_named_gradients: bool,
 ) -> Result<
     (
@@ -233,6 +360,12 @@ fn train_step_cuda_burn_dense_inner_v1(
 > {
     if groups.is_empty() {
         return Err(NativePolicyTrainErrorV1::EmptyBatch);
+    }
+    #[cfg(test)]
+    if anchor_target_probability_rows.is_some() != policy_anchor_coefficient.is_some() {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-policy-anchor-contract",
+        });
     }
     // The capture template is the input snapshot's OWN 33 named parameters.
     // The device import borrows the snapshot, so the capture branch reads
@@ -264,6 +397,14 @@ fn train_step_cuda_burn_dense_inner_v1(
             views.push(encoded);
             selected_action_indices.push(substep.selected_action_index);
             substep_group_indices.push(group_index);
+        }
+    }
+    #[cfg(test)]
+    if let Some(rows) = anchor_target_probability_rows {
+        if rows.len() != views.len() || rows.iter().zip(&views).any(|(row, _)| row.is_empty()) {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-policy-anchor-row-cardinality",
+            });
         }
     }
 
@@ -346,6 +487,19 @@ fn train_step_cuda_burn_dense_inner_v1(
             .iter()
             .map(|group| group - chunk_start_group)
             .collect::<Vec<_>>();
+        #[cfg(test)]
+        let chunk_anchor_rows = anchor_target_probability_rows.map(|rows| {
+            rows.get(substep_begin..substep_end)
+                .ok_or(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-policy-anchor-chunk-slicing",
+                })
+        });
+        #[cfg(test)]
+        let chunk_anchor_rows = match chunk_anchor_rows {
+            Some(Ok(rows)) => Some(rows),
+            Some(Err(error)) => return Err(error),
+            None => None,
+        };
         let mut chunk_workspace = HostPackingWorkspace::default();
         chunk_workspace
             .pack_views(&views[substep_begin..substep_end])
@@ -357,6 +511,10 @@ fn train_step_cuda_burn_dense_inner_v1(
             &chunk_group_first_substeps,
             &terminal_returns[chunk_start_group..chunk_end_group],
             &device,
+            #[cfg(test)]
+            chunk_anchor_rows,
+            #[cfg(test)]
+            policy_anchor_coefficient,
         )
         .map_err(bridge_error_v1)?;
         let chunk_batch = DevicePackedBatch::upload(&device, &chunk_workspace);
@@ -799,7 +957,30 @@ fn train_step_cuda_burn_dense_inner_v1(
             substep_count,
         });
     }
+    #[cfg(not(test))]
     let loss = (policy_sum + value_coefficient * value_sum) / group_count;
+    #[cfg(test)]
+    let loss = match policy_anchor_coefficient {
+        None => (policy_sum + value_coefficient * value_sum) / group_count,
+        Some(coefficient) => {
+            let rows =
+                anchor_target_probability_rows.ok_or(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-policy-anchor-contract",
+                })?;
+            let anchor_kl =
+                stable_forward_kl_sum_f64_v1(&logit_outputs, &global_action_offsets, rows)?;
+            let objective = f64::from(policy_sum)
+                + f64::from(value_coefficient) * f64::from(value_sum)
+                + f64::from(coefficient) * anchor_kl;
+            let objective = (objective / f64::from(group_count)) as f32;
+            if !objective.is_finite() {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-bridge-policy-anchor-objective-nonfinite",
+                });
+            }
+            objective
+        }
+    };
     #[cfg(test)]
     if measurement_mode {
         #[derive(serde::Serialize)]
@@ -953,6 +1134,58 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         value_coefficient,
         learning_rate,
         #[cfg(test)]
+        None,
+        #[cfg(test)]
+        None,
+        #[cfg(test)]
+        false,
+    )?;
+    *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+        code: "cuda-burn-dense-bridge-state-reimport-failure",
+    })?;
+    Ok(result)
+}
+
+/// Test-only forward-KL policy-anchor sibling of
+/// [`train_step_cuda_burn_dense_v1`].  The parent rows are aligned as
+/// `anchor_target_probabilities[group][substep][action]` with
+/// `NativePolicyPhysicalDecisionV1`.  A literal positive f32 coefficient is
+/// retained without quantization.  A literal positive zero routes directly
+/// through the original wrapper so the beta-zero result remains bit-identical.
+#[cfg(test)]
+pub(crate) fn train_step_cuda_burn_dense_policy_anchor_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    anchor_target_probabilities: &[Vec<Vec<f32>>],
+    policy_anchor_coefficient: f32,
+    value_coefficient: f32,
+    learning_rate: f32,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    if policy_anchor_coefficient.to_bits() == 0 {
+        return train_step_cuda_burn_dense_v1(state, groups, value_coefficient, learning_rate);
+    }
+    let flat_anchor_rows = validate_policy_anchor_rows_v1(
+        groups,
+        anchor_target_probabilities,
+        policy_anchor_coefficient,
+    )?;
+    let snapshot = state
+        .snapshot_v1()
+        .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-snapshot-failure",
+        })?;
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        false,
+        groups,
+        value_coefficient,
+        learning_rate,
+        Some(flat_anchor_rows.as_slice()),
+        Some(policy_anchor_coefficient),
         false,
     )?;
     *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
@@ -997,6 +1230,10 @@ pub(crate) fn train_step_cuda_burn_dense_capture_named_gradients_v1(
         groups,
         value_coefficient,
         learning_rate,
+        #[cfg(test)]
+        None,
+        #[cfg(test)]
+        None,
         true,
     )?;
     if result.gradients.len() != 33 || result.gradients.len() != expected_tensor_count {
@@ -1043,6 +1280,10 @@ pub(crate) fn train_step_cuda_burn_dense_wide_v1(
         groups,
         value_coefficient,
         learning_rate,
+        #[cfg(test)]
+        None,
+        #[cfg(test)]
+        None,
         #[cfg(test)]
         false,
     )?;
