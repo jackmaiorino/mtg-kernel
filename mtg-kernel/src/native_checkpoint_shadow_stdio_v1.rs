@@ -780,7 +780,7 @@ mod fixed_native_state_tests_v1 {
         let encoded = encode_native_train_state_payload_v1(&snapshot).unwrap();
         let manifest = FixedNativeStateManifestV1 {
             schema: FIXED_NATIVE_STATE_SCHEMA_V1.to_owned(),
-            authority_kind: "test-fixed-native-state-v1".to_owned(),
+            authority_kind: "current-net8-gae8-v1".to_owned(),
             source_result_sha256: lower_hex_raw32_v1([7; 32]),
             payload: FixedNativeStatePayloadManifestV1 {
                 filename: FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1.to_owned(),
@@ -846,6 +846,10 @@ mod fixed_native_state_tests_v1 {
             lower_hex_raw32_v1(encoded.digests.native_state_sha256)
         );
         assert_eq!(service.identity.loaded_generation, state.adam_step_v1());
+        let mut export_identity = service.identity.clone();
+        export_identity.loaded_generation = 1;
+        XmageCp7OutcomeJsonlWriterV1::from_writer_v1(Box::new(io::sink()), &export_identity)
+            .unwrap();
 
         let mut tampered = encoded.bytes.clone();
         tampered[0] ^= 1;
@@ -1998,6 +2002,8 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             == "xmage-cp7-outcome-reinforce-derivative-v1"
             || checkpoint.authority_kind == "recurrent-cp7-deployment-v1"
             || checkpoint.authority_kind == "qualified-policy-bounded-value-search-v1"
+            || checkpoint.authority_kind == "current-net8-gae8-v1"
+            || checkpoint.authority_kind == "current-net8-gae16-v1"
             || checkpoint
                 .authority_kind
                 .starts_with("xmage-cp7-outcome-structured-policy-successor-v"))
