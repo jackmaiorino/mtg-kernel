@@ -6565,7 +6565,7 @@ mod tests {
     fn population_response_gpu_sample_v1(start: std::time::Instant) -> serde_json::Value {
         let output = std::process::Command::new("nvidia-smi")
             .args([
-                "--query-gpu=index,utilization.gpu,memory.used",
+                "--query-gpu=index,uuid,utilization.gpu,memory.used",
                 "--format=csv,noheader,nounits",
             ])
             .output()
@@ -6580,11 +6580,13 @@ mod tests {
             })
             .next()
             .expect("GPU ordinal 1 monitor row");
-        assert_eq!(fields.len(), 3);
+        assert_eq!(fields.len(), 4);
         serde_json::json!({
             "elapsed_ms": start.elapsed().as_millis(),
-            "gpu_utilization_percent": fields[1].parse::<u64>().expect("GPU utilization integer"),
-            "memory_used_mib": fields[2].parse::<u64>().expect("GPU memory integer"),
+            "gpu_ordinal": 1_u64,
+            "gpu_uuid": fields[1],
+            "gpu_utilization_percent": fields[2].parse::<u64>().expect("GPU utilization integer"),
+            "memory_used_mib": fields[3].parse::<u64>().expect("GPU memory integer"),
         })
     }
 
@@ -6818,7 +6820,7 @@ mod tests {
             h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
             "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
         );
-        let (preflight_manifest_path, preflight_manifest_sha256, _) =
+        let (preflight_manifest_path, preflight_manifest_sha256, preflight_manifest) =
             population_response_preflight_manifest_v1();
 
         let retained = load_h4_canary_source_v1();
@@ -6883,6 +6885,13 @@ mod tests {
             .join()
             .expect("join population response GPU monitor");
         assert!(!gpu_samples.is_empty());
+        let expected_gpu_uuid = preflight_manifest["gpu"]["uuid"]
+            .as_str()
+            .expect("preflight GPU UUID");
+        assert!(gpu_samples.iter().all(|sample| {
+            sample["gpu_ordinal"].as_u64() == Some(1)
+                && sample["gpu_uuid"].as_str() == Some(expected_gpu_uuid)
+        }));
         let mean_gpu_utilization_percent = gpu_samples
             .iter()
             .map(|sample| sample["gpu_utilization_percent"].as_u64().unwrap() as f64)
@@ -6933,6 +6942,8 @@ mod tests {
             "gpu_monitor": {
                 "sample_interval_ms": 250_u64,
                 "sample_count": gpu_samples.len(),
+                "gpu_ordinal": 1_u64,
+                "gpu_uuid": expected_gpu_uuid,
                 "mean_gpu_utilization_percent": mean_gpu_utilization_percent,
                 "peak_gpu_utilization_percent": peak_gpu_utilization_percent,
                 "peak_gpu_memory_used_mib": peak_gpu_memory_used_mib,
@@ -8603,7 +8614,7 @@ mod tests {
             h4_canary_hex_v1(critic.composite_model_parameter_sha256_v1()),
             "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22"
         );
-        let (preflight_manifest_path, preflight_manifest_sha256, _) =
+        let (preflight_manifest_path, preflight_manifest_sha256, preflight_manifest) =
             population_response_preflight_manifest_v1();
 
         let output_root = h4_canary_path_v1(
@@ -8635,16 +8646,6 @@ mod tests {
             throughput["bit_identical_final_state_across_topologies"].as_bool(),
             Some(true)
         );
-        assert_eq!(
-            throughput["numerical_envelope"]["pass"].as_bool(),
-            Some(true)
-        );
-        assert!(
-            throughput["gpu_monitor"]["sample_count"]
-                .as_u64()
-                .is_some_and(|value| value > 0),
-            "throughput report lacks GPU utilization samples"
-        );
         let throughput_rows = throughput["rows"]
             .as_array()
             .expect("population response throughput rows");
@@ -8658,6 +8659,16 @@ mod tests {
             assert!(row["update_elapsed_ns"]
                 .as_u64()
                 .is_some_and(|value| value > 0));
+            let update = &row["update"];
+            assert!(update["sampled_policy_entropy_estimate_nats"]
+                .as_f64()
+                .is_some_and(|value| value.is_finite() && value >= 0.10));
+            assert!(update["gradient_l2_norm"]
+                .as_f64()
+                .is_some_and(|value| value.is_finite() && value <= 5.0));
+            assert!(update["parameter_movement_l2_from_initial"]
+                .as_f64()
+                .is_some_and(|value| value.is_finite() && value <= 0.75));
         }
         let common_throughput_state = throughput_rows[0]["final_train_state_sha256"]
             .as_str()
@@ -8675,6 +8686,36 @@ mod tests {
             &throughput["selected"], &throughput_rows[selected_index],
             "throughput selected row is not the fastest qualified row"
         );
+        let gpu_monitor = &throughput["gpu_monitor"];
+        assert_eq!(gpu_monitor["sample_interval_ms"].as_u64(), Some(250));
+        assert_eq!(gpu_monitor["gpu_ordinal"].as_u64(), Some(1));
+        assert_eq!(
+            gpu_monitor["gpu_uuid"].as_str(),
+            preflight_manifest["gpu"]["uuid"].as_str()
+        );
+        let gpu_samples = gpu_monitor["samples"]
+            .as_array()
+            .expect("throughput GPU samples");
+        assert_eq!(
+            gpu_monitor["sample_count"].as_u64(),
+            Some(gpu_samples.len() as u64)
+        );
+        assert!(!gpu_samples.is_empty());
+        let mut prior_elapsed_ms = 0_u64;
+        for sample in gpu_samples {
+            let elapsed_ms = sample["elapsed_ms"].as_u64().expect("GPU sample elapsed");
+            assert!(elapsed_ms >= prior_elapsed_ms);
+            prior_elapsed_ms = elapsed_ms;
+            assert_eq!(sample["gpu_ordinal"].as_u64(), Some(1));
+            assert_eq!(
+                sample["gpu_uuid"].as_str(),
+                gpu_monitor["gpu_uuid"].as_str()
+            );
+            assert!(sample["gpu_utilization_percent"]
+                .as_u64()
+                .is_some_and(|value| value <= 100));
+            assert!(sample["memory_used_mib"].as_u64().is_some());
+        }
         let worker_count = throughput["selected"]["worker_count"]
             .as_u64()
             .and_then(|value| usize::try_from(value).ok())
