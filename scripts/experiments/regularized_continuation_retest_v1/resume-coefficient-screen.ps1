@@ -5,6 +5,7 @@ param(
     [string]$ExpectedEvaluatorSha256 = '',
     [string]$ExpectedEvaluatorSourceCommit = '',
     [ValidateRange(1, 999)][int]$EvaluationAttempt = 1,
+    [switch]$SelectExistingReport,
     [switch]$ValidateOnly
 )
 
@@ -159,14 +160,31 @@ try {
     $reportPath = Join-Path $AttemptRoot "terminal-blind-report$evaluationSuffix.json"
     $evaluationLog = Join-Path $AttemptRoot "terminal-blind-evaluator$evaluationSuffix.log"
     $resumeStoppedPath = Join-Path $AttemptRoot "resume-stopped$evaluationSuffix.log"
+    $selectorResumeStoppedPath = Join-Path $AttemptRoot "selector-resume-stopped$evaluationSuffix.log"
+    $manifestPath = Join-Path $AttemptRoot 'coefficient-manifest.json'
+    $activeStoppedPath = if ($SelectExistingReport) { $selectorResumeStoppedPath } else { $resumeStoppedPath }
     foreach ($path in @($planPath, $formalStartPath, $stoppedPath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "required recovery input is missing: $path"
         }
     }
-    foreach ($path in @($requestPath, $reportPath, $evaluationLog, $resumeStoppedPath, (Join-Path $AttemptRoot 'coefficient-manifest.json'))) {
-        if (Test-Path -LiteralPath $path) {
-            throw "recovery output is not create-new: $path"
+    if ($SelectExistingReport) {
+        foreach ($path in @($requestPath, $reportPath, $evaluationLog, $resumeStoppedPath)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                throw "selector recovery input is missing: $path"
+            }
+        }
+        foreach ($path in @($selectorResumeStoppedPath, $manifestPath)) {
+            if (Test-Path -LiteralPath $path) {
+                throw "selector recovery output is not create-new: $path"
+            }
+        }
+    }
+    else {
+        foreach ($path in @($requestPath, $reportPath, $evaluationLog, $resumeStoppedPath, $manifestPath)) {
+            if (Test-Path -LiteralPath $path) {
+                throw "recovery output is not create-new: $path"
+            }
         }
     }
     $plan = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json
@@ -289,10 +307,13 @@ try {
         Assert-LastExitCode $LASTEXITCODE 'corrected evaluator source ancestry'
         $evaluatorSourceToRecoveryDiffFiles = @(& git -c "safe.directory=$safe" -C $script:RepoRoot diff --name-only $ExpectedEvaluatorSourceCommit ([string]$recoveryGit.commit))
         Assert-LastExitCode $LASTEXITCODE 'corrected evaluator source-to-recovery diff'
-        $allowedPostBuildFile = 'scripts/experiments/regularized_continuation_retest_v1/resume-coefficient-screen.ps1'
-        if ($evaluatorSourceToRecoveryDiffFiles.Count -gt 1 -or
-            ($evaluatorSourceToRecoveryDiffFiles.Count -eq 1 -and
-                [string]$evaluatorSourceToRecoveryDiffFiles[0] -ne $allowedPostBuildFile)) {
+        $allowedPostBuildFiles = @(
+            'scripts/experiments/regularized_continuation_retest_v1/coefficient-selector.ps1',
+            'scripts/experiments/regularized_continuation_retest_v1/coefficient-selector-tests.ps1',
+            'scripts/experiments/regularized_continuation_retest_v1/resume-coefficient-screen.ps1'
+        )
+        $unexpectedPostBuildFiles = @($evaluatorSourceToRecoveryDiffFiles | Where-Object { $_ -notin $allowedPostBuildFiles })
+        if ($unexpectedPostBuildFiles.Count -ne 0) {
             throw "corrected evaluator source differs from recovery HEAD outside its recovery script: $($evaluatorSourceToRecoveryDiffFiles -join ', ')"
         }
         $evaluatorSourceCommit = $ExpectedEvaluatorSourceCommit
@@ -347,30 +368,52 @@ try {
             }
         })
     }
-    Write-Utf8NoBomJsonFile -Value $request -Path $requestPath
-
-    $phase = 'formal-terminal-blind-evaluation'
-    $savedInput = [Environment]::GetEnvironmentVariable('REGCONT_SCREEN_INPUT_JSON', 'Process')
-    $savedOutput = [Environment]::GetEnvironmentVariable('REGCONT_SCREEN_OUTPUT_JSON', 'Process')
-    [Environment]::SetEnvironmentVariable('REGCONT_SCREEN_INPUT_JSON', $requestPath, 'Process')
-    [Environment]::SetEnvironmentVariable('REGCONT_SCREEN_OUTPUT_JSON', $reportPath, 'Process')
-    try {
-        $previous = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
+    $selectorRecovery = $null
+    if ($SelectExistingReport) {
+        $phase = 'selector-recovery'
+        $expectedRequestText = $request | ConvertTo-Json -Depth 12
+        $actualRequestText = [IO.File]::ReadAllText($requestPath)
+        $evaluationLogText = Get-Content -LiteralPath $evaluationLog -Raw
+        $selectorFailureText = Get-Content -LiteralPath $resumeStoppedPath -Raw
+        if ($actualRequestText -ne $expectedRequestText -or
+            $evaluationLogText -notmatch 'test result: ok\.' -or
+            $selectorFailureText -notmatch 'stopped=expected exactly one beta=0 arm, found 0') {
+            throw 'existing report is not the bound successful-evaluator numeric-beta selector failure'
+        }
+        $selectorRecovery = [ordered]@{
+            disposition = 'EVALUATOR-SUCCEEDED; NUMERIC-BETA-SELECTOR-RECOVERY'
+            source_failure_log = [ordered]@{
+                path = $resumeStoppedPath
+                sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $resumeStoppedPath).Hash.ToLowerInvariant()
+            }
+            evaluator_rerun = $false
+        }
+    }
+    else {
+        Write-Utf8NoBomJsonFile -Value $request -Path $requestPath
+        $phase = 'formal-terminal-blind-evaluation'
+        $savedInput = [Environment]::GetEnvironmentVariable('REGCONT_SCREEN_INPUT_JSON', 'Process')
+        $savedOutput = [Environment]::GetEnvironmentVariable('REGCONT_SCREEN_OUTPUT_JSON', 'Process')
+        [Environment]::SetEnvironmentVariable('REGCONT_SCREEN_INPUT_JSON', $requestPath, 'Process')
+        [Environment]::SetEnvironmentVariable('REGCONT_SCREEN_OUTPUT_JSON', $reportPath, 'Process')
         try {
-            & $EvaluatorExecutable $EvaluatorTest --ignored --exact --nocapture --test-threads=1 2>&1 |
-                Tee-Object -FilePath $evaluationLog |
-                Out-Null
-            $evaluationExit = $LASTEXITCODE
+            $previous = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                & $EvaluatorExecutable $EvaluatorTest --ignored --exact --nocapture --test-threads=1 2>&1 |
+                    Tee-Object -FilePath $evaluationLog |
+                    Out-Null
+                $evaluationExit = $LASTEXITCODE
+            }
+            finally {
+                $ErrorActionPreference = $previous
+            }
+            Assert-LastExitCode $evaluationExit "terminal-blind evaluator; see $evaluationLog"
         }
         finally {
-            $ErrorActionPreference = $previous
+            [Environment]::SetEnvironmentVariable('REGCONT_SCREEN_INPUT_JSON', $savedInput, 'Process')
+            [Environment]::SetEnvironmentVariable('REGCONT_SCREEN_OUTPUT_JSON', $savedOutput, 'Process')
         }
-        Assert-LastExitCode $evaluationExit "terminal-blind evaluator; see $evaluationLog"
-    }
-    finally {
-        [Environment]::SetEnvironmentVariable('REGCONT_SCREEN_INPUT_JSON', $savedInput, 'Process')
-        [Environment]::SetEnvironmentVariable('REGCONT_SCREEN_OUTPUT_JSON', $savedOutput, 'Process')
     }
     if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
         throw 'terminal-blind evaluator did not create its report'
@@ -414,6 +457,7 @@ try {
             reason = 'post-training OrderedDictionary resource-summary failure before evaluator launch'
             evaluator_attempt = $EvaluationAttempt
             prior_evaluator_failures = @($priorEvaluatorFailures)
+            selector_recovery = $selectorRecovery
             original_stopped_log = [ordered]@{ path = $stoppedPath; sha256 = $stoppedSha256 }
             recovery_git = $recoveryGit
             recovery_script = [ordered]@{
@@ -421,7 +465,7 @@ try {
                 sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
             }
             missing_evidence = @('per-second in-memory resource samples and exact wave wall seconds')
-            scientific_effect = 'none; training is hash-bound, and every prior recovery failure occurred before request deserialization or corpus construction'
+            scientific_effect = 'none; training is hash-bound, evaluator attempt 5 published one immutable terminal-blind report, and selector recovery does not rerun evaluation'
         }
         training_waves = @(
             for ($index = 0; $index -lt @($plan.waves).Count; $index++) {
@@ -444,7 +488,6 @@ try {
         arms = @($arms | ForEach-Object { $_ })
         selection = $selection
     }
-    $manifestPath = Join-Path $AttemptRoot 'coefficient-manifest.json'
     Write-JsonFile -Value $manifest -Path $manifestPath
     $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()
     if ($null -eq $selection.selected_beta) {
@@ -457,6 +500,6 @@ try {
 catch {
     $message = $_.Exception.Message -replace "[\r\n]+", ' '
     "$( [DateTimeOffset]::UtcNow.ToString('O') ) phase=$phase stopped=$message" |
-        Set-Content -LiteralPath $resumeStoppedPath -Encoding utf8
+        Set-Content -LiteralPath $activeStoppedPath -Encoding utf8
     throw
 }

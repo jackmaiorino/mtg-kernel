@@ -77,6 +77,16 @@ if ($selection.selected_beta -ne '0.03') {
     throw "smallest eligible beta test failed: $($selection.selected_beta)"
 }
 
+$numericReport = New-SyntheticReport
+foreach ($arm in $numericReport.arms) {
+    $arm.beta = [double]::Parse([string]$arm.beta, [Globalization.CultureInfo]::InvariantCulture)
+}
+$numericReport = $numericReport | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+$numericSelection = Get-CoefficientSelection -Report $numericReport
+if ($numericSelection.selected_beta -ne '0.03') {
+    throw "numeric JSON beta matching test failed: $($numericSelection.selected_beta)"
+}
+
 $beta03 = Get-ExactArm -Report $report -Beta '0.03'
 (Get-ScopeMetrics -Checkpoint (Get-ExactCheckpoint -Arm $beta03 -Generation 32) -Scope 'P1').p99_row_tv = 0.151
 $selection = Get-CoefficientSelection -Report $report

@@ -18,7 +18,11 @@ function Test-FiniteNumber {
 
 function Get-ExactArm {
     param([Parameter(Mandatory = $true)]$Report, [Parameter(Mandatory = $true)][string]$Beta)
-    $matches = @($Report.arms | Where-Object { [string]$_.beta -eq $Beta })
+    $target = [double]::Parse($Beta, [Globalization.CultureInfo]::InvariantCulture)
+    $targetBits = [BitConverter]::DoubleToInt64Bits($target)
+    $matches = @($Report.arms | Where-Object {
+        [BitConverter]::DoubleToInt64Bits([double]$_.beta) -eq $targetBits
+    })
     if ($matches.Count -ne 1) {
         throw "expected exactly one beta=$Beta arm, found $($matches.Count)"
     }
