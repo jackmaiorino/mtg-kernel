@@ -25,7 +25,7 @@ use crate::private_physical_trajectory_core::{
 use crate::rl::PlayerSeatV1;
 use crate::rl_session::FastActorDecisionV1;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct FlatOwnedScoringInputsV2 {
     pub(crate) globals: FlatGlobalsV2,
     pub(crate) objects: Vec<FlatObjectCoreV2>,
@@ -41,6 +41,22 @@ pub(crate) struct FlatOwnedScoringInputsV2 {
 }
 
 impl FlatOwnedScoringInputsV2 {
+    pub(crate) fn scoring_view_v2(&self) -> FlatScoringDecisionViewV2<'_> {
+        FlatScoringDecisionViewV2::new(
+            &self.globals,
+            &self.objects,
+            &self.relations,
+            &self.object_subtypes,
+            &self.ability_uses,
+            &self.goads,
+            &self.completed_dungeons,
+            &self.effect_subtype_changes,
+            &self.context_path_elements,
+            &self.actions,
+            &self.action_refs,
+        )
+    }
+
     fn copy_from_view(decision: FlatScoringDecisionViewV2<'_>) -> Self {
         Self {
             globals: *decision.globals(),

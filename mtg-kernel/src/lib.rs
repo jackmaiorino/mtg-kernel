@@ -206,6 +206,8 @@ pub mod native_training_store_run_v2;
 pub mod native_training_store_reference_latest_v2;
 // Private-construction persistence receipt and the strict native generation
 // store boundary. The high-level publisher/read/recovery path lands here.
+#[cfg(test)]
+mod native_gate3_terminal_blind_coefficient_screen_v1;
 pub mod native_training_store_v2;
 pub mod phase_profile;
 pub mod policy_surface_v5;
