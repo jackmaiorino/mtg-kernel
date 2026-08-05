@@ -499,14 +499,31 @@ pub fn run_native_science_loop_v1(
                 continuation
                     .executor
                     .set_policy_anchor_v1(policy_anchor.clone())
-                    .map_err(|_| train_error)?;
+                    .map_err(|error| {
+                        eprintln!(
+                            "science-loop policy-anchor install failure: kind={:?} code={}",
+                            error.kind(),
+                            error.code()
+                        );
+                        train_error
+                    })?;
                 let prepared = prepare_segment_v2(
                     &mut continuation.executor,
                     run,
                     &continuation.parent_boundary,
                     &continuation.parent_checkpoint,
                 )
-                .map_err(|_| train_error)?;
+                .map_err(|error| {
+                    #[cfg(test)]
+                    eprintln!(
+                        "science-loop segment preparation failure: kind={:?} code={}",
+                        error.kind(),
+                        error.code()
+                    );
+                    #[cfg(not(test))]
+                    let _ = error;
+                    train_error
+                })?;
                 let receipt = crate::native_training_store_v2::publish_prepared_segment_v2(
                     &root,
                     run,
@@ -514,8 +531,28 @@ pub fn run_native_science_loop_v1(
                     &continuation.parent_checkpoint,
                     &prepared,
                 )
-                .map_err(|_| train_error)?;
-                prepared.commit_v2(receipt).map_err(|_| train_error)?;
+                .map_err(|error| {
+                    #[cfg(test)]
+                    eprintln!(
+                        "science-loop segment publication failure: kind={:?} code={}",
+                        error.kind(),
+                        error.code()
+                    );
+                    #[cfg(not(test))]
+                    let _ = error;
+                    train_error
+                })?;
+                prepared.commit_v2(receipt).map_err(|error| {
+                    #[cfg(test)]
+                    eprintln!(
+                        "science-loop segment commit failure: kind={:?} code={}",
+                        error.kind(),
+                        error.code()
+                    );
+                    #[cfg(not(test))]
+                    let _ = error;
+                    train_error
+                })?;
             }
         }
     };

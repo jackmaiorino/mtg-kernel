@@ -820,6 +820,13 @@ impl NativeTrainingExecutorErrorV1 {
         self.code
     }
 
+    #[cfg(test)]
+    pub(crate) fn diagnostic_for_test_v1(&self) -> Option<&str> {
+        self._diagnostic
+            .as_ref()
+            .map(|diagnostic| diagnostic._message.as_str())
+    }
+
     fn redacted(kind: NativeTrainingExecutorErrorKindV1, code: &'static str) -> Self {
         Self {
             kind,

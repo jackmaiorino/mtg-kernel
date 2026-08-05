@@ -670,7 +670,18 @@ pub fn prepare_segment_v2<'executor>(
         };
         let transition = candidate
             .prepare_transition_v2(expected_predecessor, is_final)
-            .map_err(|_| update_error_v2())?;
+            .map_err(|error| {
+                #[cfg(test)]
+                eprintln!(
+                    "prepared-segment update failure: offset={offset} kind={:?} code={} diagnostic={}",
+                    error.kind(),
+                    error.code(),
+                    error.diagnostic_for_test_v1().unwrap_or("absent")
+                );
+                #[cfg(not(test))]
+                let _ = error;
+                update_error_v2()
+            })?;
         #[cfg(test)]
         injected_abort_for_test_v2(NativeTrainingPreparedAbortPointForTestV2::AfterUpdate(
             offset,

@@ -165,7 +165,11 @@ fn stable_forward_kl_sum_f64_v1(
     Ok(total)
 }
 
-fn bridge_error_v1(_error: Box<dyn Error>) -> NativePolicyTrainErrorV1 {
+fn bridge_error_v1(error: Box<dyn Error>) -> NativePolicyTrainErrorV1 {
+    #[cfg(test)]
+    eprintln!("cuda-burn-dense bridge failure: {error:?}");
+    #[cfg(not(test))]
+    let _ = error;
     NativePolicyTrainErrorV1::CudaBackend {
         code: "cuda-burn-dense-bridge-device-failure",
     }
@@ -957,30 +961,29 @@ fn train_step_cuda_burn_dense_inner_v1(
             substep_count,
         });
     }
-    #[cfg(not(test))]
+    // Store V2's frozen `loss` evidence is the terminal policy-plus-value
+    // objective rederived from `physical_terms`. The experiment-only anchor
+    // changes the differentiated CUDA objective above, but it is not a reward
+    // term and has no field in that frozen evidence schema. Keep the persisted
+    // scalar on its legacy formula while still validating the regularized
+    // objective as finite here.
     let loss = (policy_sum + value_coefficient * value_sum) / group_count;
     #[cfg(test)]
-    let loss = match policy_anchor_coefficient {
-        None => (policy_sum + value_coefficient * value_sum) / group_count,
-        Some(coefficient) => {
-            let rows =
-                anchor_target_probability_rows.ok_or(NativePolicyTrainErrorV1::CudaBackend {
-                    code: "cuda-burn-dense-bridge-policy-anchor-contract",
-                })?;
-            let anchor_kl =
-                stable_forward_kl_sum_f64_v1(&logit_outputs, &global_action_offsets, rows)?;
-            let objective = f64::from(policy_sum)
-                + f64::from(value_coefficient) * f64::from(value_sum)
-                + f64::from(coefficient) * anchor_kl;
-            let objective = (objective / f64::from(group_count)) as f32;
-            if !objective.is_finite() {
-                return Err(NativePolicyTrainErrorV1::CudaBackend {
-                    code: "cuda-burn-dense-bridge-policy-anchor-objective-nonfinite",
-                });
-            }
-            objective
+    if let Some(coefficient) = policy_anchor_coefficient {
+        let rows = anchor_target_probability_rows.ok_or(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-bridge-policy-anchor-contract",
+        })?;
+        let anchor_kl = stable_forward_kl_sum_f64_v1(&logit_outputs, &global_action_offsets, rows)?;
+        let objective = f64::from(policy_sum)
+            + f64::from(value_coefficient) * f64::from(value_sum)
+            + f64::from(coefficient) * anchor_kl;
+        let objective = (objective / f64::from(group_count)) as f32;
+        if !objective.is_finite() {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-bridge-policy-anchor-objective-nonfinite",
+            });
         }
-    };
+    }
     #[cfg(test)]
     if measurement_mode {
         #[derive(serde::Serialize)]
