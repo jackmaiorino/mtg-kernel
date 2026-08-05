@@ -1,6 +1,7 @@
 param(
     [string]$AttemptRoot = 'D:\mtg-kernel-regularized-continuation-retest-v1\development\seed-1940001\coefficient-screen\attempt-002',
     [string]$EvaluatorTest = 'native_gate3_terminal_blind_coefficient_screen_v1::gate3_terminal_blind_coefficient_screen_v1',
+    [string]$EvaluatorExecutable = '',
     [ValidateRange(1, 999)][int]$EvaluationAttempt = 1,
     [switch]$ValidateOnly
 )
@@ -199,6 +200,10 @@ try {
                 $priorLogText.Contains('Gate 3 request JSON must validate: Error("invalid type: string \"0\", expected f64", line: 12, column: 33)')) {
                 'INPUT-BETA-TYPE-FAILURE-BEFORE-CORPUS-CONSTRUCTION'
             }
+            elseif (-not $hasUtf8Bom -and
+                $priorLogText.Contains('Gate 3 terminal-blind screen failed: parent and Pool3 identity mismatch')) {
+                'EVALUATOR-PARENT-POOL-CHECK-FAILURE-BEFORE-CORPUS-CONSTRUCTION'
+            }
             else {
                 throw "prior evaluator attempt $priorAttempt is not an approved pre-corpus request-transport failure"
             }
@@ -232,8 +237,15 @@ try {
     Assert-Gpu1Idle | Out-Null
     Assert-NoForeignGpu1ComputeProcesses
     $recoveryGit = Get-GitRecord -RepoRoot $script:RepoRoot
-    $executable = [string]$plan.executable.path
-    Assert-FileSha256 -Path $executable -Expected ([string]$plan.executable.sha256) -Label 'frozen evaluator executable'
+    $trainingExecutable = [string]$plan.executable.path
+    Assert-FileSha256 -Path $trainingExecutable -Expected ([string]$plan.executable.sha256) -Label 'frozen training executable'
+    if ([string]::IsNullOrWhiteSpace($EvaluatorExecutable)) {
+        $EvaluatorExecutable = $trainingExecutable
+    }
+    else {
+        $EvaluatorExecutable = (Resolve-Path -LiteralPath $EvaluatorExecutable).Path
+    }
+    $evaluatorExecutableSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $EvaluatorExecutable).Hash.ToLowerInvariant()
     Assert-FileSha256 -Path ([string]$plan.prerequisite_identity.manifest_path) -Expected ([string]$plan.prerequisite_identity.manifest_sha256) -Label 'identity prerequisite manifest'
     Assert-FileSha256 -Path ([string]$plan.prerequisite_throughput.manifest_path) -Expected ([string]$plan.prerequisite_throughput.manifest_sha256) -Label 'throughput prerequisite manifest'
     foreach ($binding in @(
@@ -295,7 +307,7 @@ try {
         $previous = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            & $executable $EvaluatorTest --ignored --exact --nocapture --test-threads=1 2>&1 |
+            & $EvaluatorExecutable $EvaluatorTest --ignored --exact --nocapture --test-threads=1 2>&1 |
                 Tee-Object -FilePath $evaluationLog |
                 Out-Null
             $evaluationExit = $LASTEXITCODE
@@ -336,6 +348,11 @@ try {
         terminal_blind_report = [ordered]@{ path = $reportPath; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $reportPath).Hash.ToLowerInvariant() }
         evaluator_log = [ordered]@{ path = $evaluationLog; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $evaluationLog).Hash.ToLowerInvariant() }
         executable = $plan.executable
+        evaluator_executable = [ordered]@{
+            path = $EvaluatorExecutable
+            sha256 = $evaluatorExecutableSha256
+            git = $recoveryGit
+        }
         git = $plan.git
         prerequisite_identity = $plan.prerequisite_identity
         prerequisite_throughput = $plan.prerequisite_throughput

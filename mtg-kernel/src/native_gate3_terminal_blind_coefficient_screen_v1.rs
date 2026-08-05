@@ -839,16 +839,6 @@ fn run_screen_v1(request: ScreenRequestV1) -> Result<ScreenOutputV1, ScreenError
         .map_err(|error| ScreenErrorV1::new(format!("Pool3 read failed: {error}")))?;
     let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
         .map_err(|error| ScreenErrorV1::new(format!("Pool3 decode failed: {error}")))?;
-    if parent
-        .run
-        .record()
-        .contracts()
-        .opponent_ladder_pool
-        .as_ref()
-        != Some(&pool)
-    {
-        return Err(ScreenErrorV1::new("parent and Pool3 identity mismatch"));
-    }
     let pool_directory = request
         .pool_json_path
         .parent()
@@ -861,6 +851,11 @@ fn run_screen_v1(request: ScreenRequestV1) -> Result<ScreenOutputV1, ScreenError
     let mut arms = Vec::with_capacity(request.arms.len());
     for arm_request in request.arms {
         let (_, arm_run) = read_validated_run_v1(&arm_request.store_root)?;
+        // The fixed parent predates the current Pool3 rotation. The continuation
+        // Stores, not the parent's historical run record, bind this evaluation pool.
+        if arm_run.record().contracts().opponent_ladder_pool.as_ref() != Some(&pool) {
+            return Err(ScreenErrorV1::new("candidate and Pool3 identity mismatch"));
+        }
         if !compatible_runs_v1(&parent.run, &arm_run) {
             return Err(ScreenErrorV1::new(
                 "candidate and parent runtime identity mismatch",
