@@ -258,6 +258,49 @@ class SelectorTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "training recipe mismatch"):
                 SELECTOR.validate_arm("beta-1.0", report, package)
 
+    def test_cli_destinations_are_valid_python_attributes(self):
+        arguments = ["--manifest", "manifest.json"]
+        for cli_name in ("beta-0-3", "beta-1", "beta-3", "beta-10"):
+            arguments.extend([f"--{cli_name}-report", f"{cli_name}.json"])
+        arguments.extend(["--output", "selection.json"])
+        parsed = SELECTOR._parser().parse_args(arguments)
+        self.assertEqual(parsed.beta_0_3_report, Path("beta-0-3.json"))
+        self.assertEqual(parsed.beta_1_report, Path("beta-1.json"))
+        self.assertEqual(parsed.beta_3_report, Path("beta-3.json"))
+        self.assertEqual(parsed.beta_10_report, Path("beta-10.json"))
+
+    def test_all_four_ineligible_selects_none(self):
+        arms = [
+            {
+                "arm": name,
+                "beta": SELECTOR.ARMS[name]["beta"],
+                "eligible": False,
+                "mean_action_total_variation": 0.02,
+            }
+            for name in SELECTOR.ARM_ORDER
+        ]
+        self.assertIsNone(SELECTOR.select(arms))
+
+    def test_p99_row_tv_and_above_one_count_each_fail_independently(self):
+        mutations = [
+            ("p99_action_total_variation_nearest_rank", 0.151),
+            ("above_absolute_joint_log_ratio_1_count", 1),
+        ]
+        for field, value in mutations:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                report, package = self.make_report(root, "beta-0.3", 0.02)
+                document = json.loads(report.read_text(encoding="utf-8"))
+                document["candidate"]["tail_shape"][field] = value
+                document["publication_gate"]["pass"] = False
+                report.write_text(json.dumps(document), encoding="utf-8")
+                for path in package.iterdir():
+                    path.unlink()
+                package.rmdir()
+                self.assertFalse(
+                    SELECTOR.validate_arm("beta-0.3", report, package)["eligible"]
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

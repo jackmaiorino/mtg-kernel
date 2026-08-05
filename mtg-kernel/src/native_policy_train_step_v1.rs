@@ -8321,6 +8321,12 @@ mod tests {
             .unwrap();
         assert_eq!(anchored_result.adam_step, 1);
         assert_eq!(anchored_state.adam_step_v1(), 1);
+        assert_eq!(anchored_result.scorer_bias_gauge.substep_bounds.len(), 1);
+        assert_eq!(
+            anchored_result.scorer_bias_gauge.substep_bounds[0].gamma_operation_count,
+            output.logits.len() * 12 + 12,
+            "anchored gauge evidence uses the declared 12n+12 operation bound"
+        );
         let target_logits = anchor_logit_bits
             .iter()
             .copied()

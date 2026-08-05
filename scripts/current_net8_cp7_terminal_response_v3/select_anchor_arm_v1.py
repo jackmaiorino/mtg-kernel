@@ -452,8 +452,20 @@ def _parser() -> argparse.ArgumentParser:
         ("beta-3.0", "beta-3"),
         ("beta-10.0", "beta-10"),
     ):
-        parser.add_argument(f"--{cli_name}-report", f"--{name}-report", dest=f"{cli_name}_report", type=Path, required=True)
-        parser.add_argument(f"--{cli_name}-package", f"--{name}-package", dest=f"{cli_name}_package", type=Path)
+        destination = cli_name.replace("-", "_")
+        parser.add_argument(
+            f"--{cli_name}-report",
+            f"--{name}-report",
+            dest=f"{destination}_report",
+            type=Path,
+            required=True,
+        )
+        parser.add_argument(
+            f"--{cli_name}-package",
+            f"--{name}-package",
+            dest=f"{destination}_package",
+            type=Path,
+        )
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
