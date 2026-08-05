@@ -5076,7 +5076,7 @@ mod tests {
     use std::fs::{self, OpenOptions};
     use std::io::{ErrorKind, Write};
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     static SNAPSHOT_CORRUPTION_ORDINAL_V1: AtomicU64 = AtomicU64::new(0);
     static COMPOSED_ARTIFACT_ORDINAL_V1: AtomicU64 = AtomicU64::new(0);
@@ -6471,7 +6471,141 @@ mod tests {
             Some("mtg-kernel-current-net8-population-response-preflight/v1")
         );
         assert_eq!(manifest["status"].as_str(), Some("ready-not-launched"));
+
+        let current_exe = std::env::current_exe().expect("population response current executable");
+        let manifest_exe = PathBuf::from(
+            manifest["executable"]["path"]
+                .as_str()
+                .expect("manifest executable path"),
+        );
+        assert_eq!(
+            fs::canonicalize(&current_exe).expect("canonical current executable"),
+            fs::canonicalize(&manifest_exe).expect("canonical manifest executable"),
+            "population response executable path differs from preflight"
+        );
+        let current_exe_bytes =
+            fs::read(&current_exe).expect("read population response current executable");
+        assert_eq!(
+            h4_canary_hex_v1(crate::native_training_store_digest_v1::sha256_v1(
+                &current_exe_bytes,
+            )),
+            manifest["executable"]["sha256"]
+                .as_str()
+                .expect("manifest executable SHA-256"),
+            "population response executable digest differs from preflight"
+        );
+
+        let canonical_manifest_input = |field: &str| {
+            fs::canonicalize(
+                manifest["inputs"][field]
+                    .as_str()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| panic!("manifest input path {field}")),
+            )
+            .unwrap_or_else(|_| panic!("canonical manifest input path {field}"))
+        };
+        let initializer_path = h4_canary_path_v1(
+            "MTG_KERNEL_GAE_V3_CANDIDATE_STATE",
+            GAE_V3_CANDIDATE_STATE_PATH_V1,
+        );
+        assert_eq!(
+            fs::canonicalize(initializer_path).expect("canonical runtime initializer"),
+            fs::canonicalize(
+                manifest["inputs"]["initializer"]["path"]
+                    .as_str()
+                    .map(PathBuf::from)
+                    .expect("manifest initializer path"),
+            )
+            .expect("canonical manifest initializer"),
+            "population response initializer path differs from preflight"
+        );
+        assert_eq!(
+            fs::canonicalize(h4_canary_path_v1(
+                "MTG_KERNEL_H4_CANARY_STORE_ROOT",
+                H4_CANARY_STORE_ROOT_V1,
+            ))
+            .expect("canonical runtime source store"),
+            canonical_manifest_input("source_store_root"),
+            "population response source store differs from preflight"
+        );
+        assert_eq!(
+            fs::canonicalize(h4_canary_path_v1(
+                "MTG_KERNEL_H4_CANARY_POOL_ROOT",
+                H4_CANARY_POOL_ROOT_V1,
+            ))
+            .expect("canonical runtime pool root"),
+            canonical_manifest_input("pool_root"),
+            "population response pool root differs from preflight"
+        );
+        let critic_root = PathBuf::from(
+            std::env::var_os(NATIVE_HISTORY_VALUE_CRITIC_ROOT_ENV_V1)
+                .expect("population response critic root"),
+        );
+        assert_eq!(
+            fs::canonicalize(critic_root).expect("canonical runtime critic root"),
+            canonical_manifest_input("critic_root"),
+            "population response critic root differs from preflight"
+        );
+        assert_eq!(
+            h4_canary_path_v1(
+                "MTG_KERNEL_POPULATION_RESPONSE_OUTPUT_ROOT",
+                "D:\\mtg-kernel-composed-factorial-v1\\population-response-cycle-v1",
+            ),
+            PathBuf::from(
+                manifest["output"]["root"]
+                    .as_str()
+                    .expect("manifest output root"),
+            ),
+            "population response output root differs from preflight"
+        );
         (path, sha256, manifest)
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn population_response_gpu_sample_v1(start: std::time::Instant) -> serde_json::Value {
+        let output = std::process::Command::new("nvidia-smi")
+            .args([
+                "--query-gpu=index,utilization.gpu,memory.used",
+                "--format=csv,noheader,nounits",
+            ])
+            .output()
+            .expect("run nvidia-smi population response monitor");
+        assert!(output.status.success(), "nvidia-smi monitor command failed");
+        let stdout = String::from_utf8(output.stdout).expect("nvidia-smi UTF-8 output");
+        let fields = stdout
+            .lines()
+            .filter_map(|line| {
+                let fields = line.split(',').map(str::trim).collect::<Vec<_>>();
+                (fields.first().copied() == Some("1")).then_some(fields)
+            })
+            .next()
+            .expect("GPU ordinal 1 monitor row");
+        assert_eq!(fields.len(), 3);
+        serde_json::json!({
+            "elapsed_ms": start.elapsed().as_millis(),
+            "gpu_utilization_percent": fields[1].parse::<u64>().expect("GPU utilization integer"),
+            "memory_used_mib": fields[2].parse::<u64>().expect("GPU memory integer"),
+        })
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn start_population_response_gpu_monitor_v1() -> (
+        Arc<AtomicBool>,
+        std::thread::JoinHandle<Vec<serde_json::Value>>,
+    ) {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let mut samples = Vec::new();
+            while !thread_stop.load(Ordering::Acquire) {
+                samples.push(population_response_gpu_sample_v1(start));
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            samples.push(population_response_gpu_sample_v1(start));
+            samples
+        });
+        (stop, handle)
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -6693,6 +6827,10 @@ mod tests {
         let topologies = [(1_usize, 32_usize), (2, 32), (4, 16)];
         let mut rows = Vec::with_capacity(topologies.len());
         let mut common_final_state = None;
+        let mut minimum_entropy = f64::INFINITY;
+        let mut maximum_gradient_l2 = 0.0_f64;
+        let mut maximum_movement_l2 = 0.0_f64;
+        let (gpu_monitor_stop, gpu_monitor_handle) = start_population_response_gpu_monitor_v1();
         for (worker_count, sessions_per_worker) in topologies {
             let (run, state) = run_h4_development_arm_with_state_v1(
                 &response_source,
@@ -6714,6 +6852,22 @@ mod tests {
             } else {
                 common_final_state = Some(final_state.clone());
             }
+            let update = &run["updates"][0];
+            let entropy = update["sampled_policy_entropy_estimate_nats"]
+                .as_f64()
+                .expect("throughput entropy");
+            let gradient_l2 = update["gradient_l2_norm"]
+                .as_f64()
+                .expect("throughput gradient L2");
+            let movement_l2 = update["parameter_movement_l2_from_initial"]
+                .as_f64()
+                .expect("throughput movement L2");
+            assert!(entropy.is_finite() && entropy >= 0.10);
+            assert!(gradient_l2.is_finite() && gradient_l2 <= 5.0);
+            assert!(movement_l2.is_finite() && movement_l2 <= 0.75);
+            minimum_entropy = minimum_entropy.min(entropy);
+            maximum_gradient_l2 = maximum_gradient_l2.max(gradient_l2);
+            maximum_movement_l2 = maximum_movement_l2.max(movement_l2);
             rows.push(serde_json::json!({
                 "worker_count": worker_count,
                 "sessions_per_worker": sessions_per_worker,
@@ -6724,6 +6878,26 @@ mod tests {
                 "update": run["updates"][0],
             }));
         }
+        gpu_monitor_stop.store(true, Ordering::Release);
+        let gpu_samples = gpu_monitor_handle
+            .join()
+            .expect("join population response GPU monitor");
+        assert!(!gpu_samples.is_empty());
+        let mean_gpu_utilization_percent = gpu_samples
+            .iter()
+            .map(|sample| sample["gpu_utilization_percent"].as_u64().unwrap() as f64)
+            .sum::<f64>()
+            / gpu_samples.len() as f64;
+        let peak_gpu_utilization_percent = gpu_samples
+            .iter()
+            .map(|sample| sample["gpu_utilization_percent"].as_u64().unwrap())
+            .max()
+            .unwrap();
+        let peak_gpu_memory_used_mib = gpu_samples
+            .iter()
+            .map(|sample| sample["memory_used_mib"].as_u64().unwrap())
+            .max()
+            .unwrap();
         let selected_index = rows
             .iter()
             .enumerate()
@@ -6747,6 +6921,23 @@ mod tests {
             "episode_count_per_topology": 64_u64,
             "topology_only_roots_excluded_from_development": true,
             "bit_identical_final_state_across_topologies": true,
+            "numerical_envelope": {
+                "minimum_entropy_nats": minimum_entropy,
+                "required_minimum_entropy_nats": 0.10,
+                "maximum_gradient_l2": maximum_gradient_l2,
+                "allowed_maximum_gradient_l2": 5.0,
+                "maximum_parameter_movement_l2": maximum_movement_l2,
+                "allowed_maximum_parameter_movement_l2": 0.75,
+                "pass": true,
+            },
+            "gpu_monitor": {
+                "sample_interval_ms": 250_u64,
+                "sample_count": gpu_samples.len(),
+                "mean_gpu_utilization_percent": mean_gpu_utilization_percent,
+                "peak_gpu_utilization_percent": peak_gpu_utilization_percent,
+                "peak_gpu_memory_used_mib": peak_gpu_memory_used_mib,
+                "samples": gpu_samples,
+            },
             "rows": rows,
             "selected": selected,
             "projection": {
@@ -8433,8 +8624,56 @@ mod tests {
         );
         assert_eq!(throughput["status"].as_str(), Some("complete"));
         assert_eq!(
+            throughput["preflight_manifest"]["sha256"].as_str(),
+            Some(preflight_manifest_sha256.as_str()),
+            "throughput report belongs to a different preflight manifest"
+        );
+        assert_eq!(throughput["base_seed"].as_u64(), Some(980_000));
+        assert_eq!(throughput["first_episode_index"].as_u64(), Some(33_280));
+        assert_eq!(throughput["episode_count_per_topology"].as_u64(), Some(64));
+        assert_eq!(
             throughput["bit_identical_final_state_across_topologies"].as_bool(),
             Some(true)
+        );
+        assert_eq!(
+            throughput["numerical_envelope"]["pass"].as_bool(),
+            Some(true)
+        );
+        assert!(
+            throughput["gpu_monitor"]["sample_count"]
+                .as_u64()
+                .is_some_and(|value| value > 0),
+            "throughput report lacks GPU utilization samples"
+        );
+        let throughput_rows = throughput["rows"]
+            .as_array()
+            .expect("population response throughput rows");
+        assert_eq!(throughput_rows.len(), 3);
+        for (row, expected) in throughput_rows
+            .iter()
+            .zip([(1_u64, 32_u64), (2, 32), (4, 16)])
+        {
+            assert_eq!(row["worker_count"].as_u64(), Some(expected.0));
+            assert_eq!(row["sessions_per_worker"].as_u64(), Some(expected.1));
+            assert!(row["update_elapsed_ns"]
+                .as_u64()
+                .is_some_and(|value| value > 0));
+        }
+        let common_throughput_state = throughput_rows[0]["final_train_state_sha256"]
+            .as_str()
+            .expect("first throughput final state");
+        assert!(throughput_rows.iter().all(|row| {
+            row["final_train_state_sha256"].as_str() == Some(common_throughput_state)
+        }));
+        let selected_index = throughput_rows
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, row)| row["update_elapsed_ns"].as_u64().unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(
+            &throughput["selected"], &throughput_rows[selected_index],
+            "throughput selected row is not the fastest qualified row"
         );
         let worker_count = throughput["selected"]["worker_count"]
             .as_u64()
