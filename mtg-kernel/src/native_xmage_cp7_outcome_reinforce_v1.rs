@@ -1949,6 +1949,7 @@ struct PreparedPpoEpochV1 {
     terms: Vec<NativePolicyFrozenObjectiveTermV1>,
     objective_metrics: ObjectiveMetricsV1,
     ratio_metrics: PpoRatioMetricsManifestV1,
+    tail_shape: PpoTailShapeManifestV1,
 }
 
 fn prepare_ppo_epoch_v1(
@@ -1976,9 +1977,13 @@ fn prepare_ppo_epoch_v1(
     let mut likelihood_ratio_sum = 0.0_f64;
     let mut absolute_log_likelihood_ratio_sum = 0.0_f64;
     let mut maximum_absolute_joint_log_likelihood_ratio = 0.0_f64;
+    let mut absolute_joint_log_likelihood_ratios = Vec::with_capacity(groups.len());
+    let mut worst_group_index = 0_usize;
+    let mut worst_signed_joint_log_likelihood_ratio = 0.0_f64;
+    let mut worst_likelihood_ratio = 1.0_f64;
     let mut old_to_current_forward_kl_sum = 0.0_f64;
     let mut action_total_variations = Vec::new();
-    for (group, base_term) in groups.iter().zip(base_terms) {
+    for (group_index, (group, base_term)) in groups.iter().zip(base_terms).enumerate() {
         let mut current_selected_log_probabilities = Vec::with_capacity(group.examples.len());
         let mut old_selected_log_probabilities = Vec::with_capacity(group.examples.len());
         let mut group_top1 = true;
@@ -2066,8 +2071,14 @@ fn prepare_ppo_epoch_v1(
         maximum_likelihood_ratio = maximum_likelihood_ratio.max(likelihood_ratio);
         likelihood_ratio_sum += likelihood_ratio;
         absolute_log_likelihood_ratio_sum += joint_log_likelihood_ratio.abs();
-        maximum_absolute_joint_log_likelihood_ratio =
-            maximum_absolute_joint_log_likelihood_ratio.max(joint_log_likelihood_ratio.abs());
+        let absolute_joint_log_likelihood_ratio = joint_log_likelihood_ratio.abs();
+        absolute_joint_log_likelihood_ratios.push(absolute_joint_log_likelihood_ratio);
+        if absolute_joint_log_likelihood_ratio > maximum_absolute_joint_log_likelihood_ratio {
+            maximum_absolute_joint_log_likelihood_ratio = absolute_joint_log_likelihood_ratio;
+            worst_group_index = group_index;
+            worst_signed_joint_log_likelihood_ratio = joint_log_likelihood_ratio;
+            worst_likelihood_ratio = likelihood_ratio;
+        }
     }
     let group_count = groups.len() as f64;
     action_total_variations.sort_by(f64::total_cmp);
@@ -2081,6 +2092,37 @@ fn prepare_ppo_epoch_v1(
         .ok_or_else(|| invalid_data_v1("PPO p90 rank overflow"))?
         / 10;
     let p90_action_total_variation_nearest_rank = action_total_variations[p90_rank - 1];
+    let p99_rank = observed_row_count
+        .checked_mul(99)
+        .and_then(|value| value.checked_add(99))
+        .ok_or_else(|| invalid_data_v1("PPO p99 rank overflow"))?
+        / 100;
+    let p99_action_total_variation_nearest_rank = action_total_variations[p99_rank - 1];
+    let maximum_action_total_variation = *action_total_variations
+        .last()
+        .expect("nonempty row metrics were checked");
+    absolute_joint_log_likelihood_ratios.sort_by(f64::total_cmp);
+    let physical_group_count = absolute_joint_log_likelihood_ratios.len();
+    let physical_p99_rank = physical_group_count
+        .checked_mul(99)
+        .and_then(|value| value.checked_add(99))
+        .ok_or_else(|| invalid_data_v1("PPO physical p99 rank overflow"))?
+        / 100;
+    let p99_absolute_joint_log_likelihood_ratio_nearest_rank =
+        absolute_joint_log_likelihood_ratios[physical_p99_rank - 1];
+    let above_absolute_joint_log_ratio_1_count = absolute_joint_log_likelihood_ratios
+        .iter()
+        .filter(|value| **value > 1.0)
+        .count();
+    let above_absolute_joint_log_ratio_1_5_count = absolute_joint_log_likelihood_ratios
+        .iter()
+        .filter(|value| **value > 1.5)
+        .count();
+    let above_absolute_joint_log_ratio_2_count = absolute_joint_log_likelihood_ratios
+        .iter()
+        .filter(|value| **value > 2.0)
+        .count();
+    let worst_group = &groups[worst_group_index];
     let mean_action_total_variation =
         action_total_variations.iter().sum::<f64>() / observed_row_count as f64;
     let mean_policy = policy_sum / group_count;
@@ -2111,10 +2153,32 @@ fn prepare_ppo_epoch_v1(
         p90_action_total_variation_nearest_rank,
         mean_policy_surrogate: mean_policy,
     };
+    let tail_shape = PpoTailShapeManifestV1 {
+        p99_action_total_variation_nearest_rank,
+        maximum_action_total_variation,
+        p99_absolute_joint_log_likelihood_ratio_nearest_rank,
+        above_absolute_joint_log_ratio_1_count,
+        above_absolute_joint_log_ratio_1_5_count,
+        above_absolute_joint_log_ratio_2_count,
+        worst_group: PpoWorstGroupManifestV1 {
+            pair_index: worst_group.pair_index,
+            episode_id: worst_group.episode_id,
+            candidate_seat: match worst_group.candidate_seat {
+                PlayerSeatV1::P0 => "p0".to_owned(),
+                PlayerSeatV1::P1 => "p1".to_owned(),
+            },
+            decision_kind: worst_group.decision_kind.clone(),
+            substep_count: worst_group.examples.len(),
+            signed_joint_log_likelihood_ratio: worst_signed_joint_log_likelihood_ratio,
+            absolute_joint_log_likelihood_ratio: maximum_absolute_joint_log_likelihood_ratio,
+            likelihood_ratio: worst_likelihood_ratio,
+        },
+    };
     Ok(PreparedPpoEpochV1 {
         terms,
         objective_metrics,
         ratio_metrics,
+        tail_shape,
     })
 }
 
@@ -2611,6 +2675,29 @@ struct PpoRatioMetricsManifestV1 {
     mean_action_total_variation: f64,
     p90_action_total_variation_nearest_rank: f64,
     mean_policy_surrogate: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PpoTailShapeManifestV1 {
+    p99_action_total_variation_nearest_rank: f64,
+    maximum_action_total_variation: f64,
+    p99_absolute_joint_log_likelihood_ratio_nearest_rank: f64,
+    above_absolute_joint_log_ratio_1_count: usize,
+    above_absolute_joint_log_ratio_1_5_count: usize,
+    above_absolute_joint_log_ratio_2_count: usize,
+    worst_group: PpoWorstGroupManifestV1,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PpoWorstGroupManifestV1 {
+    pair_index: u64,
+    episode_id: u64,
+    candidate_seat: String,
+    decision_kind: String,
+    substep_count: usize,
+    signed_joint_log_likelihood_ratio: f64,
+    absolute_joint_log_likelihood_ratio: f64,
+    likelihood_ratio: f64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -4766,6 +4853,7 @@ fn run_fixed_native_training_v1(
             "scorer_bias_anchor_f32_bits": state.scorer_bias_anchor_f32_bits_v1(),
             "parameter_l2_from_gae8": parameter_l2,
             "movement": movement,
+            "tail_shape": &current.tail_shape,
         },
         "publication_gate": {
             "finite": finite,
@@ -5200,6 +5288,62 @@ mod tests {
             },
         )
         .collect()
+    }
+
+    #[test]
+    fn ppo_tail_shape_binds_quantiles_counts_and_worst_group_v1() {
+        let groups = scorer_scope_test_groups_v1();
+        let terms = [
+            NativePolicyFrozenObjectiveTermV1 {
+                policy_advantage: 0.5,
+                value_target: 1.0,
+                value_weight: 1.0,
+            },
+            NativePolicyFrozenObjectiveTermV1 {
+                policy_advantage: -0.5,
+                value_target: -1.0,
+                value_weight: 1.0,
+            },
+        ];
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let prepared = prepare_ppo_epoch_v1(&model, &groups, &terms, 0.1, 0.0).unwrap();
+        let tail = &prepared.tail_shape;
+        assert_eq!(
+            tail.worst_group
+                .absolute_joint_log_likelihood_ratio
+                .to_bits(),
+            prepared
+                .ratio_metrics
+                .maximum_absolute_joint_log_likelihood_ratio
+                .to_bits()
+        );
+        assert_eq!(
+            tail.p99_absolute_joint_log_likelihood_ratio_nearest_rank
+                .to_bits(),
+            tail.worst_group
+                .absolute_joint_log_likelihood_ratio
+                .to_bits()
+        );
+        assert_eq!(
+            tail.p99_action_total_variation_nearest_rank.to_bits(),
+            tail.maximum_action_total_variation.to_bits()
+        );
+        assert!(
+            tail.above_absolute_joint_log_ratio_2_count
+                <= tail.above_absolute_joint_log_ratio_1_5_count
+        );
+        assert!(
+            tail.above_absolute_joint_log_ratio_1_5_count
+                <= tail.above_absolute_joint_log_ratio_1_count
+        );
+        assert!(tail.above_absolute_joint_log_ratio_1_count <= groups.len());
+        assert!(groups.iter().any(|group| {
+            group.pair_index == tail.worst_group.pair_index
+                && group.episode_id == tail.worst_group.episode_id
+                && group.decision_kind == tail.worst_group.decision_kind
+        }));
     }
 
     #[test]
