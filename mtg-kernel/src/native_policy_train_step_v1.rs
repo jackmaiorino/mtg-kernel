@@ -1816,13 +1816,22 @@ impl NativePolicyValueTrainStateV1 {
                                     scale * (current_log_probability.exp() - *target_probability);
                             }
                         }
-                        gauge_accumulator.observe_with_anchor_v1(
-                            selected.tape.logits_v1(),
-                            selected.selected_action_index,
-                            d_joint_log_probability,
-                            selected.anchor_target_probabilities.as_deref(),
-                            policy_anchor_coefficient / group_count,
-                        )?;
+                        match selected.anchor_target_probabilities.as_deref() {
+                            Some(target_probabilities) => {
+                                gauge_accumulator.observe_with_anchor_v1(
+                                    selected.tape.logits_v1(),
+                                    selected.selected_action_index,
+                                    d_joint_log_probability,
+                                    Some(target_probabilities),
+                                    policy_anchor_coefficient / group_count,
+                                )?;
+                            }
+                            None => gauge_accumulator.observe(
+                                selected.tape.logits_v1(),
+                                selected.selected_action_index,
+                                d_joint_log_probability,
+                            )?,
+                        }
                         reverse_decision(
                             &parameters,
                             &mut gradients,
@@ -2443,7 +2452,14 @@ impl ScorerBiasGaugeAccumulatorV1 {
         selected_action_index: usize,
         policy_coefficient: f32,
     ) -> Result<(), NativePolicyTrainErrorV1> {
-        self.observe_with_anchor_v1(logits, selected_action_index, policy_coefficient, None, 0.0)
+        self.observe_inner_v1(
+            logits,
+            selected_action_index,
+            policy_coefficient,
+            None,
+            0.0,
+            false,
+        )
     }
 
     pub(crate) fn observe_with_anchor_v1(
@@ -2454,10 +2470,30 @@ impl ScorerBiasGaugeAccumulatorV1 {
         anchor_target_probabilities: Option<&[f32]>,
         anchor_coefficient: f32,
     ) -> Result<(), NativePolicyTrainErrorV1> {
+        self.observe_inner_v1(
+            logits,
+            selected_action_index,
+            policy_coefficient,
+            anchor_target_probabilities,
+            anchor_coefficient,
+            true,
+        )
+    }
+
+    fn observe_inner_v1(
+        &mut self,
+        logits: &[f32],
+        selected_action_index: usize,
+        policy_coefficient: f32,
+        anchor_target_probabilities: Option<&[f32]>,
+        anchor_coefficient: f32,
+        anchored_operation_bound: bool,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        let operations_per_action = if anchored_operation_bound { 12 } else { 8 };
         let operation_count = logits
             .len()
-            .checked_mul(12)
-            .and_then(|value| value.checked_add(12))
+            .checked_mul(operations_per_action)
+            .and_then(|value| value.checked_add(operations_per_action))
             .ok_or(NativePolicyTrainErrorV1::GaugeBoundOverflow)?;
         let coefficient = f64::from(policy_coefficient);
         let anchor_coefficient = f64::from(anchor_coefficient);
@@ -8304,6 +8340,112 @@ mod tests {
         assert_ne!(
             anchored_state.model_v1().parameter_snapshot_v1(),
             anchored_before
+        );
+
+        let multi_group0_substeps = [
+            NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded(case))),
+                selected_action_index: 0,
+                expected_raw_action_logit_bits: &logit_bits,
+                expected_value_bits: output.value.to_bits(),
+            },
+            NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded(case))),
+                selected_action_index: 1,
+                expected_raw_action_logit_bits: &logit_bits,
+                expected_value_bits: output.value.to_bits(),
+            },
+        ];
+        let multi_group1_substeps = [NativePolicySubstepV1 {
+            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded(case))),
+            selected_action_index: 1,
+            expected_raw_action_logit_bits: &logit_bits,
+            expected_value_bits: output.value.to_bits(),
+        }];
+        let multi_groups = [
+            NativePolicyPhysicalDecisionV1 {
+                substeps: &multi_group0_substeps,
+                terminal_return: 1,
+            },
+            NativePolicyPhysicalDecisionV1 {
+                substeps: &multi_group1_substeps,
+                terminal_return: -1,
+            },
+        ];
+        let multi_terms = [
+            NativePolicyFrozenObjectiveTermV1 {
+                policy_advantage: 0.4,
+                value_target: output.value,
+                value_weight: 1.0,
+            },
+            NativePolicyFrozenObjectiveTermV1 {
+                policy_advantage: -0.7,
+                value_target: output.value,
+                value_weight: 1.0,
+            },
+        ];
+        let multi_group0_anchor_substeps = [
+            NativePolicyFrozenAnchorSubstepV1 {
+                target_logits_f32_bits: &anchor_logit_bits,
+            },
+            NativePolicyFrozenAnchorSubstepV1 {
+                target_logits_f32_bits: &anchor_logit_bits,
+            },
+        ];
+        let multi_group1_anchor_substeps = [NativePolicyFrozenAnchorSubstepV1 {
+            target_logits_f32_bits: &anchor_logit_bits,
+        }];
+        let multi_anchors = [
+            NativePolicyFrozenAnchorGroupV1 {
+                substeps: &multi_group0_anchor_substeps,
+            },
+            NativePolicyFrozenAnchorGroupV1 {
+                substeps: &multi_group1_anchor_substeps,
+            },
+        ];
+        let multi_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut multi_state = NativePolicyValueTrainStateV1::new_v1(multi_model).unwrap();
+        let multi_result = multi_state
+            .train_step_with_frozen_objective_and_policy_anchor_v1(
+                &multi_groups,
+                &multi_terms,
+                &multi_anchors,
+                0.5,
+                0.0,
+                golden.optimizer.learning_rate,
+            )
+            .unwrap();
+        let selected_log0 = current_log_probabilities[0];
+        let selected_log1 = current_log_probabilities[1];
+        let group0_joint_log = selected_log0 + selected_log1;
+        let accumulated_anchor_kl = |substep_count: usize| {
+            let mut sum = 0.0_f32;
+            for _ in 0..substep_count {
+                for (target, current) in target_log_probabilities
+                    .iter()
+                    .zip(&current_log_probabilities)
+                {
+                    sum += target.exp() * (target - current);
+                }
+            }
+            sum
+        };
+        let group0_kl = accumulated_anchor_kl(2);
+        let group1_kl = accumulated_anchor_kl(1);
+        let expected_multi_policy_sum = (-group0_joint_log * multi_terms[0].policy_advantage
+            + 0.5 * group0_kl)
+            + (-selected_log1 * multi_terms[1].policy_advantage + 0.5 * group1_kl);
+        assert_eq!(
+            multi_result.policy_sum.to_bits(),
+            expected_multi_policy_sum.to_bits(),
+            "physical groups sum joint selected-action PPO and every substep KL"
+        );
+        assert_eq!(
+            multi_result.loss.to_bits(),
+            (expected_multi_policy_sum / 2.0).to_bits(),
+            "combined PPO plus KL loss is normalized once by physical-group count"
         );
     }
 

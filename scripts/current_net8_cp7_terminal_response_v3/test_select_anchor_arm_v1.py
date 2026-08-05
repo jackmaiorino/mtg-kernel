@@ -45,7 +45,7 @@ class SelectorTests(unittest.TestCase):
             },
             "training": {
                 "reward": "natural_terminal_win_draw_loss_only",
-                "objective": "ppo_clip_frozen_source_value_standardized_episode_balanced/v1",
+                "objective": SELECTOR.OBJECTIVE,
                 "learning_rate_f32_bits": SELECTOR.LEARNING_RATE_F32_BITS,
                 "value_coefficient_f32_bits": 0,
                 "ppo_clip_epsilon_f32_bits": SELECTOR.PPO_CLIP_F32_BITS,
@@ -247,6 +247,16 @@ class SelectorTests(unittest.TestCase):
             wrong["beta-0.3"] = root / "other.json"
             with self.assertRaisesRegex(ValueError, "report binding mismatch"):
                 SELECTOR.validate_manifest(manifest, wrong)
+
+    def test_training_objective_is_exact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report, package = self.make_report(root, "beta-1.0", 0.02)
+            value = json.loads(report.read_text(encoding="utf-8"))
+            value["training"]["objective"] = "other"
+            report.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "training recipe mismatch"):
+                SELECTOR.validate_arm("beta-1.0", report, package)
 
 
 if __name__ == "__main__":

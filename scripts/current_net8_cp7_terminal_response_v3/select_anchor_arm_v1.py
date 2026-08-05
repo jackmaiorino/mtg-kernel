@@ -40,6 +40,7 @@ ANCHOR_IDENTITY = "old-policy-forward-kl-every-legal-action-distribution/v1"
 ANCHOR_DIRECTION = "old_to_current"
 ANCHOR_SOURCE = "corpus_old_policy_logits_f32_bits"
 ANCHOR_SCOPE = "every_legal_action_distribution"
+OBJECTIVE = "ppo_clip_frozen_source_value_standardized_episode_balanced/v1"
 
 PARAMETER_L2_CAP = 0.75
 MEAN_TV_FLOOR = 0.010
@@ -290,6 +291,7 @@ def validate_arm(
         raise ValueError(f"{name} training recipe mismatch")
     if (
         training.get("reward") != "natural_terminal_win_draw_loss_only"
+        or training.get("objective") != OBJECTIVE
         or training.get("learning_rate_f32_bits") != LEARNING_RATE_F32_BITS
         or training.get("value_coefficient_f32_bits") != VALUE_COEFFICIENT_F32_BITS
         or training.get("ppo_clip_epsilon_f32_bits") != PPO_CLIP_F32_BITS
