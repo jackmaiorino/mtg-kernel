@@ -13,8 +13,8 @@ ledger reuses alpha after launch.
 
 | gate id | pool | alpha | launched | outcome | frozen seed schedule |
 |---|---:|---:|---:|---|---|
-| `candidate-01-gae-initial` | candidates | 0.00875 | N | pending | `488b64430f2aa806dbaa2689e6bd0d14570f87ed091ca1ac4c553561d05dfa96` |
-| `candidate-01-gae-confirm` | candidates | 0.00875 | N | pending | `b82fa7bd4b4220bcfac60415c097448e7d992846871f1d485865dc3e12f9faaa` |
+| `candidate-01-gae-initial` | candidates | 0.00875 | Y | `INCONCLUSIVE-AT-MAX-N`, `n=16384`; closed | `488b64430f2aa806dbaa2689e6bd0d14570f87ed091ca1ac4c553561d05dfa96` |
+| `candidate-01-gae-confirm` | candidates | 0.00875 | N | not launched; candidate closed | `b82fa7bd4b4220bcfac60415c097448e7d992846871f1d485865dc3e12f9faaa` |
 | `candidate-02-initial/confirm` | candidates | 0.0175 total | N | unassigned | unassigned |
 | `candidate-03-initial/confirm` | candidates | 0.0175 total | N | unassigned | unassigned |
 | `candidate-04-initial/confirm` | candidates | 0.0175 total | N | unassigned | unassigned |
@@ -22,3 +22,8 @@ ledger reuses alpha after launch.
 Historical and development evaluations predating V3 consumed no slot in this
 ledger. They remain selection panels and therefore cannot appear in any formal
 seed schedule for a candidate they helped select.
+
+Candidate 01 initial analysis SHA-256:
+`fd6940053d9d307621465e39bf792843aaa874b26fd4a4f4abcb4a2979bd1ffb`.
+Its unlaunched confirmation allocation remains unused and is not reassigned by
+this ledger.

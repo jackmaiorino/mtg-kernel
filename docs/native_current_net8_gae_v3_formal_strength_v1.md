@@ -1,6 +1,7 @@
 # Current Net8 history-value GAE V3 formal strength v1
 
-Status: frozen design, measurement not launched. This sheet is governed by
+Status: initial gate complete, candidate closed without confirmation. This
+sheet is governed by
 `SEQUENTIAL-GATE-CONTRACT-DRAFT-V3.md` plus
 `SEQUENTIAL-GATE-CONTRACT-V3-ERRATUM-1.md` in `collab`.
 Their frozen SHA-256 values are respectively
@@ -96,3 +97,25 @@ the already-frozen confirmation. Promotion requires `SUCCESS` in both gates.
 Any other initial verdict closes the candidate without confirmation. This
 gate supports only a strength claim against the update-512 parent under the
 frozen Rally/Pool3 kernel distribution, not a pro-level or real-MTG claim.
+
+## Completed initial result
+
+The formal initial measurement completed on 2026-08-04 at the full cap of
+16,384 clusters. The raw store contains exactly 512 atomic chunk files and no
+partial files. The release test completed in 1,256.05 seconds with the selected
+4-worker by 16-session topology. The raw report SHA-256 is
+`c8bcba394491bacfa737b84f39630323b1c151f7e51bad6bea516af7978a9d9e`.
+
+The candidate had 1,373 favorable, 1,028 unfavorable, and 30,367 tied leg
+comparisons. The cluster score sum was `172.5`, giving the terminal-only
+paired effect estimate `Delta_hat=0.010528564453125`. The final V3 confidence
+sequence was `[0.00475336130478099, 0.018388660485134878]`. Its lower bound
+did not reach `delta_promote=0.01`, while its upper bound remained at or above
+`delta_worthwhile=0.01`.
+
+The frozen verdict is therefore `INCONCLUSIVE-AT-MAX-N`, with decision
+`n=16384`. The analysis SHA-256 is
+`fd6940053d9d307621465e39bf792843aaa874b26fd4a4f4abcb4a2979bd1ffb`.
+The candidate is not promoted, and the independent confirmation gate is not
+launched. The nominal positive estimate is descriptive evidence for this
+fixed policy under Rally/Pool3, not a successful gate or a pro-level claim.
