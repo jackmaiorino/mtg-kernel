@@ -61,7 +61,7 @@ Require-Equal $manifest.toolchain.llvm_version (Tool-Field $rustcLines 'LLVM ver
 Require-Equal $manifest.toolchain.cargo_release (Tool-Field $cargoLines 'release:') 'toolchain.cargo_release'
 Require-Equal $manifest.toolchain.cargo_commit_hash (Tool-Field $cargoLines 'commit-hash:') 'toolchain.cargo_commit_hash'
 
-$linkerPath = (Get-Command link.exe -ErrorAction Stop).Source
+$linkerPath = (Resolve-Path -LiteralPath $manifest.toolchain.linker.path).Path
 $linkerItem = Get-Item -LiteralPath $linkerPath
 $linkerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $linkerPath).Hash.ToLowerInvariant()
 Require-Condition ([StringComparer]::OrdinalIgnoreCase.Equals($manifest.toolchain.linker.path, $linkerPath)) 'toolchain.linker.path mismatch'
