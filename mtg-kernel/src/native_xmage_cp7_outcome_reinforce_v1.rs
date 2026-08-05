@@ -73,6 +73,18 @@ const CURRENT_GAE8_MODEL_PARAMETER_SHA256_V1: &str =
 const CURRENT_GAE8_SOURCE_RESULT_SHA256_V1: &str =
     "dc581e2bd6548c5fa9c05d9d8ab70a2bd6f213b20dd82a042109ee9a500b628e";
 const CURRENT_GAE8_ADAM_STEP_V1: u64 = 520;
+const CURRENT_GAE8_CP7_CORPUS_SHA256_V1: &str =
+    "fe95949e852227259efda060889c2ea707033f77b919f6100f42f5feeef754b4";
+const CURRENT_GAE8_CP7_CORPUS_BASE_SEED_HEX_V1: &str = "00000000001bc561";
+const CURRENT_GAE8_CP7_CORPUS_PAIR_COUNT_V1: usize = 64;
+const CURRENT_GAE8_CP7_CORPUS_EPISODE_COUNT_V1: usize = 128;
+const CURRENT_GAE8_CP7_CORPUS_DECISION_ROW_COUNT_V1: usize = 4_769;
+const CURRENT_GAE8_CP7_CORPUS_TERMINAL_RETURN_COUNTS_V1: [u64; 3] = [80, 0, 48];
+const CURRENT_NET8_CP7_RESPONSE_LEARNING_RATE_V1: f32 = 0.001;
+const CURRENT_NET8_CP7_RESPONSE_VALUE_COEFFICIENT_V1: f32 = 0.5;
+const CURRENT_NET8_CP7_RESPONSE_EPOCHS_V1: u32 = 4;
+const CURRENT_NET8_CP7_RESPONSE_PPO_CLIP_EPSILON_V1: f32 = 0.1;
+const CURRENT_NET8_CP7_RESPONSE_ENDING_ADAM_STEP_V1: u64 = 524;
 const CURRENT_NET8_CP7_RESPONSE_AUTHORITY_KIND_V1: &str = "current-net8-cp7-terminal-response-v1";
 const FIXED_NATIVE_STATE_SCHEMA_V1: &str = "mtg-kernel-xmage-fixed-native-state/v1";
 const FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1: &str = "fixed_native_state.json";
@@ -480,6 +492,7 @@ struct OutcomeDatasetV1 {
     export_contract: String,
     schema_version: u32,
     policy_checkpoint: CheckpointIdentityWireV1,
+    base_seed_u64_hex: String,
     decision_row_count: usize,
     terminal_row_count: usize,
     episode_count: usize,
@@ -1043,6 +1056,18 @@ fn load_outcome_dataset_v1(path: &Path) -> DynResultV1<OutcomeDatasetV1> {
             .into());
         }
     }
+    let base_seeds = pairs
+        .values()
+        .map(|pair| pair.base_seed_u64_hex.as_str())
+        .collect::<BTreeSet<_>>();
+    if base_seeds.len() != 1 {
+        return Err(invalid_data_v1("outcome corpus mixes base seeds").into());
+    }
+    let base_seed_u64_hex = base_seeds
+        .into_iter()
+        .next()
+        .expect("nonempty corpus has one base seed")
+        .to_owned();
     groups.sort_by_key(|group| group.first_record_ordinal);
     Ok(OutcomeDatasetV1 {
         jsonl_sha256: lower_hex_raw32_v1(digest.finalize().into()),
@@ -1052,6 +1077,7 @@ fn load_outcome_dataset_v1(path: &Path) -> DynResultV1<OutcomeDatasetV1> {
             .ok_or_else(|| invalid_data_v1("outcome schema version is missing"))?,
         policy_checkpoint: policy_checkpoint
             .ok_or_else(|| invalid_data_v1("outcome policy checkpoint is missing"))?,
+        base_seed_u64_hex,
         decision_row_count: usize::try_from(expected_outcome_decision_ordinal)?,
         terminal_row_count,
         episode_count: closed_episodes.len(),
@@ -1287,6 +1313,39 @@ struct PreparedAdvantagesV1 {
     manifest: AdvantageTransformManifestV1,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct SeatAdvantageMomentsManifestV1 {
+    candidate_seat: String,
+    physical_group_count: usize,
+    contributing_episode_count: usize,
+    source_advantage_mean: f64,
+    source_advantage_population_standard_deviation: f64,
+    normalization_denominator: f64,
+    policy_advantage_sum: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SeatStandardizedAdvantageManifestV1 {
+    identity: String,
+    raw_advantage: String,
+    source_value_baseline: String,
+    centering_and_standardization_weighting: String,
+    policy_objective_aggregation: String,
+    value_objective_aggregation: String,
+    standard_deviation_floor: f64,
+    physical_group_count: usize,
+    contributing_episode_count: usize,
+    zero_decision_episode_count: usize,
+    value_weight_sum: f64,
+    seats: Vec<SeatAdvantageMomentsManifestV1>,
+}
+
+#[derive(Clone, Debug)]
+struct SeatPreparedAdvantagesV1 {
+    terms: Vec<NativePolicyFrozenObjectiveTermV1>,
+    manifest: SeatStandardizedAdvantageManifestV1,
+}
+
 fn prepare_standardized_episode_balanced_advantages_v1(
     observations: &[AdvantageObservationV1],
     corpus_episode_count: usize,
@@ -1439,6 +1498,198 @@ fn prepare_dataset_advantages_v1(
             "exported_g384_old_value_f32_bits_first_substep"
         },
     )
+}
+
+fn prepare_seat_standardized_dataset_advantages_v1(
+    dataset: &OutcomeDatasetV1,
+) -> DynResultV1<SeatPreparedAdvantagesV1> {
+    if dataset.groups.is_empty() || dataset.episode_count == 0 {
+        return Err(invalid_data_v1("seat-standardized corpus is empty").into());
+    }
+    let mut episode_group_counts = BTreeMap::<u64, usize>::new();
+    let mut episode_seats = BTreeMap::<u64, PlayerSeatV1>::new();
+    for group in &dataset.groups {
+        let first = group
+            .examples
+            .first()
+            .ok_or_else(|| invalid_data_v1("empty seat-standardized physical group"))?;
+        if !matches!(group.terminal_return, -1..=1)
+            || !f32::from_bits(first.old_value_f32_bits).is_finite()
+        {
+            return Err(invalid_data_v1("invalid seat-standardized observation").into());
+        }
+        let count = episode_group_counts.entry(group.episode_id).or_default();
+        *count = count
+            .checked_add(1)
+            .ok_or_else(|| invalid_data_v1("seat-standardized episode count overflow"))?;
+        match episode_seats.entry(group.episode_id) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(group.candidate_seat);
+            }
+            std::collections::btree_map::Entry::Occupied(entry)
+                if *entry.get() != group.candidate_seat =>
+            {
+                return Err(invalid_data_v1("candidate seat changes within an episode").into());
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+    }
+    let contributing_episode_count = episode_group_counts.len();
+    if contributing_episode_count > dataset.episode_count {
+        return Err(invalid_data_v1("seat-standardized episodes exceed terminals").into());
+    }
+
+    #[derive(Clone, Copy)]
+    struct MomentsV1 {
+        episode_count: usize,
+        group_count: usize,
+        mean: f64,
+        standard_deviation: f64,
+        denominator: f64,
+    }
+
+    let moments_for = |seat: PlayerSeatV1| -> DynResultV1<MomentsV1> {
+        let episode_count = episode_seats
+            .values()
+            .filter(|value| **value == seat)
+            .count();
+        if episode_count == 0 {
+            return Err(invalid_data_v1("seat-standardized seat has no episodes").into());
+        }
+        let mut group_count = 0_usize;
+        let mut weighted_sum = 0.0_f64;
+        for group in dataset
+            .groups
+            .iter()
+            .filter(|group| group.candidate_seat == seat)
+        {
+            let first = group
+                .examples
+                .first()
+                .expect("groups were checked nonempty");
+            let raw = f64::from(group.terminal_return)
+                - f64::from(f32::from_bits(first.old_value_f32_bits));
+            let episode_groups = *episode_group_counts
+                .get(&group.episode_id)
+                .expect("episode count was populated");
+            weighted_sum += raw / episode_groups as f64;
+            group_count += 1;
+        }
+        let mean = weighted_sum / episode_count as f64;
+        let mut weighted_variance = 0.0_f64;
+        for group in dataset
+            .groups
+            .iter()
+            .filter(|group| group.candidate_seat == seat)
+        {
+            let first = group
+                .examples
+                .first()
+                .expect("groups were checked nonempty");
+            let raw = f64::from(group.terminal_return)
+                - f64::from(f32::from_bits(first.old_value_f32_bits));
+            let episode_groups = *episode_group_counts
+                .get(&group.episode_id)
+                .expect("episode count was populated");
+            let centered = raw - mean;
+            weighted_variance += centered * centered / episode_groups as f64;
+        }
+        let standard_deviation = (weighted_variance / episode_count as f64).sqrt();
+        let denominator = standard_deviation.max(ADVANTAGE_STANDARD_DEVIATION_FLOOR_V1);
+        if !mean.is_finite() || !standard_deviation.is_finite() || !denominator.is_finite() {
+            return Err(invalid_data_v1("seat-standardized moments are not finite").into());
+        }
+        Ok(MomentsV1 {
+            episode_count,
+            group_count,
+            mean,
+            standard_deviation,
+            denominator,
+        })
+    };
+    let p0 = moments_for(PlayerSeatV1::P0)?;
+    let p1 = moments_for(PlayerSeatV1::P1)?;
+    let total_group_count = dataset.groups.len() as f64;
+    let total_episode_count = contributing_episode_count as f64;
+    let mut terms = Vec::with_capacity(dataset.groups.len());
+    let mut p0_policy_sum = 0.0_f64;
+    let mut p1_policy_sum = 0.0_f64;
+    for group in &dataset.groups {
+        let first = group
+            .examples
+            .first()
+            .expect("groups were checked nonempty");
+        let raw =
+            f64::from(group.terminal_return) - f64::from(f32::from_bits(first.old_value_f32_bits));
+        let episode_groups = *episode_group_counts
+            .get(&group.episode_id)
+            .expect("episode count was populated");
+        let effective_weight = total_group_count / (total_episode_count * episode_groups as f64);
+        let moments = match group.candidate_seat {
+            PlayerSeatV1::P0 => p0,
+            PlayerSeatV1::P1 => p1,
+        };
+        let policy_advantage =
+            (effective_weight * (raw - moments.mean) / moments.denominator) as f32;
+        let value_weight = effective_weight as f32;
+        if !policy_advantage.is_finite() || !value_weight.is_finite() || value_weight <= 0.0 {
+            return Err(invalid_data_v1("seat-standardized coefficient is invalid").into());
+        }
+        match group.candidate_seat {
+            PlayerSeatV1::P0 => p0_policy_sum += f64::from(policy_advantage),
+            PlayerSeatV1::P1 => p1_policy_sum += f64::from(policy_advantage),
+        }
+        terms.push(NativePolicyFrozenObjectiveTermV1 {
+            policy_advantage,
+            value_target: f32::from(group.terminal_return),
+            value_weight,
+        });
+    }
+    let value_weight_sum = terms
+        .iter()
+        .map(|term| f64::from(term.value_weight))
+        .sum::<f64>();
+    Ok(SeatPreparedAdvantagesV1 {
+        terms,
+        manifest: SeatStandardizedAdvantageManifestV1 {
+            identity: "terminal_reinforce_frozen_source_value_standardized_by_candidate_seat_episode_balanced/v1".to_owned(),
+            raw_advantage: "candidate_terminal_reward_minus_frozen_source_value".to_owned(),
+            source_value_baseline:
+                "exported_fixed_step520_gae8_old_value_f32_bits_first_substep".to_owned(),
+            centering_and_standardization_weighting:
+                "separate_candidate_seat_population_moments_with_each_episode_total_mass_one"
+                    .to_owned(),
+            policy_objective_aggregation:
+                "mean_over_all_physical_groups_after_equal_episode_mass_weighting".to_owned(),
+            value_objective_aggregation:
+                "mean_over_all_physical_groups_after_equal_episode_mass_weighting".to_owned(),
+            standard_deviation_floor: ADVANTAGE_STANDARD_DEVIATION_FLOOR_V1,
+            physical_group_count: dataset.groups.len(),
+            contributing_episode_count,
+            zero_decision_episode_count: dataset.episode_count - contributing_episode_count,
+            value_weight_sum,
+            seats: vec![
+                SeatAdvantageMomentsManifestV1 {
+                    candidate_seat: "p0".to_owned(),
+                    physical_group_count: p0.group_count,
+                    contributing_episode_count: p0.episode_count,
+                    source_advantage_mean: p0.mean,
+                    source_advantage_population_standard_deviation: p0.standard_deviation,
+                    normalization_denominator: p0.denominator,
+                    policy_advantage_sum: p0_policy_sum,
+                },
+                SeatAdvantageMomentsManifestV1 {
+                    candidate_seat: "p1".to_owned(),
+                    physical_group_count: p1.group_count,
+                    contributing_episode_count: p1.episode_count,
+                    source_advantage_mean: p1.mean,
+                    source_advantage_population_standard_deviation: p1.standard_deviation,
+                    normalization_denominator: p1.denominator,
+                    policy_advantage_sum: p1_policy_sum,
+                },
+            ],
+        },
+    })
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -3997,19 +4248,18 @@ where
         return Err(invalid_data_v1("train-fixed requires every documented path and hash").into());
     }
     parse_lower_hex_raw32_v1(&config.outcome_jsonl_sha256)?;
-    if !config.learning_rate.is_finite()
-        || config.learning_rate <= 0.0
-        || config.learning_rate > 1.0e-3
-        || !config.value_coefficient.is_finite()
-        || config.value_coefficient <= 0.0
-        || config.value_coefficient > 10.0
-        || config.epochs < 2
-        || !config.ppo_clip_epsilon.is_finite()
-        || config.ppo_clip_epsilon <= 0.0
-        || config.ppo_clip_epsilon >= 1.0
+    if config.outcome_jsonl_sha256 != CURRENT_GAE8_CP7_CORPUS_SHA256_V1 {
+        return Err(invalid_data_v1("train-fixed requires the exact pinned GAE8 corpus").into());
+    }
+    if config.learning_rate.to_bits() != CURRENT_NET8_CP7_RESPONSE_LEARNING_RATE_V1.to_bits()
+        || config.value_coefficient.to_bits()
+            != CURRENT_NET8_CP7_RESPONSE_VALUE_COEFFICIENT_V1.to_bits()
+        || config.epochs != CURRENT_NET8_CP7_RESPONSE_EPOCHS_V1
+        || config.ppo_clip_epsilon.to_bits()
+            != CURRENT_NET8_CP7_RESPONSE_PPO_CLIP_EPSILON_V1.to_bits()
     {
         return Err(invalid_data_v1(
-            "train-fixed requires bounded positive learning/value settings, epochs >= 2, and 0 < PPO clip < 1",
+            "train-fixed requires the exact current Net8 CP7 response recipe",
         )
         .into());
     }
@@ -4243,12 +4493,20 @@ fn run_fixed_native_training_v1(
         .into());
     }
     let dataset = load_outcome_dataset_v1(&config.outcome_jsonl)?;
-    if dataset.jsonl_sha256 != config.outcome_jsonl_sha256
+    if config.outcome_jsonl_sha256 != CURRENT_GAE8_CP7_CORPUS_SHA256_V1
+        || dataset.jsonl_sha256 != CURRENT_GAE8_CP7_CORPUS_SHA256_V1
         || dataset.schema_version != 2
         || dataset.export_contract != XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
         || !current_gae8_checkpoint_v1(&dataset.policy_checkpoint)
         || dataset.policy_checkpoint.environment_trajectory_contract
             != FIXED_NATIVE_STATE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1
+        || dataset.base_seed_u64_hex != CURRENT_GAE8_CP7_CORPUS_BASE_SEED_HEX_V1
+        || dataset.pair_indices
+            != (0..CURRENT_GAE8_CP7_CORPUS_PAIR_COUNT_V1 as u64).collect::<Vec<_>>()
+        || dataset.episode_count != CURRENT_GAE8_CP7_CORPUS_EPISODE_COUNT_V1
+        || dataset.terminal_row_count != CURRENT_GAE8_CP7_CORPUS_EPISODE_COUNT_V1
+        || dataset.decision_row_count != CURRENT_GAE8_CP7_CORPUS_DECISION_ROW_COUNT_V1
+        || dataset.terminal_return_counts != CURRENT_GAE8_CP7_CORPUS_TERMINAL_RETURN_COUNTS_V1
     {
         return Err(invalid_data_v1("fixed-native outcome corpus authority mismatch").into());
     }
@@ -4272,7 +4530,7 @@ fn run_fixed_native_training_v1(
     let source_snapshot = source.state.snapshot_v1()?;
     let mut state = source.state;
     let transport = audit_source_transport_v1(state.model_v1(), &dataset.groups, true)?;
-    let prepared = prepare_dataset_advantages_v1(&dataset, 1.0, true)?;
+    let prepared = prepare_seat_standardized_dataset_advantages_v1(&dataset)?;
     let mut current = prepare_ppo_epoch_v1(
         state.model_v1(),
         &dataset.groups,
@@ -4322,10 +4580,7 @@ fn run_fixed_native_training_v1(
         });
         current = next;
     }
-    let expected_adam_step = CURRENT_GAE8_ADAM_STEP_V1
-        .checked_add(u64::from(config.epochs))
-        .ok_or_else(|| invalid_data_v1("fixed-native ending Adam step overflow"))?;
-    if state.adam_step_v1() != expected_adam_step {
+    if state.adam_step_v1() != CURRENT_NET8_CP7_RESPONSE_ENDING_ADAM_STEP_V1 {
         return Err(invalid_data_v1("fixed-native ending Adam step mismatch").into());
     }
 
@@ -4644,7 +4899,7 @@ mod tests {
             "--outcome-jsonl",
             "outcomes.jsonl",
             "--outcome-jsonl-sha256",
-            &"0".repeat(64),
+            CURRENT_GAE8_CP7_CORPUS_SHA256_V1,
             "--source-fixed-root",
             "source",
             "--output-dir",
@@ -4663,11 +4918,27 @@ mod tests {
         .into_iter()
         .map(OsString::from)
         .collect::<Vec<_>>();
-        let config = parse_fixed_native_train_config_v1(arguments).unwrap();
+        let config = parse_fixed_native_train_config_v1(arguments.clone()).unwrap();
         assert_eq!(config.epochs, 4);
         assert_eq!(config.learning_rate.to_bits(), 0.001_f32.to_bits());
         assert_eq!(config.value_coefficient.to_bits(), 0.5_f32.to_bits());
         assert_eq!(config.ppo_clip_epsilon.to_bits(), 0.1_f32.to_bits());
+
+        for (flag, wrong_value) in [
+            ("--learning-rate", "0.0003"),
+            ("--value-coefficient", "1.0"),
+            ("--epochs", "3"),
+            ("--ppo-clip-epsilon", "0.2"),
+            ("--outcome-jsonl-sha256", SOURCE_PAYLOAD_SHA256_V1),
+        ] {
+            let mut wrong = arguments.clone();
+            let index = wrong
+                .iter()
+                .position(|value| value == flag)
+                .expect("test flag exists");
+            wrong[index + 1] = OsString::from(wrong_value);
+            assert!(parse_fixed_native_train_config_v1(wrong).is_err());
+        }
     }
 
     fn scorer_scope_test_tensor_v1() -> OwnedDecisionTensorV1 {
@@ -4740,6 +5011,98 @@ mod tests {
             },
         )
         .collect()
+    }
+
+    #[test]
+    fn seat_standardization_uses_independent_episode_balanced_moments_v1() {
+        let groups = [
+            (0_u64, PlayerSeatV1::P0, 1_i8),
+            (1_u64, PlayerSeatV1::P0, -1_i8),
+            (2_u64, PlayerSeatV1::P1, 1_i8),
+            (3_u64, PlayerSeatV1::P1, 0_i8),
+        ]
+        .into_iter()
+        .map(|(episode_id, candidate_seat, terminal_return)| {
+            let example = OutcomeExampleV1 {
+                record_ordinal: episode_id,
+                outcome_decision_ordinal: episode_id,
+                pair_index: episode_id / 2,
+                episode_id,
+                step: 0,
+                environment_revision: 0,
+                physical_decision_id: episode_id,
+                actor_physical_decision_ordinal: 0,
+                substep_index: 0,
+                substep_count: 1,
+                decision_kind: "seat-standardization-test".to_owned(),
+                legal_action_count: 2,
+                selected_index: 0,
+                old_policy_logits_f32_bits: vec![0; 2],
+                old_value_f32_bits: 0.0_f32.to_bits(),
+                tensor: scorer_scope_test_tensor_v1(),
+            };
+            OutcomePhysicalDecisionV1 {
+                first_record_ordinal: episode_id,
+                pair_index: episode_id / 2,
+                episode_id,
+                candidate_seat,
+                terminal_return,
+                decision_kind: "seat-standardization-test".to_owned(),
+                examples: vec![example],
+            }
+        })
+        .collect();
+        let dataset = OutcomeDatasetV1 {
+            jsonl_sha256: "6".repeat(64),
+            export_contract: XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2.to_owned(),
+            schema_version: 2,
+            policy_checkpoint: exact_g384_checkpoint_wire_v1(),
+            base_seed_u64_hex: "0000000000000001".to_owned(),
+            decision_row_count: 4,
+            terminal_row_count: 4,
+            episode_count: 4,
+            pair_indices: vec![0, 1],
+            terminal_return_counts: [1, 1, 2],
+            groups,
+        };
+
+        let prepared = prepare_seat_standardized_dataset_advantages_v1(&dataset).unwrap();
+        assert_eq!(prepared.terms.len(), 4);
+        assert_eq!(prepared.manifest.contributing_episode_count, 4);
+        assert_eq!(
+            prepared.manifest.value_weight_sum.to_bits(),
+            4.0_f64.to_bits()
+        );
+        let p0 = &prepared.manifest.seats[0];
+        let p1 = &prepared.manifest.seats[1];
+        assert_eq!(p0.candidate_seat, "p0");
+        assert_eq!(p0.contributing_episode_count, 2);
+        assert_eq!(p0.source_advantage_mean.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(
+            p0.source_advantage_population_standard_deviation.to_bits(),
+            1.0_f64.to_bits()
+        );
+        assert!(p0.policy_advantage_sum.abs() < 1.0e-12);
+        assert_eq!(p1.candidate_seat, "p1");
+        assert_eq!(p1.contributing_episode_count, 2);
+        assert_eq!(p1.source_advantage_mean.to_bits(), 0.5_f64.to_bits());
+        assert_eq!(
+            p1.source_advantage_population_standard_deviation.to_bits(),
+            0.5_f64.to_bits()
+        );
+        assert!(p1.policy_advantage_sum.abs() < 1.0e-12);
+        assert_eq!(
+            prepared
+                .terms
+                .iter()
+                .map(|term| term.value_target)
+                .collect::<Vec<_>>(),
+            vec![1.0, -1.0, 1.0, 0.0]
+        );
+        assert!(prepared
+            .terms
+            .iter()
+            .all(|term| term.value_weight.to_bits() == 1.0_f32.to_bits()));
     }
 
     #[test]
@@ -5330,6 +5693,7 @@ mod tests {
             export_contract: XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2.to_owned(),
             schema_version: 2,
             policy_checkpoint: checkpoint,
+            base_seed_u64_hex: "0000000000000001".to_owned(),
             decision_row_count: 1,
             terminal_row_count: 2,
             episode_count: 2,
@@ -5393,7 +5757,18 @@ mod tests {
             dataset.decision_row_count as u64
         );
         assert_eq!(transport.mismatched_decision_row_count, 0);
-        let prepared = prepare_dataset_advantages_v1(&dataset, 1.0, true).unwrap();
+        let prepared = prepare_seat_standardized_dataset_advantages_v1(&dataset).unwrap();
+        assert_eq!(prepared.manifest.seats.len(), 2);
+        assert!(prepared
+            .manifest
+            .seats
+            .iter()
+            .all(|seat| seat.contributing_episode_count == 64));
+        assert!(prepared
+            .manifest
+            .seats
+            .iter()
+            .all(|seat| seat.policy_advantage_sum.abs() < 1.0e-5));
         let initial = prepare_ppo_epoch_v1(
             source.state.model_v1(),
             &dataset.groups,
