@@ -1,6 +1,6 @@
 # Current Net8 GAE 16-update development v1
 
-Status: frozen before development outcomes.
+Status: completed; fixed extension stopped.
 
 ## Question
 
@@ -75,3 +75,29 @@ Failure closes this fixed sixteen-update extension without changing any
 threshold on the revealed panel. The next branch is a genuinely distinct
 population or response-oracle mechanism. A pass only authorizes fresh,
 disjoint V3 sizing and design review for candidate slot 02.
+
+## Completed result
+
+The direct release run completed cleanly and atomically published only
+`fresh-eval-v1`. The reproduced eight-update native state was exactly
+`ab7dd25ca6619a4a613ca089e1eb8e75981f8e5cfc0bae8535b78cddd7efa952`.
+All numerical and movement gates passed: maximum gradient L2 was
+`1.2101220294092261`, minimum sampled entropy was `0.176023615029181`, and
+final movement was `0.9305950202089189`.
+
+On the 1,024 common fresh episodes, the sixteen-update state beat the original
+parent by a terminal-order net of `+21`, split `+5` at P0 and `+16` at P1.
+Against the reproduced eight-update state it scored `26` better, `19` worse,
+and `979` tied outcomes, for net `+7` and effect `+0.68359375` percentage
+points. The frozen continuation threshold was `+8`, so the unique contract
+result is `STOP_FIXED_GAE_16_UPDATE_EXTENSION`. Missing by one game does not
+authorize changing the threshold or reusing this panel.
+
+The candidate native state SHA-256 is
+`519ba6e6a9fec87d58fdf62b638eb78404319a4f2456a35575b8e55da4238415`.
+The report SHA-256 is
+`dc581e2bd6548c5fa9c05d9d8ab70a2bd6f213b20dd82a042109ee9a500b628e`,
+bound to preflight manifest SHA-256
+`2d974362caaa9a7eba18172728943c7cfd828961d01873812804425e92a7ece1`.
+This was a development screen, not formal strength evidence, and consumed no
+V3 alpha slot.

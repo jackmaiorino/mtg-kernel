@@ -27,3 +27,11 @@ Candidate 01 initial analysis SHA-256:
 `fd6940053d9d307621465e39bf792843aaa874b26fd4a4f4abcb4a2979bd1ffb`.
 Its unlaunched confirmation allocation remains unused and is not reassigned by
 this ledger.
+
+Process deviation for `candidate-01-gae-initial`: formal measurement began
+before the concrete design sheet received the per-sheet countersign required
+by V3 Erratum 6. The result remains accepted after Fable independently
+recomputed all chunk hashes, leg scores, confidence-sequence endpoints,
+stopping looks, schedule identities, and component receipts with zero
+discrepancies. Candidate 02 and later formal gates require countersign before
+launch.
