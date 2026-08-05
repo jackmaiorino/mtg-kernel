@@ -1,0 +1,21 @@
+{
+  "schema": "mtg-kernel-xmage-fixed-native-state/v1",
+  "authority_kind": "current-net8-gae8-v1",
+  "source_result_sha256": "dc581e2bd6548c5fa9c05d9d8ab70a2bd6f213b20dd82a042109ee9a500b628e",
+  "payload": {
+    "filename": "checkpoint.state.f32le",
+    "byte_count": 14771928,
+    "adam_step": 520,
+    "scorer_bias_anchor_f32_bits": 3141403366,
+    "payload_sha256": "a0b7752181a562f8e5a0821a490ce20b777b509855d754283536e8242f489b98",
+    "parameters_sha256": "039c07b60df0b1e580abb875eff93f3b4e5e33c7ef7a209c400a639adefd6053",
+    "first_moments_sha256": "15faca5c01c0fe055e285d46a9ae91313ac71cac80d2fe02a9ead7567a0f9aaa",
+    "second_moments_sha256": "fa9221dc26881559ecd14b11ae20321ac8fd98c8063f7e57cd33f20078dc8424",
+    "model_parameter_sha256": "5efe2f167045bde379da3be8af6c480b6702f5d7a849ff8435d8ac6b1d91daa8",
+    "native_state_sha256": "ab7dd25ca6619a4a613ca089e1eb8e75981f8e5cfc0bae8535b78cddd7efa952"
+  },
+  "non_claims": [
+    "external software anchor is not professional-level evidence",
+    "terminal win/loss/draw is the only playing-strength outcome"
+  ]
+}

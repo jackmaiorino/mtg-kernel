@@ -9,57 +9,68 @@
 use crate::async_flat_scored_rollout_v1::{FlatScoredFamilyCore, NativeLaneScheduleStateV1};
 use crate::async_flat_scored_rollout_v2::{FlatScoredFamilyV2, OwnedFlatScoringDecisionV2};
 use crate::fast_sampler::{
-    FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
-    FastCategoricalScratch,
+    FastCategoricalScratch, FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+    FAST_CATEGORICAL_SAMPLER_VERSION,
 };
 use crate::flat_policy_v2::{FlatDecisionBindingV2, FlatScoringDecisionViewV2};
 use crate::native_bilinear_policy_residual_v1::{
-    NativeRank1PolicyResidualInferenceV1, load_native_rank1_policy_residual_inference_v1,
+    load_native_rank1_policy_residual_inference_v1, NativeRank1PolicyResidualInferenceV1,
 };
 use crate::native_checkpoint_inference_v1::{
     NativeCheckpointInferenceOutputV1, NativeCheckpointInferenceV1,
 };
 use crate::native_cp7_behavior_clone_v1::{
-    NativeCp7BehaviorCloneInferenceV1, load_cp7_behavior_clone_inference_v1,
+    load_cp7_behavior_clone_inference_v1, NativeCp7BehaviorCloneInferenceV1,
 };
 use crate::native_flat_tensorizer_v2::{
-    NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2, NATIVE_FLAT_ACTION_FEATURE_DIM_V2,
-    NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2, NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
-    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2,
+    NativeFlatDecisionTensorV2, NativeFlatTensorizerV2, NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2,
+    NATIVE_FLAT_ACTION_FEATURE_DIM_V2, NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
+    NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_ladder_pool_resolution_v1::{
     resolve_ladder_checkpoint_authority_v1, resolve_ladder_pool_v1, stage_ladder_checkpoint_ref_v1,
 };
+use crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1;
+use crate::native_policy_value_net_v1::{
+    NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativePolicyValueModelConfigV1,
+    NativePolicyValueNetV1,
+};
 use crate::native_structured_history_stack_v1::{
-    NativeStructuredHistoryStackInferenceV1, load_native_structured_history_stack_inference_v1,
+    load_native_structured_history_stack_inference_v1, NativeStructuredHistoryStackInferenceV1,
 };
 use crate::native_structured_policy_residual_v1::{
-    CARD_VOCAB_V1, HISTORY_LENGTH_V1, NativeStructuredHistoryEntryV1,
-    NativeStructuredPolicyResidualInferenceV1, PARENT_NATIVE_STATE_SHA256_V1,
-    load_native_structured_policy_residual_inference_v1,
+    load_native_structured_policy_residual_inference_v1, NativeStructuredHistoryEntryV1,
+    NativeStructuredPolicyResidualInferenceV1, CARD_VOCAB_V1, HISTORY_LENGTH_V1,
+    PARENT_NATIVE_STATE_SHA256_V1,
 };
 use crate::native_structured_policy_successor_v1::{
-    CANDIDATE_FILENAME_V1 as STRUCTURED_POLICY_SUCCESSOR_CANDIDATE_FILENAME_V1,
-    NativeStructuredPolicySuccessorInferenceV1,
     load_native_structured_policy_successor_inference_v1,
+    NativeStructuredPolicySuccessorInferenceV1,
+    CANDIDATE_FILENAME_V1 as STRUCTURED_POLICY_SUCCESSOR_CANDIDATE_FILENAME_V1,
+};
+use crate::native_train_state_payload_v1::{
+    decode_native_train_state_payload_verified_v1, NativeTrainStatePayloadDigestsV1,
+    NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1,
 };
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2;
-use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
+use crate::native_training_store_digest_v1::{
+    lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1,
+};
 use crate::native_training_store_run_v2::{
     NativeRunEnvironmentTrajectoryContractV1, OpponentLadderCheckpointRefV1,
     OpponentLadderPoolContractV1, ValidatedTrainRunV2,
 };
 use crate::native_xmage_cp7_outcome_reinforce_v1::{
-    NativeXmageCp7OutcomeInferenceV1, load_xmage_cp7_outcome_inference_v1,
+    load_xmage_cp7_outcome_inference_v1, NativeXmageCp7OutcomeInferenceV1,
 };
 use crate::rl::{
-    ActionSemanticV1, PlayerSeatV1, parse_strict_json_value, rally_deck_ids, shuffled,
+    parse_strict_json_value, rally_deck_ids, shuffled, ActionSemanticV1, PlayerSeatV1,
 };
 use crate::rl_session::{
-    CANONICAL_RALLY_DECK_ID, FastActorDecisionKindV1, FastActorDecisionV1, FastActorResponseV1,
-    FastActorSessionV1, RlSessionErrorCode, RlSessionTerminalV1, SessionDeckIdsV1,
+    FastActorDecisionKindV1, FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1,
+    RlSessionErrorCode, RlSessionTerminalV1, SessionDeckIdsV1, CANONICAL_RALLY_DECK_ID,
 };
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
@@ -93,6 +104,10 @@ const BOUNDED_VALUE_SEARCH_VALUE_CANDIDATE_SHA256_V1: &str =
     "83d6d2ddb97e96cf5ef4feda525b035bba079d6d1d2f4bc44f4affcf70fd6529";
 const BOUNDED_VALUE_SEARCH_VALUE_COMPOSITE_SHA256_V1: &str =
     "6329233bcc22f7941e8085ef0235107eb75293fe74c727434c0474da15354f22";
+const FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1: &str = "fixed_native_state.json";
+const FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1: &str = "checkpoint.state.f32le";
+const FIXED_NATIVE_STATE_SCHEMA_V1: &str = "mtg-kernel-xmage-fixed-native-state/v1";
+const FIXED_NATIVE_STATE_ENVIRONMENT_CONTRACT_V1: &str = "environment-randomization-v2";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ShadowCandidateSelectorV1 {
@@ -552,6 +567,294 @@ impl ShadowModelScorerV1 for NativeShadowModelScorerV1 {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FixedNativeStatePayloadManifestV1 {
+    filename: String,
+    byte_count: usize,
+    adam_step: u64,
+    scorer_bias_anchor_f32_bits: u32,
+    payload_sha256: String,
+    parameters_sha256: String,
+    first_moments_sha256: String,
+    second_moments_sha256: String,
+    model_parameter_sha256: String,
+    native_state_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FixedNativeStateManifestV1 {
+    schema: String,
+    authority_kind: String,
+    source_result_sha256: String,
+    payload: FixedNativeStatePayloadManifestV1,
+    non_claims: Vec<String>,
+}
+
+struct FixedNativeStateShadowModelScorerV1 {
+    state: NativePolicyValueTrainStateV1,
+}
+
+impl ShadowModelScorerV1 for FixedNativeStateShadowModelScorerV1 {
+    fn score_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        _history: &[NativeStructuredHistoryEntryV1],
+        _acting_player: u8,
+        _substep_count: u32,
+    ) -> Result<ShadowModelOutputV1, ()> {
+        let mut tensorizer = NativeFlatTensorizerV2::new();
+        let mut tensor = NativeFlatDecisionTensorV2::default();
+        tensorizer.fill(decision, &mut tensor).map_err(|_| ())?;
+        let encoded = NativeEncodedDecisionViewV1::from_slices_unvalidated(
+            NativeEncodedDecisionSchemaV1::contract_v1(),
+            &tensor.state,
+            &tensor.object_features,
+            &tensor.object_card_ids,
+            &tensor.object_groups,
+            &tensor.object_node_ids,
+            &tensor.edge_features,
+            &tensor.edge_source_indices,
+            &tensor.edge_target_indices,
+            &tensor.action_features,
+            &tensor.action_ref_features,
+            &tensor.action_ref_card_ids,
+            &tensor.action_ref_action_indices,
+            &tensor.action_ref_node_indices,
+        );
+        let output = self.state.model_v1().forward_v1(encoded).map_err(|_| ())?;
+        if output.logits.len() != decision.actions().len()
+            || output.logits.is_empty()
+            || output.logits.iter().any(|value| !value.is_finite())
+            || !output.value.is_finite()
+        {
+            return Err(());
+        }
+        Ok(ShadowModelOutputV1 {
+            logits: output.logits,
+            value: output.value,
+            structured_parent_logits: None,
+            structured_parent_value: None,
+        })
+    }
+}
+
+struct LoadedFixedNativeStateV1 {
+    scorer: FixedNativeStateShadowModelScorerV1,
+    authority_kind: String,
+    source_result_sha256: [u8; 32],
+    manifest_sha256: [u8; 32],
+    payload_sha256: [u8; 32],
+    native_state_sha256: [u8; 32],
+    model_parameter_sha256: [u8; 32],
+    adam_step: u64,
+}
+
+fn load_fixed_native_state_v1(
+    root: &Path,
+) -> Result<LoadedFixedNativeStateV1, ShadowScorerStartupErrorV1> {
+    let authority_error =
+        || ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority);
+    let identity_error =
+        || ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointIdentity);
+    let inventory = fs::read_dir(root)
+        .map_err(|_| authority_error())?
+        .map(|entry| {
+            let entry = entry.map_err(|_| ())?;
+            let file_type = entry.file_type().map_err(|_| ())?;
+            let name = entry.file_name().into_string().map_err(|_| ())?;
+            if file_type.is_symlink() || !file_type.is_file() {
+                return Err(());
+            }
+            Ok(name)
+        })
+        .collect::<Result<std::collections::BTreeSet<_>, ()>>()
+        .map_err(|_| authority_error())?;
+    if inventory
+        != std::collections::BTreeSet::from([
+            FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1.to_owned(),
+            FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1.to_owned(),
+        ])
+    {
+        return Err(authority_error());
+    }
+    let manifest_bytes = fs::read(root.join(FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1))
+        .map_err(|_| authority_error())?;
+    if !manifest_bytes.ends_with(b"\n") || manifest_bytes.contains(&b'\r') {
+        return Err(authority_error());
+    }
+    let manifest_text = std::str::from_utf8(&manifest_bytes).map_err(|_| authority_error())?;
+    let manifest_value = parse_strict_json_value(manifest_text).map_err(|_| authority_error())?;
+    let manifest: FixedNativeStateManifestV1 =
+        serde_json::from_value(manifest_value).map_err(|_| authority_error())?;
+    let mut canonical = serde_json::to_vec_pretty(&manifest).map_err(|_| authority_error())?;
+    canonical.push(b'\n');
+    if canonical != manifest_bytes
+        || manifest.schema != FIXED_NATIVE_STATE_SCHEMA_V1
+        || manifest.authority_kind.is_empty()
+        || manifest.authority_kind.len() > 96
+        || !manifest
+            .authority_kind
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        || manifest.payload.filename != FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1
+        || manifest.payload.byte_count != NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1
+        || manifest.non_claims
+            != [
+                "external software anchor is not professional-level evidence".to_owned(),
+                "terminal win/loss/draw is the only playing-strength outcome".to_owned(),
+            ]
+    {
+        return Err(identity_error());
+    }
+    let source_result_sha256 =
+        parse_lower_hex_raw32_v1(&manifest.source_result_sha256).map_err(|_| identity_error())?;
+    let payload_sha256 =
+        parse_lower_hex_raw32_v1(&manifest.payload.payload_sha256).map_err(|_| identity_error())?;
+    let expected = NativeTrainStatePayloadDigestsV1 {
+        payload_sha256,
+        parameters_sha256: parse_lower_hex_raw32_v1(&manifest.payload.parameters_sha256)
+            .map_err(|_| identity_error())?,
+        first_moments_sha256: parse_lower_hex_raw32_v1(&manifest.payload.first_moments_sha256)
+            .map_err(|_| identity_error())?,
+        second_moments_sha256: parse_lower_hex_raw32_v1(&manifest.payload.second_moments_sha256)
+            .map_err(|_| identity_error())?,
+        model_parameter_sha256: parse_lower_hex_raw32_v1(&manifest.payload.model_parameter_sha256)
+            .map_err(|_| identity_error())?,
+        native_state_sha256: parse_lower_hex_raw32_v1(&manifest.payload.native_state_sha256)
+            .map_err(|_| identity_error())?,
+    };
+    let payload = fs::read(root.join(FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1))
+        .map_err(|_| authority_error())?;
+    if payload.len() != manifest.payload.byte_count || sha256_v1(&payload) != payload_sha256 {
+        return Err(identity_error());
+    }
+    let decoded = decode_native_train_state_payload_verified_v1(
+        &payload,
+        manifest.payload.adam_step,
+        manifest.payload.scorer_bias_anchor_f32_bits,
+        &expected,
+    )
+    .map_err(|_| identity_error())?;
+    let mut model =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .map_err(|_| identity_error())?;
+    model
+        .replace_parameter_snapshot_v1(&decoded.snapshot.parameters)
+        .map_err(|_| identity_error())?;
+    let state = NativePolicyValueTrainStateV1::from_snapshot_v1(model, &decoded.snapshot)
+        .map_err(|_| identity_error())?;
+    if state.adam_step_v1() != manifest.payload.adam_step
+        || state.model_v1().parameter_manifest_sha256_v1()
+            != manifest.payload.model_parameter_sha256
+        || state.state_sha256_v1().map_err(|_| identity_error())? != expected.native_state_sha256
+    {
+        return Err(identity_error());
+    }
+    Ok(LoadedFixedNativeStateV1 {
+        scorer: FixedNativeStateShadowModelScorerV1 { state },
+        authority_kind: manifest.authority_kind,
+        source_result_sha256,
+        manifest_sha256: sha256_v1(&manifest_bytes),
+        payload_sha256,
+        native_state_sha256: expected.native_state_sha256,
+        model_parameter_sha256: expected.model_parameter_sha256,
+        adam_step: manifest.payload.adam_step,
+    })
+}
+
+#[cfg(test)]
+mod fixed_native_state_tests_v1 {
+    use super::*;
+    use crate::native_train_state_payload_v1::encode_native_train_state_payload_v1;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn fixed_native_state_package_loads_and_rejects_payload_tamper_v1() {
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let snapshot = state.snapshot_v1().unwrap();
+        let encoded = encode_native_train_state_payload_v1(&snapshot).unwrap();
+        let manifest = FixedNativeStateManifestV1 {
+            schema: FIXED_NATIVE_STATE_SCHEMA_V1.to_owned(),
+            authority_kind: "test-fixed-native-state-v1".to_owned(),
+            source_result_sha256: lower_hex_raw32_v1([7; 32]),
+            payload: FixedNativeStatePayloadManifestV1 {
+                filename: FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1.to_owned(),
+                byte_count: encoded.bytes.len(),
+                adam_step: state.adam_step_v1(),
+                scorer_bias_anchor_f32_bits: state.scorer_bias_anchor_f32_bits_v1(),
+                payload_sha256: lower_hex_raw32_v1(encoded.digests.payload_sha256),
+                parameters_sha256: lower_hex_raw32_v1(encoded.digests.parameters_sha256),
+                first_moments_sha256: lower_hex_raw32_v1(encoded.digests.first_moments_sha256),
+                second_moments_sha256: lower_hex_raw32_v1(encoded.digests.second_moments_sha256),
+                model_parameter_sha256: lower_hex_raw32_v1(encoded.digests.model_parameter_sha256),
+                native_state_sha256: lower_hex_raw32_v1(encoded.digests.native_state_sha256),
+            },
+            non_claims: vec![
+                "external software anchor is not professional-level evidence".to_owned(),
+                "terminal win/loss/draw is the only playing-strength outcome".to_owned(),
+            ],
+        };
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mtg-kernel-fixed-native-state-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let mut manifest_bytes = serde_json::to_vec_pretty(&manifest).unwrap();
+        manifest_bytes.push(b'\n');
+        fs::write(
+            root.join(FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1),
+            manifest_bytes,
+        )
+        .unwrap();
+        fs::write(
+            root.join(FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1),
+            &encoded.bytes,
+        )
+        .unwrap();
+
+        let loaded = load_fixed_native_state_v1(&root).unwrap();
+        assert_eq!(loaded.adam_step, state.adam_step_v1());
+        assert_eq!(
+            loaded.native_state_sha256,
+            encoded.digests.native_state_sha256
+        );
+        assert_eq!(
+            loaded.model_parameter_sha256,
+            encoded.digests.model_parameter_sha256
+        );
+        let service = ShadowScorerServiceV1::load_v1(
+            ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root: root.clone() },
+        )
+        .unwrap();
+        assert_eq!(service.identity.source_run_sha256, SOURCE_RUN_SHA256_V1);
+        assert_eq!(service.identity.source_generation, SOURCE_GENERATION_V1);
+        assert_eq!(
+            service.identity.source_checkpoint_sha256,
+            SOURCE_CHECKPOINT_SHA256_V1
+        );
+        assert_eq!(
+            service.identity.loaded_train_state_sha256,
+            lower_hex_raw32_v1(encoded.digests.native_state_sha256)
+        );
+        assert_eq!(service.identity.loaded_generation, state.adam_step_v1());
+
+        let mut tampered = encoded.bytes.clone();
+        tampered[0] ^= 1;
+        fs::write(root.join(FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1), tampered).unwrap();
+        assert!(load_fixed_native_state_v1(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 struct Cp7BehaviorCloneShadowModelScorerV1 {
     inference: NativeCp7BehaviorCloneInferenceV1,
 }
@@ -960,15 +1263,12 @@ impl XmageCp7TeacherTensorV1 {
 
 const RECURRENT_CP7_PACKAGE_SCHEMA_V1: &str = "mtg-kernel-recurrent-cp7-deployment/v1";
 const RECURRENT_CP7_MANIFEST_FILENAME_V1: &str = "recurrent_cp7_deployment.json";
-const RECURRENT_CP7_REQUEST_SCHEMA_V1: &str =
-    "mtg-kernel-recurrent-cp7-inference-request/v1";
-const RECURRENT_CP7_RESPONSE_SCHEMA_V1: &str =
-    "mtg-kernel-recurrent-cp7-inference-response/v1";
+const RECURRENT_CP7_REQUEST_SCHEMA_V1: &str = "mtg-kernel-recurrent-cp7-inference-request/v1";
+const RECURRENT_CP7_RESPONSE_SCHEMA_V1: &str = "mtg-kernel-recurrent-cp7-inference-response/v1";
 const RECURRENT_CP7_READY_SCHEMA_V1: &str = "mtg-kernel-recurrent-cp7-inference-ready/v1";
 const RECURRENT_CP7_COMPOSITE_DOMAIN_V1: &[u8] =
     b"mtg-kernel-recurrent-cp7-deployment-composite/v1\0";
-const RECURRENT_TERMINAL_PACKAGE_SCHEMA_V1: &str =
-    "mtg-kernel-recurrent-terminal-deployment/v1";
+const RECURRENT_TERMINAL_PACKAGE_SCHEMA_V1: &str = "mtg-kernel-recurrent-terminal-deployment/v1";
 const RECURRENT_TERMINAL_COMPOSITE_DOMAIN_V1: &[u8] =
     b"mtg-kernel-recurrent-terminal-deployment-composite/v1\0";
 const RECURRENT_CP7_MAX_WORKER_LINE_BYTES_V1: usize = 4 * 1_048_576;
@@ -1115,8 +1415,8 @@ impl RecurrentCp7WorkerV1 {
                 "recurrent worker ready line invalid",
             ));
         }
-        let ready: RecurrentCp7ReadyV1 = serde_json::from_str(ready_line.trim_end())
-            .map_err(|_| {
+        let ready: RecurrentCp7ReadyV1 =
+            serde_json::from_str(ready_line.trim_end()).map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     "recurrent worker ready JSON invalid",
@@ -1162,8 +1462,8 @@ impl RecurrentCp7WorkerV1 {
                 "recurrent worker response line invalid",
             ));
         }
-        let response: RecurrentCp7ResponseV1 = serde_json::from_str(line.trim_end())
-            .map_err(|_| {
+        let response: RecurrentCp7ResponseV1 =
+            serde_json::from_str(line.trim_end()).map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     "recurrent worker response JSON invalid",
@@ -1172,8 +1472,7 @@ impl RecurrentCp7WorkerV1 {
         if response.schema != RECURRENT_CP7_RESPONSE_SCHEMA_V1
             || response.sequence != self.sequence
             || !response.projection_scale.is_finite()
-            || !(0.0..=self.deployment_scale + 1.0e-5)
-                .contains(&response.projection_scale)
+            || !(0.0..=self.deployment_scale + 1.0e-5).contains(&response.projection_scale)
             || !response.maximum_absolute_log_ratio.is_finite()
             || response.maximum_absolute_log_ratio > self.log_ratio_budget + 1.0e-5
             || response.value_f32_bits.is_some() != self.require_recurrent_value
@@ -1198,12 +1497,12 @@ impl RecurrentCp7WorkerV1 {
             ));
         }
         self.sequence = self.sequence.checked_add(1).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "recurrent worker sequence overflow")
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "recurrent worker sequence overflow",
+            )
         })?;
-        Ok((
-            logits,
-            response.value_f32_bits.map(f32::from_bits),
-        ))
+        Ok((logits, response.value_f32_bits.map(f32::from_bits)))
     }
 }
 
@@ -1234,9 +1533,9 @@ impl ShadowModelScorerV1 for RecurrentCp7ShadowModelScorerV1 {
         if acting_player > 1 || substep_count == 0 || history.len() > HISTORY_LENGTH_V1 {
             return Err(());
         }
-        let parent = self
-            .parent
-            .score_decision_with_history_v1(decision, history, acting_player)?;
+        let parent =
+            self.parent
+                .score_decision_with_history_v1(decision, history, acting_player)?;
         let mut tensorizer = NativeFlatTensorizerV2::new();
         let mut tensor = NativeFlatDecisionTensorV2::default();
         tensorizer.fill(decision, &mut tensor).map_err(|_| ())?;
@@ -1257,7 +1556,11 @@ impl ShadowModelScorerV1 for RecurrentCp7ShadowModelScorerV1 {
             substep_count,
             tensor: XmageCp7TeacherTensorV1::from_native_v1(&tensor),
             history_f32_bits,
-            parent_logits_f32_bits: parent.logits_v1().iter().map(|value| value.to_bits()).collect(),
+            parent_logits_f32_bits: parent
+                .logits_v1()
+                .iter()
+                .map(|value| value.to_bits())
+                .collect(),
             parent_value_f32_bits: parent.value_v1().to_bits(),
         };
         let (logits, recurrent_value) = worker.exchange_v1(&request).map_err(|_| ())?;
@@ -2277,14 +2580,10 @@ impl ShadowScorerServiceV1 {
         root: PathBuf,
         python_executable: PathBuf,
     ) -> Result<Self, ShadowScorerStartupErrorV1> {
-        let authority_error = || {
-            ShadowScorerStartupErrorV1::new(
-                ShadowScorerStartupErrorKindV1::CheckpointAuthority,
-            )
-        };
-        let identity_error = || {
-            ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointIdentity)
-        };
+        let authority_error =
+            || ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority);
+        let identity_error =
+            || ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointIdentity);
         if !root.is_dir() || !python_executable.is_file() {
             return Err(authority_error());
         }
@@ -2320,7 +2619,8 @@ impl ShadowScorerServiceV1 {
             return Err(authority_error());
         }
         let manifest_text = std::str::from_utf8(&manifest_bytes).map_err(|_| authority_error())?;
-        let manifest_value = parse_strict_json_value(manifest_text).map_err(|_| authority_error())?;
+        let manifest_value =
+            parse_strict_json_value(manifest_text).map_err(|_| authority_error())?;
         let package: RecurrentCp7PackageV1 =
             serde_json::from_value(manifest_value).map_err(|_| authority_error())?;
         let cp7_package = package.schema == RECURRENT_CP7_PACKAGE_SCHEMA_V1;
@@ -2347,8 +2647,7 @@ impl ShadowScorerServiceV1 {
                             "terminal win or loss remains the only promotion measure".to_owned(),
                         ]))
             || (terminal_package
-                && (package.identity.authority_kind
-                    != "recurrent-terminal-policy-deployment-v1"
+                && (package.identity.authority_kind != "recurrent-terminal-policy-deployment-v1"
                     || package.deployment_scale.to_bits() != 1.0f64.to_bits()
                     || package.log_ratio_budget.to_bits() != 0.20f64.to_bits()
                     || package
@@ -2381,7 +2680,10 @@ impl ShadowScorerServiceV1 {
         }
         for (relative, expected) in [
             ("model.pt", package.files.model.sha256.as_str()),
-            ("model_v1.py", package.files.model_definition.sha256.as_str()),
+            (
+                "model_v1.py",
+                package.files.model_definition.sha256.as_str(),
+            ),
             ("worker_v1.py", package.files.worker.sha256.as_str()),
         ] {
             if recurrent_cp7_sha256_v1(&root.join(relative))? != expected {
@@ -2497,6 +2799,58 @@ impl ShadowScorerServiceV1 {
             });
         }
         if let ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root } = &authority {
+            let fixed_native_state = root
+                .join(FIXED_NATIVE_STATE_MANIFEST_FILENAME_V1)
+                .try_exists()
+                .map_err(|_| {
+                    ShadowScorerStartupErrorV1::new(
+                        ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                    )
+                })?;
+            if fixed_native_state {
+                let loaded = load_fixed_native_state_v1(root)?;
+                let identity = ShadowCheckpointIdentityV1 {
+                    authority_kind: loaded.authority_kind.clone(),
+                    source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                    source_generation: SOURCE_GENERATION_V1,
+                    source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+                    source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+                    source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+                    source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+                    loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+                    loaded_generation: loaded.adam_step,
+                    loaded_checkpoint_sha256: lower_hex_raw32_v1(loaded.manifest_sha256),
+                    loaded_payload_sha256: lower_hex_raw32_v1(loaded.payload_sha256),
+                    loaded_train_state_sha256: lower_hex_raw32_v1(loaded.native_state_sha256),
+                    model_parameter_sha256: lower_hex_raw32_v1(loaded.model_parameter_sha256),
+                    environment_trajectory_contract: FIXED_NATIVE_STATE_ENVIRONMENT_CONTRACT_V1,
+                    sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+                    sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+                };
+                eprintln!(
+                    "FIXED_NATIVE_STATE authority_kind={} source_result_sha256={} manifest_sha256={} payload_sha256={} native_state_sha256={} model_parameter_sha256={} adam_step={}",
+                    identity.authority_kind,
+                    lower_hex_raw32_v1(loaded.source_result_sha256),
+                    identity.loaded_checkpoint_sha256,
+                    identity.loaded_payload_sha256,
+                    identity.loaded_train_state_sha256,
+                    identity.model_parameter_sha256,
+                    identity.loaded_generation,
+                );
+                return Ok(Self {
+                    model: Box::new(loaded.scorer),
+                    opponent_model: None,
+                    population_opponent: None,
+                    identity,
+                    candidate_selector: ShadowCandidateSelectorV1::PolicySample,
+                    max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
+                    max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
+                    active: None,
+                    teacher_export: None,
+                    outcome_export: None,
+                    export_poisoned: false,
+                });
+            }
             let bounded_value_search = root
                 .join(BOUNDED_VALUE_SEARCH_MANIFEST_FILENAME_V1)
                 .try_exists()
@@ -3747,9 +4101,8 @@ impl ShadowScorerServiceV1 {
                         candidate_seat,
                         fallback,
                     )? {
-                        let json = serde_json::to_string(&diagnostic).map_err(|_| {
-                            "depth8_search_diagnostic_serialization_failed"
-                        })?;
+                        let json = serde_json::to_string(&diagnostic)
+                            .map_err(|_| "depth8_search_diagnostic_serialization_failed")?;
                         eprintln!("NATIVE_DEPTH8_BOUNDED_TEACHER_JSON {json}");
                     }
                     None
@@ -4451,12 +4804,7 @@ pub fn run_checkpoint_shadow_stdio_with_recurrent_cp7_v1(
     root: PathBuf,
     python_executable: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
-    run_checkpoint_shadow_stdio_with_recurrent_cp7_exports_v1(
-        root,
-        python_executable,
-        None,
-        None,
-    )
+    run_checkpoint_shadow_stdio_with_recurrent_cp7_exports_v1(root, python_executable, None, None)
 }
 
 /// Opt-in on-policy terminal export for the calibrated recurrent CP7 policy.
@@ -4495,8 +4843,7 @@ fn run_checkpoint_shadow_stdio_with_recurrent_cp7_exports_v1(
     teacher_jsonl: Option<PathBuf>,
     outcome_jsonl: Option<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut service =
-        ShadowScorerServiceV1::load_recurrent_cp7_v1(root, python_executable)?;
+    let mut service = ShadowScorerServiceV1::load_recurrent_cp7_v1(root, python_executable)?;
     if let Some(path) = teacher_jsonl {
         let export = XmageCp7TeacherJsonlWriterV1::create_v1(&path, &service.identity)?;
         service.install_teacher_export_v1(export).map_err(|()| {
@@ -4636,12 +4983,7 @@ pub fn run_checkpoint_shadow_stdio_with_native_population_exports_jsonl_v1(
     outcome_jsonl: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
-    install_native_population_exports_v1(
-        &mut service,
-        pool_root,
-        teacher_jsonl,
-        outcome_jsonl,
-    )?;
+    install_native_population_exports_v1(&mut service, pool_root, teacher_jsonl, outcome_jsonl)?;
     run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
     Ok(())
 }
@@ -4656,14 +4998,8 @@ pub fn run_checkpoint_shadow_stdio_with_recurrent_native_population_exports_json
     teacher_jsonl: PathBuf,
     outcome_jsonl: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
-    let mut service =
-        ShadowScorerServiceV1::load_recurrent_cp7_v1(root, python_executable)?;
-    install_native_population_exports_v1(
-        &mut service,
-        pool_root,
-        teacher_jsonl,
-        outcome_jsonl,
-    )?;
+    let mut service = ShadowScorerServiceV1::load_recurrent_cp7_v1(root, python_executable)?;
+    install_native_population_exports_v1(&mut service, pool_root, teacher_jsonl, outcome_jsonl)?;
     run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
     Ok(())
 }
@@ -5274,11 +5610,11 @@ mod tests {
             .as_array()
             .expect("reset includes initial library orders");
         assert_eq!(initial_libraries.len(), 2);
-        assert!(
-            initial_libraries
-                .iter()
-                .all(|library| library.as_array().expect("library row").len() == 60)
-        );
+        assert!(initial_libraries.iter().all(|library| library
+            .as_array()
+            .expect("library row")
+            .len()
+            == 60));
         assert!(reset["decision"]["selected_action_index"].is_u64());
         assert!(reset["decision"]["candidate_action_seed_u64_hex"].is_string());
         assert_eq!(
@@ -5678,11 +6014,9 @@ mod tests {
             header["checkpoint"]["loaded_checkpoint_sha256"],
             "1".repeat(64)
         );
-        assert!(
-            rows[1..]
-                .iter()
-                .all(|row| row["schema_version"] == 2 && row["checkpoint"] == header["checkpoint"])
-        );
+        assert!(rows[1..]
+            .iter()
+            .all(|row| row["schema_version"] == 2 && row["checkpoint"] == header["checkpoint"]));
         assert_eq!(rows.last().unwrap()["record_type"], "terminal");
     }
 
@@ -5897,11 +6231,9 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.ends_with('\n'));
         assert_eq!(output.lines().count(), 2);
-        assert!(
-            output
-                .lines()
-                .all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok())
-        );
+        assert!(output
+            .lines()
+            .all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok()));
     }
 
     #[test]
