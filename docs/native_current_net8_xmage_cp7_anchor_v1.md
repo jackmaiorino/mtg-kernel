@@ -1,7 +1,8 @@
 # Current Net8 XMage CP7 anchor v1
 
-Status: implementation and retryable preflight authorized. Formal benchmark
-launch requires a passing bridge repeat and bounded topology screen.
+Status: complete. The bridge repeat and topology screen passed. The fresh
+64-pair benchmark retained GAE8 after GAE8 and GAE16 each went 48-80 against
+XMage CP7 skill 7, with paired gains 1-1 and 126 ties.
 
 ## Question
 
