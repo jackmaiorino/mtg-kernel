@@ -71,6 +71,7 @@ TOP1_DELTA_MIN = 0.03
 MEAN_TV_MAX = 0.03
 P90_TV_MAX = 0.10
 OVERRIDE_RATE_MIN = 0.05
+QUALITY_SUM_TOLERANCE_ULPS = 8
 
 FROZEN_SETTINGS: dict[str, Any] = {
     "architecture": "width-128-two-layer-recurrent-structured-residual/v1",
@@ -426,8 +427,8 @@ def _load_collector_labels(
             "equal_episode_mass_override_rate",
         ):
             value = observed.get(field)
-            if not isinstance(value, (int, float)) or not math.isclose(
-                float(value), float(expected[field]), rel_tol=0.0, abs_tol=1.0e-15
+            if not isinstance(value, (int, float)) or not _quality_sum_matches(
+                float(value), float(expected[field])
             ):
                 _fail(f"search-teacher reported {seat} {field} does not match labels")
     expected_gate = recomputed_quality["target_quality_gate"]
@@ -449,6 +450,15 @@ def _load_collector_labels(
         "label_count": len(labels),
         "target_quality_recomputed": recomputed_quality,
     }
+
+
+def _quality_sum_matches(observed: float, recomputed: float) -> bool:
+    if not math.isfinite(observed) or not math.isfinite(recomputed):
+        return False
+    tolerance = QUALITY_SUM_TOLERANCE_ULPS * max(
+        math.ulp(observed), math.ulp(recomputed)
+    )
+    return math.isclose(observed, recomputed, rel_tol=0.0, abs_tol=tolerance)
 
 
 def _target_quality_from_labels(labels: Iterable[dict[str, Any]]) -> dict[str, Any]:

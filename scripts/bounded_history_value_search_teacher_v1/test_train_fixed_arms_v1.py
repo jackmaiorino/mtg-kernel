@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -65,6 +66,12 @@ def _metrics(nll: float, top1: float, *, seat1_nll: float | None = None) -> dict
 
 
 class FixedArmTests(unittest.TestCase):
+    def test_quality_sum_envelope_accepts_reordered_float_addition_only(self):
+        value = 23.5098477113407
+        ulp = math.ulp(value)
+        self.assertTrue(driver._quality_sum_matches(value + 3 * ulp, value))
+        self.assertFalse(driver._quality_sum_matches(value + 9 * ulp, value))
+
     def test_public_history_hash_matches_rust_empty_history_fixture(self):
         torch = __import__("torch")
         self.assertEqual(
