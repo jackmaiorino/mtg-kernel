@@ -35,3 +35,20 @@ recomputed all chunk hashes, leg scores, confidence-sequence endpoints,
 stopping looks, schedule identities, and component receipts with zero
 discrepancies. Candidate 02 and later formal gates require countersign before
 launch.
+
+## Post-freeze development history
+
+These single-shot development panels consume no V3 alpha. Their revealed seed
+schedules are excluded from any later formal gate for a candidate they helped
+select.
+
+| development lane | outcome | formal consequence |
+| --- | --- | --- |
+| Current Net8 fixed GAE extension to 16 updates | stopped at `+7/1024` versus the frozen `+8` margin | exact extension closed; no candidate slot consumed |
+| Current Net8 population response cycle v1 | stopped: original Pool3 `+6` vs GAE8, `+7` vs parent with P0 `-4`; pure GAE8 `+17` | exact response cycle closed; no candidate slot consumed |
+
+Population response report SHA-256:
+`717c80fe855b9903baef19570119992fc43634d5d0809a69c38ded90c64ced6e`.
+The next mechanism under design is search-as-teacher. It remains development
+work unless and until a separate V3 candidate sheet is frozen and
+countersigned.
