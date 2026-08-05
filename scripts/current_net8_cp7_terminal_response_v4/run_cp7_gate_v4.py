@@ -538,7 +538,7 @@ def _validate_outcome_shard(
                 or not isinstance(row.get("pair_environment_seed_u64_hex"), str)
                 or outcome.HEX_16.fullmatch(row["pair_environment_seed_u64_hex"]) is None
                 or row.get("deck_ids") != ["Rally", "Rally"]
-                or row.get("randomization_identity") != "environment-randomization-v2"
+                or row.get("randomization_identity") != "legacy_v1"
             ):
                 fail(f"{path}: pair receipt mismatch at {ordinal}")
             if episode != expected_episode:

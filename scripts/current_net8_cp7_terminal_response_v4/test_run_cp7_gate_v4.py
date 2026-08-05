@@ -27,7 +27,7 @@ def terminal(pair: int, seat: str, reward: int, seed: str | None = None) -> dict
         "base_seed_u64_hex": f"{GATE.PANEL['base_seed']:016x}",
         "pair_environment_seed_u64_hex": seed or f"{pair + 1:016x}",
         "deck_ids": ["Rally", "Rally"],
-        "randomization_identity": "environment-randomization-v2",
+        "randomization_identity": "legacy_v1",
         "candidate_terminal_reward": reward,
     }
 
@@ -98,6 +98,8 @@ class Cp7GateV4Tests(unittest.TestCase):
             checkpoint = GATE.expected_checkpoint("candidate")
             for row in rows:
                 row["checkpoint"] = copy.deepcopy(checkpoint)
+                if row.get("record_type") != "header":
+                    row["randomization_identity"] = "legacy_v1"
             write_rows(path, rows)
             report = GATE._validate_outcome_shard(
                 path, arm="candidate", first_pair=0, pair_count=1
@@ -108,7 +110,11 @@ class Cp7GateV4Tests(unittest.TestCase):
     def test_baseline_outcome_header_and_rows_validate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "baseline.jsonl"
-            write_rows(path, shard_rows(pair=0, base_seed=GATE.PANEL["base_seed"]))
+            rows = shard_rows(pair=0, base_seed=GATE.PANEL["base_seed"])
+            for row in rows:
+                if row.get("record_type") != "header":
+                    row["randomization_identity"] = "legacy_v1"
+            write_rows(path, rows)
             report = GATE._validate_outcome_shard(
                 path, arm="baseline", first_pair=0, pair_count=1
             )
@@ -121,6 +127,8 @@ class Cp7GateV4Tests(unittest.TestCase):
             checkpoint = GATE.expected_checkpoint("candidate")
             for row in rows:
                 row["checkpoint"] = copy.deepcopy(checkpoint)
+                if row.get("record_type") != "header":
+                    row["randomization_identity"] = "legacy_v1"
             rows[-1]["checkpoint"]["loaded_payload_sha256"] = "0" * 64
             write_rows(path, rows)
             with self.assertRaisesRegex(ValueError, "checkpoint mismatch"):
