@@ -97,6 +97,26 @@ class _RunningChild:
         return None
 
 
+class _UnkillableChild:
+    pid = 456
+
+    @staticmethod
+    def poll() -> None:
+        return None
+
+    @staticmethod
+    def wait(timeout: float) -> None:
+        raise __import__("subprocess").TimeoutExpired("child", timeout)
+
+    @staticmethod
+    def terminate() -> None:
+        return None
+
+    @staticmethod
+    def kill() -> None:
+        return None
+
+
 class ScreenTopologyTests(unittest.TestCase):
     def test_canonical_digest_is_order_independent(self) -> None:
         rows = [
@@ -159,6 +179,15 @@ class ScreenTopologyTests(unittest.TestCase):
                 sleep=lambda _: None,
                 monotonic=lambda: next(clock),
             )
+
+    def test_terminate_fails_closed_when_process_remains_live(self) -> None:
+        failed_taskkill = type("Completed", (), {"returncode": 1})()
+        with (
+            mock.patch.object(screen.os, "name", "nt"),
+            mock.patch.object(screen.subprocess, "run", return_value=failed_taskkill),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "remains live after termination"):
+                screen._terminate(_UnkillableChild())
 
     def test_cross_topology_requires_identical_bindings(self) -> None:
         topologies = [

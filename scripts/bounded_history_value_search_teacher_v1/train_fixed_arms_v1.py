@@ -49,6 +49,9 @@ PUBLIC_HISTORY_COMMITMENT = (
     "mtg-kernel-checkpoint-shadow-public-history-framed-sha256/v1"
 )
 CACHE_VERSION = "structured_adapter_screen_v1"
+CACHE_REPORT_SCHEMA = (
+    "mtg-kernel-depth8-bounded-value-search-teacher-complete-history-cache/v1"
+)
 PAIR_COUNT = 256
 HISTORY_LENGTH = 16
 CARD_VOCAB = 136
@@ -571,6 +574,49 @@ def _load_cache(cache_path: Path) -> tuple[list[dict[str, Any]], str, dict[str, 
     }
 
 
+def _load_cache_report(
+    report_path: Path,
+    cache_path: Path,
+    cache_sha256: str,
+    collector_report_sha256: str,
+) -> dict[str, Any]:
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(report, dict)
+        or report.get("schema") != CACHE_REPORT_SCHEMA
+        or report.get("status") != "complete"
+        or report.get("base_seed") != 1_400_001
+        or report.get("pair_start") != 0
+        or report.get("pairs") != PAIR_COUNT
+    ):
+        _fail("history-cache report is not the exact completed 256-pair cache report")
+    reported_cache = report.get("cache")
+    if not isinstance(reported_cache, str):
+        _fail("history-cache report does not name its cache")
+    reported_cache_path = Path(reported_cache)
+    if not reported_cache_path.is_absolute():
+        reported_cache_path = report_path.parent / reported_cache_path
+    if reported_cache_path.resolve(strict=True) != cache_path.resolve(strict=True):
+        _fail("history-cache report names a different cache file")
+    if report.get("cache_sha256") != cache_sha256:
+        _fail("history-cache report hash does not match the actual cache bytes")
+    if report.get("collector_report_sha256") != collector_report_sha256:
+        _fail("history-cache report and cache bind different collector reports")
+    collector_value = report.get("collector_report")
+    if not isinstance(collector_value, str):
+        _fail("history-cache report does not name its collector report")
+    collector_path = Path(collector_value)
+    if not collector_path.is_absolute():
+        collector_path = report_path.parent / collector_path
+    return {
+        "history_cache_report": str(report_path),
+        "history_cache_report_sha256": _sha256(report_path),
+        "history_cache_report_cache_sha256": cache_sha256,
+        "history_cache_report_collector": str(collector_path.resolve(strict=True)),
+        "history_cache_report_collector_sha256": collector_report_sha256,
+    }
+
+
 def _join_rows(
     cache_rows: list[dict[str, Any]], labels: dict[tuple[Any, ...], dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -673,7 +719,7 @@ def _fit_fixed_arm(train: list[Any], device: torch.device) -> tuple[Any, dict[st
         loss_sum = 0.0
         steps = 0
         gradient_max = 0.0
-        for batch in sparse._batches(train, BATCH_SIZE, rng):
+        for batch in sparse._batches(train, rng):
             loss, _ = _dense_loss(model, batch, device)
             if not torch.isfinite(loss):
                 _fail("fixed-arm loss is non-finite")
@@ -885,28 +931,46 @@ def _save_model(path: Path, payload: dict[str, Any]) -> str:
     return _sha256(path)
 
 
-def _load_inputs(cache_path: Path, report_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _load_inputs(
+    cache_path: Path, cache_report_path: Path, report_path: Path
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     cache_rows, cache_sha256, cache_metadata = _load_cache(cache_path)
+    cache_report_metadata = _load_cache_report(
+        cache_report_path,
+        cache_path,
+        cache_sha256,
+        cache_metadata["collector_report_sha256"],
+    )
     labels, label_metadata = _load_search_labels(report_path, cache_sha256)
-    if (
-        label_metadata.get("label_source") == "collector_task_logs"
-        and cache_metadata["collector_report_sha256"]
-        != label_metadata["report_sha256"]
-    ):
-        _fail("history cache and search labels bind different collector reports")
+    if label_metadata.get("label_source") == "collector_task_logs":
+        if (
+            cache_metadata["collector_report_sha256"]
+            != label_metadata["report_sha256"]
+            or cache_report_metadata["history_cache_report_collector_sha256"]
+            != label_metadata["report_sha256"]
+            or Path(cache_report_metadata["history_cache_report_collector"])
+            != report_path.resolve(strict=True)
+        ):
+            _fail("history cache, cache report, and search labels bind different collector reports")
     joined = _join_rows(cache_rows, labels)
     if not joined:
         _fail("search-label/cache join produced no examples")
-    source = {**cache_metadata, **label_metadata, "joined_examples": len(joined)}
+    source = {
+        **cache_metadata,
+        **cache_report_metadata,
+        **label_metadata,
+        "joined_examples": len(joined),
+    }
     return joined, source
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     cache_path = args.history_cache.resolve(strict=True)
+    cache_report_path = args.history_cache_report.resolve(strict=True)
     report_path = args.search_label_report.resolve(strict=True)
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         _fail("output directory must be absent or empty")
-    joined, source = _load_inputs(cache_path, report_path)
+    joined, source = _load_inputs(cache_path, cache_report_path, report_path)
     command = [str(Path(sys.executable).resolve()), str(Path(__file__).resolve()), *sys.argv[1:]]
     result: dict[str, Any] = {
         "schema": SCHEMA,
@@ -1115,6 +1179,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--history-cache", type=Path, required=True)
+    parser.add_argument("--history-cache-report", type=Path, required=True)
     parser.add_argument("--search-label-report", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", type=int, default=GPU_ORDINAL)

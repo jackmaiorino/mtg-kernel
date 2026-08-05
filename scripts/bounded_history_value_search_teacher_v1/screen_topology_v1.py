@@ -420,28 +420,42 @@ def _load_monitoring_dependencies() -> Any:
 def _terminate(process: Any) -> None:
     if process.poll() is not None:
         return
+    failures: list[str] = []
     if os.name == "nt":
         try:
-            subprocess.run(
+            completed = subprocess.run(
                 ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=30,
                 check=False,
             )
-            process.wait(timeout=30)
-            return
-        except (AttributeError, OSError, subprocess.TimeoutExpired):
-            pass
+            if completed.returncode == 0:
+                try:
+                    process.wait(timeout=30)
+                except (AttributeError, OSError, subprocess.TimeoutExpired) as error:
+                    failures.append(f"taskkill wait failed: {error}")
+                if process.poll() is not None:
+                    return
+            else:
+                failures.append(f"taskkill exited {completed.returncode}")
+        except (AttributeError, OSError, subprocess.TimeoutExpired) as error:
+            failures.append(f"taskkill failed: {error}")
     try:
         process.terminate()
         process.wait(timeout=10)
-    except (AttributeError, OSError, subprocess.TimeoutExpired):
-        try:
-            process.kill()
-            process.wait(timeout=10)
-        except (AttributeError, OSError, subprocess.TimeoutExpired):
-            pass
+    except (AttributeError, OSError, subprocess.TimeoutExpired) as error:
+        failures.append(f"terminate failed: {error}")
+    if process.poll() is not None:
+        return
+    try:
+        process.kill()
+        process.wait(timeout=10)
+    except (AttributeError, OSError, subprocess.TimeoutExpired) as kill_error:
+        failures.append(f"kill failed: {kill_error}")
+    if process.poll() is None:
+        detail = "; ".join(failures) if failures else "no termination method completed"
+        _fail(f"process tree {process.pid} remains live after termination: {detail}")
 
 
 def _run_commands(args: argparse.Namespace, commands: list[list[str]]) -> dict[str, Any]:

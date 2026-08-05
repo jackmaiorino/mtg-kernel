@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import train_fixed_arms_v1 as driver
 
@@ -80,6 +81,70 @@ class FixedArmTests(unittest.TestCase):
         self.assertEqual(driver.FROZEN_SETTINGS["seed"], 20_260_811)
         self.assertEqual(driver.FROZEN_SETTINGS["checkpoint_policy"], "final_epoch_8_only")
         self.assertEqual(driver.FROZEN_SETTINGS["arm_selection"], "none")
+
+    def test_fixed_arm_executes_multiple_batches_with_sparse_batch_signature(self):
+        torch = __import__("torch")
+        model = torch.nn.Linear(1, 1)
+        seen: list[str] = []
+
+        def batches(decisions, rng):
+            self.assertIsNotNone(rng)
+            for decision in decisions:
+                yield [decision]
+
+        def loss(current_model, batch, device):
+            self.assertEqual(device.type, "cpu")
+            seen.extend(batch)
+            return sum(parameter.square().sum() for parameter in current_model.parameters()), {}
+
+        with (
+            mock.patch.object(driver, "EPOCHS", 2),
+            mock.patch.object(driver, "_new_model", return_value=model),
+            mock.patch.object(driver.sparse, "_batches", side_effect=batches),
+            mock.patch.object(driver, "_dense_loss", side_effect=loss),
+        ):
+            _, metadata = driver._fit_fixed_arm(["first", "second"], torch.device("cpu"))
+        self.assertEqual(seen, ["first", "second", "first", "second"])
+        self.assertEqual(metadata["final_epoch"], 2)
+
+    def test_cache_report_binds_actual_cache_bytes_bidirectionally(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache_path = root / "history.pt"
+            cache_path.write_bytes(b"actual cache")
+            cache_sha256 = hashlib.sha256(cache_path.read_bytes()).hexdigest()
+            collector_path = root / "collector.json"
+            collector_path.write_text("{}", encoding="utf-8")
+            collector_sha256 = hashlib.sha256(collector_path.read_bytes()).hexdigest()
+            report_path = root / "history-report.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schema": driver.CACHE_REPORT_SCHEMA,
+                        "status": "complete",
+                        "cache": str(cache_path),
+                        "cache_sha256": cache_sha256,
+                        "collector_report": str(collector_path),
+                        "collector_report_sha256": collector_sha256,
+                        "base_seed": 1_400_001,
+                        "pair_start": 0,
+                        "pairs": driver.PAIR_COUNT,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            metadata = driver._load_cache_report(
+                report_path, cache_path, cache_sha256, collector_sha256
+            )
+            self.assertEqual(metadata["history_cache_report_cache_sha256"], cache_sha256)
+            cache_path.write_bytes(b"swapped cache")
+            with self.assertRaisesRegex(ValueError, "actual cache bytes"):
+                driver._load_cache_report(
+                    report_path,
+                    cache_path,
+                    hashlib.sha256(cache_path.read_bytes()).hexdigest(),
+                    collector_sha256,
+                )
 
     def test_label_validation_rejects_inconsistent_branch_counts(self):
         row = _label(critic_bootstrap_branch_count=3)
