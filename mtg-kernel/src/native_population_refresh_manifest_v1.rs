@@ -179,6 +179,30 @@ impl PopulationRefreshSlotV1 {
     pub(crate) const fn source_base_seed_v1(&self) -> u64 {
         self.source_base_seed
     }
+
+    pub(crate) fn source_run_sha256_v1(&self) -> &str {
+        &self.source_run_sha256
+    }
+
+    pub(crate) const fn source_generation_v1(&self) -> u64 {
+        self.source_generation
+    }
+
+    pub(crate) fn checkpoint_sha256_v1(&self) -> &str {
+        &self.checkpoint_sha256
+    }
+
+    pub(crate) fn sidecar_sha256_v1(&self) -> &str {
+        &self.sidecar_sha256
+    }
+
+    pub(crate) fn state_sha256_v1(&self) -> &str {
+        &self.state_sha256
+    }
+
+    pub(crate) fn model_parameter_sha256_v1(&self) -> &str {
+        &self.model_parameter_sha256
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

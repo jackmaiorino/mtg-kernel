@@ -365,6 +365,15 @@ pub fn run_native_science_loop_with_population_v1(
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
 ) -> Result<NativeScienceLoopReportV1> {
+    if population_opponent.is_none()
+        || run
+            .record()
+            .contracts()
+            .population_program_v1
+            .is_none()
+    {
+        return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
+    }
     run_native_science_loop_with_opponents_v1(
         parent,
         root_basename,
@@ -963,7 +972,10 @@ mod windows_science_loop_tests {
     #[ignore = "measurement probe, run explicitly"]
     fn multirun_pilot_v1() {
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
-        use crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_v2;
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_with_schedule_and_base_seed_population_environment_v2,
+            test_fixture_bytes_with_schedule_and_base_seed_v2,
+        };
 
         fn env_knob_v1(name: &str, default: u64) -> u64 {
             match std::env::var(name) {
@@ -1012,6 +1024,9 @@ mod windows_science_loop_tests {
         // instead of the uniform identity; the uniform path (MULTIRUN_LADDER
         // unset) is completely untouched.
         let ladder_enabled = env_knob_v1("MULTIRUN_LADDER", 0) != 0;
+        let population_authority_enabled =
+            env_knob_v1("MULTIRUN_POPULATION_AUTHORITY", 0) != 0;
+        let population_runtime_enabled = env_knob_v1("MULTIRUN_POPULATION_RUNTIME", 0) != 0;
         // Macro Self-Play Envrand-V2 Rung V1. This knob changes only the
         // run-record trajectory declaration. Runtime dispatch remains owned
         // by the validated record and its sealed executor-mode diagonal.
@@ -1125,6 +1140,64 @@ mod windows_science_loop_tests {
             }
             _ => None,
         };
+        assert!(
+            !population_authority_enabled
+                || (ladder_enabled
+                    && environment_randomization_v2
+                    && ladder_init_section.is_some()
+                    && updates == 1_536),
+            "MULTIRUN_POPULATION_AUTHORITY=1 requires the exact ladder, envrand-v2, parent-init, and global-1536 Run"
+        );
+        assert!(
+            !population_runtime_enabled || population_authority_enabled,
+            "MULTIRUN_POPULATION_RUNTIME=1 requires MULTIRUN_POPULATION_AUTHORITY=1"
+        );
+        let population_engine = if population_runtime_enabled {
+            let chain_paths: Vec<std::path::PathBuf> = std::env::var(
+                "MULTIRUN_POPULATION_REFRESH_CHAIN",
+            )
+            .expect("population runtime requires MULTIRUN_POPULATION_REFRESH_CHAIN")
+            .split(';')
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from)
+            .collect();
+            assert!(!chain_paths.is_empty(), "population refresh chain is empty");
+            let mut chain = Vec::with_capacity(chain_paths.len());
+            for path in chain_paths {
+                let bytes = fs::read(&path).expect("population refresh manifest must be readable");
+                let manifest = crate::native_population_refresh_manifest_v1::decode_population_refresh_manifest_v1(
+                    &bytes,
+                    chain.last(),
+                )
+                .expect("population refresh chain must validate");
+                chain.push(manifest);
+            }
+            let active = chain.last().expect("population refresh chain is nonempty");
+            let expected_start = expected_resume_generation
+                .expect("population runtime requires MULTIRUN_EXPECT_RESUME_GENERATION");
+            let expected_stop = expected_start
+                .checked_add(128)
+                .expect("population interval generation overflow");
+            assert_eq!(active.global_generation_v1(), expected_start);
+            assert_eq!(stop_after_generation, Some(expected_stop));
+            let slot_roots: Vec<std::path::PathBuf> = std::env::var(
+                "MULTIRUN_POPULATION_SLOT_ROOTS",
+            )
+            .expect("population runtime requires MULTIRUN_POPULATION_SLOT_ROOTS")
+            .split(';')
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from)
+            .collect();
+            Some(Arc::new(
+                crate::native_population_runtime_resolution_v1::resolve_population_opponent_v1(
+                    active,
+                    &slot_roots,
+                )
+                .expect("population runtime slots must resolve through Store authority"),
+            ))
+        } else {
+            None
+        };
         // Capacity Experiment Contract (Stage 3), Section 4 (task item 4).
         // MULTIRUN_WIDE=1 stamps every spawned run's record with the wide
         // (kernel-policy-value-net-8w128) architecture identity via the wide
@@ -1147,11 +1220,17 @@ mod windows_science_loop_tests {
             !(wide_enabled && environment_randomization_v2),
             "MULTIRUN_WIDE=1 is not part of the narrow envrand-v2 macro rung"
         );
+        assert!(
+            !(wide_enabled && population_authority_enabled),
+            "population authority is fixed to the narrow Net8 runtime"
+        );
         println!(
             "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
              broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset} \
              record_only={record_only} ladder={ladder_enabled} \
              ladder_init={} wide={wide_enabled} envrand_v2={environment_randomization_v2} \
+             population_authority={population_authority_enabled} \
+             population_runtime={population_runtime_enabled} \
              policy_anchor_beta={} stop_after_generation={} expected_resume_generation={}",
             ladder_init_store.is_some(),
             std::env::var("MULTIRUN_POLICY_ANCHOR_BETA").unwrap_or_else(|_| "absent".to_owned()),
@@ -1167,9 +1246,31 @@ mod windows_science_loop_tests {
                 let ladder_engine = ladder_engine.clone();
                 let ladder_init_section = ladder_init_section.clone();
                 let ladder_init_reference = ladder_init_reference.clone();
+                let population_engine = population_engine.clone();
                 std::thread::spawn(move || {
                     let run_seed = base_seed + seed_offset + ordinal as u64;
-                    let patched = if wide_enabled {
+                    let patched = if population_authority_enabled {
+                        test_fixture_bytes_with_schedule_and_base_seed_population_environment_v2(
+                            NativeTrainingNumericalBackendV1::CudaBurnDense,
+                            64,
+                            4,
+                            updates,
+                            workers,
+                            sessions,
+                            broker_target,
+                            1_024,
+                            2_048,
+                            run_seed,
+                            ladder_pool
+                                .as_ref()
+                                .expect("population Run requires ladder pool")
+                                .clone(),
+                            ladder_init_section
+                                .as_ref()
+                                .expect("population Run requires parent initialization")
+                                .clone(),
+                        )
+                    } else if wide_enabled {
                         // wide_enabled && ladder_init_section.is_some() is
                         // already ruled out by the assert above this closure
                         // is built from; only the pool (or its absence)
@@ -1353,17 +1454,31 @@ mod windows_science_loop_tests {
                         measure_broker_service_time: false,
                     };
                     let run_started = std::time::Instant::now();
-                    let report = run_native_science_loop_v1(
-                        &parent_path,
-                        "store",
-                        &run,
-                        execution_config,
-                        &snapshot_manifest,
-                        &snapshot_payload,
-                        runner_config,
-                        ladder_engine.clone(),
-                        ladder_init_reference.as_deref(),
-                    )
+                    let report = if population_runtime_enabled {
+                        run_native_science_loop_with_population_v1(
+                            &parent_path,
+                            "store",
+                            &run,
+                            execution_config,
+                            &snapshot_manifest,
+                            &snapshot_payload,
+                            runner_config,
+                            population_engine.clone(),
+                            ladder_init_reference.as_deref(),
+                        )
+                    } else {
+                        run_native_science_loop_v1(
+                            &parent_path,
+                            "store",
+                            &run,
+                            execution_config,
+                            &snapshot_manifest,
+                            &snapshot_payload,
+                            runner_config,
+                            ladder_engine.clone(),
+                            ladder_init_reference.as_deref(),
+                        )
+                    }
                     .expect("pilot loop");
                     let wall = run_started.elapsed().as_secs_f64();
                     let outcomes = report.evaluation().candidate_learner_outcomes();

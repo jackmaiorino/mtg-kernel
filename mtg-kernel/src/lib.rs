@@ -119,13 +119,17 @@ pub(crate) mod native_trainer_schedule_v2;
 // native_checkpoint_inference_v1.
 #[allow(dead_code)]
 pub(crate) mod native_ladder_opponent_v1;
-// Standalone eight-slot population-opponent primitive. This is intentionally
-// not wired into the trainer, rollout, science loop, or Store yet.
+// Eight-slot population-opponent runtime primitive.
 #[allow(dead_code)]
 pub(crate) mod native_population_opponent_v1;
 // Canonical hash-linked authority for each eight-slot population refresh.
 #[allow(dead_code)]
 pub(crate) mod native_population_refresh_manifest_v1;
+// Store-backed resolution of one validated population refresh into eight
+// immutable checkpoint-inference handles.
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) mod native_population_runtime_resolution_v1;
 // Pool resolution loader: an OpponentLadderPoolContractV1's checkpoint refs
 // plus a base directory per ref -> validated NativeCheckpointInferenceV1
 // handles ready for LadderOpponentEngineV1::new_v1 (Self-Play Ladder Design
