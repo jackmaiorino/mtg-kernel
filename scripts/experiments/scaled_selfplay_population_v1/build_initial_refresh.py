@@ -143,7 +143,8 @@ def main() -> int:
     }
     encoded = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(encoded, encoding="utf-8")
+    encoded_bytes = encoded.encode("utf-8")
+    args.output.write_bytes(encoded_bytes)
     fallback = {
         "schema": "scaled-selfplay-population-fallback-record/v1",
         "program_update": 0,
@@ -154,11 +155,13 @@ def main() -> int:
             {"seed": 970003, "generation": 384},
         ],
         "selection_uses_terminal_outcomes": False,
-        "refresh_manifest_sha256": hashlib.sha256(encoded.encode()).hexdigest(),
+        "refresh_manifest_sha256": hashlib.sha256(encoded_bytes).hexdigest(),
     }
-    args.fallback_record.write_text(
-        json.dumps(fallback, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
+    args.fallback_record.write_bytes(
+        (
+            json.dumps(fallback, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + "\n"
+        ).encode("utf-8")
     )
     return 0
 
