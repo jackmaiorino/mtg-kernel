@@ -5,9 +5,10 @@
 //! complete dependency-closed run/v2 grammar, reconstructs the standalone
 //! semantics projection, and independently recomputes every run-root digest.
 
+use crate::KERNEL_VERSION;
 use crate::canonical_json_v1::{
-    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonErrorKindV1,
-    CanonicalJsonErrorV1, CanonicalJsonNullPolicyV1,
+    CanonicalJsonErrorKindV1, CanonicalJsonErrorV1, CanonicalJsonNullPolicyV1,
+    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1,
 };
 use crate::card_def::KERNEL_CARDDB_HASH;
 pub use crate::common_model_snapshot_v1::CommonModelSnapshotRecordV1;
@@ -25,8 +26,8 @@ use crate::environment_randomization_v2::{
     ENVIRONMENT_RANDOMIZATION_PURPOSES_V2, ENVIRONMENT_RANDOMIZATION_SHUFFLE_ALGORITHM_V2,
 };
 use crate::fast_sampler::{
-    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256,
-    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256, FAST_CATEGORICAL_EXP_TABLE_SHA256,
+    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256,
+    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256, FAST_CATEGORICAL_EXP_TABLE_SHA256,
     FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
 };
 use crate::native_flat_tensorizer_v2::{
@@ -35,22 +36,20 @@ use crate::native_flat_tensorizer_v2::{
     NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
 };
 use crate::native_full_episode_trajectory_v1::{
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1,
-    NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1, NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
 };
 /// The V2 trajectory six-pin tuple is imported from its owner module rather
 /// than restated, so the classifier and the trajectory contract cannot drift.
 use crate::native_full_episode_trajectory_v2::{
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V2,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
-    NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V2, NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V2,
 };
 use crate::native_opponent_policy_v2::{
     FROZEN_CHECKPOINT_OPPONENT_POLICY_IDENTITY_V2, FROZEN_CHECKPOINT_OPPONENT_POLICY_MODEL_RULE_V2,
@@ -60,8 +59,8 @@ use crate::native_opponent_policy_v2::{
     OPPONENT_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2,
 };
 use crate::native_opponent_sampler_v1::{
-    NATIVE_OPPONENT_SAMPLER_VECTORS_FILE_SHA256_V1,
     NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1,
+    NATIVE_OPPONENT_SAMPLER_VECTORS_FILE_SHA256_V1,
     NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_IDENTITY_V1,
     NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_MODEL_RULE_V1, UNIFORM_INDEX_MODULO_U64_ALGORITHM_V1,
     UNIFORM_INDEX_MODULO_U64_IDENTITY_V1,
@@ -70,7 +69,7 @@ use crate::native_policy_train_step_v1::{
     ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1, ADAM_WEIGHT_DECAY_V1,
     CANONICAL_GAUGE_PARAMETERS_V1, NATIVE_OPTIMIZER_IDENTITY_V1,
     NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1,
-    NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1, TRAINER_ALGORITHM_V1, TRAIN_STEP_IDENTITY_V1,
+    NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1, TRAIN_STEP_IDENTITY_V1, TRAINER_ALGORITHM_V1,
 };
 use crate::native_policy_value_net_v1::{
     FEATURE_CONTRACT_DIGEST_V1, FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1,
@@ -94,8 +93,8 @@ use crate::rl_session::{
     RL_SESSION_PROTOCOL_VERSION_V6, RL_SESSION_SCHEMA_VERSION, RL_SESSION_SCHEMA_VERSION_V6,
 };
 use crate::runtime_decks::{
-    runtime_deck_by_id, RUNTIME_DECK_CATALOG_FILE_SHA256, RUNTIME_DECK_CATALOG_SCHEMA,
-    RUNTIME_DECK_PROTOCOL,
+    RUNTIME_DECK_CATALOG_FILE_SHA256, RUNTIME_DECK_CATALOG_SCHEMA, RUNTIME_DECK_PROTOCOL,
+    runtime_deck_by_id,
 };
 use crate::strict_source_tree_attestation_v1::{
     STRICT_SOURCE_TREE_RECIPE_BYTE_COUNT_V1,
@@ -103,7 +102,6 @@ use crate::strict_source_tree_attestation_v1::{
     STRICT_SOURCE_TREE_RECIPE_SHA256_V1 as SOURCE_TREE_RECIPE_SHA256_V1,
 };
 use crate::surface_v2::H2_PREDICATE_VERSION;
-use crate::KERNEL_VERSION;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::error::Error;
@@ -189,8 +187,7 @@ const FROZEN_ADAM_STEP_INITIAL_V2: u64 = 0;
 const FROZEN_MOMENT_INITIALIZATION_V2: &str = "positive-zero-f32";
 const FROZEN_CANONICAL_GAUGE_PARAMETERS_V2: [&str; 1] = ["scorer.2.bias"];
 const FROZEN_SCORER_BIAS_ANCHOR_F32_BITS_V2: u64 = 3_141_403_366;
-const FROZEN_SNAPSHOT_NONCLAIM_V2: &str =
-    "Rust does not reproduce the Python trainer-seeded-v1 initializer in this snapshot configuration; the snapshot proves bit-exact initial parameters only and does not establish seeded-initializer parity, cross-runtime numerical bit parity, learning parity, or speedup.";
+const FROZEN_SNAPSHOT_NONCLAIM_V2: &str = "Rust does not reproduce the Python trainer-seeded-v1 initializer in this snapshot configuration; the snapshot proves bit-exact initial parameters only and does not establish seeded-initializer parity, cross-runtime numerical bit parity, learning parity, or speedup.";
 
 // Capacity-experiment wide-net (`kernel-policy-value-net-8w128`) mirrors of
 // the frozen Net8 literals above (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md,
@@ -238,8 +235,7 @@ const FROZEN_WIDE_SCORER_BIAS_ANCHOR_F32_BITS_V1: u64 = 975_689_200;
 // `common_model_snapshot_v1::wide_record_from_validated` computes at load
 // time. Spelled out as its own literal (not derived via `concat!`, which
 // cannot reference another `const`) so this stays a plain frozen mirror.
-const FROZEN_WIDE_SNAPSHOT_NONCLAIM_V1: &str =
-    "Rust does not reproduce the Python trainer-seeded-v1 initializer in this snapshot configuration; the snapshot proves bit-exact initial parameters only and does not establish seeded-initializer parity, cross-runtime numerical bit parity, learning parity, or speedup. Label: WIDE-DIAGNOSTIC-NON-EVIDENCE";
+const FROZEN_WIDE_SNAPSHOT_NONCLAIM_V1: &str = "Rust does not reproduce the Python trainer-seeded-v1 initializer in this snapshot configuration; the snapshot proves bit-exact initial parameters only and does not establish seeded-initializer parity, cross-runtime numerical bit parity, learning parity, or speedup. Label: WIDE-DIAGNOSTIC-NON-EVIDENCE";
 const FROZEN_WIDE_DIAGNOSTIC_LABEL_V1: &str = "WIDE-DIAGNOSTIC-NON-EVIDENCE";
 
 const FROZEN_TRAINER_IDENTITY_V2: &str = "mtg-kernel-native-even-batch-trainer-v2";
@@ -272,10 +268,8 @@ fn store_backend_identity_for_runtime_tuple_v2(tuple_identity: &str) -> Option<&
 const FROZEN_OPTIMIZER_IDENTITY_V2: &str = "native-adam-canonical-scorer-bias-gauge-v1";
 const FROZEN_GAUGE_EVIDENCE_IDENTITY_V2: &str = "mtg-kernel-native-scorer-bias-gauge-evidence-v1";
 const FROZEN_ENVIRONMENT_SEED_DERIVATION_IDENTITY_V2: &str = "train-env/base_seed/pair_index";
-const FROZEN_LEARNER_ACTION_SEED_DERIVATION_IDENTITY_V2: &str =
-    "train-learner-action-group/base_seed/episode_index/learner_physical_decision_index -> train-learner-action-substep/group_seed/substep_index";
-const FROZEN_OPPONENT_ACTION_SEED_DERIVATION_IDENTITY_V2: &str =
-    "train-opponent-action-group/base_seed/episode_index/opponent_physical_decision_index -> train-opponent-action-substep/group_seed/substep_index";
+const FROZEN_LEARNER_ACTION_SEED_DERIVATION_IDENTITY_V2: &str = "train-learner-action-group/base_seed/episode_index/learner_physical_decision_index -> train-learner-action-substep/group_seed/substep_index";
+const FROZEN_OPPONENT_ACTION_SEED_DERIVATION_IDENTITY_V2: &str = "train-opponent-action-group/base_seed/episode_index/opponent_physical_decision_index -> train-opponent-action-substep/group_seed/substep_index";
 const FROZEN_LEARNER_SAMPLER_IDENTITY_V2: &str = "f32-q8-expq63-hamilton-splitmix64-v1";
 const FROZEN_LEARNER_SAMPLER_CONTRACT_SHA256_V2: &str =
     "276407494966b195b7c011caf984d2354484f7532161107b19ecc83388de92b6";
@@ -304,14 +298,62 @@ const FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2: &str =
     "mtg-kernel-trainer-frozen-checkpoint-policy-v2";
 const FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2: &str =
     "frozen-checkpoint-softmax-t1-one-seed-per-decision";
-const FROZEN_LADDER_POLICY_SAMPLING_RULE_V2: &str =
-    "seeded-categorical-sample-from-softmax-temperature-1.0-checkpoint-policy-one-seed-per-decision";
+const FROZEN_LADDER_POLICY_SAMPLING_RULE_V2: &str = "seeded-categorical-sample-from-softmax-temperature-1.0-checkpoint-policy-one-seed-per-decision";
 const FROZEN_LADDER_POOL_IDENTITY_V2: &str = "mtg-kernel-opponent-ladder-pool-v1";
 const FROZEN_LADDER_POOL_SIZE_V2: u64 = 4;
 const FROZEN_LADDER_POOL_WEIGHT_PRIMARY_V2: u64 = 40;
 const FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_A_V2: u64 = 20;
 const FROZEN_LADDER_POOL_WEIGHT_PREDECESSOR_B_V2: u64 = 20;
 const FROZEN_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2: u64 = 20;
+
+const POPULATION_PROGRAM_IDENTITY_V1: &str = "mtg-kernel-native-scaled-selfplay-population/v1";
+const POPULATION_PACKAGE_COMMIT_V1: &str = "838920e359c7a1152d97c450f4575c6be2309f22";
+const POPULATION_PROGRAM_DOCUMENT_SHA256_V1: &str =
+    "b0e836858379137e9f5068f1ed2d3cb98d0d6507d09170d8272caad2a989ea38";
+const POPULATION_RETEST_MANIFEST_SHA256_V1: &str =
+    "f3128e5f700830df2110d6abb06b5b6f7f8f642ac5064c5d3188afac93aed2c8";
+const POPULATION_REPLAY_END_GENERATION_V1: u64 = 512;
+const POPULATION_PROGRAM_UPDATE_COUNT_V1: u64 = 1_024;
+const POPULATION_REFRESH_INTERVAL_V1: u64 = 128;
+const POPULATION_SLOT_COUNT_V1: u64 = 8;
+const POPULATION_REWARD_IDENTITY_V1: &str = FROZEN_LOSS_IDENTITY_V2;
+const POPULATION_REFRESH_MANIFEST_IDENTITY_V1: &str =
+    "mtg-kernel-native-scaled-selfplay-refresh-manifest/v1";
+const POPULATION_RETEST_BETA_F32_BITS_V1: &str = "3dcccccd";
+const POPULATION_POOL_IDENTITY_V1: &str = "Pool3";
+const POPULATION_POOL_DOCUMENT_SHA256_V1: &str =
+    "6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71";
+const POPULATION_EXPECTED_BASE_SEEDS_V1: [u64; 3] = [970_001, 970_002, 970_003];
+
+const POPULATION_SOURCE_LINEAGES_V1: [(u64, &str, &str, &str, &str, &str, &str); 3] = [
+    (
+        970_001,
+        "2d6650f111cebcb8e87271fb3446127306e2c4006da793c45a7aec5d80c7780e",
+        "2307caf5a0093bf3f6f9d3673788eac1d73bcd248bfb6fcb3af785a596304cab",
+        "21f95221663a7a064d4d5935d19c95dc108a84085513524f48def0b0da21a2bc",
+        "2ee82c53afb9c4cd8343ca67411d9a0b5db800215688f809a08a44c8016953a5",
+        "e2e3fdb4216a013fdb043bcb90f33f590d5f7d72a77b5999c423919da3ae3b85",
+        "a51d05f8f89e3cca652e8c2daaa289a65cfdb317164d07410395430044b54ed0",
+    ),
+    (
+        970_002,
+        "bcecb18db197a5ef14c8512642a3f15191f7dd05e389c02c129853c9496deda7",
+        "fdbd65dca0660afe1156f4dff49204325064802e7d44606eb44b7529db528ce1",
+        "c3aa704e7670c158da82ad4602a20bcec3240f275ecb7aac9ca42fb341f482df",
+        "16c834b632e99589c5970dc52164ea12647f954e43e7bfe61b5d4d767133b9aa",
+        "304053bdc96ef094d97506f5605fc599aae045c770cbd6fa7efcebfccc9069b6",
+        "1e9022105aec341101c0b14ffa4d509b4073a2f80b213e71dd0065f036e701dd",
+    ),
+    (
+        970_003,
+        "1a1bdb75099b50b4d250d3e03ab6d882718f017e2c6d715bc8a67d3022b627ec",
+        "9a1c417e6990c54929481f5eee19cf0f9f8d816fa72a3e3a575fdde603364295",
+        "814583b210191bc00ec1cf5f485eb6b83ffce2d4c2e632b87874d64e3b62cb3e",
+        "50108e3751ab52b6432903cac0b57addb747e287e41bc83f57e0bf9110149788",
+        "b3a8811923533bda7b1a8d2dbfa0b5b8ec187b1d40a7029d348a0dabbb04dbc3",
+        "861f28ca95316e68d1552986294aae0f7677af64b21f615d5bfcaff01276602c",
+    ),
+];
 
 // V2 opponent seed-schedule namespace declarations (Self-Play Ladder Design
 // Contract S2, Section 2), owned by `native_trainer_schedule_v2`. Present in
@@ -686,6 +728,42 @@ pub struct TrainRunContractsV2 {
     /// wide report (as opposed to a label that is merely documented).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) wide_model_experiment_v1: Option<WideModelExperimentContractV1>,
+    /// Fixed replay plus scaled population-program authority. Absent for
+    /// every pre-existing RunV2 record, so its canonical bytes are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) population_program_v1: Option<PopulationProgramContractV1>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopulationProgramContractV1 {
+    pub(crate) identity: String,
+    pub(crate) package_commit: String,
+    pub(crate) program_document_sha256: String,
+    pub(crate) retest_manifest_sha256: String,
+    pub(crate) replay_end_generation: u64,
+    pub(crate) program_update_count: u64,
+    pub(crate) refresh_interval: u64,
+    pub(crate) slot_count: u64,
+    pub(crate) reward_identity: String,
+    pub(crate) refresh_manifest_identity: String,
+    pub(crate) retest_beta_f32_bits: String,
+    pub(crate) expected_base_seed: u64,
+    pub(crate) pool_identity: String,
+    pub(crate) pool_document_sha256: String,
+    pub(crate) source_lineages: [PopulationSourceLineageV1; 3],
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopulationSourceLineageV1 {
+    pub(crate) base_seed: u64,
+    pub(crate) store_tree_sha256: String,
+    pub(crate) run_sha256: String,
+    pub(crate) checkpoint_sha256: String,
+    pub(crate) sidecar_sha256: String,
+    pub(crate) state_sha256: String,
+    pub(crate) model_parameter_sha256: String,
 }
 
 /// Capacity-experiment wide-net record section. See
@@ -1365,6 +1443,7 @@ fn validate_decoded_train_run_v2(
     validate_contracts_v2(&record.contracts)?;
     validate_optimization_v2(&record.optimization)?;
     let requested_episode_count = validate_schedule_v2(&record.schedule, &record.model_snapshot)?;
+    validate_population_program_v1(&record)?;
     validate_limits_v2(&record.limits)?;
     validate_topology_v2(&record.topology)?;
     validate_artifact_schemas_v2(&record.artifact_schemas)?;
@@ -2204,6 +2283,62 @@ fn validate_opponent_schedule_v2(schedule: &OpponentScheduleV2ContractV1) -> Res
         || schedule.version_change_rule != FROZEN_LADDER_SCHEDULE_VERSION_CHANGE_RULE_V2
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    Ok(())
+}
+
+fn validate_population_program_v1(record: &TrainRunV2) -> Result<()> {
+    let Some(program) = record.contracts.population_program_v1.as_ref() else {
+        return Ok(());
+    };
+
+    if program.identity != POPULATION_PROGRAM_IDENTITY_V1
+        || program.package_commit != POPULATION_PACKAGE_COMMIT_V1
+        || record.source.git_commit != POPULATION_PACKAGE_COMMIT_V1
+        || program.program_document_sha256 != POPULATION_PROGRAM_DOCUMENT_SHA256_V1
+        || program.retest_manifest_sha256 != POPULATION_RETEST_MANIFEST_SHA256_V1
+        || program.replay_end_generation != POPULATION_REPLAY_END_GENERATION_V1
+        || program.program_update_count != POPULATION_PROGRAM_UPDATE_COUNT_V1
+        || program.refresh_interval != POPULATION_REFRESH_INTERVAL_V1
+        || program.slot_count != POPULATION_SLOT_COUNT_V1
+        || program.reward_identity != POPULATION_REWARD_IDENTITY_V1
+        || program.refresh_manifest_identity != POPULATION_REFRESH_MANIFEST_IDENTITY_V1
+        || program.retest_beta_f32_bits != POPULATION_RETEST_BETA_F32_BITS_V1
+        || program.pool_identity != POPULATION_POOL_IDENTITY_V1
+        || program.pool_document_sha256 != POPULATION_POOL_DOCUMENT_SHA256_V1
+        || record.contracts.wide_model_experiment_v1.is_some()
+        || record.environment.environment_randomization_v2.is_none()
+        || record.contracts.opponent_policy.identity != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
+        || record.contracts.opponent_ladder_pool.is_none()
+        || !POPULATION_EXPECTED_BASE_SEEDS_V1.contains(&program.expected_base_seed)
+        || program.expected_base_seed != record.schedule.base_seed
+        || record.schedule.batch_episodes != 64
+        || record.schedule.checkpoint_segment_updates != 4
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+
+    let requested_successful_updates = program
+        .replay_end_generation
+        .checked_add(program.program_update_count)
+        .ok_or_else(|| TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidArithmetic))?;
+    if requested_successful_updates != 1_536
+        || record.schedule.requested_successful_updates != requested_successful_updates
+        || !program
+            .source_lineages
+            .iter()
+            .zip(POPULATION_SOURCE_LINEAGES_V1)
+            .all(|(actual, expected)| {
+                actual.base_seed == expected.0
+                    && actual.store_tree_sha256 == expected.1
+                    && actual.run_sha256 == expected.2
+                    && actual.checkpoint_sha256 == expected.3
+                    && actual.sidecar_sha256 == expected.4
+                    && actual.state_sha256 == expected.5
+                    && actual.model_parameter_sha256 == expected.6
+            })
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::CrossBinding));
     }
     Ok(())
 }
@@ -3139,7 +3274,7 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     const ZERO_SHA256: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -4725,9 +4860,11 @@ mod tests {
 
         let bytes = fixture_bytes();
         decode_train_run_v2(&bytes).unwrap();
-        assert!(!bytes
-            .windows(b"membership".len())
-            .any(|window| window == b"membership"));
+        assert!(
+            !bytes
+                .windows(b"membership".len())
+                .any(|window| window == b"membership")
+        );
     }
 
     #[test]
@@ -5180,6 +5317,190 @@ mod tests {
         record
     }
 
+    fn population_program_fixture() -> PopulationProgramContractV1 {
+        PopulationProgramContractV1 {
+            identity: POPULATION_PROGRAM_IDENTITY_V1.to_owned(),
+            package_commit: POPULATION_PACKAGE_COMMIT_V1.to_owned(),
+            program_document_sha256: POPULATION_PROGRAM_DOCUMENT_SHA256_V1.to_owned(),
+            retest_manifest_sha256: POPULATION_RETEST_MANIFEST_SHA256_V1.to_owned(),
+            replay_end_generation: POPULATION_REPLAY_END_GENERATION_V1,
+            program_update_count: POPULATION_PROGRAM_UPDATE_COUNT_V1,
+            refresh_interval: POPULATION_REFRESH_INTERVAL_V1,
+            slot_count: POPULATION_SLOT_COUNT_V1,
+            reward_identity: POPULATION_REWARD_IDENTITY_V1.to_owned(),
+            refresh_manifest_identity: POPULATION_REFRESH_MANIFEST_IDENTITY_V1.to_owned(),
+            retest_beta_f32_bits: POPULATION_RETEST_BETA_F32_BITS_V1.to_owned(),
+            expected_base_seed: 970_001,
+            pool_identity: POPULATION_POOL_IDENTITY_V1.to_owned(),
+            pool_document_sha256: POPULATION_POOL_DOCUMENT_SHA256_V1.to_owned(),
+            source_lineages: POPULATION_SOURCE_LINEAGES_V1.map(|lineage| {
+                PopulationSourceLineageV1 {
+                    base_seed: lineage.0,
+                    store_tree_sha256: lineage.1.to_owned(),
+                    run_sha256: lineage.2.to_owned(),
+                    checkpoint_sha256: lineage.3.to_owned(),
+                    sidecar_sha256: lineage.4.to_owned(),
+                    state_sha256: lineage.5.to_owned(),
+                    model_parameter_sha256: lineage.6.to_owned(),
+                }
+            }),
+        }
+    }
+
+    fn population_record() -> TrainRunV2 {
+        let mut record = coherent_v2_record();
+        record.source.git_commit = POPULATION_PACKAGE_COMMIT_V1.to_owned();
+        record.schedule.base_seed = 970_001;
+        record.schedule.batch_episodes = 64;
+        record.schedule.requested_successful_updates = 1_536;
+        record.schedule.checkpoint_episode_interval = 64 * 4;
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
+        record.contracts.population_program_v1 = Some(population_program_fixture());
+        refresh_derived(&mut record);
+        record
+    }
+
+    #[test]
+    fn population_program_round_trips_and_binds_exact_authority() {
+        let record = population_record();
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.record().schedule.requested_successful_updates,
+            POPULATION_REPLAY_END_GENERATION_V1 + POPULATION_PROGRAM_UPDATE_COUNT_V1
+        );
+        assert!(
+            String::from_utf8(bytes)
+                .unwrap()
+                .contains("\"population_program_v1\":{")
+        );
+    }
+
+    #[test]
+    fn population_program_absence_preserves_legacy_bytes_and_run_hash() {
+        let bytes = fixture_bytes();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert!(
+            validated
+                .record()
+                .contracts()
+                .population_program_v1
+                .is_none()
+        );
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            sha256_hex(&bytes),
+            "dae0b647887ef07ffe6e307490a96bfff69a22b29d69f8d1d9c3f96eb484846f"
+        );
+        assert!(
+            !String::from_utf8(bytes)
+                .unwrap()
+                .contains("population_program_v1")
+        );
+    }
+
+    #[test]
+    fn population_program_update_arithmetic_and_hashes_fail_closed() {
+        let mut wrong_updates = population_record();
+        wrong_updates.schedule.requested_successful_updates = 1_532;
+        refresh_derived(&mut wrong_updates);
+        assert_record_error(wrong_updates, TrainRunV2ErrorKind::CrossBinding);
+
+        let mut wrong_program_count = population_record();
+        wrong_program_count
+            .contracts
+            .population_program_v1
+            .as_mut()
+            .unwrap()
+            .program_update_count = 1_023;
+        refresh_derived(&mut wrong_program_count);
+        assert_record_error(wrong_program_count, TrainRunV2ErrorKind::InvalidLiteral);
+
+        for mutate in [
+            |p: &mut PopulationProgramContractV1| {
+                p.program_document_sha256 = ZERO_SHA256.to_owned()
+            },
+            |p: &mut PopulationProgramContractV1| p.retest_manifest_sha256 = ZERO_SHA256.to_owned(),
+            |p: &mut PopulationProgramContractV1| {
+                p.source_lineages[0].store_tree_sha256 = ZERO_SHA256.to_owned()
+            },
+            |p: &mut PopulationProgramContractV1| {
+                p.source_lineages[1].run_sha256 = ZERO_SHA256.to_owned()
+            },
+            |p: &mut PopulationProgramContractV1| {
+                p.source_lineages[2].checkpoint_sha256 = ZERO_SHA256.to_owned()
+            },
+            |p: &mut PopulationProgramContractV1| {
+                p.source_lineages[0].sidecar_sha256 = ZERO_SHA256.to_owned()
+            },
+            |p: &mut PopulationProgramContractV1| {
+                p.source_lineages[1].state_sha256 = ZERO_SHA256.to_owned()
+            },
+            |p: &mut PopulationProgramContractV1| {
+                p.source_lineages[2].model_parameter_sha256 = ZERO_SHA256.to_owned()
+            },
+        ] {
+            let mut record = population_record();
+            mutate(record.contracts.population_program_v1.as_mut().unwrap());
+            refresh_derived(&mut record);
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+    }
+
+    #[test]
+    fn population_program_seed_and_presence_gates_fail_closed() {
+        let mut wrong_seed = population_record();
+        wrong_seed
+            .contracts
+            .population_program_v1
+            .as_mut()
+            .unwrap()
+            .expected_base_seed = 970_002;
+        refresh_derived(&mut wrong_seed);
+        assert_record_error(wrong_seed, TrainRunV2ErrorKind::InvalidLiteral);
+
+        let mut no_environment = population_record();
+        no_environment.environment.environment_randomization_v2 = None;
+        assert!(validate_train_run_record_v2(no_environment).is_err());
+
+        let mut no_ladder = population_record();
+        no_ladder.contracts.opponent_policy.identity =
+            FROZEN_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        no_ladder.contracts.opponent_policy.model_rule =
+            FROZEN_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        no_ladder.contracts.opponent_ladder_pool = None;
+        no_ladder.contracts.opponent_schedule_v2 = None;
+        refresh_derived(&mut no_ladder);
+        assert!(validate_train_run_record_v2(no_ladder).is_err());
+    }
+
+    #[test]
+    fn population_program_section_rejects_unknown_missing_and_null_fields() {
+        let section = serde_json::to_value(population_program_fixture()).unwrap();
+        let mut unknown = section.clone();
+        unknown
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".to_owned(), json!(1));
+        assert!(serde_json::from_value::<PopulationProgramContractV1>(unknown).is_err());
+
+        let mut missing = section.clone();
+        missing.as_object_mut().unwrap().remove("source_lineages");
+        assert!(serde_json::from_value::<PopulationProgramContractV1>(missing).is_err());
+
+        let mut null = section;
+        null.as_object_mut()
+            .unwrap()
+            .insert("program_update_count".to_owned(), Value::Null);
+        assert!(serde_json::from_value::<PopulationProgramContractV1>(null).is_err());
+    }
+
     #[test]
     fn ladder_identity_with_valid_pool_validates() {
         let record = ladder_record();
@@ -5281,11 +5602,13 @@ mod tests {
         // which MUST keep validating (Amendment 1's explicit requirement).
         let record = ladder_record();
         let validated = validate_train_run_record_v2(record).unwrap();
-        assert!(validated
-            .record()
-            .contracts()
-            .opponent_ladder_initialization
-            .is_none());
+        assert!(
+            validated
+                .record()
+                .contracts()
+                .opponent_ladder_initialization
+                .is_none()
+        );
     }
 
     #[test]
@@ -5833,11 +6156,13 @@ mod tests {
             environment.environment_trajectory_contract_v1(),
             NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
         );
-        assert!(environment
-            .record()
-            .contracts()
-            .opponent_ladder_pool
-            .is_none());
+        assert!(
+            environment
+                .record()
+                .contracts()
+                .opponent_ladder_pool
+                .is_none()
+        );
 
         let ladder_environment_bytes =
             test_fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
@@ -5862,11 +6187,13 @@ mod tests {
             ladder_environment.record().contracts().opponent_ladder_pool,
             Some(pool.clone())
         );
-        assert!(ladder_environment
-            .record()
-            .contracts()
-            .opponent_ladder_initialization
-            .is_none());
+        assert!(
+            ladder_environment
+                .record()
+                .contracts()
+                .opponent_ladder_initialization
+                .is_none()
+        );
 
         let ladder_init_environment_bytes =
             test_fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
@@ -5947,11 +6274,13 @@ mod tests {
 
         // This is a uniform-identity run: the ladder pool section must be
         // absent, and the uniform identities validate exactly as before.
-        assert!(validated
-            .record()
-            .contracts()
-            .opponent_ladder_pool
-            .is_none());
+        assert!(
+            validated
+                .record()
+                .contracts()
+                .opponent_ladder_pool
+                .is_none()
+        );
         assert_eq!(
             validated.record().contracts().opponent_policy.identity,
             FROZEN_OPPONENT_POLICY_IDENTITY_V2
@@ -5995,16 +6324,20 @@ mod tests {
         // present, but the init section is absent (fresh init from the
         // common model snapshot -- the shape this amendment's field must
         // not disturb).
-        assert!(validated
-            .record()
-            .contracts()
-            .opponent_ladder_pool
-            .is_some());
-        assert!(validated
-            .record()
-            .contracts()
-            .opponent_ladder_initialization
-            .is_none());
+        assert!(
+            validated
+                .record()
+                .contracts()
+                .opponent_ladder_pool
+                .is_some()
+        );
+        assert!(
+            validated
+                .record()
+                .contracts()
+                .opponent_ladder_initialization
+                .is_none()
+        );
         assert_eq!(
             validated.record().contracts().opponent_policy.identity,
             FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
