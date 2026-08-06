@@ -282,7 +282,7 @@ try {
 
     $gate3File = Assert-FileSha256 -Path $Gate3ManifestPath -ExpectedSha256 $script:ExpectedGate3Sha256 -Label 'Gate 3 manifest'
     $gate3 = Get-Content -LiteralPath $Gate3ManifestPath -Raw | ConvertFrom-Json
-    if ($gate3.passed -ne $true -or [string]$gate3.disposition -ne 'PASS' -or
+    if ($gate3.passed -ne $true -or [string]$gate3.disposition -ne 'SELECTED' -or
         [string]$gate3.selected_beta -ne $script:SelectedBeta -or $gate3.terminal_outcomes_read -ne $false) {
         throw 'Gate 3 does not authorize the selected terminal-blind beta'
     }
