@@ -14,10 +14,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import queue
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from typing import Any
 
@@ -28,6 +31,27 @@ SAMPLER_IDENTITY = "f32-q8-expq63-hamilton-splitmix64-v1"
 SAMPLER_CONTRACT = "276407494966b195b7c011caf984d2354484f7532161107b19ecc83388de92b6"
 OUTCOME_CONTRACT = "mtg-kernel-xmage-cp7-outcome-jsonl/v2"
 CARD_DB_HASH = "b833d6a7b44ad1f7bd6aef9a21d1f2498136ef61e44db0e48e60e5ec471ce09d"
+HEX_16 = re.compile(r"[0-9a-f]{16}\Z")
+HEX_32 = re.compile(r"[0-9a-f]{32}\Z")
+HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
+DECISION_KEYS = {
+    "record_type", "schema_version", "record_ordinal", "outcome_decision_ordinal",
+    "pair_index", "episode_id", "candidate_seat", "base_seed_u64_hex",
+    "pair_environment_seed_u64_hex", "deck_ids", "environment_revision",
+    "randomization_identity", "selection_source", "acting_player", "step",
+    "decision_kind", "physical_decision_id", "actor_physical_decision_ordinal",
+    "substep_index", "substep_count", "legal_action_count", "selected_index",
+    "selected_semantic", "candidate_order_commitment_128_hex", "action_semantics",
+    "tensor", "model_input_sha256", "old_policy_logits_f32_bits",
+    "old_value_f32_bits", "checkpoint",
+}
+TERMINAL_KEYS = {
+    "record_type", "schema_version", "record_ordinal", "pair_index", "episode_id",
+    "candidate_seat", "base_seed_u64_hex", "pair_environment_seed_u64_hex",
+    "deck_ids", "randomization_identity", "core_environment_hash_u64_hex",
+    "diagnostic_state_hash_u64_hex", "first_outcome_decision_ordinal",
+    "outcome_decision_count", "terminal", "candidate_terminal_reward", "checkpoint",
+}
 
 
 def fail(message: str) -> None:
@@ -40,6 +64,27 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def canonical_json_bytes(value: Any, *, indent: int | None = None) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True,
+                       indent=indent, separators=None if indent is not None else (",", ":"))
+            + "\n").encode("utf-8")
+
+
+def exclusive_write(path: Path, payload: bytes) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def load_canonical_json(path: Path) -> dict[str, Any]:
@@ -183,13 +228,41 @@ def maven_opts(identity: dict[str, Any]) -> str:
     return " ".join(prefix + key + "=" + str(identity[value]) for key, value in names.items())
 
 
-def anchor_command(args: argparse.Namespace, model: dict[str, Any], pair: int, outcome: Path) -> list[str]:
-    execution_args = " ".join((
+def chunk_ranges(pair_start: int, pairs: int, task_pairs: int) -> list[tuple[int, int]]:
+    if pair_start < 0 or pairs < 1 or task_pairs < 1:
+        fail("invalid shard range")
+    stop = pair_start + pairs
+    return [(first, min(task_pairs, stop - first))
+            for first in range(pair_start, stop, task_pairs)]
+
+
+def planned_tasks(labels: list[str], chunks: list[tuple[int, int]]) -> list[dict[str, Any]]:
+    return [
+        {"label": label, "first_pair": first_pair, "pair_count": pair_count,
+         "first_episode": first_pair * 2, "episode_count": pair_count * 2,
+         "stem": f"{label}-p{first_pair:06d}-n{pair_count:03d}"}
+        for first_pair, pair_count in chunks
+        for label in sorted(labels)
+    ]
+
+
+def _exec_argument_string(parts: list[str]) -> str:
+    def quote(value: str) -> str:
+        if not value or any(character.isspace() for character in value) or '"' in value:
+            return '"' + value.replace('"', '\\"') + '"'
+        return value
+    return " ".join(quote(part) for part in parts)
+
+
+def anchor_command(args: argparse.Namespace, model: dict[str, Any], first_pair: int,
+                   pair_count: int, outcome: Path) -> list[str]:
+    execution_args = _exec_argument_string([
         "--repo-root", str(args.mage_repo), "--scorer-exe", str(args.scorer_exe),
         "--population-store-root", model["root"], "--generation", str(args.generation),
-        "--base-seed", str(args.base_seed), "--first-episode", str(pair * 2),
-        "--pairs", "1", "--opponent", "cp7", "--cp7-skill", "7", "--outcome-export", str(outcome),
-    ))
+        "--base-seed", str(args.base_seed), "--first-episode", str(first_pair * 2),
+        "--pairs", str(pair_count), "--opponent", "cp7", "--cp7-skill", "7",
+        "--outcome-export", str(outcome),
+    ])
     return [str(args.maven), "-o", "-q", "-pl", "Mage.Server.Plugins/Mage.Player.AIRL",
             "-DskipTests", "exec:java", "-Dexec.mainClass=mage.player.ai.rl.XMageRallyAnchorSpike",
             "-Dexec.args=" + execution_args]
@@ -204,54 +277,232 @@ def environment(database_root: Path, model: dict[str, Any]) -> dict[str, str]:
     return value
 
 
-def parse_outcome(path: Path, model: dict[str, Any], base_seed: int, pair: int) -> dict[str, Any]:
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    if not rows or rows[0].get("record_type") != "header":
-        fail(f"outcome header missing: {path}")
-    expected = model["checkpoint"]
-    if rows[0].get("export_contract") != OUTCOME_CONTRACT or rows[0].get("checkpoint") != expected:
-        fail(f"outcome header identity mismatch: {path}")
-    terminals = [row for row in rows if row.get("record_type") == "terminal"]
-    if len(terminals) != 2:
-        fail(f"expected two terminal outcomes: {path}")
-    results: dict[str, str] = {}
-    seed = None
-    for row in terminals:
-        seat, terminal, reward = row.get("candidate_seat"), row.get("terminal"), row.get("candidate_terminal_reward")
-        if (seat not in {"p0", "p1"} or row.get("pair_index") != pair
-                or row.get("episode_id") != pair * 2 + int(seat[1])
-                or row.get("base_seed_u64_hex") != f"{base_seed:016x}"
-                or row.get("checkpoint") != expected or not isinstance(terminal, dict)
-                or terminal.get("terminal_classification") != "natural"
-                or terminal.get("terminal_code") != "natural_game_over" or reward not in {-1, 0, 1}):
-            fail(f"terminal contract mismatch: {path}")
-        if seed is None:
-            seed = row.get("pair_environment_seed_u64_hex")
-        elif seed != row.get("pair_environment_seed_u64_hex"):
-            fail(f"pair environment seed changed: {path}")
-        results[seat] = "win" if reward == 1 else "draw" if reward == 0 else "loss"
-    if set(results) != {"p0", "p1"} or not isinstance(seed, str):
-        fail(f"terminal seat coverage mismatch: {path}")
-    return {"environment_seed": seed, "by_seat": results}
+def expected_header(checkpoint: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "record_type": "header", "schema_version": 2, "record_ordinal": 0,
+        "export_contract": OUTCOME_CONTRACT,
+        "selection_source": "candidate_checkpoint_policy",
+        "tensorizer_identity": "mtg-kernel-python-encoded-decision-tensor-contract-v2",
+        "tensorizer_features_source_sha256":
+            "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+        "model_input_commitment":
+            "mtg-kernel-checkpoint-shadow-model-input-framed-sha256/v1",
+        "checkpoint": checkpoint,
+    }
 
 
-def run_task(args: argparse.Namespace, worker: int, database: Path, label: str,
-             model: dict[str, Any], pair: int) -> dict[str, Any]:
-    task_root = args.evidence_root / "tasks"
-    stem = f"{label}-pair-{pair:04d}"
-    log, outcome = task_root / (stem + ".log"), task_root / (stem + ".outcome.jsonl")
-    started = time.perf_counter()
-    with log.open("x", encoding="utf-8", newline="\n") as handle:
-        completed = subprocess.run(anchor_command(args, model, pair, outcome), cwd=args.mage_repo,
-                                   env=environment(database, model), stdout=handle,
-                                   stderr=subprocess.STDOUT, timeout=args.task_timeout_seconds)
-    if completed.returncode != 0 or not outcome.is_file():
-        fail(f"panel task failed: {label} pair {pair}")
-    parsed = parse_outcome(outcome, model, args.base_seed, pair)
-    return {"label": label, "pair_index": pair, "worker": worker,
-            "elapsed_seconds": time.perf_counter() - started, "log": str(log),
-            "log_sha256": sha256(log), "outcome": str(outcome), "outcome_sha256": sha256(outcome),
-            **parsed}
+def _strict_json(raw: bytes, path: Path, line_number: int) -> dict[str, Any]:
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                fail(f"{path}:{line_number}: duplicate JSON field {key}")
+            value[key] = item
+        return value
+    try:
+        row = json.loads(raw, object_pairs_hook=object_pairs,
+                         parse_constant=lambda value: fail(
+                             f"{path}:{line_number}: nonfinite JSON value {value}"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        fail(f"{path}:{line_number}: invalid JSON: {error}")
+    if not isinstance(row, dict):
+        fail(f"{path}:{line_number}: row is not an object")
+    return row
+
+
+def _plain_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_decision(path: Path, row: dict[str, Any], ordinal: int) -> None:
+    legal_count, selected = row.get("legal_action_count"), row.get("selected_index")
+    semantics, logits = row.get("action_semantics"), row.get("old_policy_logits_f32_bits")
+    if (set(row) != DECISION_KEYS or row.get("record_type") != "decision"
+            or row.get("selection_source") != "candidate_checkpoint_policy"
+            or not _plain_int(row.get("outcome_decision_ordinal"))
+            or not _plain_int(legal_count) or legal_count < 1
+            or not _plain_int(selected) or not 0 <= selected < legal_count
+            or not isinstance(semantics, list) or len(semantics) != legal_count
+            or row.get("selected_semantic") != semantics[selected]
+            or not isinstance(logits, list) or len(logits) != legal_count
+            or any(not _plain_int(value) for value in logits)
+            or not isinstance(row.get("tensor"), dict)
+            or HEX_64.fullmatch(row.get("model_input_sha256", "")) is None
+            or HEX_32.fullmatch(row.get("candidate_order_commitment_128_hex", "")) is None
+            or not _plain_int(row.get("old_value_f32_bits"))
+            or row.get("acting_player") != row.get("candidate_seat")
+            or not _plain_int(row.get("physical_decision_id"))
+            or row["physical_decision_id"] < 0
+            or not _plain_int(row.get("actor_physical_decision_ordinal"))
+            or row["actor_physical_decision_ordinal"] < 0
+            or not _plain_int(row.get("substep_index"))
+            or not _plain_int(row.get("substep_count")) or row["substep_count"] < 1
+            or not 0 <= row["substep_index"] < row["substep_count"]):
+        fail(f"{path}: malformed outcome-v2 decision at record {ordinal}")
+
+
+def _validate_terminal(path: Path, row: dict[str, Any], ordinal: int) -> str:
+    terminal, reward = row.get("terminal"), row.get("candidate_terminal_reward")
+    if not isinstance(terminal, dict):
+        fail(f"{path}: terminal payload missing at record {ordinal}")
+    outcome = terminal.get("terminal_outcome")
+    expected = {"p0_win": ("p0", [1, -1]), "p1_win": ("p1", [-1, 1]),
+                "draw": (None, [0, 0])}.get(outcome)
+    seat_index = 0 if row.get("candidate_seat") == "p0" else 1
+    if (set(row) != TERMINAL_KEYS or row.get("record_type") != "terminal"
+            or terminal.get("schema_version") != 5
+            or terminal.get("episode_id") != row.get("episode_id")
+            or terminal.get("terminal_classification") != "natural"
+            or terminal.get("terminal_code") != "natural_game_over"
+            or terminal.get("terminal_reason") != "game_over" or expected is None
+            or terminal.get("winner") != expected[0]
+            or terminal.get("terminal_reward") != expected[1]
+            or reward not in (-1, 0, 1) or expected[1][seat_index] != reward
+            or not _plain_int(row.get("outcome_decision_count"))
+            or row["outcome_decision_count"] < 0):
+        fail(f"{path}: terminal is not an exact natural outcome at record {ordinal}")
+    return "win" if reward == 1 else "draw" if reward == 0 else "loss"
+
+
+def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
+                           first_pair: int, pair_count: int) -> dict[str, Any]:
+    if not path.is_file() or not 0 <= base_seed <= 0x7FFF_FFFF_FFFF_FFFF:
+        fail(f"invalid outcome path or base seed: {path}")
+    expected_checkpoint = model["checkpoint"]
+    exact_header = expected_header(expected_checkpoint)
+    expected_episode, decision_ordinal = first_pair * 2, 0
+    active_episode: int | None = None
+    active_first_decision: int | None = None
+    active_decision_count = 0
+    terminal_keys: set[tuple[int, int, str]] = set()
+    environment_seeds: dict[int, str] = {}
+    outcomes: list[dict[str, Any]] = []
+    record_count = 0
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for line_number, raw in enumerate(handle, 1):
+            digest.update(raw)
+            if not raw.endswith(b"\n") or b"\r" in raw or raw == b"\n":
+                fail(f"{path}:{line_number}: noncanonical JSONL row")
+            row = _strict_json(raw, path, line_number)
+            if raw != (json.dumps(row, ensure_ascii=False, allow_nan=False,
+                                  separators=(",", ":")) + "\n").encode("utf-8"):
+                fail(f"{path}:{line_number}: JSONL row is not canonical compact JSON")
+            ordinal = record_count
+            record_count += 1
+            if ordinal == 0:
+                if row != exact_header:
+                    fail(f"{path}: first row is not the exact population outcome-v2 header")
+                continue
+            if row.get("record_type") == "header":
+                fail(f"{path}: duplicate header at record {ordinal}")
+            if (row.get("schema_version") != 2 or row.get("record_ordinal") != ordinal
+                    or row.get("checkpoint") != expected_checkpoint):
+                fail(f"{path}: schema, ordinal, or checkpoint mismatch at record {ordinal}")
+            pair, episode, seat = row.get("pair_index"), row.get("episode_id"), row.get("candidate_seat")
+            if (not _plain_int(pair) or not first_pair <= pair < first_pair + pair_count
+                    or seat not in {"p0", "p1"} or not _plain_int(episode)
+                    or episode != pair * 2 + int(seat[1]) or episode != expected_episode
+                    or row.get("base_seed_u64_hex") != f"{base_seed:016x}"
+                    or HEX_16.fullmatch(row.get("pair_environment_seed_u64_hex", "")) is None):
+                fail(f"{path}: pair, episode, seat, or seed mismatch at record {ordinal}")
+            environment_seed = row["pair_environment_seed_u64_hex"]
+            if pair in environment_seeds and environment_seeds[pair] != environment_seed:
+                fail(f"{path}: pair environment seed changed for pair {pair}")
+            environment_seeds[pair] = environment_seed
+            if row.get("record_type") == "decision":
+                _validate_decision(path, row, ordinal)
+                if active_episode is None:
+                    active_episode, active_first_decision = episode, decision_ordinal
+                    active_decision_count = 0
+                elif active_episode != episode:
+                    fail(f"{path}: decisions are interleaved between episodes")
+                if row["outcome_decision_ordinal"] != decision_ordinal:
+                    fail(f"{path}: noncontiguous outcome decision ordinal")
+                decision_ordinal += 1
+                active_decision_count += 1
+            elif row.get("record_type") == "terminal":
+                result = _validate_terminal(path, row, ordinal)
+                if active_episode is None:
+                    active_episode = episode
+                    active_first_decision = None
+                    active_decision_count = 0
+                if (active_episode != episode
+                        or row.get("first_outcome_decision_ordinal") != active_first_decision
+                        or row.get("outcome_decision_count") != active_decision_count):
+                    fail(f"{path}: terminal does not exactly close the active episode")
+                key = (pair, episode, seat)
+                if key in terminal_keys:
+                    fail(f"{path}: duplicate terminal {key}")
+                terminal_keys.add(key)
+                outcomes.append({"pair_index": pair, "seat": seat, "result": result,
+                                 "environment_seed": environment_seed})
+                expected_episode += 1
+                active_episode = active_first_decision = None
+                active_decision_count = 0
+            else:
+                fail(f"{path}: unknown record type at record {ordinal}")
+    expected_terminals = {(pair, pair * 2 + seat, f"p{seat}")
+                          for pair in range(first_pair, first_pair + pair_count)
+                          for seat in (0, 1)}
+    if record_count == 0 or active_episode is not None or terminal_keys != expected_terminals:
+        fail(f"{path}: terminal pair, episode, or seat coverage mismatch")
+    if set(environment_seeds) != set(range(first_pair, first_pair + pair_count)):
+        fail(f"{path}: pair environment seed coverage mismatch")
+    return {"sha256": digest.hexdigest(), "byte_count": path.stat().st_size,
+            "first_pair": first_pair, "pair_count": pair_count,
+            "record_count": record_count, "decision_count": decision_ordinal,
+            "outcomes": outcomes, "environment_seeds": environment_seeds}
+
+
+class DatabaseLeasePool:
+    def __init__(self, roots: list[Path]):
+        if not roots:
+            fail("database lease pool is empty")
+        self._slots: queue.Queue[tuple[int, Path]] = queue.Queue()
+        self._active: set[int] = set()
+        self._lock = threading.Lock()
+        for worker, root in enumerate(roots):
+            self._slots.put((worker, root))
+
+    def acquire(self) -> tuple[int, Path]:
+        worker, root = self._slots.get()
+        with self._lock:
+            if worker in self._active:
+                fail(f"database worker {worker} received an overlapping lease")
+            self._active.add(worker)
+        return worker, root
+
+    def release(self, worker: int, root: Path) -> None:
+        with self._lock:
+            if worker not in self._active:
+                fail(f"database worker {worker} released without an active lease")
+            self._active.remove(worker)
+        self._slots.put((worker, root))
+
+
+def run_task(args: argparse.Namespace, leases: DatabaseLeasePool, label: str,
+             model: dict[str, Any], first_pair: int, pair_count: int) -> dict[str, Any]:
+    worker, database = leases.acquire()
+    try:
+        task_root = args.evidence_root / "tasks"
+        stem = f"{label}-p{first_pair:06d}-n{pair_count:03d}"
+        log, outcome = task_root / (stem + ".log"), task_root / (stem + ".outcome.jsonl")
+        started = time.perf_counter()
+        with log.open("x", encoding="utf-8", newline="\n") as handle:
+            completed = subprocess.run(
+                anchor_command(args, model, first_pair, pair_count, outcome),
+                cwd=args.mage_repo, env=environment(database, model), stdout=handle,
+                stderr=subprocess.STDOUT, timeout=args.task_timeout_seconds,
+            )
+        if completed.returncode != 0 or not outcome.is_file():
+            fail(f"panel task failed: {label} pairs {first_pair}+{pair_count}")
+        return {"label": label, "first_pair": first_pair, "pair_count": pair_count,
+                "worker": worker, "elapsed_seconds": time.perf_counter() - started,
+                "log": str(log.resolve()), "log_sha256": sha256(log),
+                "outcome": str(outcome.resolve()), "outcome_sha256": sha256(outcome)}
+    finally:
+        leases.release(worker, database)
 
 
 def aggregate_terminal_wdl(results: list[dict[str, Any]], labels: list[str]) -> dict[str, dict[str, Any]]:
@@ -270,6 +521,43 @@ def aggregate_terminal_wdl(results: list[dict[str, Any]], labels: list[str]) -> 
     return summary
 
 
+def build_launch_plan(args: argparse.Namespace, identities: dict[str, dict[str, Any]],
+                      tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "schema": "mtg-kernel-population-store-cp7-panel-plan/v1",
+        "status": "planned",
+        "inputs": {
+            "runner": str(Path(__file__).resolve()),
+            "runner_sha256": sha256(Path(__file__).resolve()),
+            "scorer_exe": str(args.scorer_exe.resolve()),
+            "scorer_sha256": sha256(args.scorer_exe),
+            "mage_repo": str(args.mage_repo.resolve()),
+            "mage_commit": _git_commit(args.mage_repo),
+            "source_database": str(args.source_database.resolve()),
+            "source_database_sha256": sha256(args.source_database),
+            "models": identities,
+        },
+        "panel": {
+            "mode": args.mode, "opponent": "xmage-cp7", "cp7_skill": 7,
+            "base_seed": args.base_seed, "pair_start": args.pair_start,
+            "pair_count": args.pairs, "episode_count": args.pairs * 2,
+            "generation": args.generation, "workers": args.workers,
+            "task_pairs": args.task_pairs, "task_count": len(tasks),
+            "task_timeout_seconds": args.task_timeout_seconds,
+            "tasks": tasks,
+        },
+        "toolchain": {
+            "python": sys.version, "rustc": _version(["rustc", "-V"]),
+            "maven": _version([str(args.maven), "-version"]),
+        },
+        "analysis_policy": {
+            "parse_outcomes_after_all_shards_complete": True,
+            "terminal_win_draw_loss_only": True,
+            "promotion_claim": False,
+        },
+    }
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.evidence_root.exists():
         fail(f"evidence root already exists: {args.evidence_root}")
@@ -281,7 +569,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     identities = {label: load_store_identity(root, args.generation) for label, root in models.items()}
     if len({identity["store_files"]["identity_bundle_sha256"] for identity in identities.values()}) != 1:
         fail("population Store models do not share one identity-bundle root")
+    chunks = chunk_ranges(args.pair_start, args.pairs, args.task_pairs)
+    task_plan = planned_tasks(list(identities), chunks)
     args.evidence_root.mkdir(parents=True)
+    plan_path = args.evidence_root / "panel-plan.json"
+    launch_plan = build_launch_plan(args, identities, task_plan)
+    exclusive_write(plan_path, canonical_json_bytes(launch_plan, indent=2))
     (args.evidence_root / "tasks").mkdir()
     workers: list[Path] = []
     for worker in range(args.workers):
@@ -292,37 +585,68 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if sha256(target) != CARD_DB_HASH:
             fail("worker card database copy hash mismatch")
         workers.append(root)
-    pairs = list(range(args.pair_start, args.pair_start + args.pairs))
-    assignments = [(label, pair) for pair in pairs for label in sorted(identities)]
+    leases = DatabaseLeasePool(workers)
     results: list[dict[str, Any]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = [executor.submit(run_task, args, index % args.workers, workers[index % args.workers],
-                                   label, identities[label], pair)
-                   for index, (label, pair) in enumerate(assignments)]
+        futures = [executor.submit(run_task, args, leases, task["label"],
+                                   identities[task["label"]], task["first_pair"],
+                                   task["pair_count"])
+                   for task in task_plan]
         for future in concurrent.futures.as_completed(futures):
             results.append(future.result())
-    results.sort(key=lambda row: (row["pair_index"], row["label"]))
-    summary = aggregate_terminal_wdl(results, sorted(identities))
+    results.sort(key=lambda row: (row["first_pair"], row["label"]))
+    completed = [(row["label"], row["first_pair"], row["pair_count"]) for row in results]
+    expected = [(task["label"], task["first_pair"], task["pair_count"])
+                for task in task_plan]
+    if completed != expected:
+        fail("completed shard coverage differs from the create-new launch plan")
+
+    pair_results: dict[tuple[str, int], dict[str, Any]] = {}
+    for result in results:
+        validation = validate_outcome_shard(
+            Path(result["outcome"]), identities[result["label"]],
+            base_seed=args.base_seed, first_pair=result["first_pair"],
+            pair_count=result["pair_count"],
+        )
+        result["validation"] = {
+            key: value for key, value in validation.items()
+            if key not in {"outcomes", "environment_seeds"}
+        }
+        for outcome in validation["outcomes"]:
+            key = (result["label"], outcome["pair_index"])
+            row = pair_results.setdefault(key, {
+                "label": result["label"], "pair_index": outcome["pair_index"],
+                "environment_seed": outcome["environment_seed"], "by_seat": {},
+            })
+            if (row["environment_seed"] != outcome["environment_seed"]
+                    or outcome["seat"] in row["by_seat"]):
+                fail("duplicate terminal or pair environment seed mismatch across shards")
+            row["by_seat"][outcome["seat"]] = outcome["result"]
+    pairs = list(range(args.pair_start, args.pair_start + args.pairs))
+    expected_pair_keys = {(label, pair) for label in identities for pair in pairs}
+    if set(pair_results) != expected_pair_keys or any(
+        set(row["by_seat"]) != {"p0", "p1"} for row in pair_results.values()
+    ):
+        fail("parsed model, pair, or seat coverage is incomplete")
+    terminal_results = sorted(pair_results.values(),
+                              key=lambda row: (row["pair_index"], row["label"]))
+    summary = aggregate_terminal_wdl(terminal_results, sorted(identities))
     for pair in pairs:
-        seeds = {row["environment_seed"] for row in results if row["pair_index"] == pair}
+        seeds = {row["environment_seed"] for row in terminal_results
+                 if row["pair_index"] == pair}
         if len(seeds) != 1:
             fail(f"models did not share pair environment seed for pair {pair}")
     manifest = {
-        "schema": "mtg-kernel-population-store-cp7-panel/v1", "mode": args.mode,
+        "schema": "mtg-kernel-population-store-cp7-panel/v2", "mode": args.mode,
         "base_seed": args.base_seed, "pair_start": args.pair_start, "pairs": args.pairs,
         "workers": args.workers, "task_pairs": args.task_pairs,
-        "models": identities, "tasks": results, "terminal_wdl": summary,
-        "provenance": {"scorer_sha256": sha256(args.scorer_exe), "mage_commit": _git_commit(args.mage_repo),
-                       "card_database_sha256": CARD_DB_HASH, "runner_sha256": sha256(Path(__file__)),
-                       "python": sys.version, "rustc": _version(["rustc", "-V"]),
-                       "maven": _version([str(args.maven), "-version"])},
+        "plan": {"path": str(plan_path.resolve()), "sha256": sha256(plan_path)},
+        "tasks": results, "terminal_wdl": summary,
         "non_claims": ["terminal win/loss/draw is the only playing-strength outcome",
                        "this external CP7 anchor panel is not a promotion or professional-level claim"],
     }
     output = args.evidence_root / "panel-summary.json"
-    with output.open("x", encoding="utf-8", newline="\n") as handle:
-        json.dump(manifest, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    exclusive_write(output, canonical_json_bytes(manifest, indent=2))
     return manifest
 
 
@@ -395,7 +719,10 @@ def main(argv: list[str] | None = None) -> int:
         return self_test()
     required = (args.evidence_root, args.generation, args.mode, args.base_seed,
                 args.pairs, args.scorer_exe, args.mage_repo, args.source_database, args.maven)
-    if any(value is None for value in required) or args.base_seed < 0 or args.pair_start < 0:
+    if (any(value is None for value in required)
+            or not 0 <= args.base_seed <= 0x7FFF_FFFF_FFFF_FFFF
+            or args.pair_start < 0 or not 1 <= args.task_pairs <= 128
+            or args.task_timeout_seconds < 60):
         fail("missing or invalid panel arguments")
     parsed: list[tuple[str, Path]] = []
     for spec in args.model_specs:
