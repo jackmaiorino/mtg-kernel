@@ -12,7 +12,8 @@ Set-StrictMode -Version Latest
 $script:RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $script:H2hTest = 'native_science_loop_v1::windows_science_loop_tests::ladder_head_to_head_eval_v1'
 $script:H2hEnvironmentNames = @(
-    'H2H_CANDIDATE_STORE_ROOT', 'H2H_CANDIDATE_GEN', 'H2H_CANDIDATE_BASE_SEED',
+    'H2H_CANDIDATE_STORE_ROOT', 'H2H_CANDIDATE_GEN', 'H2H_CANDIDATE_USE_STORE_RUN',
+    'H2H_CANDIDATE_BASE_SEED',
     'H2H_CANDIDATE_POOL_JSON', 'H2H_UPDATES', 'H2H_INIT_STORE', 'H2H_INIT_GEN',
     'H2H_OPPONENT_STORE_ROOT', 'H2H_OPPONENT_GEN', 'H2H_PAIRS', 'H2H_EVAL_SEED',
     'H2H_ENVIRONMENT_RANDOMIZATION_V2', 'H2H_OUTCOME_JSON', 'WIDE'

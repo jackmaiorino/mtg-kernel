@@ -1943,10 +1943,22 @@ mod windows_science_loop_tests {
         let candidate_gen: u64 = required_env_v1("H2H_CANDIDATE_GEN")
             .parse()
             .expect("candidate generation");
-        let candidate_base_seed: u64 = required_env_v1("H2H_CANDIDATE_BASE_SEED")
-            .parse()
-            .expect("candidate base seed");
-        let candidate_pool_json = required_env_v1("H2H_CANDIDATE_POOL_JSON");
+        let candidate_use_store_run =
+            std::env::var("H2H_CANDIDATE_USE_STORE_RUN").is_ok_and(|value| value != "0");
+        let candidate_base_seed: Option<u64> = if candidate_use_store_run {
+            None
+        } else {
+            Some(
+                required_env_v1("H2H_CANDIDATE_BASE_SEED")
+                    .parse()
+                    .expect("candidate base seed"),
+            )
+        };
+        let candidate_pool_json = if candidate_use_store_run {
+            None
+        } else {
+            Some(required_env_v1("H2H_CANDIDATE_POOL_JSON"))
+        };
         let opponent_store_root = required_env_v1("H2H_OPPONENT_STORE_ROOT");
         let pairs: u64 = std::env::var("H2H_PAIRS")
             .unwrap_or_else(|_| "1024".to_owned())
@@ -1980,17 +1992,25 @@ mod windows_science_loop_tests {
             "WIDE=1 is not part of the narrow envrand-v2 macro rung"
         );
 
-        // Candidate: the SAME ladder run-record reconstruction as
-        // ladder_saturation_eval_v1.
-        let pool_bytes = fs::read(&candidate_pool_json)
+        // Existing ladder probes reconstruct the candidate Run from their
+        // frozen knobs. Population checkpoints instead opt in to loading the
+        // exact Run already authenticated by their Store root. The old path
+        // and bytes remain unchanged when the opt-in knob is absent.
+        let candidate_run_bytes = if candidate_use_store_run {
+            fs::read(std::path::Path::new(&candidate_store_root).join("run.json"))
+                .expect("H2H_CANDIDATE_STORE_ROOT/run.json must be readable")
+        } else {
+            let pool_bytes = fs::read(
+                candidate_pool_json
+                    .as_ref()
+                    .expect("candidate pool path must exist on the reconstruction path"),
+            )
             .expect("H2H_CANDIDATE_POOL_JSON must be a readable file");
-        let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
-            .expect("pool.json must decode as OpponentLadderPoolContractV1");
-        let candidate_run_bytes = match (
-            &init_store,
-            wide,
-            environment_randomization_v2,
-        ) {
+            let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
+                .expect("pool.json must decode as OpponentLadderPoolContractV1");
+            let candidate_base_seed =
+                candidate_base_seed.expect("candidate seed must exist on the reconstruction path");
+            match (&init_store, wide, environment_randomization_v2) {
             (Some(dir), false, true) => {
                 let initialization =
                     crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1(
@@ -2076,10 +2096,11 @@ mod windows_science_loop_tests {
                 candidate_base_seed,
                 pool,
             ),
-            (Some(_), true, _) | (None, true, true) => unreachable!("guarded above"),
+                (Some(_), true, _) | (None, true, true) => unreachable!("guarded above"),
+            }
         };
         let candidate_run =
-            decode_train_run_v2(&candidate_run_bytes).expect("candidate ladder run record");
+            decode_train_run_v2(&candidate_run_bytes).expect("candidate run record");
         let candidate_root =
             ValidatedNativeTrainingStoreRootV2::open_v2(&candidate_store_root).unwrap();
         let candidate_boundary =
@@ -2277,6 +2298,7 @@ mod windows_science_loop_tests {
         println!(
             "H2H candidate_gen={candidate_gen} wide={wide} W/L/D {wins}/{losses}/{draws} of {total}"
         );
+        println!("H2H candidate_use_store_run={candidate_use_store_run}");
         for (seat_label, seat) in [("P0", 0_usize), ("P1", 1_usize)] {
             let seat_total = seat_wins[seat] + seat_losses[seat] + seat_draws[seat];
             println!(
