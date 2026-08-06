@@ -3107,6 +3107,41 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_environment_
     )
 }
 
+/// Population-program RunV2 authority used by the scaled self-play replay
+/// and every later 128-update population segment. The complete ladder plus
+/// environment-v2 record remains present because generations 0 through 512
+/// replay that exact recipe; this function adds the separately frozen
+/// population-program authority before reminting the run digests.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_population_environment_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+    pool: OpponentLadderPoolContractV1,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_population_environment_v2(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+        pool,
+    )
+}
+
 /// Continual-initialization variant of
 /// [`test_fixture_bytes_with_schedule_and_base_seed_ladder_v2`] (Self-Play
 /// Ladder Design Contract S2, Amendment 1 / Section 8A point 2 pilot harness
@@ -4384,6 +4419,41 @@ mod tests {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_population_environment_v2(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+        pool: OpponentLadderPoolContractV1,
+    ) -> Vec<u8> {
+        let base = fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
+            backend,
+            batch_episodes,
+            checkpoint_segment_updates,
+            requested_successful_updates,
+            worker_count,
+            sessions_per_worker,
+            broker_batch_target,
+            max_physical_decisions,
+            max_policy_steps,
+            base_seed,
+            pool,
+        );
+        let wire: TrainRunWireV2 = serde_json::from_slice(&base).unwrap();
+        let mut record = TrainRunV2::from(wire);
+        record.contracts.population_program_v1 =
+            Some(population_program_fixture_for_seed(base_seed));
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn fixture_bytes_with_schedule_and_base_seed_ladder_init(
         backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
         batch_episodes: u64,
@@ -5340,7 +5410,7 @@ mod tests {
         record
     }
 
-    fn population_program_fixture() -> PopulationProgramContractV1 {
+    fn population_program_fixture_for_seed(expected_base_seed: u64) -> PopulationProgramContractV1 {
         PopulationProgramContractV1 {
             identity: POPULATION_PROGRAM_IDENTITY_V1.to_owned(),
             package_commit: POPULATION_PACKAGE_COMMIT_V1.to_owned(),
@@ -5353,7 +5423,7 @@ mod tests {
             reward_identity: POPULATION_REWARD_IDENTITY_V1.to_owned(),
             refresh_manifest_identity: POPULATION_REFRESH_MANIFEST_IDENTITY_V1.to_owned(),
             retest_beta_f32_bits: POPULATION_RETEST_BETA_F32_BITS_V1.to_owned(),
-            expected_base_seed: 970_001,
+            expected_base_seed,
             pool_identity: POPULATION_POOL_IDENTITY_V1.to_owned(),
             pool_document_sha256: POPULATION_POOL_DOCUMENT_SHA256_V1.to_owned(),
             parent_source_run_sha256: POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned(),
@@ -5374,6 +5444,10 @@ mod tests {
                 }
             }),
         }
+    }
+
+    fn population_program_fixture() -> PopulationProgramContractV1 {
+        population_program_fixture_for_seed(970_001)
     }
 
     fn population_record() -> TrainRunV2 {
@@ -5409,6 +5483,39 @@ mod tests {
                 .unwrap()
                 .contains("\"population_program_v1\":{")
         );
+    }
+
+    #[test]
+    fn population_program_builder_mints_each_authorized_lineage() {
+        for seed in POPULATION_EXPECTED_BASE_SEEDS_V1 {
+            let bytes = fixture_bytes_with_schedule_and_base_seed_population_environment_v2(
+                crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1::Sequential,
+                64,
+                4,
+                1_536,
+                2,
+                32,
+                16,
+                400,
+                2_000,
+                seed,
+                valid_ladder_pool_fixture(),
+            );
+            let run = decode_train_run_v2(&bytes).unwrap();
+            let population = run
+                .record()
+                .contracts()
+                .population_program_v1
+                .as_ref()
+                .unwrap();
+            assert_eq!(population.expected_base_seed, seed);
+            assert_eq!(run.requested_successful_updates(), 1_536);
+            assert!(run
+                .record()
+                .environment
+                .environment_randomization_v2
+                .is_some());
+        }
     }
 
     #[test]

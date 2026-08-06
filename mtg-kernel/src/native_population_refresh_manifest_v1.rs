@@ -28,6 +28,29 @@ pub(crate) const POPULATION_SLOT_COUNT_V1: usize = 8;
 pub(crate) const POPULATION_WEIGHT_TOTAL_UNITS_V1: u64 = 1_000_000;
 pub(crate) const POPULATION_ROLE_FLOOR_UNITS_V1: u64 = 200_000;
 pub(crate) const POPULATION_POLICY_CAP_UNITS_V1: u64 = 250_000;
+const POPULATION_LINEAGE_SEEDS_V1: [u64; 3] = [970_001, 970_002, 970_003];
+const POPULATION_ANCHOR_BASE_SEEDS_V1: [u64; 2] = [920_012, 920_005];
+const POPULATION_ANCHOR_GENERATIONS_V1: [u64; 2] = [384, 512];
+const POPULATION_ANCHOR_RUN_SHA256S_V1: [&str; 2] = [
+    "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+    "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+];
+const POPULATION_ANCHOR_CHECKPOINT_SHA256S_V1: [&str; 2] = [
+    "4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8",
+    "03f0e226f884f51bf7128f70bec189bd6ac2c8f231ced8886f2cb7d3e936cc90",
+];
+const POPULATION_ANCHOR_SIDECAR_SHA256S_V1: [&str; 2] = [
+    "7511c0377edd4e8d918fa5843f89a0270a8264e5466c329f6b4ef18bbf9e76bb",
+    "c56a8ba1361ab172c669307084c4522ee06ac79e39b7cf4a306f11effe36b031",
+];
+const POPULATION_ANCHOR_STATE_SHA256S_V1: [&str; 2] = [
+    "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99",
+    "2904dd7b899c21234c64925440277dbfa8d6f552d8f620b153bc8d16c44f523a",
+];
+const POPULATION_ANCHOR_MODEL_SHA256S_V1: [&str; 2] = [
+    "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d",
+    "0635d2defb8facd700ede34789434956fc4a2fd3b5058cc2df5dd820398b4c22",
+];
 
 const EXPECTED_ROLES_V1: [&str; POPULATION_SLOT_COUNT_V1] = [
     "anchor-0",
@@ -46,6 +69,7 @@ pub(crate) struct PopulationRefreshSlotV1 {
     slot_index: u64,
     role: String,
     occupant_class: String,
+    source_base_seed: u64,
     source_run_sha256: String,
     source_generation: u64,
     available_by_global_generation: u64,
@@ -114,6 +138,7 @@ impl PopulationRefreshSlotV1 {
         slot_index: u64,
         role: impl Into<String>,
         occupant_class: impl Into<String>,
+        source_base_seed: u64,
         source_run_sha256: impl Into<String>,
         source_generation: u64,
         available_by_global_generation: u64,
@@ -127,6 +152,7 @@ impl PopulationRefreshSlotV1 {
             slot_index,
             role: role.into(),
             occupant_class: occupant_class.into(),
+            source_base_seed,
             source_run_sha256: source_run_sha256.into(),
             source_generation,
             available_by_global_generation,
@@ -148,6 +174,10 @@ impl PopulationRefreshSlotV1 {
 
     pub(crate) const fn weight_units_v1(&self) -> u64 {
         self.weight_units
+    }
+
+    pub(crate) const fn source_base_seed_v1(&self) -> u64 {
+        self.source_base_seed
     }
 }
 
@@ -357,6 +387,7 @@ fn validate_slots_v1(wire: &PopulationRefreshManifestWireV1) -> Result<()> {
                 PopulationRefreshManifestErrorKindV1::InvalidSlots,
             ));
         }
+        validate_slot_assignment_v1(wire, index, slot)?;
         if slot.source_generation > slot.available_by_global_generation
             || slot.available_by_global_generation > wire.availability_generation
         {
@@ -399,6 +430,62 @@ fn validate_slots_v1(wire: &PopulationRefreshManifestWireV1) -> Result<()> {
     Ok(())
 }
 
+fn validate_slot_assignment_v1(
+    wire: &PopulationRefreshManifestWireV1,
+    index: usize,
+    slot: &PopulationRefreshSlotV1,
+) -> Result<()> {
+    let invalid = || {
+        PopulationRefreshManifestErrorV1::new(
+            PopulationRefreshManifestErrorKindV1::InvalidSlots,
+        )
+    };
+    match index {
+        0 | 1 => {
+            if slot.source_base_seed != POPULATION_ANCHOR_BASE_SEEDS_V1[index]
+                || slot.source_generation != POPULATION_ANCHOR_GENERATIONS_V1[index]
+                || slot.source_run_sha256 != POPULATION_ANCHOR_RUN_SHA256S_V1[index]
+                || slot.checkpoint_sha256 != POPULATION_ANCHOR_CHECKPOINT_SHA256S_V1[index]
+                || slot.sidecar_sha256 != POPULATION_ANCHOR_SIDECAR_SHA256S_V1[index]
+                || slot.state_sha256 != POPULATION_ANCHOR_STATE_SHA256S_V1[index]
+                || slot.model_parameter_sha256 != POPULATION_ANCHOR_MODEL_SHA256S_V1[index]
+                || slot.occupant_class != "policy"
+            {
+                return Err(invalid());
+            }
+        }
+        2 | 3 => {
+            let lineage_index = usize::try_from((wire.refresh_index + 2) % 3)
+                .map_err(|_| invalid())?;
+            let lag = if index == 2 { 256 } else { 384 };
+            if slot.source_base_seed != POPULATION_LINEAGE_SEEDS_V1[lineage_index]
+                || slot.source_generation != wire.global_generation.checked_sub(lag).ok_or_else(invalid)?
+                || slot.occupant_class != "policy"
+            {
+                return Err(invalid());
+            }
+        }
+        4 | 5 => {
+            let offset = u64::try_from(index - 4).map_err(|_| invalid())?;
+            let lineage_index = usize::try_from((wire.refresh_index + offset) % 3)
+                .map_err(|_| invalid())?;
+            if slot.source_base_seed != POPULATION_LINEAGE_SEEDS_V1[lineage_index]
+                || slot.source_generation != wire.global_generation
+                || slot.occupant_class != "policy"
+            {
+                return Err(invalid());
+            }
+        }
+        6 | 7 => {
+            if slot.occupant_class == "policy" && slot.source_generation != 256 {
+                return Err(invalid());
+            }
+        }
+        _ => return Err(invalid()),
+    }
+    Ok(())
+}
+
 fn is_sha256_v1(value: &str) -> bool {
     value.len() == 64
         && value
@@ -417,19 +504,69 @@ mod tests {
     }
 
     fn slots_v1(global_generation: u64) -> Vec<PopulationRefreshSlotV1> {
+        let refresh_index = (global_generation - POPULATION_REPLAY_END_GENERATION_V1)
+            / POPULATION_REFRESH_INTERVAL_V1;
         (0..POPULATION_SLOT_COUNT_V1)
             .map(|index| {
+                let (source_base_seed, source_generation, source_run, checkpoint, sidecar, state, model) =
+                    match index {
+                        0 | 1 => (
+                            POPULATION_ANCHOR_BASE_SEEDS_V1[index],
+                            POPULATION_ANCHOR_GENERATIONS_V1[index],
+                            POPULATION_ANCHOR_RUN_SHA256S_V1[index].to_owned(),
+                            POPULATION_ANCHOR_CHECKPOINT_SHA256S_V1[index].to_owned(),
+                            POPULATION_ANCHOR_SIDECAR_SHA256S_V1[index].to_owned(),
+                            POPULATION_ANCHOR_STATE_SHA256S_V1[index].to_owned(),
+                            POPULATION_ANCHOR_MODEL_SHA256S_V1[index].to_owned(),
+                        ),
+                        2 | 3 => {
+                            let lineage = POPULATION_LINEAGE_SEEDS_V1[((refresh_index + 2) % 3) as usize];
+                            let lag = if index == 2 { 256 } else { 384 };
+                            (
+                                lineage,
+                                global_generation - lag,
+                                digest_v1(10 + index),
+                                digest_v1(20 + index),
+                                digest_v1(30 + index),
+                                digest_v1(40 + index),
+                                digest_v1(50 + index),
+                            )
+                        }
+                        4 | 5 => {
+                            let lineage = POPULATION_LINEAGE_SEEDS_V1
+                                [((refresh_index + (index - 4) as u64) % 3) as usize];
+                            (
+                                lineage,
+                                global_generation,
+                                digest_v1(10 + index),
+                                digest_v1(20 + index),
+                                digest_v1(30 + index),
+                                digest_v1(40 + index),
+                                digest_v1(50 + index),
+                            )
+                        }
+                        _ => (
+                            980_000 + index as u64,
+                            256,
+                            digest_v1(10 + index),
+                            digest_v1(20 + index),
+                            digest_v1(30 + index),
+                            digest_v1(40 + index),
+                            digest_v1(50 + index),
+                        ),
+                    };
                 PopulationRefreshSlotV1::new_v1(
                     index as u64,
                     EXPECTED_ROLES_V1[index],
                     "policy",
-                    digest_v1(10 + index),
-                    global_generation.saturating_sub(128),
+                    source_base_seed,
+                    source_run,
+                    source_generation,
                     global_generation,
-                    digest_v1(20 + index),
-                    digest_v1(30 + index),
-                    digest_v1(40 + index),
-                    digest_v1(50 + index),
+                    checkpoint,
+                    sidecar,
+                    state,
+                    model,
                     125_000,
                 )
             })
@@ -464,6 +601,9 @@ mod tests {
         assert_eq!(next.program_update_v1(), 128);
         assert_eq!(next.global_generation_v1(), 640);
         assert_eq!(next.slots_v1().len(), 8);
+        assert_eq!(next.slots_v1()[2].source_base_seed_v1(), 970_001);
+        assert_eq!(next.slots_v1()[4].source_base_seed_v1(), 970_002);
+        assert_eq!(next.slots_v1()[5].source_base_seed_v1(), 970_003);
         assert_eq!(
             decode_population_refresh_manifest_v1(next.canonical_bytes_v1(), Some(&initial))
                 .unwrap()
@@ -533,6 +673,30 @@ mod tests {
                 None
             ),
             PopulationRefreshManifestErrorKindV1::FutureCheckpoint
+        );
+        assert_eq!(
+            mutate_v1(
+                &initial,
+                |value| value["slots"][4]["source_base_seed"] = json!(970_003),
+                None
+            ),
+            PopulationRefreshManifestErrorKindV1::InvalidSlots
+        );
+        assert_eq!(
+            mutate_v1(
+                &initial,
+                |value| value["slots"][2]["source_generation"] = json!(255),
+                None
+            ),
+            PopulationRefreshManifestErrorKindV1::InvalidSlots
+        );
+        assert_eq!(
+            mutate_v1(
+                &initial,
+                |value| value["slots"][0]["checkpoint_sha256"] = json!(digest_v1(99)),
+                None
+            ),
+            PopulationRefreshManifestErrorKindV1::InvalidSlots
         );
     }
 
