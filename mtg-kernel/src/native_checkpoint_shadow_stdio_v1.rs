@@ -158,8 +158,7 @@ const SOURCE_TRAIN_STATE_SHA256_V1: &str =
 const SOURCE_MODEL_PARAMETER_SHA256_V1: &str =
     "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d";
 const SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str = "legacy-v1";
-const POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str =
-    "environment-randomization-v2";
+const POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str = "environment-randomization-v2";
 const SHADOW_RANDOMIZATION_IDENTITY_V1: &str = "legacy_v1";
 
 const PORTABLE_RUN_SHA256_V1: &str =
@@ -310,9 +309,7 @@ fn checkpoint_ref_v1(
         }
         ShadowCheckpointAuthorityV1::PopulationStoreGeneration { root, generation } => {
             stage_ladder_checkpoint_ref_v1(root, *generation).map_err(|_| {
-                ShadowScorerStartupErrorV1::new(
-                    ShadowScorerStartupErrorKindV1::CheckpointAuthority,
-                )
+                ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
             })
         }
         ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { .. } => Ok(fixed(
@@ -2120,13 +2117,24 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             && checkpoint.source_train_state_sha256 == SOURCE_TRAIN_STATE_SHA256_V1
             && checkpoint.loaded_run_sha256 == SOURCE_RUN_SHA256_V1
             && checkpoint.loaded_generation > 0;
+        let verified_population_generation = checkpoint.authority_kind
+            == "population-store-validated-generation"
+            && checkpoint.source_run_sha256 == checkpoint.loaded_run_sha256
+            && checkpoint.source_generation == checkpoint.loaded_generation
+            && checkpoint.source_checkpoint_sha256 == checkpoint.loaded_checkpoint_sha256
+            && checkpoint.source_payload_sha256 == checkpoint.loaded_payload_sha256
+            && checkpoint.source_train_state_sha256 == checkpoint.loaded_train_state_sha256
+            && checkpoint.environment_trajectory_contract
+                == POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1
+            && checkpoint.sampler_identity == FAST_CATEGORICAL_SAMPLER_VERSION
+            && checkpoint.sampler_contract_sha256 == FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256;
         let (schema_version, export_contract, row_checkpoint) = if exact_g384 {
             (
                 XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V1,
                 XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V1,
                 None,
             )
-        } else if verified_outcome_parent {
+        } else if verified_outcome_parent || verified_population_generation {
             (
                 XMAGE_CP7_OUTCOME_JSONL_SCHEMA_VERSION_V2,
                 XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2,
@@ -2135,7 +2143,7 @@ impl XmageCp7OutcomeJsonlWriterV1 {
         } else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "CP7 outcome export requires exact g384 or a verified outcome parent",
+                "CP7 outcome export requires exact g384 or a verified checkpoint authority",
             ));
         };
         Self::from_writer_configured_v1(
@@ -6168,6 +6176,31 @@ mod tests {
             rows[0]["export_contract"],
             XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
         );
+    }
+
+    #[test]
+    fn population_store_outcome_export_uses_verified_v2_contract() {
+        let mut service =
+            ShadowScorerServiceV1::with_test_model_v1(Box::new(FirstActionTestModelV1));
+        service.identity.authority_kind = "population-store-validated-generation".to_owned();
+        service.identity.source_generation = 1024;
+        service.identity.loaded_generation = 1024;
+        service.identity.environment_trajectory_contract =
+            POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1.to_owned();
+        let bytes = SharedBytesV1::default();
+        XmageCp7OutcomeJsonlWriterV1::from_writer_v1(Box::new(bytes.clone()), &service.identity)
+            .unwrap();
+        let rows = outcome_rows_v1(&bytes);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["schema_version"], 2);
+        assert_eq!(rows[0]["checkpoint"]["source_generation"], 1024);
+
+        service.identity.loaded_generation = 1028;
+        assert!(XmageCp7OutcomeJsonlWriterV1::from_writer_v1(
+            Box::new(io::sink()),
+            &service.identity,
+        )
+        .is_err());
     }
 
     #[test]
