@@ -205,7 +205,7 @@ function Stop-ProcessTreeLocal {
         }
         $frontier = $next
     }
-    $ordered = @($descendants)
+    $ordered = $descendants.ToArray()
     [array]::Reverse($ordered)
     foreach ($id in $ordered) {
         Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
@@ -403,12 +403,13 @@ function Wait-H2hBatch {
         }
         $completed = [DateTimeOffset]::UtcNow
         $records = @($Runs | ForEach-Object { Assert-ArmCompletion -Run $_ -ExecutableSha256 $ExecutableSha256 })
+        $sampleArray = $samples.ToArray()
         [ordered]@{
             started_utc = $started.ToString('O')
             completed_utc = $completed.ToString('O')
             wall_seconds = ($completed - $started).TotalSeconds
-            samples = @($samples)
-            resources = Get-ResourceSummaryLocal -Samples @($samples)
+            samples = $sampleArray
+            resources = Get-ResourceSummaryLocal -Samples $sampleArray
             records = $records
         }
     }
@@ -436,10 +437,10 @@ function Invoke-H2hBatch {
         foreach ($arm in @($Arms)) {
             $runs.Add((Start-H2hArm -Arm $arm -Executable $Executable -RunRoot $batchRoot))
         }
-        return Wait-H2hBatch -Runs @($runs) -TimeoutSeconds $TimeoutSeconds -ExecutableSha256 $ExecutableSha256
+        return Wait-H2hBatch -Runs ($runs.ToArray()) -TimeoutSeconds $TimeoutSeconds -ExecutableSha256 $ExecutableSha256
     }
     catch {
-        Stop-H2hRuns -Runs @($runs)
+        Stop-H2hRuns -Runs ($runs.ToArray())
         throw
     }
 }
@@ -571,7 +572,7 @@ function Get-ArmPlan {
     if ($arms.Count -ne 21) {
         throw "full-horizon arm plan has $($arms.Count) arms, expected 21"
     }
-    @($arms)
+    $arms.ToArray()
 }
 
 $phase = 'preflight'

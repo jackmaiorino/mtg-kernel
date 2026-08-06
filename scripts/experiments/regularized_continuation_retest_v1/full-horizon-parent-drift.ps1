@@ -309,7 +309,7 @@ try {
             throw "training Store changed during parent-drift evaluation: $($record.role) seed-$($record.seed)"
         }
     }
-    $resourceSummary = Get-ResourceSummary -Samples @($samples)
+    $resourceSummary = Get-ResourceSummary -Samples ($samples.ToArray())
 
     $phase = 'classification'
     $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
