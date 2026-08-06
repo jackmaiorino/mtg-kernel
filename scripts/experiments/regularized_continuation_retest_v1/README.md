@@ -1,8 +1,9 @@
 # Regularized continuation retest v1 gates
 
-These scripts implement the first four ordered gates. Gates 1 through 3 do not
-interpret gameplay outcomes. Gate 4 is the predeclared gross-safety terminal
-comparison and runs only after Gate 3 selects a coefficient.
+These scripts implement the ordered gates through full-horizon training. Gates
+1 through 3 do not interpret gameplay outcomes. Gate 4 is the predeclared
+gross-safety terminal comparison and runs only after Gate 3 selects a
+coefficient. Full-horizon training runs only after Gate 4 passes.
 Run them from the repository root after the native implementation is ready:
 
 ```powershell
@@ -10,6 +11,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regulari
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/throughput-screen.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/coefficient-screen.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/gross-safety.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/full-horizon-training.ps1
 ```
 
 The identity gate builds the exact original macro commit and the clean candidate
@@ -44,6 +46,15 @@ seed `1942001`. Both terminal streams must complete before either is parsed.
 The terminal-order classifier requires selected-minus-control net at least
 `-26` overall and `-18` in each selected seat. Failure is the frozen
 `GROSS-SAFETY-STOP`; it cannot select another beta.
+
+The full-horizon controller binds the exact selected training executable and
+the passed coefficient, gross-safety, and deterministic throughput manifests.
+It trains beta `0.1` on seeds `970001` and `970002` concurrently on GPUs 0 and
+1, then seed `970003` on GPU 1. Each create-new candidate Store must finish at
+generation and Adam step 512 with 32,768 natural episodes and checkpoints 64,
+128, 256, 384, and 512. The immutable original beta-zero Stores are recorded as
+matched controls. Training completion does not read terminal outcomes and is
+not playing-strength evidence.
 
 Both gates bind the base commit, clean candidate commit, original `2/32/16`
 topology, revealed preflight seed `969999`, Pool3 generation-384 inputs,

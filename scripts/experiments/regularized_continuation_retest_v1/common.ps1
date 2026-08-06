@@ -574,9 +574,7 @@ function Wait-NativeLane {
         $samples.Add((Get-ResourceSample))
     }
     catch {
-        if (-not $Lane.process.HasExited) {
-            Stop-Process -Id $Lane.process.Id -Force -ErrorAction SilentlyContinue
-        }
+        Stop-NativeLane -Lane $Lane
         throw
     }
     $verifiedCompletion = Get-VerifiedNativeLaneCompletion -Lane $Lane -ProcessId $Lane.process.Id
@@ -597,10 +595,39 @@ function Wait-NativeLane {
     }
 }
 
+function Stop-ProcessTree {
+    param(
+        [Parameter(Mandatory = $true)][int]$RootProcessId,
+        [switch]$SkipRoot
+    )
+    $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $descendants = New-Object System.Collections.Generic.List[int]
+    $frontier = @($RootProcessId)
+    while ($frontier.Count -ne 0) {
+        $next = @()
+        foreach ($parent in $frontier) {
+            foreach ($child in @($all | Where-Object { [int]$_.ParentProcessId -eq $parent })) {
+                $childId = [int]$child.ProcessId
+                $descendants.Add($childId)
+                $next += $childId
+            }
+        }
+        $frontier = $next
+    }
+    $ordered = @($descendants)
+    [array]::Reverse($ordered)
+    foreach ($processId in $ordered) {
+        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+    }
+    if (-not $SkipRoot) {
+        Stop-Process -Id $RootProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Stop-NativeLane {
     param($Lane)
-    if ($null -ne $Lane -and -not $Lane.process.HasExited) {
-        Stop-Process -Id $Lane.process.Id -Force -ErrorAction SilentlyContinue
+    if ($null -ne $Lane) {
+        Stop-ProcessTree -RootProcessId ([int]$Lane.process.Id) -SkipRoot:$Lane.process.HasExited
     }
 }
 
@@ -641,9 +668,15 @@ function New-UniqueAttemptRoot {
     New-Item -ItemType Directory -Force -Path $gateRoot | Out-Null
     for ($attempt = 1; $attempt -le 999; $attempt++) {
         $candidate = Join-Path $gateRoot ('attempt-{0:d3}' -f $attempt)
-        if (-not (Test-Path -LiteralPath $candidate)) {
-            New-Item -ItemType Directory -Path $candidate | Out-Null
+        try {
+            New-Item -ItemType Directory -Path $candidate -ErrorAction Stop | Out-Null
             return $candidate
+        }
+        catch {
+            if (Test-Path -LiteralPath $candidate -PathType Container) {
+                continue
+            }
+            throw
         }
     }
     throw "no free attempt directory remains under $gateRoot"
