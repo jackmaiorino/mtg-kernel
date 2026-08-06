@@ -149,7 +149,8 @@ def load_store_identity(root: Path, generation: int) -> dict[str, Any]:
         or latest.get("schema") != "mtg_kernel_native_train_latest/v2"
         or checkpoint.get("generation_index") != generation
         or sidecar.get("generation_index") != generation
-        or latest.get("generation_index") != generation
+        or not _plain_int(latest.get("generation_index"))
+        or latest["generation_index"] < generation
     ):
         fail("population Store schema or generation mismatch")
     payload = checkpoint.get("payload")
@@ -202,6 +203,7 @@ def load_store_identity(root: Path, generation: int) -> dict[str, Any]:
             "run_json_sha256": run_sha, "checkpoint_json_sha256": checkpoint_sha,
             "sidecar_json_sha256": sidecar_sha, "state_payload_sha256": state_sha,
             "identity_bundle_sha256": checkpoint["identity_bundle_sha256"],
+            "store_head_generation": latest["generation_index"],
         },
         "payload": {
             "byte_count": payload["byte_count"],
@@ -676,9 +678,10 @@ def self_test() -> int:
                    "model_parameter_sha256": "5" * 64}
         write_json(root / "checkpoints" / "update-00001024.sidecar.json", sidecar)
         (root / "checkpoints" / "update-00001024.state.f32le").write_bytes(state)
-        write_json(root / "latest.json", {"schema": "mtg_kernel_native_train_latest/v2", "generation_index": generation, "run_sha256": run_sha, "identity_bundle_sha256": "a" * 64})
+        write_json(root / "latest.json", {"schema": "mtg_kernel_native_train_latest/v2", "generation_index": generation + 4, "run_sha256": run_sha, "identity_bundle_sha256": "a" * 64})
         identity = load_store_identity(root, generation)
         assert identity["checkpoint"]["loaded_generation"] == generation
+        assert identity["store_files"]["store_head_generation"] == generation + 4
         try:
             load_store_identity(root, generation + 4)
             raise AssertionError("missing generation was accepted")
@@ -689,7 +692,7 @@ def self_test() -> int:
             {"label": "a", "by_seat": {"p0": "draw", "p1": "draw"}},
         ], ["a"])
         assert aggregate["a"]["overall_wdl"] == {"win": 1, "draw": 2, "loss": 1}
-    print("PASS population Store identity and stale-generation rejection")
+    print("PASS retained population Store generation and missing-generation rejection")
     return 0
 
 
