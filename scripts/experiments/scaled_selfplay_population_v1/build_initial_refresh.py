@@ -57,7 +57,14 @@ def load_json(path: Path) -> dict:
         return json.load(stream)
 
 
-def slot(root: Path, seed: int, generation: int, role: str, occupant: str) -> dict:
+def slot(
+    root: Path,
+    seed: int,
+    generation: int,
+    role: str,
+    occupant: str,
+    availability_generation: int = 512,
+) -> dict:
     prefix = root / "checkpoints" / f"update-{generation:08d}"
     run_path = root / "run.json"
     checkpoint_path = Path(f"{prefix}.checkpoint.json")
@@ -73,7 +80,7 @@ def slot(root: Path, seed: int, generation: int, role: str, occupant: str) -> di
     if checkpoint.get("generation_index") != generation:
         raise ValueError(f"generation mismatch for {checkpoint_path}")
     return {
-        "available_by_global_generation": 512,
+        "available_by_global_generation": availability_generation,
         "checkpoint_sha256": sha256_file(checkpoint_path),
         "model_parameter_sha256": checkpoint["train_state"]["model_parameter_sha256"],
         "occupant_class": occupant,
