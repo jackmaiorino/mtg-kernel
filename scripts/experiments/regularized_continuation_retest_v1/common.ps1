@@ -580,6 +580,7 @@ function Wait-NativeLane {
     $verifiedCompletion = Get-VerifiedNativeLaneCompletion -Lane $Lane -ProcessId $Lane.process.Id
     $finished = [DateTimeOffset]::UtcNow
     return [ordered]@{
+        seed = [uint64]$Lane.seed
         gpu_ordinal = $Lane.gpu_ordinal
         store_parent = $Lane.store_parent
         log = $Lane.log
