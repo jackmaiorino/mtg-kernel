@@ -20,7 +20,6 @@ from run_payoff_evaluation import (
 
 
 PAIR_COUNT = 1024
-EVALUATION_SEED = 768_300_001
 
 
 def checkpoint_slot(root: Path, seed: int, generation: int, role: str) -> dict:
@@ -53,13 +52,13 @@ def checkpoint_slot(root: Path, seed: int, generation: int, role: str) -> dict:
     }
 
 
-def arm_spec(label: str, candidate_index: int) -> dict:
+def arm_spec(label: str, candidate_index: int, evaluation_seed: int) -> dict:
     return {
         "label": label,
         "candidate_index": candidate_index,
         "opponent_index": 3,
         "pair_count": PAIR_COUNT,
-        "evaluation_seed": EVALUATION_SEED,
+        "evaluation_seed": evaluation_seed,
     }
 
 
@@ -102,6 +101,7 @@ def main() -> int:
     parser.add_argument("--promoted-2", required=True, type=Path)
     parser.add_argument("--screen-manifest", required=True, type=Path)
     parser.add_argument("--prerequisite-interval", required=True, type=Path)
+    parser.add_argument("--global-generation", required=True, type=int)
     parser.add_argument("--evidence-root", required=True, type=Path)
     args = parser.parse_args()
 
@@ -109,25 +109,34 @@ def main() -> int:
     executable = args.executable.resolve()
     screen = load_json(args.screen_manifest)
     prerequisite = load_json(args.prerequisite_interval)
+    global_generation = args.global_generation
+    if global_generation < 512 or (global_generation - 512) % 128 != 0:
+        raise ValueError("global generation is not a population refresh boundary")
+    program_update = global_generation - 512
+    evaluation_seed = global_generation * 1_000_000 + 300_001
     if (
         screen.get("passed") is not True
         or screen["selected_concurrency"] != 4
         or screen["executable"]["sha256"] != sha256_file(executable)
-        or prerequisite.get("disposition") != "INTERVAL-0768-COMPLETE"
+        or prerequisite.get("disposition")
+        != f"INTERVAL-{global_generation:04d}-COMPLETE"
     ):
         raise ValueError("anchor read prerequisites do not pass")
     slots = [
-        checkpoint_slot(args.seed_970001, 970001, 768, "lineage-970001"),
-        checkpoint_slot(args.seed_970002, 970002, 768, "lineage-970002"),
-        checkpoint_slot(args.seed_970003, 970003, 768, "lineage-970003"),
+        checkpoint_slot(args.seed_970001, 970001, global_generation, "lineage-970001"),
+        checkpoint_slot(args.seed_970002, 970002, global_generation, "lineage-970002"),
+        checkpoint_slot(args.seed_970003, 970003, global_generation, "lineage-970003"),
         checkpoint_slot(args.promoted_2, 920012, 384, "promoted-2-control"),
     ]
-    root = unique_attempt_root(args.evidence_root.resolve(), "native-anchor-read-generation-0768")
+    root = unique_attempt_root(
+        args.evidence_root.resolve(),
+        f"native-anchor-read-generation-{global_generation:04d}",
+    )
     specs = [
-        arm_spec("lineage-970001", 0),
-        arm_spec("lineage-970002", 1),
-        arm_spec("lineage-970003", 2),
-        arm_spec("shared-control", 3),
+        arm_spec("lineage-970001", 0, evaluation_seed),
+        arm_spec("lineage-970002", 1, evaluation_seed),
+        arm_spec("lineage-970003", 2, evaluation_seed),
+        arm_spec("shared-control", 3, evaluation_seed),
     ]
     context = {
         "git": git_record(repo_root, args.executable_source_commit),
@@ -135,10 +144,10 @@ def main() -> int:
         "executable": {**file_record(executable), "source_commit": args.executable_source_commit},
         "screen": file_record(args.screen_manifest),
         "prerequisite_interval": file_record(args.prerequisite_interval),
-        "global_generation": 768,
-        "program_update": 256,
+        "global_generation": global_generation,
+        "program_update": program_update,
         "pair_count_per_arm": PAIR_COUNT,
-        "evaluation_seed": EVALUATION_SEED,
+        "evaluation_seed": evaluation_seed,
         "concurrency": 4,
         "gpu_ordinal": "not-used; native head-to-head inference is CPU-resident",
         "terminal_reward_only": True,
@@ -169,8 +178,8 @@ def main() -> int:
     ]
     result = {
         "schema": "scaled-selfplay-native-anchor-read-result/v1",
-        "global_generation": 768,
-        "program_update": 256,
+        "global_generation": global_generation,
+        "program_update": program_update,
         "pair_count_per_arm": PAIR_COUNT,
         "total_game_count": 8192,
         "all_natural": True,
@@ -183,7 +192,7 @@ def main() -> int:
     manifest = {
         "schema": "scaled-selfplay-native-anchor-read-execution/v1",
         "passed": True,
-        "disposition": "NATIVE-ANCHOR-READ-0768-COMPLETE",
+        "disposition": f"NATIVE-ANCHOR-READ-{global_generation:04d}-COMPLETE",
         "plan": file_record(plan_path),
         "result": file_record(result_path),
         "wall_seconds": wall_seconds,
