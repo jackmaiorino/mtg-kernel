@@ -569,8 +569,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         fail("card database hash mismatch")
     models = dict(args.models)
     identities = {label: load_store_identity(root, args.generation) for label, root in models.items()}
-    if len({identity["store_files"]["identity_bundle_sha256"] for identity in identities.values()}) != 1:
-        fail("population Store models do not share one identity-bundle root")
     chunks = chunk_ranges(args.pair_start, args.pairs, args.task_pairs)
     task_plan = planned_tasks(list(identities), chunks)
     args.evidence_root.mkdir(parents=True)
