@@ -123,6 +123,9 @@ pub(crate) mod native_ladder_opponent_v1;
 // not wired into the trainer, rollout, science loop, or Store yet.
 #[allow(dead_code)]
 pub(crate) mod native_population_opponent_v1;
+// Canonical hash-linked authority for each eight-slot population refresh.
+#[allow(dead_code)]
+pub(crate) mod native_population_refresh_manifest_v1;
 // Pool resolution loader: an OpponentLadderPoolContractV1's checkpoint refs
 // plus a base directory per ref -> validated NativeCheckpointInferenceV1
 // handles ready for LadderOpponentEngineV1::new_v1 (Self-Play Ladder Design
