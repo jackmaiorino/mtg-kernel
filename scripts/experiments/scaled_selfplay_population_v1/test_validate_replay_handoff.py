@@ -25,22 +25,34 @@ def valid_manifest() -> dict:
         "retest_formal_manifest_sha256": RETEST_FORMAL_MANIFEST_SHA256,
         "retest_disposition": RETEST_DISPOSITION,
     }
-    return {
+    manifest = {
         "schema": INPUT_SCHEMA,
         "global_target_generation": 1536,
         "replay_end_generation": 512,
         "program_updates": 1024,
         "terminal_outcomes_read": False,
         "authorities": authorities,
-        "lineages": [
-            {
-                "seed": seed,
-                "expected": copy.deepcopy(EXPECTED_LINEAGES[seed]),
-                "observed": copy.deepcopy(EXPECTED_LINEAGES[seed]),
-            }
-            for seed in SEEDS
-        ],
+        "lineages": [],
     }
+    for ordinal, seed in enumerate(SEEDS):
+        source = copy.deepcopy(EXPECTED_LINEAGES[seed])
+        observed = {
+            "store_root": rf"D:\mtg-kernel-scaled-selfplay-v1\seed-{seed}\store",
+            "store_tree_sha256": f"{100 + ordinal:064x}",
+            "run_sha256": f"{110 + ordinal:064x}",
+            "checkpoint_sha256": f"{120 + ordinal:064x}",
+            "sidecar_sha256": f"{130 + ordinal:064x}",
+            "native_state_sha256": source["native_state_sha256"],
+            "model_parameter_sha256": source["model_parameter_sha256"],
+            "bound_source_store_tree_sha256": source["store_tree_sha256"],
+            "bound_source_run_sha256": source["run_sha256"],
+            "bound_retest_manifest_sha256": RETEST_FORMAL_MANIFEST_SHA256,
+            "adam_step": 512,
+            "generation": 512,
+            "progress": copy.deepcopy(source["progress"]),
+        }
+        manifest["lineages"].append({"seed": seed, "source": source, "successor": observed})
+    return manifest
 
 
 class ReplayHandoffValidationTests(unittest.TestCase):
@@ -61,11 +73,12 @@ class ReplayHandoffValidationTests(unittest.TestCase):
                          '"replay_end_generation":512,"schema":"mtg-kernel-scaled-selfplay-replay-handoff-validation/v1",'
                          '"seeds":[970001,970002,970003]}')
 
-    def test_outcome_payload_is_not_parsed(self) -> None:
+    def test_outcome_payload_is_rejected_without_parsing(self) -> None:
         manifest = valid_manifest()
         manifest["terminal_outcomes"] = {"not_a_supported_outcome": object()}
         result = validate_manifest(manifest)
-        self.assertEqual(result["disposition"], "ADVANCE")
+        self.assertEqual(result["disposition"], "FAIL-INVESTIGATE")
+        self.assertFalse(result["continuation_authorized"])
 
     def test_corruption_matrix_fails_closed(self) -> None:
         mutations = [
@@ -78,14 +91,14 @@ class ReplayHandoffValidationTests(unittest.TestCase):
             ("retest authority", lambda m: m["authorities"].update(retest_formal_manifest_sha256="0" * 64)),
             ("missing seed", lambda m: m["lineages"].pop()),
             ("extra seed", lambda m: m["lineages"].append(copy.deepcopy(m["lineages"][0]))),
-            ("store tree", lambda m: m["lineages"][0]["observed"].update(store_tree_sha256="0" * 64)),
-            ("checkpoint", lambda m: m["lineages"][1]["observed"].update(checkpoint_sha256="0" * 64)),
-            ("sidecar", lambda m: m["lineages"][2]["observed"].update(sidecar_sha256="0" * 64)),
-            ("native state", lambda m: m["lineages"][0]["observed"].update(native_state_sha256="0" * 64)),
-            ("model digest", lambda m: m["lineages"][1]["observed"].update(model_parameter_sha256="0" * 64)),
-            ("Adam step", lambda m: m["lineages"][2]["observed"].update(adam_step=511)),
-            ("generation", lambda m: m["lineages"][0]["observed"].update(generation=511)),
-            ("progress", lambda m: m["lineages"][1]["observed"]["progress"].update(next_episode_index=32767)),
+            ("store tree binding", lambda m: m["lineages"][0]["successor"].update(bound_source_store_tree_sha256="0" * 64)),
+            ("checkpoint shape", lambda m: m["lineages"][1]["successor"].update(checkpoint_sha256="x" * 64)),
+            ("sidecar shape", lambda m: m["lineages"][2]["successor"].update(sidecar_sha256="x" * 64)),
+            ("native state", lambda m: m["lineages"][0]["successor"].update(native_state_sha256="0" * 64)),
+            ("model digest", lambda m: m["lineages"][1]["successor"].update(model_parameter_sha256="0" * 64)),
+            ("Adam step", lambda m: m["lineages"][2]["successor"].update(adam_step=511)),
+            ("generation", lambda m: m["lineages"][0]["successor"].update(generation=511)),
+            ("progress", lambda m: m["lineages"][1]["successor"]["progress"].update(next_episode_index=32767)),
         ]
         for name, mutate in mutations:
             with self.subTest(name=name):
@@ -98,11 +111,11 @@ class ReplayHandoffValidationTests(unittest.TestCase):
 
     def test_one_bad_lineage_blocks_all_three(self) -> None:
         manifest = valid_manifest()
-        manifest["lineages"][1]["observed"]["native_state_sha256"] = "0" * 64
+        manifest["lineages"][1]["successor"]["native_state_sha256"] = "0" * 64
         result = validate_manifest(manifest)
         self.assertEqual(result["disposition"], "FAIL-INVESTIGATE")
         self.assertFalse(result["continuation_authorized"])
-        self.assertTrue(any("lineages[1].observed.native_state_sha256" in error for error in result["errors"]))
+        self.assertTrue(any("lineages[1].successor.native_state_sha256" in error for error in result["errors"]))
 
 
 if __name__ == "__main__":

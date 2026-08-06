@@ -23,10 +23,19 @@ RETEST_DISPOSITION = "ADVANCE"
 SEEDS = (970001, 970002, 970003)
 
 
-def _lineage(store_root: str, tree: str, checkpoint: str, sidecar: str, native: str, model: str) -> dict[str, Any]:
+def _lineage(
+    store_root: str,
+    tree: str,
+    run: str,
+    checkpoint: str,
+    sidecar: str,
+    native: str,
+    model: str,
+) -> dict[str, Any]:
     return {
         "store_root": store_root,
         "store_tree_sha256": tree,
+        "run_sha256": run,
         "checkpoint_sha256": checkpoint,
         "sidecar_sha256": sidecar,
         "native_state_sha256": native,
@@ -46,6 +55,7 @@ EXPECTED_LINEAGES = {
         r"D:\mtg-kernel-regularized-continuation-retest-v1\development\full-horizon-training"
         r"\attempt-003\wave-00-seed-970001-gpu0\run-0\store",
         "2d6650f111cebcb8e87271fb3446127306e2c4006da793c45a7aec5d80c7780e",
+        "2307caf5a0093bf3f6f9d3673788eac1d73bcd248bfb6fcb3af785a596304cab",
         "21f95221663a7a064d4d5935d19c95dc108a84085513524f48def0b0da21a2bc",
         "2ee82c53afb9c4cd8343ca67411d9a0b5db800215688f809a08a44c8016953a5",
         "e2e3fdb4216a013fdb043bcb90f33f590d5f7d72a77b5999c423919da3ae3b85",
@@ -55,6 +65,7 @@ EXPECTED_LINEAGES = {
         r"D:\mtg-kernel-regularized-continuation-retest-v1\development\full-horizon-training"
         r"\attempt-003\wave-00-seed-970002-gpu1\run-0\store",
         "bcecb18db197a5ef14c8512642a3f15191f7dd05e389c02c129853c9496deda7",
+        "fdbd65dca0660afe1156f4dff49204325064802e7d44606eb44b7529db528ce1",
         "c3aa704e7670c158da82ad4602a20bcec3240f275ecb7aac9ca42fb341f482df",
         "16c834b632e99589c5970dc52164ea12647f954e43e7bfe61b5d4d767133b9aa",
         "304053bdc96ef094d97506f5605fc599aae045c770cbd6fa7efcebfccc9069b6",
@@ -64,6 +75,7 @@ EXPECTED_LINEAGES = {
         r"D:\mtg-kernel-regularized-continuation-retest-v1\development\full-horizon-training"
         r"\attempt-003\wave-01-seed-970003-gpu1\run-0\store",
         "1a1bdb75099b50b4d250d3e03ab6d882718f017e2c6d715bc8a67d3022b627ec",
+        "9a1c417e6990c54929481f5eee19cf0f9f8d816fa72a3e3a575fdde603364295",
         "814583b210191bc00ec1cf5f485eb6b83ffce2d4c2e632b87874d64e3b62cb3e",
         "50108e3751ab52b6432903cac0b57addb747e287e41bc83f57e0bf9110149788",
         "b3a8811923533bda7b1a8d2dbfa0b5b8ec187b1d40a7029d348a0dabbb04dbc3",
@@ -106,26 +118,68 @@ def _check_exact(document: Mapping[str, Any], key: str, expected: Any, errors: l
         errors.append(f"{key} must equal {expected!r}")
 
 
-def _check_record(record: Any, expected: Mapping[str, Any], label: str, errors: list[str]) -> None:
+def _check_exact_keys(record: Mapping[str, Any], expected: set[str], label: str, errors: list[str]) -> None:
+    actual = set(record)
+    if actual != expected:
+        errors.append(f"{label} keys must be exactly {sorted(expected)!r}")
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
+def _check_source(record: Any, expected: Mapping[str, Any], label: str, errors: list[str]) -> None:
     if not isinstance(record, Mapping):
         errors.append(f"{label} must be an object")
         return
-    for key in (
+    _check_exact_keys(record, set(expected), label, errors)
+    for key, value in expected.items():
+        if record.get(key) != value:
+            errors.append(f"{label}.{key} does not match audited provenance")
+
+
+def _check_successor(record: Any, expected: Mapping[str, Any], label: str, errors: list[str]) -> None:
+    keys = {
         "store_root",
         "store_tree_sha256",
+        "run_sha256",
         "checkpoint_sha256",
         "sidecar_sha256",
         "native_state_sha256",
         "model_parameter_sha256",
+        "bound_source_store_tree_sha256",
+        "bound_source_run_sha256",
+        "bound_retest_manifest_sha256",
         "adam_step",
         "generation",
         "progress",
-    ):
-        if key not in record:
-            errors.append(f"{label}.{key} is missing")
-            continue
-        if record[key] != expected[key]:
-            errors.append(f"{label}.{key} does not match audited provenance")
+    }
+    if not isinstance(record, Mapping):
+        errors.append(f"{label} must be an object")
+        return
+    _check_exact_keys(record, keys, label, errors)
+    for key in ("store_tree_sha256", "run_sha256", "checkpoint_sha256", "sidecar_sha256"):
+        if not _is_sha256(record.get(key)):
+            errors.append(f"{label}.{key} must be lowercase SHA-256")
+    if not isinstance(record.get("store_root"), str) or not record["store_root"]:
+        errors.append(f"{label}.store_root must be a nonempty string")
+    if record.get("store_root") == expected["store_root"]:
+        errors.append(f"{label}.store_root must name the successor Store")
+    if record.get("store_tree_sha256") == expected["store_tree_sha256"]:
+        errors.append(f"{label}.store_tree_sha256 must not reuse the source Store tree")
+    exact = {
+        "native_state_sha256": expected["native_state_sha256"],
+        "model_parameter_sha256": expected["model_parameter_sha256"],
+        "bound_source_store_tree_sha256": expected["store_tree_sha256"],
+        "bound_source_run_sha256": expected["run_sha256"],
+        "bound_retest_manifest_sha256": RETEST_FORMAL_MANIFEST_SHA256,
+        "adam_step": 512,
+        "generation": 512,
+        "progress": expected["progress"],
+    }
+    for key, value in exact.items():
+        if record.get(key) != value:
+            errors.append(f"{label}.{key} does not match the handoff contract")
 
 
 def validate_manifest(document: Any) -> dict[str, Any]:
@@ -140,6 +194,20 @@ def validate_manifest(document: Any) -> dict[str, Any]:
         }
 
     errors: list[str] = []
+    _check_exact_keys(
+        document,
+        {
+            "schema",
+            "global_target_generation",
+            "replay_end_generation",
+            "program_updates",
+            "terminal_outcomes_read",
+            "authorities",
+            "lineages",
+        },
+        "manifest",
+        errors,
+    )
     _check_exact(document, "schema", INPUT_SCHEMA, errors)
     _check_exact(document, "global_target_generation", 1536, errors)
     _check_exact(document, "replay_end_generation", 512, errors)
@@ -157,6 +225,7 @@ def validate_manifest(document: Any) -> dict[str, Any]:
             "retest_formal_manifest_sha256": RETEST_FORMAL_MANIFEST_SHA256,
             "retest_disposition": RETEST_DISPOSITION,
         }
+        _check_exact_keys(authorities, set(authority_values), "authorities", errors)
         for key, expected in authority_values.items():
             if authorities.get(key) != expected:
                 errors.append(f"authorities.{key} does not match bound authority")
@@ -183,8 +252,9 @@ def validate_manifest(document: Any) -> dict[str, Any]:
         if expected is None:
             errors.append(f"{label}.seed {seed} is not one of {SEEDS}")
             continue
-        _check_record(lineage.get("expected"), expected, f"{label}.expected", errors)
-        _check_record(lineage.get("observed"), expected, f"{label}.observed", errors)
+        _check_exact_keys(lineage, {"seed", "source", "successor"}, label, errors)
+        _check_source(lineage.get("source"), expected, f"{label}.source", errors)
+        _check_successor(lineage.get("successor"), expected, f"{label}.successor", errors)
 
     if sorted(seen) != list(SEEDS):
         errors.append(f"lineage seeds must be exactly {SEEDS}")
