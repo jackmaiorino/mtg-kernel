@@ -2333,6 +2333,20 @@ fn validate_population_program_v1(record: &TrainRunV2) -> Result<()> {
         || record.environment.environment_randomization_v2.is_none()
         || record.contracts.opponent_policy.identity != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
         || record.contracts.opponent_ladder_pool.is_none()
+        || record
+            .contracts
+            .opponent_ladder_initialization
+            .as_ref()
+            .is_none_or(|initialization| {
+                initialization.source_run_sha256 != POPULATION_PARENT_SOURCE_RUN_SHA256_V1
+                    || initialization.generation != POPULATION_PARENT_GENERATION_V1
+                    || initialization.checkpoint_sha256
+                        != POPULATION_PARENT_CHECKPOINT_SHA256_V1
+                    || initialization.sidecar_sha256 != POPULATION_PARENT_SIDECAR_SHA256_V1
+                    || initialization.state_sha256 != POPULATION_PARENT_STATE_SHA256_V1
+                    || initialization.derived_model_parameter_sha256
+                        != POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1
+            })
         || !POPULATION_EXPECTED_BASE_SEEDS_V1.contains(&program.expected_base_seed)
         || program.expected_base_seed != record.schedule.base_seed
         || record.schedule.batch_episodes != 64
@@ -3126,6 +3140,7 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_population_environm
     max_policy_steps: u64,
     base_seed: u64,
     pool: OpponentLadderPoolContractV1,
+    initialization: OpponentLadderInitializationContractV1,
 ) -> Vec<u8> {
     tests::fixture_bytes_with_schedule_and_base_seed_population_environment_v2(
         backend,
@@ -3139,6 +3154,7 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_population_environm
         max_policy_steps,
         base_seed,
         pool,
+        initialization,
     )
 }
 
@@ -4431,8 +4447,9 @@ mod tests {
         max_policy_steps: u64,
         base_seed: u64,
         pool: OpponentLadderPoolContractV1,
+        initialization: OpponentLadderInitializationContractV1,
     ) -> Vec<u8> {
-        let base = fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
+        let base = fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
             backend,
             batch_episodes,
             checkpoint_segment_updates,
@@ -4444,6 +4461,7 @@ mod tests {
             max_policy_steps,
             base_seed,
             pool,
+            initialization,
         );
         let wire: TrainRunWireV2 = serde_json::from_slice(&base).unwrap();
         let mut record = TrainRunV2::from(wire);
@@ -5450,6 +5468,17 @@ mod tests {
         population_program_fixture_for_seed(970_001)
     }
 
+    fn population_parent_initialization_fixture() -> OpponentLadderInitializationContractV1 {
+        OpponentLadderInitializationContractV1 {
+            source_run_sha256: POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned(),
+            generation: POPULATION_PARENT_GENERATION_V1,
+            checkpoint_sha256: POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned(),
+            sidecar_sha256: POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned(),
+            state_sha256: POPULATION_PARENT_STATE_SHA256_V1.to_owned(),
+            derived_model_parameter_sha256: POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1.to_owned(),
+        }
+    }
+
     fn population_record() -> TrainRunV2 {
         let mut record = coherent_v2_record();
         record.schedule.base_seed = 970_001;
@@ -5461,6 +5490,8 @@ mod tests {
         record.contracts.opponent_policy.model_rule =
             FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
         record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
+        record.contracts.opponent_ladder_initialization =
+            Some(population_parent_initialization_fixture());
         record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
         record.contracts.population_program_v1 = Some(population_program_fixture());
         refresh_derived(&mut record);
@@ -5500,6 +5531,7 @@ mod tests {
                 2_000,
                 seed,
                 valid_ladder_pool_fixture(),
+                population_parent_initialization_fixture(),
             );
             let run = decode_train_run_v2(&bytes).unwrap();
             let population = run
@@ -5642,6 +5674,11 @@ mod tests {
         no_ladder.contracts.opponent_schedule_v2 = None;
         refresh_derived(&mut no_ladder);
         assert!(validate_train_run_record_v2(no_ladder).is_err());
+
+        let mut no_initialization = population_record();
+        no_initialization.contracts.opponent_ladder_initialization = None;
+        refresh_derived(&mut no_initialization);
+        assert!(validate_train_run_record_v2(no_initialization).is_err());
     }
 
     #[test]
