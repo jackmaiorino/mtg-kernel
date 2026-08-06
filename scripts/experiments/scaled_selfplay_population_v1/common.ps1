@@ -172,7 +172,7 @@ function Get-ScaledEndpointRecord {
         checkpoint_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prefix.checkpoint.json").Hash.ToLowerInvariant()
         sidecar_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prefix.sidecar.json").Hash.ToLowerInvariant()
         state_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prefix.state.f32le").Hash.ToLowerInvariant()
-        model_parameter_sha256 = [string]$checkpoint.model_parameter_sha256
+        model_parameter_sha256 = [string]$checkpoint.train_state.model_parameter_sha256
         adam_step = [uint64]$checkpoint.train_state.adam_step
         completed_episode_count = [uint64]$checkpoint.progress.completed_episode_count
     }
