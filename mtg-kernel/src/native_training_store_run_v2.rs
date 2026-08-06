@@ -316,13 +316,25 @@ const POPULATION_REPLAY_END_GENERATION_V1: u64 = 512;
 const POPULATION_PROGRAM_UPDATE_COUNT_V1: u64 = 1_024;
 const POPULATION_REFRESH_INTERVAL_V1: u64 = 128;
 const POPULATION_SLOT_COUNT_V1: u64 = 8;
-const POPULATION_REWARD_IDENTITY_V1: &str = FROZEN_LOSS_IDENTITY_V2;
+const POPULATION_REWARD_IDENTITY_V1: &str =
+    "terminal-wdl-win-plus-one-draw-zero-loss-minus-one/v1";
 const POPULATION_REFRESH_MANIFEST_IDENTITY_V1: &str =
     "mtg-kernel-native-scaled-selfplay-refresh-manifest/v1";
 const POPULATION_RETEST_BETA_F32_BITS_V1: &str = "3dcccccd";
-const POPULATION_POOL_IDENTITY_V1: &str = "Pool3";
+const POPULATION_POOL_IDENTITY_V1: &str = FROZEN_LADDER_POOL_IDENTITY_V2;
 const POPULATION_POOL_DOCUMENT_SHA256_V1: &str =
     "6c3c8ff09ab519dc9f462b41cbf898da902d230656d14e64d79fc66a19f3bc71";
+const POPULATION_PARENT_SOURCE_RUN_SHA256_V1: &str =
+    "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae";
+const POPULATION_PARENT_GENERATION_V1: u64 = 384;
+const POPULATION_PARENT_CHECKPOINT_SHA256_V1: &str =
+    "4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8";
+const POPULATION_PARENT_SIDECAR_SHA256_V1: &str =
+    "7511c0377edd4e8d918fa5843f89a0270a8264e5466c329f6b4ef18bbf9e76bb";
+const POPULATION_PARENT_STATE_SHA256_V1: &str =
+    "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99";
+const POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1: &str =
+    "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d";
 const POPULATION_EXPECTED_BASE_SEEDS_V1: [u64; 3] = [970_001, 970_002, 970_003];
 
 const POPULATION_SOURCE_LINEAGES_V1: [(u64, &str, &str, &str, &str, &str, &str); 3] = [
@@ -751,6 +763,12 @@ pub struct PopulationProgramContractV1 {
     pub(crate) expected_base_seed: u64,
     pub(crate) pool_identity: String,
     pub(crate) pool_document_sha256: String,
+    pub(crate) parent_source_run_sha256: String,
+    pub(crate) parent_generation: u64,
+    pub(crate) parent_checkpoint_sha256: String,
+    pub(crate) parent_sidecar_sha256: String,
+    pub(crate) parent_state_sha256: String,
+    pub(crate) parent_model_parameter_sha256: String,
     pub(crate) source_lineages: [PopulationSourceLineageV1; 3],
 }
 
@@ -2294,7 +2312,6 @@ fn validate_population_program_v1(record: &TrainRunV2) -> Result<()> {
 
     if program.identity != POPULATION_PROGRAM_IDENTITY_V1
         || program.package_commit != POPULATION_PACKAGE_COMMIT_V1
-        || record.source.git_commit != POPULATION_PACKAGE_COMMIT_V1
         || program.program_document_sha256 != POPULATION_PROGRAM_DOCUMENT_SHA256_V1
         || program.retest_manifest_sha256 != POPULATION_RETEST_MANIFEST_SHA256_V1
         || program.replay_end_generation != POPULATION_REPLAY_END_GENERATION_V1
@@ -2306,6 +2323,12 @@ fn validate_population_program_v1(record: &TrainRunV2) -> Result<()> {
         || program.retest_beta_f32_bits != POPULATION_RETEST_BETA_F32_BITS_V1
         || program.pool_identity != POPULATION_POOL_IDENTITY_V1
         || program.pool_document_sha256 != POPULATION_POOL_DOCUMENT_SHA256_V1
+        || program.parent_source_run_sha256 != POPULATION_PARENT_SOURCE_RUN_SHA256_V1
+        || program.parent_generation != POPULATION_PARENT_GENERATION_V1
+        || program.parent_checkpoint_sha256 != POPULATION_PARENT_CHECKPOINT_SHA256_V1
+        || program.parent_sidecar_sha256 != POPULATION_PARENT_SIDECAR_SHA256_V1
+        || program.parent_state_sha256 != POPULATION_PARENT_STATE_SHA256_V1
+        || program.parent_model_parameter_sha256 != POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1
         || record.contracts.wide_model_experiment_v1.is_some()
         || record.environment.environment_randomization_v2.is_none()
         || record.contracts.opponent_policy.identity != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
@@ -5333,6 +5356,12 @@ mod tests {
             expected_base_seed: 970_001,
             pool_identity: POPULATION_POOL_IDENTITY_V1.to_owned(),
             pool_document_sha256: POPULATION_POOL_DOCUMENT_SHA256_V1.to_owned(),
+            parent_source_run_sha256: POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned(),
+            parent_generation: POPULATION_PARENT_GENERATION_V1,
+            parent_checkpoint_sha256: POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned(),
+            parent_sidecar_sha256: POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned(),
+            parent_state_sha256: POPULATION_PARENT_STATE_SHA256_V1.to_owned(),
+            parent_model_parameter_sha256: POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1.to_owned(),
             source_lineages: POPULATION_SOURCE_LINEAGES_V1.map(|lineage| {
                 PopulationSourceLineageV1 {
                     base_seed: lineage.0,
@@ -5349,7 +5378,6 @@ mod tests {
 
     fn population_record() -> TrainRunV2 {
         let mut record = coherent_v2_record();
-        record.source.git_commit = POPULATION_PACKAGE_COMMIT_V1.to_owned();
         record.schedule.base_seed = 970_001;
         record.schedule.batch_episodes = 64;
         record.schedule.requested_successful_updates = 1_536;
@@ -5368,6 +5396,7 @@ mod tests {
     #[test]
     fn population_program_round_trips_and_binds_exact_authority() {
         let record = population_record();
+        assert_ne!(record.source.git_commit, POPULATION_PACKAGE_COMMIT_V1);
         let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
         let validated = decode_train_run_v2(&bytes).unwrap();
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
@@ -5422,11 +5451,39 @@ mod tests {
         refresh_derived(&mut wrong_program_count);
         assert_record_error(wrong_program_count, TrainRunV2ErrorKind::InvalidLiteral);
 
+        let mut wrong_parent_generation = population_record();
+        wrong_parent_generation
+            .contracts
+            .population_program_v1
+            .as_mut()
+            .unwrap()
+            .parent_generation = 383;
+        refresh_derived(&mut wrong_parent_generation);
+        assert_record_error(
+            wrong_parent_generation,
+            TrainRunV2ErrorKind::InvalidLiteral,
+        );
+
         for mutate in [
             |p: &mut PopulationProgramContractV1| {
                 p.program_document_sha256 = ZERO_SHA256.to_owned()
             },
             |p: &mut PopulationProgramContractV1| p.retest_manifest_sha256 = ZERO_SHA256.to_owned(),
+            |p: &mut PopulationProgramContractV1| {
+                p.parent_source_run_sha256 = ZERO_SHA256.to_owned()
+            },
+            |p: &mut PopulationProgramContractV1| {
+                p.parent_checkpoint_sha256 = ZERO_SHA256.to_owned()
+            },
+            |p: &mut PopulationProgramContractV1| {
+                p.parent_sidecar_sha256 = ZERO_SHA256.to_owned()
+            },
+            |p: &mut PopulationProgramContractV1| {
+                p.parent_state_sha256 = ZERO_SHA256.to_owned()
+            },
+            |p: &mut PopulationProgramContractV1| {
+                p.parent_model_parameter_sha256 = ZERO_SHA256.to_owned()
+            },
             |p: &mut PopulationProgramContractV1| {
                 p.source_lineages[0].store_tree_sha256 = ZERO_SHA256.to_owned()
             },

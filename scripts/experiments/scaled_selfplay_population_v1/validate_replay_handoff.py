@@ -262,9 +262,18 @@ def validate_manifest(document: Any) -> dict[str, Any]:
     return _result(document, "ADVANCE" if not errors else "FAIL-INVESTIGATE", errors)
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def _load(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as stream:
-        return json.load(stream)
+        return json.load(stream, object_pairs_hook=_reject_duplicate_keys)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -273,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         document = _load(args.manifest)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         result = {
             "schema": OUTPUT_SCHEMA,
             "disposition": "FAIL-INVESTIGATE",

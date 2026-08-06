@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import copy
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from validate_replay_handoff import (
     EXPECTED_LINEAGES,
@@ -12,6 +15,7 @@ from validate_replay_handoff import (
     RETEST_FORMAL_MANIFEST_PATH,
     RETEST_FORMAL_MANIFEST_SHA256,
     SEEDS,
+    _load,
     canonical_output,
     validate_manifest,
 )
@@ -116,6 +120,19 @@ class ReplayHandoffValidationTests(unittest.TestCase):
         self.assertEqual(result["disposition"], "FAIL-INVESTIGATE")
         self.assertFalse(result["continuation_authorized"])
         self.assertTrue(any("lineages[1].successor.native_state_sha256" in error for error in result["errors"]))
+
+    def test_duplicate_json_key_is_rejected_during_load(self) -> None:
+        manifest = json.dumps(valid_manifest(), separators=(",", ":"))
+        duplicate = manifest.replace(
+            '"schema":"mtg-kernel-scaled-selfplay-replay-manifest/v1"',
+            '"schema":"wrong","schema":"mtg-kernel-scaled-selfplay-replay-manifest/v1"',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(duplicate, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate JSON key: schema"):
+                _load(path)
 
 
 if __name__ == "__main__":
