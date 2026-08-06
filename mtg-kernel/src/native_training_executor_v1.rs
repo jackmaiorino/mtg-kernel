@@ -31,6 +31,7 @@ use crate::native_policy_train_step_v1::{
 use crate::native_policy_value_net_v1::{
     NativePolicyValueModelConfigV1, NativePolicyValueNetV1, NativePolicyValueNetWideV1,
 };
+use crate::native_population_opponent_v1::PopulationOpponentEngineV1;
 use crate::native_train_state_payload_v1::{
     decode_native_train_state_payload_verified_v1,
     decode_native_train_state_payload_verified_wide_v1, encode_native_train_state_payload_v1,
@@ -1659,6 +1660,13 @@ impl NativeTrainingExecutorV1 {
         ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     ) {
         self.trainer.set_ladder_opponent_v1(ladder_opponent);
+    }
+
+    pub(crate) fn set_population_opponent_v1(
+        &mut self,
+        population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    ) {
+        self.trainer.set_population_opponent_v1(population_opponent);
     }
 
     #[cfg(test)]

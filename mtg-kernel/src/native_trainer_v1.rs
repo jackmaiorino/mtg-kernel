@@ -16,11 +16,13 @@
 
 use crate::async_flat_scored_rollout_v2::{
     expected_scorer_contract, run_async_flat_scored_rollout_native_environment_randomization_v2,
-    run_async_flat_scored_rollout_native_observed_v2, AsyncFlatScoredObservedRunErrorV2,
-    AsyncFlatScoredRolloutErrorV2, AsyncFlatScoredRolloutMetricsV2, FlatBatchScorerErrorV2,
-    FlatBatchScorerV2, FlatScoredObserverPhaseV2, FlatScoredSelectedEventV2,
-    FlatScoredTerminalEventV2, FlatScoredTrajectoryObserverV2, FlatScoringBatchViewV2,
-    ValidatedOwnedFlatScoringDecisionV2,
+    run_async_flat_scored_rollout_native_environment_randomization_with_population_v1,
+    run_async_flat_scored_rollout_native_observed_v2,
+    run_async_flat_scored_rollout_native_observed_with_population_v1,
+    AsyncFlatScoredObservedRunErrorV2, AsyncFlatScoredRolloutErrorV2,
+    AsyncFlatScoredRolloutMetricsV2, FlatBatchScorerErrorV2, FlatBatchScorerV2,
+    FlatScoredObserverPhaseV2, FlatScoredSelectedEventV2, FlatScoredTerminalEventV2,
+    FlatScoredTrajectoryObserverV2, FlatScoringBatchViewV2, ValidatedOwnedFlatScoringDecisionV2,
 };
 use crate::async_rollout_v2::{
     AsyncRolloutConfigV2, ASYNC_ROLLOUT_MAX_SESSIONS_PER_WORKER_V2, ASYNC_ROLLOUT_MAX_WORKERS_V2,
@@ -63,6 +65,7 @@ use crate::native_policy_value_net_v1::{
     NativePolicyValueErrorV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
     NativePolicyValueNetWideV1, NativePolicyValueOutputV1,
 };
+use crate::native_population_opponent_v1::PopulationOpponentEngineV1;
 use crate::native_trainer_schedule_v1::{
     native_trainer_episode_schedule_v1, NativeTrainerScheduleErrorV1,
 };
@@ -2030,6 +2033,9 @@ pub(crate) struct NativeTrainerStateV2 {
     /// pilot runner integration (`native_science_loop_v1`) sets it via
     /// [`Self::set_ladder_opponent_v1`].
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    /// Optional immutable eight-slot opponent population. Every constructor
+    /// defaults to `None`; rollout entry rejects if this and K4 are both set.
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     #[cfg(test)]
     policy_anchor: Option<NativePolicyAnchorRuntimeV1>,
     #[cfg(test)]
@@ -2136,6 +2142,7 @@ impl NativeTrainerStateV2 {
             train_state: NativeTrainerModelStateV2::Frozen(train_state),
             progress,
             ladder_opponent: None,
+            population_opponent: None,
             #[cfg(test)]
             policy_anchor: None,
             #[cfg(test)]
@@ -2171,6 +2178,7 @@ impl NativeTrainerStateV2 {
             train_state: NativeTrainerModelStateV2::Wide(train_state),
             progress,
             ladder_opponent: None,
+            population_opponent: None,
             #[cfg(test)]
             policy_anchor: None,
             #[cfg(test)]
@@ -2204,6 +2212,7 @@ impl NativeTrainerStateV2 {
             train_state: NativeTrainerModelStateV2::Frozen(train_state.clone()),
             progress,
             ladder_opponent: None,
+            population_opponent: None,
             #[cfg(test)]
             policy_anchor: None,
             #[cfg(test)]
@@ -2233,6 +2242,7 @@ impl NativeTrainerStateV2 {
             train_state: NativeTrainerModelStateV2::Wide(train_state.clone()),
             progress,
             ladder_opponent: None,
+            population_opponent: None,
             #[cfg(test)]
             policy_anchor: None,
             #[cfg(test)]
@@ -2290,6 +2300,13 @@ impl NativeTrainerStateV2 {
         ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     ) {
         self.ladder_opponent = ladder_opponent;
+    }
+
+    pub(crate) fn set_population_opponent_v1(
+        &mut self,
+        population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    ) {
+        self.population_opponent = population_opponent;
     }
 
     /// Installs the immutable experiment-only parent policy on one
@@ -2529,22 +2546,45 @@ impl NativeTrainerStateV2 {
         }
         phase_recorder.finish_v1(setup_timer);
         let rollout_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::Rollout);
-        let rollout_result = match environment_authority {
-            None => run_async_flat_scored_rollout_native_observed_v2(
+        let rollout_result = match (environment_authority, self.population_opponent.clone()) {
+            (None, None) => run_async_flat_scored_rollout_native_observed_v2(
                 rollout_config,
                 self.base_seed,
                 self.ladder_opponent.clone(),
                 &mut scorer,
                 observer,
             ),
-            Some(authority) => run_async_flat_scored_rollout_native_environment_randomization_v2(
-                rollout_config,
-                self.base_seed,
-                authority,
-                self.ladder_opponent.clone(),
-                &mut scorer,
-                observer,
-            ),
+            (Some(authority), None) => {
+                run_async_flat_scored_rollout_native_environment_randomization_v2(
+                    rollout_config,
+                    self.base_seed,
+                    authority,
+                    self.ladder_opponent.clone(),
+                    &mut scorer,
+                    observer,
+                )
+            }
+            (None, Some(population_opponent)) => {
+                run_async_flat_scored_rollout_native_observed_with_population_v1(
+                    rollout_config,
+                    self.base_seed,
+                    self.ladder_opponent.clone(),
+                    Some(population_opponent),
+                    &mut scorer,
+                    observer,
+                )
+            }
+            (Some(authority), Some(population_opponent)) => {
+                run_async_flat_scored_rollout_native_environment_randomization_with_population_v1(
+                    rollout_config,
+                    self.base_seed,
+                    authority,
+                    self.ladder_opponent.clone(),
+                    Some(population_opponent),
+                    &mut scorer,
+                    observer,
+                )
+            }
         };
         phase_recorder.finish_v1(rollout_timer);
         let scorer_accepted_batch_count = scorer.accepted_batch_count;
@@ -2848,22 +2888,45 @@ impl NativeTrainerStateV2 {
                 .map_err(NativeTrainerErrorV1::Train)?;
         phase_recorder.finish_v1(setup_timer);
         let rollout_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::Rollout);
-        let rollout_result = match environment_authority {
-            None => run_async_flat_scored_rollout_native_observed_v2(
+        let rollout_result = match (environment_authority, self.population_opponent.clone()) {
+            (None, None) => run_async_flat_scored_rollout_native_observed_v2(
                 rollout_config,
                 self.base_seed,
                 self.ladder_opponent.clone(),
                 &mut scorer,
                 observer,
             ),
-            Some(authority) => run_async_flat_scored_rollout_native_environment_randomization_v2(
-                rollout_config,
-                self.base_seed,
-                authority,
-                self.ladder_opponent.clone(),
-                &mut scorer,
-                observer,
-            ),
+            (Some(authority), None) => {
+                run_async_flat_scored_rollout_native_environment_randomization_v2(
+                    rollout_config,
+                    self.base_seed,
+                    authority,
+                    self.ladder_opponent.clone(),
+                    &mut scorer,
+                    observer,
+                )
+            }
+            (None, Some(population_opponent)) => {
+                run_async_flat_scored_rollout_native_observed_with_population_v1(
+                    rollout_config,
+                    self.base_seed,
+                    self.ladder_opponent.clone(),
+                    Some(population_opponent),
+                    &mut scorer,
+                    observer,
+                )
+            }
+            (Some(authority), Some(population_opponent)) => {
+                run_async_flat_scored_rollout_native_environment_randomization_with_population_v1(
+                    rollout_config,
+                    self.base_seed,
+                    authority,
+                    self.ladder_opponent.clone(),
+                    Some(population_opponent),
+                    &mut scorer,
+                    observer,
+                )
+            }
         };
         phase_recorder.finish_v1(rollout_timer);
         let scorer_accepted_batch_count = scorer.accepted_batch_count;

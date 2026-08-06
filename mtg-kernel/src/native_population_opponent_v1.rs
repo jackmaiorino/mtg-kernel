@@ -11,10 +11,11 @@ use crate::native_checkpoint_inference_v1::NativeCheckpointInferenceV1;
 use crate::native_ladder_opponent_v1::softmax_sample_temperature_one_v1;
 use crate::native_trainer_schedule_v2::derive_native_trainer_opponent_pool_choice_seed_v2;
 use core::fmt;
+#[cfg(test)]
+use std::sync::Mutex;
 
 /// Versioned identity for the standalone eight-policy population primitive.
-pub(crate) const POPULATION_OPPONENT_IDENTITY_V1: &str =
-    "mtg-kernel-native-population-opponent-v1";
+pub(crate) const POPULATION_OPPONENT_IDENTITY_V1: &str = "mtg-kernel-native-population-opponent-v1";
 
 /// The population runtime has exactly eight policy slots.
 pub(crate) const POPULATION_OPPONENT_SLOT_COUNT_V1: usize = 8;
@@ -23,7 +24,6 @@ pub(crate) const POPULATION_OPPONENT_SLOT_COUNT_V1: usize = 8;
 pub(crate) enum PopulationOpponentErrorV1 {
     InvalidWeightTotal,
     WeightOverflow,
-    ZeroWeight,
     SeedDerivation,
     InvalidSlot,
     Inference,
@@ -35,7 +35,6 @@ impl fmt::Display for PopulationOpponentErrorV1 {
         formatter.write_str(match self {
             Self::InvalidWeightTotal => "population weight total is invalid",
             Self::WeightOverflow => "population weight total overflows u64",
-            Self::ZeroWeight => "population weights must be positive",
             Self::SeedDerivation => "population slot seed derivation failed",
             Self::InvalidSlot => "population slot is invalid",
             Self::Inference => "population checkpoint inference rejected the decision",
@@ -46,11 +45,13 @@ impl fmt::Display for PopulationOpponentErrorV1 {
 
 impl std::error::Error for PopulationOpponentErrorV1 {}
 
-/// A validated positive integer weight vector and its cumulative thresholds.
+/// A validated integer weight vector and its cumulative thresholds.
 ///
 /// `declared_total` is checked against the exact sum of `weights`. Runtime
 /// selection performs one documented modulo draw, `seed % total`, with no
-/// rejection sampling.
+/// rejection sampling. Zero weights are allowed for inactive slots; the total
+/// must remain nonzero, so every selectable slot necessarily has positive
+/// weight.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PopulationWeightVectorV1 {
     weights: [u64; POPULATION_OPPONENT_SLOT_COUNT_V1],
@@ -69,9 +70,6 @@ impl PopulationWeightVectorV1 {
         let mut cumulative = [0_u64; POPULATION_OPPONENT_SLOT_COUNT_V1];
         let mut running = 0_u64;
         for (index, &weight) in weights.iter().enumerate() {
-            if weight == 0 {
-                return Err(PopulationOpponentErrorV1::ZeroWeight);
-            }
             running = running
                 .checked_add(weight)
                 .ok_or(PopulationOpponentErrorV1::WeightOverflow)?;
@@ -144,6 +142,8 @@ pub(crate) fn population_slot_for_episode_v1(
 pub(crate) struct PopulationOpponentEngineV1 {
     weights: PopulationWeightVectorV1,
     handles: [NativeCheckpointInferenceV1; POPULATION_OPPONENT_SLOT_COUNT_V1],
+    #[cfg(test)]
+    selected_episode_slots: Mutex<Vec<(u64, u64, usize)>>,
 }
 
 impl fmt::Debug for PopulationOpponentEngineV1 {
@@ -162,7 +162,12 @@ impl PopulationOpponentEngineV1 {
         weights: PopulationWeightVectorV1,
         handles: [NativeCheckpointInferenceV1; POPULATION_OPPONENT_SLOT_COUNT_V1],
     ) -> Self {
-        Self { weights, handles }
+        Self {
+            weights,
+            handles,
+            #[cfg(test)]
+            selected_episode_slots: Mutex::new(Vec::new()),
+        }
     }
 
     pub(crate) const fn weights_v1(&self) -> &PopulationWeightVectorV1 {
@@ -174,7 +179,21 @@ impl PopulationOpponentEngineV1 {
         base_seed: u64,
         episode_index: u64,
     ) -> Result<PopulationSlotV1, PopulationOpponentErrorV1> {
-        population_slot_for_episode_v1(base_seed, episode_index, &self.weights)
+        let slot = population_slot_for_episode_v1(base_seed, episode_index, &self.weights)?;
+        #[cfg(test)]
+        self.selected_episode_slots
+            .lock()
+            .expect("population selection trace mutex poisoned")
+            .push((base_seed, episode_index, slot.index_v1()));
+        Ok(slot)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selected_episode_slots_for_test_v1(&self) -> Vec<(u64, u64, usize)> {
+        self.selected_episode_slots
+            .lock()
+            .expect("population selection trace mutex poisoned")
+            .clone()
     }
 
     /// Scores one decision with the selected immutable checkpoint and reuses
@@ -195,6 +214,56 @@ impl PopulationOpponentEngineV1 {
         softmax_sample_temperature_one_v1(output.action_logits(), policy_substep_seed)
             .map_err(|_| PopulationOpponentErrorV1::Softmax)
     }
+}
+
+/// Constructs independently loaded real checkpoint handles for focused
+/// rollout integration tests. This is CPU-only and never launches gameplay or
+/// training compute.
+#[cfg(test)]
+pub(crate) fn checkpoint_inference_handles_for_test_v1<const N: usize>(
+) -> [NativeCheckpointInferenceV1; N] {
+    use crate::native_checkpoint_inference_v1::load_native_checkpoint_inference_v1;
+    use crate::native_training_executor_v1::{
+        NativeTrainingExecutionConfigV1, NativeTrainingExecutorV1, NativeTrainingNumericalBackendV1,
+    };
+    use crate::native_training_store_checkpoint_v3::build_genesis_checkpoint_manifest_v3;
+    use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
+    use std::time::Duration;
+
+    let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+    let config = NativeTrainingExecutionConfigV1 {
+        run_base_seed: run.record().schedule.base_seed,
+        batch_episodes: run.batch_episodes(),
+        deck_ids: ["Rally".to_owned(), "Rally".to_owned()],
+        max_physical_decisions: run.record().limits.max_physical_decisions,
+        max_policy_steps: run.record().limits.max_policy_steps,
+        worker_count: usize::try_from(run.record().topology.worker_count).unwrap(),
+        sessions_per_worker: usize::try_from(run.record().topology.sessions_per_worker).unwrap(),
+        broker_batch_target: usize::try_from(run.record().topology.broker_batch_target).unwrap(),
+        scheduler_timeout: Duration::from_secs(30),
+        measure_broker_service_time: false,
+        value_coefficient_bits: 0.5_f32.to_bits(),
+        learning_rate_bits: 0.001_f32.to_bits(),
+        numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
+        backward_worker_limit: 1,
+    };
+    let (snapshot_manifest, snapshot_payload) =
+        crate::common_model_snapshot_v1::common_model_snapshot_paths_v1();
+    let executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+        config,
+        &snapshot_manifest,
+        &snapshot_payload,
+    )
+    .unwrap();
+    let payload = executor
+        .checkpoint_candidate_v1()
+        .unwrap()
+        .payload()
+        .to_vec();
+    let checkpoint = build_genesis_checkpoint_manifest_v3(&run, &payload).unwrap();
+    std::array::from_fn(|_| {
+        load_native_checkpoint_inference_v1(&run, &checkpoint, &payload).unwrap()
+    })
 }
 
 #[cfg(test)]
@@ -225,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_totals_and_zero_weights_fail_closed() {
+    fn malformed_totals_and_overflow_fail_closed() {
         assert_eq!(
             PopulationWeightVectorV1::new_v1([1; POPULATION_OPPONENT_SLOT_COUNT_V1], 0),
             Err(PopulationOpponentErrorV1::InvalidWeightTotal)
@@ -235,13 +304,26 @@ mod tests {
             Err(PopulationOpponentErrorV1::InvalidWeightTotal)
         );
         assert_eq!(
-            PopulationWeightVectorV1::new_v1([1, 1, 1, 1, 1, 1, 1, 0], 7),
-            Err(PopulationOpponentErrorV1::ZeroWeight)
-        );
-        assert_eq!(
-            PopulationWeightVectorV1::new_v1([u64::MAX; POPULATION_OPPONENT_SLOT_COUNT_V1], u64::MAX),
+            PopulationWeightVectorV1::new_v1(
+                [u64::MAX; POPULATION_OPPONENT_SLOT_COUNT_V1],
+                u64::MAX
+            ),
             Err(PopulationOpponentErrorV1::WeightOverflow)
         );
+    }
+
+    #[test]
+    fn zero_weight_inactive_slots_are_never_selected() {
+        let weights = PopulationWeightVectorV1::new_v1([1, 1, 1, 1, 1, 1, 0, 0], 6).unwrap();
+        for draw in 0..10_000 {
+            assert!(weights.select_draw_v1(draw).index_v1() < 6);
+        }
+        for active_slot in 0..6 {
+            assert_eq!(
+                weights.select_draw_v1(active_slot as u64).index_v1(),
+                active_slot
+            );
+        }
     }
 
     #[test]

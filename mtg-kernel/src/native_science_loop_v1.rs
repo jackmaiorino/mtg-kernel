@@ -22,6 +22,7 @@ use crate::native_checkpoint_runner_v1::{
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 #[cfg(test)]
 use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
+use crate::native_population_opponent_v1::PopulationOpponentEngineV1;
 #[cfg(test)]
 use crate::native_train_state_payload_v1::decode_native_train_state_payload_v1;
 #[cfg(test)]
@@ -335,7 +336,67 @@ pub fn run_native_science_loop_v1(
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
 ) -> Result<NativeScienceLoopReportV1> {
+    run_native_science_loop_with_opponents_v1(
+        parent,
+        root_basename,
+        run,
+        execution_config,
+        snapshot_manifest_path,
+        snapshot_payload_path,
+        runner_config,
+        ladder_opponent,
+        None,
+        ladder_init_reference,
+    )
+}
+
+/// Experiment-facing population-runtime entry point. The existing science
+/// loop and K4 entry point above remain unchanged and always install no
+/// population engine.
+#[allow(private_interfaces, clippy::too_many_arguments)]
+pub fn run_native_science_loop_with_population_v1(
+    parent: impl AsRef<Path>,
+    root_basename: &str,
+    run: &ValidatedTrainRunV2,
+    execution_config: NativeTrainingExecutionConfigV1,
+    snapshot_manifest_path: &Path,
+    snapshot_payload_path: &Path,
+    runner_config: NativeCheckpointRunnerConfigV1,
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
+) -> Result<NativeScienceLoopReportV1> {
+    run_native_science_loop_with_opponents_v1(
+        parent,
+        root_basename,
+        run,
+        execution_config,
+        snapshot_manifest_path,
+        snapshot_payload_path,
+        runner_config,
+        None,
+        population_opponent,
+        ladder_init_reference,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_native_science_loop_with_opponents_v1(
+    parent: impl AsRef<Path>,
+    root_basename: &str,
+    run: &ValidatedTrainRunV2,
+    execution_config: NativeTrainingExecutionConfigV1,
+    snapshot_manifest_path: &Path,
+    snapshot_payload_path: &Path,
+    runner_config: NativeCheckpointRunnerConfigV1,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
+) -> Result<NativeScienceLoopReportV1> {
     use crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2ErrorKind;
+
+    if ladder_opponent.is_some() && population_opponent.is_some() {
+        return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
+    }
 
     validate_prepared_execution_config_v1(run, &execution_config)
         .map_err(|_| loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid))?;
@@ -495,6 +556,9 @@ pub fn run_native_science_loop_v1(
                 continuation
                     .executor
                     .set_ladder_opponent_v1(ladder_opponent.clone());
+                continuation
+                    .executor
+                    .set_population_opponent_v1(population_opponent.clone());
                 #[cfg(test)]
                 continuation
                     .executor

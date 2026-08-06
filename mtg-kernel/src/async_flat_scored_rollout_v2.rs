@@ -7,13 +7,14 @@
 //! runnable through [`crate::async_flat_scored_rollout_v1`].
 
 use crate::async_flat_scored_rollout_v1::{
-    run_async_flat_scored_rollout_core, AsyncFlatScoredObservedRunErrorV1,
-    AsyncFlatScoredRolloutErrorV1, AsyncFlatScoredRolloutMetricsV1, AsyncFlatScoredRolloutResultV1,
-    AsyncFlatScoredWorkerPhaseV1, FlatBatchScorerCore, FlatBatchScorerErrorV1,
-    FlatScoredExecutionScheduleV1, FlatScoredFamilyCore, FlatScoredObserverPhaseV1,
-    FlatScoredSelectedEventCore, FlatScoredSessionEnvironmentV1, FlatScoredTerminalEventV1,
-    FlatScoredTrajectoryObserverCore, RoundDecisionCore, ASYNC_FLAT_SCORED_SAMPLER_ID_V1,
-    ASYNC_FLAT_SCORED_SAMPLER_VERSION_V1, ASYNC_FLAT_SCORED_SPLITMIX_GAMMA_V1,
+    run_async_flat_scored_rollout_core, run_async_flat_scored_rollout_core_with_population_v1,
+    AsyncFlatScoredObservedRunErrorV1, AsyncFlatScoredRolloutErrorV1,
+    AsyncFlatScoredRolloutMetricsV1, AsyncFlatScoredRolloutResultV1, AsyncFlatScoredWorkerPhaseV1,
+    FlatBatchScorerCore, FlatBatchScorerErrorV1, FlatScoredExecutionScheduleV1,
+    FlatScoredFamilyCore, FlatScoredObserverPhaseV1, FlatScoredSelectedEventCore,
+    FlatScoredSessionEnvironmentV1, FlatScoredTerminalEventV1, FlatScoredTrajectoryObserverCore,
+    RoundDecisionCore, ASYNC_FLAT_SCORED_SAMPLER_ID_V1, ASYNC_FLAT_SCORED_SAMPLER_VERSION_V1,
+    ASYNC_FLAT_SCORED_SPLITMIX_GAMMA_V1,
 };
 use crate::async_rollout::{AsyncRolloutEpisodeV1, AsyncRolloutTerminalV1};
 use crate::async_rollout_v2::{
@@ -38,6 +39,7 @@ use crate::native_full_episode_trajectory_v2::{
     NativeEnvironmentWindowPreflightAuthorityV2, NativeTrainingTrajectoryReceiptV2,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
+use crate::native_population_opponent_v1::PopulationOpponentEngineV1;
 use crate::rl::{TerminalClassificationV1, TerminalSafeCodeV2};
 use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1,
@@ -1111,6 +1113,30 @@ pub(crate) fn run_async_flat_scored_rollout_native_observed_v2<
     )
 }
 
+/// Population-aware native-trainer sibling. Existing native callers keep the
+/// function above and therefore continue to install no population engine.
+pub(crate) fn run_async_flat_scored_rollout_native_observed_with_population_v1<
+    O: FlatScoredTrajectoryObserverV2,
+>(
+    config: AsyncRolloutConfigV2,
+    base_seed: u64,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    scorer: &mut impl FlatBatchScorerV2,
+    observer: O,
+) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
+{
+    run_async_flat_scored_rollout_observed_with_schedule_and_population_v1(
+        config,
+        FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed },
+        None,
+        ladder_opponent,
+        population_opponent,
+        scorer,
+        observer,
+    )
+}
+
 /// Internal environment randomization V2 native-trainer execution path. The
 /// caller must surrender the move-only whole-window preflight authority; the
 /// shared core validates it against this exact window and consumes it before
@@ -1131,6 +1157,30 @@ pub(crate) fn run_async_flat_scored_rollout_native_environment_randomization_v2<
         FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { base_seed },
         Some(environment_authority),
         ladder_opponent,
+        scorer,
+        observer,
+    )
+}
+
+/// Population-aware environment-randomization native-trainer sibling.
+pub(crate) fn run_async_flat_scored_rollout_native_environment_randomization_with_population_v1<
+    O: FlatScoredTrajectoryObserverV2,
+>(
+    config: AsyncRolloutConfigV2,
+    base_seed: u64,
+    environment_authority: NativeEnvironmentWindowPreflightAuthorityV2,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    scorer: &mut impl FlatBatchScorerV2,
+    observer: O,
+) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
+{
+    run_async_flat_scored_rollout_observed_with_schedule_and_population_v1(
+        config,
+        FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { base_seed },
+        Some(environment_authority),
+        ladder_opponent,
+        population_opponent,
         scorer,
         observer,
     )
@@ -1173,6 +1223,47 @@ fn run_async_flat_scored_rollout_observed_with_schedule_v2<O: FlatScoredTrajecto
     }
 }
 
+fn run_async_flat_scored_rollout_observed_with_schedule_and_population_v1<
+    O: FlatScoredTrajectoryObserverV2,
+>(
+    config: AsyncRolloutConfigV2,
+    execution_schedule: FlatScoredExecutionScheduleV1,
+    environment_authority: Option<NativeEnvironmentWindowPreflightAuthorityV2>,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    scorer: &mut impl FlatBatchScorerV2,
+    observer: O,
+) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
+{
+    let mut scorer = FlatBatchScorerAdapterV2(scorer);
+    let observer = FlatScoredTrajectoryObserverAdapterV2(observer);
+    match run_async_flat_scored_rollout_core_with_population_v1::<FlatScoredFamilyV2, _, _>(
+        config,
+        execution_schedule,
+        environment_authority,
+        ladder_opponent,
+        population_opponent,
+        &mut scorer,
+        observer,
+    ) {
+        Ok((result, output)) => Ok((result.into(), output)),
+        Err(AsyncFlatScoredObservedRunErrorV1::Rollout(error)) => {
+            Err(AsyncFlatScoredObservedRunErrorV2::Rollout(error.into()))
+        }
+        Err(AsyncFlatScoredObservedRunErrorV1::ObserverFailed { phase, error }) => {
+            Err(AsyncFlatScoredObservedRunErrorV2::ObserverFailed {
+                phase: observer_phase_v2(phase),
+                error,
+            })
+        }
+        Err(AsyncFlatScoredObservedRunErrorV1::ObserverPanicked { phase }) => {
+            Err(AsyncFlatScoredObservedRunErrorV2::ObserverPanicked {
+                phase: observer_phase_v2(phase),
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,6 +1279,7 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::any::TypeId;
     use std::convert::Infallible;
+    use std::sync::OnceLock;
     use std::time::Duration;
 
     fn minimal_valid_packet() -> OwnedFlatScoringDecisionV2 {
@@ -1259,6 +1351,35 @@ mod tests {
             scheduler_timeout: Duration::from_secs(60),
             measure_broker_service_time: false,
         }
+    }
+
+    fn population_and_ladder_engines_v1(
+    ) -> &'static (Arc<PopulationOpponentEngineV1>, Arc<LadderOpponentEngineV1>) {
+        static ENGINES: OnceLock<(Arc<PopulationOpponentEngineV1>, Arc<LadderOpponentEngineV1>)> =
+            OnceLock::new();
+        ENGINES.get_or_init(|| {
+            let mut handles =
+                crate::native_population_opponent_v1::checkpoint_inference_handles_for_test_v1::<
+                    11,
+                >()
+                .into_iter();
+            let population_handles = std::array::from_fn(|_| handles.next().unwrap());
+            let population = Arc::new(PopulationOpponentEngineV1::new_v1(
+                crate::native_population_opponent_v1::PopulationWeightVectorV1::new_v1(
+                    [1, 2, 3, 4, 5, 6, 0, 0],
+                    21,
+                )
+                .unwrap(),
+                population_handles,
+            ));
+            let ladder = Arc::new(LadderOpponentEngineV1::head_to_head_eval_v1(
+                handles.next().unwrap(),
+                handles.next().unwrap(),
+                handles.next().unwrap(),
+            ));
+            assert!(handles.next().is_none());
+            (population, ladder)
+        })
     }
 
     #[test]
@@ -1615,6 +1736,141 @@ mod tests {
             v2.metrics.terminal_notification_count,
             v1.metrics.terminal_notification_count
         );
+    }
+
+    #[test]
+    fn population_aware_wrapper_with_none_preserves_uniform_native_behavior() {
+        const BASE_SEED: u64 = 71_501;
+        let mut old_scorer = ContractCheckingScorerV2::default();
+        let (old_result, old_rows) = run_async_flat_scored_rollout_native_observed_v2(
+            config(1),
+            BASE_SEED,
+            None,
+            &mut old_scorer,
+            UniformTrajectoryObserverV2::default(),
+        )
+        .unwrap();
+        let mut new_scorer = ContractCheckingScorerV2::default();
+        let (new_result, new_rows) =
+            run_async_flat_scored_rollout_native_observed_with_population_v1(
+                config(1),
+                BASE_SEED,
+                None,
+                None,
+                &mut new_scorer,
+                UniformTrajectoryObserverV2::default(),
+            )
+            .unwrap();
+        assert_eq!(new_rows, old_rows);
+        assert_eq!(new_result.episodes, old_result.episodes);
+        assert_eq!(new_result.policy_step_count, old_result.policy_step_count);
+        assert_eq!(
+            new_result.physical_decision_count,
+            old_result.physical_decision_count
+        );
+        assert_eq!(
+            new_result.metrics.batch_membership_digest,
+            old_result.metrics.batch_membership_digest
+        );
+    }
+
+    #[test]
+    fn population_selection_reaches_rollout_once_per_episode() {
+        use crate::native_full_episode_trajectory_v2::preflight_native_environment_window_v2;
+        use crate::native_population_opponent_v1::population_slot_for_episode_v1;
+        use crate::runtime_decks::runtime_deck_by_id;
+
+        const BASE_SEED: u64 = 71_501;
+        let population = population_and_ladder_engines_v1().0.clone();
+        assert!(population.selected_episode_slots_for_test_v1().is_empty());
+        let shaped = config(2);
+        let rally_hash = runtime_deck_by_id("Rally").unwrap().runtime_deck_hash;
+        let authority = preflight_native_environment_window_v2(
+            BASE_SEED,
+            shaped.first_episode_id,
+            shaped.episode_count,
+            &shaped.deck_ids,
+            [rally_hash; 2],
+        )
+        .unwrap();
+        let mut scorer = ContractCheckingScorerV2::default();
+        let result =
+            run_async_flat_scored_rollout_native_environment_randomization_with_population_v1(
+                shaped,
+                BASE_SEED,
+                authority,
+                None,
+                Some(population.clone()),
+                &mut scorer,
+                NoopFlatScoredTrajectoryObserverV2,
+            )
+            .unwrap()
+            .0;
+        assert!(result.all_natural());
+
+        let mut actual = population.selected_episode_slots_for_test_v1();
+        actual.sort_unstable_by_key(|entry| entry.1);
+        let expected: Vec<_> = (0..2)
+            .map(|episode_index| {
+                (
+                    BASE_SEED,
+                    episode_index,
+                    population_slot_for_episode_v1(
+                        BASE_SEED,
+                        episode_index,
+                        population.weights_v1(),
+                    )
+                    .unwrap()
+                    .index_v1(),
+                )
+            })
+            .collect();
+        assert_eq!(actual, expected);
+        assert!(actual.iter().all(|entry| entry.2 < 6));
+    }
+
+    #[test]
+    fn population_runtime_rejects_ladder_and_population_before_construction() {
+        use crate::async_flat_scored_rollout_v1::{
+            acquire_async_flat_scored_test_guard_v1, acquire_async_flat_scored_test_lock_v1,
+            rollout_construction_count_scope_v2,
+        };
+
+        struct UnreachableScorerV2;
+        impl FlatBatchScorerV2 for UnreachableScorerV2 {
+            fn score_batch_v2(
+                &mut self,
+                _batch: &FlatScoringBatchViewV2<'_>,
+                _action_logits: &mut [f32],
+                _values: &mut [f32],
+            ) -> Result<(), FlatBatchScorerErrorV2> {
+                unreachable!("dual-engine rejection must happen before scoring")
+            }
+        }
+
+        let (population, ladder) = population_and_ladder_engines_v1();
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+        let guard = acquire_async_flat_scored_test_guard_v1();
+        let scope = rollout_construction_count_scope_v2();
+        let error = run_async_flat_scored_rollout_native_observed_with_population_v1(
+            config(1),
+            71_501,
+            Some(ladder.clone()),
+            Some(population.clone()),
+            &mut UnreachableScorerV2,
+            NoopFlatScoredTrajectoryObserverV2,
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            AsyncFlatScoredObservedRunErrorV2::Rollout(
+                AsyncFlatScoredRolloutErrorV2::BrokerProtocolViolation
+            )
+        ));
+        assert_eq!(scope.counts(), (0, 0, 0, 0));
+        assert_eq!(guard.legacy_session_reset_count(), 0);
+        assert_eq!(guard.environment_v2_session_reset_count(), 0);
     }
 
     #[test]
