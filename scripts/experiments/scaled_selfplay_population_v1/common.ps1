@@ -161,8 +161,16 @@ function Get-ScaledEndpointRecord {
         [Parameter(Mandatory = $true)][string]$StoreRoot,
         [Parameter(Mandatory = $true)][uint64]$Generation
     )
-    Assert-GenerationCheckpoint -Store $StoreRoot -Generation $Generation
+    $latest = Get-Content -Raw -LiteralPath (Join-Path $StoreRoot 'latest.json') | ConvertFrom-Json
+    if ([uint64]$latest.generation_index -lt $Generation) {
+        throw "Store latest generation precedes requested checkpoint $Generation"
+    }
     $prefix = Join-Path $StoreRoot ('checkpoints\update-{0:d8}' -f $Generation)
+    foreach ($suffix in @('checkpoint.json', 'sidecar.json', 'state.f32le')) {
+        if (-not (Test-Path -LiteralPath "$prefix.$suffix" -PathType Leaf)) {
+            throw "generation-$Generation checkpoint file is missing: $prefix.$suffix"
+        }
+    }
     $checkpoint = Get-Content -Raw -LiteralPath "$prefix.checkpoint.json" | ConvertFrom-Json
     return [ordered]@{
         store_root = (Resolve-Path -LiteralPath $StoreRoot).Path
