@@ -1,5 +1,8 @@
 param(
-    [string]$EvidenceRoot = 'D:\mtg-kernel-scaled-selfplay-population-v1\preflight'
+    [string]$EvidenceRoot = 'D:\mtg-kernel-scaled-selfplay-population-v1\preflight',
+    [string]$ExecutablePath = '',
+    [string]$ExecutableSourceCommit = '',
+    [string]$RetestStoreRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,17 +30,17 @@ function Get-ResourceSummaryV1 {
                 [ordered]@{
                     ordinal = $ordinal
                     samples = $matches.Count
-                    utilization_mean_percent = ($matches | Measure-Object -Property utilization_percent -Average).Average
-                    utilization_peak_percent = ($matches | Measure-Object -Property utilization_percent -Maximum).Maximum
-                    memory_peak_mib = ($matches | Measure-Object -Property memory_used_mib -Maximum).Maximum
+                    utilization_mean_percent = ($matches | ForEach-Object { [double]$_['utilization_percent'] } | Measure-Object -Average).Average
+                    utilization_peak_percent = ($matches | ForEach-Object { [double]$_['utilization_percent'] } | Measure-Object -Maximum).Maximum
+                    memory_peak_mib = ($matches | ForEach-Object { [double]$_['memory_used_mib'] } | Measure-Object -Maximum).Maximum
                 }
             }
         }
     )
     return [ordered]@{
         samples = $rows.Count
-        cpu_mean_percent = ($rows | Measure-Object -Property cpu_total_percent -Average).Average
-        cpu_peak_percent = ($rows | Measure-Object -Property cpu_total_percent -Maximum).Maximum
+        cpu_mean_percent = ($rows | ForEach-Object { [double]$_['cpu_total_percent'] } | Measure-Object -Average).Average
+        cpu_peak_percent = ($rows | ForEach-Object { [double]$_['cpu_total_percent'] } | Measure-Object -Maximum).Maximum
         host_memory_peak_fraction = ($rows | ForEach-Object {
             $_.host_memory_used_mib / [double]$_.host_memory_total_mib
         } | Measure-Object -Maximum).Maximum
@@ -83,11 +86,35 @@ try {
     $gpu1 = Assert-Gpu1Idle
     $prelaunch = Assert-PrelaunchResourceWindow
     Assert-NoForeignGpu1ComputeProcesses
-    $executable = Get-ReleaseTestExecutable -RepoRoot $script:RepoRoot -EvidenceRoot $root -Label 'scaled-population'
+    if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
+        $executable = Get-ReleaseTestExecutable -RepoRoot $script:RepoRoot -EvidenceRoot $root -Label 'scaled-population'
+        $ExecutableSourceCommit = [string]$git.commit
+    }
+    else {
+        if ([string]::IsNullOrWhiteSpace($ExecutableSourceCommit)) {
+            throw 'ExecutableSourceCommit is required with ExecutablePath'
+        }
+        $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
+        & git -C $script:RepoRoot merge-base --is-ancestor $ExecutableSourceCommit ([string]$git.commit)
+        Assert-LastExitCode $LASTEXITCODE 'executable source commit ancestry'
+    }
     $executableRecord = Get-FileRecordV1 -Path $executable
+    $executableRecord['source_commit'] = $ExecutableSourceCommit
 
     $phase = 'matched-identity'
-    $retest = Invoke-TwoPhaseLaneV1 -Executable $executable -Mode retest -Label 'identity-retest'
+    if ([string]::IsNullOrWhiteSpace($RetestStoreRoot)) {
+        $retest = Invoke-TwoPhaseLaneV1 -Executable $executable -Mode retest -Label 'identity-retest'
+    }
+    else {
+        $retestRoot = (Resolve-Path -LiteralPath $RetestStoreRoot).Path
+        $retest = [ordered]@{
+            mode = 'retest'
+            reused = $true
+            generation4 = Get-ScaledEndpointRecord -StoreRoot $retestRoot -Generation 4
+            generation8 = Get-ScaledEndpointRecord -StoreRoot $retestRoot -Generation 8
+            source_store_root = $retestRoot
+        }
+    }
     $successor = Invoke-TwoPhaseLaneV1 -Executable $executable -Mode successor -Label 'identity-successor'
     $generation4Identical = $retest.generation4.state_sha256 -eq $successor.generation4.state_sha256 -and
         $retest.generation4.model_parameter_sha256 -eq $successor.generation4.model_parameter_sha256
