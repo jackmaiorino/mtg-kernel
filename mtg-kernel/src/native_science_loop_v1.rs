@@ -2074,6 +2074,7 @@ mod windows_science_loop_tests {
                     "environment_seed": binding.environment_seed(),
                     "learner_seat": if seat_index == 0 { "P0" } else { "P1" },
                     "deck_hashes_u64": binding.deck_hashes(),
+                    "opponent_pool_member": "Primary",
                     "terminal_order_rank": reward,
                 }));
                 pair_reward += reward;

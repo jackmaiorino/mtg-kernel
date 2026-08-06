@@ -35,12 +35,18 @@ use std::time::Duration;
 
 const REQUEST_SCHEMA_V1: &str = "regularized-continuation-terminal-blind-request/v1";
 const REPORT_SCHEMA_V1: &str = "regularized-continuation-terminal-blind-report/v1";
+const FULL_HORIZON_REQUEST_SCHEMA_V1: &str =
+    "regularized-continuation-full-horizon-parent-drift-request/v1";
+const FULL_HORIZON_REPORT_SCHEMA_V1: &str =
+    "regularized-continuation-full-horizon-parent-drift-report/v1";
 const PARENT_GENERATION_V1: u64 = 384;
 const EVALUATION_SEED_V1: u64 = 1_941_001;
 const PAIR_COUNT_V1: u64 = 512;
 const EPISODE_COUNT_V1: u64 = PAIR_COUNT_V1 * 2;
 const SCREEN_GENERATIONS_V1: [u64; 5] = [0, 8, 16, 24, 32];
 const SCREEN_BETAS_V1: [f64; 5] = [0.0, 0.01, 0.03, 0.1, 0.3];
+const FULL_HORIZON_GENERATIONS_V1: [u64; 5] = [64, 128, 256, 384, 512];
+const FULL_HORIZON_BETAS_V1: [f64; 6] = [0.1, 0.1, 0.1, 0.0, 0.0, 0.0];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -831,23 +837,27 @@ fn checkpoint_identity_report_v1(
     }
 }
 
-fn run_screen_v1(request: ScreenRequestV1) -> Result<ScreenOutputV1, ScreenErrorV1> {
-    if request.schema != REQUEST_SCHEMA_V1
+fn run_screen_v1(
+    request: ScreenRequestV1,
+    request_schema: &'static str,
+    report_schema: &'static str,
+    expected_betas: &'static [f64],
+    expected_generations: &'static [u64],
+) -> Result<ScreenOutputV1, ScreenErrorV1> {
+    if request.schema != request_schema
         || request.evaluation_base_seed != EVALUATION_SEED_V1
         || request.pair_count != PAIR_COUNT_V1
         || request.parent.generation != PARENT_GENERATION_V1
-        || request.arms.len() != SCREEN_BETAS_V1.len()
+        || request.arms.len() != expected_betas.len()
         || request.parent.store_root.is_relative()
         || request.pool_json_path.is_relative()
     {
-        return Err(ScreenErrorV1::new(
-            "frozen Gate 3 request identity mismatch",
-        ));
+        return Err(ScreenErrorV1::new("frozen request identity mismatch"));
     }
-    for (arm, expected_beta) in request.arms.iter().zip(SCREEN_BETAS_V1) {
+    for (arm, expected_beta) in request.arms.iter().zip(expected_betas.iter().copied()) {
         if arm.beta.to_bits() != expected_beta.to_bits()
             || arm.store_root.is_relative()
-            || arm.generations != SCREEN_GENERATIONS_V1
+            || arm.generations != expected_generations
         {
             return Err(ScreenErrorV1::new("beta-arm request identity mismatch"));
         }
@@ -921,13 +931,13 @@ fn run_screen_v1(request: ScreenRequestV1) -> Result<ScreenOutputV1, ScreenError
         arms.push(ArmReportV1 {
             beta: arm_request.beta,
             store_root: arm_request.store_root.to_string_lossy().into_owned(),
-            complete: checkpoints.len() == SCREEN_GENERATIONS_V1.len(),
+            complete: checkpoints.len() == expected_generations.len(),
             finite: true,
             checkpoints,
         });
     }
     Ok(ScreenOutputV1 {
-        schema: REPORT_SCHEMA_V1,
+        schema: report_schema,
         terminal_outcomes_read: false,
         corpus: corpus.report,
         arms,
@@ -990,11 +1000,50 @@ fn gate3_terminal_blind_coefficient_screen_v1() {
     let request_bytes = fs::read(&input_path).expect("Gate 3 request JSON must be readable");
     let request: ScreenRequestV1 =
         serde_json::from_slice(&request_bytes).expect("Gate 3 request JSON must validate");
-    let output = run_screen_v1(request)
-        .unwrap_or_else(|error| panic!("Gate 3 terminal-blind screen failed: {}", error.0));
+    let output = run_screen_v1(
+        request,
+        REQUEST_SCHEMA_V1,
+        REPORT_SCHEMA_V1,
+        &SCREEN_BETAS_V1,
+        &SCREEN_GENERATIONS_V1,
+    )
+    .unwrap_or_else(|error| panic!("Gate 3 terminal-blind screen failed: {}", error.0));
     let output_bytes = serde_json::to_vec_pretty(&output).expect("Gate 3 output must serialize");
     write_output_create_new_v1(&output_path, &output_bytes)
         .unwrap_or_else(|error| panic!("Gate 3 output publish failed: {}", error.0));
+}
+
+#[test]
+#[ignore = "full-horizon parent-drift integration; invoke explicitly with REGCONT_FULL_HORIZON_DRIFT_INPUT_JSON and REGCONT_FULL_HORIZON_DRIFT_OUTPUT_JSON"]
+fn full_horizon_parent_drift_v1() {
+    let input_path = PathBuf::from(
+        std::env::var_os("REGCONT_FULL_HORIZON_DRIFT_INPUT_JSON")
+            .expect("REGCONT_FULL_HORIZON_DRIFT_INPUT_JSON is required"),
+    );
+    let output_path = PathBuf::from(
+        std::env::var_os("REGCONT_FULL_HORIZON_DRIFT_OUTPUT_JSON")
+            .expect("REGCONT_FULL_HORIZON_DRIFT_OUTPUT_JSON is required"),
+    );
+    let request_bytes =
+        fs::read(&input_path).expect("full-horizon parent-drift request JSON must be readable");
+    let request: ScreenRequestV1 = serde_json::from_slice(&request_bytes)
+        .expect("full-horizon parent-drift request JSON must validate");
+    let output = run_screen_v1(
+        request,
+        FULL_HORIZON_REQUEST_SCHEMA_V1,
+        FULL_HORIZON_REPORT_SCHEMA_V1,
+        &FULL_HORIZON_BETAS_V1,
+        &FULL_HORIZON_GENERATIONS_V1,
+    )
+    .unwrap_or_else(|error| panic!("full-horizon parent-drift screen failed: {}", error.0));
+    let output_bytes = serde_json::to_vec_pretty(&output)
+        .expect("full-horizon parent-drift output must serialize");
+    write_output_create_new_v1(&output_path, &output_bytes).unwrap_or_else(|error| {
+        panic!(
+            "full-horizon parent-drift output publish failed: {}",
+            error.0
+        )
+    });
 }
 
 #[cfg(test)]

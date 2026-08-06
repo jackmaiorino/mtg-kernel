@@ -12,6 +12,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regulari
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/coefficient-screen.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/gross-safety.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/full-horizon-training.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/full-horizon-parent-drift.ps1
+$drift = (Get-ChildItem 'D:\mtg-kernel-regularized-continuation-retest-v1\development\seed-1941001\full-horizon-parent-drift\attempt-*\parent-drift-manifest.json' | Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/full-horizon-evaluation.ps1 -ParentDriftManifestPath $drift
 ```
 
 The identity gate builds the exact original macro commit and the clean candidate
@@ -56,6 +59,27 @@ generation and Adam step 512 with 32,768 natural episodes and checkpoints 64,
 matched controls. Training completion does not read terminal outcomes and is
 not playing-strength evidence.
 
+The full-horizon parent-drift evaluator reuses the frozen terminal-blind
+validation corpus at seed `1941001`. It measures mean parent KL and TV for all
+three beta `0.1` candidates and matched beta-zero controls at generations 64,
+128, 256, 384, and 512. It reports every `R_g` ratio and the predeclared
+`R_512 >= 0.75` diagnostic without reading terminal outcomes. Since beta `0.1`
+was the only positive screen-eligible coefficient, this diagnostic cannot
+authorize an escalation in this campaign.
+
+The full-horizon evaluation first measures 1, 2, and 8 concurrent 64-pair
+streams on revealed seed `969999`, verifies a bit-identical repeated stream,
+and freezes the fastest resource-safe measured topology. It records the
+achieved rate, utilization, and projected wall time before formal evaluation.
+This screen chooses only H2H evaluator process concurrency. It does not change
+the earlier frozen GPU training topology or its `1.5x` selection rule.
+The formal phase runs exactly 21 create-new streams on seed `982001`: nine
+512-pair diagnostic streams and twelve 2,048-pair endpoint streams. No formal
+terminal stream is parsed until all 21 have completed and their process,
+executable, Store, and output hashes validate. The classifier then applies the
+frozen collapse-reproduction, V3, late-stability, P1, direct-score, H4, and
+nomination rules using terminal W/L/D only.
+
 Both gates bind the base commit, clean candidate commit, original `2/32/16`
 topology, revealed preflight seed `969999`, Pool3 generation-384 inputs,
 Rust/Cargo/linker/CUDA/driver identity, executable hashes, GPU identity,
@@ -68,6 +92,7 @@ Run the pure harness checks before a release build:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/common-tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/coefficient-selector-tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/experiments/regularized_continuation_retest_v1/gross-safety-classifier-tests.ps1
+python scripts/experiments/regularized_continuation_retest_v1/full-horizon-classifier.py --self-test
 ```
 
 Each child process receives exactly one physical GPU UUID through
