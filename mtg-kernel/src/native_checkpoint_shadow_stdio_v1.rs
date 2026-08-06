@@ -158,6 +158,8 @@ const SOURCE_TRAIN_STATE_SHA256_V1: &str =
 const SOURCE_MODEL_PARAMETER_SHA256_V1: &str =
     "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d";
 const SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str = "legacy-v1";
+const POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str =
+    "environment-randomization-v2";
 const SHADOW_RANDOMIZATION_IDENTITY_V1: &str = "legacy_v1";
 
 const PORTABLE_RUN_SHA256_V1: &str =
@@ -184,6 +186,11 @@ pub enum ShadowCheckpointAuthorityV1 {
     /// complete Store. The checkpoint digests are staged from the named Store
     /// boundary and then revalidated by the normal chain-proven loader.
     OriginalPromoted2StoreGeneration { root: PathBuf, generation: u64 },
+    /// One explicitly selected generation from a population Store. The Store
+    /// chain is the authority. Unlike the promoted(2) authority this has no
+    /// fixed source-run pin, but still requires the compiled inference and
+    /// environment-randomization-v2 contracts.
+    PopulationStoreGeneration { root: PathBuf, generation: u64 },
     /// A generation-0, weights-only derivative whose model parameters are
     /// bit-identical to promoted(2) g384. This is portable, but is never
     /// reported as the original checkpoint payload or manifest.
@@ -301,6 +308,13 @@ fn checkpoint_ref_v1(
             }
             Ok(checkpoint_ref)
         }
+        ShadowCheckpointAuthorityV1::PopulationStoreGeneration { root, generation } => {
+            stage_ladder_checkpoint_ref_v1(root, *generation).map_err(|_| {
+                ShadowScorerStartupErrorV1::new(
+                    ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+                )
+            })
+        }
         ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { .. } => Ok(fixed(
             PORTABLE_RUN_SHA256_V1,
             PORTABLE_GENERATION_V1,
@@ -319,9 +333,21 @@ fn authority_root_v1(authority: &ShadowCheckpointAuthorityV1) -> &Path {
     match authority {
         ShadowCheckpointAuthorityV1::OriginalPromoted2Generation384Store { root }
         | ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration { root, .. }
+        | ShadowCheckpointAuthorityV1::PopulationStoreGeneration { root, .. }
         | ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { root }
         | ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { root }
         | ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root } => root,
+    }
+}
+
+fn expected_environment_contract_v1(
+    authority: &ShadowCheckpointAuthorityV1,
+) -> NativeRunEnvironmentTrajectoryContractV1 {
+    match authority {
+        ShadowCheckpointAuthorityV1::PopulationStoreGeneration { .. } => {
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        }
+        _ => NativeRunEnvironmentTrajectoryContractV1::LegacyV1,
     }
 }
 
@@ -407,9 +433,8 @@ fn load_checkpoint_v1(
                 ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
             })?;
     validate_run_limits_v1(authority.run())?;
-    if authority.run().environment_trajectory_contract_v1()
-        != NativeRunEnvironmentTrajectoryContractV1::LegacyV1
-    {
+    let expected_environment_contract = expected_environment_contract_v1(&requested);
+    if authority.run().environment_trajectory_contract_v1() != expected_environment_contract {
         return Err(ShadowScorerStartupErrorV1::new(
             ShadowScorerStartupErrorKindV1::CheckpointIdentity,
         ));
@@ -423,6 +448,9 @@ fn load_checkpoint_v1(
         ),
         ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration { .. } => {
             ("original-promoted2-validated-store-generation", None, None)
+        }
+        ShadowCheckpointAuthorityV1::PopulationStoreGeneration { .. } => {
+            ("population-store-validated-generation", None, None)
         }
         ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis { .. } => {
             require_portable_source_binding_v1(authority.run())?;
@@ -485,7 +513,8 @@ fn load_checkpoint_v1(
             SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
         ),
         ShadowCheckpointAuthorityV1::OriginalPromoted2Generation384Store { .. }
-        | ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration { .. } => (
+        | ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration { .. }
+        | ShadowCheckpointAuthorityV1::PopulationStoreGeneration { .. } => (
             checkpoint_ref.source_run_sha256.clone(),
             checkpoint_ref.generation,
             checkpoint_ref.checkpoint_sha256.clone(),
@@ -510,7 +539,12 @@ fn load_checkpoint_v1(
         loaded_payload_sha256: lower_hex_raw32_v1(inference.checkpoint_payload_sha256()),
         loaded_train_state_sha256: lower_hex_raw32_v1(inference.train_state_sha256()),
         model_parameter_sha256: lower_hex_raw32_v1(inference.model_parameter_sha256()),
-        environment_trajectory_contract: SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
+        environment_trajectory_contract: match &requested {
+            ShadowCheckpointAuthorityV1::PopulationStoreGeneration { .. } => {
+                POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1
+            }
+            _ => SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
+        },
         sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
         sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
     };
@@ -5209,6 +5243,26 @@ fn run_jsonl_v1(
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn population_store_authority_selects_only_environment_randomization_v2_v1() {
+        let population = ShadowCheckpointAuthorityV1::PopulationStoreGeneration {
+            root: PathBuf::from("population-store"),
+            generation: 1024,
+        };
+        let original = ShadowCheckpointAuthorityV1::OriginalPromoted2StoreGeneration {
+            root: PathBuf::from("original-store"),
+            generation: 1024,
+        };
+        assert_eq!(
+            expected_environment_contract_v1(&population),
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
+        );
+        assert_eq!(
+            expected_environment_contract_v1(&original),
+            NativeRunEnvironmentTrajectoryContractV1::LegacyV1
+        );
+    }
 
     #[derive(Clone, Default)]
     struct SharedBytesV1(Arc<Mutex<Vec<u8>>>);
