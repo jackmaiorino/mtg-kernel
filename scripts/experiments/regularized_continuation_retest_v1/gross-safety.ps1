@@ -68,16 +68,23 @@ function Start-H2hArm {
     $outcome = Join-Path $RunRoot "$Label-terminal-stream.json"
     $stdout = Join-Path $RunRoot "$Label.stdout.log"
     $stderr = Join-Path $RunRoot "$Label.stderr.log"
-    foreach ($path in @($outcome, $stdout, $stderr)) {
+    $completion = Join-Path $RunRoot "$Label.completion.json"
+    $wrapperStdout = Join-Path $RunRoot "$Label.wrapper.stdout.log"
+    $wrapperStderr = Join-Path $RunRoot "$Label.wrapper.stderr.log"
+    foreach ($path in @($outcome, $stdout, $stderr, $completion, $wrapperStdout, $wrapperStderr)) {
         if (Test-Path -LiteralPath $path) {
             throw "arm output already exists: $path"
         }
     }
     Set-H2hEnvironment -StoreRoot $StoreRoot -OutcomePath $outcome -EvaluationSeed $EvaluationSeed -Pairs $Pairs
     try {
-        $process = Start-Process -FilePath $Executable -ArgumentList @(
-            $script:H2hTest, '--ignored', '--exact', '--nocapture', '--test-threads=1'
-        ) -WorkingDirectory $script:RepoRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        $wrapper = Join-Path $PSScriptRoot 'run-gross-safety-arm.ps1'
+        $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $wrapper,
+            '-Executable', $Executable, '-TestName', $script:H2hTest,
+            '-OutcomePath', $outcome, '-StdoutPath', $stdout,
+            '-StderrPath', $stderr, '-CompletionPath', $completion
+        ) -WorkingDirectory $script:RepoRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $wrapperStdout -RedirectStandardError $wrapperStderr
     }
     finally {
         Clear-H2hEnvironment
@@ -91,6 +98,9 @@ function Start-H2hArm {
         outcome_path = $outcome
         stdout_path = $stdout
         stderr_path = $stderr
+        completion_path = $completion
+        wrapper_stdout_path = $wrapperStdout
+        wrapper_stderr_path = $wrapperStderr
     }
 }
 
@@ -115,18 +125,20 @@ function Wait-H2hArms {
         $samples += Get-ResourceSample
     }
     catch {
-        foreach ($run in $Runs) {
-            if (-not $run.process.HasExited) {
-                Stop-Process -Id $run.process.Id -Force -ErrorAction SilentlyContinue
-            }
-        }
+        Stop-H2hArms -Runs $Runs
         throw
     }
     $completed = [DateTimeOffset]::UtcNow
     foreach ($run in $Runs) {
         $run.process.WaitForExit()
-        if ($run.process.ExitCode -ne 0) {
-            throw "$($run.label) evaluator failed with exit code $($run.process.ExitCode); see $($run.stderr_path)"
+        if (-not (Test-Path -LiteralPath $run.completion_path -PathType Leaf)) {
+            throw "$($run.label) evaluator exited without a completion record; see $($run.stderr_path)"
+        }
+        $completion = Get-Content -LiteralPath $run.completion_path -Raw | ConvertFrom-Json
+        if ([string]$completion.schema -ne 'regularized-continuation-gross-safety-arm-completion/v1' -or
+            $completion.success -ne $true -or [int]$completion.native_exit_code -ne 0 -or
+            [int]$completion.wrapper_process_id -ne [int]$run.process_id) {
+            throw "$($run.label) evaluator completion record is not successful; see $($run.completion_path)"
         }
         if (-not (Test-Path -LiteralPath $run.outcome_path -PathType Leaf)) {
             throw "$($run.label) did not publish its terminal stream"
@@ -148,6 +160,24 @@ function Stop-H2hArms {
     param([Parameter(Mandatory = $true)]$Runs)
     foreach ($run in $Runs) {
         if ($null -ne $run -and -not $run.process.HasExited) {
+            $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+            $descendants = New-Object System.Collections.Generic.List[int]
+            $frontier = @([int]$run.process.Id)
+            while ($frontier.Count -ne 0) {
+                $next = @()
+                foreach ($parent in $frontier) {
+                    foreach ($child in @($all | Where-Object { [int]$_.ParentProcessId -eq $parent })) {
+                        $descendants.Add([int]$child.ProcessId)
+                        $next += [int]$child.ProcessId
+                    }
+                }
+                $frontier = $next
+            }
+            $descendantArray = @($descendants)
+            [array]::Reverse($descendantArray)
+            foreach ($id in $descendantArray) {
+                Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
+            }
             Stop-Process -Id $run.process.Id -Force -ErrorAction SilentlyContinue
         }
     }
@@ -284,8 +314,11 @@ $preflightManifest = [ordered]@{
     }
     outputs = [ordered]@{
         single_control = Get-FileRecord $singleRun.outcome_path
+        single_control_completion = Get-FileRecord $singleRun.completion_path
         concurrent_control = Get-FileRecord $concurrentControl.outcome_path
+        concurrent_control_completion = Get-FileRecord $concurrentControl.completion_path
         concurrent_selected = Get-FileRecord $concurrentSelected.outcome_path
+        concurrent_selected_completion = Get-FileRecord $concurrentSelected.completion_path
     }
 }
 $preflightManifestPath = Join-Path $preflightRoot 'throughput-manifest.json'
@@ -369,7 +402,9 @@ $formalManifest = [ordered]@{
     }
     outputs = [ordered]@{
         control_terminal_stream = Get-FileRecord $formalControl.outcome_path
+        control_completion = Get-FileRecord $formalControl.completion_path
         selected_terminal_stream = Get-FileRecord $formalSelected.outcome_path
+        selected_completion = Get-FileRecord $formalSelected.completion_path
         classification = Get-FileRecord $classificationPath
         control_stdout = Get-FileRecord $formalControl.stdout_path
         control_stderr = Get-FileRecord $formalControl.stderr_path
