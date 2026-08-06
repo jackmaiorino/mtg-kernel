@@ -41,7 +41,6 @@ SCREEN_PAIR_COUNT = 128
 SCREEN_REPLICAS = 4
 SCREEN_MIN_SPEEDUP = 2.0
 SCREEN_EVAL_SEED = 639_800_001
-MATRIX_FIRST_EVAL_SEED = 640_100_001
 MATRIX_EVAL_SEED_STRIDE = 1_000_000
 
 
@@ -490,6 +489,7 @@ def run_matrix(args: argparse.Namespace) -> Path:
         f"payoff-matrix-generation-{context['global_generation']:04d}",
     )
     specs = []
+    matrix_first_eval_seed = context["global_generation"] * 1_000_000 + 100_001
     for matchup_index, (candidate, opponent) in enumerate(itertools.combinations(range(8), 2)):
         specs.append(
             arm_spec(
@@ -497,7 +497,7 @@ def run_matrix(args: argparse.Namespace) -> Path:
                 candidate,
                 opponent,
                 PAIR_COUNT,
-                MATRIX_FIRST_EVAL_SEED + matchup_index * MATRIX_EVAL_SEED_STRIDE,
+                matrix_first_eval_seed + matchup_index * MATRIX_EVAL_SEED_STRIDE,
             )
         )
     plan = {
@@ -509,6 +509,8 @@ def run_matrix(args: argparse.Namespace) -> Path:
         "total_pair_count": 14336,
         "total_game_count": 28672,
         "selected_concurrency": concurrency,
+        "first_evaluation_seed": matrix_first_eval_seed,
+        "evaluation_seed_stride": MATRIX_EVAL_SEED_STRIDE,
         "matchups": specs,
         "analysis": {
             "per_matchup_payoff": "candidate terminal-order sum divided by 1024 games",
