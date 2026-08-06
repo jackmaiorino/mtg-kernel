@@ -108,12 +108,14 @@ def bind(
     ]
 
     program_update = refresh_index * 128
-    if program_update % 256 == 0:
-        raise ValueError(
-            "this boundary requires a new exploiter build or explicit fallback selection"
-        )
+    if program_update % 256 == 0 and args.fallback_record is None:
+        raise ValueError("this boundary requires an explicit fallback record")
+    if program_update % 256 != 0 and args.fallback_record is not None:
+        raise ValueError("fallback records are accepted only at scheduled rebuild boundaries")
     for index, role in ((6, "exploiter-0"), (7, "exploiter-1")):
         prior = previous["slots"][index]
+        if program_update % 256 == 0 and prior["occupant_class"] != "historical-fallback":
+            raise ValueError("scheduled fallback carry requires prior historical fallbacks")
         records.append(
             slot(
                 root_for_seed(args, int(prior["source_base_seed"])),
@@ -144,6 +146,7 @@ def main() -> int:
     parser.add_argument("--seed-970001", required=True, type=Path)
     parser.add_argument("--seed-970002", required=True, type=Path)
     parser.add_argument("--seed-970003", required=True, type=Path)
+    parser.add_argument("--fallback-record", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
@@ -154,6 +157,26 @@ def main() -> int:
     if previous["global_generation"] != global_generation - 128:
         raise ValueError("previous refresh generation is not contiguous")
     records = bind(args, previous, refresh_index, global_generation)
+    fallback_hash = None
+    if args.fallback_record is not None:
+        fallback = {
+            "schema": "scaled-selfplay-population-fallback-record/v1",
+            "program_update": refresh_index * 128,
+            "reason": "response-exploiter build lane unavailable",
+            "disposition": "carry deterministic historical fallbacks; no exploiter-robustness claim",
+            "archive_order": [
+                {
+                    "seed": records[index]["source_base_seed"],
+                    "generation": records[index]["source_generation"],
+                    "model_parameter_sha256": records[index]["model_parameter_sha256"],
+                }
+                for index in (6, 7)
+            ],
+            "previous_manifest_sha256": sha256_file(args.previous_refresh),
+            "selection_uses_terminal_outcomes": False,
+        }
+        write_new_canonical(args.fallback_record, fallback)
+        fallback_hash = sha256_file(args.fallback_record)
     document = {
         "schema": "scaled-selfplay-population-slot-bindings/v1",
         "program_commit": PROGRAM_COMMIT,
@@ -166,6 +189,8 @@ def main() -> int:
         "selection_uses_terminal_outcomes": False,
         "slots": records,
     }
+    if fallback_hash is not None:
+        document["fallback_record_sha256"] = fallback_hash
     write_new_canonical(args.output, document)
     return 0
 
