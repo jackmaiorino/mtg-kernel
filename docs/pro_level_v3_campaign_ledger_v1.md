@@ -15,8 +15,8 @@ ledger reuses alpha after launch.
 |---|---:|---:|---:|---|---|
 | `candidate-01-gae-initial` | candidates | 0.00875 | Y | `INCONCLUSIVE-AT-MAX-N`, `n=16384`; closed | `488b64430f2aa806dbaa2689e6bd0d14570f87ed091ca1ac4c553561d05dfa96` |
 | `candidate-01-gae-confirm` | candidates | 0.00875 | N | not launched; candidate closed | `b82fa7bd4b4220bcfac60415c097448e7d992846871f1d485865dc3e12f9faaa` |
-| `candidate-02-population-g1536-initial` | candidates | 0.00875 | N | assigned to fixed lineage-970002 generation-1536; not launched | `b8609141d42f5c5230dadc95d279ff17d5869de523a8b579e3ec93c10561868c` |
-| `candidate-02-population-g1536-confirm` | candidates | 0.00875 | N | mandatory only after independently reverified initial `SUCCESS`; not launched | `bd7612fc6a937b55a1f0ed9efec0042200a0effe3d3eaee822a5032de8af0100` |
+| `candidate-02-population-g1536-initial` | candidates | 0.00875 | Y | `INCONCLUSIVE-AT-MAX-N`, `n=131072`; closed | `b8609141d42f5c5230dadc95d279ff17d5869de523a8b579e3ec93c10561868c` |
+| `candidate-02-population-g1536-confirm` | candidates | 0.00875 | N | not launched; candidate closed | `bd7612fc6a937b55a1f0ed9efec0042200a0effe3d3eaee822a5032de8af0100` |
 | `candidate-03-initial/confirm` | candidates | 0.0175 total | N | unassigned | unassigned |
 | `candidate-04-initial/confirm` | candidates | 0.0175 total | N | unassigned | unassigned |
 
@@ -36,6 +36,22 @@ recomputed all chunk hashes, leg scores, confidence-sequence endpoints,
 stopping looks, schedule identities, and component receipts with zero
 discrepancies. Candidate 02 and later formal gates require countersign before
 launch.
+
+Candidate 02 initial execution manifest SHA-256:
+`7446c215961749c7d3d74f217f7baa553701b63046f480a05ee36a06c7c0df4d`.
+Its full analysis SHA-256 is
+`4b8ecd305f7beb98b86aa2e250e5e301c4e745148167aa91006581c6a55fd6d3`.
+Independent reconstruction reproduced the retained analysis byte-for-byte
+from all 64 receipts and 128 raw outcomes. The final estimate was
+`0.0085296630859375` with confidence-sequence interval
+`[0.0033928632690480853, 0.011348276520729561]`.
+
+Process deviation for `candidate-02-population-g1536-initial`: its valid
+prelaunch countersign came from an independent OpenAI sidecar reviewer rather
+than Fable's usual review lane; Fable acknowledged the clean launch and
+requested this ledger note plus independent reanalysis before any confirmation.
+The initial was independently reconstructed exactly and was not `SUCCESS`, so
+confirmation was not launched.
 
 ## Post-freeze development history
 
