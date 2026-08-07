@@ -15,7 +15,8 @@ ledger reuses alpha after launch.
 |---|---:|---:|---:|---|---|
 | `candidate-01-gae-initial` | candidates | 0.00875 | Y | `INCONCLUSIVE-AT-MAX-N`, `n=16384`; closed | `488b64430f2aa806dbaa2689e6bd0d14570f87ed091ca1ac4c553561d05dfa96` |
 | `candidate-01-gae-confirm` | candidates | 0.00875 | N | not launched; candidate closed | `b82fa7bd4b4220bcfac60415c097448e7d992846871f1d485865dc3e12f9faaa` |
-| `candidate-02-initial/confirm` | candidates | 0.0175 total | N | unassigned | unassigned |
+| `candidate-02-population-g1536-initial` | candidates | 0.00875 | N | assigned to fixed lineage-970002 generation-1536; not launched | `b8609141d42f5c5230dadc95d279ff17d5869de523a8b579e3ec93c10561868c` |
+| `candidate-02-population-g1536-confirm` | candidates | 0.00875 | N | mandatory only after independently reverified initial `SUCCESS`; not launched | `bd7612fc6a937b55a1f0ed9efec0042200a0effe3d3eaee822a5032de8af0100` |
 | `candidate-03-initial/confirm` | candidates | 0.0175 total | N | unassigned | unassigned |
 | `candidate-04-initial/confirm` | candidates | 0.0175 total | N | unassigned | unassigned |
 
