@@ -22,7 +22,9 @@ use crate::native_checkpoint_runner_v1::{
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 #[cfg(test)]
 use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
-use crate::native_population_opponent_v1::PopulationOpponentEngineV1;
+use crate::native_population_opponent_v1::{
+    PopulationOpponentEngineV1, PopulationWeightVectorV1,
+};
 #[cfg(test)]
 use crate::native_train_state_payload_v1::decode_native_train_state_payload_v1;
 #[cfg(test)]
@@ -189,6 +191,49 @@ fn policy_anchor_runtime_v1(
         coefficient,
         model: Arc::new(model),
     }))
+}
+
+#[cfg(test)]
+fn response_exploiter_runtime_bindings_match_v1(
+    declared_beta_f32_bits: &str,
+    declared_weight_units: &[u64; 8],
+    declared_weight_total_units: u64,
+    installed_anchor: Option<NativePolicyAnchorCoefficientV1>,
+    runtime_weights: Option<&PopulationWeightVectorV1>,
+) -> bool {
+    let Ok(declared_beta_bits) = u32::from_str_radix(declared_beta_f32_bits, 16) else {
+        return false;
+    };
+    let Some(installed_anchor) = installed_anchor else {
+        return false;
+    };
+    let Some(runtime_weights) = runtime_weights else {
+        return false;
+    };
+    declared_beta_bits == installed_anchor.bits_v1()
+        && declared_weight_units == runtime_weights.weights_v1()
+        && declared_weight_total_units == runtime_weights.total_v1()
+}
+
+#[cfg(test)]
+fn validate_response_exploiter_runtime_bindings_v1(
+    run: &ValidatedTrainRunV2,
+    installed_anchor: Option<NativePolicyAnchorCoefficientV1>,
+    runtime_weights: Option<&PopulationWeightVectorV1>,
+) -> Result<()> {
+    let Some(response) = run.record().contracts().response_exploiter_v1.as_ref() else {
+        return Ok(());
+    };
+    if !response_exploiter_runtime_bindings_match_v1(
+        &response.policy_anchor_beta_f32_bits,
+        &response.effective_weight_units,
+        response.effective_weight_total_units,
+        installed_anchor,
+        runtime_weights,
+    ) {
+        return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
+    }
+    Ok(())
 }
 
 fn map_busy_v1<K>(
@@ -483,6 +528,14 @@ fn run_native_science_loop_with_opponents_v1(
     #[cfg(test)]
     let policy_anchor = policy_anchor_runtime_v1(ladder_init_reference)
         .map_err(|_| loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid))?;
+    #[cfg(test)]
+    validate_response_exploiter_runtime_bindings_v1(
+        run,
+        policy_anchor.as_ref().map(|anchor| anchor.coefficient),
+        population_opponent
+            .as_deref()
+            .map(PopulationOpponentEngineV1::weights_v1),
+    )?;
     #[cfg(test)]
     let stop_after_generation = parse_optional_generation_knob_v1("MULTIRUN_STOP_AFTER_GENERATION")
         .map_err(|_| loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid))?;
@@ -820,6 +873,52 @@ mod policy_anchor_parse_tests {
             parse_optional_generation_value_v1(Some(OsStr::new("-1"))),
             Err(())
         );
+    }
+
+    #[test]
+    fn response_exploiter_runtime_bindings_require_exact_installed_beta_and_weights() {
+        let declared = [125_407, 115_542, 127_252, 127_098, 128_077, 127_916, 0, 0];
+        let runtime = PopulationWeightVectorV1::new_v1(declared, 751_292).unwrap();
+        assert!(response_exploiter_runtime_bindings_match_v1(
+            "3dcccccd",
+            &declared,
+            751_292,
+            Some(NativePolicyAnchorCoefficientV1::Beta0p1),
+            Some(&runtime),
+        ));
+        assert!(!response_exploiter_runtime_bindings_match_v1(
+            "3cf5c28f",
+            &declared,
+            751_292,
+            Some(NativePolicyAnchorCoefficientV1::Beta0p1),
+            Some(&runtime),
+        ));
+        let wrong_runtime = PopulationWeightVectorV1::new_v1(
+            [125_408, 115_541, 127_252, 127_098, 128_077, 127_916, 0, 0],
+            751_292,
+        )
+        .unwrap();
+        assert!(!response_exploiter_runtime_bindings_match_v1(
+            "3dcccccd",
+            &declared,
+            751_292,
+            Some(NativePolicyAnchorCoefficientV1::Beta0p1),
+            Some(&wrong_runtime),
+        ));
+        assert!(!response_exploiter_runtime_bindings_match_v1(
+            "3dcccccd",
+            &declared,
+            751_291,
+            Some(NativePolicyAnchorCoefficientV1::Beta0p1),
+            Some(&runtime),
+        ));
+        assert!(!response_exploiter_runtime_bindings_match_v1(
+            "3dcccccd",
+            &declared,
+            751_292,
+            None,
+            Some(&runtime),
+        ));
     }
 }
 
