@@ -387,8 +387,18 @@ const RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1: u64 = 64;
 const RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1: u64 = 4;
 const RESPONSE_EXPLOITER_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1: &str =
     "weights-bit-exact-from-promoted2-adam-moments-positive-zero-adam-step-zero/v1";
-const RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1: [u64; 2] = [971_001, 971_002];
-const RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1: [u64; 2] = [971_091, 971_092];
+// Response-exploiter build v2 (CLAUDE-RESPONSE-EXPLOITER-V2-SHEET-V1.md
+// Section 1) adds three fresh build seeds (971101/971102/971103) and two
+// fresh preflight/screen seeds (971191/971192, introduced for Section 13's
+// infrastructure sanity check; the sheet itself does not specify preflight
+// seed literals) alongside the original v1 campaign's two build and two
+// screen seeds. The original four seeds keep the exact same role and
+// completion-generation semantics as before; this is a pure widening, not a
+// reinterpretation.
+const RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1: [u64; 5] =
+    [971_001, 971_002, 971_101, 971_102, 971_103];
+const RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1: [u64; 4] =
+    [971_091, 971_092, 971_191, 971_192];
 const RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1: u64 = 4;
 const RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1: &str = "3dcccccd";
 const RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1: &str = "3cf5c28f";
@@ -834,8 +844,8 @@ pub struct ResponseExploiterContractV1 {
     pub(crate) episodes_per_update: u64,
     pub(crate) reward_identity: String,
     pub(crate) fresh_adam_after_weight_init_identity: String,
-    pub(crate) authorized_base_seeds: [u64; 2],
-    pub(crate) authorized_screen_seeds: [u64; 2],
+    pub(crate) authorized_base_seeds: [u64; 5],
+    pub(crate) authorized_screen_seeds: [u64; 4],
     pub(crate) expected_base_seed: u64,
     pub(crate) run_role: String,
     pub(crate) expected_completion_generation: u64,
@@ -6287,8 +6297,8 @@ mod tests {
             |r| r.episodes_per_update = 32,
             |r| r.reward_identity = "wrong".to_owned(),
             |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
-            |r| r.authorized_base_seeds = [971_001, 971_003],
-            |r| r.authorized_screen_seeds = [971_091, 971_093],
+            |r| r.authorized_base_seeds = [971_001, 971_002, 971_101, 971_102, 971_003],
+            |r| r.authorized_screen_seeds = [971_091, 971_092, 971_191, 971_003],
             |r| r.expected_base_seed = 971_002,
             |r| r.run_role = "screen".to_owned(),
             |r| r.expected_completion_generation = 4,
