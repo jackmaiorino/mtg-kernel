@@ -336,7 +336,7 @@ pub fn run_native_science_loop_v1(
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
 ) -> Result<NativeScienceLoopReportV1> {
-    run_native_science_loop_with_opponents_v1(
+    match run_native_science_loop_with_opponents_v1(
         parent,
         root_basename,
         run,
@@ -347,7 +347,13 @@ pub fn run_native_science_loop_v1(
         ladder_opponent,
         None,
         ladder_init_reference,
-    )
+        true,
+    )? {
+        NativeScienceLoopCompletionV1::Evaluated(report) => Ok(report),
+        NativeScienceLoopCompletionV1::TrainingOnly { .. } => {
+            Err(loop_error_v1(NativeScienceLoopV1ErrorKind::EvaluateFailed))
+        }
+    }
 }
 
 /// Experiment-facing population-runtime entry point. The existing science
@@ -374,7 +380,7 @@ pub fn run_native_science_loop_with_population_v1(
     {
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
     }
-    run_native_science_loop_with_opponents_v1(
+    match run_native_science_loop_with_opponents_v1(
         parent,
         root_basename,
         run,
@@ -385,7 +391,70 @@ pub fn run_native_science_loop_with_population_v1(
         None,
         population_opponent,
         ladder_init_reference,
-    )
+        true,
+    )? {
+        NativeScienceLoopCompletionV1::Evaluated(report) => Ok(report),
+        NativeScienceLoopCompletionV1::TrainingOnly { .. } => {
+            Err(loop_error_v1(NativeScienceLoopV1ErrorKind::EvaluateFailed))
+        }
+    }
+}
+
+/// Response-exploiter training entry point. Unlike the general science loop,
+/// this path stops after complete Store validation and never launches or reads
+/// an automatic development evaluation. Qualification outcomes are produced
+/// later by the separately frozen mixture and pure-anchor panels.
+#[allow(private_interfaces, clippy::too_many_arguments)]
+pub fn run_native_response_exploiter_training_v1(
+    parent: impl AsRef<Path>,
+    root_basename: &str,
+    run: &ValidatedTrainRunV2,
+    execution_config: NativeTrainingExecutionConfigV1,
+    snapshot_manifest_path: &Path,
+    snapshot_payload_path: &Path,
+    runner_config: NativeCheckpointRunnerConfigV1,
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
+) -> Result<u64> {
+    if population_opponent.is_none()
+        || run
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .is_none()
+        || run
+            .record()
+            .contracts()
+            .population_program_v1
+            .is_some()
+    {
+        return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
+    }
+    match run_native_science_loop_with_opponents_v1(
+        parent,
+        root_basename,
+        run,
+        execution_config,
+        snapshot_manifest_path,
+        snapshot_payload_path,
+        runner_config,
+        None,
+        population_opponent,
+        ladder_init_reference,
+        false,
+    )? {
+        NativeScienceLoopCompletionV1::TrainingOnly {
+            latest_generation_index,
+        } => Ok(latest_generation_index),
+        NativeScienceLoopCompletionV1::Evaluated(_) => {
+            Err(loop_error_v1(NativeScienceLoopV1ErrorKind::EvaluateFailed))
+        }
+    }
+}
+
+enum NativeScienceLoopCompletionV1 {
+    TrainingOnly { latest_generation_index: u64 },
+    Evaluated(NativeScienceLoopReportV1),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -400,7 +469,8 @@ fn run_native_science_loop_with_opponents_v1(
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
-) -> Result<NativeScienceLoopReportV1> {
+    evaluate_after_training: bool,
+) -> Result<NativeScienceLoopCompletionV1> {
     use crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2ErrorKind;
 
     if ladder_opponent.is_some() && population_opponent.is_some() {
@@ -640,6 +710,11 @@ fn run_native_science_loop_with_opponents_v1(
     if state.latest_generation_index() != latest_generation_index {
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::ValidateFailed));
     }
+    if !evaluate_after_training {
+        return Ok(NativeScienceLoopCompletionV1::TrainingOnly {
+            latest_generation_index,
+        });
+    }
 
     // Load the update-zero and latest boundaries through the complete decode
     // chain, then run both through the checkpoint-backed runner.
@@ -693,12 +768,14 @@ fn run_native_science_loop_with_opponents_v1(
     let evaluation = evaluate_native_checkpoint_uniform_delta_v1(&reference_run, &candidate_run)
         .map_err(|_| loop_error_v1(NativeScienceLoopV1ErrorKind::EvaluateFailed))?;
 
-    Ok(NativeScienceLoopReportV1 {
+    Ok(NativeScienceLoopCompletionV1::Evaluated(
+        NativeScienceLoopReportV1 {
         latest_generation_index,
         reference_run,
         candidate_run,
         evaluation,
-    })
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -1027,6 +1104,8 @@ mod windows_science_loop_tests {
         let population_authority_enabled =
             env_knob_v1("MULTIRUN_POPULATION_AUTHORITY", 0) != 0;
         let population_runtime_enabled = env_knob_v1("MULTIRUN_POPULATION_RUNTIME", 0) != 0;
+        let response_exploiter_runtime_enabled =
+            env_knob_v1("MULTIRUN_RESPONSE_EXPLOITER_RUNTIME", 0) != 0;
         // Macro Self-Play Envrand-V2 Rung V1. This knob changes only the
         // run-record trajectory declaration. Runtime dispatch remains owned
         // by the validated record and its sealed executor-mode diagonal.
@@ -1152,11 +1231,33 @@ mod windows_science_loop_tests {
             !population_runtime_enabled || population_authority_enabled,
             "MULTIRUN_POPULATION_RUNTIME=1 requires MULTIRUN_POPULATION_AUTHORITY=1"
         );
-        let population_engine = if population_runtime_enabled {
-            let chain_paths: Vec<std::path::PathBuf> = std::env::var(
-                "MULTIRUN_POPULATION_REFRESH_CHAIN",
-            )
-            .expect("population runtime requires MULTIRUN_POPULATION_REFRESH_CHAIN")
+        assert!(
+            !(population_runtime_enabled && response_exploiter_runtime_enabled),
+            "population and response-exploiter runtimes are mutually exclusive"
+        );
+        assert!(
+            !response_exploiter_runtime_enabled
+                || (ladder_enabled
+                    && environment_randomization_v2
+                    && ladder_init_section.is_some()
+                    && updates == 256
+                    && !population_authority_enabled),
+            "response-exploiter runtime requires ladder parent init, envrand-v2, and exactly 256 updates"
+        );
+        let population_engine = if population_runtime_enabled || response_exploiter_runtime_enabled {
+            let (chain_name, roots_name) = if response_exploiter_runtime_enabled {
+                (
+                    "MULTIRUN_RESPONSE_EXPLOITER_REFRESH_CHAIN",
+                    "MULTIRUN_RESPONSE_EXPLOITER_SLOT_ROOTS",
+                )
+            } else {
+                (
+                    "MULTIRUN_POPULATION_REFRESH_CHAIN",
+                    "MULTIRUN_POPULATION_SLOT_ROOTS",
+                )
+            };
+            let chain_paths: Vec<std::path::PathBuf> = std::env::var(chain_name)
+            .unwrap_or_else(|_| panic!("runtime requires {chain_name}"))
             .split(';')
             .filter(|value| !value.is_empty())
             .map(std::path::PathBuf::from)
@@ -1173,28 +1274,50 @@ mod windows_science_loop_tests {
                 chain.push(manifest);
             }
             let active = chain.last().expect("population refresh chain is nonempty");
-            let expected_start = expected_resume_generation
-                .expect("population runtime requires MULTIRUN_EXPECT_RESUME_GENERATION");
-            let expected_stop = expected_start
-                .checked_add(128)
-                .expect("population interval generation overflow");
-            assert_eq!(active.global_generation_v1(), expected_start);
-            assert_eq!(stop_after_generation, Some(expected_stop));
-            let slot_roots: Vec<std::path::PathBuf> = std::env::var(
-                "MULTIRUN_POPULATION_SLOT_ROOTS",
-            )
-            .expect("population runtime requires MULTIRUN_POPULATION_SLOT_ROOTS")
+            if population_runtime_enabled {
+                let expected_start = expected_resume_generation
+                    .expect("population runtime requires MULTIRUN_EXPECT_RESUME_GENERATION");
+                let expected_stop = expected_start
+                    .checked_add(128)
+                    .expect("population interval generation overflow");
+                assert_eq!(active.global_generation_v1(), expected_start);
+                assert_eq!(stop_after_generation, Some(expected_stop));
+            } else {
+                assert_eq!(active.refresh_index_v1(), 8);
+                assert_eq!(active.global_generation_v1(), 1_536);
+                assert_eq!(
+                    crate::native_training_store_digest_v1::lower_hex_raw32_v1(
+                        active.manifest_sha256_v1()
+                    ),
+                    "9c9490b205b7b5a933eae7ca86916e5ff5ff9307a150dc35487a8e1c28e73e22",
+                    "response-exploiter runtime refresh bytes differ from the RunV2 target authority"
+                );
+                assert_eq!(expected_resume_generation, None);
+                assert!(
+                    stop_after_generation.is_none() || stop_after_generation == Some(4),
+                    "response-exploiter runtime permits only the four-update screen or full 256-update build"
+                );
+            }
+            let slot_roots: Vec<std::path::PathBuf> = std::env::var(roots_name)
+            .unwrap_or_else(|_| panic!("runtime requires {roots_name}"))
             .split(';')
             .filter(|value| !value.is_empty())
             .map(std::path::PathBuf::from)
             .collect();
-            Some(Arc::new(
+            let engine = if response_exploiter_runtime_enabled {
+                crate::native_population_runtime_resolution_v1::resolve_population_response_target_v1(
+                    active,
+                    &slot_roots,
+                )
+                .expect("response-exploiter target slots must resolve through Store authority")
+            } else {
                 crate::native_population_runtime_resolution_v1::resolve_population_opponent_v1(
                     active,
                     &slot_roots,
                 )
-                .expect("population runtime slots must resolve through Store authority"),
-            ))
+                .expect("population runtime slots must resolve through Store authority")
+            };
+            Some(Arc::new(engine))
         } else {
             None
         };
@@ -1231,6 +1354,7 @@ mod windows_science_loop_tests {
              ladder_init={} wide={wide_enabled} envrand_v2={environment_randomization_v2} \
              population_authority={population_authority_enabled} \
              population_runtime={population_runtime_enabled} \
+             response_exploiter_runtime={response_exploiter_runtime_enabled} \
              policy_anchor_beta={} stop_after_generation={} expected_resume_generation={}",
             ladder_init_store.is_some(),
             std::env::var("MULTIRUN_POLICY_ANCHOR_BETA").unwrap_or_else(|_| "absent".to_owned()),
@@ -1249,7 +1373,33 @@ mod windows_science_loop_tests {
                 let population_engine = population_engine.clone();
                 std::thread::spawn(move || {
                     let run_seed = base_seed + seed_offset + ordinal as u64;
-                    let patched = if population_authority_enabled {
+                    let patched = if response_exploiter_runtime_enabled {
+                        crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_environment_v2(
+                            NativeTrainingNumericalBackendV1::CudaBurnDense,
+                            64,
+                            4,
+                            updates,
+                            workers,
+                            sessions,
+                            broker_target,
+                            1_024,
+                            2_048,
+                            run_seed,
+                            ladder_pool
+                                .as_ref()
+                                .expect("response-exploiter Run requires ladder pool")
+                                .clone(),
+                            ladder_init_section
+                                .as_ref()
+                                .expect("response-exploiter Run requires parent initialization")
+                                .clone(),
+                            match std::env::var("MULTIRUN_POLICY_ANCHOR_BETA").as_deref() {
+                                Ok("0.1") => "3dcccccd",
+                                Ok("0.03") => "3cf5c28f",
+                                _ => panic!("response-exploiter beta must be exactly 0.1 or 0.03"),
+                            },
+                        )
+                    } else if population_authority_enabled {
                         test_fixture_bytes_with_schedule_and_base_seed_population_environment_v2(
                             NativeTrainingNumericalBackendV1::CudaBurnDense,
                             64,
@@ -1411,6 +1561,27 @@ mod windows_science_loop_tests {
                         }
                     };
                     let run = decode_train_run_v2(&patched).expect("pilot run record");
+                    if response_exploiter_runtime_enabled {
+                        let response = run
+                            .record()
+                            .contracts()
+                            .response_exploiter_v1
+                            .as_ref()
+                            .expect("response-exploiter Run requires its authority section");
+                        let actual_completion = stop_after_generation.unwrap_or(updates);
+                        assert_eq!(
+                            response.expected_completion_generation, actual_completion,
+                            "response-exploiter Run role must bind the external stop generation"
+                        );
+                        assert_eq!(
+                            response.run_role,
+                            if stop_after_generation.is_some() {
+                                "screen"
+                            } else {
+                                "build"
+                            }
+                        );
+                    }
                     // Capacity Experiment Contract Section 3: genesis authors
                     // from the wide production snapshot instead of the frozen
                     // common snapshot whenever the record carries the wide
@@ -1454,8 +1625,8 @@ mod windows_science_loop_tests {
                         measure_broker_service_time: false,
                     };
                     let run_started = std::time::Instant::now();
-                    let report = if population_runtime_enabled {
-                        run_native_science_loop_with_population_v1(
+                    let (latest_generation_index, evaluation_counts) = if response_exploiter_runtime_enabled {
+                        let generation = run_native_response_exploiter_training_v1(
                             &parent_path,
                             "store",
                             &run,
@@ -1466,28 +1637,47 @@ mod windows_science_loop_tests {
                             population_engine.clone(),
                             ladder_init_reference.as_deref(),
                         )
+                        .expect("response exploiter training loop");
+                        (generation, None)
                     } else {
-                        run_native_science_loop_v1(
-                            &parent_path,
-                            "store",
-                            &run,
-                            execution_config,
-                            &snapshot_manifest,
-                            &snapshot_payload,
-                            runner_config,
-                            ladder_engine.clone(),
-                            ladder_init_reference.as_deref(),
+                        let report = if population_runtime_enabled {
+                            run_native_science_loop_with_population_v1(
+                                &parent_path,
+                                "store",
+                                &run,
+                                execution_config,
+                                &snapshot_manifest,
+                                &snapshot_payload,
+                                runner_config,
+                                population_engine.clone(),
+                                ladder_init_reference.as_deref(),
+                            )
+                        } else {
+                            run_native_science_loop_v1(
+                                &parent_path,
+                                "store",
+                                &run,
+                                execution_config,
+                                &snapshot_manifest,
+                                &snapshot_payload,
+                                runner_config,
+                                ladder_engine.clone(),
+                                ladder_init_reference.as_deref(),
+                            )
+                        }
+                        .expect("pilot loop");
+                        let outcomes = report.evaluation().candidate_learner_outcomes();
+                        (
+                            report.latest_generation_index(),
+                            Some((outcomes.wins(), outcomes.losses())),
                         )
-                    }
-                    .expect("pilot loop");
+                    };
                     let wall = run_started.elapsed().as_secs_f64();
-                    let outcomes = report.evaluation().candidate_learner_outcomes();
                     (
                         ordinal,
-                        report.latest_generation_index(),
+                        latest_generation_index,
                         wall,
-                        outcomes.wins(),
-                        outcomes.losses(),
+                        evaluation_counts,
                     )
                 })
             })
@@ -1502,14 +1692,20 @@ mod windows_science_loop_tests {
         };
         let mut total_episodes = 0_u64;
         for handle in handles {
-            let (ordinal, generation, wall, wins, losses) = handle.join().expect("pilot thread");
+            let (ordinal, generation, wall, evaluation_counts) =
+                handle.join().expect("pilot thread");
             let expected_generation = stop_after_generation.unwrap_or(updates);
             assert_eq!(generation, expected_generation);
             total_episodes +=
                 64 * generation.saturating_sub(expected_resume_generation.unwrap_or(0));
-            println!(
-                "MULTIRUN run={ordinal} gen={generation} wall={wall:.1}s eval W/L {wins}/{losses}{wide_label}"
-            );
+            match evaluation_counts {
+                Some((wins, losses)) => println!(
+                    "MULTIRUN run={ordinal} gen={generation} wall={wall:.1}s eval W/L {wins}/{losses}{wide_label}"
+                ),
+                None => println!(
+                    "MULTIRUN run={ordinal} gen={generation} wall={wall:.1}s training_only=true terminal_outcomes_read=false{wide_label}"
+                ),
+            }
         }
         if let Some(generation) = expected_resume_generation {
             println!("STORE CLOSE_REOPEN resume_generation={generation}");
@@ -2387,6 +2583,280 @@ mod windows_science_loop_tests {
                 lower_hex_raw32_v1(sha256_v1(&bytes))
             );
         }
+    }
+
+    /// Evaluation-only terminal stream for the frozen six-slot response target.
+    /// One population component is selected per seat-swapped pair and recorded
+    /// on both natural terminal rows. The same evaluation seed therefore gives
+    /// the analyzer an exact CRN component, environment, and seat binding across
+    /// independently completed candidate and control arms.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[test]
+    #[ignore = "measurement probe, run explicitly"]
+    fn response_exploiter_mixture_eval_v1() {
+        use crate::native_checkpoint_runner_v1::run_native_checkpoint_with_population_opponent_eval_v1;
+        use crate::native_population_refresh_manifest_v1::decode_population_refresh_manifest_v1;
+        use crate::native_population_runtime_resolution_v1::resolve_population_response_target_pairwise_v1;
+        use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
+        use crate::rl::{
+            terminal_tuple_is_valid_v1, PlayerSeatV1, TerminalClassificationV1,
+            TerminalSafeCodeV2,
+        };
+        use std::fs::OpenOptions;
+        use std::io::Write;
+
+        const TARGET_REFRESH_SHA256_V1: &str =
+            "9c9490b205b7b5a933eae7ca86916e5ff5ff9307a150dc35487a8e1c28e73e22";
+
+        fn required_env_v1(name: &str) -> String {
+            std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
+        }
+
+        let candidate_store_root = required_env_v1("RESPONSE_H2H_CANDIDATE_STORE_ROOT");
+        let candidate_gen: u64 = required_env_v1("RESPONSE_H2H_CANDIDATE_GEN")
+            .parse()
+            .expect("response candidate generation");
+        assert!(
+            matches!(candidate_gen, 0 | 256),
+            "mixture arm must be a complete exploiter or its exact promoted(2) genesis control"
+        );
+        let pairs: u64 = std::env::var("RESPONSE_H2H_PAIRS")
+            .unwrap_or_else(|_| "1024".to_owned())
+            .parse()
+            .expect("RESPONSE_H2H_PAIRS");
+        assert_eq!(pairs, 1_024, "frozen mixture panel has 1,024 pairs");
+        let eval_seed: u64 = required_env_v1("RESPONSE_H2H_EVAL_SEED")
+            .parse()
+            .expect("RESPONSE_H2H_EVAL_SEED");
+        assert!(
+            matches!(eval_seed, 1_971_001 | 1_971_011),
+            "mixture seed must be the frozen initial or retry seed"
+        );
+        let outcome_path = required_env_v1("RESPONSE_H2H_OUTCOME_JSON");
+
+        let chain_paths: Vec<PathBuf> = required_env_v1("RESPONSE_H2H_REFRESH_CHAIN")
+            .split(';')
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .collect();
+        assert_eq!(chain_paths.len(), 9, "refresh-008 requires its full chain");
+        let mut chain = Vec::with_capacity(chain_paths.len());
+        for path in chain_paths {
+            let bytes = fs::read(path).expect("response refresh manifest must be readable");
+            let manifest = decode_population_refresh_manifest_v1(&bytes, chain.last())
+                .expect("response refresh chain must validate");
+            chain.push(manifest);
+        }
+        let active = chain.last().expect("response refresh chain is nonempty");
+        assert_eq!(active.refresh_index_v1(), 8);
+        assert_eq!(active.program_update_v1(), 1_024);
+        assert_eq!(active.global_generation_v1(), 1_536);
+        assert_eq!(
+            lower_hex_raw32_v1(active.manifest_sha256_v1()),
+            TARGET_REFRESH_SHA256_V1
+        );
+
+        let slot_roots: Vec<PathBuf> = required_env_v1("RESPONSE_H2H_SLOT_ROOTS")
+            .split(';')
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .collect();
+        let population_engine = Arc::new(
+            resolve_population_response_target_pairwise_v1(active, &slot_roots)
+                .expect("response mixture target must resolve through all Store authorities"),
+        );
+
+        let candidate_run_bytes =
+            fs::read(Path::new(&candidate_store_root).join("run.json"))
+                .expect("response candidate run.json must be readable");
+        let candidate_run =
+            decode_train_run_v2(&candidate_run_bytes).expect("response candidate RunV2");
+        let candidate_root =
+            ValidatedNativeTrainingStoreRootV2::open_v2(&candidate_store_root).unwrap();
+        let candidate_boundary =
+            load_native_training_boundary_v2(&candidate_root, &candidate_run, candidate_gen)
+                .unwrap();
+
+        let episode_count = pairs.checked_mul(2).expect("pair count overflow");
+        let result = run_native_checkpoint_with_population_opponent_eval_v1(
+            &candidate_run,
+            candidate_boundary.checkpoint(),
+            candidate_boundary.payload(),
+            NativeCheckpointRunnerConfigV1 {
+                evaluation_base_seed: eval_seed,
+                first_episode_index: 0,
+                episode_count,
+                scheduler_timeout: Duration::from_secs(3_600),
+                measure_broker_service_time: false,
+            },
+            population_engine.clone(),
+        )
+        .unwrap();
+        assert!(result.rollout().all_natural());
+
+        let episodes = &result.rollout().episodes;
+        let bindings = result.episode_bindings();
+        assert_eq!(episodes.len(), usize::try_from(episode_count).unwrap());
+        assert_eq!(episodes.len(), bindings.len());
+        let mut selected = population_engine.selected_episode_slots_for_test_v1();
+        selected.sort_unstable_by_key(|(_, episode_index, _)| *episode_index);
+        assert_eq!(selected.len(), episodes.len());
+
+        let mut wins = 0_u64;
+        let mut losses = 0_u64;
+        let mut draws = 0_u64;
+        let mut seat_wins = [0_u64; 2];
+        let mut seat_losses = [0_u64; 2];
+        let mut seat_draws = [0_u64; 2];
+        let mut outcome_rows = Vec::with_capacity(episodes.len());
+        for pair_index in 0..pairs {
+            let first_index = usize::try_from(pair_index * 2).unwrap();
+            let second_index = first_index + 1;
+            assert_eq!(selected[first_index].0, eval_seed);
+            assert_eq!(selected[second_index].0, eval_seed);
+            assert_eq!(selected[first_index].1, pair_index * 2);
+            assert_eq!(selected[second_index].1, pair_index * 2 + 1);
+            let slot_index = selected[first_index].2;
+            assert_eq!(selected[second_index].2, slot_index);
+            assert!(slot_index < 6, "excluded exploiter fallback was selected");
+            assert_eq!(
+                bindings[first_index].environment_seed(),
+                bindings[second_index].environment_seed()
+            );
+            assert_ne!(
+                bindings[first_index].learner_seat(),
+                bindings[second_index].learner_seat()
+            );
+            let component = &active.slots_v1()[slot_index];
+
+            for index in [first_index, second_index] {
+                let binding = &bindings[index];
+                let episode = &episodes[index];
+                assert_eq!(
+                    episode.terminal.terminal_classification,
+                    TerminalClassificationV1::Natural
+                );
+                assert_eq!(
+                    episode.terminal.terminal_code,
+                    TerminalSafeCodeV2::NaturalGameOver
+                );
+                assert!(terminal_tuple_is_valid_v1(
+                    episode.terminal.terminal_outcome,
+                    episode.terminal.terminal_classification,
+                    episode.terminal.winner,
+                    episode.terminal.terminal_reward,
+                ));
+                let seat_index = match binding.learner_seat() {
+                    PlayerSeatV1::P0 => 0,
+                    PlayerSeatV1::P1 => 1,
+                };
+                let reward = episode.terminal.terminal_reward[seat_index];
+                match reward {
+                    1 => {
+                        wins += 1;
+                        seat_wins[seat_index] += 1;
+                    }
+                    -1 => {
+                        losses += 1;
+                        seat_losses[seat_index] += 1;
+                    }
+                    0 => {
+                        draws += 1;
+                        seat_draws[seat_index] += 1;
+                    }
+                    other => panic!("unexpected response candidate reward {other}"),
+                }
+                outcome_rows.push(serde_json::json!({
+                    "episode_index": binding.episode_index(),
+                    "pair_index": pair_index,
+                    "environment_seed": binding.environment_seed(),
+                    "learner_seat": if seat_index == 0 { "P0" } else { "P1" },
+                    "deck_hashes_u64": binding.deck_hashes(),
+                    "opponent_population_slot": slot_index,
+                    "opponent": {
+                        "run_sha256": component.source_run_sha256_v1(),
+                        "generation": component.source_generation_v1(),
+                        "checkpoint_manifest_sha256": component.checkpoint_sha256_v1(),
+                        "checkpoint_payload_sha256": component.state_sha256_v1(),
+                        "model_parameter_sha256": component.model_parameter_sha256_v1(),
+                    },
+                    "terminal_order_rank": reward,
+                }));
+            }
+        }
+        assert_eq!(wins + losses + draws, episode_count);
+        for seat in 0..2 {
+            assert_eq!(
+                seat_wins[seat] + seat_losses[seat] + seat_draws[seat],
+                pairs
+            );
+        }
+
+        let checkpoint = candidate_boundary.checkpoint();
+        let components: Vec<_> = active
+            .slots_v1()
+            .iter()
+            .take(6)
+            .map(|component| {
+                serde_json::json!({
+                    "run_sha256": component.source_run_sha256_v1(),
+                    "generation": component.source_generation_v1(),
+                    "checkpoint_manifest_sha256": component.checkpoint_sha256_v1(),
+                    "checkpoint_payload_sha256": component.state_sha256_v1(),
+                    "model_parameter_sha256": component.model_parameter_sha256_v1(),
+                })
+            })
+            .collect();
+        let artifact = serde_json::json!({
+            "schema": "mtg-kernel-response-exploiter-mixture-terminal-stream/v1",
+            "evaluation_base_seed": eval_seed,
+            "pair_count": pairs,
+            "episode_count": episode_count,
+            "candidate": {
+                "run_sha256": lower_hex_raw32_v1(result.run_sha256()),
+                "identity_bundle_sha256": lower_hex_raw32_v1(result.identity_bundle_sha256()),
+                "generation": candidate_gen,
+                "checkpoint_manifest_sha256": lower_hex_raw32_v1(result.checkpoint_manifest_sha256()),
+                "checkpoint_payload_sha256": lower_hex_raw32_v1(checkpoint.checkpoint_payload_sha256()),
+                "model_parameter_sha256": lower_hex_raw32_v1(checkpoint.model_parameter_sha256()),
+            },
+            "opponent_population": {
+                "refresh_sha256": TARGET_REFRESH_SHA256_V1,
+                "weights": [125407, 115542, 127252, 127098, 128077, 127916, 0, 0],
+                "declared_total": 751292,
+                "components": components,
+            },
+            "runtime": {
+                "worker_count": result.worker_count(),
+                "sessions_per_worker": result.sessions_per_worker(),
+                "broker_batch_target": result.broker_batch_target(),
+                "environment_randomization_v2": true,
+                "all_natural": true,
+            },
+            "learner_outcomes": {
+                "overall": {"wins": wins, "losses": losses, "draws": draws},
+                "P0": {"wins": seat_wins[0], "losses": seat_losses[0], "draws": seat_draws[0]},
+                "P1": {"wins": seat_wins[1], "losses": seat_losses[1], "draws": seat_draws[1]},
+            },
+            "episodes": outcome_rows,
+        });
+        let mut bytes = serde_json::to_vec_pretty(&artifact)
+            .expect("response mixture terminal stream must serialize");
+        bytes.push(b'\n');
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&outcome_path)
+            .expect("RESPONSE_H2H_OUTCOME_JSON must name a create-new file");
+        file.write_all(&bytes)
+            .expect("response mixture terminal stream must write completely");
+        file.sync_all()
+            .expect("response mixture terminal stream must reach the filesystem");
+        println!(
+            "RESPONSE_H2H candidate_gen={candidate_gen} W/L/D {wins}/{losses}/{draws} artifact={} sha256={}",
+            Path::new(&outcome_path).display(),
+            lower_hex_raw32_v1(sha256_v1(&bytes))
+        );
     }
 
     /// per generation. Non-banked diagnostic; the store root arrives via

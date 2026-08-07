@@ -7,6 +7,9 @@ $script:ScaledScriptRoot = $PSScriptRoot
 $script:EnvironmentNames = @($script:EnvironmentNames) + @(
     'MULTIRUN_POPULATION_AUTHORITY', 'MULTIRUN_POPULATION_RUNTIME',
     'MULTIRUN_POPULATION_REFRESH_CHAIN', 'MULTIRUN_POPULATION_SLOT_ROOTS',
+    'MULTIRUN_RESPONSE_EXPLOITER_RUNTIME',
+    'MULTIRUN_RESPONSE_EXPLOITER_REFRESH_CHAIN',
+    'MULTIRUN_RESPONSE_EXPLOITER_SLOT_ROOTS',
     'MULTIRUN_WIDE'
 )
 
@@ -16,11 +19,12 @@ function Set-ScaledNativeEnvironment {
         [Parameter(Mandatory = $true)][uint64]$Updates,
         [Parameter(Mandatory = $true)][string]$StoreParent,
         [Parameter(Mandatory = $true)][ValidateSet(0, 1)][int]$GpuOrdinal,
-        [Parameter(Mandatory = $true)][ValidateSet('retest', 'successor', 'population')][string]$Mode,
+        [Parameter(Mandatory = $true)][ValidateSet('retest', 'successor', 'population', 'response-exploiter')][string]$Mode,
         [Nullable[uint64]]$StopAfterGeneration,
         [Nullable[uint64]]$ExpectedResumeGeneration,
         [string]$RefreshChain = '',
         [string]$SlotRoots = '',
+        [ValidateSet('0.1', '0.03')][string]$PolicyAnchorBeta = '0.1',
         [switch]$ResumeExistingStore
     )
 
@@ -36,13 +40,15 @@ function Set-ScaledNativeEnvironment {
     }
 
     $gpu = Assert-GpuIdentity -Ordinal $GpuOrdinal
-    Assert-OrCreatePolicyAnchorAuthority -StoreParent $StoreParent -PolicyAnchorBeta '0.1' -ResumeExistingStore:$ResumeExistingStore | Out-Null
+    Assert-OrCreatePolicyAnchorAuthority -StoreParent $StoreParent -PolicyAnchorBeta $PolicyAnchorBeta -ResumeExistingStore:$ResumeExistingStore | Out-Null
     $saved = @{}
     foreach ($name in $script:EnvironmentNames) {
         $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
     $populationAuthority = $Mode -ne 'retest'
     $populationRuntime = $Mode -eq 'population'
+    $responseExploiterRuntime = $Mode -eq 'response-exploiter'
+    if ($responseExploiterRuntime) { $populationAuthority = $false }
     $values = @{
         MULTIRUN_RUNS = '1'; MULTIRUN_UPDATES = [string]$Updates
         MULTIRUN_WORKERS = '2'; MULTIRUN_SESSIONS = '32'; MULTIRUN_BROKER_TARGET = '16'
@@ -51,13 +57,16 @@ function Set-ScaledNativeEnvironment {
         MULTIRUN_LADDER = '1'; MULTIRUN_LADDER_INIT_STORE = $script:InitStore
         MULTIRUN_LADDER_INIT_GEN = [string]$script:InitGeneration
         MULTIRUN_LADDER_POOL_DIR = $script:PoolRoot
-        MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2 = '1'; MULTIRUN_POLICY_ANCHOR_BETA = '0.1'
+        MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2 = '1'; MULTIRUN_POLICY_ANCHOR_BETA = $PolicyAnchorBeta
         MULTIRUN_STOP_AFTER_GENERATION = if ($null -eq $StopAfterGeneration) { $null } else { [string]$StopAfterGeneration }
         MULTIRUN_EXPECT_RESUME_GENERATION = if ($null -eq $ExpectedResumeGeneration) { $null } else { [string]$ExpectedResumeGeneration }
         MULTIRUN_POPULATION_AUTHORITY = if ($populationAuthority) { '1' } else { '0' }
         MULTIRUN_POPULATION_RUNTIME = if ($populationRuntime) { '1' } else { '0' }
         MULTIRUN_POPULATION_REFRESH_CHAIN = if ($populationRuntime) { $RefreshChain } else { $null }
         MULTIRUN_POPULATION_SLOT_ROOTS = if ($populationRuntime) { $SlotRoots } else { $null }
+        MULTIRUN_RESPONSE_EXPLOITER_RUNTIME = if ($responseExploiterRuntime) { '1' } else { '0' }
+        MULTIRUN_RESPONSE_EXPLOITER_REFRESH_CHAIN = if ($responseExploiterRuntime) { $RefreshChain } else { $null }
+        MULTIRUN_RESPONSE_EXPLOITER_SLOT_ROOTS = if ($responseExploiterRuntime) { $SlotRoots } else { $null }
         MULTIRUN_WIDE = '0'; CUDA_DEVICE_ORDER = 'PCI_BUS_ID'
         CUDA_VISIBLE_DEVICES = $gpu.uuid; MTG_KERNEL_PILOT_CUDA_ORDINAL = '0'
     }
@@ -74,15 +83,16 @@ function Invoke-ScaledNativePilot {
         [Parameter(Mandatory = $true)][uint64]$Updates,
         [Parameter(Mandatory = $true)][string]$StoreParent,
         [Parameter(Mandatory = $true)][ValidateSet(0, 1)][int]$GpuOrdinal,
-        [Parameter(Mandatory = $true)][ValidateSet('retest', 'successor', 'population')][string]$Mode,
+        [Parameter(Mandatory = $true)][ValidateSet('retest', 'successor', 'population', 'response-exploiter')][string]$Mode,
         [Parameter(Mandatory = $true)][string]$LogPath,
         [Nullable[uint64]]$StopAfterGeneration,
         [Nullable[uint64]]$ExpectedResumeGeneration,
         [string]$RefreshChain = '',
         [string]$SlotRoots = '',
+        [ValidateSet('0.1', '0.03')][string]$PolicyAnchorBeta = '0.1',
         [switch]$ResumeExistingStore
     )
-    $saved = Set-ScaledNativeEnvironment -Seed $Seed -Updates $Updates -StoreParent $StoreParent -GpuOrdinal $GpuOrdinal -Mode $Mode -StopAfterGeneration $StopAfterGeneration -ExpectedResumeGeneration $ExpectedResumeGeneration -RefreshChain $RefreshChain -SlotRoots $SlotRoots -ResumeExistingStore:$ResumeExistingStore
+    $saved = Set-ScaledNativeEnvironment -Seed $Seed -Updates $Updates -StoreParent $StoreParent -GpuOrdinal $GpuOrdinal -Mode $Mode -StopAfterGeneration $StopAfterGeneration -ExpectedResumeGeneration $ExpectedResumeGeneration -RefreshChain $RefreshChain -SlotRoots $SlotRoots -PolicyAnchorBeta $PolicyAnchorBeta -ResumeExistingStore:$ResumeExistingStore
     try {
         $previous = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
@@ -99,11 +109,18 @@ function Invoke-ScaledNativePilot {
     $text = Get-Content -LiteralPath $LogPath -Raw
     $authority = if ($Mode -eq 'retest') { 'false' } else { 'true' }
     $runtime = if ($Mode -eq 'population') { 'true' } else { 'false' }
-    if ($text -notmatch "MULTIRUN CONFIG .*envrand_v2=true .*population_authority=$authority .*population_runtime=$runtime") {
+    $responseRuntime = if ($Mode -eq 'response-exploiter') { 'true' } else { 'false' }
+    if ($Mode -eq 'response-exploiter') { $authority = 'false' }
+    if ($text -notmatch "MULTIRUN CONFIG .*envrand_v2=true .*population_authority=$authority .*population_runtime=$runtime .*response_exploiter_runtime=$responseRuntime") {
         throw 'scaled runner configuration marker is absent'
     }
-    if ($text -notmatch 'policy_anchor_beta=0\.1(?:\s|$)') {
-        throw 'policy-anchor beta 0.1 marker is absent'
+    $escapedBeta = [regex]::Escape($PolicyAnchorBeta)
+    if ($text -notmatch "policy_anchor_beta=$escapedBeta(?:\s|$)") {
+        throw "policy-anchor beta $PolicyAnchorBeta marker is absent"
+    }
+    if ($Mode -eq 'response-exploiter' -and
+        $text -notmatch 'training_only=true terminal_outcomes_read=false') {
+        throw 'response-exploiter training-only marker is absent'
     }
     $start = if ($null -eq $ExpectedResumeGeneration) { [uint64]0 } else { [uint64]$ExpectedResumeGeneration }
     $end = if ($null -eq $StopAfterGeneration) { $Updates } else { [uint64]$StopAfterGeneration }
@@ -120,13 +137,14 @@ function Start-ScaledNativeLane {
         [Parameter(Mandatory = $true)][uint64]$Updates,
         [Parameter(Mandatory = $true)][string]$StoreParent,
         [Parameter(Mandatory = $true)][ValidateSet(0, 1)][int]$GpuOrdinal,
-        [Parameter(Mandatory = $true)][ValidateSet('retest', 'successor', 'population')][string]$Mode,
+        [Parameter(Mandatory = $true)][ValidateSet('retest', 'successor', 'population', 'response-exploiter')][string]$Mode,
         [Parameter(Mandatory = $true)][string]$LogPath,
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
         [Nullable[uint64]]$StopAfterGeneration,
         [Nullable[uint64]]$ExpectedResumeGeneration,
         [string]$RefreshChain = '',
         [string]$SlotRoots = '',
+        [ValidateSet('0.1', '0.03')][string]$PolicyAnchorBeta = '0.1',
         [switch]$ResumeExistingStore
     )
     $hostCommand = Get-Command pwsh -ErrorAction SilentlyContinue
@@ -138,7 +156,8 @@ function Start-ScaledNativeLane {
     $childArgs = @('-NoProfile', '-WindowStyle', 'Hidden', '-File', (Join-Path $script:ScaledScriptRoot 'run-native.ps1'),
         '-Executable', $Executable, '-Seed', $Seed, '-Updates', $Updates,
         '-StoreParent', $StoreParent, '-GpuOrdinal', $GpuOrdinal, '-Mode', $Mode,
-        '-LogPath', $LogPath, '-CompletionPath', $completion)
+        '-LogPath', $LogPath, '-CompletionPath', $completion,
+        '-PolicyAnchorBeta', $PolicyAnchorBeta)
     if ($null -ne $StopAfterGeneration) { $childArgs += @('-StopAfterGeneration', [string]$StopAfterGeneration) }
     if ($null -ne $ExpectedResumeGeneration) { $childArgs += @('-ExpectedResumeGeneration', [string]$ExpectedResumeGeneration) }
     if (-not [string]::IsNullOrWhiteSpace($RefreshChain)) { $childArgs += @('-RefreshChain', $RefreshChain) }
@@ -151,7 +170,7 @@ function Start-ScaledNativeLane {
         process = $process; gpu_ordinal = $GpuOrdinal; store_parent = $StoreParent
         log = $LogPath; stdout = $stdout; stderr = $stderr; completion = $completion
         executable = $Executable; seed = $Seed; updates = $Updates
-        policy_anchor_beta = '0.1'; mode = $Mode
+        policy_anchor_beta = $PolicyAnchorBeta; mode = $Mode
         started_utc = $started.ToString('O'); started = $started
     }
 }
@@ -172,6 +191,10 @@ function Get-ScaledEndpointRecord {
         }
     }
     $checkpoint = Get-Content -Raw -LiteralPath "$prefix.checkpoint.json" | ConvertFrom-Json
+    $stateFileSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prefix.state.f32le").Hash.ToLowerInvariant()
+    if ([string]$checkpoint.payload.sha256 -cne $stateFileSha256) {
+        throw "generation-$Generation checkpoint payload and state-file hashes differ"
+    }
     return [ordered]@{
         store_root = (Resolve-Path -LiteralPath $StoreRoot).Path
         tree_sha256 = Get-StoreTreeHash -Path $StoreRoot
@@ -179,8 +202,11 @@ function Get-ScaledEndpointRecord {
         run_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $StoreRoot 'run.json')).Hash.ToLowerInvariant()
         checkpoint_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prefix.checkpoint.json").Hash.ToLowerInvariant()
         sidecar_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prefix.sidecar.json").Hash.ToLowerInvariant()
-        state_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prefix.state.f32le").Hash.ToLowerInvariant()
+        state_sha256 = $stateFileSha256
+        checkpoint_payload_sha256 = [string]$checkpoint.payload.sha256
+        train_state_sha256 = [string]$checkpoint.train_state.state_sha256
         model_parameter_sha256 = [string]$checkpoint.train_state.model_parameter_sha256
+        identity_bundle_sha256 = [string]$checkpoint.identity_bundle_sha256
         adam_step = [uint64]$checkpoint.train_state.adam_step
         completed_episode_count = [uint64]$checkpoint.progress.completed_episode_count
     }

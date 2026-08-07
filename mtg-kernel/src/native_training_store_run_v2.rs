@@ -367,6 +367,32 @@ const POPULATION_SOURCE_LINEAGES_V1: [(u64, &str, &str, &str, &str, &str, &str);
     ),
 ];
 
+const RESPONSE_EXPLOITER_IDENTITY_V1: &str =
+    "mtg-kernel-native-scaled-selfplay-response-exploiter/v1";
+const RESPONSE_EXPLOITER_TARGET_REFRESH_SHA256_V1: &str =
+    "9c9490b205b7b5a933eae7ca86916e5ff5ff9307a150dc35487a8e1c28e73e22";
+const RESPONSE_EXPLOITER_TARGET_GLOBAL_GENERATION_V1: u64 = 1_536;
+const RESPONSE_EXPLOITER_SOURCE_REFRESH_INDEX_V1: u64 = 8;
+const RESPONSE_EXPLOITER_SOURCE_PROGRAM_UPDATE_V1: u64 = 1_024;
+const RESPONSE_EXPLOITER_ACTIVE_SLOT_INDICES_V1: [u64; 6] = [0, 1, 2, 3, 4, 5];
+const RESPONSE_EXPLOITER_EXCLUDED_SLOT_INDICES_V1: [u64; 2] = [6, 7];
+const RESPONSE_EXPLOITER_RENORMALIZATION_IDENTITY_V1: &str =
+    "integer-preserving-renormalization-drop-excluded-slots-redeclare-total/v1";
+const RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_UNITS_V1: [u64; 8] = [
+    125_407, 115_542, 127_252, 127_098, 128_077, 127_916, 0, 0,
+];
+const RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_TOTAL_UNITS_V1: u64 = 751_292;
+const RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1: u64 = 256;
+const RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1: u64 = 64;
+const RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1: u64 = 4;
+const RESPONSE_EXPLOITER_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1: &str =
+    "weights-bit-exact-from-promoted2-adam-moments-positive-zero-adam-step-zero/v1";
+const RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1: [u64; 2] = [971_001, 971_002];
+const RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1: [u64; 2] = [971_091, 971_092];
+const RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1: u64 = 4;
+const RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1: &str = "3dcccccd";
+const RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1: &str = "3cf5c28f";
+
 // V2 opponent seed-schedule namespace declarations (Self-Play Ladder Design
 // Contract S2, Section 2), owned by `native_trainer_schedule_v2`. Present in
 // a record if and only if `opponent_policy.identity` carries the ladder
@@ -744,6 +770,11 @@ pub struct TrainRunContractsV2 {
     /// every pre-existing RunV2 record, so its canonical bytes are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) population_program_v1: Option<PopulationProgramContractV1>,
+    /// Exact program-update-1024 response-exploiter build authority. This is
+    /// additive and omitted for every pre-existing RunV2 record, preserving
+    /// their canonical bytes and behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) response_exploiter_v1: Option<ResponseExploiterContractV1>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -782,6 +813,39 @@ pub struct PopulationSourceLineageV1 {
     pub(crate) sidecar_sha256: String,
     pub(crate) state_sha256: String,
     pub(crate) model_parameter_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResponseExploiterContractV1 {
+    pub(crate) identity: String,
+    pub(crate) package_commit: String,
+    pub(crate) program_document_sha256: String,
+    pub(crate) target_refresh_manifest_sha256: String,
+    pub(crate) target_global_generation: u64,
+    pub(crate) source_refresh_index: u64,
+    pub(crate) source_program_update: u64,
+    pub(crate) active_slot_indices: [u64; 6],
+    pub(crate) excluded_slot_indices: [u64; 2],
+    pub(crate) renormalization_identity: String,
+    pub(crate) effective_weight_units: [u64; 8],
+    pub(crate) effective_weight_total_units: u64,
+    pub(crate) training_update_count: u64,
+    pub(crate) episodes_per_update: u64,
+    pub(crate) reward_identity: String,
+    pub(crate) fresh_adam_after_weight_init_identity: String,
+    pub(crate) authorized_base_seeds: [u64; 2],
+    pub(crate) authorized_screen_seeds: [u64; 2],
+    pub(crate) expected_base_seed: u64,
+    pub(crate) run_role: String,
+    pub(crate) expected_completion_generation: u64,
+    pub(crate) policy_anchor_beta_f32_bits: String,
+    pub(crate) parent_source_run_sha256: String,
+    pub(crate) parent_generation: u64,
+    pub(crate) parent_checkpoint_sha256: String,
+    pub(crate) parent_sidecar_sha256: String,
+    pub(crate) parent_state_sha256: String,
+    pub(crate) parent_model_parameter_sha256: String,
 }
 
 /// Capacity-experiment wide-net record section. See
@@ -1462,6 +1526,7 @@ fn validate_decoded_train_run_v2(
     validate_optimization_v2(&record.optimization)?;
     let requested_episode_count = validate_schedule_v2(&record.schedule, &record.model_snapshot)?;
     validate_population_program_v1(&record)?;
+    validate_response_exploiter_v1(&record)?;
     validate_limits_v2(&record.limits)?;
     validate_topology_v2(&record.topology)?;
     validate_artifact_schemas_v2(&record.artifact_schemas)?;
@@ -2330,6 +2395,7 @@ fn validate_population_program_v1(record: &TrainRunV2) -> Result<()> {
         || program.parent_state_sha256 != POPULATION_PARENT_STATE_SHA256_V1
         || program.parent_model_parameter_sha256 != POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1
         || record.contracts.wide_model_experiment_v1.is_some()
+        || record.contracts.response_exploiter_v1.is_some()
         || record.environment.environment_randomization_v2.is_none()
         || record.contracts.opponent_policy.identity != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
         || record.contracts.opponent_ladder_pool.is_none()
@@ -2376,6 +2442,103 @@ fn validate_population_program_v1(record: &TrainRunV2) -> Result<()> {
             })
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::CrossBinding));
+    }
+    Ok(())
+}
+
+fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
+    let Some(response) = record.contracts.response_exploiter_v1.as_ref() else {
+        return Ok(());
+    };
+
+    let effective_weight_total = response
+        .effective_weight_units
+        .iter()
+        .try_fold(0_u64, |sum, weight| sum.checked_add(*weight))
+        .ok_or_else(|| TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidArithmetic))?;
+    let initialization = record
+        .contracts
+        .opponent_ladder_initialization
+        .as_ref();
+    let expected_role_and_completion = if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
+        .contains(&response.expected_base_seed)
+    {
+        ("build", RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1)
+    } else if RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1
+        .contains(&response.expected_base_seed)
+    {
+        ("screen", RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1)
+    } else {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    };
+
+    if response.identity != RESPONSE_EXPLOITER_IDENTITY_V1
+        || response.package_commit != POPULATION_PACKAGE_COMMIT_V1
+        || response.program_document_sha256 != POPULATION_PROGRAM_DOCUMENT_SHA256_V1
+        || response.target_refresh_manifest_sha256
+            != RESPONSE_EXPLOITER_TARGET_REFRESH_SHA256_V1
+        || response.target_global_generation != RESPONSE_EXPLOITER_TARGET_GLOBAL_GENERATION_V1
+        || response.source_refresh_index != RESPONSE_EXPLOITER_SOURCE_REFRESH_INDEX_V1
+        || response.source_program_update != RESPONSE_EXPLOITER_SOURCE_PROGRAM_UPDATE_V1
+        || response.active_slot_indices != RESPONSE_EXPLOITER_ACTIVE_SLOT_INDICES_V1
+        || response.excluded_slot_indices != RESPONSE_EXPLOITER_EXCLUDED_SLOT_INDICES_V1
+        || response.renormalization_identity
+            != RESPONSE_EXPLOITER_RENORMALIZATION_IDENTITY_V1
+        || response.effective_weight_units != RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_UNITS_V1
+        || response.effective_weight_total_units
+            != RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_TOTAL_UNITS_V1
+        || effective_weight_total != response.effective_weight_total_units
+        || response.training_update_count != RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1
+        || response.episodes_per_update != RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
+        || response.reward_identity != POPULATION_REWARD_IDENTITY_V1
+        || response.fresh_adam_after_weight_init_identity
+            != RESPONSE_EXPLOITER_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1
+        || response.authorized_base_seeds != RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
+        || response.authorized_screen_seeds != RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1
+        || response.expected_base_seed != record.schedule.base_seed
+        || response.run_role != expected_role_and_completion.0
+        || response.expected_completion_generation != expected_role_and_completion.1
+        || !matches!(
+            response.policy_anchor_beta_f32_bits.as_str(),
+            RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1
+                | RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1
+        )
+        || (response.run_role == "screen"
+            && response.policy_anchor_beta_f32_bits
+                != RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1)
+        || response.parent_source_run_sha256 != POPULATION_PARENT_SOURCE_RUN_SHA256_V1
+        || response.parent_generation != POPULATION_PARENT_GENERATION_V1
+        || response.parent_checkpoint_sha256 != POPULATION_PARENT_CHECKPOINT_SHA256_V1
+        || response.parent_sidecar_sha256 != POPULATION_PARENT_SIDECAR_SHA256_V1
+        || response.parent_state_sha256 != POPULATION_PARENT_STATE_SHA256_V1
+        || response.parent_model_parameter_sha256
+            != POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1
+        || record.contracts.population_program_v1.is_some()
+        || record.contracts.wide_model_experiment_v1.is_some()
+        || record.environment.environment_randomization_v2.is_none()
+        || record.contracts.opponent_policy.identity
+            != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
+        || record.contracts.opponent_ladder_pool.is_none()
+        || record.contracts.opponent_schedule_v2.is_none()
+        || initialization.is_none_or(|initialization| {
+            initialization.source_run_sha256 != POPULATION_PARENT_SOURCE_RUN_SHA256_V1
+                || initialization.generation != POPULATION_PARENT_GENERATION_V1
+                || initialization.checkpoint_sha256 != POPULATION_PARENT_CHECKPOINT_SHA256_V1
+                || initialization.sidecar_sha256 != POPULATION_PARENT_SIDECAR_SHA256_V1
+                || initialization.state_sha256 != POPULATION_PARENT_STATE_SHA256_V1
+                || initialization.derived_model_parameter_sha256
+                    != POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1
+        })
+        || record.schedule.batch_episodes != RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
+        || record.schedule.checkpoint_segment_updates
+            != RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1
+        || record.schedule.checkpoint_episode_interval
+            != RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
+                * RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1
+        || record.schedule.requested_successful_updates
+            != RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
     Ok(())
 }
@@ -3155,6 +3318,43 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_population_environm
         base_seed,
         pool,
         initialization,
+    )
+}
+
+/// Exact program-update-1024 response-exploiter RunV2 authority. It composes
+/// the existing ladder-init plus environment-v2 carrier, then adds only the
+/// response contract before reminting the derived digests.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_environment_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+    pool: OpponentLadderPoolContractV1,
+    initialization: OpponentLadderInitializationContractV1,
+    policy_anchor_beta_f32_bits: &str,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_response_exploiter_environment_v2(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+        pool,
+        initialization,
+        policy_anchor_beta_f32_bits,
     )
 }
 
@@ -4472,6 +4672,45 @@ mod tests {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_response_exploiter_environment_v2(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+        pool: OpponentLadderPoolContractV1,
+        initialization: OpponentLadderInitializationContractV1,
+        policy_anchor_beta_f32_bits: &str,
+    ) -> Vec<u8> {
+        let base = fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
+            backend,
+            batch_episodes,
+            checkpoint_segment_updates,
+            requested_successful_updates,
+            worker_count,
+            sessions_per_worker,
+            broker_batch_target,
+            max_physical_decisions,
+            max_policy_steps,
+            base_seed,
+            pool,
+            initialization,
+        );
+        let wire: TrainRunWireV2 = serde_json::from_slice(&base).unwrap();
+        let mut record = TrainRunV2::from(wire);
+        let mut response = response_exploiter_fixture_for_seed(base_seed);
+        response.policy_anchor_beta_f32_bits = policy_anchor_beta_f32_bits.to_owned();
+        record.contracts.response_exploiter_v1 = Some(response);
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn fixture_bytes_with_schedule_and_base_seed_ladder_init(
         backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
         batch_episodes: u64,
@@ -5479,6 +5718,76 @@ mod tests {
         }
     }
 
+    fn response_exploiter_fixture_for_seed(expected_base_seed: u64) -> ResponseExploiterContractV1 {
+        ResponseExploiterContractV1 {
+            identity: RESPONSE_EXPLOITER_IDENTITY_V1.to_owned(),
+            package_commit: POPULATION_PACKAGE_COMMIT_V1.to_owned(),
+            program_document_sha256: POPULATION_PROGRAM_DOCUMENT_SHA256_V1.to_owned(),
+            target_refresh_manifest_sha256: RESPONSE_EXPLOITER_TARGET_REFRESH_SHA256_V1.to_owned(),
+            target_global_generation: RESPONSE_EXPLOITER_TARGET_GLOBAL_GENERATION_V1,
+            source_refresh_index: RESPONSE_EXPLOITER_SOURCE_REFRESH_INDEX_V1,
+            source_program_update: RESPONSE_EXPLOITER_SOURCE_PROGRAM_UPDATE_V1,
+            active_slot_indices: RESPONSE_EXPLOITER_ACTIVE_SLOT_INDICES_V1,
+            excluded_slot_indices: RESPONSE_EXPLOITER_EXCLUDED_SLOT_INDICES_V1,
+            renormalization_identity: RESPONSE_EXPLOITER_RENORMALIZATION_IDENTITY_V1.to_owned(),
+            effective_weight_units: RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_UNITS_V1,
+            effective_weight_total_units: RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_TOTAL_UNITS_V1,
+            training_update_count: RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
+            episodes_per_update: RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1,
+            reward_identity: POPULATION_REWARD_IDENTITY_V1.to_owned(),
+            fresh_adam_after_weight_init_identity:
+                RESPONSE_EXPLOITER_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1.to_owned(),
+            authorized_base_seeds: RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1,
+            authorized_screen_seeds: RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1,
+            expected_base_seed,
+            run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
+                .contains(&expected_base_seed)
+            {
+                "build".to_owned()
+            } else {
+                "screen".to_owned()
+            },
+            expected_completion_generation: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
+                .contains(&expected_base_seed)
+            {
+                RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1
+            } else {
+                RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1
+            },
+            policy_anchor_beta_f32_bits: RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned(),
+            parent_source_run_sha256: POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned(),
+            parent_generation: POPULATION_PARENT_GENERATION_V1,
+            parent_checkpoint_sha256: POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned(),
+            parent_sidecar_sha256: POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned(),
+            parent_state_sha256: POPULATION_PARENT_STATE_SHA256_V1.to_owned(),
+            parent_model_parameter_sha256: POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1.to_owned(),
+        }
+    }
+
+    fn response_exploiter_record_for_seed(expected_base_seed: u64) -> TrainRunV2 {
+        let mut record = coherent_v2_record();
+        record.schedule.base_seed = expected_base_seed;
+        record.schedule.batch_episodes = RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1;
+        record.schedule.checkpoint_segment_updates =
+            RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1;
+        record.schedule.requested_successful_updates =
+            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1;
+        record.schedule.checkpoint_episode_interval = RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
+            * RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1;
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
+        record.contracts.opponent_ladder_initialization =
+            Some(population_parent_initialization_fixture());
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
+        record.contracts.response_exploiter_v1 =
+            Some(response_exploiter_fixture_for_seed(expected_base_seed));
+        refresh_derived(&mut record);
+        record
+    }
+
     fn population_record() -> TrainRunV2 {
         let mut record = coherent_v2_record();
         record.schedule.base_seed = 970_001;
@@ -5700,6 +6009,328 @@ mod tests {
             .unwrap()
             .insert("program_update_count".to_owned(), Value::Null);
         assert!(serde_json::from_value::<PopulationProgramContractV1>(null).is_err());
+    }
+
+    #[test]
+    fn response_exploiter_round_trips_and_binds_exact_update_1024_authority() {
+        let record = response_exploiter_record_for_seed(971_001);
+        assert_ne!(record.source.git_commit, POPULATION_PACKAGE_COMMIT_V1);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        let response = validated
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .unwrap();
+
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(response, &response_exploiter_fixture_for_seed(971_001));
+        assert_eq!(validated.record().schedule.batch_episodes, 64);
+        assert_eq!(validated.requested_successful_updates(), 256);
+        assert_eq!(validated.record().schedule.checkpoint_segment_updates, 4);
+        assert_eq!(
+            validated.record().contracts().model.architecture_identity,
+            FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2
+        );
+        assert!(validated.record().contracts().population_program_v1.is_none());
+        assert!(validated.record().contracts().wide_model_experiment_v1.is_none());
+        assert!(
+            validated
+                .record()
+                .environment
+                .environment_randomization_v2
+                .is_some()
+        );
+        assert!(String::from_utf8(bytes)
+            .unwrap()
+            .contains("\"response_exploiter_v1\":{"));
+    }
+
+    #[test]
+    fn response_exploiter_builder_mints_both_authorized_seeds() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+
+        for seed in RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1 {
+            let bytes =
+                test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_environment_v2(
+                    NativeTrainingNumericalBackendV1::Sequential,
+                    64,
+                    4,
+                    256,
+                    2,
+                    32,
+                    16,
+                    1_024,
+                    2_048,
+                    seed,
+                    valid_ladder_pool_fixture(),
+                    population_parent_initialization_fixture(),
+                    RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1,
+                );
+            let validated = decode_train_run_v2(&bytes).unwrap();
+            let response = validated
+                .record()
+                .contracts()
+                .response_exploiter_v1
+                .as_ref()
+                .unwrap();
+            assert_eq!(response.expected_base_seed, seed);
+            assert_eq!(validated.record().schedule.base_seed, seed);
+            assert_eq!(
+                validated.record().schedule.batch_episodes
+                    * validated.record().schedule.requested_successful_updates,
+                256 * 64
+            );
+            assert!(validated.record().contracts().population_program_v1.is_none());
+            assert_eq!(
+                validated
+                    .record()
+                    .contracts()
+                    .opponent_ladder_initialization,
+                Some(population_parent_initialization_fixture())
+            );
+        }
+    }
+
+    #[test]
+    fn response_exploiter_builder_mints_bounded_screen_seeds() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+
+        for seed in RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1 {
+            let bytes =
+                test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_environment_v2(
+                    NativeTrainingNumericalBackendV1::Sequential,
+                    64,
+                    4,
+                    256,
+                    2,
+                    32,
+                    16,
+                    1_024,
+                    2_048,
+                    seed,
+                    valid_ladder_pool_fixture(),
+                    population_parent_initialization_fixture(),
+                    RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1,
+                );
+            let validated = decode_train_run_v2(&bytes).unwrap();
+            let response = validated
+                .record()
+                .contracts()
+                .response_exploiter_v1
+                .as_ref()
+                .unwrap();
+            assert_eq!(response.expected_base_seed, seed);
+            assert_eq!(response.run_role, "screen");
+            assert_eq!(
+                response.expected_completion_generation,
+                RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1
+            );
+        }
+    }
+
+    #[test]
+    fn response_exploiter_beta_authority_distinguishes_initial_screen_and_retry() {
+        let initial = response_exploiter_record_for_seed(971_001);
+        assert_eq!(
+            initial
+                .contracts
+                .response_exploiter_v1
+                .as_ref()
+                .unwrap()
+                .policy_anchor_beta_f32_bits,
+            RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1
+        );
+
+        let mut retry = response_exploiter_record_for_seed(971_001);
+        retry
+            .contracts
+            .response_exploiter_v1
+            .as_mut()
+            .unwrap()
+            .policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned();
+        refresh_derived(&mut retry);
+        validate_train_run_record_v2(retry).unwrap();
+
+        let mut invalid_screen = response_exploiter_record_for_seed(971_091);
+        invalid_screen
+            .contracts
+            .response_exploiter_v1
+            .as_mut()
+            .unwrap()
+            .policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned();
+        refresh_derived(&mut invalid_screen);
+        assert!(validate_train_run_record_v2(invalid_screen).is_err());
+    }
+
+    #[test]
+    fn response_exploiter_absence_preserves_existing_bytes_and_population_behavior() {
+        let legacy_bytes = fixture_bytes();
+        let legacy = decode_train_run_v2(&legacy_bytes).unwrap();
+        assert!(legacy.record().contracts().response_exploiter_v1.is_none());
+        assert_eq!(
+            sha256_hex(&legacy_bytes),
+            "dae0b647887ef07ffe6e307490a96bfff69a22b29d69f8d1d9c3f96eb484846f"
+        );
+        assert!(!String::from_utf8(legacy_bytes)
+            .unwrap()
+            .contains("response_exploiter_v1"));
+
+        let population_bytes = fixture_bytes_with_schedule_and_base_seed_population_environment_v2(
+            crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1::Sequential,
+            64,
+            4,
+            1_536,
+            2,
+            32,
+            16,
+            1_024,
+            2_048,
+            970_001,
+            valid_ladder_pool_fixture(),
+            population_parent_initialization_fixture(),
+        );
+        let population = decode_train_run_v2(&population_bytes).unwrap();
+        assert!(population.record().contracts().population_program_v1.is_some());
+        assert!(population.record().contracts().response_exploiter_v1.is_none());
+    }
+
+    #[test]
+    fn response_exploiter_seed_schedule_parent_and_presence_gates_fail_closed() {
+        let mut wrong_seed = response_exploiter_record_for_seed(971_001);
+        wrong_seed.schedule.base_seed = 971_003;
+        wrong_seed
+            .contracts
+            .response_exploiter_v1
+            .as_mut()
+            .unwrap()
+            .expected_base_seed = 971_003;
+        refresh_derived(&mut wrong_seed);
+        assert!(validate_train_run_record_v2(wrong_seed).is_err());
+
+        let mut wrong_batch = response_exploiter_record_for_seed(971_001);
+        wrong_batch.schedule.batch_episodes = 32;
+        wrong_batch.schedule.checkpoint_episode_interval = 32 * 4;
+        refresh_derived(&mut wrong_batch);
+        assert!(validate_train_run_record_v2(wrong_batch).is_err());
+
+        let mut wrong_updates = response_exploiter_record_for_seed(971_001);
+        wrong_updates.schedule.requested_successful_updates = 255;
+        refresh_derived(&mut wrong_updates);
+        assert!(validate_train_run_record_v2(wrong_updates).is_err());
+
+        let mut wrong_segment = response_exploiter_record_for_seed(971_001);
+        wrong_segment.schedule.checkpoint_segment_updates = 8;
+        wrong_segment.schedule.checkpoint_episode_interval = 64 * 8;
+        refresh_derived(&mut wrong_segment);
+        assert!(validate_train_run_record_v2(wrong_segment).is_err());
+
+        let mut no_environment = response_exploiter_record_for_seed(971_001);
+        no_environment.environment.environment_randomization_v2 = None;
+        assert!(validate_train_run_record_v2(no_environment).is_err());
+
+        let mut no_pool = response_exploiter_record_for_seed(971_001);
+        no_pool.contracts.opponent_ladder_pool = None;
+        refresh_derived(&mut no_pool);
+        assert!(validate_train_run_record_v2(no_pool).is_err());
+
+        let mut no_initialization = response_exploiter_record_for_seed(971_001);
+        no_initialization.contracts.opponent_ladder_initialization = None;
+        refresh_derived(&mut no_initialization);
+        assert!(validate_train_run_record_v2(no_initialization).is_err());
+
+        let mut wrong_parent = response_exploiter_record_for_seed(971_001);
+        wrong_parent
+            .contracts
+            .response_exploiter_v1
+            .as_mut()
+            .unwrap()
+            .parent_generation = 383;
+        wrong_parent
+            .contracts
+            .opponent_ladder_initialization
+            .as_mut()
+            .unwrap()
+            .generation = 383;
+        refresh_derived(&mut wrong_parent);
+        assert!(validate_train_run_record_v2(wrong_parent).is_err());
+
+        let mut simultaneous_population = response_exploiter_record_for_seed(971_001);
+        simultaneous_population.contracts.population_program_v1 =
+            Some(population_program_fixture());
+        refresh_derived(&mut simultaneous_population);
+        assert!(validate_train_run_record_v2(simultaneous_population).is_err());
+
+        let mut simultaneous_wide = response_exploiter_record_for_seed(971_001);
+        apply_wide_model_experiment(&mut simultaneous_wide);
+        refresh_derived(&mut simultaneous_wide);
+        assert!(validate_train_run_record_v2(simultaneous_wide).is_err());
+    }
+
+    #[test]
+    fn response_exploiter_target_literals_hashes_and_vector_fail_closed() {
+        let mutations: &[fn(&mut ResponseExploiterContractV1)] = &[
+            |r| r.identity = "wrong".to_owned(),
+            |r| r.package_commit = "0".repeat(40),
+            |r| r.program_document_sha256 = ZERO_SHA256.to_owned(),
+            |r| r.target_refresh_manifest_sha256 = ZERO_SHA256.to_owned(),
+            |r| r.target_global_generation = 1_535,
+            |r| r.source_refresh_index = 7,
+            |r| r.source_program_update = 1_023,
+            |r| r.active_slot_indices = [0, 1, 2, 3, 4, 6],
+            |r| r.excluded_slot_indices = [5, 7],
+            |r| r.renormalization_identity = "wrong".to_owned(),
+            |r| r.effective_weight_units[0] += 1,
+            |r| r.effective_weight_total_units -= 1,
+            |r| r.training_update_count = 255,
+            |r| r.episodes_per_update = 32,
+            |r| r.reward_identity = "wrong".to_owned(),
+            |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
+            |r| r.authorized_base_seeds = [971_001, 971_003],
+            |r| r.authorized_screen_seeds = [971_091, 971_093],
+            |r| r.expected_base_seed = 971_002,
+            |r| r.run_role = "screen".to_owned(),
+            |r| r.expected_completion_generation = 4,
+            |r| r.policy_anchor_beta_f32_bits = "3dccccce".to_owned(),
+            |r| r.parent_source_run_sha256 = ZERO_SHA256.to_owned(),
+            |r| r.parent_generation = 383,
+            |r| r.parent_checkpoint_sha256 = ZERO_SHA256.to_owned(),
+            |r| r.parent_sidecar_sha256 = ZERO_SHA256.to_owned(),
+            |r| r.parent_state_sha256 = ZERO_SHA256.to_owned(),
+            |r| r.parent_model_parameter_sha256 = ZERO_SHA256.to_owned(),
+        ];
+        for mutate in mutations {
+            let mut record = response_exploiter_record_for_seed(971_001);
+            mutate(record.contracts.response_exploiter_v1.as_mut().unwrap());
+            refresh_derived(&mut record);
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+    }
+
+    #[test]
+    fn response_exploiter_section_rejects_unknown_missing_and_null_fields() {
+        let section = serde_json::to_value(response_exploiter_fixture_for_seed(971_001)).unwrap();
+
+        let mut unknown = section.clone();
+        unknown
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".to_owned(), json!(1));
+        assert!(serde_json::from_value::<ResponseExploiterContractV1>(unknown).is_err());
+
+        let mut missing = section.clone();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("effective_weight_units");
+        assert!(serde_json::from_value::<ResponseExploiterContractV1>(missing).is_err());
+
+        let mut null = section;
+        null.as_object_mut()
+            .unwrap()
+            .insert("target_refresh_manifest_sha256".to_owned(), Value::Null);
+        assert!(serde_json::from_value::<ResponseExploiterContractV1>(null).is_err());
     }
 
     #[test]

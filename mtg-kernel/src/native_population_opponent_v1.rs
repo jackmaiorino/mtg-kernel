@@ -134,6 +134,18 @@ pub(crate) fn population_slot_for_episode_v1(
     Ok(weights.select_draw_v1(seed))
 }
 
+fn grouped_population_slot_for_episode_v1(
+    base_seed: u64,
+    episode_index: u64,
+    selection_group_size: u64,
+    weights: &PopulationWeightVectorV1,
+) -> Result<PopulationSlotV1, PopulationOpponentErrorV1> {
+    let selection_index = episode_index
+        .checked_div(selection_group_size)
+        .ok_or(PopulationOpponentErrorV1::InvalidSlot)?;
+    population_slot_for_episode_v1(base_seed, selection_index, weights)
+}
+
 /// Runtime bridge for one validated eight-slot population snapshot.
 ///
 /// The array is the only model-handle field and contains exactly eight
@@ -142,6 +154,7 @@ pub(crate) fn population_slot_for_episode_v1(
 pub(crate) struct PopulationOpponentEngineV1 {
     weights: PopulationWeightVectorV1,
     handles: [NativeCheckpointInferenceV1; POPULATION_OPPONENT_SLOT_COUNT_V1],
+    selection_group_size: u64,
     #[cfg(test)]
     selected_episode_slots: Mutex<Vec<(u64, u64, usize)>>,
 }
@@ -153,6 +166,7 @@ impl fmt::Debug for PopulationOpponentEngineV1 {
             .field("identity", &POPULATION_OPPONENT_IDENTITY_V1)
             .field("total_weight", &self.weights.total_v1())
             .field("slot_count", &POPULATION_OPPONENT_SLOT_COUNT_V1)
+            .field("selection_group_size", &self.selection_group_size)
             .finish_non_exhaustive()
     }
 }
@@ -165,7 +179,24 @@ impl PopulationOpponentEngineV1 {
         Self {
             weights,
             handles,
+            selection_group_size: 1,
             #[cfg(test)]
+            selected_episode_slots: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Evaluation-only constructor that selects one component for each
+    /// complete seat-swapped pair. Training continues to use one selection
+    /// per episode through [`Self::new_v1`].
+    #[cfg(test)]
+    pub(crate) fn new_pairwise_eval_v1(
+        weights: PopulationWeightVectorV1,
+        handles: [NativeCheckpointInferenceV1; POPULATION_OPPONENT_SLOT_COUNT_V1],
+    ) -> Self {
+        Self {
+            weights,
+            handles,
+            selection_group_size: 2,
             selected_episode_slots: Mutex::new(Vec::new()),
         }
     }
@@ -179,7 +210,12 @@ impl PopulationOpponentEngineV1 {
         base_seed: u64,
         episode_index: u64,
     ) -> Result<PopulationSlotV1, PopulationOpponentErrorV1> {
-        let slot = population_slot_for_episode_v1(base_seed, episode_index, &self.weights)?;
+        let slot = grouped_population_slot_for_episode_v1(
+            base_seed,
+            episode_index,
+            self.selection_group_size,
+            &self.weights,
+        )?;
         #[cfg(test)]
         self.selected_episode_slots
             .lock()
@@ -346,6 +382,28 @@ mod tests {
         assert_eq!(first, second);
         assert!(population_slot_for_episode_v1(1_u64 << 63, 0, &weights).is_err());
         assert!(population_slot_for_episode_v1(0, 1_u64 << 63, &weights).is_err());
+    }
+
+    #[test]
+    fn pairwise_selection_maps_both_legs_to_one_component() {
+        let weights = equal_weights_v1();
+        for pair_index in 0..1_024_u64 {
+            let expected = population_slot_for_episode_v1(71_502, pair_index, &weights).unwrap();
+            for leg in 0..2_u64 {
+                let actual = grouped_population_slot_for_episode_v1(
+                    71_502,
+                    pair_index * 2 + leg,
+                    2,
+                    &weights,
+                )
+                .unwrap();
+                assert_eq!(actual, expected);
+            }
+        }
+        assert_eq!(
+            grouped_population_slot_for_episode_v1(71_502, 0, 0, &weights),
+            Err(PopulationOpponentErrorV1::InvalidSlot)
+        );
     }
 
     #[test]

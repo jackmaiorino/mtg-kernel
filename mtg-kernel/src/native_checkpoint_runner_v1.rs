@@ -9,7 +9,9 @@
 //! derivation.
 
 use crate::async_flat_scored_rollout_v2::{
+    run_async_flat_scored_rollout_native_environment_randomization_with_population_v1,
     run_async_flat_scored_rollout_native_environment_randomization_v2,
+    run_async_flat_scored_rollout_native_observed_with_population_v1,
     run_async_flat_scored_rollout_native_observed_v2, AsyncFlatScoredObservedRunErrorV2,
     AsyncFlatScoredRolloutErrorV2, AsyncFlatScoredRolloutResultV2, FlatScoredSelectedEventV2,
     FlatScoredTerminalEventV2, FlatScoredTrajectoryObserverV2,
@@ -23,6 +25,7 @@ use crate::native_full_episode_trajectory_v2::{
     preflight_native_environment_window_v2, NativeEnvironmentWindowPreflightAuthorityV2,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
+use crate::native_population_opponent_v1::PopulationOpponentEngineV1;
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_training_store_checkpoint_v3::CheckpointManifestV3;
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, parse_lower_hex_raw32_v1};
@@ -516,7 +519,7 @@ pub fn run_native_checkpoint_v1(
     checkpoint_payload: &[u8],
     config: NativeCheckpointRunnerConfigV1,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
-    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, None)
+    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, None, None)
 }
 
 /// EVAL-ONLY (Self-Play Ladder Design Contract S2, Deliverable 2 head-to-head
@@ -554,7 +557,34 @@ pub(crate) fn run_native_checkpoint_with_ladder_opponent_eval_v1(
     config: NativeCheckpointRunnerConfigV1,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
-    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, ladder_opponent)
+    run_native_checkpoint_core_v1(
+        run,
+        checkpoint,
+        checkpoint_payload,
+        config,
+        ladder_opponent,
+        None,
+    )
+}
+
+/// Evaluation-only population-opponent sibling. Existing fixed and ladder
+/// callers cannot supply a population engine and preserve their exact path.
+#[cfg(test)]
+pub(crate) fn run_native_checkpoint_with_population_opponent_eval_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    checkpoint_payload: &[u8],
+    config: NativeCheckpointRunnerConfigV1,
+    population_opponent: Arc<PopulationOpponentEngineV1>,
+) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    run_native_checkpoint_core_v1(
+        run,
+        checkpoint,
+        checkpoint_payload,
+        config,
+        None,
+        Some(population_opponent),
+    )
 }
 
 fn run_native_checkpoint_core_v1(
@@ -563,7 +593,11 @@ fn run_native_checkpoint_core_v1(
     checkpoint_payload: &[u8],
     config: NativeCheckpointRunnerConfigV1,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    if ladder_opponent.is_some() && population_opponent.is_some() {
+        return Err(NativeCheckpointRunnerErrorV1::InvalidConfig);
+    }
     let validated = validate_runner_config_v1(run, config)?;
     let expected_episode_count = usize::try_from(config.episode_count)
         .map_err(|_| NativeCheckpointRunnerErrorV1::InvalidConfig)?;
@@ -620,8 +654,22 @@ fn run_native_checkpoint_core_v1(
     // Exhaustive rollout dispatch by the sealed contract: neither core can
     // default to Legacy, and the V2 arm surrenders the consumed authority
     // minted by the first validator from the evaluation seed.
-    let observed = match (validated.environment, validated.environment_authority) {
-        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, None) => {
+    let observed = match (
+        validated.environment,
+        validated.environment_authority,
+        population_opponent,
+    ) {
+        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, None, Some(population)) => {
+            run_async_flat_scored_rollout_native_observed_with_population_v1(
+                rollout_config,
+                config.evaluation_base_seed,
+                ladder_opponent,
+                Some(population),
+                &mut scorer,
+                observer,
+            )
+        }
+        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, None, None) => {
             run_async_flat_scored_rollout_native_observed_v2(
                 rollout_config,
                 config.evaluation_base_seed,
@@ -633,6 +681,20 @@ fn run_native_checkpoint_core_v1(
         (
             NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
             Some(environment_authority),
+            Some(population),
+        ) => run_async_flat_scored_rollout_native_environment_randomization_with_population_v1(
+            rollout_config,
+            config.evaluation_base_seed,
+            environment_authority,
+            ladder_opponent,
+            Some(population),
+            &mut scorer,
+            observer,
+        ),
+        (
+            NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
+            Some(environment_authority),
+            None,
         ) => run_async_flat_scored_rollout_native_environment_randomization_v2(
             rollout_config,
             config.evaluation_base_seed,
@@ -641,8 +703,8 @@ fn run_native_checkpoint_core_v1(
             &mut scorer,
             observer,
         ),
-        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, Some(_))
-        | (NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2, None) => {
+        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, Some(_), _)
+        | (NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2, None, _) => {
             return Err(NativeCheckpointRunnerErrorV1::Protocol);
         }
     };
