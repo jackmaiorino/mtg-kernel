@@ -27,9 +27,21 @@ It then reports, per arm:
   * discordant pair count and pair-level tie rate;
   * the decomposition's own already-published pooled per-slot P0-minus-P1
     control rate for the same slot identity, cited verbatim for comparison
-    (not recomputed -- see CLAUDE-SEAT-DECOMPOSITION-V1.md Section 1).
+    (not recomputed -- see CLAUDE-SEAT-DECOMPOSITION-V1.md Section 1);
+  * a two-sided normal-approximation z-test of the arm's own paired net
+    against zero (McNemar SE, sqrt(discordant)), of the arm against its
+    decomposition-slot reference (combined SE), and of the promoted(2)
+    mirror arm against the decomposition's marginal pooled-mixture P0-minus-P1
+    tilt (+0.0313, combined SE 0.0181, Section 1 "Marginal by seat, pooled
+    across all six slots"); plus every pairwise between-arm comparison of
+    the three arms' paired net rates (independent two-sample z-test,
+    combined SE from each arm's own McNemar SE, since the three arms share
+    no CRN seed and are statistically independent of one another).
 
-Descriptive only. No threshold, no alpha, no promotion or selection logic.
+All significance figures are two-sided normal-approximation z-tests
+(p = erfc(|z|/sqrt(2))); no continuity correction, no multiple-comparison
+adjustment. Descriptive only. No threshold, no alpha, no promotion or
+selection logic; nothing here changes which arms ran or how they were read.
 """
 
 from __future__ import annotations
@@ -57,6 +69,19 @@ DECOMPOSITION_REFERENCE = {
     3: {"p0_rate": 0.5296, "p0_se": 0.0304, "p1_rate": 0.4741, "p1_se": 0.0304, "diff": 0.0555},
     5: {"p0_rate": 0.4943, "p0_se": 0.0309, "p1_rate": 0.4598, "p1_se": 0.0308, "diff": 0.0345},
 }
+
+# CLAUDE-SEAT-DECOMPOSITION-V1.md Section 1, "Marginal by seat, pooled
+# across all six slots", "Pooled control" row: P0 0.5098 (SE 0.0128), P1
+# 0.4785 (SE 0.0128), diff +0.0313, combined SE ~0.0181. This is
+# promoted(2)'s own seat gap against the FULL SIX-COMPONENT MIXTURE (not a
+# single slot); it is the "+3.1pp pooled tilt" the mirror panel exists to
+# decompose. Cited verbatim, not recomputed.
+MIXTURE_MARGINAL_REFERENCE = {"diff": 0.0313, "se": 0.0181}
+MIXTURE_MARGINAL_ARM_LABEL = "mirror-promoted2-slot0"
+
+
+def two_sided_normal_p(z: float) -> float:
+    return math.erfc(abs(z) / math.sqrt(2.0))
 
 
 def require(condition: bool, message: str) -> None:
@@ -176,35 +201,60 @@ def analyze_arm(outcome_path: Path, expected_pairs: int, decomposition_slot: int
     net = p0_better - p1_better
     se_discordant_count = math.sqrt(discordant) if discordant > 0 else 0.0
     se_net_rate = (se_discordant_count / pairs) if pairs > 0 else 0.0
+    net_rate = net / pairs
+
+    # Paired seat-advantage net vs zero (McNemar normal approximation): the
+    # arm's own two-sided significance of its P0-minus-P1 deviation.
+    z_vs_zero = (net / se_discordant_count) if discordant > 0 else None
+    p_vs_zero = two_sided_normal_p(z_vs_zero) if z_vs_zero is not None else None
+
+    # Simple one-sample check (secondary, weaker): P0-perspective rate alone
+    # vs the fixed value 0.5, ignoring the P1 leg and the CRN pairing that
+    # the McNemar test above exploits. Reported because it is the literal
+    # "P0 win rate vs 50%" reading; the McNemar test is the primary,
+    # higher-power statistic this sheet's design calls for.
+    se_binom_half = binomial_se(0.5, pairs)
+    z_p0_vs_half = (p0_rate - 0.5) / se_binom_half
+    p_p0_vs_half = two_sided_normal_p(z_p0_vs_half)
 
     reference = DECOMPOSITION_REFERENCE.get(decomposition_slot) if decomposition_slot is not None else None
     comparison = None
     if reference is not None:
-        p0_minus_p1_rate = p0_rate - p1_rate
-        combined_se = math.sqrt(binomial_se(p0_rate, pairs) ** 2 + binomial_se(p1_rate, pairs) ** 2)
+        decomposition_se = math.sqrt(reference["p0_se"] ** 2 + reference["p1_se"] ** 2)
+        combined_se_vs_decomp = math.sqrt(se_net_rate ** 2 + decomposition_se ** 2)
+        z_vs_decomp = (net_rate - reference["diff"]) / combined_se_vs_decomp
         comparison = {
             "decomposition_slot": decomposition_slot,
             "decomposition_pooled_control_p0_minus_p1": reference["diff"],
-            "decomposition_combined_se": round(math.sqrt(reference["p0_se"] ** 2 + reference["p1_se"] ** 2), 4),
-            "mirror_p0_minus_p1_rate": round(p0_minus_p1_rate, 4),
-            "mirror_combined_se": round(combined_se, 4),
-            "difference_of_differences": round(p0_minus_p1_rate - reference["diff"], 4),
+            "decomposition_combined_se": round(decomposition_se, 4),
+            "mirror_p0_minus_p1_rate": round(net_rate, 4),
+            "mirror_combined_se": round(se_net_rate, 4),
+            "difference_of_differences": round(net_rate - reference["diff"], 4),
+            "combined_se_of_difference": round(combined_se_vs_decomp, 4),
+            "z_vs_decomposition": round(z_vs_decomp, 4),
+            "p_vs_decomposition_two_sided": round(two_sided_normal_p(z_vs_decomp), 4),
         }
 
     return {
         "evaluation_seed": seed,
         "pairs": pairs,
         "candidate_identity": {key: candidate[key] for key in mirror_keys},
-        "p0_perspective": {"wins": p0_wins, "losses": p0_losses, "draws": p0_draws, "rate": round(p0_rate, 4), "se": round(binomial_se(p0_rate, pairs), 4)},
+        "p0_perspective": {
+            "wins": p0_wins, "losses": p0_losses, "draws": p0_draws, "rate": round(p0_rate, 4), "se": round(binomial_se(p0_rate, pairs), 4),
+            "z_vs_50_percent": round(z_p0_vs_half, 4), "p_vs_50_percent_two_sided": round(p_p0_vs_half, 4),
+        },
         "p1_perspective": {"wins": p1_wins, "losses": p1_losses, "draws": p1_draws, "rate": round(p1_rate, 4), "se": round(binomial_se(p1_rate, pairs), 4)},
         "paired_seat_advantage": {
             "p0_better": p0_better, "p1_better": p1_better, "tie": tie,
-            "net": net, "discordant": discordant,
+            "net": net, "discordant": discordant, "net_rate": round(net_rate, 4),
             "se_net_count": round(se_discordant_count, 4),
             "se_net_rate": round(se_net_rate, 4),
-            "net_ratio_to_se": (round(net / se_discordant_count, 4) if discordant > 0 else None),
+            "net_ratio_to_se": (round(z_vs_zero, 4) if z_vs_zero is not None else None),
+            "z_vs_zero": (round(z_vs_zero, 4) if z_vs_zero is not None else None),
+            "p_vs_zero_two_sided": (round(p_vs_zero, 4) if p_vs_zero is not None else None),
         },
         "decomposition_comparison": comparison,
+        "_net_rate": net_rate, "_se_net_rate": se_net_rate,
     }
 
 
@@ -227,6 +277,47 @@ def analyze(manifest_path: Path) -> dict[str, Any]:
         arm_result["label"] = arm["label"]
         results.append(arm_result)
 
+    # Between-arm comparisons: independent two-sample z-tests on each pair
+    # of arms' paired net rates. The three arms share no CRN seed with each
+    # other (each has its own fresh evaluation seed), so they are treated
+    # as statistically independent; each arm's own McNemar SE (se_net_rate)
+    # is the correct per-arm variance to combine.
+    between_arm = []
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            a, b = results[i], results[j]
+            combined_se = math.sqrt(a["_se_net_rate"] ** 2 + b["_se_net_rate"] ** 2)
+            diff = a["_net_rate"] - b["_net_rate"]
+            z = diff / combined_se if combined_se > 0 else None
+            between_arm.append({
+                "arm_a": a["label"], "arm_b": b["label"],
+                "net_rate_a": round(a["_net_rate"], 4), "net_rate_b": round(b["_net_rate"], 4),
+                "difference": round(diff, 4), "combined_se": round(combined_se, 4),
+                "z": (round(z, 4) if z is not None else None),
+                "p_two_sided": (round(two_sided_normal_p(z), 4) if z is not None else None),
+            })
+
+    # promoted(2) mirror vs the decomposition's marginal pooled-mixture
+    # P0-minus-P1 tilt (the "+3.1pp" figure this whole panel exists to
+    # decompose). Only meaningful for the promoted2/slot0 arm.
+    mixture_marginal_comparison = None
+    for a in results:
+        if a["label"] == MIXTURE_MARGINAL_ARM_LABEL:
+            combined_se = math.sqrt(a["_se_net_rate"] ** 2 + MIXTURE_MARGINAL_REFERENCE["se"] ** 2)
+            diff = a["_net_rate"] - MIXTURE_MARGINAL_REFERENCE["diff"]
+            z = diff / combined_se
+            mixture_marginal_comparison = {
+                "arm": a["label"],
+                "mirror_net_rate": round(a["_net_rate"], 4),
+                "mixture_marginal_pooled_p0_minus_p1": MIXTURE_MARGINAL_REFERENCE["diff"],
+                "mixture_marginal_se": MIXTURE_MARGINAL_REFERENCE["se"],
+                "difference": round(diff, 4), "combined_se": round(combined_se, 4),
+                "z": round(z, 4), "p_two_sided": round(two_sided_normal_p(z), 4),
+            }
+
+    for a in results:
+        del a["_net_rate"], a["_se_net_rate"]
+
     return {
         "schema": "mtg-kernel-mirror-seat-diagnostic-analysis/v1",
         "descriptive_only": True,
@@ -235,6 +326,8 @@ def analyze(manifest_path: Path) -> dict[str, Any]:
         "run_mode": manifest["run_mode"],
         "pair_count": pair_count,
         "arms": results,
+        "between_arm_comparisons": between_arm,
+        "promoted2_vs_mixture_marginal_tilt": mixture_marginal_comparison,
     }
 
 
