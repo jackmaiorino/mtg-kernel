@@ -1,0 +1,43 @@
+{
+  "candidate_slot": 2,
+  "excluded_evaluation_seed_intervals": [
+    {
+      "end_inclusive": 2000000000,
+      "label": "all revealed native H2H development and selection evaluation roots through candidate-02 nomination",
+      "start_inclusive": 0
+    }
+  ],
+  "formal_schedule_sha256": {
+    "confirmation": "bd7612fc6a937b55a1f0ed9efec0042200a0effe3d3eaee822a5032de8af0100",
+    "initial": "b8609141d42f5c5230dadc95d279ff17d5869de523a8b579e3ec93c10561868c"
+  },
+  "nomination_evidence": [
+    {
+      "bytes": 7947,
+      "path": "D:\\mtg-kernel-scaled-selfplay-population-v1\\measurement\\native-anchor-read-generation-1536\\attempt-001\\anchor-read-plan.json",
+      "sha256": "665399eb32e301bfcba7632cd32ffdcf5a30e676cac7be4b13af3940259f4a04"
+    },
+    {
+      "bytes": 4553,
+      "path": "D:\\mtg-kernel-scaled-selfplay-population-v1\\measurement\\native-anchor-read-generation-1536\\attempt-001\\anchor-read-execution-manifest.json",
+      "sha256": "b1689ca47e909a0634f74e9bfd555afe011af1f60d711b57fdefc3958fc1c463"
+    },
+    {
+      "bytes": 4290,
+      "path": "D:\\mtg-kernel-scaled-selfplay-population-v1\\measurement\\native-anchor-read-generation-1536\\attempt-001\\anchor-read-result.json",
+      "sha256": "8419f849108ce8a1d3b9e5e67689feba5477723e45180dc2bf6c774b9b7069fb"
+    },
+    {
+      "bytes": 30807,
+      "path": "D:\\mtg-kernel-scaled-selfplay-population-v1\\payoff\\payoff-matrix-generation-1536\\attempt-001\\payoff-matrix-generation-1536\\attempt-001\\matrix-execution-manifest.json",
+      "sha256": "522f5dbfd02d2841896e673b8ce998ecb00507533cd7e8f4be7a6878f0efc03d"
+    },
+    {
+      "bytes": 12739,
+      "path": "D:\\mtg-kernel-scaled-selfplay-population-v1\\measurement\\xmage-cp7-generation-1536\\formal\\attempt-001\\panel-summary.json",
+      "sha256": "ccdf6fc7c88d3ddce2b579acc95fdb37ef6916aad9ae65f2e474908c48eaed28"
+    }
+  ],
+  "policy": "formal candidate-02 H2H evaluation seeds must be outside every revealed interval and initial and confirmation schedules must be mutually disjoint",
+  "schema": "scaled-selfplay-candidate-02-v3-freshness/v1"
+}
