@@ -323,17 +323,22 @@ where
     B: Send + 'static,
 {
     /// Spawns the background producer thread immediately. `produce` is
-    /// called once per dispatched batch with `(scoring_weight_version,
-    /// weight snapshot)` and must return the produced batch plus the episode
-    /// identifiers it scored. `total_updates` bounds how many batches the
-    /// producer will ever dispatch (both the smoke harness and the A/B
-    /// harness know this figure up front; an open-ended producer is not
-    /// needed for a bounded-duration measurement).
+    /// called once per dispatched batch with `(target_update,
+    /// scoring_weight_version, weight snapshot)` and must return the
+    /// produced batch plus the episode identifiers it scored.
+    /// `target_update` is the logical update index this batch is destined
+    /// for (dispatch is strictly sequential and 1-indexed, so callers that
+    /// need a per-update deterministic seed schedule can derive it from this
+    /// argument alone, without any shared mutable counter of their own).
+    /// `total_updates` bounds how many batches the producer will ever
+    /// dispatch (both the smoke harness and the A/B harness know this figure
+    /// up front; an open-ended producer is not needed for a bounded-duration
+    /// measurement).
     pub fn spawn_v1(
         initial_weights: W,
         max_staleness_updates: u32,
         total_updates: u64,
-        mut produce: impl FnMut(u64, Arc<W>) -> (B, Vec<u64>) + Send + 'static,
+        mut produce: impl FnMut(u64, u64, Arc<W>) -> (B, Vec<u64>) + Send + 'static,
     ) -> Self {
         assert!(
             max_staleness_updates >= 1,
@@ -374,7 +379,7 @@ where
                         guard = worker_dispatch_cv.wait(guard).unwrap();
                     }
                 };
-                let (batch, episode_ids) = produce(scoring_version, weights_snapshot);
+                let (batch, episode_ids) = produce(target_update, scoring_version, weights_snapshot);
                 worker_ready.lock().unwrap().push_back(ReadyBatchV1 {
                     consuming_update_version: target_update,
                     scoring_weight_version: scoring_version,
@@ -736,7 +741,7 @@ mod tests {
                 0_u64,
                 max_staleness_updates,
                 total_updates,
-                move |_scoring_version, _weights| {
+                move |_target_update, _scoring_version, _weights| {
                     let ordinal = produced_count_for_closure.fetch_add(1, Ordering::SeqCst);
                     std::thread::sleep(synthetic_delay_v1(ordinal));
                     let episode_id = ordinal;
@@ -788,15 +793,15 @@ mod tests {
     #[should_panic(expected = "max_staleness_updates >= 1")]
     fn scheduler_construction_rejects_k0() {
         let _scheduler: BoundedStalenessSchedulerV1<u64, Vec<u64>> =
-            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 0, 1, |_v, _w| (Vec::new(), Vec::new()));
+            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 0, 1, |_u, _v, _w| (Vec::new(), Vec::new()));
     }
 
     #[test]
     fn scheduler_produces_updates_in_strict_order_with_no_gaps() {
         let total_updates = 40;
         let scheduler: BoundedStalenessSchedulerV1<u64, u64> =
-            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 4, total_updates, |version, _weights| {
-                (version, Vec::new())
+            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 4, total_updates, |target_update, _version, _weights| {
+                (target_update, Vec::new())
             });
         let mut seen = Vec::new();
         for update in 1..=total_updates {
@@ -814,7 +819,7 @@ mod tests {
     #[test]
     fn scheduler_publish_does_not_block_on_a_slow_producer() {
         let scheduler: BoundedStalenessSchedulerV1<u64, ()> =
-            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 4, 1, |_version, _weights| {
+            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 4, 1, |_target_update, _version, _weights| {
                 // Deliberately much slower than any reasonable publish call.
                 std::thread::sleep(Duration::from_millis(300));
                 ((), Vec::new())
@@ -861,7 +866,9 @@ mod tests {
         // receive in this test, so the second `next_batch_v1` call must time
         // out rather than hang.
         let scheduler: BoundedStalenessSchedulerV1<u64, u64> =
-            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 1, 2, |version, _weights| (version, Vec::new()));
+            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 1, 2, |target_update, _version, _weights| {
+                (target_update, Vec::new())
+            });
         let first = scheduler
             .next_batch_v1(Duration::from_secs(5))
             .expect("first batch should be ready without any publish");
