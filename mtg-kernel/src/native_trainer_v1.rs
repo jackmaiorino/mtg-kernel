@@ -1879,6 +1879,15 @@ pub struct NativeTrainerEpisodeEvidenceV1 {
     /// receipt. The legacy learner-only trace remains diagnostic and is not a
     /// persisted trajectory identity.
     pub full_trajectory_receipt: NativeTrainingTrajectoryReceiptV2,
+    /// Population-opponent slot this episode's opponent seat used, recorded
+    /// only: `attach_population_opponent_identity_v1` fills it in after
+    /// rollout by recomputing the same deterministic
+    /// `(base_seed, episode_index)` selection the rollout already made.
+    /// `None` when no population opponent is installed (ladder opponent or
+    /// plain self-play).
+    pub opponent_population_slot: Option<u8>,
+    pub opponent_run_sha256: Option<[u8; 32]>,
+    pub opponent_checkpoint_manifest_sha256: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2662,7 +2671,7 @@ impl NativeTrainerStateV2 {
         let adam_step_before = self.train_state_v1().adam_step_v1();
         let mut candidate_train_state = self.train_state_v1().clone();
         phase_recorder.finish_v1(grouping_timer);
-        let (train_result, episode_evidence, learner_group_count) = train_grouped_candidate_v1(
+        let (train_result, mut episode_evidence, learner_group_count) = train_grouped_candidate_v1(
             &mut candidate_train_state,
             &grouped,
             &full_trajectory_receipts,
@@ -2678,6 +2687,11 @@ impl NativeTrainerStateV2 {
             #[cfg(test)]
             test_physical_substep_count_mutation,
             phase_recorder,
+        )?;
+        attach_population_opponent_identity_v1(
+            self.population_opponent.as_deref(),
+            self.base_seed,
+            &mut episode_evidence,
         )?;
         let finalization_timer =
             phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
@@ -2990,7 +3004,7 @@ impl NativeTrainerStateV2 {
         let adam_step_before = self.train_state_wide_v1().adam_step_v1();
         let mut candidate_train_state = self.train_state_wide_v1().clone();
         phase_recorder.finish_v1(grouping_timer);
-        let (train_result, episode_evidence, learner_group_count) =
+        let (train_result, mut episode_evidence, learner_group_count) =
             train_grouped_candidate_wide_v1(
                 &mut candidate_train_state,
                 &grouped,
@@ -3004,6 +3018,11 @@ impl NativeTrainerStateV2 {
                 },
                 phase_recorder,
             )?;
+        attach_population_opponent_identity_v1(
+            self.population_opponent.as_deref(),
+            self.base_seed,
+            &mut episode_evidence,
+        )?;
         let finalization_timer =
             phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
         let parameters_after = candidate_train_state
@@ -3557,6 +3576,40 @@ fn validate_grouped_batch_v2<Input>(
     }
 }
 
+/// Records each episode's population-opponent identity without touching
+/// gameplay, seeding, or learning math: it recomputes the same deterministic
+/// `(base_seed, episode_index)` slot selection
+/// [`PopulationOpponentEngineV1::slot_for_episode_v1`] already made during
+/// the rollout that just produced these episodes, then reads off the
+/// selected slot's immutable checkpoint identity. Pure post-processing, run
+/// once per update after grouping; no new inference and no shared state.
+/// Leaves every field `None` when no population opponent is installed
+/// (ladder opponent or plain self-play).
+fn attach_population_opponent_identity_v1(
+    population_opponent: Option<&PopulationOpponentEngineV1>,
+    base_seed: u64,
+    episodes: &mut [NativeTrainerEpisodeEvidenceV1],
+) -> Result<(), NativeTrainerErrorV1> {
+    let Some(population_opponent) = population_opponent else {
+        return Ok(());
+    };
+    for episode in episodes {
+        let slot = population_opponent
+            .slot_for_episode_v1(base_seed, episode.episode_index)
+            .map_err(|_| {
+                NativeTrainerErrorV1::GroupingInvariant(
+                    "population opponent slot recomputation failed",
+                )
+            })?;
+        let (run_sha256, checkpoint_manifest_sha256) =
+            population_opponent.checkpoint_identity_for_slot_v1(slot);
+        episode.opponent_population_slot = Some(slot.index_v1() as u8);
+        episode.opponent_run_sha256 = Some(run_sha256);
+        episode.opponent_checkpoint_manifest_sha256 = Some(checkpoint_manifest_sha256);
+    }
+    Ok(())
+}
+
 fn train_grouped_candidate_v1(
     candidate: &mut NativePolicyValueTrainStateV1,
     grouped: &NativePolicyGroupedTrajectoryV1,
@@ -3622,6 +3675,9 @@ fn train_grouped_candidate_v1(
             learner_trace_hash: episode.learner_trace_hash,
             terminal_outcome: episode.terminal.terminal_outcome,
             full_trajectory_receipt,
+            opponent_population_slot: None,
+            opponent_run_sha256: None,
+            opponent_checkpoint_manifest_sha256: None,
         });
         for group in &episode.groups {
             source_groups.push(group);
@@ -3884,6 +3940,9 @@ fn train_grouped_candidate_wide_v1(
             learner_trace_hash: episode.learner_trace_hash,
             terminal_outcome: episode.terminal.terminal_outcome,
             full_trajectory_receipt,
+            opponent_population_slot: None,
+            opponent_run_sha256: None,
+            opponent_checkpoint_manifest_sha256: None,
         });
         for group in &episode.groups {
             source_groups.push(group);

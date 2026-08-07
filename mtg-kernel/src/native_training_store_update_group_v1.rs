@@ -15,6 +15,7 @@ use crate::canonical_json_v1::{
 use crate::native_policy_train_step_v1::{
     CANONICAL_GAUGE_PARAMETERS_V1, NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1,
 };
+use crate::native_population_opponent_v1::POPULATION_OPPONENT_SLOT_COUNT_V1;
 use crate::native_training_executor_v1::{
     native_training_episode_schedule_v1, NativeTrainingCheckpointCandidateV1,
     NativeTrainingExecutionConfigV1, NativeTrainingIntrinsicCheckpointFactsV2,
@@ -203,6 +204,20 @@ struct EpisodeWireV1 {
     learner_physical_decision_count: u64,
     opponent_physical_decision_count: u64,
     trajectory_sha256: String,
+    /// Population-opponent slot (0-7) this episode's opponent seat used.
+    /// `None` for records written before this field existed, and for
+    /// episodes with no population opponent installed (ladder opponent or
+    /// plain self-play). Omitted from the wire (not written as `null`) in
+    /// both cases: `#[serde(default)]` lets a pre-existing segment
+    /// continuation file, which never wrote this key, keep decoding, and
+    /// `skip_serializing_if` re-emits that same absence on the way back out
+    /// so the canonical round-trip byte check still passes for old records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opponent_population_slot: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opponent_run_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opponent_checkpoint_manifest_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -354,8 +369,11 @@ pub(crate) fn maximum_update_group_json_shape_v2(
             CanonicalJsonClosedMaxV1::terminal_return_i8_v1(),
         ),
         ("learner_seat", seat),
+        ("opponent_checkpoint_manifest_sha256", digest),
         ("opponent_physical_decision_count", u63),
         ("opponent_policy_step_count", u63),
+        ("opponent_population_slot", u32_value),
+        ("opponent_run_sha256", digest),
         ("physical_decision_count", u63),
         ("policy_step_count", u63),
         (
@@ -1405,6 +1423,11 @@ fn evidence_from_observation_v1(
             // projects the inner V1 digest through the same compatibility
             // accessor. The V2 outer digest never enters EpisodeWire.
             trajectory_sha256: lower_hex_raw32_v1(receipt.trajectory_sha256()),
+            opponent_population_slot: observed.opponent_population_slot.map(u32::from),
+            opponent_run_sha256: observed.opponent_run_sha256.map(lower_hex_raw32_v1),
+            opponent_checkpoint_manifest_sha256: observed
+                .opponent_checkpoint_manifest_sha256
+                .map(lower_hex_raw32_v1),
         });
     }
     if total_policy_steps == 0
@@ -1928,6 +1951,27 @@ fn validate_episodes_v1(run: &ValidatedTrainRunV2, evidence: &UpdateEvidenceWire
             || parse_digest_v1(&episode.trajectory_sha256).is_err()
         {
             return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+        }
+        // The three opponent-identity fields are recorded together or not at
+        // all: a population opponent always names a slot and its checkpoint's
+        // full identity, and every other opponent path (ladder, plain
+        // self-play, or a record predating this field) leaves all three
+        // absent.
+        match (
+            episode.opponent_population_slot,
+            &episode.opponent_run_sha256,
+            &episode.opponent_checkpoint_manifest_sha256,
+        ) {
+            (None, None, None) => {}
+            (Some(slot), Some(run_sha256), Some(checkpoint_manifest_sha256)) => {
+                if slot >= POPULATION_OPPONENT_SLOT_COUNT_V1 as u32
+                    || parse_digest_v1(run_sha256).is_err()
+                    || parse_digest_v1(checkpoint_manifest_sha256).is_err()
+                {
+                    return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+                }
+            }
+            _ => return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding)),
         }
         let environment_seed = parse_u64_hex_v1(&episode.environment_seed_u64_hex)?;
         if environment_seed != schedule.environment_seed {
@@ -2547,12 +2591,12 @@ mod tests {
     #[test]
     fn update_group_closed_maximum_matches_frozen_recurrence() {
         let one = maximum_update_group_json_shape_v2(1, 1, 1).unwrap();
-        assert_eq!(one.token_bytes(), 3_496 + 754 + 125 + 216);
-        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_592);
+        assert_eq!(one.token_bytes(), 3_728 + 754 + 125 + 216);
+        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_824);
 
         let current = maximum_update_group_json_shape_v2(2, 65_536, 131_072).unwrap();
-        assert_eq!(current.token_bytes(), 36_508_556);
-        assert_eq!(current.canonical_document_bytes_v1().unwrap(), 36_508_557);
+        assert_eq!(current.token_bytes(), 36_509_020);
+        assert_eq!(current.canonical_document_bytes_v1().unwrap(), 36_509_021);
     }
 
     fn execution_config_v1(run: &ValidatedTrainRunV2) -> NativeTrainingExecutionConfigV1 {
@@ -3544,6 +3588,9 @@ mod tests {
             learner_physical_decision_count: U63_MAX_V1,
             opponent_physical_decision_count: U63_MAX_V1,
             trajectory_sha256: "f".repeat(64),
+            opponent_population_slot: Some(u32::MAX),
+            opponent_run_sha256: Some("f".repeat(64)),
+            opponent_checkpoint_manifest_sha256: Some("f".repeat(64)),
         };
         let bytes = to_canonical_json_bytes_v1(&maximum_episode, GROUP_NULL_POLICY_V1)
             .expect("the maximum episode is canonically serializable");
@@ -3587,16 +3634,16 @@ mod tests {
         // `update_group_closed_maximum_matches_frozen_recurrence`; restate them
         // here so a planner widening cannot satisfy the allowance equality
         // above by moving both sides at once.
-        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_592);
+        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_824);
         assert_eq!(
             maximum_update_group_json_shape_v2(2, 65_536, 131_072)
                 .unwrap()
                 .canonical_document_bytes_v1()
                 .unwrap(),
-            36_508_557
+            36_509_021
         );
 
-        const EPISODE_KEYS_V1: [&str; 18] = [
+        const BASE_EPISODE_KEYS_V1: [&str; 18] = [
             "deck_hashes_u64_hex",
             "deck_ids",
             "environment_seed_u64_hex",
@@ -3616,6 +3663,27 @@ mod tests {
             "trajectory_sha256",
             "winner",
         ];
+
+        /// The three opponent-identity fields are omitted from the wire
+        /// (never written as `null`) whenever they are `None`, so unlike the
+        /// eighteen base fields the expected key set is per-episode: a
+        /// population-opponent episode carries twenty-one keys, and every
+        /// other episode (ladder opponent, plain self-play, or a record
+        /// predating this field) carries the original eighteen.
+        fn expected_episode_keys_v1(episode: &EpisodeWireV1) -> Vec<&'static str> {
+            let mut keys = BASE_EPISODE_KEYS_V1.to_vec();
+            if episode.opponent_population_slot.is_some() {
+                keys.push("opponent_population_slot");
+            }
+            if episode.opponent_run_sha256.is_some() {
+                keys.push("opponent_run_sha256");
+            }
+            if episode.opponent_checkpoint_manifest_sha256.is_some() {
+                keys.push("opponent_checkpoint_manifest_sha256");
+            }
+            keys.sort_unstable();
+            keys
+        }
         const FORBIDDEN_EPISODE_SUBSTRINGS_V1: [&str; 6] = [
             "environment_randomization_v2",
             "trajectory_sha256_v2",
@@ -3635,7 +3703,7 @@ mod tests {
                 SeatWireV1::P0 => "p0",
                 SeatWireV1::P1 => "p1",
             };
-            serde_json::json!({
+            let mut value = serde_json::json!({
                 "deck_hashes_u64_hex": [
                     episode.deck_hashes_u64_hex[0].clone(),
                     episode.deck_hashes_u64_hex[1].clone(),
@@ -3664,7 +3732,27 @@ mod tests {
                     Some(seat) => Value::from(seat_name_v1(seat)),
                     None => Value::Null,
                 },
-            })
+            });
+            // Omitted (not written as `null`) whenever `None`, matching the
+            // wire's `skip_serializing_if`: this keeps a pre-existing record
+            // that never wrote these keys round-tripping byte for byte.
+            let object = value.as_object_mut().expect("the oracle is a JSON object");
+            if let Some(slot) = episode.opponent_population_slot {
+                object.insert("opponent_population_slot".to_owned(), Value::from(slot));
+            }
+            if let Some(run_sha256) = &episode.opponent_run_sha256 {
+                object.insert(
+                    "opponent_run_sha256".to_owned(),
+                    Value::from(run_sha256.clone()),
+                );
+            }
+            if let Some(checkpoint_manifest_sha256) = &episode.opponent_checkpoint_manifest_sha256 {
+                object.insert(
+                    "opponent_checkpoint_manifest_sha256".to_owned(),
+                    Value::from(checkpoint_manifest_sha256.clone()),
+                );
+            }
+            value
         }
 
         fn assert_episode_oracle_v1(episode: &EpisodeWireV1, label: &str) {
@@ -3679,7 +3767,8 @@ mod tests {
             let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
             keys.sort_unstable();
             assert_eq!(
-                keys, EPISODE_KEYS_V1,
+                keys,
+                expected_episode_keys_v1(episode),
                 "{label}: EpisodeWireV1 must not gain or lose a field"
             );
 
@@ -3752,6 +3841,94 @@ mod tests {
         );
 
         assert_eq!(maximum_episode.schema, "mtg_kernel_native_train_episode/v1");
+    }
+
+    /// A training record written with a population opponent installed
+    /// carries a correct, independently reproducible opponent identity, and
+    /// the whole group round-trips through canonical bytes unchanged.
+    #[test]
+    fn population_opponent_identity_round_trips_through_the_written_record() {
+        use crate::native_population_opponent_v1::{
+            checkpoint_inference_handles_for_test_v1, population_slot_for_episode_v1,
+            PopulationOpponentEngineV1, PopulationWeightVectorV1,
+        };
+        use std::sync::Arc;
+
+        let run_bytes = test_fixture_bytes_v2();
+        let run = decode_train_run_v2(&run_bytes).unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let mut executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+
+        let weights = PopulationWeightVectorV1::new_v1([1, 1, 1, 1, 1, 1, 1, 1], 8).unwrap();
+        let handles = checkpoint_inference_handles_for_test_v1::<8>();
+        let population = Arc::new(PopulationOpponentEngineV1::new_v1(weights, handles));
+        executor.set_population_opponent_v1(Some(population.clone()));
+
+        let genesis_candidate = executor.checkpoint_candidate_v1().unwrap();
+        let genesis_payload = genesis_candidate.payload().to_vec();
+        let genesis = build_genesis_checkpoint_manifest_v3(&run, &genesis_payload).unwrap();
+        let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let prepared = executor.prepare_update_v2().unwrap();
+        let (group, _advanced_context) = build_update_group_v1(&run, context, &prepared)
+            .unwrap()
+            .into_parts();
+        let group_bytes = group.canonical_bytes().to_vec();
+
+        let decode_context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let decoded = decode_update_group_v1(&run, decode_context, &group_bytes)
+            .expect("the population-opponent group decodes");
+        let episodes = &decoded.group().wire.evidence.episodes;
+        assert!(
+            !episodes.is_empty(),
+            "the population-opponent update must emit real episodes"
+        );
+        for episode in episodes {
+            let slot = episode
+                .opponent_population_slot
+                .expect("a population opponent must record its slot");
+            let run_sha256 = episode
+                .opponent_run_sha256
+                .as_deref()
+                .expect("a population opponent must record its run sha256");
+            let checkpoint_manifest_sha256 = episode
+                .opponent_checkpoint_manifest_sha256
+                .as_deref()
+                .expect("a population opponent must record its checkpoint manifest sha256");
+
+            let expected_slot = population_slot_for_episode_v1(
+                run.record().schedule.base_seed,
+                episode.episode_index,
+                &weights,
+            )
+            .unwrap();
+            assert_eq!(
+                slot,
+                u32::from(expected_slot.index_v1() as u8),
+                "the recorded slot must match the deterministic selection the rollout used"
+            );
+            let (expected_run_sha256, expected_checkpoint_manifest_sha256) =
+                population.checkpoint_identity_for_slot_v1(expected_slot);
+            assert_eq!(run_sha256, lower_hex_raw32_v1(expected_run_sha256));
+            assert_eq!(
+                checkpoint_manifest_sha256,
+                lower_hex_raw32_v1(expected_checkpoint_manifest_sha256)
+            );
+        }
+
+        // The whole group, opponent identity included, round-trips through
+        // canonical bytes exactly: re-encoding the decoded wire must
+        // reproduce the bytes that were written.
+        let reencoded = to_canonical_json_bytes_v1(&decoded.group().wire, GROUP_NULL_POLICY_V1)
+            .expect("the decoded group re-serializes");
+        assert_eq!(
+            reencoded, group_bytes,
+            "a population-opponent record must round-trip byte for byte"
+        );
     }
 
     /// Complete-genesis Store, recreated from the proven helper in

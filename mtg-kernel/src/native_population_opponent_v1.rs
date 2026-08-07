@@ -232,6 +232,18 @@ impl PopulationOpponentEngineV1 {
             .clone()
     }
 
+    /// The immutable `(run_sha256, checkpoint_manifest_sha256)` identity
+    /// installed at `slot`. Read-only: it performs no inference and mutates
+    /// nothing, so callers may use it purely to record which opponent
+    /// checkpoint a training episode's `slot_for_episode_v1` result names.
+    pub(crate) fn checkpoint_identity_for_slot_v1(
+        &self,
+        slot: PopulationSlotV1,
+    ) -> ([u8; 32], [u8; 32]) {
+        let handle = &self.handles[slot.index_v1()];
+        (handle.run_sha256(), handle.checkpoint_manifest_sha256())
+    }
+
     /// Scores one decision with the selected immutable checkpoint and reuses
     /// the K4 ladder's temperature-one softmax sampler unchanged.
     pub(crate) fn select_policy_action_v1(
