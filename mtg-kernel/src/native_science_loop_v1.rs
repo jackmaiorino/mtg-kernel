@@ -2715,22 +2715,40 @@ mod windows_science_loop_tests {
         let candidate_gen: u64 = required_env_v1("RESPONSE_H2H_CANDIDATE_GEN")
             .parse()
             .expect("response candidate generation");
-        assert!(
-            matches!(candidate_gen, 0 | 256),
-            "mixture arm must be a complete exploiter or its exact promoted(2) genesis control"
-        );
+        let diagnostic_v1 = std::env::var("RESPONSE_H2H_DIAGNOSTIC_V1")
+            .map(|value| value == "1")
+            .unwrap_or(false);
+        if diagnostic_v1 {
+            assert!(
+                matches!(candidate_gen, 0 | 64 | 128 | 192 | 256),
+                "diagnostic mixture arm must use the shared genesis control or a retained checkpoint"
+            );
+        } else {
+            assert!(
+                matches!(candidate_gen, 0 | 256),
+                "mixture arm must be a complete exploiter or its exact promoted(2) genesis control"
+            );
+        }
         let pairs: u64 = std::env::var("RESPONSE_H2H_PAIRS")
             .unwrap_or_else(|_| "1024".to_owned())
             .parse()
             .expect("RESPONSE_H2H_PAIRS");
-        assert_eq!(pairs, 1_024, "frozen mixture panel has 1,024 pairs");
+        if diagnostic_v1 {
+            assert_eq!(pairs, 512, "diagnostic mixture panel has 512 pairs");
+        } else {
+            assert_eq!(pairs, 1_024, "frozen mixture panel has 1,024 pairs");
+        }
         let eval_seed: u64 = required_env_v1("RESPONSE_H2H_EVAL_SEED")
             .parse()
             .expect("RESPONSE_H2H_EVAL_SEED");
-        assert!(
-            matches!(eval_seed, 1_971_001 | 1_971_011),
-            "mixture seed must be the frozen initial or retry seed"
-        );
+        if diagnostic_v1 {
+            assert_eq!(eval_seed, 1_973_001, "diagnostic mixture seed must be 1973001");
+        } else {
+            assert!(
+                matches!(eval_seed, 1_971_001 | 1_971_011),
+                "mixture seed must be the frozen initial or retry seed"
+            );
+        }
         let outcome_path = required_env_v1("RESPONSE_H2H_OUTCOME_JSON");
 
         let chain_paths: Vec<PathBuf> = required_env_v1("RESPONSE_H2H_REFRESH_CHAIN")
@@ -2906,7 +2924,7 @@ mod windows_science_loop_tests {
                 })
             })
             .collect();
-        let artifact = serde_json::json!({
+        let mut artifact = serde_json::json!({
             "schema": "mtg-kernel-response-exploiter-mixture-terminal-stream/v1",
             "evaluation_base_seed": eval_seed,
             "pair_count": pairs,
@@ -2939,6 +2957,9 @@ mod windows_science_loop_tests {
             },
             "episodes": outcome_rows,
         });
+        if diagnostic_v1 {
+            artifact["runtime"]["response_exploiter_diagnostic_v1"] = serde_json::json!(true);
+        }
         let mut bytes = serde_json::to_vec_pretty(&artifact)
             .expect("response mixture terminal stream must serialize");
         bytes.push(b'\n');
