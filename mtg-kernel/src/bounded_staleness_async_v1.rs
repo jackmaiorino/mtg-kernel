@@ -48,16 +48,11 @@ use std::time::Duration;
 /// byte-identical to every prior commit's trainer behavior) and the opt-in
 /// bounded-staleness async path. `Default` is [`Self::SynchronousV1`];
 /// nothing in this crate selects the async variant implicitly.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TrainingExecutionModeV1 {
+    #[default]
     SynchronousV1,
     BoundedStalenessAsyncV1 { max_staleness_updates: u32 },
-}
-
-impl Default for TrainingExecutionModeV1 {
-    fn default() -> Self {
-        Self::SynchronousV1
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -444,6 +439,14 @@ where
 
         let entry_outcome = {
             let mut ledger = self.ledger.lock().unwrap();
+            // Every episode in one batch shares the same (scoring_weight_
+            // version, consuming_update_version) pair (they were all scored
+            // by the same dispatched batch), so a violation is batch-wide,
+            // not per-episode. Record every episode individually regardless
+            // (append-only evidence discipline: a violation is a reason to
+            // surface it, not to under-record), then report the first
+            // violation, if any.
+            let mut first_violation = None;
             for &episode_id in &ready_batch.episode_ids {
                 let entry = StalenessLedgerEntryV1 {
                     episode_id,
@@ -451,30 +454,17 @@ where
                     consuming_update_version: ready_batch.consuming_update_version,
                 };
                 if let Err(violation) = ledger.record_v1(entry, self.max_staleness_updates) {
-                    // Still finish recording the remaining episodes in this
-                    // batch (append-only evidence discipline) before
-                    // returning the first violation.
-                    for &remaining_episode_id in ready_batch
-                        .episode_ids
-                        .iter()
-                        .skip_while(|&&id| id != episode_id)
-                        .skip(1)
-                    {
-                        let _ = ledger.record_v1(
-                            StalenessLedgerEntryV1 {
-                                episode_id: remaining_episode_id,
-                                scoring_weight_version: ready_batch.scoring_weight_version,
-                                consuming_update_version: ready_batch.consuming_update_version,
-                            },
-                            self.max_staleness_updates,
-                        );
-                    }
-                    return Err(BoundedStalenessConsumeErrorV1::BoundViolation(violation));
+                    first_violation.get_or_insert(violation);
                 }
             }
-            Ok(())
+            match first_violation {
+                Some(violation) => Err(violation),
+                None => Ok(()),
+            }
         };
-        entry_outcome?;
+        if let Err(violation) = entry_outcome {
+            return Err(BoundedStalenessConsumeErrorV1::BoundViolation(violation));
+        }
 
         Ok(BoundedStalenessConsumedBatchV1 {
             batch: ready_batch.batch,

@@ -12,7 +12,9 @@
 //! [--train-step-ms N] [--workers N] [--sessions-per-worker N]
 //! [--broker-batch-target N]`
 
-use mtg_kernel::bounded_staleness_async_harness_v1::{run_matched_ab_v1, ArmReportV1, HarnessConfigV1};
+use mtg_kernel::bounded_staleness_async_harness_v1::{
+    run_matched_ab_v1, ArmReportV1, HarnessConfigV1,
+};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy)]
@@ -152,7 +154,10 @@ fn main() {
     println!();
     print_arm(&report.bounded_staleness_async);
     println!();
-    println!("speedup (sync wall / async wall): {:.3}x", report.speedup_ratio);
+    println!(
+        "speedup (sync wall / async wall): {:.3}x",
+        report.speedup_ratio
+    );
     println!(
         "reward curves identical between arms (expected under the stand-in \
          scorer): {}",

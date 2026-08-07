@@ -34,7 +34,6 @@ use crate::async_flat_scored_rollout_v1::{
 use crate::async_rollout_v2::AsyncRolloutConfigV2;
 use crate::bounded_staleness_async_v1::{BoundedStalenessConsumeErrorV1, BoundedStalenessSchedulerV1};
 use crate::rl::PlayerSeatV1;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub const HARNESS_LIMITATIONS_NOTE_V1: &str =
