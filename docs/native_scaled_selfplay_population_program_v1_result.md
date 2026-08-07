@@ -1,9 +1,10 @@
 # Native scaled self-play population program v1 result
 
 Status: base campaign complete. Candidate 02 closed
-`INCONCLUSIVE-AT-MAX-N` without confirmation. The optional extension is held
-until the frozen response-exploiter contract is realized and the split
-external-native frontier is reviewed.
+`INCONCLUSIVE-AT-MAX-N` without confirmation. The frozen response-exploiter
+build subsequently classified `FAILED`, so the optional extension remains
+held while the split external-native frontier and exploiter failure are
+diagnosed.
 
 ## Base-campaign completion
 
@@ -80,13 +81,21 @@ route. Refresh-008's fallback record SHA-256 is
 This preserves a population-pressure test but supports no
 exploiter-robustness claim.
 
-Before any extension or second population campaign, the program must build
-and evaluate the two distinct response exploiters required at program update
-1,024. They start from promoted(2) with fresh Adam, train for 256 updates of 64
-natural episodes against the exact frozen six-slot generation-1,536 mixture,
-and must pass the predeclared mixture and pure-promoted(2) terminal W/L/D
-gates. A failed build follows the documented fallback rule but does not justify
-more training that continues to rely only on fallbacks.
+The required post-campaign response build completed both fixed 256-update
+Stores, but its initial evaluation classified `FAILED`. Seed 971001 was
+`FAIL-NO-RETRY`, with mixture net `-23`, mixture P1 net `-15`, and pure-anchor
+scores of 49.02 percent overall and 45.90 percent as P1. Seed 971002 was
+individually `RETRY-ELIGIBLE`, with mixture net `+16` and pure-anchor scores of
+50.88 percent overall and 47.07 percent as P1. Because one build was
+`FAIL-NO-RETRY`, the campaign-level beta-0.03 recourse did not activate.
+
+The response evaluation manifest is
+`D:\mtg-kernel-scaled-selfplay-response-exploiter-v1\response-exploiter-initial-evaluation\attempt-004\evaluation-manifest.json`;
+its bound analysis SHA-256 is
+`0dfc8adc5fe91becb68483d91934ee913974f9737f719acefb783c68221cb0af`.
+The exact recipe is therefore not a robust exploiter builder, and more
+population training that continues to rely only on historical fallbacks is
+not justified.
 
 ## Candidate-02 formal result
 
@@ -110,10 +119,12 @@ against the fixed control, but it is not a promotion.
 
 The base population mechanism produced the first three-lineage native endpoint
 above promoted(2), but it did not produce a formally promoted model and its
-external anchor deteriorated. The next campaign action is the missing
-response-exploiter implementation and bounded qualification, followed by a
-fresh extension decision under the unchanged terminal-only reward contract.
-The optional extension does not launch from this result alone.
+external anchor deteriorated. The attempted response-exploiter repair also
+failed its two-seed robustness gate. The next bounded action is retained-
+checkpoint diagnosis of that seed and seat divergence, followed by a fresh
+decision between a revised response-learning mechanism, selective search, and
+the structured model lane under the unchanged terminal-only reward contract.
+The optional extension does not launch from these results.
 
 This remains native Rally BO1 evidence. It does not establish human,
 professional, multi-deck, BO3, sideboarding, or metagame-wide strength. XMage
