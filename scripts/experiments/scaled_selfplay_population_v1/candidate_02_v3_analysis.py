@@ -120,9 +120,21 @@ def load_reference(spec: dict[str, Any]):
     return module
 
 
-def chunk_count(spec: dict[str, Any]) -> int:
-    maximum = exact_int(spec["max_N"], "max_N", 1)
-    size = exact_int(spec["chunk_pair_count"], "chunk_pair_count", 1)
+def mode_pair_count(spec: dict[str, Any], mode: str) -> int:
+    if mode == "screen":
+        return exact_int(spec["screen"]["pair_count_per_chunk"], "screen.pair_count_per_chunk", 1)
+    return exact_int(spec["chunk_pair_count"], "chunk_pair_count", 1)
+
+
+def mode_max_n(spec: dict[str, Any], mode: str) -> int:
+    if mode == "screen":
+        return mode_pair_count(spec, mode) * exact_int(spec["screen"]["chunk_count"], "screen.chunk_count", 1)
+    return exact_int(spec["max_N"], "max_N", 1)
+
+
+def chunk_count(spec: dict[str, Any], mode: str) -> int:
+    maximum = mode_max_n(spec, mode)
+    size = mode_pair_count(spec, mode)
     require(maximum % size == 0, "max_N must be divisible by chunk_pair_count")
     return maximum // size
 
@@ -134,7 +146,7 @@ def chunk_seed(spec: dict[str, Any], mode: str, index: int) -> int:
 
 
 def schedule_identifier(spec: dict[str, Any], mode: str, cluster_index: int) -> str:
-    chunk_index, pair_index = divmod(cluster_index, exact_int(spec["chunk_pair_count"], "chunk_pair_count", 1))
+    chunk_index, pair_index = divmod(cluster_index, mode_pair_count(spec, mode))
     candidate = spec["candidate"]
     parent = spec["opponent_and_control"]
     return (
@@ -147,7 +159,7 @@ def schedule_identifier(spec: dict[str, Any], mode: str, cluster_index: int) -> 
 
 
 def schedule_identifiers(spec: dict[str, Any], mode: str) -> list[str]:
-    return [schedule_identifier(spec, mode, index) for index in range(exact_int(spec["max_N"], "max_N", 1))]
+    return [schedule_identifier(spec, mode, index) for index in range(mode_max_n(spec, mode))]
 
 
 def append_atom(hasher: Any, tag: str, payload: bytes) -> None:
@@ -181,7 +193,9 @@ def validate_spec(path: Path) -> tuple[dict[str, Any], Any]:
     require(exact_number(spec["delta_worthwhile"], "delta_worthwhile") == 0.01, "worthwhile threshold changed")
     require(spec["conditional_mean_stability"] == "IID-MIXTURE", "conditional mean class changed")
     require(spec["joint_component_law"] == "P((Primary,Primary))=1", "joint component law changed")
-    chunk_count(spec)
+    chunk_count(spec, "screen")
+    chunk_count(spec, "initial")
+    chunk_count(spec, "confirmation")
     expected_decks = spec["expected_rally_deck_hashes_u64"]
     require(type(expected_decks) is list and len(expected_decks) == 2, "expected Rally deck binding is invalid")
     for index, value in enumerate(expected_decks):
@@ -200,8 +214,8 @@ def validate_spec(path: Path) -> tuple[dict[str, Any], Any]:
             reference.canonical_ordered_identifier_sha256(identifiers) == spec[mode]["pre_outcome_schedule_sha256"],
             f"{mode} schedule hash mismatch",
         )
-    initial_seeds = {chunk_seed(spec, "initial", index) for index in range(chunk_count(spec))}
-    confirmation_seeds = {chunk_seed(spec, "confirmation", index) for index in range(chunk_count(spec))}
+    initial_seeds = {chunk_seed(spec, "initial", index) for index in range(chunk_count(spec, "initial"))}
+    confirmation_seeds = {chunk_seed(spec, "confirmation", index) for index in range(chunk_count(spec, "confirmation"))}
     require(initial_seeds.isdisjoint(confirmation_seeds), "initial and confirmation schedules overlap")
     for binding_name in ("freshness_manifest", "campaign_ledger"):
         validate_file_record(spec[binding_name], binding_name)
@@ -265,7 +279,7 @@ def validate_outcome(
         f"{arm_name} outcome",
     )
     require(outcome["schema"] == OUTCOME_SCHEMA, f"{arm_name} outcome schema mismatch")
-    pair_count = exact_int(spec["chunk_pair_count"], "chunk_pair_count", 1)
+    pair_count = mode_pair_count(spec, mode)
     evaluation_seed = chunk_seed(spec, mode, chunk_index)
     require(exact_int(outcome["evaluation_base_seed"], "evaluation_base_seed") == evaluation_seed, "wrong evaluation seed")
     require(exact_int(outcome["pair_count"], "pair_count") == pair_count, "wrong pair count")
@@ -346,6 +360,8 @@ def validate_plan(plan_path: Path, spec_path: Path, spec: dict[str, Any], mode: 
             "max_N", "chunk_pair_count", "concurrent_chunks", "conditional_mean_stability",
         )
     }
+    expected_gate["max_N"] = mode_max_n(spec, mode)
+    expected_gate["chunk_pair_count"] = mode_pair_count(spec, mode)
     require(plan["gate"] == expected_gate, "plan gate parameters changed")
     require(plan["first_evaluation_seed"] == spec[mode]["first_evaluation_seed"], "plan first evaluation seed changed")
     require(plan["evaluation_seed_stride"] == spec["evaluation_seed_stride"], "plan evaluation seed stride changed")
@@ -366,13 +382,14 @@ def validate_plan(plan_path: Path, spec_path: Path, spec: dict[str, Any], mode: 
         validation = load_json_strict(validation_path)
         require(validation.get("schema") == VERIFICATION_SCHEMA and validation.get("decision") == "VERIFIED-SUCCESS", "initial verification is not a verified success")
     chunks = plan["chunk_plan"]
-    require(type(chunks) is list and len(chunks) == chunk_count(spec), "chunk plan size mismatch")
+    require(type(chunks) is list and len(chunks) == chunk_count(spec, mode), "chunk plan size mismatch")
     for index, chunk in enumerate(chunks):
         expect_keys(chunk, {"chunk_index", "evaluation_seed", "global_cluster_start", "global_cluster_end_exclusive"}, f"chunk_plan[{index}]")
         require(exact_int(chunk["chunk_index"], "planned chunk index") == index, "chunk plan order changed")
         require(exact_int(chunk["evaluation_seed"], "planned evaluation seed") == chunk_seed(spec, mode, index), "planned evaluation seed mismatch")
-        start = index * spec["chunk_pair_count"]
-        require(chunk["global_cluster_start"] == start and chunk["global_cluster_end_exclusive"] == start + spec["chunk_pair_count"], "planned cluster interval mismatch")
+        pair_count = mode_pair_count(spec, mode)
+        start = index * pair_count
+        require(chunk["global_cluster_start"] == start and chunk["global_cluster_end_exclusive"] == start + pair_count, "planned cluster interval mismatch")
     return plan
 
 
@@ -418,11 +435,12 @@ def reconstruct(run_root: Path, spec_path: Path, mode: str) -> tuple[dict[str, A
         control_record, control_path = normalize_arm(receipt["control_arm"], "control arm", run_root)
         for arm_name, record, expected_candidate_index in (("candidate", candidate_record, 0), ("control", control_record, 1)):
             require(record["candidate_index"] == expected_candidate_index and record["opponent_index"] == 1, f"{arm_name} arm role changed")
-            require(record["pair_count"] == spec["chunk_pair_count"] and record["evaluation_seed"] == evaluation_seed, f"{arm_name} arm schedule changed")
+            require(record["pair_count"] == mode_pair_count(spec, mode) and record["evaluation_seed"] == evaluation_seed, f"{arm_name} arm schedule changed")
             require(record["label"] == f"chunk-{expected_index:03d}-{arm_name}", f"{arm_name} arm label changed")
         candidate_rows = validate_outcome(candidate_path, spec, mode, expected_index, "candidate")
         control_rows = validate_outcome(control_path, spec, mode, expected_index, "control")
-        for pair_index in range(spec["chunk_pair_count"]):
+        pair_count = mode_pair_count(spec, mode)
+        for pair_index in range(pair_count):
             pair_legs: list[int] = []
             expected_seed = trainer_environment_seed(evaluation_seed, pair_index)
             require(expected_seed not in seen_pair_seeds, "environment seed reused across acquired clusters")
@@ -438,7 +456,7 @@ def reconstruct(run_root: Path, spec_path: Path, mode: str) -> tuple[dict[str, A
             leg_pair = (pair_legs[0], pair_legs[1])
             leg_scores.append(leg_pair)
             scores.append((leg_pair[0] + leg_pair[1]) / 2.0)
-            identifiers.append(schedule_identifier(spec, mode, expected_index * spec["chunk_pair_count"] + pair_index))
+            identifiers.append(schedule_identifier(spec, mode, expected_index * pair_count + pair_index))
         raw_authorities.extend(
             [
                 {"chunk_index": expected_index, "arm": "candidate", **candidate_record["outcome"]},
@@ -446,7 +464,7 @@ def reconstruct(run_root: Path, spec_path: Path, mode: str) -> tuple[dict[str, A
             ]
         )
         receipt_authorities.append({"chunk_index": expected_index, "path": str(receipt_path.resolve()), "bytes": receipt_path.stat().st_size, "sha256": sha256_file(receipt_path)})
-    require(len(scores) <= spec["max_N"], "acquired clusters exceed max_N")
+    require(len(scores) <= mode_max_n(spec, mode), "acquired clusters exceed max_N")
     expected_prefix = schedule_identifiers(spec, mode)[: len(scores)]
     require(identifiers == expected_prefix, "acquired identifiers are not the frozen prefix")
     authorities = {"plan": {"path": str(plan_path.resolve()), "bytes": plan_path.stat().st_size, "sha256": sha256_file(plan_path)}, "receipts": receipt_authorities}
@@ -463,7 +481,7 @@ def build_analysis(run_root: Path, spec_path: Path, mode: str, full_trajectory: 
     trajectory = reference.compute_eb_cs_trajectory(scores, alpha=spec["alpha"], c=spec["c"])
     decision = reference.gate_decision(
         trajectory,
-        max_n=spec["max_N"],
+        max_n=mode_max_n(spec, mode),
         delta_promote=spec["delta_promote"],
         delta_worthwhile=spec["delta_worthwhile"],
         gate_class=spec["gate_class"],
@@ -503,7 +521,7 @@ def build_analysis(run_root: Path, spec_path: Path, mode: str, full_trajectory: 
         "c": spec["c"],
         "delta_promote": spec["delta_promote"],
         "delta_worthwhile": spec["delta_worthwhile"],
-        "max_N": spec["max_N"],
+        "max_N": mode_max_n(spec, mode),
         "acquired_N": len(scores),
         "decision_N": decision_n,
         "post_decision_acquired_clusters_excluded": len(scores) - decision_n,

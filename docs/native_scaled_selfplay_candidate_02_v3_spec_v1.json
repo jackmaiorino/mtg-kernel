@@ -74,9 +74,11 @@
     "store_root": "D:\\mtg-kernel-ladder-pilot-20260725\\pool3\\primary"
   },
   "screen": {
+    "chunk_count": 2,
     "first_evaluation_seed": 1936300001,
     "gate_id": "candidate-02-population-g1536-throughput-screen",
-    "pre_outcome_schedule_sha256": "8b91a040a734105e0f388569c2cb508717dbca79325760eba3beedbd689fef25"
+    "pair_count_per_chunk": 256,
+    "pre_outcome_schedule_sha256": "b5328f15c4e5ae848f2beca9b68bf763fb405bcaae066a46a6c28a88f57433a4"
   },
   "schema": "scaled-selfplay-candidate-02-v3-spec/v1"
 }

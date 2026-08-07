@@ -50,7 +50,7 @@ def raw_identity(binding: dict, has_bundle: bool) -> dict:
 
 
 def make_outcome(spec: dict, mode: str, chunk_index: int, arm: str, rank: int) -> dict:
-    pair_count = spec["chunk_pair_count"]
+    pair_count = spec["screen"]["pair_count_per_chunk"] if mode == "screen" else spec["chunk_pair_count"]
     evaluation_seed = spec[mode]["first_evaluation_seed"] + chunk_index * spec["evaluation_seed_stride"]
     parent = spec["opponent_and_control"]
     candidate = spec["candidate"] if arm == "candidate" else parent
@@ -105,7 +105,7 @@ def make_arm_record(root: Path, spec: dict, mode: str, chunk_index: int, arm: st
         "label": f"chunk-{chunk_index:03d}-{arm}",
         "candidate_index": 0 if arm == "candidate" else 1,
         "opponent_index": 1,
-        "pair_count": spec["chunk_pair_count"],
+        "pair_count": spec["screen"]["pair_count_per_chunk"] if mode == "screen" else spec["chunk_pair_count"],
         "evaluation_seed": evaluation_seed,
         "exit_code": 0,
         "wall_seconds": 1.0,
@@ -122,7 +122,7 @@ class Candidate02StrictUnitTests(unittest.TestCase):
 
     def small_outcome(self, root: Path) -> tuple[dict, Path]:
         spec = copy.deepcopy(self.spec)
-        spec["chunk_pair_count"] = 2
+        spec["screen"]["pair_count_per_chunk"] = 2
         path = root / "outcome.json"
         write_json(path, make_outcome(spec, "screen", 0, "candidate", 1))
         return spec, path
@@ -217,12 +217,12 @@ class Candidate02ReconstructionTests(unittest.TestCase):
 
     def test_manifest_reconstruction_and_postdecision_exclusion(self) -> None:
         analysis = ANALYZER.build_analysis(self.root, SPEC_PATH, "screen", True)
-        self.assertEqual(analysis["acquired_N"], self.spec["chunk_pair_count"])
+        self.assertEqual(analysis["acquired_N"], self.spec["screen"]["pair_count_per_chunk"])
         self.assertEqual(analysis["decision"], "SUCCESS")
         self.assertGreater(analysis["post_decision_acquired_clusters_excluded"], 0)
         self.assertTrue(analysis["trajectory_complete"])
-        self.assertEqual(len(analysis["trajectory_records"]), self.spec["chunk_pair_count"])
-        self.assertEqual(analysis["leg_counts_by_seat_at_acquired_N"]["P0"]["favorable"], self.spec["chunk_pair_count"])
+        self.assertEqual(len(analysis["trajectory_records"]), self.spec["screen"]["pair_count_per_chunk"])
+        self.assertEqual(analysis["leg_counts_by_seat_at_acquired_N"]["P0"]["favorable"], self.spec["screen"]["pair_count_per_chunk"])
         self.assertNotEqual(analysis["acquired_stream_sha256"], "")
         self.assertNotEqual(analysis["decision_prefix_stream_sha256"], "")
 

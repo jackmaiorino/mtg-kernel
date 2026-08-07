@@ -35,7 +35,6 @@ PLAN_SCHEMA = "scaled-selfplay-candidate-02-v3-plan/v2"
 RECEIPT_SCHEMA = "scaled-selfplay-candidate-02-v3-chunk-receipt/v1"
 ANALYSIS_SCHEMA = "scaled-selfplay-candidate-02-v3-analysis/v2"
 MANIFEST_SCHEMA = "scaled-selfplay-candidate-02-v3-execution/v2"
-SCREEN_CHUNK_COUNT = 2
 SCREEN_MIN_SPEEDUP = 1.5
 
 
@@ -139,10 +138,18 @@ def exclusive_gpu1_snapshot() -> dict[str, Any]:
 
 
 def chunk_evaluation_seeds(spec: dict[str, Any], mode: str) -> list[int]:
-    count = int(spec["max_N"]) // int(spec["chunk_pair_count"])
+    count = int(spec["screen"]["chunk_count"]) if mode == "screen" else int(spec["max_N"]) // int(spec["chunk_pair_count"])
     first = int(spec[mode]["first_evaluation_seed"])
     stride = int(spec["evaluation_seed_stride"])
     return [first + index * stride for index in range(count)]
+
+
+def mode_pair_count(spec: dict[str, Any], mode: str) -> int:
+    return int(spec["screen"]["pair_count_per_chunk"]) if mode == "screen" else int(spec["chunk_pair_count"])
+
+
+def mode_max_n(spec: dict[str, Any], mode: str) -> int:
+    return len(chunk_evaluation_seeds(spec, mode)) * mode_pair_count(spec, mode)
 
 
 def context(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -168,12 +175,13 @@ def context(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[dict[str, A
 
 
 def chunk_plan(spec: dict[str, Any], mode: str) -> list[dict[str, int]]:
+    pair_count = mode_pair_count(spec, mode)
     return [
         {
             "chunk_index": index,
             "evaluation_seed": seed,
-            "global_cluster_start": index * int(spec["chunk_pair_count"]),
-            "global_cluster_end_exclusive": (index + 1) * int(spec["chunk_pair_count"]),
+            "global_cluster_start": index * pair_count,
+            "global_cluster_end_exclusive": (index + 1) * pair_count,
         }
         for index, seed in enumerate(chunk_evaluation_seeds(spec, mode))
     ]
@@ -187,6 +195,9 @@ def build_plan(
     countersign: dict[str, Any] | None,
     initial_verification: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    gate = {key: spec[key] for key in ("gate_class", "alpha", "c", "delta_promote", "delta_worthwhile", "max_N", "chunk_pair_count", "concurrent_chunks", "conditional_mean_stability")}
+    gate["max_N"] = mode_max_n(spec, mode)
+    gate["chunk_pair_count"] = mode_pair_count(spec, mode)
     return {
         "schema": PLAN_SCHEMA,
         "mode": mode,
@@ -195,7 +206,7 @@ def build_plan(
         "screen": screen,
         "countersign": countersign,
         "initial_verification": initial_verification,
-        "gate": {key: spec[key] for key in ("gate_class", "alpha", "c", "delta_promote", "delta_worthwhile", "max_N", "chunk_pair_count", "concurrent_chunks", "conditional_mean_stability")},
+        "gate": gate,
         "joint_component_law": spec["joint_component_law"],
         "pre_outcome_schedule_sha256": spec[mode]["pre_outcome_schedule_sha256"],
         "first_evaluation_seed": spec[mode]["first_evaluation_seed"],
@@ -231,8 +242,8 @@ def acquire_chunk_batch(
         evaluation_seed = seeds[chunk_index]
         arm_specs.extend(
             [
-                arm_spec(f"chunk-{chunk_index:03d}-candidate", 0, 1, int(spec["chunk_pair_count"]), evaluation_seed),
-                arm_spec(f"chunk-{chunk_index:03d}-control", 1, 1, int(spec["chunk_pair_count"]), evaluation_seed),
+                arm_spec(f"chunk-{chunk_index:03d}-candidate", 0, 1, mode_pair_count(spec, mode), evaluation_seed),
+                arm_spec(f"chunk-{chunk_index:03d}-control", 1, 1, mode_pair_count(spec, mode), evaluation_seed),
             ]
         )
     batch, wall = run_batch(executable, repo_root, root, slots, arm_specs, concurrency)
@@ -330,12 +341,12 @@ def screen(args: argparse.Namespace, spec: dict[str, Any]) -> Path:
             slots,
             spec,
             "screen",
-            list(range(SCREEN_CHUNK_COUNT)),
+            list(range(int(spec["screen"]["chunk_count"]))),
             process_count,
         )
         analysis_path = topology_root / "analysis.json"
         analysis = run_analyzer(topology_root, args.spec.resolve(), "screen", analysis_path, "full")
-        receipts = [load_json(topology_root / f"chunk-{index:03d}-receipt.json") for index in range(SCREEN_CHUNK_COUNT)]
+        receipts = [load_json(topology_root / f"chunk-{index:03d}-receipt.json") for index in range(int(spec["screen"]["chunk_count"]))]
         raw_hashes = [receipt[arm]["outcome"]["sha256"] for receipt in receipts for arm in ("candidate_arm", "control_arm")]
         topology_records[str(process_count)] = {
             "wall_seconds": wall,
@@ -343,7 +354,7 @@ def screen(args: argparse.Namespace, spec: dict[str, Any]) -> Path:
             "analysis": file_record(analysis_path),
             "inferential_core_sha256": analysis["inferential_core_sha256"],
             "raw_outcome_sha256s": raw_hashes,
-            "receipts": [file_record(topology_root / f"chunk-{index:03d}-receipt.json") for index in range(SCREEN_CHUNK_COUNT)],
+            "receipts": [file_record(topology_root / f"chunk-{index:03d}-receipt.json") for index in range(int(spec["screen"]["chunk_count"]))],
         }
     baseline = topology_records["1"]
     raw_exact = all(record["raw_outcome_sha256s"] == baseline["raw_outcome_sha256s"] for record in topology_records.values())
@@ -356,8 +367,8 @@ def screen(args: argparse.Namespace, spec: dict[str, Any]) -> Path:
         "passed": passed,
         **run_context,
         "screen_mode": "candidate/control two-chunk mini-gate under the revealed screen schedule",
-        "screen_chunk_count": SCREEN_CHUNK_COUNT,
-        "pair_count_per_chunk": spec["chunk_pair_count"],
+        "screen_chunk_count": spec["screen"]["chunk_count"],
+        "pair_count_per_chunk": spec["screen"]["pair_count_per_chunk"],
         "minimum_four_process_speedup": SCREEN_MIN_SPEEDUP,
         "topologies": topology_records,
         "aggregate_speedups": speedups,
@@ -430,7 +441,7 @@ def formal_run(args: argparse.Namespace, spec: dict[str, Any]) -> Path:
         gpu_window_snapshots.append(exclusive_gpu1_snapshot())
         chunk_indexes = list(range(wave_start, min(wave_start + concurrent_chunks, len(chunk_seeds))))
         acquire_chunk_batch(executable, args.repo_root.resolve(), root, slots, spec, mode, chunk_indexes, 4)
-        acquired_n = (chunk_indexes[-1] + 1) * int(spec["chunk_pair_count"])
+        acquired_n = (chunk_indexes[-1] + 1) * mode_pair_count(spec, mode)
         look_path = root / f"analysis-look-{acquired_n:06d}.json"
         look = run_analyzer(root, args.spec.resolve(), mode, look_path, "endpoint")
         look_records.append(file_record(look_path))

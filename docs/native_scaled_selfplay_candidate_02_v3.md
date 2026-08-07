@@ -16,7 +16,7 @@ and native trainer schedule goldens at SHA-256
 `6b2e1edbbe49b4e02f98794f9057f5c2bb8e3079d2ba8cb3e2a4b9ea6c34867c`.
 The machine-readable specification is
 `docs/native_scaled_selfplay_candidate_02_v3_spec_v1.json`, presently
-SHA-256 `7a2b8f7f9bdd69565dccd89eb8907cff5f31c27e10d98d51cf82388d85d3cbf0`.
+SHA-256 `270ebb83378e9677d491cd7e9bf3fb057525cc52a7dfd50f748fc02562cdb7c1`.
 
 ## Nomination and comparison
 
@@ -151,11 +151,12 @@ commit, slot and alpha ledger, freshness manifest, throughput screen, and
 countersign are checked. The countersign binds the exact runner and independent
 analyzer hashes as well as the commit, specification, design, and screen.
 The review-request runner SHA-256 is
-`fbcc4576cafeea0668bd0e9a28cc1f03fe6122daf2f954d7ea82ab95e5fbd39f`;
+`d328547e5f369ee7f2a140bc9622d334d164b82701c76a6f1c72f20574e5d71d`;
 the standalone analyzer SHA-256 is
-`4061e14f8b003224ff3e34f529fb7d4624fd8f4dc0ce86bcdc9770adda66909d`.
+`b45e0d6f2d1a3af8937c7ca7196a0bb26ced2322beb63d0f88a0ab65e85c7d25`.
 
-The revealed screen is an end-to-end two-chunk candidate/control mini-gate,
+The revealed screen is an end-to-end two-chunk, 256-cluster-per-chunk
+candidate/control mini-gate,
 not repeated candidate-only arms. The same four raw arms run under 1, 2, and 4
 evaluator processes. All corresponding raw outcome hashes and the independent
 inferential-core hash must be bit-identical, and four processes must achieve
