@@ -2718,14 +2718,20 @@ mod windows_science_loop_tests {
         let diagnostic_v1 = std::env::var("RESPONSE_H2H_DIAGNOSTIC_V1")
             .map(|value| value == "1")
             .unwrap_or(false);
+        // Build v2 (probe stage) adds the every-32 grid {0,32,64,96,128,
+        // 160,192,224,256}, a superset of the v1 every-64 diagnostic grid
+        // {0,64,128,192,256}. Build v2 (confirmation stage) selects
+        // whichever of those nine generations the probe stage picked for a
+        // given seed, so the non-diagnostic allowlist widens to the same
+        // nine-value set (superset of the v1 {0,256}).
         if diagnostic_v1 {
             assert!(
-                matches!(candidate_gen, 0 | 64 | 128 | 192 | 256),
+                matches!(candidate_gen, 0 | 32 | 64 | 96 | 128 | 160 | 192 | 224 | 256),
                 "diagnostic mixture arm must use the shared genesis control or a retained checkpoint"
             );
         } else {
             assert!(
-                matches!(candidate_gen, 0 | 256),
+                matches!(candidate_gen, 0 | 32 | 64 | 96 | 128 | 160 | 192 | 224 | 256),
                 "mixture arm must be a complete exploiter or its exact promoted(2) genesis control"
             );
         }
@@ -2733,20 +2739,34 @@ mod windows_science_loop_tests {
             .unwrap_or_else(|_| "1024".to_owned())
             .parse()
             .expect("RESPONSE_H2H_PAIRS");
+        // Build v2 probe stage runs the real diagnostic panel at 256 pairs
+        // (not the v1 512) and additionally permits cheap smoke pair counts
+        // below 256 for plumbing tests isolated under their own smoke
+        // evidence roots. The v1 fixed 512 stays valid.
         if diagnostic_v1 {
-            assert_eq!(pairs, 512, "diagnostic mixture panel has 512 pairs");
+            assert!(
+                (1..=512).contains(&pairs),
+                "diagnostic mixture panel must be the frozen 512, the build v2 probe's 256, or a smaller smoke pair count"
+            );
         } else {
             assert_eq!(pairs, 1_024, "frozen mixture panel has 1,024 pairs");
         }
         let eval_seed: u64 = required_env_v1("RESPONSE_H2H_EVAL_SEED")
             .parse()
             .expect("RESPONSE_H2H_EVAL_SEED");
+        // Build v2 probe stage uses seeds 1978001 (initial) / 1978011
+        // (retry-only) alongside the v1 diagnostic seed 1973001; build v2
+        // confirmation stage uses 1976001 (initial) / 1976011 (retry)
+        // alongside the v1 frozen seeds 1971001 / 1971011.
         if diagnostic_v1 {
-            assert_eq!(eval_seed, 1_973_001, "diagnostic mixture seed must be 1973001");
+            assert!(
+                matches!(eval_seed, 1_973_001 | 1_978_001 | 1_978_011),
+                "diagnostic mixture seed must be the frozen 1973001 or a build v2 probe seed"
+            );
         } else {
             assert!(
-                matches!(eval_seed, 1_971_001 | 1_971_011),
-                "mixture seed must be the frozen initial or retry seed"
+                matches!(eval_seed, 1_971_001 | 1_971_011 | 1_976_001 | 1_976_011),
+                "mixture seed must be a frozen initial/retry seed or a build v2 confirmation seed"
             );
         }
         let outcome_path = required_env_v1("RESPONSE_H2H_OUTCOME_JSON");
