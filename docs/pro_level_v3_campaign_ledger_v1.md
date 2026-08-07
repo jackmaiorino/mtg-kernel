@@ -53,6 +53,32 @@ requested this ledger note plus independent reanalysis before any confirmation.
 The initial was independently reconstructed exactly and was not `SUCCESS`, so
 confirmation was not launched.
 
+Candidate 02 schedule-hash closure: source commit
+`133b6ac97d5e30a36cff4bff128f1b60ddf47813` constructs one identifier for
+each ordered `cluster_index` from 0 through 131071. It computes
+`chunk_index,pair_index = divmod(cluster_index,2048)` and
+`evaluation_seed = 2608070001 + 1000000*chunk_index`, then emits this exact
+field order:
+
+`candidate-02-v3/v1;mode=initial;cluster_index=<cluster_index>;evaluation_seed=<evaluation_seed>;pair_index=<pair_index>;candidate_run=<candidate_run>;candidate_generation=1536;control_run=<promoted2_run>;control_generation=384;opponent_run=<promoted2_run>;opponent_generation=384`
+
+Here `<candidate_run>` is
+`dc171fe72549154e533e337bc39884faa76811809abc0bc573bb975cea500a42` and
+`<promoted2_run>` is
+`2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae`.
+Joining all 131072 identifiers with literal commas, encoding the resulting
+string as UTF-8, and applying SHA-256 reproduces
+`b8609141d42f5c5230dadc95d279ff17d5869de523a8b579e3ec93c10561868c`.
+
+Candidate 02 freshness closure: an exhaustive read of the completed
+population campaign plans found 234 unique revealed panel roots. These are 5
+native-anchor roots, 224 payoff-matrix roots, and 5 XMage CP7 formal or smoke
+roots. Their range is `640100001` through `1563100001`. Candidate 02 uses the
+64 chunk roots `2608070001 + 1000000*k` for `k=0..63`, ranging from
+`2608070001` through `2671070001`. The set intersection is empty. The
+auxiliary payoff-concurrency seed `639800001` is also disjoint. Freshness
+therefore passes against every enumerated revealed campaign panel.
+
 ## Post-freeze development history
 
 These single-shot development panels consume no V3 alpha. Their revealed seed
