@@ -17,8 +17,8 @@
 
 use crate::card_def::{CardType, Subtype};
 use crate::event;
-use crate::ids::{ObjectId, PlayerId};
-use crate::mana::ManaColor;
+use crate::ids::{ObjectId, PlayerId, StackItemId};
+use crate::mana::{Cost, ManaColor};
 use crate::state::{GameState, StackItem, StackTargetContractV4, Target, Zone};
 use serde::{Deserialize, Serialize};
 
@@ -417,6 +417,14 @@ pub enum EffectOp {
     DestroyObject {
         object: ObjectRef,
     },
+    /// Counters the exact opposing stack incarnation that targeted the bound
+    /// Ward permanent unless that item's controller pays generic mana.
+    /// Trigger construction, not generated card data, creates this leaf.
+    CounterUnlessPaysGeneric {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        generic: u8,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -526,6 +534,15 @@ pub enum EffectFrame {
         selected: Option<EffectObjectBinding>,
         path: Vec<u16>,
         canonical_path: Vec<u16>,
+    },
+    /// Authenticated post-answer Ward payment/counter completion.
+    ResolveCounterUnlessPaysGeneric {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        player: PlayerId,
+        generic: u8,
+        pay: bool,
+        path: Vec<u16>,
     },
 }
 
@@ -647,7 +664,15 @@ pub enum ScrySelectionStage {
 /// `BooleanChoicePurposeV4::Shuffle` variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EffectBooleanChoicePurpose {
-    ShuffleLibrary { player: PlayerId },
+    ShuffleLibrary {
+        player: PlayerId,
+    },
+    CounterUnlessPaysGeneric {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        player: PlayerId,
+        generic: u8,
+    },
 }
 
 /// Internal completion contract for an option choice. Public schema-v4
@@ -730,6 +755,7 @@ pub struct EffectContinuation {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EffectAnsweredChoiceGuard {
     OwnerLibrarySecondOrBottom { frame: Box<EffectFrame> },
+    CounterUnlessPaysGeneric { frame: Box<EffectFrame> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -743,6 +769,10 @@ pub enum ResumableProgress {
 /// targets chosen when it was cast/activated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExecCtx {
+    /// Exact resolving stack incarnation. Direct unit-test contexts that do
+    /// not originate from a real stack item leave this absent.
+    #[serde(default)]
+    pub stack_item_id: Option<StackItemId>,
     pub source: ObjectId,
     pub controller: PlayerId,
     pub targets: Vec<Target>,
@@ -790,7 +820,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::PutCardsFromHandOnLibraryTop { .. }
         | EffectOp::Scry { .. }
         | EffectOp::SearchLibraryToHand { .. }
-        | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. } => true,
+        | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
+        | EffectOp::CounterUnlessPaysGeneric { .. } => true,
         _ => false,
     }
 }
@@ -1095,6 +1126,46 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                             path,
                         });
                     }
+                }
+                EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
+                    ward_target,
+                    targeting_stack_item,
+                    player: payer,
+                    generic,
+                } => {
+                    let StackTargetContractV4::Object {
+                        object: ward_source,
+                        ..
+                    } = ward_target
+                    else {
+                        return Err("Ward Boolean choice lost its permanent binding".to_string());
+                    };
+                    if player != payer
+                        || continuation.resolving_item.source != ward_source
+                        || path.as_slice() != [u16::from(value)]
+                        || !continuation.frames.is_empty()
+                    {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path,
+                            default,
+                            purpose,
+                        });
+                        return Err("Ward Boolean choice metadata is inconsistent".to_string());
+                    }
+                    let frame = EffectFrame::ResolveCounterUnlessPaysGeneric {
+                        ward_target,
+                        targeting_stack_item,
+                        player: payer,
+                        generic,
+                        pay: value,
+                        path,
+                    };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::CounterUnlessPaysGeneric {
+                            frame: Box::new(frame.clone()),
+                        });
+                    continuation.frames.push(frame);
                 }
             }
             Ok(())
@@ -1424,6 +1495,149 @@ fn validate_owner_library_placement_frame(
     validate_owner_library_target_binding(state, pending, *object, *owner)
 }
 
+fn generic_mana_cost(generic: u8) -> Cost {
+    Cost {
+        pips: &[],
+        generic,
+        x_count: 0,
+    }
+}
+
+/// Revalidates every Ward binding from immutable target provenance through
+/// the exact targeter stack id. `allow_absent` is used only before a later
+/// Ward trigger begins resolving, where an earlier Ward may already have
+/// countered the shared targeter.
+fn validate_counter_unless_pays_generic(
+    state: &GameState,
+    ward_target: StackTargetContractV4,
+    ward_controller: PlayerId,
+    targeting_stack_item: StackItemId,
+    player: PlayerId,
+    generic: u8,
+    allow_absent: bool,
+    require_public_unambiguous_and_payable: bool,
+) -> Result<Option<StackItem>, String> {
+    if generic == 0 {
+        return Err("zero-mana Ward is outside the certified payment shape".to_string());
+    }
+    if targeting_stack_item == StackItemId::default() {
+        return Err("Ward targets an unstamped stack incarnation".to_string());
+    }
+    let StackTargetContractV4::Object {
+        object: ward_source,
+        card_def,
+        owner,
+        controller: target_controller,
+        zone: Zone::Battlefield,
+        zone_change_count,
+        spell_copy_origin: None,
+    } = ward_target
+    else {
+        return Err("Ward lost its battlefield-permanent target contract".to_string());
+    };
+    if target_controller != ward_controller {
+        return Err("Ward trigger controller changed from the targeting event".to_string());
+    }
+    let live = state
+        .objects
+        .try_get(ward_source)
+        .ok_or("Ward source object no longer exists")?;
+    if live.card_def != card_def
+        || live.owner != owner
+        || live.zone_change_count < zone_change_count
+        || (live.zone_change_count == zone_change_count && live.zone != Zone::Battlefield)
+    {
+        return Err("Ward source incarnation metadata is inconsistent".to_string());
+    }
+
+    let matches = state
+        .stack
+        .iter()
+        .filter(|item| item.v4.stack_item_id == targeting_stack_item)
+        .cloned()
+        .collect::<Vec<_>>();
+    let item = match matches.as_slice() {
+        [] if allow_absent => return Ok(None),
+        [] => return Err("the Ward-bound stack incarnation is absent".to_string()),
+        [item] => item.clone(),
+        _ => return Err("the Ward-bound stack incarnation is duplicated".to_string()),
+    };
+    if item.controller != player || player == ward_controller {
+        return Err("the Ward payer/controller binding changed".to_string());
+    }
+    crate::engine::validated_stack_item_target_spec(&item, state)
+        .map_err(|error| format!("Ward targeter has invalid stack provenance: {error}"))?;
+    if !item.v4.target_contracts.contains(&ward_target) {
+        return Err(
+            "the Ward-bound stack item no longer carries its triggering target".to_string(),
+        );
+    }
+    if require_public_unambiguous_and_payable {
+        let public_candidates = state
+            .stack
+            .iter()
+            .filter(|candidate| candidate.v4.target_contracts.contains(&ward_target))
+            .collect::<Vec<_>>();
+        if public_candidates.len() != 1
+            || public_candidates[0].v4.stack_item_id != targeting_stack_item
+        {
+            return Err(
+                "the current public schema cannot identify the Ward-bound stack item unambiguously"
+                    .to_string(),
+            );
+        }
+        if crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none() {
+            return Err("the staged Ward payment is no longer payable".to_string());
+        }
+    }
+    Ok(Some(item))
+}
+
+fn validate_counter_unless_pays_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::ResolveCounterUnlessPaysGeneric {
+        ward_target,
+        targeting_stack_item,
+        player,
+        generic,
+        pay,
+        path,
+    } = frame
+    else {
+        return Err("Ward answer guard does not contain its typed frame".to_string());
+    };
+    if path.as_slice() != [u16::from(*pay)] || !pending.frames.ends_with(&[frame.clone()]) {
+        return Err("Ward answered Boolean path or frame position changed".to_string());
+    }
+    let StackTargetContractV4::Object {
+        object: ward_source,
+        ..
+    } = *ward_target
+    else {
+        return Err("Ward answer lost its permanent binding".to_string());
+    };
+    if pending.resolving_item.source != ward_source
+        || pending.ctx.source != ward_source
+        || pending.ctx.controller != pending.resolving_item.controller
+    {
+        return Err("Ward answer no longer matches its resolving trigger".to_string());
+    }
+    validate_counter_unless_pays_generic(
+        state,
+        *ward_target,
+        pending.resolving_item.controller,
+        *targeting_stack_item,
+        *player,
+        *generic,
+        false,
+        true,
+    )?;
+    Ok(())
+}
+
 fn validate_answered_choice_guard(
     state: &GameState,
     pending: &EffectContinuation,
@@ -1435,12 +1649,14 @@ fn validate_answered_choice_guard(
     }
     match &pending.answered_choice_guard {
         None => {
-            if pending
-                .frames
-                .iter()
-                .any(|frame| matches!(frame, EffectFrame::OwnerLibraryPlacement { .. }))
-            {
-                return Err("typed owner-library answer frame has no matching guard".to_string());
+            if pending.frames.iter().any(|frame| {
+                matches!(
+                    frame,
+                    EffectFrame::OwnerLibraryPlacement { .. }
+                        | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
+                )
+            }) {
+                return Err("typed answered-choice frame has no matching guard".to_string());
             }
         }
         Some(EffectAnsweredChoiceGuard::OwnerLibrarySecondOrBottom { frame }) => {
@@ -1461,6 +1677,15 @@ fn validate_answered_choice_guard(
             }
             validate_owner_library_placement_frame(state, pending, frame)?;
         }
+        Some(EffectAnsweredChoiceGuard::CounterUnlessPaysGeneric { frame }) => {
+            if pending.choice.is_some() {
+                return Err("answered Ward guard still carries a live choice".to_string());
+            }
+            if pending.frames.as_slice() != [frame.as_ref().clone()] {
+                return Err("Ward answered continuation frame stack changed".to_string());
+            }
+            validate_counter_unless_pays_frame(state, pending, frame)?;
+        }
     }
     Ok(())
 }
@@ -1469,7 +1694,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
     };
-    if pending.ctx.source != pending.resolving_item.source
+    if pending.ctx.stack_item_id != Some(pending.resolving_item.v4.stack_item_id)
+        || pending.ctx.source != pending.resolving_item.source
         || pending.ctx.controller != pending.resolving_item.controller
         || pending.ctx.targets != pending.resolving_item.targets
         || pending.ctx.target_contracts != pending.resolving_item.v4.target_contracts
@@ -1778,16 +2004,49 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         }
         PendingEffectChoice::ChooseBoolean {
             player,
-            purpose:
-                EffectBooleanChoicePurpose::ShuffleLibrary {
-                    player: library_player,
-                },
+            path,
+            purpose,
             ..
-        } => {
-            if player != library_player {
-                return Err("shuffle choice player/library mismatch".to_string());
+        } => match purpose {
+            EffectBooleanChoicePurpose::ShuffleLibrary {
+                player: library_player,
+            } => {
+                if player != library_player {
+                    return Err("shuffle choice player/library mismatch".to_string());
+                }
             }
-        }
+            EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
+                ward_target,
+                targeting_stack_item,
+                player: payer,
+                generic,
+            } => {
+                let StackTargetContractV4::Object {
+                    object: ward_source,
+                    ..
+                } = *ward_target
+                else {
+                    return Err("Ward Boolean choice lost its permanent binding".to_string());
+                };
+                if player != payer
+                    || pending.resolving_item.source != ward_source
+                    || !path.is_empty()
+                    || !pending.frames.is_empty()
+                {
+                    return Err("Ward Boolean choice metadata is inconsistent".to_string());
+                }
+                validate_counter_unless_pays_generic(
+                    state,
+                    *ward_target,
+                    pending.resolving_item.controller,
+                    *targeting_stack_item,
+                    *payer,
+                    *generic,
+                    false,
+                    true,
+                )?;
+            }
+        },
         PendingEffectChoice::ChooseOption {
             player,
             options,
@@ -1989,6 +2248,55 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     state
                         .shuffle_library(player)
                         .map_err(|error| error.to_string())?;
+                }
+                EffectFrame::ResolveCounterUnlessPaysGeneric {
+                    ward_target,
+                    targeting_stack_item,
+                    player,
+                    generic,
+                    pay,
+                    path,
+                } => {
+                    let answered_frame = EffectFrame::ResolveCounterUnlessPaysGeneric {
+                        ward_target,
+                        targeting_stack_item,
+                        player,
+                        generic,
+                        pay,
+                        path: path.clone(),
+                    };
+                    if !continuation.frames.is_empty()
+                        || continuation.answered_choice_guard.as_ref()
+                            != Some(&EffectAnsweredChoiceGuard::CounterUnlessPaysGeneric {
+                                frame: Box::new(answered_frame),
+                            })
+                        || path.as_slice() != [u16::from(pay)]
+                    {
+                        return Err("Ward answered frame/guard mismatch".to_string());
+                    }
+                    validate_counter_unless_pays_generic(
+                        state,
+                        ward_target,
+                        continuation.resolving_item.controller,
+                        targeting_stack_item,
+                        player,
+                        generic,
+                        false,
+                        true,
+                    )?;
+                    continuation.answered_choice_guard = None;
+                    if pay {
+                        let plan =
+                            crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state)
+                                .ok_or("the accepted Ward payment became unpayable")?;
+                        crate::engine::pay_plan(state, player, &plan);
+                    } else if crate::engine::counter_stack_item_by_id(state, targeting_stack_item)?
+                        .is_none()
+                    {
+                        return Err(
+                            "the declined Ward payment lost its bound stack item".to_string()
+                        );
+                    }
                 }
                 EffectFrame::PutCardsFromHandOnLibraryTop {
                     player,
@@ -2407,6 +2715,73 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     return Ok(ResumableProgress::Suspended);
                 }
             },
+            EffectOp::CounterUnlessPaysGeneric {
+                ward_target,
+                targeting_stack_item,
+                generic,
+            } => {
+                let StackTargetContractV4::Object {
+                    object: ward_source,
+                    ..
+                } = ward_target
+                else {
+                    return Err("Ward effect lost its permanent binding".to_string());
+                };
+                if continuation.ctx.source != ward_source || !path.is_empty() {
+                    return Err("Ward effect no longer matches its root trigger".to_string());
+                }
+                let Some(bound) = validate_counter_unless_pays_generic(
+                    state,
+                    ward_target,
+                    continuation.ctx.controller,
+                    targeting_stack_item,
+                    state
+                        .stack
+                        .iter()
+                        .find(|item| item.v4.stack_item_id == targeting_stack_item)
+                        .map(|item| item.controller)
+                        .unwrap_or(continuation.ctx.controller.opponent()),
+                    generic,
+                    true,
+                    false,
+                )?
+                else {
+                    // Another Ward trigger already countered this targeter.
+                    continue;
+                };
+                let player = bound.controller;
+                if crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none() {
+                    crate::engine::counter_stack_item_by_id(state, targeting_stack_item)?
+                        .ok_or("the unpayable Ward binding disappeared during resolution")?;
+                    continue;
+                }
+                if !continuation.frames.is_empty() {
+                    return Err("Ward payment is not a root-only generated effect".to_string());
+                }
+                validate_counter_unless_pays_generic(
+                    state,
+                    ward_target,
+                    continuation.ctx.controller,
+                    targeting_stack_item,
+                    player,
+                    generic,
+                    false,
+                    true,
+                )?;
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path,
+                    default: Some(false),
+                    purpose: EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
+                        ward_target,
+                        targeting_stack_item,
+                        player,
+                        generic,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
             EffectOp::RevealTopAndPartitionByType {
                 player,
                 count,
@@ -2618,6 +2993,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
 impl ExecCtx {
     pub fn no_targets(source: ObjectId, controller: PlayerId) -> ExecCtx {
         ExecCtx {
+            stack_item_id: None,
             source,
             controller,
             targets: Vec::new(),
@@ -3779,6 +4155,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 Target::Object(id) => state.objects.get(id).controller,
             };
             state.engine.pending_spell_copy = Some(crate::engine::PendingSpellCopy {
+                resolving_stack_item: ctx
+                    .stack_item_id
+                    .expect("spell-copy offers only resolve from a real stack item"),
                 resolving_source: ctx.source,
                 resolving_source_zone_change_count: state.objects.get(ctx.source).zone_change_count,
                 player: decider,
@@ -3790,6 +4169,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     .and_then(|index| ctx.target_contracts.get(index).copied()),
                 stage: crate::engine::SpellCopyStage::Payment,
                 copy_source: None,
+                copy_stack_item: None,
             });
         }
         EffectOp::MillCards { player, count } => {
@@ -3808,8 +4188,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::Scry { .. }
         | EffectOp::SearchLibraryToHand { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
-        | EffectOp::PutBoundObjectInOwnersLibrary { .. } => {
-            panic!("private library choices must use the resumable interpreter")
+        | EffectOp::PutBoundObjectInOwnersLibrary { .. }
+        | EffectOp::CounterUnlessPaysGeneric { .. } => {
+            panic!("choice-bearing effects must use the resumable interpreter")
         }
     }
 }
@@ -3937,6 +4318,7 @@ mod tests {
     fn deal_damage_to_target_player_reduces_life() {
         let mut state = two_card_libraries();
         let ctx = ExecCtx {
+            stack_item_id: None,
             source: ObjectId(0),
             controller: PlayerId::P0,
             targets: vec![Target::Player(PlayerId::P1)],
@@ -3961,6 +4343,7 @@ mod tests {
         let creature = state.draw_card(PlayerId::P1).unwrap();
         state.move_hand_to_battlefield(PlayerId::P1, creature);
         let ctx = ExecCtx {
+            stack_item_id: None,
             source: ObjectId(0),
             controller: PlayerId::P0,
             targets: vec![Target::Object(creature)],

@@ -419,6 +419,14 @@ pub struct GenericCostReductionDef {
     pub count: DynamicCountDef,
 }
 
+/// Printed Ward payments supported by the reusable opponent-target trigger.
+/// New colored or nonmana costs require their own explicit variant rather
+/// than an approximation through generic mana.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WardCostDef {
+    Generic(u8),
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -426,6 +434,9 @@ pub struct CardDef {
     /// A spell-local generic cost reducer evaluated by the shared cast
     /// legality/payment pipeline. `None` for cards without this text.
     pub generic_cost_reduction: Option<GenericCostReductionDef>,
+    /// Static Ward cost materialized when an opposing spell or ability
+    /// finishes targeting this permanent. `None` means no implemented Ward.
+    pub ward_cost: Option<WardCostDef>,
     pub types: &'static [CardType],
     /// This card's creature/land/artifact subtypes (105.1's subtype line),
     /// e.g. `[Subtype::Human, Subtype::Shaman]` for Burning-Tree Emissary --
@@ -688,10 +699,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v10_is_frozen() {
-        // Version 10 adds the shared controlled-artifact reducer used by
-        // Myr Enforcer and Thoughtcast to the combined catalog.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xd818_94d2_698c_b53a);
+    fn card_db_hash_v11_is_frozen() {
+        // Version 11 composes the artifact reducer catalog with Tolarian
+        // Terror's graveyard reducer and static generic Ward definition.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x7347_6d95_f5d3_3174);
     }
 
     #[test]
@@ -776,6 +787,42 @@ mod tests {
     }
 
     #[test]
+    fn tolarian_terror_composes_the_shared_reducer_and_generic_ward() {
+        let def = &CARD_DEFS[card_id_by_name("Tolarian Terror").unwrap() as usize];
+        assert_eq!(def.capability, CardCapability::Full);
+        assert_eq!(def.cost.generic, 6);
+        assert_eq!(def.cost.pips, &[Pip::Colored(ManaColor::U)]);
+        assert_eq!((def.power, def.toughness), (Some(5), Some(5)));
+        assert_eq!(
+            def.generic_cost_reduction,
+            Some(GenericCostReductionDef {
+                generic_per_count: 1,
+                count: DynamicCountDef::ControllerGraveyardAnyType(&[
+                    CardType::Instant,
+                    CardType::Sorcery,
+                ]),
+            })
+        );
+        assert_eq!(def.ward_cost, Some(WardCostDef::Generic(2)));
+        assert!(def.is_castable());
+    }
+
+    #[test]
+    fn ward_costs_fail_closed_outside_the_static_generic_creature_shape() {
+        for def in CARD_DEFS.iter().filter(|def| def.ward_cost.is_some()) {
+            assert!(def.is_castable(), "{} is not executable", def.name);
+            assert!(
+                def.has_type(CardType::Creature),
+                "{} is not a creature",
+                def.name
+            );
+            match def.ward_cost.unwrap() {
+                WardCostDef::Generic(amount) => assert_ne!(amount, 0, "{} has Ward 0", def.name),
+            }
+        }
+    }
+
+    #[test]
     fn generic_reducers_fail_closed_outside_the_certified_printed_cost_shape() {
         for def in CARD_DEFS
             .iter()
@@ -855,7 +902,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 59, "55 deck cards plus four required tokens");
+        assert_eq!(full, 66, "62 deck cards plus four required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -868,15 +915,20 @@ mod tests {
             .map(|name| card_id_by_name(name).expect("card in registry"));
         assert!(preflight_fully_supported_deck(&supported).is_ok());
         assert!(preflight_fully_supported_deck(&[card_id_by_name("Winding Way").unwrap()]).is_ok());
-        let unsupported = ["Island", "Tolarian Terror"]
+        assert!(preflight_fully_supported_deck(&[
+            card_id_by_name("Island").unwrap(),
+            card_id_by_name("Tolarian Terror").unwrap(),
+        ])
+        .is_ok());
+        let unsupported = ["Island", "Avenging Hunter"]
             .map(|name| card_id_by_name(name).expect("card in registry"));
         let err = preflight_fully_supported_deck(&unsupported)
-            .expect_err("Tolarian Terror is still deferred");
+            .expect_err("Avenging Hunter is still deferred");
         assert!(matches!(
             err,
             DeckPreflightError::NotFullySupported {
                 index: 1,
-                name: "Tolarian Terror",
+                name: "Avenging Hunter",
                 capability: CardCapability::NoEffect,
                 ..
             }
@@ -952,11 +1004,11 @@ mod tests {
 
     #[test]
     fn unsupported_permanents_and_nonbasic_mana_metadata_remain_inert() {
-        let terror = &CARD_DEFS[card_id_by_name("Tolarian Terror").unwrap() as usize];
-        assert!(terror.has_type(CardType::Creature));
-        assert!(!terror.is_executable());
-        assert!(!terror.is_castable());
-        assert!((terror.spell_effect)().is_none());
+        let hunter = &CARD_DEFS[card_id_by_name("Avenging Hunter").unwrap() as usize];
+        assert!(hunter.has_type(CardType::Creature));
+        assert!(!hunter.is_executable());
+        assert!(!hunter.is_castable());
+        assert!((hunter.spell_effect)().is_none());
 
         for name in [
             "Burning-Tree Emissary",

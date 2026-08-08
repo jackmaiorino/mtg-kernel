@@ -2984,12 +2984,19 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
         "Myr Enforcer" | "Thoughtcast" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
         }
-        "Cryptic Serpent" => {
+        "Cryptic Serpent" | "Tolarian Terror" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerGraveyardAnyType(&[CardType::Instant, CardType::Sorcery]) })"
         }
         "Deem Inferior" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerDrawsThisTurn })"
         }
+        _ => "None",
+    }
+}
+
+fn ward_cost_for(name: &str) -> &'static str {
+    match name {
+        "Tolarian Terror" => "Some(WardCostDef::Generic(2))",
         _ => "None",
     }
 }
@@ -4051,6 +4058,7 @@ fn codegen(cards: &[CardJson]) -> String {
             generic_cost_reduction_for(&c.name)
         )
         .unwrap();
+        writeln!(out, "        ward_cost: {},", ward_cost_for(&c.name)).unwrap();
         writeln!(out, "        types: &[{types_src}],").unwrap();
         writeln!(out, "        subtypes: &[{subtypes_src}],").unwrap();
         writeln!(out, "        supertypes: &[{supertypes_src}],").unwrap();
@@ -4124,7 +4132,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v7\n");
+    let mut canon = String::from("kernel_carddb/v8\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -4160,6 +4168,8 @@ fn codegen(cards: &[CardJson]) -> String {
         // `None` is included too, preserving positional separation and making
         // addition/removal equally visible.
         canon.push_str(generic_cost_reduction_for(&c.name));
+        canon.push('|');
+        canon.push_str(ward_cost_for(&c.name));
         canon.push('|');
         // Reuse the exact generated source fragments plus the stable spell
         // recipe token. This covers every field selected by the generator for

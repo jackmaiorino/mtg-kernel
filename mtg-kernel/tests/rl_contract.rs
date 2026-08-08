@@ -617,6 +617,7 @@ fn rl_contract_ceased_objects_leave_live_effects_but_remain_historical_stack_tar
         v4: {
             let mut v4 =
                 mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal);
+            v4.stack_item_id = mtg_kernel::ids::StackItemId(1);
             v4.target_spec = Some(TargetSpec::AnyTarget);
             v4.target_contracts = vec![mtg_kernel::state::StackTargetContractV4::capture(
                 &state,
@@ -1398,7 +1399,9 @@ fn rl_contract_spell_copy_state_and_binary_actions_are_explicit() {
             v4
         },
     });
+    state.engine.next_stack_item_id = 1;
     state.engine.pending_spell_copy = Some(PendingSpellCopy {
+        resolving_stack_item: mtg_kernel::ids::StackItemId(1),
         resolving_source: parent,
         resolving_source_zone_change_count: state.objects.get(parent).zone_change_count,
         player: PlayerId::P1,
@@ -1408,6 +1411,7 @@ fn rl_contract_spell_copy_state_and_binary_actions_are_explicit() {
         )),
         stage: SpellCopyStage::Payment,
         copy_source: None,
+        copy_stack_item: None,
     });
 
     let payment_obs = observe_for_test(&state, PlayerId::P1, 4);
@@ -1522,6 +1526,7 @@ fn rl_contract_chain_copy_keeps_historical_target_through_same_generation_contro
         mtg_kernel::state::StackTargetContractV4::capture(&state, Target::Object(target));
     let mut parent_v4 =
         mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal);
+    parent_v4.stack_item_id = mtg_kernel::ids::StackItemId(1);
     parent_v4.target_spec = Some(TargetSpec::AnyTarget);
     parent_v4.target_contracts = vec![contract];
     parent_v4.source_contract = Some(mtg_kernel::state::StackSourceContractV4::capture(
@@ -1543,6 +1548,7 @@ fn rl_contract_chain_copy_keeps_historical_target_through_same_generation_contro
         kicked: false,
         v4: parent_v4,
     });
+    state.engine.next_stack_item_id = 1;
 
     state.players[PlayerId::P1.index()]
         .battlefield
@@ -1550,6 +1556,7 @@ fn rl_contract_chain_copy_keeps_historical_target_through_same_generation_contro
     state.players[PlayerId::P0.index()].battlefield.push(target);
     state.objects.get_mut(target).controller = PlayerId::P0;
     state.engine.pending_spell_copy = Some(PendingSpellCopy {
+        resolving_stack_item: mtg_kernel::ids::StackItemId(1),
         resolving_source: parent,
         resolving_source_zone_change_count: state.objects.get(parent).zone_change_count,
         player: PlayerId::P0,
@@ -1557,6 +1564,7 @@ fn rl_contract_chain_copy_keeps_historical_target_through_same_generation_contro
         inherited_target_contract: Some(contract),
         stage: SpellCopyStage::Payment,
         copy_source: None,
+        copy_stack_item: None,
     });
 
     let payment = observe_for_test(&state, PlayerId::P0, 0);
@@ -3373,8 +3381,8 @@ fn v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins() {
     assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
     assert_eq!(
         state.diagnostic_state_hash_algorithm(),
-        "fnv1a64-serde-json-game-state-envelope-v7",
-        "v7 diagnostic identity"
+        "fnv1a64-serde-json-game-state-envelope-v8",
+        "v8 diagnostic identity"
     );
 
     assert_eq!(state.players[0].hand.len(), 7);
@@ -3423,13 +3431,13 @@ fn v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins() {
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     assert_eq!(
-        serialized_sha256, "0c6ffa74853cf03e657938c9fdb58c182cd8cb38e62cdac565737f55514e2174",
+        serialized_sha256, "7037b030d73ee7d4e7765a0e9f90fc79a9bd77989250ba7592425251f4f8fa7a",
         "pinned SHA-256 of the serialized Burn/Rally root-940001 state"
     );
     assert_eq!(
         format!("{:016x}", state.diagnostic_state_hash()),
-        "7f8b6be5f208635b",
-        "pinned v7 diagnostic hash of the Burn/Rally root-940001 state"
+        "853f23afc1b13f96",
+        "pinned v8 diagnostic hash of the Burn/Rally root-940001 state"
     );
 }
 

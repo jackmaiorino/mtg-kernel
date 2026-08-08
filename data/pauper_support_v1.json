@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "61fc30f5f207a7d9fcbda43e7e31d2e2b2f8c2f7b878128b855bbf6ac1977ae0"
+    "registry_raw_sha256": "2f37087d2ee322731a619ba2bbf3c7e5dd2ec0d094a220aa953eb842f74f6815"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 61,
+    "full_cards": 62,
     "partial_cards": 0,
-    "no_effect_cards": 89,
+    "no_effect_cards": 88,
     "token_dependencies": 4
   },
   "deck_mainboard_copy_totals": [
@@ -59,9 +59,9 @@
     },
     {
       "deck_id": "Terror",
-      "full": 56,
+      "full": 60,
       "partial": 0,
-      "no_effect": 4,
+      "no_effect": 0,
       "total": 60
     },
     {
@@ -3314,10 +3314,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Toxin Analysis",

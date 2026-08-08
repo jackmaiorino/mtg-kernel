@@ -8,7 +8,7 @@
 //! resulting `CommittedEvent` to `state.engine.event_log` for
 //! `trigger::collect_and_process` to drain after the resolution finishes.
 
-use crate::ids::{ObjectId, PlayerId};
+use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use crate::state::{GameState, Target, Zone};
 use serde::{Deserialize, Serialize};
@@ -315,6 +315,15 @@ pub enum CommittedEvent {
         spell: ObjectId,
         controller: PlayerId,
     },
+    /// A completed cast, activation, or copy-target choice made this exact
+    /// permanent incarnation a target. This is nonreplaceable bookkeeping
+    /// consumed by reusable Ward trigger matching.
+    Targeted {
+        target: ObjectId,
+        target_zone_change_count: u32,
+        targeting_stack_item: StackItemId,
+        targeting_controller: PlayerId,
+    },
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an
@@ -558,6 +567,25 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
 /// later, it doesn't replace the cast event itself).
 pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: PlayerId) {
     let committed = CommittedEvent::SpellCast { spell, controller };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+/// Logs one final targeting marker after the enclosing spell or ability has
+/// completed announcement. Failed casts never reach this point.
+pub fn log_targeted(
+    state: &mut GameState,
+    target: ObjectId,
+    target_zone_change_count: u32,
+    targeting_stack_item: StackItemId,
+    targeting_controller: PlayerId,
+) {
+    let committed = CommittedEvent::Targeted {
+        target,
+        target_zone_change_count,
+        targeting_stack_item,
+        targeting_controller,
+    };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
 }

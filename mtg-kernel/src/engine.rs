@@ -42,7 +42,7 @@
 use crate::card_def::{self, CardType, CostComponent, Keywords, TargetSpec};
 use crate::effect::{self, EffectOp, ExecCtx, ObjectRef, TargetRef};
 use crate::event::{self, ActiveReplacement, CommittedEvent, ProposedEvent};
-use crate::ids::{ObjectId, PlayerId};
+use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{self, Cost, ManaColor};
 use crate::state::{
     stack_target_contract_is_structurally_valid, AbilityKindV4, CastMethodV4, GameState,
@@ -55,6 +55,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
+    /// Last allocated private stack-incarnation id. Zero remains reserved for
+    /// legacy/default-constructed state, so every engine-created item is
+    /// distinguishable from an unstamped continuation.
+    #[serde(default)]
+    pub next_stack_item_id: u64,
     /// Whether [P0, P1] has passed priority since the last time priority
     /// was reset (new step, a cast/activation/land-drop, or a resolution).
     pub priority_passes: [bool; 2],
@@ -232,6 +237,15 @@ pub struct EngineState {
     /// for me", the same distinction `stack_top_is_fresh_own_item` draws
     /// structurally for the stack case.
     pub last_mana_ability_activator: Option<PlayerId>,
+}
+
+fn next_stack_item_id(state: &mut GameState) -> StackItemId {
+    state.engine.next_stack_item_id = state
+        .engine
+        .next_stack_item_id
+        .checked_add(1)
+        .expect("stack-item identity space exhausted");
+    StackItemId(state.engine.next_stack_item_id)
 }
 
 /// 613.1's continuous-effect layers this kernel's card pool actually
@@ -734,6 +748,9 @@ pub enum SpellCopyStage {
 /// virtual arena object once payment succeeds.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PendingSpellCopy {
+    /// Exact parent stack incarnation whose resolution is suspended.
+    #[serde(default)]
+    pub resolving_stack_item: StackItemId,
     pub resolving_source: ObjectId,
     pub resolving_source_zone_change_count: u32,
     pub player: PlayerId,
@@ -746,6 +763,9 @@ pub struct PendingSpellCopy {
     pub inherited_target_contract: Option<StackTargetContractV4>,
     pub stage: SpellCopyStage,
     pub copy_source: Option<ObjectId>,
+    /// Exact virtual copy incarnation allocated after payment.
+    #[serde(default)]
+    pub copy_stack_item: Option<StackItemId>,
 }
 
 /// The answer to a `Decision::ChooseOptionalCost`. Declining is always
@@ -3545,6 +3565,16 @@ pub(crate) fn validate_pending_cast(
     if stack_matches.next().is_some() || placeholder_index + 1 != state.stack.len() {
         return Err("pending cast placeholder is not the unique stack top".to_string());
     }
+    if placeholder.v4.stack_item_id == StackItemId::default()
+        || state
+            .stack
+            .iter()
+            .filter(|item| item.v4.stack_item_id == placeholder.v4.stack_item_id)
+            .count()
+            != 1
+    {
+        return Err("pending cast placeholder has no unique stack incarnation".to_string());
+    }
     if placeholder.kind != StackItemKind::Spell
         || placeholder.source != pending.spell
         || placeholder.controller != pending.controller
@@ -4378,10 +4408,64 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
     None
 }
 
+/// Emits one committed targeting marker per distinct permanent incarnation in
+/// a completed targeting action. The private stack id must resolve uniquely;
+/// source ids and mutable stack positions are never accepted as substitutes.
+fn log_final_targeting_events(
+    state: &mut GameState,
+    stack_item_id: StackItemId,
+) -> Result<(), String> {
+    if stack_item_id == StackItemId::default() {
+        return Err("a finalized targeting action lacks a stack-incarnation id".to_string());
+    }
+    let matches = state
+        .stack
+        .iter()
+        .filter(|item| item.v4.stack_item_id == stack_item_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    let [item] = matches.as_slice() else {
+        return Err(format!(
+            "expected one stack item for {stack_item_id}, found {}",
+            matches.len()
+        ));
+    };
+    validated_stack_item_target_spec(item, state)?;
+    if item.targets.len() != item.v4.target_contracts.len() {
+        return Err("final targeting vectors no longer have parallel contracts".to_string());
+    }
+
+    let mut seen = Vec::new();
+    for contract in &item.v4.target_contracts {
+        let StackTargetContractV4::Object {
+            object,
+            zone: Zone::Battlefield,
+            zone_change_count,
+            ..
+        } = *contract
+        else {
+            continue;
+        };
+        if seen.contains(&(object, zone_change_count)) {
+            continue;
+        }
+        seen.push((object, zone_change_count));
+        event::log_targeted(
+            state,
+            object,
+            zone_change_count,
+            stack_item_id,
+            item.controller,
+        );
+    }
+    Ok(())
+}
+
 fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) {
     let madness_source_contract = t
         .is_madness_offer
         .then(|| MadnessOfferSourceContractV4::capture(state, t.source));
+    let stack_item_id = next_stack_item_id(state);
     state.stack.push(StackItem {
         kind: if t.is_madness_offer {
             StackItemKind::MadnessOffer
@@ -4411,6 +4495,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) {
         // full chain.
         kicked: t.kicked,
         v4: StackStateV4 {
+            stack_item_id,
             madness_source_contract,
             ..StackStateV4::default()
         },
@@ -4769,6 +4854,42 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
     Ok(())
 }
 
+/// Counters one exact stack incarnation. Physical spells use the shared
+/// flashback/copy-aware departure contract; abilities leave the stack without
+/// moving their source or any already-paid cost object. An absent id is a
+/// valid no-op for a later Ward trigger whose targeter was already countered.
+pub(crate) fn counter_stack_item_by_id(
+    state: &mut GameState,
+    stack_item_id: StackItemId,
+) -> Result<Option<StackItem>, String> {
+    if stack_item_id == StackItemId::default() {
+        return Err("cannot counter an unstamped stack incarnation".to_string());
+    }
+    let positions = state
+        .stack
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| (item.v4.stack_item_id == stack_item_id).then_some(index))
+        .collect::<Vec<_>>();
+    let position = match positions.as_slice() {
+        [] => return Ok(None),
+        [position] => *position,
+        _ => return Err("duplicate private stack-incarnation ids".to_string()),
+    };
+    let item = state.stack[position].clone();
+    validated_stack_item_target_spec(&item, state)?;
+    let departure = if item.kind == StackItemKind::Spell {
+        Some(plan_spell_departure(state, &item, Zone::Graveyard)?)
+    } else {
+        None
+    };
+    state.stack.remove(position);
+    if let Some(departure) = departure {
+        apply_spell_departure(state, departure)?;
+    }
+    Ok(Some(item))
+}
+
 /// Applies the last part of a completed spell resolution. Physical cards
 /// move normally; virtual spell copies cease without entering a card zone.
 fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result<(), String> {
@@ -4863,6 +4984,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     // previous resolution. See `EngineState::pending_kicked_source`'s doc.
     state.engine.pending_kicked_source = if item.kicked { Some(item.source) } else { None };
     let ctx = ExecCtx {
+        stack_item_id: Some(item.v4.stack_item_id),
         source: item.source,
         controller: item.controller,
         targets: item.targets.clone(),
@@ -6150,6 +6272,7 @@ fn expected_spell_copy(
     parent: &StackItem,
     pending: &PendingSpellCopy,
     copy_source: ObjectId,
+    copy_stack_item: StackItemId,
     source_contract: StackSourceContractV4,
 ) -> StackItem {
     let mut copy = parent.clone();
@@ -6159,6 +6282,7 @@ fn expected_spell_copy(
     copy.v4.target_contracts = vec![pending
         .inherited_target_contract
         .expect("validated copy continuation retains the inherited target contract")];
+    copy.v4.stack_item_id = copy_stack_item;
     copy.v4.source_contract = Some(source_contract);
     copy.is_copy = true;
     copy.is_flashback = false;
@@ -6166,31 +6290,40 @@ fn expected_spell_copy(
     copy
 }
 
-fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> ObjectId {
+fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (ObjectId, StackItemId) {
     let (_, parent) = pending_spell_copy_parent(state, pending)
         .expect("validated immediately before paying; no action can interleave");
     let original = state.objects.get(parent.source);
     let copy_source = state.objects.push(expected_spell_copy_source_object(
         original, &parent, pending,
     ));
+    let copy_stack_item = next_stack_item_id(state);
     let source_contract = StackSourceContractV4::capture(state, copy_source, CastMethodV4::Normal);
-    let copy = expected_spell_copy(&parent, pending, copy_source, source_contract);
+    let copy = expected_spell_copy(
+        &parent,
+        pending,
+        copy_source,
+        copy_stack_item,
+        source_contract,
+    );
     state.stack.push(copy);
-    copy_source
+    (copy_source, copy_stack_item)
 }
 
 fn pending_spell_copy_parent(
     state: &GameState,
     pending: &PendingSpellCopy,
 ) -> Result<(usize, StackItem), String> {
-    let mut matches = state
-        .stack
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.source == pending.resolving_source);
+    let mut matches = state.stack.iter().enumerate().filter(|(_, item)| {
+        item.v4.stack_item_id == pending.resolving_stack_item
+            && item.source == pending.resolving_source
+    });
     let (parent_index, parent) = matches
         .next()
         .ok_or("the resolving spell is no longer on the stack")?;
+    if pending.resolving_stack_item == StackItemId::default() {
+        return Err("the resolving spell lacks a stack-incarnation id".to_string());
+    }
     if matches.next().is_some() {
         return Err("the resolving spell has duplicate stack membership".to_string());
     }
@@ -6311,7 +6444,7 @@ pub(crate) fn validate_pending_spell_copy(
     }
     match pending.stage {
         SpellCopyStage::Payment => {
-            if pending.copy_source.is_some() {
+            if pending.copy_source.is_some() || pending.copy_stack_item.is_some() {
                 return Err("the payment-stage spell copy already has a copy object".to_string());
             }
             if parent_index + 1 != state.stack.len() {
@@ -6324,14 +6457,20 @@ pub(crate) fn validate_pending_spell_copy(
             let copy_source = pending
                 .copy_source
                 .ok_or("the post-payment spell-copy continuation lost its copy object")?;
+            let copy_stack_item = pending
+                .copy_stack_item
+                .ok_or("the post-payment spell-copy continuation lost its stack incarnation")?;
+            if copy_stack_item == StackItemId::default()
+                || copy_stack_item == pending.resolving_stack_item
+            {
+                return Err("the spell-copy stack incarnation is invalid".to_string());
+            }
             if copy_source == pending.resolving_source {
                 return Err("the spell-copy parent and copy source are not distinct".to_string());
             }
-            let mut matches = state
-                .stack
-                .iter()
-                .enumerate()
-                .filter(|(_, item)| item.source == copy_source);
+            let mut matches = state.stack.iter().enumerate().filter(|(_, item)| {
+                item.v4.stack_item_id == copy_stack_item && item.source == copy_source
+            });
             let (copy_index, copy) = matches
                 .next()
                 .ok_or("the spell-copy continuation's copy is no longer on the stack")?;
@@ -6343,6 +6482,7 @@ pub(crate) fn validate_pending_spell_copy(
                 &parent,
                 pending,
                 copy_source,
+                copy_stack_item,
                 StackSourceContractV4::capture(state, copy_source, CastMethodV4::Normal),
             );
             let expected_copy_object = expected_spell_copy_source_object(
@@ -6419,7 +6559,7 @@ fn apply_choose_spell_copy_payment(state: &mut GameState, pay: bool) -> Result<(
         return finish_pending_spell_copy_resolution(state, &pending);
     };
     pay_plan(state, pending.player, &plan);
-    let copy_source = create_spell_copy(state, &pending);
+    let (copy_source, copy_stack_item) = create_spell_copy(state, &pending);
     let live = state
         .engine
         .pending_spell_copy
@@ -6427,6 +6567,7 @@ fn apply_choose_spell_copy_payment(state: &mut GameState, pay: bool) -> Result<(
         .expect("pending was validated above");
     live.stage = SpellCopyStage::Retarget;
     live.copy_source = Some(copy_source);
+    live.copy_stack_item = Some(copy_stack_item);
     Ok(())
 }
 
@@ -6452,6 +6593,10 @@ fn apply_choose_spell_copy_retarget(
             .stage = SpellCopyStage::Target;
         return Ok(());
     }
+    let copy_stack_item = pending
+        .copy_stack_item
+        .ok_or("the retarget-stage spell copy lacks a stack incarnation")?;
+    log_final_targeting_events(state, copy_stack_item)?;
     finish_pending_spell_copy_resolution(state, &pending)
 }
 
@@ -6471,14 +6616,20 @@ fn apply_choose_spell_copy_target(state: &mut GameState, target: Target) -> Resu
     let copy_source = pending
         .copy_source
         .ok_or("the target-stage spell copy does not exist")?;
+    let copy_stack_item = pending
+        .copy_stack_item
+        .ok_or("the target-stage spell copy lacks a stack incarnation")?;
     let target_contract = StackTargetContractV4::capture(state, target);
     let copy = state
         .stack
         .iter_mut()
-        .find(|item| item.source == copy_source && item.is_copy)
+        .find(|item| {
+            item.v4.stack_item_id == copy_stack_item && item.source == copy_source && item.is_copy
+        })
         .ok_or("the target-stage spell copy is no longer on the stack")?;
     copy.targets = vec![target];
     copy.v4.target_contracts = vec![target_contract];
+    log_final_targeting_events(state, copy_stack_item)?;
     finish_pending_spell_copy_resolution(state, &pending)
 }
 
@@ -6839,6 +6990,7 @@ fn begin_cast_ex(
     // different holder. Freeze that controller into the source contract.
     state.objects.get_mut(spell_id).controller = player;
     let source_contract = StackSourceContractV4::capture(state, spell_id, cast_method);
+    let stack_item_id = next_stack_item_id(state);
     state.stack.push(StackItem {
         kind: StackItemKind::Spell,
         source: spell_id,
@@ -6854,6 +7006,7 @@ fn begin_cast_ex(
         // -- see `StackItem::kicked`'s doc.
         kicked: false,
         v4: StackStateV4 {
+            stack_item_id,
             source_contract: Some(source_contract),
             ..StackStateV4::spell(cast_method)
         },
@@ -7088,10 +7241,12 @@ fn finalize_owned_cast(
     item.v4.paid_cost_refs = paid_cost_refs;
     item.v4.cast_method = Some(cast_method);
     item.v4.source_contract = Some(finalized_source_contract);
+    let stack_item_id = item.v4.stack_item_id;
     state.players[pending.controller.index()].spells_cast_this_turn = state.players
         [pending.controller.index()]
     .spells_cast_this_turn
     .saturating_add(1);
+    log_final_targeting_events(state, stack_item_id)?;
     event::log_spell_cast(state, pending.spell, pending.controller);
 
     // 601.2i/603.3: casting is complete the instant costs are paid --
@@ -7266,6 +7421,7 @@ fn push_paid_activation(
         .map(|object| PaidCostRefV4::capture(state, object))
         .collect();
     let effect = (ability.effect)();
+    let stack_item_id = next_stack_item_id(state);
     state.stack.push(StackItem {
         kind: StackItemKind::ActivatedAbility,
         source: pending.source,
@@ -7279,6 +7435,7 @@ fn push_paid_activation(
         madness_offer: false,
         kicked: false, // no activated ability in this pool has Kicker
         v4: StackStateV4 {
+            stack_item_id,
             paid_cost_refs,
             target_spec: Some(pending.target_spec),
             target_contracts: pending.target_contracts,
@@ -7286,6 +7443,13 @@ fn push_paid_activation(
             ..StackStateV4::default()
         },
     });
+    if log_final_targeting_events(state, stack_item_id).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
     // A zone change creates a new object under CR 400.7 and resets its v4
     // state. Never stamp the old activation onto Lorien's new graveyard
     // incarnation (or any sacrificed/exiled source); the stack provenance
@@ -7329,7 +7493,7 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
         .reset_for_zone_change(object.card_def, Zone::Stack, turn);
 }
 
-fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::PaymentPlan) {
+pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::PaymentPlan) {
     for &(id, color) in &plan.taps {
         event::propose_and_commit(state, ProposedEvent::tap(id));
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![color]));
@@ -9954,6 +10118,42 @@ mod tests {
     }
 
     #[test]
+    fn exact_stack_counter_removes_one_trigger_incarnation_without_moving_its_source() {
+        let mut state = empty_game();
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Guttersnipe");
+        for stack_item_id in [StackItemId(90), StackItemId(91)] {
+            state.stack.push(StackItem {
+                kind: StackItemKind::TriggeredAbility,
+                source,
+                controller: PlayerId::P0,
+                targets: vec![],
+                is_copy: false,
+                inline_effect: Some(EffectOp::Sequence(vec![])),
+                discarded: vec![],
+                is_flashback: false,
+                mode_chosen: 0,
+                madness_offer: false,
+                kicked: false,
+                v4: StackStateV4 {
+                    stack_item_id,
+                    ..StackStateV4::default()
+                },
+            });
+        }
+
+        let removed = counter_stack_item_by_id(&mut state, StackItemId(90))
+            .expect("exact counter validates")
+            .expect("named trigger remains live");
+
+        assert_eq!(removed.v4.stack_item_id, StackItemId(90));
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.stack[0].v4.stack_item_id, StackItemId(91));
+        assert_eq!(state.stack[0].source, source);
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        assert!(state.players[0].battlefield.contains(&source));
+    }
+
+    #[test]
     fn instant_spell_filter_preserves_raw_stack_order_across_mixed_spell_types() {
         let mut state = empty_game();
         assert!(legal_targets_for(TargetSpec::InstantSpellOnStack, &[], &state).is_empty());
@@ -11223,7 +11423,9 @@ mod tests {
             Decision::CastSpellOrPass { .. }
         ));
         let contract = bolt_state.stack.last().unwrap().v4.target_contracts[0];
+        let resolving_stack_item = bolt_state.stack.last().unwrap().v4.stack_item_id;
         bolt_state.engine.pending_spell_copy = Some(PendingSpellCopy {
+            resolving_stack_item,
             resolving_source: bolt,
             resolving_source_zone_change_count: bolt_state.objects.get(bolt).zone_change_count,
             player: PlayerId::P1,
@@ -11231,6 +11433,7 @@ mod tests {
             inherited_target_contract: Some(contract),
             stage: SpellCopyStage::Payment,
             copy_source: None,
+            copy_stack_item: None,
         });
         let before = bolt_state.clone();
         assert!(step(&mut bolt_state, Action::ChooseSpellCopyPayment(true)).is_err());

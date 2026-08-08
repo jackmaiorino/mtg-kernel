@@ -11307,41 +11307,41 @@ mod tests {
         // recorded from the untouched parent before any production edit.
         let legacy_full = RlEpisodeSessionV1::reset(1, 99, 8);
         let legacy_fast = FastActorSessionV1::reset(1, 99, 8);
-        assert_eq!(
-            legacy_full.privileged_environment_hash(),
-            0xcc4e_fc39_024e_ccd5,
-            "captured legacy policy environment golden"
-        );
-        assert_eq!(
-            legacy_full.privileged_core_environment_hash(),
-            0x5005_8868_e7a2_bc28,
-            "captured legacy full-session core golden"
-        );
-        assert_eq!(
-            legacy_fast.privileged_core_environment_hash(),
-            0x5005_8868_e7a2_bc28,
-            "captured legacy fast-session core golden equals the full one"
-        );
-
         let v2_full = full_session_on_environment_v2(99);
         let v2_fast = fast_session_on_environment_v2(99);
         let v2_policy = v2_full.privileged_environment_hash();
         let v2_full_core = v2_full.privileged_core_environment_hash();
         let v2_fast_core = v2_fast.privileged_core_environment_hash();
         assert_eq!(
-            v2_policy, 0x7abb_750c_9f4a_4651,
-            "environment-v2 policy environment golden"
+            legacy_full.privileged_environment_hash(),
+            0x0409_40da_a4de_ca3e,
+            "stack-incarnation-v7 legacy policy environment golden"
         );
         assert_eq!(
-            v2_full_core, 0xbb18_34f0_90be_fb8c,
-            "environment-v2 core environment golden"
+            legacy_full.privileged_core_environment_hash(),
+            0x07ac_307a_ced8_be3b,
+            "stack-incarnation-v7 legacy full-session core golden"
+        );
+        assert_eq!(
+            legacy_fast.privileged_core_environment_hash(),
+            0x07ac_307a_ced8_be3b,
+            "captured legacy fast-session core golden equals the full one"
+        );
+
+        assert_eq!(
+            v2_policy, 0x53e2_039b_3793_94f8,
+            "stack-incarnation-v8 environment-v2 policy environment golden"
+        );
+        assert_eq!(
+            v2_full_core, 0xd2ab_40d2_914c_cac5,
+            "stack-incarnation-v8 environment-v2 core environment golden"
         );
         assert_eq!(
             v2_fast_core, v2_full_core,
             "full and fast environment-v2 core hashes are equal"
         );
-        assert_ne!(v2_policy, 0xcc4e_fc39_024e_ccd5);
-        assert_ne!(v2_full_core, 0x5005_8868_e7a2_bc28);
+        assert_ne!(v2_policy, 0x0409_40da_a4de_ca3e);
+        assert_ne!(v2_full_core, 0x07ac_307a_ced8_be3b);
     }
 
     #[test]
@@ -11508,7 +11508,7 @@ mod tests {
             assert!(session.state.environment_randomization_v2().is_none());
             assert_eq!(
                 session.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v6"
+                "fnv1a64-serde-json-game-state-envelope-v7"
             );
             assert_eq!(session.state, canonical.state);
             assert_eq!(
@@ -11534,7 +11534,7 @@ mod tests {
             assert!(fast.state.environment_randomization_v2().is_none());
             assert_eq!(
                 fast.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v6"
+                "fnv1a64-serde-json-game-state-envelope-v7"
             );
             assert_eq!(fast.state, fast_canonical.state);
             assert_eq!(fast.current, fast_canonical.current);
@@ -11566,15 +11566,15 @@ mod tests {
         // Captured legacy pins are preserved bit-exact.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0xcc4e_fc39_024e_ccd5
+            0x0409_40da_a4de_ca3e
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
-            0x5005_8868_e7a2_bc28
+            0x07ac_307a_ced8_be3b
         );
         assert_eq!(
             fast_canonical.privileged_core_environment_hash(),
-            0x5005_8868_e7a2_bc28
+            0x07ac_307a_ced8_be3b
         );
     }
 
@@ -11616,7 +11616,7 @@ mod tests {
         assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
         assert_eq!(
             full.state.diagnostic_state_hash_algorithm(),
-            "fnv1a64-serde-json-game-state-envelope-v7"
+            "fnv1a64-serde-json-game-state-envelope-v8"
         );
         let serialized = serde_json::to_value(&full.state).unwrap();
         assert!(serialized.get("environment_randomization_v2").is_some());
@@ -11750,17 +11750,17 @@ mod tests {
         let fast = canonical_v2_fast_reset(99);
         assert_eq!(
             full.privileged_environment_hash(),
-            0x7abb_750c_9f4a_4651,
+            0x53e2_039b_3793_94f8,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
             full.privileged_core_environment_hash(),
-            0xbb18_34f0_90be_fb8c,
+            0xd2ab_40d2_914c_cac5,
             "pre-constructor core pin is reused, not minted"
         );
         assert_eq!(
             fast.privileged_core_environment_hash(),
-            0xbb18_34f0_90be_fb8c,
+            0xd2ab_40d2_914c_cac5,
             "full and fast v2 core hashes are equal and equal the pin"
         );
 
@@ -11798,11 +11798,11 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x7abb_750c_9f4a_4651
+            0x53e2_039b_3793_94f8
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
-            0xbb18_34f0_90be_fb8c
+            0xd2ab_40d2_914c_cac5
         );
 
         // Root u64::MAX succeeds and stays exact full-width in both.
@@ -11816,7 +11816,7 @@ mod tests {
             assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
             assert_eq!(
                 state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v7"
+                "fnv1a64-serde-json-game-state-envelope-v8"
             );
         }
         assert_eq!(
@@ -12309,7 +12309,7 @@ mod tests {
             assert_eq!(v2.pair_environment_seed(), 99);
             assert_eq!(
                 active.session.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v7"
+                "fnv1a64-serde-json-game-state-envelope-v8"
             );
         }
 

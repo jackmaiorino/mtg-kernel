@@ -467,7 +467,8 @@ fn triggers_from_events(
     let draws_this_turn_at = draws_this_turn_snapshot(events, state);
     let mut new_triggers = Vec::new();
     for (id, obj) in state.objects.iter() {
-        if !crate::card_def::CARD_DEFS[obj.card_def as usize].is_executable() {
+        let card = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+        if !card.is_executable() {
             continue;
         }
         for def in triggers_for(obj.card_def) {
@@ -519,6 +520,42 @@ fn triggers_from_events(
                         effect: (def.effect)(),
                         is_madness_offer: false,
                         kicked,
+                    });
+                }
+            }
+        }
+        if obj.zone == Zone::Battlefield {
+            if let Some(crate::card_def::WardCostDef::Generic(generic)) = card.ward_cost {
+                for event in events {
+                    let CommittedEvent::Targeted {
+                        target,
+                        target_zone_change_count,
+                        targeting_stack_item,
+                        targeting_controller,
+                    } = event
+                    else {
+                        continue;
+                    };
+                    if *target != id
+                        || *target_zone_change_count != obj.zone_change_count
+                        || *targeting_controller == obj.controller
+                    {
+                        continue;
+                    }
+                    let ward_target = crate::state::StackTargetContractV4::capture(
+                        state,
+                        crate::state::Target::Object(id),
+                    );
+                    new_triggers.push(PendingTrigger {
+                        controller: obj.controller,
+                        source: id,
+                        effect: EffectOp::CounterUnlessPaysGeneric {
+                            ward_target,
+                            targeting_stack_item: *targeting_stack_item,
+                            generic,
+                        },
+                        is_madness_offer: false,
+                        kicked: false,
                     });
                 }
             }

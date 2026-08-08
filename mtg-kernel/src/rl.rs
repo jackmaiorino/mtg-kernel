@@ -5060,6 +5060,9 @@ fn pending_effect_semantic_v4(
                         crate::effect::EffectBooleanChoicePurpose::ShuffleLibrary { .. } => {
                             BooleanChoicePurposeV4::Shuffle
                         }
+                        crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
+                            ..
+                        } => BooleanChoicePurposeV4::PayCost,
                     },
                 }),
             }

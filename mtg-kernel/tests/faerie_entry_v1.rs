@@ -74,6 +74,7 @@ fn execute_trigger(state: &mut GameState, trigger: &trigger::PendingTrigger) {
         &ExecCtx {
             source: trigger.source,
             controller: trigger.controller,
+            stack_item_id: None,
             targets: Vec::new(),
             target_contracts: Vec::new(),
             discarded: Vec::new(),
