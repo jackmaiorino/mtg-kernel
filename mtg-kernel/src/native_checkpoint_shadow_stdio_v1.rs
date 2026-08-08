@@ -6186,7 +6186,7 @@ mod tests {
         service.identity.source_generation = 1024;
         service.identity.loaded_generation = 1024;
         service.identity.environment_trajectory_contract =
-            POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1.to_owned();
+            POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1;
         let bytes = SharedBytesV1::default();
         XmageCp7OutcomeJsonlWriterV1::from_writer_v1(Box::new(bytes.clone()), &service.identity)
             .unwrap();
