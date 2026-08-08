@@ -90,6 +90,9 @@ pub struct ObjectStateV4 {
     pub entered_battlefield_turn: Option<u32>,
     /// Sorted by `(ability_kind, ability_index)`; absent abilities have zero uses.
     pub ability_uses_this_turn: Vec<AbilityUseV4>,
+    /// Incarnation-local delayed effect. Control-changing effects must preserve
+    /// this marker; only a zone change or the affected controller's next
+    /// untap step consumes it.
     pub skip_next_untap: bool,
     /// Sorted by `(player, expires_at_turn)`.
     pub goaded_by: Vec<GoadStateV4>,
@@ -557,7 +560,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::AnyPermanent
                 | TargetSpec::BluePermanent
                 | TargetSpec::RedPermanent
-                | TargetSpec::NonlandPermanent,
+                | TargetSpec::NonlandPermanent
+                | TargetSpec::Creature,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,

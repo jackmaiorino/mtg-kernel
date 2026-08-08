@@ -239,6 +239,10 @@ pub enum TargetSpec {
     /// (Deem Inferior). Appended so every pre-existing target-spec
     /// discriminant and serialized snapshot identity remains stable.
     NonlandPermanent,
+    /// Exactly 1 target: any creature on either battlefield. Appended so
+    /// every pre-existing target-spec discriminant and serialized snapshot
+    /// identity remains stable.
+    Creature,
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -603,6 +607,36 @@ mod tests {
         // by Rally at the Hornburg/Experimental Synthesizer; Bird Illusion
         // Token, created by Murmuring Mystic -- see `trigger.rs`/`build.rs`).
         assert_eq!(CARD_DEFS.len(), 136);
+    }
+
+    #[test]
+    fn creature_target_spec_is_append_only() {
+        let stable_ordinals = [
+            (TargetSpec::None, 0),
+            (TargetSpec::AnyTarget, 1),
+            (TargetSpec::PlayerThenTheirCreature, 2),
+            (TargetSpec::AnySpellOnStack, 3),
+            (TargetSpec::InstantSpellOnStack, 4),
+            (TargetSpec::BlueSpellOnStack, 5),
+            (TargetSpec::AnyPermanent, 6),
+            (TargetSpec::BluePermanent, 7),
+            (TargetSpec::AnyPlayer, 8),
+            (TargetSpec::RedSpellOnStack, 9),
+            (TargetSpec::RedPermanent, 10),
+            (TargetSpec::NonlandPermanent, 11),
+            (TargetSpec::Creature, 12),
+        ];
+        for (target_spec, ordinal) in stable_ordinals {
+            assert_eq!(target_spec as u8, ordinal);
+        }
+        assert_eq!(
+            serde_json::to_string(&TargetSpec::Creature).unwrap(),
+            "\"Creature\""
+        );
+        assert_eq!(
+            serde_json::from_str::<TargetSpec>("\"Creature\"").unwrap(),
+            TargetSpec::Creature
+        );
     }
 
     #[test]
