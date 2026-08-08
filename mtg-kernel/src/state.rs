@@ -884,7 +884,15 @@ pub(crate) struct LibraryShuffleToken {
     authorization: LibraryShuffleAuthorization,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// `Hash` is manual (see the `impl Hash for GameState` block below this
+/// struct): it must reproduce the exact pre-existing field-hash sequence for
+/// a legacy P0-first state, the same discipline `starting_player`'s serde
+/// attributes above already apply to JSON. A plain `#[derive(Hash)]` would
+/// unconditionally fold the new `starting_player` field into every hash,
+/// changing `state_hash()`'s output for every existing P0-first state, which
+/// `legacy_randomization_bytes_are_sealed` below (a sealed golden byte/hash
+/// artifact predating this field) catches immediately.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameState {
     pub objects: Arena<GameObject>,
@@ -892,6 +900,22 @@ pub struct GameState {
     pub turn: u32,
     pub active_player: PlayerId,
     pub priority_player: PlayerId,
+    /// The physical player who took the very first turn of the game. Read by
+    /// the first-turn draw-skip (`engine.rs`'s `Step::Draw` arm) and the
+    /// round-wraparound counter (`engine.rs`'s `advance_step`) instead of
+    /// either site hardcoding `PlayerId::P0`. Set once at construction and
+    /// never mutated afterward. Skipped on the wire whenever it is the
+    /// legacy default (`PlayerId::P0`), via `skip_serializing_if` below, so
+    /// every existing P0-first serialized `GameState`, diagnostic hash, and
+    /// sealed golden byte artifact stays byte-identical; see
+    /// `starting_player_is_p0_v1`/`default_starting_player_v1` and
+    /// `P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2's bit-identity
+    /// requirement.
+    #[serde(
+        default = "default_starting_player_v1",
+        skip_serializing_if = "starting_player_is_p0_v1"
+    )]
+    pub starting_player: PlayerId,
     pub step: Step,
     pub stack: Vec<StackItem>,
     pub exile: Vec<ObjectId>,
@@ -912,6 +936,38 @@ pub struct GameState {
     /// event log, all owned by the `engine`/`event`/`trigger` modules. See
     /// `engine::EngineState`.
     pub engine: crate::engine::EngineState,
+}
+
+/// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
+/// before `starting_player` existed, for every field except `starting_player`
+/// itself, in the same declaration order. `starting_player` is folded in only
+/// when it is not the legacy default (`PlayerId::P0`): a P0-first state
+/// therefore hashes byte-for-byte identically to the pre-`starting_player`
+/// code (see `legacy_randomization_bytes_are_sealed`'s sealed `state_hash_hex`
+/// golden), while a P1-first state still hashes distinguishably from its
+/// P0-first counterpart. Same discipline `GameRandomnessState`'s own manual
+/// `Hash` impl already applies to its `Legacy` arm (no discriminant) versus
+/// its `EnvironmentV2` arm (explicit discriminant).
+impl Hash for GameState {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.objects.hash(state);
+        self.players.hash(state);
+        self.turn.hash(state);
+        self.active_player.hash(state);
+        self.priority_player.hash(state);
+        self.step.hash(state);
+        self.stack.hash(state);
+        self.exile.hash(state);
+        self.command.hash(state);
+        self.initiative.hash(state);
+        self.library_knowledge.hash(state);
+        self.hand_knowledge.hash(state);
+        self.randomness.hash(state);
+        self.engine.hash(state);
+        if self.starting_player != PlayerId::P0 {
+            self.starting_player.hash(state);
+        }
+    }
 }
 
 impl PaidCostRefV4 {
@@ -972,6 +1028,30 @@ impl GameState {
         names: impl Fn(u16) -> String,
         seed: u64,
     ) -> GameState {
+        // Thin wrapper over the starting-player-aware core below, with the
+        // exact pre-existing literal (`PlayerId::P0`) supplied structurally:
+        // this function's own body and behavior are unchanged.
+        Self::new_from_libraries_with_starting_player_v1(lib0, lib1, names, seed, PlayerId::P0)
+    }
+
+    /// Opt-in sibling of [`GameState::new_from_libraries`] taking an explicit
+    /// starting player (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2, site
+    /// 1 of the three coupled starting-player-authority sites). `starting_player`
+    /// is the constructor's only extra input: it sets `active_player`,
+    /// `priority_player`, and the new `starting_player` field to the same
+    /// value, so all three stay consistent from the very first state. The
+    /// other two coupled sites (`engine.rs`'s first-turn draw-skip and
+    /// round-wraparound) read `state.starting_player` rather than a literal.
+    /// `new_from_libraries` itself calls this with `PlayerId::P0`, so it is
+    /// the exact pre-change literal reproduced structurally, not merely by
+    /// convention.
+    pub fn new_from_libraries_with_starting_player_v1(
+        lib0: &[u16],
+        lib1: &[u16],
+        names: impl Fn(u16) -> String,
+        seed: u64,
+        starting_player: PlayerId,
+    ) -> GameState {
         let mut objects = Arena::with_capacity(lib0.len() + lib1.len());
         let mut library0 = Vec::with_capacity(lib0.len());
         let mut library1 = Vec::with_capacity(lib1.len());
@@ -1002,8 +1082,9 @@ impl GameState {
             objects,
             players: [player0, player1],
             turn: 1,
-            active_player: PlayerId::P0,
-            priority_player: PlayerId::P0,
+            active_player: starting_player,
+            priority_player: starting_player,
+            starting_player,
             step: Step::Untap,
             stack: Vec::new(),
             exile: Vec::new(),
@@ -1597,7 +1678,36 @@ impl GameState {
         card_name: impl Fn(u16) -> String,
         pair_environment_seed: u64,
     ) -> GameState {
-        let mut state = GameState::new_from_libraries(library0, library1, card_name, 0);
+        // Thin wrapper, same discipline as `new_from_libraries` above.
+        Self::new_from_libraries_environment_v2_with_starting_player_v1(
+            library0,
+            library1,
+            card_name,
+            pair_environment_seed,
+            PlayerId::P0,
+        )
+    }
+
+    /// Opt-in sibling of [`GameState::new_from_libraries_environment_v2`]
+    /// taking an explicit starting player. Composes the starting-player
+    /// authority with the environment-randomization-v2 construction path, so
+    /// a P1-first request against an envrand-v2 game does not silently fall
+    /// back to P0-first (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2's
+    /// downstream-assumption audit, first bullet).
+    pub fn new_from_libraries_environment_v2_with_starting_player_v1(
+        library0: &[u16],
+        library1: &[u16],
+        card_name: impl Fn(u16) -> String,
+        pair_environment_seed: u64,
+        starting_player: PlayerId,
+    ) -> GameState {
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            library0,
+            library1,
+            card_name,
+            0,
+            starting_player,
+        );
         state.randomness = GameRandomnessState::EnvironmentV2(
             crate::environment_randomization_v2::GameEnvironmentRandomizationV2::new(
                 pair_environment_seed,
@@ -1756,6 +1866,21 @@ fn diagnostic_state_hash_bytes(state: &GameState) -> Vec<u8> {
             .expect("GameState v6 diagnostic hash envelope must serialize")
         }
     }
+}
+
+/// `serde(default = ...)` for `GameState::starting_player`: reproduces the
+/// legacy hardcoded-`P0` literal so a missing field on deserialize (every
+/// pre-existing serialized state) resolves to the exact old behavior.
+fn default_starting_player_v1() -> PlayerId {
+    PlayerId::P0
+}
+
+/// `serde(skip_serializing_if = ...)` for `GameState::starting_player`: omits
+/// the field from the wire entirely when it is the legacy default, so a
+/// P0-first game serializes with exactly the pre-change byte sequence (no
+/// new JSON key appears).
+fn starting_player_is_p0_v1(starting_player: &PlayerId) -> bool {
+    *starting_player == PlayerId::P0
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {

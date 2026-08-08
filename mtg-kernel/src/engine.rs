@@ -4683,7 +4683,13 @@ fn advance_step(state: &mut GameState) {
 
     if next_idx >= STEP_ORDER.len() {
         state.active_player = state.active_player.opponent();
-        if state.active_player == PlayerId::P0 {
+        // Round counter advances when the active player comes back around to
+        // whoever started the game, not specifically to physical seat P0.
+        // `state.starting_player` defaults to `PlayerId::P0`, reproducing
+        // this condition's original `== PlayerId::P0` literal exactly when
+        // unset; see `P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2, coupled
+        // site 3.
+        if state.active_player == state.starting_player {
             state.turn += 1;
         }
         next_idx = 0;
@@ -4779,12 +4785,16 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         Step::Draw => {
             let p = state.active_player;
             // 103.8a: the starting player skips the draw step of their
-            // very first turn. `turn == 1 && p == P0` uniquely identifies
-            // that turn under this kernel's round-based turn numbering
-            // (see module doc): `turn` only becomes 1 again... it never
-            // does, it's monotonic, so this combination occurs exactly
-            // once, at the start of the game.
-            let is_first_turn_of_the_game = state.turn == 1 && p == PlayerId::P0;
+            // very first turn. `turn == 1 && p == state.starting_player`
+            // uniquely identifies that turn under this kernel's round-based
+            // turn numbering (see module doc): `turn` only becomes 1 again...
+            // it never does, it's monotonic, so this combination occurs
+            // exactly once, at the start of the game. `state.starting_player`
+            // is the explicit authority set once at construction (defaults
+            // to `PlayerId::P0`, reproducing this condition's original
+            // `p == PlayerId::P0` literal exactly when unset; see
+            // `P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2, coupled site 2).
+            let is_first_turn_of_the_game = state.turn == 1 && p == state.starting_player;
             if !is_first_turn_of_the_game {
                 event::propose_and_commit(state, ProposedEvent::draw(p));
                 collect_and_queue_triggers(state);
@@ -6955,6 +6965,138 @@ mod tests {
 
     fn empty_game() -> GameState {
         GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1)
+    }
+
+    // ---- starting-player authority (P1-METAMORPHIC-AUDIT-DESIGN-V4.md
+    // ---- Section 1.2): construction, first-turn draw-skip, and round
+    // ---- wraparound, exercised in both P0-first and P1-first orientations.
+
+    #[test]
+    fn starting_player_authority_flips_active_and_priority_player_at_construction_v1() {
+        let lib0: Vec<u16> = vec![1, 2, 3];
+        let lib1: Vec<u16> = vec![4, 5, 6];
+
+        let p0_first = GameState::new_from_libraries_with_starting_player_v1(
+            &lib0,
+            &lib1,
+            |c| format!("card-{c}"),
+            1,
+            PlayerId::P0,
+        );
+        assert_eq!(p0_first.starting_player, PlayerId::P0);
+        assert_eq!(p0_first.active_player, PlayerId::P0);
+        assert_eq!(p0_first.priority_player, PlayerId::P0);
+
+        let p1_first = GameState::new_from_libraries_with_starting_player_v1(
+            &lib0,
+            &lib1,
+            |c| format!("card-{c}"),
+            1,
+            PlayerId::P1,
+        );
+        assert_eq!(p1_first.starting_player, PlayerId::P1);
+        assert_eq!(p1_first.active_player, PlayerId::P1);
+        assert_eq!(p1_first.priority_player, PlayerId::P1);
+
+        // The legacy zero-argument constructor is unaffected: it still
+        // structurally produces the P0-first literal.
+        assert_eq!(empty_game().starting_player, PlayerId::P0);
+    }
+
+    /// 103.8a: only the starting player skips their own very first draw
+    /// step. The non-starting player draws normally on their own (real)
+    /// first turn. Checked in both orientations so the site-2 fix
+    /// (`p == state.starting_player` instead of `p == PlayerId::P0`) is
+    /// shown to track whichever player was actually forced to start, not
+    /// merely physical seat P0.
+    #[test]
+    fn starting_player_authority_governs_first_turn_draw_skip_in_both_orientations_v1() {
+        for starting_player in [PlayerId::P0, PlayerId::P1] {
+            let lib0: Vec<u16> = (1..=10).collect();
+            let lib1: Vec<u16> = (101..=110).collect();
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &lib0,
+                &lib1,
+                |c| format!("card-{c}"),
+                1,
+                starting_player,
+            );
+            let opponent = starting_player.opponent();
+
+            let starting_library_before = state.players[starting_player.index()].library.len();
+            advance_step(&mut state); // Untap -> Upkeep
+            advance_step(&mut state); // Upkeep -> Draw
+            assert_eq!(state.step, Step::Draw);
+            assert_eq!(state.active_player, starting_player);
+            assert_eq!(
+                state.players[starting_player.index()].library.len(),
+                starting_library_before,
+                "starting_player={starting_player:?} must skip their own first-turn draw"
+            );
+
+            // Drive forward to the non-starting player's own first Draw
+            // step. However many steps combat-skip logic collapses along
+            // the way is irrelevant here; only the eventual Draw entry
+            // action matters.
+            while state.active_player != opponent {
+                advance_step(&mut state);
+            }
+            let opponent_library_before = state.players[opponent.index()].library.len();
+            while state.step != Step::Draw {
+                advance_step(&mut state);
+            }
+            assert_eq!(state.active_player, opponent);
+            assert_eq!(
+                state.players[opponent.index()].library.len(),
+                opponent_library_before - 1,
+                "starting_player={starting_player:?}: the non-starting player draws \
+                 normally on their own real first turn"
+            );
+            assert_eq!(
+                state.turn, 1,
+                "still round 1 for the non-starting player's first real turn"
+            );
+        }
+    }
+
+    /// The round counter advances exactly when `active_player` returns to
+    /// whoever started the game, not specifically to physical seat P0.
+    /// Checked in both orientations (site 3). Uses an every-step invariant
+    /// check rather than a fixed step count, since the no-attackers
+    /// combat-skip (`advance_step`'s `DeclareBlockers` -> `EndCombat`
+    /// override) changes how many `advance_step` calls one round takes.
+    #[test]
+    fn starting_player_authority_governs_round_wraparound_in_both_orientations_v1() {
+        for starting_player in [PlayerId::P0, PlayerId::P1] {
+            let lib0: Vec<u16> = (1..=20).collect();
+            let lib1: Vec<u16> = (101..=120).collect();
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &lib0,
+                &lib1,
+                |c| format!("card-{c}"),
+                1,
+                starting_player,
+            );
+            let mut expected_turn = state.turn;
+            for _ in 0..80 {
+                let active_before = state.active_player;
+                advance_step(&mut state);
+                let just_returned_to_starting_player =
+                    active_before != starting_player && state.active_player == starting_player;
+                if just_returned_to_starting_player {
+                    expected_turn += 1;
+                }
+                assert_eq!(
+                    state.turn, expected_turn,
+                    "starting_player={starting_player:?}: turn must advance exactly when \
+                     active_player returns to the starting player"
+                );
+            }
+            assert!(
+                expected_turn >= 3,
+                "test must exercise at least two full round wraparounds"
+            );
+        }
     }
 
     #[test]
