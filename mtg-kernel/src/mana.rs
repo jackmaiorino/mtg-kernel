@@ -139,6 +139,7 @@ pub fn can_pay(
     let sources = gather_sources(player, state);
     let pool = state.players[player.index()].mana_pool;
     solve(cost, x_value, pool, &sources)
+        .filter(|plan| plan.life_paid <= state.players[player.index()].life)
 }
 
 /// Like `can_pay`, but checks/solves 2+ costs *together* against the same
@@ -181,7 +182,7 @@ pub fn can_pay_combined(
     ) {
         return None;
     }
-    Some(plan)
+    (plan.life_paid <= state.players[player.index()].life).then_some(plan)
 }
 
 pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {

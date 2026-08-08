@@ -656,10 +656,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v6_is_frozen() {
-        // Version 6 appends Escape's ordered cost definition and Sleep of
-        // the Dead's creature-target tap/skip-next-untap recipe.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xcf2b_0b92_dfac_dad2);
+    fn card_db_hash_v7_is_frozen() {
+        // Version 7 promotes Gut Shot's shared Phyrexian burn recipe and
+        // Ichor Wellspring's ordinary permanent plus trigger contract.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x7677_9a66_a707_0988);
     }
 
     #[test]

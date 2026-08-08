@@ -158,6 +158,13 @@ fn clockwork_percussionist_dies_effect() -> EffectOp {
     }
 }
 
+fn ichor_wellspring_draw_effect() -> EffectOp {
+    EffectOp::DrawCards {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+
 fn experimental_synthesizer_impulse_effect() -> EffectOp {
     // When Experimental Synthesizer enters or leaves the battlefield, exile
     // the top card of your library. Until end of turn, you may play that
@@ -196,6 +203,20 @@ const CLOCKWORK_PERCUSSIONIST_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbi
     intervening_if_kicked: false,
     effect: clockwork_percussionist_dies_effect,
 }];
+const ICHOR_WELLSPRING_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Etb,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        effect: ichor_wellspring_draw_effect,
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        home_zone: Zone::Graveyard,
+        intervening_if_kicked: false,
+        effect: ichor_wellspring_draw_effect,
+    },
+];
 const EXPERIMENTAL_SYNTHESIZER_TRIGGERS: [TriggeredAbilityDef; 2] = [
     TriggeredAbilityDef {
         condition: TriggerCondition::Etb,
@@ -238,6 +259,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Sneaky Snacker" => &SNEAKY_SNACKER_TRIGGERS,
         "Burning-Tree Emissary" => &BURNING_TREE_EMISSARY_TRIGGERS,
         "Clockwork Percussionist" => &CLOCKWORK_PERCUSSIONIST_TRIGGERS,
+        "Ichor Wellspring" => &ICHOR_WELLSPRING_TRIGGERS,
         "Experimental Synthesizer" => &EXPERIMENTAL_SYNTHESIZER_TRIGGERS,
         "Goblin Bushwhacker" => &GOBLIN_BUSHWHACKER_TRIGGERS,
         _ => &[],

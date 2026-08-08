@@ -1520,6 +1520,7 @@
     },
     {
       "name": "Gut Shot",
+      "engine_capability": "full",
       "mana_cost": "{R/P}",
       "mana_value": 1,
       "colors": [
@@ -1773,6 +1774,7 @@
     },
     {
       "name": "Ichor Wellspring",
+      "engine_capability": "full",
       "mana_cost": "{2}",
       "mana_value": 2,
       "colors": [],

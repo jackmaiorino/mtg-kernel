@@ -2460,6 +2460,7 @@ fn special_for(name: &str) -> Special {
         "Fiery Temper" => Special::BurnAnyTarget(3),
         "Fireblast" => Special::BurnAnyTarget(4),
         "Lava Dart" => Special::BurnAnyTarget(1),
+        "Gut Shot" => Special::BurnAnyTarget(1),
         "Chain Lightning" => Special::ChainLightning,
         "Deep Analysis" => Special::TargetPlayerDraw { draw: 2 },
         "Faithless Looting" => Special::DrawThenDiscard {
