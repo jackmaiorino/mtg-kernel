@@ -3534,6 +3534,7 @@ mod tests {
             episode_count: 2,
             scheduler_timeout: Duration::from_secs(300),
             measure_broker_service_time: false,
+            starting_player: None,
         };
 
         let error = run_native_science_loop_v1(
@@ -4169,6 +4170,7 @@ mod tests {
             episode_count: 2,
             scheduler_timeout: Duration::from_secs(600),
             measure_broker_service_time: false,
+            starting_player: None,
         };
         let genesis_scope =
             crate::native_training_executor_v1::run_bound_snapshot_construction_count_scope_v2();

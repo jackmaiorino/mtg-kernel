@@ -1336,6 +1336,24 @@ pub fn build_deck_pair_state(
     p0_deck: &[u16],
     p1_deck: &[u16],
 ) -> std::result::Result<GameState, DeckPreflightError> {
+    // Thin wrapper over the starting-player-aware core below, with the exact
+    // pre-existing literal (`PlayerId::P0`) supplied structurally: this
+    // function's own body and behavior are unchanged.
+    build_deck_pair_state_with_starting_player_v1(seed, p0_deck, p1_deck, PlayerId::P0)
+}
+
+/// Opt-in sibling of [`build_deck_pair_state`] taking an explicit starting
+/// player (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2). The opening
+/// seven-card deal below is unconditional and unordered by starting-player
+/// status either way: 103.8a's draw-skip is a first-turn *draw step* rule,
+/// which only applies later, after the pre-game deal already completed (see
+/// Section 1.2's downstream-assumption audit on opening-hand composition).
+pub fn build_deck_pair_state_with_starting_player_v1(
+    seed: u64,
+    p0_deck: &[u16],
+    p1_deck: &[u16],
+    starting_player: PlayerId,
+) -> std::result::Result<GameState, DeckPreflightError> {
     // Both complete decks are admitted before RNG consumption or state
     // construction, so a bad second seat cannot partially shuffle/mutate an
     // environment that callers might otherwise retain.
@@ -1344,7 +1362,13 @@ pub fn build_deck_pair_state(
     let mut shuffle_rng = SplitMix64::seed(seed);
     let lib0 = shuffled(p0_deck, &mut shuffle_rng);
     let lib1 = shuffled(p1_deck, &mut shuffle_rng);
-    let mut state = GameState::new_from_libraries(&lib0, &lib1, card_name, seed);
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &lib0,
+        &lib1,
+        card_name,
+        seed,
+        starting_player,
+    );
     for _ in 0..7 {
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P1));
@@ -1396,6 +1420,27 @@ pub fn build_deck_pair_state_environment_v2(
     p0_deck: &[u16],
     p1_deck: &[u16],
 ) -> std::result::Result<GameState, DeckPairBuildErrorV2> {
+    // Thin wrapper, same discipline as `build_deck_pair_state` above.
+    build_deck_pair_state_environment_v2_with_starting_player_v1(
+        pair_environment_seed,
+        p0_deck,
+        p1_deck,
+        PlayerId::P0,
+    )
+}
+
+/// Opt-in sibling of [`build_deck_pair_state_environment_v2`] taking an
+/// explicit starting player. Composes the starting-player authority with the
+/// environment-randomization-v2 deck-pair builder (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md`
+/// Section 1.2's downstream-assumption audit, first bullet): a P1-first
+/// request against an envrand-v2 game no longer silently falls back to
+/// P0-first.
+pub fn build_deck_pair_state_environment_v2_with_starting_player_v1(
+    pair_environment_seed: u64,
+    p0_deck: &[u16],
+    p1_deck: &[u16],
+    starting_player: PlayerId,
+) -> std::result::Result<GameState, DeckPairBuildErrorV2> {
     use crate::environment_randomization_v2 as env2;
     preflight_fully_supported_deck(p0_deck).map_err(DeckPairBuildErrorV2::DeckPreflight)?;
     preflight_fully_supported_deck(p1_deck).map_err(DeckPairBuildErrorV2::DeckPreflight)?;
@@ -1415,11 +1460,12 @@ pub fn build_deck_pair_state_environment_v2(
     .map_err(DeckPairBuildErrorV2::EnvironmentRandomization)?;
     let lib0 = env2::permutation_v2(p0_seed, p0_deck);
     let lib1 = env2::permutation_v2(p1_seed, p1_deck);
-    let mut state = GameState::new_from_libraries_environment_v2(
+    let mut state = GameState::new_from_libraries_environment_v2_with_starting_player_v1(
         &lib0,
         &lib1,
         card_name,
         pair_environment_seed,
+        starting_player,
     );
     for _ in 0..7 {
         event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));

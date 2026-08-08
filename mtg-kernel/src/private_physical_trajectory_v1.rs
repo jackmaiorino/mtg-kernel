@@ -1437,6 +1437,7 @@ mod tests {
             episode_count: 7,
             scheduler_timeout: Duration::from_secs(60),
             measure_broker_service_time: false,
+            starting_player: None,
         }
     }
 

@@ -787,6 +787,7 @@ fn build_corpus_v1(
         episode_count: EPISODE_COUNT_V1,
         scheduler_timeout: Duration::from_secs(86_400),
         measure_broker_service_time: false,
+        starting_player: None,
     };
     let inference =
         load_native_checkpoint_inference_v1(&parent.run, &parent.checkpoint, &parent.payload)

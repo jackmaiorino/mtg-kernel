@@ -1111,6 +1111,7 @@ mod windows_science_loop_tests {
             episode_count: 2,
             scheduler_timeout: Duration::from_secs(300),
             measure_broker_service_time: false,
+            starting_player: None,
         }
     }
 
@@ -1189,6 +1190,7 @@ mod windows_science_loop_tests {
             episode_count: 256,
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
+            starting_player: None,
         };
 
         let parent = TestParentV1::new("learning-smoke");
@@ -1928,6 +1930,7 @@ mod windows_science_loop_tests {
                         episode_count: 32,
                         scheduler_timeout: Duration::from_secs(3_600),
                         measure_broker_service_time: false,
+                        starting_player: None,
                     };
                     let run_started = std::time::Instant::now();
                     let (latest_generation_index, evaluation_counts) = if response_exploiter_runtime_enabled {
@@ -2103,6 +2106,7 @@ mod windows_science_loop_tests {
             episode_count: eval_pairs,
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
+            starting_player: None,
         };
         let run_checkpoint = |checkpoint: &CheckpointManifestV3, payload: &[u8]| {
             if wide {
@@ -2300,6 +2304,7 @@ mod windows_science_loop_tests {
             episode_count: eval_pairs,
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
+            starting_player: None,
         };
         let run_checkpoint =
             |checkpoint: &crate::native_training_store_checkpoint_v3::CheckpointManifestV3,
@@ -2484,6 +2489,24 @@ mod windows_science_loop_tests {
         let wide = std::env::var("WIDE").is_ok_and(|value| value != "0");
         let environment_randomization_v2 =
             std::env::var("H2H_ENVIRONMENT_RANDOMIZATION_V2").is_ok_and(|value| value != "0");
+        // Opt-in starting-player authority (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md`
+        // Section 1.2), analogous to the other `H2H_*` bindings above: unset
+        // reproduces the legacy P0-first path exactly (`runner_config.starting_player`
+        // stays `None`, unchanged from every existing H2H invocation); set,
+        // it must be exactly `"P0"` or `"P1"` or the test panics rather than
+        // silently falling back (deny-invalid, matching `required_env_v1`'s
+        // discipline for the other required knobs above).
+        let starting_player: Option<crate::ids::PlayerId> = match std::env::var("H2H_STARTING_PLAYER")
+        {
+            Err(_) => None,
+            Ok(value) => Some(match value.as_str() {
+                "P0" => crate::ids::PlayerId::P0,
+                "P1" => crate::ids::PlayerId::P1,
+                other => panic!(
+                    "H2H_STARTING_PLAYER must be exactly \"P0\" or \"P1\" when set; got {other:?}"
+                ),
+            }),
+        };
         assert!(
             !(wide && init_store.is_some()),
             "WIDE=1 is not supported with H2H_INIT_STORE: the wide protocol trains fresh-init only"
@@ -2652,6 +2675,7 @@ mod windows_science_loop_tests {
             opponent_gen_knob.is_some()
         );
         println!("H2H envrand_v2={environment_randomization_v2}");
+        println!("H2H starting_player={starting_player:?}");
         let primary = load_native_checkpoint_inference_v1(
             &opponent_run,
             opponent_checkpoint,
@@ -2682,6 +2706,7 @@ mod windows_science_loop_tests {
             episode_count,
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
+            starting_player,
         };
         let result = if wide {
             run_native_checkpoint_wide_with_ladder_opponent_eval_v1(
@@ -3044,6 +3069,7 @@ mod windows_science_loop_tests {
                 episode_count,
                 scheduler_timeout: Duration::from_secs(3_600),
                 measure_broker_service_time: false,
+                starting_player: None,
             },
             population_engine.clone(),
         )
@@ -3255,6 +3281,7 @@ mod windows_science_loop_tests {
             episode_count: 256,
             scheduler_timeout: Duration::from_secs(3_600),
             measure_broker_service_time: false,
+            starting_player: None,
         };
 
         let reference_boundary = load_native_training_boundary_v2(&root, &run, 0).unwrap();

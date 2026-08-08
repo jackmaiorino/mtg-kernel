@@ -21,6 +21,7 @@ fn legacy_uniform_v2_c625d9a_golden_is_unchanged() {
         episode_count: 16,
         scheduler_timeout: Duration::from_secs(30),
         measure_broker_service_time: true,
+        starting_player: None,
     })
     .unwrap();
 

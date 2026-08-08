@@ -781,9 +781,13 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV2 {
         // frozen flat-action V2 reset exactly, while the environment
         // randomization V2 projection selects the combined activation
         // boundary, where `environment_seed` is the full-width shared pair
-        // root the frozen trainer schedule derived.
-        match environment {
-            FlatScoredSessionEnvironmentV1::Legacy => {
+        // root the frozen trainer schedule derived. Crossed with
+        // `config.starting_player` (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md`
+        // Section 1.2): `None` (every caller except the opt-in H2H eval
+        // binding) takes the exact two pre-existing calls below, unchanged;
+        // `Some` dispatches to the starting-player-aware siblings instead.
+        match (environment, config.starting_player) {
+            (FlatScoredSessionEnvironmentV1::Legacy, None) => {
                 FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
                     episode_id,
                     environment_seed,
@@ -793,13 +797,35 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV2 {
                 )
                 .map_err(|_| ())
             }
-            FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2 => {
+            (FlatScoredSessionEnvironmentV1::Legacy, Some(starting_player)) => {
+                FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_with_starting_player_v1(
+                    episode_id,
+                    environment_seed,
+                    config.max_physical_decisions,
+                    config.max_policy_steps,
+                    config.deck_ids.clone(),
+                    starting_player,
+                )
+                .map_err(|_| ())
+            }
+            (FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2, None) => {
                 FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
                     episode_id,
                     environment_seed,
                     config.max_physical_decisions,
                     config.max_policy_steps,
                     config.deck_ids.clone(),
+                )
+                .map_err(|_| ())
+            }
+            (FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2, Some(starting_player)) => {
+                FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1(
+                    episode_id,
+                    environment_seed,
+                    config.max_physical_decisions,
+                    config.max_policy_steps,
+                    config.deck_ids.clone(),
+                    starting_player,
                 )
                 .map_err(|_| ())
             }
@@ -1350,6 +1376,7 @@ mod tests {
             episode_count,
             scheduler_timeout: Duration::from_secs(60),
             measure_broker_service_time: false,
+            starting_player: None,
         }
     }
 

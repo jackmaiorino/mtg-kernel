@@ -23,6 +23,7 @@
 use crate::async_rollout::{
     AsyncRolloutEpisodeV1, AsyncRolloutTerminalV1, AsyncRolloutWorkerPhaseV1,
 };
+use crate::ids::PlayerId;
 use crate::rl::{
     derive_env_seed, derive_policy_seed, PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2,
 };
@@ -113,6 +114,12 @@ pub struct AsyncRolloutConfigV2 {
     /// isolation to enforce a hard kill.
     pub scheduler_timeout: Duration,
     pub measure_broker_service_time: bool,
+    /// The opt-in starting-player authority (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md`
+    /// Section 1.2). `None` (every existing construction site) preserves the
+    /// exact legacy per-family `reset_session` dispatch, unchanged; `Some`
+    /// forces every episode reset through this config to use the named
+    /// physical seat as the starting player instead of the legacy default.
+    pub starting_player: Option<PlayerId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1723,6 +1730,7 @@ mod tests {
             episode_count: 16,
             scheduler_timeout: Duration::from_secs(30),
             measure_broker_service_time: true,
+            starting_player: None,
         }
     }
 
