@@ -2915,8 +2915,11 @@ mod windows_science_loop_tests {
         // alongside the v1 frozen seeds 1971001 / 1971011.
         if diagnostic_v1 {
             assert!(
-                matches!(eval_seed, 1_973_001 | 1_978_001 | 1_978_011),
-                "diagnostic mixture seed must be the frozen 1973001 or a build v2 probe seed"
+                matches!(
+                    eval_seed,
+                    1_973_001 | 1_978_001 | 1_978_011 | 1_978_101 | 1_978_111
+                ),
+                "diagnostic mixture seed must be the frozen 1973001, a build v2 probe seed, or a denovo-screen probe seed"
             );
         } else {
             assert!(
