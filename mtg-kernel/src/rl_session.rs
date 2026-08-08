@@ -3872,7 +3872,11 @@ impl RlEpisodeSessionV1 {
         suppression_audit_mode: SuppressionAuditMode,
     ) -> Result<Self, RlSessionError> {
         let mut session = measure_optional(&mut profile, RlPhaseV1::Reset, || {
-            let (deck_hashes, state) = build_session_deck_pair_state(&deck_ids, randomization)?;
+            // `RlEpisodeSessionV1` does not (yet) expose a starting-player
+            // opt-in of its own; `FastActorSessionV1` below is the type the
+            // H2H eval path actually resets through.
+            let (deck_hashes, state) =
+                build_session_deck_pair_state(&deck_ids, randomization, None)?;
             Ok(RlEpisodeSessionV1 {
                 deck_ids,
                 deck_hashes,
@@ -4484,6 +4488,56 @@ impl FastActorSessionV1 {
             max_policy_steps,
             deck_ids,
             FlatActionContractModeV1::V2,
+            None,
+        )
+    }
+
+    /// Opt-in sibling of [`FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2`]
+    /// (legacy randomness) taking an explicit starting player
+    /// (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2).
+    pub fn reset_with_decks_and_limits_flat_action_v2_with_starting_player_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        starting_player: PlayerId,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
+            episode_id,
+            ResetRandomization::Legacy { env_seed },
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            FlatActionContractModeV1::V2,
+            Some(starting_player),
+        )
+    }
+
+    /// Opt-in sibling of [`FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2`]
+    /// taking an explicit starting player
+    /// (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2). This is the
+    /// constructor the H2H eval path (`ladder_head_to_head_eval_v1`'s
+    /// `H2H_STARTING_PLAYER` binding, via `FlatScoredFamilyV2::reset_session`)
+    /// resolves to when the starting-player authority is set.
+    pub fn reset_with_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        starting_player: PlayerId,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
+            episode_id,
+            ResetRandomization::EnvironmentV2 {
+                pair_environment_seed,
+            },
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            FlatActionContractModeV1::V2,
+            Some(starting_player),
         )
     }
 
@@ -4502,9 +4556,14 @@ impl FastActorSessionV1 {
             max_policy_steps,
             deck_ids,
             flat_action_contract_mode,
+            None,
         )
     }
 
+    /// `starting_player`: the opt-in starting-player authority. `None`
+    /// reproduces every existing caller's exact path (structurally, via
+    /// `build_session_deck_pair_state`'s own `None` arm); `Some` is reached
+    /// only through the two `_with_starting_player_v1` siblings above.
     fn reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
         episode_id: u64,
         randomization: ResetRandomization,
@@ -4512,8 +4571,10 @@ impl FastActorSessionV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
         flat_action_contract_mode: FlatActionContractModeV1,
+        starting_player: Option<PlayerId>,
     ) -> Result<Self, RlSessionError> {
-        let (deck_hashes, state) = build_session_deck_pair_state(&deck_ids, randomization)?;
+        let (deck_hashes, state) =
+            build_session_deck_pair_state(&deck_ids, randomization, starting_player)?;
         let mut session = FastActorSessionV1 {
             deck_ids,
             deck_hashes,
@@ -6519,14 +6580,20 @@ enum ResetRandomization {
 /// legacy or environment-v2 deck-pair builder. Returns only after all deck
 /// resolution, preflight, and KDF work has succeeded, so no surface or
 /// session is constructed for a failing reset.
+/// `starting_player`: the opt-in starting-player authority
+/// (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2). `None` dispatches to
+/// the exact pre-existing calls (`build_deck_pair_state`/
+/// `build_deck_pair_state_environment_v2`), unchanged; `Some` dispatches to
+/// their starting-player-aware siblings instead.
 fn build_session_deck_pair_state(
     deck_ids: &SessionDeckIdsV1,
     randomization: ResetRandomization,
+    starting_player: Option<PlayerId>,
 ) -> Result<(SessionDeckHashesV1, crate::state::GameState), RlSessionError> {
     let resolved_decks = resolve_runtime_decks(deck_ids)?;
     let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
-    let state = match randomization {
-        ResetRandomization::Legacy { env_seed } => build_deck_pair_state(
+    let state = match (randomization, starting_player) {
+        (ResetRandomization::Legacy { env_seed }, None) => build_deck_pair_state(
             env_seed,
             resolved_decks[0].card_ids,
             resolved_decks[1].card_ids,
@@ -6537,12 +6604,41 @@ fn build_session_deck_pair_state(
                 "runtime deck catalog failed full-support preflight",
             )
         })?,
-        ResetRandomization::EnvironmentV2 {
-            pair_environment_seed,
-        } => crate::rl::build_deck_pair_state_environment_v2(
+        (ResetRandomization::Legacy { env_seed }, Some(starting_player)) => {
+            crate::rl::build_deck_pair_state_with_starting_player_v1(
+                env_seed,
+                resolved_decks[0].card_ids,
+                resolved_decks[1].card_ids,
+                starting_player,
+            )
+            .map_err(|_| {
+                session_error(
+                    RlSessionErrorCode::UnsupportedDeck,
+                    "runtime deck catalog failed full-support preflight",
+                )
+            })?
+        }
+        (
+            ResetRandomization::EnvironmentV2 {
+                pair_environment_seed,
+            },
+            None,
+        ) => crate::rl::build_deck_pair_state_environment_v2(
             pair_environment_seed,
             resolved_decks[0].card_ids,
             resolved_decks[1].card_ids,
+        )
+        .map_err(map_deck_pair_build_error_v2)?,
+        (
+            ResetRandomization::EnvironmentV2 {
+                pair_environment_seed,
+            },
+            Some(starting_player),
+        ) => crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
+            pair_environment_seed,
+            resolved_decks[0].card_ids,
+            resolved_decks[1].card_ids,
+            starting_player,
         )
         .map_err(map_deck_pair_build_error_v2)?,
     };

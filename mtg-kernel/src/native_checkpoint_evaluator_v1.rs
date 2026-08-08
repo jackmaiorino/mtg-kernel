@@ -773,6 +773,7 @@ mod tests {
             episode_count: 4,
             scheduler_timeout: Duration::from_secs(60),
             measure_broker_service_time: false,
+            starting_player: None,
         }
     }
 
@@ -1059,6 +1060,7 @@ mod tests {
                 episode_count: u64::try_from(outcomes.len()).unwrap(),
                 scheduler_timeout: Duration::from_secs(60),
                 measure_broker_service_time: false,
+                starting_player: None,
             },
             worker_count: 1,
             sessions_per_worker: 2,

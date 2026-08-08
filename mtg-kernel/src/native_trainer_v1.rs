@@ -2523,6 +2523,7 @@ impl NativeTrainerStateV2 {
             episode_count: config.batch_episodes,
             scheduler_timeout: config.scheduler_timeout,
             measure_broker_service_time: config.measure_broker_service_time,
+            starting_player: None,
         };
         let (producer, consumer) = native_policy_association_channel_v1();
         #[cfg(test)]
@@ -2885,6 +2886,7 @@ impl NativeTrainerStateV2 {
             episode_count: config.batch_episodes,
             scheduler_timeout: config.scheduler_timeout,
             measure_broker_service_time: config.measure_broker_service_time,
+            starting_player: None,
         };
         let (producer, consumer) = native_policy_association_channel_wide_v1();
         let observer = NativePolicyTrajectoryObserverWideV1::new_v1(

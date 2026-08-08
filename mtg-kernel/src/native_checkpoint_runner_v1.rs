@@ -17,6 +17,7 @@ use crate::async_flat_scored_rollout_v2::{
     FlatScoredTerminalEventV2, FlatScoredTrajectoryObserverV2,
 };
 use crate::async_rollout_v2::AsyncRolloutConfigV2;
+use crate::ids::PlayerId;
 use crate::native_checkpoint_inference_v1::{
     load_native_checkpoint_inference_v1, load_native_checkpoint_inference_wide_v1,
     NativeCheckpointInferenceErrorV1,
@@ -54,6 +55,13 @@ pub struct NativeCheckpointRunnerConfigV1 {
     pub episode_count: u64,
     pub scheduler_timeout: Duration,
     pub measure_broker_service_time: bool,
+    /// The opt-in starting-player authority (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md`
+    /// Section 1.2), threaded verbatim into the rollout config below. `None`
+    /// (every existing caller) reproduces the exact legacy per-episode reset
+    /// path; `Some` is the `ladder_head_to_head_eval_v1` native test's
+    /// `H2H_STARTING_PLAYER` environment binding, forcing the named physical
+    /// seat to be the starting player of every rolled-out episode.
+    pub starting_player: Option<PlayerId>,
 }
 
 /// Native-schedule facts observed from one completed engine trajectory.
@@ -649,6 +657,7 @@ fn run_native_checkpoint_core_v1(
         episode_count: config.episode_count,
         scheduler_timeout: config.scheduler_timeout,
         measure_broker_service_time: config.measure_broker_service_time,
+        starting_player: config.starting_player,
     };
     let mut scorer = inference.batch_scorer_v1();
     // Exhaustive rollout dispatch by the sealed contract: neither core can
@@ -865,6 +874,7 @@ fn run_native_checkpoint_wide_core_v1(
         episode_count: config.episode_count,
         scheduler_timeout: config.scheduler_timeout,
         measure_broker_service_time: config.measure_broker_service_time,
+        starting_player: config.starting_player,
     };
     let mut scorer = inference.batch_scorer_v1();
     // Exhaustive rollout dispatch by the sealed contract: neither core can
@@ -1175,7 +1185,92 @@ mod tests {
             episode_count: 2,
             scheduler_timeout: Duration::from_secs(60),
             measure_broker_service_time: false,
+            starting_player: None,
         }
+    }
+
+    /// LEGACY BIT-IDENTITY GATE (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section
+    /// 1.2). This is the golden-regression half of the two-part proof
+    /// required before any starting-player authority is trusted: with the
+    /// authority unset (`runner_config_v1()`'s `starting_player: None`), the
+    /// exact same fixed-seed episode batch, run through this crate's real
+    /// checkpoint-eval path (`run_native_checkpoint_v1`, the same function
+    /// `ladder_head_to_head_eval_v1` and `run_native_checkpoint_core_v1`
+    /// share), must produce byte-identical results to the parent commit this
+    /// branch forked from (`cc8e20f8080bd8a46ccee69b1a434bd89822d06b`,
+    /// `fable/response-exploiter-v2-campaign`), before the starting-player
+    /// authority existed at all.
+    ///
+    /// Every constant below was captured by running this exact scenario
+    /// (same fixture helpers, same seeds, same episode window) on that
+    /// parent commit, via a temporary extraction test added there only for
+    /// this capture and discarded afterward (never committed): checked out
+    /// read-only into a scratch worktree, `run_native_checkpoint_v1` invoked
+    /// with the pre-existing `NativeCheckpointRunnerConfigV1` shape (no
+    /// `starting_player` field existed on that commit), and the resulting
+    /// hashes/counts printed. Every value asserted here reproduces that
+    /// printed output verbatim.
+    #[test]
+    fn starting_player_unset_reproduces_parent_commit_checkpoint_eval_bytes_v1() {
+        let fixture = fixture_v1();
+        let (run, checkpoint) = authorities_v1();
+        let result =
+            run_native_checkpoint_v1(&run, &checkpoint, &fixture.payload, runner_config_v1())
+                .unwrap();
+
+        assert_eq!(
+            lower_hex_raw32_v1(result.logical_state_sha256()),
+            "4306c612de240410aaf5f1603562bf659a49102a740b1ff3de9b71adff68d0bd"
+        );
+        assert_eq!(
+            lower_hex_raw32_v1(result.model_parameter_sha256()),
+            "36157c71b9fd736d4913e6c5722dcb9c1e4f119b7b28b108bde9d74f18862d54"
+        );
+        assert_eq!(
+            lower_hex_raw32_v1(result.train_state_sha256()),
+            "5854b477e2ce22dda199b5c9442824a339acd15d7eb8666f19895aa0d7c53c26"
+        );
+
+        let bindings = result.episode_bindings();
+        assert_eq!(bindings.len(), 2);
+
+        assert_eq!(bindings[0].episode_index(), 2);
+        assert_eq!(bindings[0].environment_seed(), 3_233_989_599_464_222_885);
+        assert_eq!(
+            bindings[0].deck_hashes(),
+            [909_447_583_901_160_127, 909_447_583_901_160_127]
+        );
+        assert_eq!(bindings[0].learner_seat(), PlayerSeatV1::P0);
+        assert_eq!(
+            lower_hex_raw32_v1(bindings[0].trajectory_sha256()),
+            "1693f81f7c600950179f06f6d5388132caecd68996145ae8b149463b97b1b580"
+        );
+        assert_eq!(bindings[0].outer_trajectory_sha256_v2(), None);
+        assert_eq!(bindings[0].policy_step_count(), 151);
+        assert_eq!(bindings[0].physical_decision_count(), 141);
+        assert_eq!(bindings[0].learner_policy_step_count(), 63);
+        assert_eq!(bindings[0].opponent_policy_step_count(), 88);
+        assert_eq!(bindings[0].learner_physical_decision_count(), 53);
+        assert_eq!(bindings[0].opponent_physical_decision_count(), 88);
+
+        assert_eq!(bindings[1].episode_index(), 3);
+        assert_eq!(bindings[1].environment_seed(), 3_233_989_599_464_222_885);
+        assert_eq!(
+            bindings[1].deck_hashes(),
+            [909_447_583_901_160_127, 909_447_583_901_160_127]
+        );
+        assert_eq!(bindings[1].learner_seat(), PlayerSeatV1::P1);
+        assert_eq!(
+            lower_hex_raw32_v1(bindings[1].trajectory_sha256()),
+            "9b1eed043a756f60573b5bb8c010861f1f70c7c490531f81cee3f0bc148c94b9"
+        );
+        assert_eq!(bindings[1].outer_trajectory_sha256_v2(), None);
+        assert_eq!(bindings[1].policy_step_count(), 191);
+        assert_eq!(bindings[1].physical_decision_count(), 161);
+        assert_eq!(bindings[1].learner_policy_step_count(), 101);
+        assert_eq!(bindings[1].opponent_policy_step_count(), 90);
+        assert_eq!(bindings[1].learner_physical_decision_count(), 100);
+        assert_eq!(bindings[1].opponent_physical_decision_count(), 61);
     }
 
     #[test]
