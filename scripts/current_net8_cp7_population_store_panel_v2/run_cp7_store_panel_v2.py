@@ -315,9 +315,15 @@ def anchor_command(args: argparse.Namespace, model: dict[str, Any], first_pair: 
     # issues PopulationStoreGeneration: any environment-randomization-v2
     # store, generation required either way.
     root_flag = "--population-store-root" if mode == "population" else "--store-root"
+    # Per-model generation (model["generation"], set by load_store_identity):
+    # every model in a group shares one panel-level --generation in the
+    # common case, but a group built from per-spec GENERATION values (see
+    # parse_model_spec / main()'s mixing check) can legitimately differ
+    # model to model, so this must never read the shared args.generation
+    # directly.
     execution_args = _exec_argument_string([
         "--repo-root", str(args.mage_repo), "--scorer-exe", str(args.scorer_exe),
-        root_flag, model["root"], "--generation", str(args.generation),
+        root_flag, model["root"], "--generation", str(model["generation"]),
         "--base-seed", str(args.base_seed), "--first-episode", str(first_pair * 2),
         "--pairs", str(pair_count), "--opponent", "cp7", "--cp7-skill", "7",
         "--outcome-export", str(outcome),
@@ -804,7 +810,15 @@ def build_launch_plan(args: argparse.Namespace, identities: dict[str, dict[str, 
             "mode": args.mode, "opponent": "xmage-cp7", "cp7_skill": 7,
             "base_seed": args.base_seed, "pair_start": args.pair_start,
             "pair_count": args.pairs, "episode_count": args.pairs * 2,
-            "generation": args.generation, "workers": args.workers,
+            # args.generation is the single shared panel-level value, or null
+            # when every model instead carries its own --model spec
+            # GENERATION (see parse_model_spec / main()'s mixing check). The
+            # per-model value actually used for each model, either way, is
+            # always in inputs.models[label].generation above.
+            "generation": args.generation,
+            "model_generations": {label: identity["generation"]
+                                  for label, identity in identities.items()},
+            "workers": args.workers,
             "task_pairs": args.task_pairs, "task_count": len(tasks),
             "task_timeout_seconds": args.task_timeout_seconds,
             "tolerate_engine_faults": args.tolerate_engine_faults,
@@ -830,9 +844,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         fail("smoke requires one pair and formal requires 128 pairs")
     if sha256(args.source_database) != CARD_DB_HASH:
         fail("card database hash mismatch")
-    models = {label: (mode, root) for label, mode, root in args.models}
-    identities = {label: load_store_identity(root, args.generation, mode=mode)
-                  for label, (mode, root) in models.items()}
+    models = {label: (mode, generation, root) for label, mode, generation, root in args.models}
+    identities = {label: load_store_identity(root, generation, mode=mode)
+                  for label, (mode, generation, root) in models.items()}
     chunks = chunk_ranges(args.pair_start, args.pairs, args.task_pairs)
     task_plan = planned_tasks(list(identities), chunks)
     args.evidence_root.mkdir(parents=True)
@@ -1043,20 +1057,33 @@ def parser() -> argparse.ArgumentParser:
     return value
 
 
-def parse_model_spec(spec: str) -> tuple[str, str, Path]:
-    """Parses one --model spec: label=[MODE:]STORE_ROOT.
+GENERATION_PREFIX = re.compile(r"^([0-9]+):")
+
+
+def parse_model_spec(spec: str) -> tuple[str, str, int | None, Path]:
+    """Parses one --model spec: label=[MODE:][GENERATION:]STORE_ROOT.
 
     MODE is one of MODEL_AUTHORITY_MODES ("population" or "original"),
     defaulting to "population" when no recognized MODE: prefix is present --
     this is the exact bareword label=STORE_ROOT shape every existing
-    invocation (and the running cells 1/2 driver) already uses, so it keeps
-    working unchanged. Matching is a literal startswith check against the
-    two known prefixes, never a blind split on the first colon, because a
-    Windows store root routinely starts with its own drive-letter colon
-    (e.g. "D:\\...") that must not be mistaken for a mode prefix.
+    invocation already uses, so it keeps working unchanged. Matching is a
+    literal startswith check against the two known prefixes, never a blind
+    split on the first colon, because a Windows store root routinely starts
+    with its own drive-letter colon (e.g. "D:\\...") that must not be
+    mistaken for a mode prefix.
+
+    GENERATION, if present, is a decimal run immediately followed by a colon,
+    checked after the mode prefix is stripped. This can never collide with a
+    real store root either: Windows drive letters are always a single ASCII
+    letter, never a digit, so a path can never start with digits-then-colon.
+    Returns None for GENERATION when the spec does not carry one -- the
+    caller (main()) decides whether that is allowed, since whether a
+    per-spec generation is required, forbidden, or optional depends on
+    whether --generation was also given and on what every OTHER --model spec
+    in the same invocation did (see main()'s mixing check).
     """
     if spec.count("=") != 1:
-        fail("model must be label=[MODE:]STORE_ROOT")
+        fail("model must be label=[MODE:][GENERATION:]STORE_ROOT")
     label, raw_root = spec.split("=", 1)
     if not label or not label.replace("-", "").replace("_", "").isalnum():
         fail("model label is invalid")
@@ -1068,28 +1095,61 @@ def parse_model_spec(spec: str) -> tuple[str, str, Path]:
             mode = candidate
             remainder = raw_root[len(prefix):]
             break
+    generation: int | None = None
+    generation_match = GENERATION_PREFIX.match(remainder)
+    if generation_match is not None:
+        generation = int(generation_match.group(1))
+        remainder = remainder[generation_match.end():]
     if not remainder:
         fail("model store root is empty")
-    return label, mode, Path(remainder)
+    return label, mode, generation, Path(remainder)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.self_test:
         return self_test()
-    required = (args.evidence_root, args.generation, args.mode, args.base_seed,
+    # --generation is no longer unconditionally required here: it becomes
+    # optional exactly when every --model spec carries its own GENERATION
+    # (see the mixing check below). Every other panel argument is still
+    # mandatory as before.
+    required = (args.evidence_root, args.mode, args.base_seed,
                 args.pairs, args.scorer_exe, args.mage_repo, args.source_database, args.maven)
     if (any(value is None for value in required)
             or not 0 <= args.base_seed <= 0x7FFF_FFFF_FFFF_FFFF
             or args.pair_start < 0 or not 1 <= args.task_pairs <= 128
             or args.task_timeout_seconds < 60):
         fail("missing or invalid panel arguments")
-    parsed: list[tuple[str, str, Path]] = [parse_model_spec(spec) for spec in args.model_specs]
-    if len(parsed) != 3 or len({label for label, _, _ in parsed}) != 3:
+    parsed: list[tuple[str, str, int | None, Path]] = [
+        parse_model_spec(spec) for spec in args.model_specs]
+    if len(parsed) != 3 or len({label for label, _, _, _ in parsed}) != 3:
         fail("exactly three uniquely labelled models are required")
-    if len({root.resolve() for _, _, root in parsed}) != 3:
+    if len({root.resolve() for _, _, _, root in parsed}) != 3:
         fail("three distinct population Store roots are required")
-    args.models = parsed
+    # Exactly two valid forms, no mixing, fail-closed on any ambiguity:
+    #   (a) shared form: --generation N given at the panel level, and every
+    #       --model spec omits GENERATION (relies on the shared value).
+    #   (b) per-model form: --generation omitted at the panel level, and
+    #       every --model spec carries its own GENERATION.
+    # A spec-level GENERATION together with a panel-level --generation is
+    # rejected even if the two values would happen to agree: which one is
+    # authoritative must never be a judgment call at read time. Likewise,
+    # some specs carrying GENERATION while others do not is rejected outright
+    # rather than silently falling back to the panel-level value for the
+    # ones missing it.
+    per_spec_generations = [generation for _, _, generation, _ in parsed]
+    all_have_generation = all(value is not None for value in per_spec_generations)
+    any_have_generation = any(value is not None for value in per_spec_generations)
+    if any_have_generation and not all_have_generation:
+        fail("either every --model spec carries its own GENERATION or none do")
+    if all_have_generation and args.generation is not None:
+        fail("--generation must be omitted when every --model spec carries its own GENERATION")
+    if not all_have_generation and args.generation is None:
+        fail("--generation is required when no --model spec carries its own GENERATION")
+    args.models = [
+        (label, mode, generation if generation is not None else args.generation, root)
+        for label, mode, generation, root in parsed
+    ]
     run(args)
     return 0
 

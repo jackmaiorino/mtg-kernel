@@ -46,7 +46,7 @@ class PanelRunnerTest(unittest.TestCase):
             "sampler_identity": panel.SAMPLER_IDENTITY,
             "sampler_contract_sha256": panel.SAMPLER_CONTRACT,
         }
-        self.model = {"root": "store", "checkpoint": self.checkpoint}
+        self.model = {"root": "store", "generation": 1024, "checkpoint": self.checkpoint}
 
     def _terminal(self, pair: int, seat: str, ordinal: int) -> dict[str, object]:
         episode = pair * 2 + int(seat[1])
@@ -382,29 +382,33 @@ class PanelRunnerTest(unittest.TestCase):
     def test_model_spec_defaults_to_population_mode_unprefixed(self) -> None:
         # The exact bareword shape every existing invocation (including the
         # live cells-1/2 driver) already uses must keep parsing identically.
-        label, mode, root = panel.parse_model_spec(
+        label, mode, generation, root = panel.parse_model_spec(
             r"seed-970001=D:\mtg-kernel-scaled-selfplay-population-v1\store")
         self.assertEqual(label, "seed-970001")
         self.assertEqual(mode, "population")
+        self.assertIsNone(generation)
         self.assertEqual(root, Path(r"D:\mtg-kernel-scaled-selfplay-population-v1\store"))
 
     def test_model_spec_windows_drive_letter_colon_is_not_a_mode_prefix(self) -> None:
         # "D:" must never be mistaken for a "population:"/"original:" prefix.
-        label, mode, root = panel.parse_model_spec(r"promoted2=D:\pool3\primary")
+        label, mode, generation, root = panel.parse_model_spec(r"promoted2=D:\pool3\primary")
         self.assertEqual(mode, "population")
+        self.assertIsNone(generation)
         self.assertEqual(root, Path(r"D:\pool3\primary"))
 
     def test_model_spec_explicit_population_prefix(self) -> None:
-        label, mode, root = panel.parse_model_spec(
+        label, mode, generation, root = panel.parse_model_spec(
             r"denovo-256=population:D:\denovo-store\run-0\store")
         self.assertEqual(mode, "population")
+        self.assertIsNone(generation)
         self.assertEqual(root, Path(r"D:\denovo-store\run-0\store"))
 
     def test_model_spec_explicit_original_prefix(self) -> None:
-        label, mode, root = panel.parse_model_spec(
+        label, mode, generation, root = panel.parse_model_spec(
             r"promoted2=original:D:\mtg-kernel-ladder-pilot-20260725\pool3\primary")
         self.assertEqual(label, "promoted2")
         self.assertEqual(mode, "original")
+        self.assertIsNone(generation)
         self.assertEqual(root, Path(r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary"))
 
     def test_model_spec_rejects_empty_root_and_bad_label(self) -> None:
@@ -415,6 +419,31 @@ class PanelRunnerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             panel.parse_model_spec("no-equals-sign")
 
+    # -- new: per-model GENERATION spec parsing --------------------------------
+
+    def test_model_spec_explicit_generation_with_mode(self) -> None:
+        label, mode, generation, root = panel.parse_model_spec(
+            r"promoted2=original:384:D:\mtg-kernel-ladder-pilot-20260725\pool3\primary")
+        self.assertEqual(mode, "original")
+        self.assertEqual(generation, 384)
+        self.assertEqual(root, Path(r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary"))
+
+    def test_model_spec_explicit_generation_without_mode_defaults_population(self) -> None:
+        label, mode, generation, root = panel.parse_model_spec(
+            r"denovo-256=256:D:\denovo-store\run-0\store")
+        self.assertEqual(mode, "population")
+        self.assertEqual(generation, 256)
+        self.assertEqual(root, Path(r"D:\denovo-store\run-0\store"))
+
+    def test_model_spec_generation_digits_never_mistaken_for_a_path(self) -> None:
+        # A three-digit generation immediately followed by a drive-letter
+        # colon must not be swallowed into the root or misparsed: digits are
+        # never a valid Windows drive letter, so "NNN:D:\..." is unambiguous.
+        label, mode, generation, root = panel.parse_model_spec(
+            r"denovo-512=population:512:D:\denovo-512-store\run-0\store")
+        self.assertEqual(generation, 512)
+        self.assertEqual(root, Path(r"D:\denovo-512-store\run-0\store"))
+
     def test_load_store_identity_rejects_invalid_mode(self) -> None:
         with self.assertRaises(ValueError):
             panel.load_store_identity(Path("."), 0, mode="bogus")
@@ -422,8 +451,10 @@ class PanelRunnerTest(unittest.TestCase):
     def test_anchor_command_selects_flag_by_mode(self) -> None:
         args = types.SimpleNamespace(mage_repo=Path("mage"), scorer_exe=Path("scorer"),
                                      generation=384, base_seed=7, maven=Path("mvn"))
-        population_model = {"root": "store", "mode": "population", "checkpoint": self.checkpoint}
-        original_model = {"root": "store", "mode": "original", "checkpoint": self.checkpoint}
+        population_model = {"root": "store", "mode": "population", "generation": 384,
+                            "checkpoint": self.checkpoint}
+        original_model = {"root": "store", "mode": "original", "generation": 384,
+                          "checkpoint": self.checkpoint}
         population_command = panel.anchor_command(args, population_model, 0, 1, Path("o.jsonl"))
         original_command = panel.anchor_command(args, original_model, 0, 1, Path("o.jsonl"))
         self.assertIn("--population-store-root", population_command[-1])
@@ -432,9 +463,79 @@ class PanelRunnerTest(unittest.TestCase):
         # A model dict with no "mode" key at all (the shape every pre-existing
         # caller and fixture uses) must still default to population, exactly
         # as before this change.
-        legacy_model = {"root": "store", "checkpoint": self.checkpoint}
+        legacy_model = {"root": "store", "generation": 384, "checkpoint": self.checkpoint}
         legacy_command = panel.anchor_command(args, legacy_model, 0, 1, Path("o.jsonl"))
         self.assertIn("--population-store-root", legacy_command[-1])
+
+    def test_anchor_command_uses_the_models_own_generation_not_the_shared_one(self) -> None:
+        # The whole point of per-model GENERATION: a group built from
+        # per-spec generations can legitimately differ model to model, and
+        # anchor_command must never fall back to args.generation once a
+        # model dict carries its own.
+        args = types.SimpleNamespace(mage_repo=Path("mage"), scorer_exe=Path("scorer"),
+                                     generation=None, base_seed=7, maven=Path("mvn"))
+        denovo_256 = {"root": "store256", "mode": "population", "generation": 256,
+                     "checkpoint": self.checkpoint}
+        denovo_512 = {"root": "store512", "mode": "population", "generation": 512,
+                     "checkpoint": self.checkpoint}
+        command_256 = panel.anchor_command(args, denovo_256, 0, 1, Path("o.jsonl"))
+        command_512 = panel.anchor_command(args, denovo_512, 0, 1, Path("o.jsonl"))
+        self.assertIn("--generation 256", command_256[-1])
+        self.assertIn("--generation 512", command_512[-1])
+
+    # -- new: main()'s --generation / per-spec GENERATION mixing rule ---------
+
+    def _main_common_args(self, evidence_root: str) -> list[str]:
+        return ["--evidence-root", evidence_root, "--mode", "smoke", "--base-seed", "1",
+                "--pairs", "1", "--scorer-exe", "scorer", "--mage-repo", "mage",
+                "--source-database", "cards", "--maven", "mvn"]
+
+    def test_main_requires_generation_when_no_spec_carries_one(self) -> None:
+        argv = self._main_common_args("new1") + [
+            "--model", "one=root-one", "--model", "two=root-two", "--model", "three=root-three"]
+        with self.assertRaises(ValueError):
+            panel.main(argv)
+
+    def test_main_rejects_shared_generation_mixed_with_per_spec_generation(self) -> None:
+        # All three specs carry their own GENERATION (isolating this from the
+        # separate "partial" mixing case below) while --generation is ALSO
+        # given: must fail even though every value would agree, because
+        # which one is authoritative must never be a judgment call.
+        argv = self._main_common_args("new2") + [
+            "--generation", "384",
+            "--model", "one=original:384:root-one",
+            "--model", "two=population:384:root-two",
+            "--model", "three=population:384:root-three"]
+        with self.assertRaises(ValueError):
+            panel.main(argv)
+
+    def test_main_rejects_partial_per_spec_generation(self) -> None:
+        # Two specs carry their own GENERATION, one relies on nothing (no
+        # --generation given either): this must fail closed, not silently
+        # treat the third model as an error only once store access is
+        # attempted.
+        argv = self._main_common_args("new3") + [
+            "--model", "one=original:384:root-one",
+            "--model", "two=population:256:root-two",
+            "--model", "three=population:root-three"]
+        with self.assertRaises(ValueError):
+            panel.main(argv)
+
+    def test_main_accepts_per_spec_generation_with_no_shared_generation(self) -> None:
+        # This is cell 3's exact shape: three different generations, no
+        # panel-level --generation. What matters here is that parsing and
+        # the mixing check let it through cleanly; it then fails later, at
+        # source-database/store access against paths that do not exist in
+        # this synthetic test (a FileNotFoundError, not the ValueError the
+        # mixing/required checks themselves raise), which is exactly the
+        # evidence that it got past the spec-shape validation.
+        argv = self._main_common_args("new4") + [
+            "--model", "one=original:384:root-one",
+            "--model", "two=population:256:root-two",
+            "--model", "three=population:512:root-three"]
+        with self.assertRaises((ValueError, OSError)) as caught:
+            panel.main(argv)
+        self.assertNotIsInstance(caught.exception, ValueError)
 
     def test_environment_omits_population_maven_opts_for_original_mode(self) -> None:
         original_model = {"root": "store", "mode": "original", "checkpoint": self.checkpoint}
