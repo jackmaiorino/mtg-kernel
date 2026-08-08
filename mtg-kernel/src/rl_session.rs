@@ -15,7 +15,8 @@ use crate::mana::ManaColor;
 use crate::phase_profile::{measure_optional, RlPhaseProfileV1, RlPhaseV1};
 use crate::policy_surface_v5::{
     FastActorInPlaceApplyErrorV1, PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5,
-    PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM, POLICY_SURFACE_VERSION,
+    PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM,
+    POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2, POLICY_SURFACE_VERSION,
 };
 use crate::rl::{
     build_deck_pair_state, core_policy_action_candidates_v5, legal_action_candidates_v5,
@@ -38,6 +39,10 @@ pub const RL_SESSION_PROTOCOL_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_NAME: &str = "kernel_rl_jsonl";
 pub const FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM: &str =
     "fnv1a64-serde-json-fast-actor-core-environment-v1";
+/// Sibling identity for sessions on environment-v2 randomness states. The
+/// legacy constant above is frozen and unchanged.
+pub const FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2: &str =
+    "fnv1a64-serde-json-fast-actor-core-environment-v2";
 pub const CANONICAL_BURN_DECK_ID: &str = "Burn";
 pub const CANONICAL_RALLY_DECK_ID: &str = "Rally";
 
@@ -61,6 +66,39 @@ impl RlSessionProvenanceV1 {
             protocol: RL_SESSION_PROTOCOL_NAME.to_string(),
             protocol_version: RL_SESSION_PROTOCOL_VERSION,
             schema_version: RL_SESSION_SCHEMA_VERSION,
+            kernel_version: KERNEL_VERSION.to_string(),
+            surface_version: H2_PREDICATE_VERSION,
+            policy_surface_version: POLICY_SURFACE_VERSION,
+            card_db_hash: KERNEL_CARDDB_HASH,
+        }
+    }
+}
+
+/// V6 wire versions. The frozen V5 constants above stay exactly 5; V6 is a
+/// distinct sibling surface, not a replacement.
+pub const RL_SESSION_SCHEMA_VERSION_V6: u32 = 6;
+pub const RL_SESSION_PROTOCOL_VERSION_V6: u32 = 6;
+
+/// V6 provenance: the exact V1 field order and types with protocol and
+/// schema 6. Protocol name, kernel version, surface version, policy-surface
+/// version, and card database hash are the same identities V1 reports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RlSessionProvenanceV6 {
+    pub protocol: String,
+    pub protocol_version: u32,
+    pub schema_version: u32,
+    pub kernel_version: String,
+    pub surface_version: u32,
+    pub policy_surface_version: u32,
+    pub card_db_hash: u64,
+}
+
+impl RlSessionProvenanceV6 {
+    pub fn current() -> Self {
+        RlSessionProvenanceV6 {
+            protocol: RL_SESSION_PROTOCOL_NAME.to_string(),
+            protocol_version: RL_SESSION_PROTOCOL_VERSION_V6,
+            schema_version: RL_SESSION_SCHEMA_VERSION_V6,
             kernel_version: KERNEL_VERSION.to_string(),
             surface_version: H2_PREDICATE_VERSION,
             policy_surface_version: POLICY_SURFACE_VERSION,
@@ -474,6 +512,7 @@ pub enum RlSessionErrorCode {
     SelectedActionIdUnknown,
     StaleEnvironmentBinding,
     UnsupportedDeck,
+    EnvironmentRandomization,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3668,6 +3707,15 @@ pub struct FastActorSessionV1 {
 #[derive(Clone)]
 pub struct FastActorSessionSnapshotV1(FastActorSessionV1);
 
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FastActorSemanticBindingAuditV2 {
+    pub(crate) binding: FlatActionDecisionBindingV2,
+    pub(crate) operational_actions: Vec<FlatActionCoreV1>,
+    pub(crate) operational_refs: Vec<FlatActionRefV2>,
+    pub(crate) operational_objects: Vec<FlatActionObjectV2>,
+}
+
 impl RlEpisodeSessionV1 {
     pub fn reset(episode_id: u64, env_seed: u64, max_physical_decisions: u64) -> Self {
         let max_policy_steps = max_physical_decisions.saturating_mul(128).max(1);
@@ -3753,23 +3801,78 @@ impl RlEpisodeSessionV1 {
         max_physical_decisions: u64,
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
+        profile: Option<&mut RlPhaseProfileV1>,
+        suppression_audit_mode: SuppressionAuditMode,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
+            episode_id,
+            ResetRandomization::Legacy { env_seed },
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            profile,
+            suppression_audit_mode,
+        )
+    }
+
+    /// The in-process environment-v2 activation boundary: identical session
+    /// construction to the legacy reset, with the game randomness built by
+    /// the explicit v2 deck-pair builder from the full-width pair root.
+    /// JSONL V5 remains fully legacy; JSONL V6 is the first wire activation
+    /// of this constructor (through the profiled sibling below); rollout,
+    /// store, trainer, manifest, and audit consumers remain legacy.
+    pub fn reset_with_decks_and_limits_environment_v2(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_environment_v2_profiled(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            None,
+        )
+    }
+
+    /// Profiled sibling used by the JSONL V6 wire path, keeping state
+    /// resolution and construction inside the Reset measurement while
+    /// advance stays outside it.
+    fn reset_with_decks_and_limits_environment_v2_profiled(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        profile: Option<&mut RlPhaseProfileV1>,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
+            episode_id,
+            ResetRandomization::EnvironmentV2 {
+                pair_environment_seed,
+            },
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            profile,
+            SuppressionAuditMode::Off,
+        )
+    }
+
+    fn reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
+        episode_id: u64,
+        randomization: ResetRandomization,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
         mut profile: Option<&mut RlPhaseProfileV1>,
         suppression_audit_mode: SuppressionAuditMode,
     ) -> Result<Self, RlSessionError> {
         let mut session = measure_optional(&mut profile, RlPhaseV1::Reset, || {
-            let resolved_decks = resolve_runtime_decks(&deck_ids)?;
-            let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
-            let state = build_deck_pair_state(
-                env_seed,
-                resolved_decks[0].card_ids,
-                resolved_decks[1].card_ids,
-            )
-            .map_err(|_| {
-                session_error(
-                    RlSessionErrorCode::UnsupportedDeck,
-                    "runtime deck catalog failed full-support preflight",
-                )
-            })?;
+            let (deck_hashes, state) = build_session_deck_pair_state(&deck_ids, randomization)?;
             Ok(RlEpisodeSessionV1 {
                 deck_ids,
                 deck_hashes,
@@ -4170,6 +4273,19 @@ impl RlEpisodeSessionV1 {
         #[cfg(test)]
         TEST_EXACT_ENVIRONMENT_HASH_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
+        Ok(fnv1a64(&self.environment_envelope_bytes(current)?))
+    }
+
+    /// Serialized policy-environment outer-envelope bytes, dispatched on the
+    /// state's diagnostic algorithm identity. Exactly one typed envelope is
+    /// serialized per state; the matching hash and diagnostic identities are
+    /// hardcoded in each branch; any unknown future identity is a typed
+    /// error. Private so the production API surface is unchanged while
+    /// same-module tests can inspect the serialized schema and identities.
+    fn environment_envelope_bytes(
+        &self,
+        current: Option<&CurrentDecisionV1>,
+    ) -> Result<Vec<u8>, String> {
         #[derive(Serialize)]
         struct PolicyEnvironmentEnvelopeV1 {
             schema_version: u32,
@@ -4188,33 +4304,83 @@ impl RlEpisodeSessionV1 {
             legal_action_ids: Vec<String>,
         }
 
-        let envelope = PolicyEnvironmentEnvelopeV1 {
-            schema_version: 1,
-            hash_algorithm: POLICY_ENVIRONMENT_HASH_ALGORITHM,
-            diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
-            diagnostic_state_hash: self.state.diagnostic_state_hash(),
-            harness_surface_context: self.surface.harness_public_context(),
-            policy_surface_context: self.surface.privileged_scan_context()?,
-            policy_step_count: self.policy_step_count,
-            physical_decision_count: self.physical_decision_count,
-            current_actor: current.map(|decision| decision.actor),
-            physical_decision_id: current.map(|decision| decision.physical_decision_id),
-            substep_index: current.map(|decision| decision.substep_index),
-            substep_count: current.map(|decision| decision.substep_count),
-            observation_projection_hash: current
-                .map(|decision| decision.observation.visible_projection_hash),
-            legal_action_ids: current
-                .map(|decision| {
-                    decision
-                        .candidates
-                        .iter()
-                        .map(|candidate| candidate.record.stable_id.clone())
-                        .collect()
+        #[derive(Serialize)]
+        struct PolicyEnvironmentEnvelopeV2 {
+            schema_version: u32,
+            hash_algorithm: &'static str,
+            diagnostic_state_hash_algorithm: &'static str,
+            diagnostic_state_hash: u64,
+            harness_surface_context: crate::surface_v2::HarnessSurfacePublicContextV2,
+            policy_surface_context: crate::policy_surface_v5::PolicySurfaceContextIdsV5,
+            policy_step_count: u64,
+            physical_decision_count: u64,
+            current_actor: Option<PlayerId>,
+            physical_decision_id: Option<u64>,
+            substep_index: Option<u32>,
+            substep_count: Option<u32>,
+            observation_projection_hash: Option<u64>,
+            legal_action_ids: Vec<String>,
+        }
+
+        let current_actor = current.map(|decision| decision.actor);
+        let physical_decision_id = current.map(|decision| decision.physical_decision_id);
+        let substep_index = current.map(|decision| decision.substep_index);
+        let substep_count = current.map(|decision| decision.substep_count);
+        let observation_projection_hash =
+            current.map(|decision| decision.observation.visible_projection_hash);
+        let legal_action_ids: Vec<String> = current
+            .map(|decision| {
+                decision
+                    .candidates
+                    .iter()
+                    .map(|candidate| candidate.record.stable_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        match self.state.diagnostic_state_hash_algorithm() {
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM => {
+                serde_json::to_vec(&PolicyEnvironmentEnvelopeV1 {
+                    schema_version: 1,
+                    hash_algorithm: POLICY_ENVIRONMENT_HASH_ALGORITHM,
+                    diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+                    diagnostic_state_hash: self.state.diagnostic_state_hash(),
+                    harness_surface_context: self.surface.harness_public_context(),
+                    policy_surface_context: self.surface.privileged_scan_context()?,
+                    policy_step_count: self.policy_step_count,
+                    physical_decision_count: self.physical_decision_count,
+                    current_actor,
+                    physical_decision_id,
+                    substep_index,
+                    substep_count,
+                    observation_projection_hash,
+                    legal_action_ids,
                 })
-                .unwrap_or_default(),
-        };
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        Ok(fnv1a64(&bytes))
+                .map_err(|err| err.to_string())
+            }
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2 => {
+                serde_json::to_vec(&PolicyEnvironmentEnvelopeV2 {
+                    schema_version: 2,
+                    hash_algorithm: POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2,
+                    diagnostic_state_hash_algorithm:
+                        crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2,
+                    diagnostic_state_hash: self.state.diagnostic_state_hash(),
+                    harness_surface_context: self.surface.harness_public_context(),
+                    policy_surface_context: self.surface.privileged_scan_context()?,
+                    policy_step_count: self.policy_step_count,
+                    physical_decision_count: self.physical_decision_count,
+                    current_actor,
+                    physical_decision_id,
+                    substep_index,
+                    substep_count,
+                    observation_projection_hash,
+                    legal_action_ids,
+                })
+                .map_err(|err| err.to_string())
+            }
+            unknown => Err(format!(
+                "unrecognized diagnostic state hash algorithm identity: {unknown}"
+            )),
+        }
     }
 }
 
@@ -4298,6 +4464,29 @@ impl FastActorSessionV1 {
         )
     }
 
+    /// Combined activation boundary: the explicit flat-action V2 contract on
+    /// an environment-v2 randomness state. This is the only constructor that
+    /// selects both; flat-action contract mode and randomness mode stay
+    /// orthogonal everywhere else.
+    pub fn reset_with_decks_and_limits_flat_action_v2_environment_v2(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
+            episode_id,
+            ResetRandomization::EnvironmentV2 {
+                pair_environment_seed,
+            },
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            FlatActionContractModeV1::V2,
+        )
+    }
+
     fn reset_with_decks_and_limits_in_flat_action_mode(
         episode_id: u64,
         env_seed: u64,
@@ -4306,19 +4495,25 @@ impl FastActorSessionV1 {
         deck_ids: SessionDeckIdsV1,
         flat_action_contract_mode: FlatActionContractModeV1,
     ) -> Result<Self, RlSessionError> {
-        let resolved_decks = resolve_runtime_decks(&deck_ids)?;
-        let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
-        let state = build_deck_pair_state(
-            env_seed,
-            resolved_decks[0].card_ids,
-            resolved_decks[1].card_ids,
+        Self::reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
+            episode_id,
+            ResetRandomization::Legacy { env_seed },
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            flat_action_contract_mode,
         )
-        .map_err(|_| {
-            session_error(
-                RlSessionErrorCode::UnsupportedDeck,
-                "runtime deck catalog failed full-support preflight",
-            )
-        })?;
+    }
+
+    fn reset_with_decks_and_limits_in_flat_action_mode_with_randomization(
+        episode_id: u64,
+        randomization: ResetRandomization,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        flat_action_contract_mode: FlatActionContractModeV1,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state(&deck_ids, randomization)?;
         let mut session = FastActorSessionV1 {
             deck_ids,
             deck_hashes,
@@ -4360,6 +4555,13 @@ impl FastActorSessionV1 {
             legal_action_count: u32::try_from(current.candidates.len())
                 .expect("fast actor candidate count was checked when bound"),
         })
+    }
+
+    /// Crate-private immutable provenance needed to seed the native full-
+    /// episode trajectory accumulator. These hashes were resolved and checked
+    /// when this session was constructed; callers cannot replace them.
+    pub(crate) fn native_full_trajectory_deck_hashes_v1(&self) -> SessionDeckHashesV1 {
+        self.deck_hashes
     }
 
     /// Audit-only counts for the live flat-action cache and backing arena.
@@ -4705,6 +4907,33 @@ impl FastActorSessionV1 {
         Ok(())
     }
 
+    /// Returns the already-constructed V2 binding only after revalidating the
+    /// current private cache against the live decision. The native uniform
+    /// opponent uses this to commit the exact candidate ordering before the
+    /// accepted action advances and recycles that cache.
+    pub(crate) fn native_full_trajectory_current_binding_v2(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<FlatActionDecisionBindingV2, FlatActionDecisionSliceErrorV1> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        flat_validate_expected_decision_v1(self, current, expected)?;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V2 {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        if let Some(error) = current.flat_action_cache_error_v2 {
+            return Err(error);
+        }
+        let cache = current
+            .flat_action_cache_v2
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        flat_validate_action_cache_v2(self, current, cache)?;
+        Ok(cache.binding)
+    }
+
     /// Applies an index only if the complete flat action binding, including
     /// the ordered 128-bit compact-candidate commitment, still matches this
     /// session's private current decision. Live semantics and referenced
@@ -4856,6 +5085,48 @@ impl FastActorSessionV1 {
                 .iter()
                 .map(|candidate| candidate.semantic.clone())
                 .collect()
+        })
+    }
+
+    /// Test-only semantic-to-flat audit bridge.
+    ///
+    /// The caller must supply the retained ordered semantic rows. Equality is
+    /// checked against the live private candidates before the production V2
+    /// cache validator regenerates every core/reference row through
+    /// `flat_action_core_and_refs_v1`. Only that validated cache is copied into
+    /// the returned typed commitment.
+    #[cfg(test)]
+    pub(crate) fn diagnostic_bind_retained_action_semantics_v2(
+        &self,
+        retained: &[ActionSemanticV1],
+    ) -> Result<FastActorSemanticBindingAuditV2, FlatActionDecisionSliceErrorV1> {
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V2
+            || current.candidates.len() != retained.len()
+            || current
+                .candidates
+                .iter()
+                .zip(retained)
+                .any(|(candidate, retained)| candidate.semantic != *retained)
+        {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        if let Some(error) = current.flat_action_cache_error_v2 {
+            return Err(error);
+        }
+        let cache = current
+            .flat_action_cache_v2
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        flat_validate_action_cache_v2(self, current, cache)?;
+        Ok(FastActorSemanticBindingAuditV2 {
+            binding: cache.binding,
+            operational_actions: cache.actions.clone(),
+            operational_refs: cache.refs.clone(),
+            operational_objects: cache.objects.clone(),
         })
     }
 
@@ -5215,6 +5486,30 @@ fn compute_core_environment_hash(
     physical_decision_count: u64,
     current: Option<CoreEnvironmentDecisionRefV1<'_>>,
 ) -> Result<u64, String> {
+    Ok(fnv1a64(&core_environment_envelope_bytes(
+        state,
+        surface,
+        environment_revision,
+        policy_step_count,
+        physical_decision_count,
+        current,
+    )?))
+}
+
+/// Serialized core-environment outer-envelope bytes, dispatched on the
+/// state's diagnostic algorithm identity. Exactly one typed envelope is
+/// serialized per state; the matching hash and diagnostic identities are
+/// hardcoded in each branch; any unknown future identity is a typed error.
+/// Private so the production API surface is unchanged while same-module
+/// tests can inspect the serialized schema and identities.
+fn core_environment_envelope_bytes(
+    state: &crate::state::GameState,
+    surface: &PolicySurfaceV5,
+    environment_revision: u64,
+    policy_step_count: u64,
+    physical_decision_count: u64,
+    current: Option<CoreEnvironmentDecisionRefV1<'_>>,
+) -> Result<Vec<u8>, String> {
     #[derive(Serialize)]
     struct CoreEnvironmentEnvelopeV1<'a> {
         schema_version: u32,
@@ -5229,20 +5524,56 @@ fn compute_core_environment_hash(
         current: Option<CoreEnvironmentDecisionRefV1<'a>>,
     }
 
-    let envelope = CoreEnvironmentEnvelopeV1 {
-        schema_version: 1,
-        hash_algorithm: FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM,
-        diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
-        diagnostic_state_hash: state.diagnostic_state_hash(),
-        harness_surface_context: surface.harness_public_context(),
-        policy_surface_context: surface.privileged_scan_context()?,
-        environment_revision,
-        policy_step_count,
-        physical_decision_count,
-        current,
-    };
-    let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-    Ok(fnv1a64(&bytes))
+    #[derive(Serialize)]
+    struct CoreEnvironmentEnvelopeV2<'a> {
+        schema_version: u32,
+        hash_algorithm: &'static str,
+        diagnostic_state_hash_algorithm: &'static str,
+        diagnostic_state_hash: u64,
+        harness_surface_context: crate::surface_v2::HarnessSurfacePublicContextV2,
+        policy_surface_context: PolicySurfaceContextIdsV5,
+        environment_revision: u64,
+        policy_step_count: u64,
+        physical_decision_count: u64,
+        current: Option<CoreEnvironmentDecisionRefV1<'a>>,
+    }
+
+    match state.diagnostic_state_hash_algorithm() {
+        crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM => {
+            serde_json::to_vec(&CoreEnvironmentEnvelopeV1 {
+                schema_version: 1,
+                hash_algorithm: FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM,
+                diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+                diagnostic_state_hash: state.diagnostic_state_hash(),
+                harness_surface_context: surface.harness_public_context(),
+                policy_surface_context: surface.privileged_scan_context()?,
+                environment_revision,
+                policy_step_count,
+                physical_decision_count,
+                current,
+            })
+            .map_err(|err| err.to_string())
+        }
+        crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2 => {
+            serde_json::to_vec(&CoreEnvironmentEnvelopeV2 {
+                schema_version: 2,
+                hash_algorithm: FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2,
+                diagnostic_state_hash_algorithm:
+                    crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2,
+                diagnostic_state_hash: state.diagnostic_state_hash(),
+                harness_surface_context: surface.harness_public_context(),
+                policy_surface_context: surface.privileged_scan_context()?,
+                environment_revision,
+                policy_step_count,
+                physical_decision_count,
+                current,
+            })
+            .map_err(|err| err.to_string())
+        }
+        unknown => Err(format!(
+            "unrecognized diagnostic state hash algorithm identity: {unknown}"
+        )),
+    }
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -5340,6 +5671,40 @@ impl KernelRlRequestV1 {
     }
 }
 
+/// The distinct V6 request surface. V6 Reset takes exactly
+/// `pair_environment_seed`; there is no `env_seed`, alias, mode field,
+/// flattening, or typed fallback.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "request_type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum KernelRlRequestV6 {
+    Reset {
+        schema_version: u32,
+        request_id: String,
+        deck_ids: SessionDeckIdsV1,
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+    },
+    Step {
+        schema_version: u32,
+        request_id: String,
+        episode_id: u64,
+        expected_step: u64,
+        selected_index: u32,
+        selected_action_id: String,
+    },
+}
+
+impl KernelRlRequestV6 {
+    fn request_id(&self) -> &str {
+        match self {
+            KernelRlRequestV6::Reset { request_id, .. }
+            | KernelRlRequestV6::Step { request_id, .. } => request_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KernelRlErrorV1 {
     pub code: String,
@@ -5388,24 +5753,159 @@ pub enum KernelRlResponseV1 {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KernelRlErrorV6 {
+    pub code: String,
+    pub message: String,
+}
+
+/// The distinct V6 response surface: the exact V5 variant field order with
+/// outer schema hardcoded to 6, `RlSessionProvenanceV6` provenance, and
+/// `KernelRlErrorV6` errors. Nested observation, legal actions, terminal
+/// types, and deck aliases are the unchanged V5/V1 types.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "response_type", rename_all = "snake_case")]
+pub enum KernelRlResponseV6 {
+    Decision {
+        schema_version: u32,
+        request_id: String,
+        provenance: RlSessionProvenanceV6,
+        deck_ids: SessionDeckIdsV1,
+        deck_hashes: SessionDeckHashesV1,
+        episode_id: u64,
+        step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        acting_player: PlayerSeatV1,
+        observation: Box<ObservationV5>,
+        legal_actions: Vec<LegalActionV5>,
+        reward: [i32; 2],
+    },
+    Terminal {
+        schema_version: u32,
+        request_id: String,
+        provenance: RlSessionProvenanceV6,
+        deck_ids: SessionDeckIdsV1,
+        deck_hashes: SessionDeckHashesV1,
+        episode_id: u64,
+        terminal_outcome: TerminalOutcomeV1,
+        terminal_classification: TerminalClassificationV1,
+        terminal_code: TerminalSafeCodeV2,
+        winner: Option<PlayerSeatV1>,
+        terminal_reward: [i32; 2],
+        terminal_reason: String,
+        policy_step_count: u64,
+        physical_decision_count: u64,
+    },
+    Error {
+        schema_version: u32,
+        request_id: Option<String>,
+        error: KernelRlErrorV6,
+    },
+}
+
+/// Private supported wire versions of the JSONL server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KernelRlWireVersionV1 {
+    V5,
+    V6,
+}
+
+/// Private typed union of the supported request surfaces. Wire version plus
+/// every typed payload field is retry identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VersionedKernelRlRequestV1 {
+    V5(KernelRlRequestV1),
+    V6(KernelRlRequestV6),
+}
+
+impl VersionedKernelRlRequestV1 {
+    fn request_id(&self) -> &str {
+        match self {
+            VersionedKernelRlRequestV1::V5(request) => request.request_id(),
+            VersionedKernelRlRequestV1::V6(request) => request.request_id(),
+        }
+    }
+
+    fn is_reset(&self) -> bool {
+        matches!(
+            self,
+            VersionedKernelRlRequestV1::V5(KernelRlRequestV1::Reset { .. })
+                | VersionedKernelRlRequestV1::V6(KernelRlRequestV6::Reset { .. })
+        )
+    }
+}
+
+/// Private decode disposition: a supported typed request, or a valid frozen
+/// V5 shape carrying an unsupported numeric schema version (kept decodable
+/// for the frozen unsupported-version error path).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DecodedKernelRlRequestV1 {
+    Supported(VersionedKernelRlRequestV1),
+    UnsupportedV5Shape(KernelRlRequestV1),
+}
+
+impl DecodedKernelRlRequestV1 {
+    fn request_id(&self) -> &str {
+        match self {
+            DecodedKernelRlRequestV1::Supported(request) => request.request_id(),
+            DecodedKernelRlRequestV1::UnsupportedV5Shape(request) => request.request_id(),
+        }
+    }
+
+    fn is_reset(&self) -> bool {
+        match self {
+            DecodedKernelRlRequestV1::Supported(request) => request.is_reset(),
+            DecodedKernelRlRequestV1::UnsupportedV5Shape(request) => {
+                matches!(request, KernelRlRequestV1::Reset { .. })
+            }
+        }
+    }
+}
+
+/// Private typed decode failure classification. Recognized numeric schemas
+/// use their versioned malformed envelope; everything else is the exact
+/// frozen V5 envelope with a null request ID.
+enum VersionedDecodeFailureV1 {
+    MalformedV5,
+    MalformedV6,
+    Unclassifiable,
+}
+
+/// Private response union. Deliberately not Serialize: every response line
+/// is produced by exactly one concrete versioned serializer.
+enum VersionedKernelRlResponseV1 {
+    V5(KernelRlResponseV1),
+    V6(KernelRlResponseV6),
+}
+
+/// The active session and the wire version that created it. GameState
+/// remains the sole randomness identity; the wire version only gates which
+/// protocol surface may speak to this session.
+struct ActiveKernelRlSessionV1 {
+    wire_version: KernelRlWireVersionV1,
+    session: RlEpisodeSessionV1,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CachedProtocolExchangeV1 {
     // Request ids are process-unique except for one immediate identical retry.
     // The cache is deliberately one entry so stale-step safety comes from the
     // episode_id/expected_step preconditions, not an unbounded replay table.
     request_id: String,
-    request: KernelRlRequestV1,
+    request: VersionedKernelRlRequestV1,
     response_line: String,
 }
 
 enum RetryDispositionV1 {
     Cached,
-    ReuseMismatch(Box<KernelRlResponseV1>),
+    ReuseMismatch(Box<VersionedKernelRlResponseV1>),
 }
 
 #[derive(Default)]
 pub struct KernelRlJsonlServerV1 {
-    session: Option<RlEpisodeSessionV1>,
+    active: Option<ActiveKernelRlSessionV1>,
     last_exchange: Option<CachedProtocolExchangeV1>,
 }
 
@@ -5452,11 +5952,11 @@ impl KernelRlJsonlServerV1 {
             }
         };
         let request_id = request_id_from_value(&value);
-        let request = match measure_optional(&mut profile, RlPhaseV1::Decode, || {
-            serde_json::from_value::<KernelRlRequestV1>(value)
+        let decoded = match measure_optional(&mut profile, RlPhaseV1::Decode, || {
+            decode_versioned_request(value)
         }) {
-            Ok(request) => request,
-            Err(_) => {
+            Ok(decoded) => decoded,
+            Err(VersionedDecodeFailureV1::MalformedV5) => {
                 return serialize_response_profiled(
                     error_response(
                         request_id,
@@ -5466,30 +5966,62 @@ impl KernelRlJsonlServerV1 {
                     &mut profile,
                 );
             }
+            Err(VersionedDecodeFailureV1::MalformedV6) => {
+                return serialize_response_v6_profiled(
+                    error_response_v6(
+                        request_id,
+                        "malformed_request",
+                        "request does not match the v6 protocol schema",
+                    ),
+                    &mut profile,
+                );
+            }
+            Err(VersionedDecodeFailureV1::Unclassifiable) => {
+                return serialize_response_profiled(
+                    error_response(
+                        None,
+                        "malformed_request",
+                        "request does not match the v5 protocol schema",
+                    ),
+                    &mut profile,
+                );
+            }
         };
         if let Some(profile) = profile.as_deref_mut() {
-            match &request {
-                KernelRlRequestV1::Reset { .. } => {
-                    profile.reset_requests = profile.reset_requests.saturating_add(1)
-                }
-                KernelRlRequestV1::Step { .. } => {
-                    profile.step_requests = profile.step_requests.saturating_add(1)
-                }
+            if decoded.is_reset() {
+                profile.reset_requests = profile.reset_requests.saturating_add(1)
+            } else {
+                profile.step_requests = profile.step_requests.saturating_add(1)
             }
         }
         let retry = measure_optional(&mut profile, RlPhaseV1::Retry, || {
             self.last_exchange.as_ref().and_then(|cached| {
-                if cached.request_id != request.request_id() {
+                if cached.request_id != decoded.request_id() {
                     return None;
                 }
-                if cached.request == request {
+                let matches_cache = match &decoded {
+                    DecodedKernelRlRequestV1::Supported(request) => cached.request == *request,
+                    DecodedKernelRlRequestV1::UnsupportedV5Shape(_) => false,
+                };
+                if matches_cache {
                     Some(RetryDispositionV1::Cached)
                 } else {
-                    Some(RetryDispositionV1::ReuseMismatch(Box::new(error_response(
-                        Some(request.request_id().to_string()),
-                        "request_id_reuse_mismatch",
-                        "request_id was reused for a different immediate request payload",
-                    ))))
+                    let reuse_id = Some(decoded.request_id().to_string());
+                    let response = match &decoded {
+                        DecodedKernelRlRequestV1::Supported(VersionedKernelRlRequestV1::V6(_)) => {
+                            VersionedKernelRlResponseV1::V6(error_response_v6(
+                                reuse_id,
+                                "request_id_reuse_mismatch",
+                                "request_id was reused for a different immediate request payload",
+                            ))
+                        }
+                        _ => VersionedKernelRlResponseV1::V5(error_response(
+                            reuse_id,
+                            "request_id_reuse_mismatch",
+                            "request_id was reused for a different immediate request payload",
+                        )),
+                    };
+                    Some(RetryDispositionV1::ReuseMismatch(Box::new(response)))
                 }
             })
         });
@@ -5513,22 +6045,36 @@ impl KernelRlJsonlServerV1 {
                 RetryDispositionV1::ReuseMismatch(response) => {
                     let response =
                         measure_optional(&mut profile, RlPhaseV1::Response, || *response);
-                    serialize_response_profiled(response, &mut profile)
+                    serialize_versioned_response_profiled(response, &mut profile)
                 }
             };
         }
-        let should_cache = request.schema_version() == RL_SESSION_SCHEMA_VERSION;
-        let request_for_cache = request.clone();
-        let response = self.handle_request_profiled(request, profile.as_deref_mut());
-        let response_line = serialize_response_profiled(response, &mut profile);
-        if should_cache {
-            self.last_exchange = Some(CachedProtocolExchangeV1 {
-                request_id: request_for_cache.request_id().to_string(),
-                request: request_for_cache,
-                response_line: response_line.clone(),
-            });
+        match decoded {
+            DecodedKernelRlRequestV1::UnsupportedV5Shape(request) => {
+                // The frozen unsupported-version path: handled and serialized
+                // as V5, never cached, never mutating.
+                let response = self.handle_request_profiled(request, profile.as_deref_mut());
+                serialize_response_profiled(response, &mut profile)
+            }
+            DecodedKernelRlRequestV1::Supported(request) => {
+                let request_for_cache = request.clone();
+                let response = match request {
+                    VersionedKernelRlRequestV1::V5(request) => VersionedKernelRlResponseV1::V5(
+                        self.handle_request_profiled(request, profile.as_deref_mut()),
+                    ),
+                    VersionedKernelRlRequestV1::V6(request) => VersionedKernelRlResponseV1::V6(
+                        self.handle_request_v6_profiled(request, profile.as_deref_mut()),
+                    ),
+                };
+                let response_line = serialize_versioned_response_profiled(response, &mut profile);
+                self.last_exchange = Some(CachedProtocolExchangeV1 {
+                    request_id: request_for_cache.request_id().to_string(),
+                    request: request_for_cache,
+                    response_line: response_line.clone(),
+                });
+                response_line
+            }
         }
-        response_line
     }
 
     fn handle_request_profiled(
@@ -5577,7 +6123,10 @@ impl KernelRlJsonlServerV1 {
                 let response = measure_optional(&mut profile, RlPhaseV1::Response, || {
                     session_response_to_protocol(request_id, session.current_response())
                 });
-                self.session = Some(session);
+                self.active = Some(ActiveKernelRlSessionV1 {
+                    wire_version: KernelRlWireVersionV1::V5,
+                    session,
+                });
                 response
             }
             KernelRlRequestV1::Step {
@@ -5597,7 +6146,7 @@ impl KernelRlJsonlServerV1 {
                         )
                     });
                 }
-                let Some(session) = self.session.as_mut() else {
+                let Some(active) = self.active.as_mut() else {
                     return measure_optional(&mut profile, RlPhaseV1::Response, || {
                         error_response(
                             Some(request_id),
@@ -5606,6 +6155,17 @@ impl KernelRlJsonlServerV1 {
                         )
                     });
                 };
+                if active.wire_version != KernelRlWireVersionV1::V5 {
+                    return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response(
+                            Some(request_id),
+                            "schema_version_mismatch",
+                            "step request schema_version does not match the active session \
+                             schema_version",
+                        )
+                    });
+                }
+                let session = &mut active.session;
                 match session.apply_step_profiled(
                     episode_id,
                     expected_step,
@@ -5626,6 +6186,133 @@ impl KernelRlJsonlServerV1 {
                 }
             }
         }
+    }
+    fn handle_request_v6_profiled(
+        &mut self,
+        request: KernelRlRequestV6,
+        mut profile: Option<&mut RlPhaseProfileV1>,
+    ) -> KernelRlResponseV6 {
+        match request {
+            KernelRlRequestV6::Reset {
+                schema_version: _,
+                request_id,
+                deck_ids,
+                episode_id,
+                pair_environment_seed,
+                max_physical_decisions,
+                max_policy_steps,
+            } => {
+                let session =
+                    match RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2_profiled(
+                        episode_id,
+                        pair_environment_seed,
+                        max_physical_decisions,
+                        max_policy_steps,
+                        deck_ids,
+                        profile.as_deref_mut(),
+                    ) {
+                        Ok(session) => session,
+                        Err(err) => {
+                            return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                                error_response_v6(
+                                    Some(request_id),
+                                    session_error_code(&err.code),
+                                    &err.message,
+                                )
+                            });
+                        }
+                    };
+                let response = measure_optional(&mut profile, RlPhaseV1::Response, || {
+                    session_response_to_protocol_v6(request_id, session.current_response())
+                });
+                self.active = Some(ActiveKernelRlSessionV1 {
+                    wire_version: KernelRlWireVersionV1::V6,
+                    session,
+                });
+                response
+            }
+            KernelRlRequestV6::Step {
+                schema_version: _,
+                request_id,
+                episode_id,
+                expected_step,
+                selected_index,
+                selected_action_id,
+            } => {
+                let Some(active) = self.active.as_mut() else {
+                    return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response_v6(
+                            Some(request_id),
+                            "step_before_reset",
+                            "step request received before reset",
+                        )
+                    });
+                };
+                if active.wire_version != KernelRlWireVersionV1::V6 {
+                    return measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response_v6(
+                            Some(request_id),
+                            "schema_version_mismatch",
+                            "step request schema_version does not match the active session \
+                             schema_version",
+                        )
+                    });
+                }
+                let session = &mut active.session;
+                match session.apply_step_profiled(
+                    episode_id,
+                    expected_step,
+                    selected_index,
+                    &selected_action_id,
+                    profile.as_deref_mut(),
+                ) {
+                    Ok(()) => measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        session_response_to_protocol_v6(request_id, session.current_response())
+                    }),
+                    Err(err) => measure_optional(&mut profile, RlPhaseV1::Response, || {
+                        error_response_v6(
+                            Some(request_id),
+                            session_error_code(&err.code),
+                            &err.message,
+                        )
+                    }),
+                }
+            }
+        }
+    }
+}
+
+/// Typed schema dispatch after strict parsing. The raw `schema_version` is
+/// inspected with a checked u32 conversion: exact 5 decodes only the frozen
+/// V5 request, exact 6 decodes only the V6 request, any other valid u32
+/// decodes the frozen V5 shape as `UnsupportedV5Shape`, and a missing,
+/// wrong-type, fractional, or out-of-range version is unclassifiable. There
+/// is no untagged union and no cross-version typed retry.
+fn decode_versioned_request(
+    value: Value,
+) -> std::result::Result<DecodedKernelRlRequestV1, VersionedDecodeFailureV1> {
+    let raw_version = value
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .and_then(|raw| u32::try_from(raw).ok());
+    match raw_version {
+        Some(version) if version == RL_SESSION_SCHEMA_VERSION => serde_json::from_value::<
+            KernelRlRequestV1,
+        >(value)
+        .map(|request| DecodedKernelRlRequestV1::Supported(VersionedKernelRlRequestV1::V5(request)))
+        .map_err(|_| VersionedDecodeFailureV1::MalformedV5),
+        Some(version) if version == RL_SESSION_SCHEMA_VERSION_V6 => serde_json::from_value::<
+            KernelRlRequestV6,
+        >(value)
+        .map(|request| DecodedKernelRlRequestV1::Supported(VersionedKernelRlRequestV1::V6(request)))
+        .map_err(|_| VersionedDecodeFailureV1::MalformedV6),
+        Some(_) => serde_json::from_value::<KernelRlRequestV1>(value)
+            .map(|request| {
+                debug_assert_ne!(request.schema_version(), RL_SESSION_SCHEMA_VERSION);
+                DecodedKernelRlRequestV1::UnsupportedV5Shape(request)
+            })
+            .map_err(|_| VersionedDecodeFailureV1::MalformedV5),
+        None => Err(VersionedDecodeFailureV1::Unclassifiable),
     }
 }
 
@@ -5686,6 +6373,92 @@ fn serialize_response_profiled(
     line
 }
 
+/// V6 sibling of `session_response_to_protocol`. Outer schema and provenance
+/// are 6; nested observation, legal actions, and the internal
+/// `RlSessionDecisionV1`/`RlSessionTerminalV1` schema values intentionally
+/// remain 5 and are never copied into the outer version.
+fn session_response_to_protocol_v6(
+    request_id: String,
+    response: RlSessionResponseV1,
+) -> KernelRlResponseV6 {
+    match response {
+        RlSessionResponseV1::Decision(decision) => KernelRlResponseV6::Decision {
+            schema_version: RL_SESSION_SCHEMA_VERSION_V6,
+            request_id,
+            provenance: RlSessionProvenanceV6::current(),
+            deck_ids: decision.deck_ids,
+            deck_hashes: decision.deck_hashes,
+            episode_id: decision.episode_id,
+            step: decision.step,
+            physical_decision_id: decision.physical_decision_id,
+            substep_index: decision.substep_index,
+            substep_count: decision.substep_count,
+            acting_player: decision.acting_player,
+            observation: decision.observation,
+            legal_actions: decision.legal_actions,
+            reward: decision.reward,
+        },
+        RlSessionResponseV1::Terminal(terminal) => KernelRlResponseV6::Terminal {
+            schema_version: RL_SESSION_SCHEMA_VERSION_V6,
+            request_id,
+            provenance: RlSessionProvenanceV6::current(),
+            deck_ids: terminal.deck_ids,
+            deck_hashes: terminal.deck_hashes,
+            episode_id: terminal.episode_id,
+            terminal_outcome: terminal.terminal_outcome,
+            terminal_classification: terminal.terminal_classification,
+            terminal_code: terminal.terminal_code,
+            winner: terminal.winner,
+            terminal_reward: terminal.terminal_reward,
+            terminal_reason: terminal.terminal_reason,
+            policy_step_count: terminal.policy_step_count,
+            physical_decision_count: terminal.physical_decision_count,
+        },
+    }
+}
+
+fn serialize_response_v6(response: KernelRlResponseV6) -> String {
+    serde_json::to_string(&response).expect("v6 protocol response serializes")
+}
+
+fn serialize_response_v6_profiled(
+    response: KernelRlResponseV6,
+    profile: &mut Option<&mut RlPhaseProfileV1>,
+) -> String {
+    let line = measure_optional(profile, RlPhaseV1::Serialize, || {
+        serialize_response_v6(response)
+    });
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.response_lines = profile.response_lines.saturating_add(1);
+    }
+    line
+}
+
+/// Serializes the private response union through exactly one concrete
+/// versioned serializer. The union itself is never serialized.
+fn serialize_versioned_response_profiled(
+    response: VersionedKernelRlResponseV1,
+    profile: &mut Option<&mut RlPhaseProfileV1>,
+) -> String {
+    match response {
+        VersionedKernelRlResponseV1::V5(response) => serialize_response_profiled(response, profile),
+        VersionedKernelRlResponseV1::V6(response) => {
+            serialize_response_v6_profiled(response, profile)
+        }
+    }
+}
+
+fn error_response_v6(request_id: Option<String>, code: &str, message: &str) -> KernelRlResponseV6 {
+    KernelRlResponseV6::Error {
+        schema_version: RL_SESSION_SCHEMA_VERSION_V6,
+        request_id,
+        error: KernelRlErrorV6 {
+            code: code.to_string(),
+            message: message.to_string(),
+        },
+    }
+}
+
 fn request_id_from_value(value: &Value) -> Option<String> {
     value
         .get("request_id")
@@ -5721,6 +6494,7 @@ fn session_error_code(code: &RlSessionErrorCode) -> &'static str {
         RlSessionErrorCode::SelectedActionIdUnknown => "selected_action_id_unknown",
         RlSessionErrorCode::StaleEnvironmentBinding => "stale_environment_binding",
         RlSessionErrorCode::UnsupportedDeck => "unsupported_deck",
+        RlSessionErrorCode::EnvironmentRandomization => "environment_randomization",
     }
 }
 
@@ -5729,6 +6503,68 @@ fn canonical_burn_mirror_deck_ids() -> SessionDeckIdsV1 {
         CANONICAL_BURN_DECK_ID.to_string(),
         CANONICAL_BURN_DECK_ID.to_string(),
     ]
+}
+
+/// Private randomness selector for session reset. Deliberately no serde and
+/// no Default: the caller always chooses explicitly, and `GameState` remains
+/// the sole persisted randomness and diagnostic identity.
+#[derive(Clone, Copy)]
+enum ResetRandomization {
+    Legacy { env_seed: u64 },
+    EnvironmentV2 { pair_environment_seed: u64 },
+}
+
+/// Shared state construction for both session types: resolves both runtime
+/// decks, obtains both catalog deck hashes, and dispatches to the exact
+/// legacy or environment-v2 deck-pair builder. Returns only after all deck
+/// resolution, preflight, and KDF work has succeeded, so no surface or
+/// session is constructed for a failing reset.
+fn build_session_deck_pair_state(
+    deck_ids: &SessionDeckIdsV1,
+    randomization: ResetRandomization,
+) -> Result<(SessionDeckHashesV1, crate::state::GameState), RlSessionError> {
+    let resolved_decks = resolve_runtime_decks(deck_ids)?;
+    let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
+    let state = match randomization {
+        ResetRandomization::Legacy { env_seed } => build_deck_pair_state(
+            env_seed,
+            resolved_decks[0].card_ids,
+            resolved_decks[1].card_ids,
+        )
+        .map_err(|_| {
+            session_error(
+                RlSessionErrorCode::UnsupportedDeck,
+                "runtime deck catalog failed full-support preflight",
+            )
+        })?,
+        ResetRandomization::EnvironmentV2 {
+            pair_environment_seed,
+        } => crate::rl::build_deck_pair_state_environment_v2(
+            pair_environment_seed,
+            resolved_decks[0].card_ids,
+            resolved_decks[1].card_ids,
+        )
+        .map_err(map_deck_pair_build_error_v2)?,
+    };
+    Ok((deck_hashes, state))
+}
+
+/// Exhaustive typed mapping of the v2 deck-pair builder failure vocabulary
+/// into session errors, shared by both new constructors. Deck admission
+/// failures keep the exact legacy message; sealed KDF failures keep the
+/// builder error's complete Display text under the distinct
+/// EnvironmentRandomization code.
+fn map_deck_pair_build_error_v2(error: crate::rl::DeckPairBuildErrorV2) -> RlSessionError {
+    match &error {
+        crate::rl::DeckPairBuildErrorV2::DeckPreflight(_) => session_error(
+            RlSessionErrorCode::UnsupportedDeck,
+            "runtime deck catalog failed full-support preflight",
+        ),
+        crate::rl::DeckPairBuildErrorV2::EnvironmentRandomization(_) => session_error(
+            RlSessionErrorCode::EnvironmentRandomization,
+            &error.to_string(),
+        ),
+    }
 }
 
 fn resolve_runtime_decks(
@@ -10278,5 +11114,1590 @@ mod tests {
             Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
         );
         assert_eq!((v2_actions, v2_refs, v2_objects), before);
+    }
+
+    fn v2_session_state(env_seed: u64) -> crate::state::GameState {
+        let burn = crate::rl::burn_deck_ids();
+        crate::rl::build_deck_pair_state_environment_v2(env_seed, &burn, &burn)
+            .expect("the v2 Burn/Burn deck pair builds")
+    }
+
+    /// Test-only environment-v2 session: the state is replaced directly,
+    /// then surface, current decision, and every counter are reset and the
+    /// session advances normally, so no legacy-derived decision remains.
+    fn full_session_on_environment_v2(env_seed: u64) -> RlEpisodeSessionV1 {
+        let mut session = RlEpisodeSessionV1::reset(1, env_seed, 8);
+        session.state = v2_session_state(env_seed);
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        assert!(
+            session.terminal.is_none(),
+            "the v2 session reaches a live decision"
+        );
+        session
+    }
+
+    fn fast_session_on_environment_v2(env_seed: u64) -> FastActorSessionV1 {
+        let mut session = FastActorSessionV1::reset(1, env_seed, 8);
+        session.state = v2_session_state(env_seed);
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        assert!(
+            session.terminal.is_none(),
+            "the v2 fast session reaches a live decision"
+        );
+        session
+    }
+
+    #[test]
+    fn environment_hashes_are_diagnostic_dispatched_with_exact_goldens() {
+        // Pre-edit captured legacy goldens (episode 1, env seed 99, max 8),
+        // recorded from the untouched parent before any production edit.
+        let legacy_full = RlEpisodeSessionV1::reset(1, 99, 8);
+        let legacy_fast = FastActorSessionV1::reset(1, 99, 8);
+        assert_eq!(
+            legacy_full.privileged_environment_hash(),
+            0xcc4e_fc39_024e_ccd5,
+            "captured legacy policy environment golden"
+        );
+        assert_eq!(
+            legacy_full.privileged_core_environment_hash(),
+            0x5005_8868_e7a2_bc28,
+            "captured legacy full-session core golden"
+        );
+        assert_eq!(
+            legacy_fast.privileged_core_environment_hash(),
+            0x5005_8868_e7a2_bc28,
+            "captured legacy fast-session core golden equals the full one"
+        );
+
+        let v2_full = full_session_on_environment_v2(99);
+        let v2_fast = fast_session_on_environment_v2(99);
+        let v2_policy = v2_full.privileged_environment_hash();
+        let v2_full_core = v2_full.privileged_core_environment_hash();
+        let v2_fast_core = v2_fast.privileged_core_environment_hash();
+        assert_eq!(
+            v2_policy, 0x7abb_750c_9f4a_4651,
+            "environment-v2 policy environment golden"
+        );
+        assert_eq!(
+            v2_full_core, 0xbb18_34f0_90be_fb8c,
+            "environment-v2 core environment golden"
+        );
+        assert_eq!(
+            v2_fast_core, v2_full_core,
+            "full and fast environment-v2 core hashes are equal"
+        );
+        assert_ne!(v2_policy, 0xcc4e_fc39_024e_ccd5);
+        assert_ne!(v2_full_core, 0x5005_8868_e7a2_bc28);
+    }
+
+    #[test]
+    fn environment_envelopes_map_schema_and_identities_exactly() {
+        assert_eq!(
+            POLICY_ENVIRONMENT_HASH_ALGORITHM,
+            "fnv1a64-serde-json-policy-environment-envelope-v1"
+        );
+        assert_eq!(
+            POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2,
+            "fnv1a64-serde-json-policy-environment-envelope-v2"
+        );
+        assert_eq!(
+            FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM,
+            "fnv1a64-serde-json-fast-actor-core-environment-v1"
+        );
+        assert_eq!(
+            FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2,
+            "fnv1a64-serde-json-fast-actor-core-environment-v2"
+        );
+
+        let legacy = RlEpisodeSessionV1::reset(1, 99, 8);
+        let bytes = legacy
+            .environment_envelope_bytes(legacy.current.as_ref())
+            .expect("legacy policy envelope bytes");
+        assert!(bytes.starts_with(br#"{"schema_version":1,"hash_algorithm":"#));
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parses");
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["hash_algorithm"], POLICY_ENVIRONMENT_HASH_ALGORITHM);
+        assert_eq!(
+            value["diagnostic_state_hash_algorithm"],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM
+        );
+
+        let v2 = full_session_on_environment_v2(99);
+        let bytes = v2
+            .environment_envelope_bytes(v2.current.as_ref())
+            .expect("v2 policy envelope bytes");
+        assert!(bytes.starts_with(br#"{"schema_version":2,"hash_algorithm":"#));
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parses");
+        assert_eq!(value["schema_version"], 2);
+        assert_eq!(
+            value["hash_algorithm"],
+            POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2
+        );
+        assert_eq!(
+            value["diagnostic_state_hash_algorithm"],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2
+        );
+
+        let fast_legacy = FastActorSessionV1::reset(1, 99, 8);
+        let bytes = core_environment_envelope_bytes(
+            &fast_legacy.state,
+            &fast_legacy.surface,
+            0,
+            0,
+            0,
+            None,
+        )
+        .expect("legacy core envelope bytes");
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parses");
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(
+            value["hash_algorithm"],
+            FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM
+        );
+        assert_eq!(
+            value["diagnostic_state_hash_algorithm"],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM
+        );
+
+        let fast_v2 = fast_session_on_environment_v2(99);
+        let bytes =
+            core_environment_envelope_bytes(&fast_v2.state, &fast_v2.surface, 0, 0, 0, None)
+                .expect("v2 core envelope bytes");
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parses");
+        assert_eq!(value["schema_version"], 2);
+        assert_eq!(
+            value["hash_algorithm"],
+            FAST_ACTOR_CORE_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2
+        );
+        assert_eq!(
+            value["diagnostic_state_hash_algorithm"],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2
+        );
+    }
+
+    /// Injected flat-action-V2 environment-v2 oracle (pre-constructor): the
+    /// legacy flat-action-V2 constructor's state is replaced by the explicit
+    /// v2 deck builder, then surface, terminal, current, revision, both
+    /// counters, and both spare caches are cleared before one normal
+    /// advance. Deliberately calls neither new reset API.
+    fn fast_flat_v2_session_on_environment_v2(root: u64) -> FastActorSessionV1 {
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            1,
+            root,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("the legacy flat-action-V2 reset succeeds");
+        session.state = v2_session_state(root);
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        assert!(session.terminal.is_none());
+        session
+    }
+
+    fn canonical_v2_full_reset(root: u64) -> RlEpisodeSessionV1 {
+        RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
+            1,
+            root,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("the full environment-v2 reset succeeds")
+    }
+
+    fn canonical_v2_fast_reset(root: u64) -> FastActorSessionV1 {
+        FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+            1,
+            root,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("the combined fast environment-v2 reset succeeds")
+    }
+
+    fn definition_order(state: &crate::state::GameState, player: PlayerId) -> Vec<u16> {
+        state.players[player.index()]
+            .hand
+            .iter()
+            .chain(&state.players[player.index()].library)
+            .map(|&object| state.objects.get(object).card_def)
+            .collect()
+    }
+
+    #[test]
+    fn v2_reset_preexisting_entry_points_remain_legacy_randomness() {
+        let canonical = RlEpisodeSessionV1::reset_with_decks_and_limits(
+            1,
+            99,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .unwrap();
+        for session in [
+            RlEpisodeSessionV1::reset(1, 99, 8),
+            RlEpisodeSessionV1::reset_with_limits(1, 99, 8, 1024),
+            RlEpisodeSessionV1::reset_with_decks(1, 99, 8, canonical_burn_mirror_deck_ids())
+                .unwrap(),
+        ] {
+            assert!(session.state.legacy_rng().is_some());
+            assert!(session.state.environment_randomization_v2().is_none());
+            assert_eq!(
+                session.state.diagnostic_state_hash_algorithm(),
+                "fnv1a64-serde-json-game-state-envelope-v5"
+            );
+            assert_eq!(session.state, canonical.state);
+            assert_eq!(
+                serde_json::to_vec(&session.current_response()).unwrap(),
+                serde_json::to_vec(&canonical.current_response()).unwrap()
+            );
+        }
+        let fast_canonical = FastActorSessionV1::reset_with_decks_and_limits(
+            1,
+            99,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .unwrap();
+        for fast in [
+            FastActorSessionV1::reset(1, 99, 8),
+            FastActorSessionV1::reset_with_limits(1, 99, 8, 1024),
+            FastActorSessionV1::reset_with_decks(1, 99, 8, canonical_burn_mirror_deck_ids())
+                .unwrap(),
+        ] {
+            assert!(fast.state.legacy_rng().is_some());
+            assert!(fast.state.environment_randomization_v2().is_none());
+            assert_eq!(
+                fast.state.diagnostic_state_hash_algorithm(),
+                "fnv1a64-serde-json-game-state-envelope-v5"
+            );
+            assert_eq!(fast.state, fast_canonical.state);
+            assert_eq!(fast.current, fast_canonical.current);
+        }
+        assert_eq!(fast_canonical.state, canonical.state);
+
+        // The existing flat-action-V2 reset stays legacy randomness while
+        // constructing only its V2 action cache.
+        let flat_v2_legacy = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            1,
+            99,
+            8,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .unwrap();
+        assert!(flat_v2_legacy.state.legacy_rng().is_some());
+        assert!(flat_v2_legacy
+            .state
+            .environment_randomization_v2()
+            .is_none());
+        assert_eq!(flat_v2_legacy.state, canonical.state);
+        let current = flat_v2_legacy.current.as_ref().unwrap();
+        assert!(current.flat_action_cache.is_none());
+        assert!(current.flat_action_cache_error.is_none());
+        assert!(current.flat_action_cache_v2.is_some());
+        assert!(current.flat_action_cache_error_v2.is_none());
+
+        // Captured legacy pins are preserved bit-exact.
+        assert_eq!(
+            canonical.privileged_environment_hash(),
+            0xcc4e_fc39_024e_ccd5
+        );
+        assert_eq!(
+            canonical.privileged_core_environment_hash(),
+            0x5005_8868_e7a2_bc28
+        );
+        assert_eq!(
+            fast_canonical.privileged_core_environment_hash(),
+            0x5005_8868_e7a2_bc28
+        );
+    }
+
+    #[test]
+    fn v2_reset_full_and_fast_match_their_injected_oracles_exactly() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        let full = canonical_v2_full_reset(99);
+        let oracle = full_session_on_environment_v2(99);
+        assert_eq!(full.deck_ids, oracle.deck_ids);
+        assert_eq!(full.deck_hashes, oracle.deck_hashes);
+        assert_eq!(full.episode_id, oracle.episode_id);
+        assert_eq!(full.max_physical_decisions, oracle.max_physical_decisions);
+        assert_eq!(full.max_policy_steps, oracle.max_policy_steps);
+        assert_eq!(full.state, oracle.state);
+        assert_eq!(
+            full.surface.harness_public_context(),
+            oracle.surface.harness_public_context()
+        );
+        assert_eq!(
+            full.surface.privileged_scan_context().unwrap(),
+            oracle.surface.privileged_scan_context().unwrap()
+        );
+        assert_eq!(full.environment_revision, 0);
+        assert_eq!(full.policy_step_count, 0);
+        assert_eq!(full.physical_decision_count, 0);
+        assert!(full.terminal.is_none());
+        assert_eq!(
+            serde_json::to_vec(&full.current_response()).unwrap(),
+            serde_json::to_vec(&oracle.current_response()).unwrap()
+        );
+
+        assert!(full.state.legacy_rng().is_none());
+        let v2 = full
+            .state
+            .environment_randomization_v2()
+            .expect("v2 randomness");
+        assert_eq!(v2.pair_environment_seed(), 99);
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), 0);
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+        assert_eq!(
+            full.state.diagnostic_state_hash_algorithm(),
+            "fnv1a64-serde-json-game-state-envelope-v6"
+        );
+        let serialized = serde_json::to_value(&full.state).unwrap();
+        assert!(serialized.get("environment_randomization_v2").is_some());
+        assert!(serialized.get("rng").is_none());
+
+        let current = full.current.as_ref().expect("current decision exists");
+        assert_eq!(current.physical_decision_id, 0);
+        assert_eq!(current.environment_revision, 0);
+        assert_eq!(current.bound_policy_step_count, 0);
+        assert_eq!(current.bound_physical_decision_count, 0);
+
+        let fast = canonical_v2_fast_reset(99);
+        let fast_oracle = fast_flat_v2_session_on_environment_v2(99);
+        assert_eq!(fast.deck_ids, fast_oracle.deck_ids);
+        assert_eq!(fast.deck_hashes, fast_oracle.deck_hashes);
+        assert_eq!(fast.episode_id, fast_oracle.episode_id);
+        assert_eq!(
+            fast.max_physical_decisions,
+            fast_oracle.max_physical_decisions
+        );
+        assert_eq!(fast.max_policy_steps, fast_oracle.max_policy_steps);
+        assert_eq!(fast.state, fast_oracle.state);
+        assert_eq!(
+            fast.surface.harness_public_context(),
+            fast_oracle.surface.harness_public_context()
+        );
+        assert_eq!(
+            fast.surface.privileged_scan_context().unwrap(),
+            fast_oracle.surface.privileged_scan_context().unwrap()
+        );
+        assert_eq!(fast.environment_revision, 0);
+        assert_eq!(fast.policy_step_count, 0);
+        assert_eq!(fast.physical_decision_count, 0);
+        assert!(fast.terminal.is_none());
+        assert_eq!(fast.current, fast_oracle.current);
+        assert!(fast.flat_action_cache_spare.is_none());
+        assert!(fast.flat_action_cache_spare_v2.is_none());
+
+        // Full and fast views of the same v2 decision agree.
+        assert_eq!(fast.state, full.state);
+        let fast_current = fast.current.as_ref().expect("fast current exists");
+        assert_eq!(current.actor, fast_current.actor);
+        assert_eq!(
+            current.physical_decision_id,
+            fast_current.physical_decision_id
+        );
+        assert_eq!(current.substep_index, fast_current.substep_index);
+        assert_eq!(current.substep_count, fast_current.substep_count);
+        assert_eq!(current.candidates.len(), fast_current.candidates.len());
+        for (full_candidate, fast_candidate) in
+            current.candidates.iter().zip(&fast_current.candidates)
+        {
+            assert_eq!(full_candidate.record.semantic, fast_candidate.semantic);
+            assert_eq!(full_candidate.policy_action, fast_candidate.policy_action);
+        }
+    }
+
+    #[test]
+    fn v2_reset_combined_fast_constructor_populates_only_the_v2_cache() {
+        reset_test_flat_action_commitment_constructions();
+        reset_test_flat_action_v2_commitment_constructions();
+        reset_test_flat_action_v1_materializations();
+        let fast = canonical_v2_fast_reset(99);
+        assert_eq!(
+            test_flat_action_v2_commitment_constructions(),
+            1,
+            "exactly one V2 commitment"
+        );
+        assert_eq!(
+            test_flat_action_commitment_constructions(),
+            0,
+            "zero V1 commitments"
+        );
+        assert_eq!(
+            test_flat_action_v1_materializations(),
+            0,
+            "zero V1 materializations"
+        );
+        assert_eq!(fast.flat_action_contract_mode, FlatActionContractModeV1::V2);
+        assert!(fast.flat_action_cache_spare.is_none());
+        assert!(fast.flat_action_cache_spare_v2.is_none());
+        let current = fast.current.as_ref().expect("current decision exists");
+        assert!(current.flat_action_cache.is_none());
+        assert!(current.flat_action_cache_error.is_none());
+        assert!(current.flat_action_cache_v2.is_some());
+        assert!(current.flat_action_cache_error_v2.is_none());
+
+        let oracle = fast_flat_v2_session_on_environment_v2(99);
+        assert_eq!(
+            current.flat_action_cache_v2,
+            oracle.current.as_ref().unwrap().flat_action_cache_v2,
+            "binding and rows equal the injected flat-action-V2 oracle"
+        );
+
+        // V1 encoding rejects the V2-contract session without materializing.
+        let decision = match fast.current_response() {
+            FastActorResponseV1::Decision(decision) => decision,
+            FastActorResponseV1::Terminal(_) => panic!("session is live"),
+        };
+        let mut actions = [poison_flat_action(); 4];
+        let mut refs = [poison_flat_ref(); 4];
+        let mut objects = [poison_flat_object(); 4];
+        let original_actions = actions;
+        let original_refs = refs;
+        let original_objects = objects;
+        let error = fast
+            .encode_current_flat_action_slice_v1(
+                decision,
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error, FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        assert_eq!(actions, original_actions);
+        assert_eq!(refs, original_refs);
+        assert_eq!(objects, original_objects);
+        assert_eq!(
+            test_flat_action_v1_materializations(),
+            0,
+            "V1 rejection must not materialize"
+        );
+    }
+
+    #[test]
+    fn v2_reset_reuses_pre_constructor_pins_and_is_root_sensitive() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        let full = canonical_v2_full_reset(99);
+        let fast = canonical_v2_fast_reset(99);
+        assert_eq!(
+            full.privileged_environment_hash(),
+            0x7abb_750c_9f4a_4651,
+            "pre-constructor policy pin is reused, not minted"
+        );
+        assert_eq!(
+            full.privileged_core_environment_hash(),
+            0xbb18_34f0_90be_fb8c,
+            "pre-constructor core pin is reused, not minted"
+        );
+        assert_eq!(
+            fast.privileged_core_environment_hash(),
+            0xbb18_34f0_90be_fb8c,
+            "full and fast v2 core hashes are equal and equal the pin"
+        );
+
+        // Same-root construction is byte-deterministic.
+        let full_again = canonical_v2_full_reset(99);
+        assert_eq!(
+            serde_json::to_vec(&full.state).unwrap(),
+            serde_json::to_vec(&full_again.state).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_vec(&full.current_response()).unwrap(),
+            serde_json::to_vec(&full_again.current_response()).unwrap()
+        );
+
+        // Root 100 is retained exactly and moves every derived quantity.
+        let full_100 = canonical_v2_full_reset(100);
+        assert_eq!(
+            full_100
+                .state
+                .environment_randomization_v2()
+                .expect("v2 randomness")
+                .pair_environment_seed(),
+            100
+        );
+        assert!(
+            definition_order(&full.state, PlayerId::P0)
+                != definition_order(&full_100.state, PlayerId::P0)
+                || definition_order(&full.state, PlayerId::P1)
+                    != definition_order(&full_100.state, PlayerId::P1),
+            "root 100 changes at least one owner's complete definition order"
+        );
+        assert_ne!(
+            full.state.diagnostic_state_hash(),
+            full_100.state.diagnostic_state_hash()
+        );
+        assert_ne!(
+            full_100.privileged_environment_hash(),
+            0x7abb_750c_9f4a_4651
+        );
+        assert_ne!(
+            full_100.privileged_core_environment_hash(),
+            0xbb18_34f0_90be_fb8c
+        );
+
+        // Root u64::MAX succeeds and stays exact full-width in both.
+        let full_max = canonical_v2_full_reset(u64::MAX);
+        let fast_max = canonical_v2_fast_reset(u64::MAX);
+        for state in [&full_max.state, &fast_max.state] {
+            assert!(state.legacy_rng().is_none());
+            let v2 = state.environment_randomization_v2().expect("v2 randomness");
+            assert_eq!(v2.pair_environment_seed(), u64::MAX);
+            assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), 0);
+            assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+            assert_eq!(
+                state.diagnostic_state_hash_algorithm(),
+                "fnv1a64-serde-json-game-state-envelope-v6"
+            );
+        }
+        assert_eq!(
+            full_max.state, fast_max.state,
+            "full/fast state parity at max root"
+        );
+        assert_eq!(
+            full_max.privileged_core_environment_hash(),
+            fast_max.privileged_core_environment_hash(),
+            "full/fast core parity at max root"
+        );
+    }
+
+    #[test]
+    fn v2_reset_error_boundaries_are_typed_and_seat_exact() {
+        const SEAT_0_MESSAGE: &str =
+            "unsupported deck_id for seat 0; supported exact canonical ids are \"Burn\" and \"Rally\"";
+        const SEAT_1_MESSAGE: &str =
+            "unsupported deck_id for seat 1; supported exact canonical ids are \"Burn\" and \"Rally\"";
+        let both_bad: SessionDeckIdsV1 = ["NotADeck".to_string(), "AlsoNotADeck".to_string()];
+        let error = match RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
+            1,
+            99,
+            8,
+            1024,
+            both_bad.clone(),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("both-bad deck ids must fail on the full API"),
+        };
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert_eq!(
+            error.message, SEAT_0_MESSAGE,
+            "bad-P0 precedence on the full API"
+        );
+        let error =
+            match FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+                1, 99, 8, 1024, both_bad,
+            ) {
+                Err(error) => error,
+                Ok(_) => panic!("both-bad deck ids must fail on the fast API"),
+            };
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert_eq!(
+            error.message, SEAT_0_MESSAGE,
+            "bad-P0 precedence on the fast API"
+        );
+        let p1_bad: SessionDeckIdsV1 = [CANONICAL_BURN_DECK_ID.to_string(), "NotADeck".to_string()];
+        let error =
+            match FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+                1,
+                99,
+                8,
+                1024,
+                p1_bad.clone(),
+            ) {
+                Err(error) => error,
+                Ok(_) => panic!("a bad P1 deck id must fail on the fast API"),
+            };
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert_eq!(
+            error.message, SEAT_1_MESSAGE,
+            "exact seat-1 reporting on the fast API"
+        );
+        let error = match RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
+            1, 99, 8, 1024, p1_bad,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("a bad P1 deck id must fail on the full API too"),
+        };
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert_eq!(
+            error.message, SEAT_1_MESSAGE,
+            "exact seat-1 reporting on the full API"
+        );
+
+        // The shared private mapper, unit-tested directly.
+        let deck_error =
+            map_deck_pair_build_error_v2(crate::rl::DeckPairBuildErrorV2::DeckPreflight(
+                crate::card_def::DeckPreflightError::UnknownCardDefinition {
+                    index: 0,
+                    card_def: 60_000,
+                },
+            ));
+        assert_eq!(deck_error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert_eq!(
+            deck_error.message,
+            "runtime deck catalog failed full-support preflight"
+        );
+        let kdf_error = map_deck_pair_build_error_v2(
+            crate::rl::DeckPairBuildErrorV2::EnvironmentRandomization(
+                crate::environment_randomization_v2::EnvironmentRandomizationErrorV2::OrdinalOverflow,
+            ),
+        );
+        assert_eq!(kdf_error.code, RlSessionErrorCode::EnvironmentRandomization);
+        assert_eq!(
+            kdf_error.message, "v2 deck-pair build seed derivation failed: OrdinalOverflow",
+            "the complete KDF Display text is retained"
+        );
+        assert_ne!(deck_error.code, kdf_error.code, "distinct typed codes");
+        assert_eq!(
+            session_error_code(&kdf_error.code),
+            "environment_randomization"
+        );
+        assert_eq!(
+            serde_json::to_string(&kdf_error.code).unwrap(),
+            "\"environment_randomization\"",
+            "serde name matches"
+        );
+    }
+
+    #[test]
+    fn v2_reset_failure_is_stateless_and_hash_paths_stay_quiet() {
+        reset_test_flat_action_commitment_constructions();
+        reset_test_flat_action_v2_commitment_constructions();
+        reset_test_flat_action_v1_materializations();
+        let bad: SessionDeckIdsV1 = ["NotADeck".to_string(), "AlsoNotADeck".to_string()];
+        assert!(
+            FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+                1, 99, 8, 1024, bad,
+            )
+            .is_err()
+        );
+        assert_eq!(
+            test_flat_action_v2_commitment_constructions(),
+            0,
+            "a failed reset constructs no flat-action cache"
+        );
+        assert_eq!(
+            test_flat_action_commitment_constructions(),
+            0,
+            "a failed reset constructs no V1 commitments either"
+        );
+        assert_eq!(
+            test_flat_action_v1_materializations(),
+            0,
+            "a failed reset materializes no V1 rows"
+        );
+        let recovered = canonical_v2_fast_reset(99);
+        assert_eq!(
+            test_flat_action_v2_commitment_constructions(),
+            1,
+            "the subsequent valid reset constructs exactly one V2 commitment"
+        );
+        let pristine = canonical_v2_fast_reset(99);
+        assert_eq!(
+            serde_json::to_vec(&recovered.state).unwrap(),
+            serde_json::to_vec(&pristine.state).unwrap(),
+            "recovery is byte-equivalent to a pristine reset"
+        );
+        assert_eq!(recovered.current, pristine.current);
+
+        reset_test_exact_environment_hash_calls();
+        reset_test_exact_surface_hash_calls();
+        let mut full = canonical_v2_full_reset(99);
+        let mut fast = canonical_v2_fast_reset(99);
+        let _ = full.current_response();
+        let _ = fast.current_response();
+        let response = full.current_response();
+        let (step, index, id) = first_action(&response);
+        full.step(1, step, index, &id).unwrap();
+        fast.step(1, 0, 0).unwrap();
+        assert_eq!(
+            test_exact_environment_hash_calls(),
+            0,
+            "v2 resets, reads, and accepted steps compute no policy-environment hashes"
+        );
+        assert_eq!(
+            test_exact_surface_hash_calls(),
+            0,
+            "owned v2 session resets compute no exact standalone surface hashes"
+        );
+        let _ = full.privileged_environment_hash();
+        assert_eq!(test_exact_environment_hash_calls(), 1);
+        assert_eq!(test_exact_surface_hash_calls(), 0);
+        let _ = full.privileged_core_environment_hash();
+        let _ = fast.privileged_core_environment_hash();
+        assert_eq!(
+            test_exact_environment_hash_calls(),
+            1,
+            "core audit calls do not raise the policy-environment count"
+        );
+        assert_eq!(test_exact_surface_hash_calls(), 0);
+    }
+
+    #[test]
+    fn v2_reset_zero_physical_limit_reaches_the_decision_cap_terminal() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        let legacy_zero = RlEpisodeSessionV1::reset_with_decks_and_limits(
+            1,
+            99,
+            0,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .unwrap();
+        let legacy_terminal = legacy_zero.terminal.as_ref().expect("legacy cap terminal");
+
+        let full = RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
+            1,
+            99,
+            0,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("zero-limit v2 reset succeeds");
+        let fast = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2_environment_v2(
+            1,
+            99,
+            0,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("zero-limit fast v2 reset succeeds");
+        for (terminal, current_none, revision, policy_count, physical_count) in [
+            (
+                full.terminal.as_ref(),
+                full.current.is_none(),
+                full.environment_revision,
+                full.policy_step_count,
+                full.physical_decision_count,
+            ),
+            (
+                fast.terminal.as_ref(),
+                fast.current.is_none(),
+                fast.environment_revision,
+                fast.policy_step_count,
+                fast.physical_decision_count,
+            ),
+        ] {
+            let terminal = terminal.expect("decision-cap terminal exists");
+            assert_eq!(
+                terminal, legacy_terminal,
+                "the complete terminal equals the legacy zero-limit terminal, \
+                 which also proves full/fast parity"
+            );
+            assert!(current_none, "no current decision at the cap");
+            assert_eq!(revision, 0);
+            assert_eq!(policy_count, 0);
+            assert_eq!(physical_count, 0);
+        }
+        assert!(fast.flat_action_cache_spare.is_none());
+        assert!(fast.flat_action_cache_spare_v2.is_none());
+        for state in [&full.state, &fast.state] {
+            assert!(state.legacy_rng().is_none());
+            let v2 = state.environment_randomization_v2().expect("v2 randomness");
+            assert_eq!(v2.pair_environment_seed(), 99);
+            assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), 0);
+            assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+        }
+    }
+
+    const V5_TRANSCRIPT_INPUTS: [&str; 5] = [
+        "{\"request_type\":\"step\",\"schema_version\":5,\"request_id\":\"v5-transcript-1\",\"episode_id\":1,\"expected_step\":0,\"selected_index\":0,\"selected_action_id\":\"none\"}",
+        "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"v5-transcript-2\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}",
+        "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"v5-transcript-2\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}",
+        "{\"request_type\":\"step\",\"schema_version\":5,\"request_id\":\"v5-transcript-4\",\"episode_id\":1,\"expected_step\":0,\"selected_index\":0,\"selected_action_id\":\"legal-action-v5:c7876642d50fe9e6\"}",
+        "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"v5-transcript-5\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":0,\"max_policy_steps\":1024}",
+    ];
+    /// Captured at clean parent 9e7d6b8 before any V6 edit. Never rederive.
+    const V5_TRANSCRIPT_SHA256: &str =
+        "286937e4d1e9e73dd4dae31ed85a3b5dc98cc67a13d1780a2ec8e133cb96edfe";
+
+    fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
+        format!(
+            "{{\"request_type\":\"reset\",\"schema_version\":6,\"request_id\":\"{request_id}\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":{root},\"max_physical_decisions\":{max_physical_decisions},\"max_policy_steps\":1024}}"
+        )
+    }
+
+    fn v5_reset_line(request_id: &str, env_seed: u64, max_physical_decisions: u64) -> String {
+        format!(
+            "{{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"{request_id}\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":{env_seed},\"max_physical_decisions\":{max_physical_decisions},\"max_policy_steps\":1024}}"
+        )
+    }
+
+    fn step_line(
+        schema_version: u32,
+        request_id: &str,
+        expected_step: u64,
+        action_id: &str,
+    ) -> String {
+        format!(
+            "{{\"request_type\":\"step\",\"schema_version\":{schema_version},\"request_id\":\"{request_id}\",\"episode_id\":1,\"expected_step\":{expected_step},\"selected_index\":0,\"selected_action_id\":\"{action_id}\"}}"
+        )
+    }
+
+    fn parse_line(line: &str) -> serde_json::Value {
+        serde_json::from_str(line).expect("response line parses")
+    }
+
+    /// Explicit expected V6 provenance, constructed from the same identity
+    /// constants V1 reports, without touching either V6 helper.
+    fn expected_v6_provenance() -> serde_json::Value {
+        serde_json::json!({
+            "protocol": RL_SESSION_PROTOCOL_NAME,
+            "protocol_version": 6,
+            "schema_version": 6,
+            "kernel_version": KERNEL_VERSION,
+            "surface_version": H2_PREDICATE_VERSION,
+            "policy_surface_version": POLICY_SURFACE_VERSION,
+            "card_db_hash": KERNEL_CARDDB_HASH,
+        })
+    }
+
+    fn first_action_of(response: &serde_json::Value) -> (u64, String) {
+        (
+            response["step"].as_u64().expect("step"),
+            response["legal_actions"][0]["stable_id"]
+                .as_str()
+                .expect("stable id")
+                .to_string(),
+        )
+    }
+
+    /// Test-only mirror of every private `CurrentDecisionV1` field with
+    /// comparable types: observation, the full ordered candidate records
+    /// plus executable policy-action bindings, revision, and bound counters.
+    #[derive(Debug, Clone, PartialEq)]
+    struct CurrentDecisionFingerprintV1 {
+        actor: PlayerId,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        observation: ObservationV5,
+        candidates: Vec<crate::rl::PolicyLegalActionCandidateV5>,
+        environment_revision: u64,
+        bound_policy_step_count: u64,
+        bound_physical_decision_count: u64,
+    }
+
+    /// Genuinely complete private-session fingerprint for nonmutation
+    /// proofs: wire version, deck identity, limits, byte-complete state,
+    /// both surface contexts, revision, counters, the complete private
+    /// current decision, the complete terminal, and the serialized current
+    /// response.
+    #[derive(Debug, Clone, PartialEq)]
+    struct ActiveSessionFingerprintV1 {
+        wire_version_is_v6: bool,
+        deck_ids: SessionDeckIdsV1,
+        deck_hashes: SessionDeckHashesV1,
+        episode_id: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        state_bytes: String,
+        harness_context: crate::surface_v2::HarnessSurfacePublicContextV2,
+        scan_context: PolicySurfaceContextIdsV5,
+        environment_revision: u64,
+        policy_step_count: u64,
+        physical_decision_count: u64,
+        current: Option<CurrentDecisionFingerprintV1>,
+        terminal: Option<RlSessionTerminalV1>,
+        current_response_bytes: Vec<u8>,
+    }
+
+    fn active_fingerprint(server: &KernelRlJsonlServerV1) -> ActiveSessionFingerprintV1 {
+        let active = server.active.as_ref().expect("an active session exists");
+        let session = &active.session;
+        ActiveSessionFingerprintV1 {
+            wire_version_is_v6: active.wire_version == KernelRlWireVersionV1::V6,
+            deck_ids: session.deck_ids.clone(),
+            deck_hashes: session.deck_hashes,
+            episode_id: session.episode_id,
+            max_physical_decisions: session.max_physical_decisions,
+            max_policy_steps: session.max_policy_steps,
+            state_bytes: serde_json::to_string(&session.state).expect("state serializes"),
+            harness_context: session.surface.harness_public_context(),
+            scan_context: session
+                .surface
+                .privileged_scan_context()
+                .expect("scan context"),
+            environment_revision: session.environment_revision,
+            policy_step_count: session.policy_step_count,
+            physical_decision_count: session.physical_decision_count,
+            current: session
+                .current
+                .as_ref()
+                .map(|current| CurrentDecisionFingerprintV1 {
+                    actor: current.actor,
+                    physical_decision_id: current.physical_decision_id,
+                    substep_index: current.substep_index,
+                    substep_count: current.substep_count,
+                    observation: current.observation.clone(),
+                    candidates: current.candidates.clone(),
+                    environment_revision: current.environment_revision,
+                    bound_policy_step_count: current.bound_policy_step_count,
+                    bound_physical_decision_count: current.bound_physical_decision_count,
+                }),
+            terminal: session.terminal.clone(),
+            current_response_bytes: serde_json::to_vec(&session.current_response())
+                .expect("response serializes"),
+        }
+    }
+
+    fn assert_no_secret_fields(value: &serde_json::Value, path: &str) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, nested) in map {
+                    let normalized = key.to_ascii_lowercase();
+                    for forbidden in [
+                        "seed",
+                        "rng",
+                        "random",
+                        "diagnostic",
+                        "state_hash",
+                        "environment_hash",
+                    ] {
+                        assert!(
+                            !normalized.contains(forbidden),
+                            "response leaks field {key} (contains {forbidden}) at {path}"
+                        );
+                    }
+                    assert_no_secret_fields(nested, &format!("{path}.{key}"));
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, nested) in items.iter().enumerate() {
+                    assert_no_secret_fields(nested, &format!("{path}[{index}]"));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn jsonl_v6_frozen_v5_bytes_and_api() {
+        use sha2::Digest as _;
+        assert_eq!(RL_SESSION_SCHEMA_VERSION, 5);
+        assert_eq!(RL_SESSION_PROTOCOL_VERSION, 5);
+        let provenance = RlSessionProvenanceV1::current();
+        assert_eq!(provenance.protocol_version, 5);
+        assert_eq!(provenance.schema_version, 5);
+        assert_eq!(provenance.protocol, RL_SESSION_PROTOCOL_NAME);
+
+        let mut server = KernelRlJsonlServerV1::new();
+        let outputs: Vec<String> = V5_TRANSCRIPT_INPUTS
+            .iter()
+            .map(|line| server.handle_line(line))
+            .collect();
+        assert_eq!(
+            outputs[1], outputs[2],
+            "the identical immediate retry is byte-identical"
+        );
+        let mut transcript = String::new();
+        for output in &outputs {
+            transcript.push_str(output);
+            transcript.push('\n');
+        }
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(transcript.as_bytes());
+        let observed = hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            observed, V5_TRANSCRIPT_SHA256,
+            "the parent-captured V5 transcript bytes are frozen"
+        );
+        // The concrete V5 response surface stays independently round-trippable.
+        for output in &outputs {
+            let response: KernelRlResponseV1 =
+                serde_json::from_str(output).expect("V5 response deserializes");
+            assert_eq!(&serialize_response(response), output);
+        }
+    }
+
+    #[test]
+    fn jsonl_v6_response_vocabulary_and_real_activation() {
+        let mut server = KernelRlJsonlServerV1::new();
+        let reset_response_line = server.handle_line(&v6_reset_line("a1", 99, 8));
+        let reset_response = parse_line(&reset_response_line);
+        assert_eq!(reset_response["response_type"], "decision");
+        assert_eq!(reset_response["schema_version"], 6);
+        assert_eq!(reset_response["provenance"]["protocol_version"], 6);
+        assert_eq!(reset_response["provenance"]["schema_version"], 6);
+        assert_eq!(reset_response["observation"]["schema_version"], 5);
+        for action in reset_response["legal_actions"].as_array().expect("actions") {
+            assert_eq!(action["schema_version"], 5);
+        }
+
+        {
+            let active = server.active.as_ref().expect("active session");
+            assert_eq!(active.wire_version, KernelRlWireVersionV1::V6);
+            assert!(active.session.state.legacy_rng().is_none());
+            let v2 = active
+                .session
+                .state
+                .environment_randomization_v2()
+                .expect("environment-v2 randomness");
+            assert_eq!(v2.pair_environment_seed(), 99);
+            assert_eq!(
+                active.session.state.diagnostic_state_hash_algorithm(),
+                "fnv1a64-serde-json-game-state-envelope-v6"
+            );
+        }
+
+        // Independent non-circular oracle: destructure the accepted direct
+        // v2 reset and explicitly construct every expected wire field. No
+        // V6 conversion or serialization helper participates.
+        let direct = canonical_v2_full_reset(99);
+        let RlSessionResponseV1::Decision(direct_decision) = direct.current_response() else {
+            panic!("the direct v2 reset yields a decision");
+        };
+        let expected_decision = serde_json::json!({
+            "response_type": "decision",
+            "schema_version": 6,
+            "request_id": "a1",
+            "provenance": expected_v6_provenance(),
+            "deck_ids": direct_decision.deck_ids,
+            "deck_hashes": direct_decision.deck_hashes,
+            "episode_id": direct_decision.episode_id,
+            "step": direct_decision.step,
+            "physical_decision_id": direct_decision.physical_decision_id,
+            "substep_index": direct_decision.substep_index,
+            "substep_count": direct_decision.substep_count,
+            "acting_player": direct_decision.acting_player,
+            "observation": direct_decision.observation,
+            "legal_actions": direct_decision.legal_actions,
+            "reward": direct_decision.reward,
+        });
+        assert_eq!(
+            reset_response, expected_decision,
+            "every wire decision field equals the direct environment-v2 reset"
+        );
+
+        // One successful Step keeps outer/provenance 6 and nested 5.
+        let (step, action_id) = first_action_of(&reset_response);
+        let step_response_line = server.handle_line(&step_line(6, "a2", step, &action_id));
+        let step_response = parse_line(&step_response_line);
+        assert_eq!(step_response["response_type"], "decision");
+        assert_eq!(step_response["schema_version"], 6);
+        assert_eq!(step_response["provenance"]["protocol_version"], 6);
+        assert_eq!(step_response["provenance"]["schema_version"], 6);
+        assert_eq!(step_response["observation"]["schema_version"], 5);
+        for action in step_response["legal_actions"].as_array().expect("actions") {
+            assert_eq!(action["schema_version"], 5);
+        }
+
+        // Zero-limit V6 Reset: complete field-by-field terminal equality
+        // with the direct v2 zero-limit session, outer/provenance 6.
+        let terminal_line = server.handle_line(&v6_reset_line("a3", 99, 0));
+        let terminal_response = parse_line(&terminal_line);
+        assert_eq!(terminal_response["response_type"], "terminal");
+        assert_eq!(terminal_response["schema_version"], 6);
+        assert_eq!(terminal_response["provenance"]["schema_version"], 6);
+        assert_eq!(terminal_response["provenance"]["protocol_version"], 6);
+        let direct_zero = RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
+            1,
+            99,
+            0,
+            1024,
+            canonical_burn_mirror_deck_ids(),
+        )
+        .expect("zero-limit direct reset");
+        let RlSessionResponseV1::Terminal(direct_terminal) = direct_zero.current_response() else {
+            panic!("the zero-limit direct reset is terminal");
+        };
+        let expected_terminal = serde_json::json!({
+            "response_type": "terminal",
+            "schema_version": 6,
+            "request_id": "a3",
+            "provenance": expected_v6_provenance(),
+            "deck_ids": direct_terminal.deck_ids,
+            "deck_hashes": direct_terminal.deck_hashes,
+            "episode_id": direct_terminal.episode_id,
+            "terminal_outcome": direct_terminal.terminal_outcome,
+            "terminal_classification": direct_terminal.terminal_classification,
+            "terminal_code": direct_terminal.terminal_code,
+            "winner": direct_terminal.winner,
+            "terminal_reward": direct_terminal.terminal_reward,
+            "terminal_reason": direct_terminal.terminal_reason,
+            "policy_step_count": direct_terminal.policy_step_count,
+            "physical_decision_count": direct_terminal.physical_decision_count,
+        });
+        assert_eq!(
+            terminal_response, expected_terminal,
+            "every wire terminal field equals the direct environment-v2 terminal"
+        );
+
+        // Concrete public V6 round trip for all three wire lines.
+        for line in [&reset_response_line, &step_response_line, &terminal_line] {
+            let response: KernelRlResponseV6 =
+                serde_json::from_str(line).expect("V6 response deserializes");
+            assert_eq!(
+                &serde_json::to_string(&response).expect("V6 response reserializes"),
+                line,
+                "public KernelRlResponseV6 round-trips exactly"
+            );
+        }
+
+        for line in [&reset_response, &step_response, &terminal_response] {
+            assert_no_secret_fields(line, "$");
+        }
+    }
+
+    #[test]
+    fn jsonl_v6_strict_dispatch_and_smuggling_resistance() {
+        let mut server = KernelRlJsonlServerV1::new();
+        let anchor_line = v6_reset_line("s1", 99, 8);
+        let anchor_response = server.handle_line(&anchor_line);
+        assert_eq!(parse_line(&anchor_response)["response_type"], "decision");
+        let fingerprint = active_fingerprint(&server);
+        let anchor_exchange = server.last_exchange.clone();
+        assert!(anchor_exchange.is_some(), "the anchor reset is cached");
+
+        let cases: [(&str, String, u32, &str, Option<&str>); 10] = [
+            (
+                "schema 6 with only env_seed",
+                "{\"request_type\":\"reset\",\"schema_version\":6,\"request_id\":\"smug1\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                6,
+                "request does not match the v6 protocol schema",
+                Some("smug1"),
+            ),
+            (
+                "schema 6 with both seed fields",
+                "{\"request_type\":\"reset\",\"schema_version\":6,\"request_id\":\"smug2\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                6,
+                "request does not match the v6 protocol schema",
+                Some("smug2"),
+            ),
+            (
+                "schema 5 with only pair_environment_seed",
+                "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"smug3\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                Some("smug3"),
+            ),
+            (
+                "duplicate root schema_version 5 then 6",
+                "{\"request_type\":\"reset\",\"schema_version\":5,\"schema_version\":6,\"request_id\":\"SECRET-DUP\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "duplicate root schema_version 6 then 5",
+                "{\"request_type\":\"reset\",\"schema_version\":6,\"schema_version\":5,\"request_id\":\"SECRET-DUP2\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "nested duplicate keys",
+                "{\"request_type\":\"step\",\"schema_version\":6,\"request_id\":\"SECRET-NEST\",\"episode_id\":1,\"expected_step\":0,\"selected_index\":0,\"selected_action_id\":\"x\",\"extra\":{\"a\":1,\"a\":2}}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "missing version with a secret ID",
+                "{\"request_type\":\"reset\",\"request_id\":\"SECRET-MISSING\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "string version with a secret ID",
+                "{\"request_type\":\"reset\",\"schema_version\":\"6\",\"request_id\":\"SECRET-STRING\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "fractional version",
+                "{\"request_type\":\"reset\",\"schema_version\":5.5,\"request_id\":\"SECRET-FRAC\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+            (
+                "out-of-range version",
+                "{\"request_type\":\"reset\",\"schema_version\":4294967296,\"request_id\":\"SECRET-RANGE\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}".to_string(),
+                5,
+                "request does not match the v5 protocol schema",
+                None,
+            ),
+        ];
+        for (label, line, expected_schema, expected_message, expected_id) in cases {
+            let response_line = server.handle_line(&line);
+            let response = parse_line(&response_line);
+            assert_eq!(
+                response["schema_version"],
+                u64::from(expected_schema),
+                "{label}: envelope version"
+            );
+            assert_eq!(
+                response["error"]["code"], "malformed_request",
+                "{label}: code"
+            );
+            assert_eq!(
+                response["error"]["message"], expected_message,
+                "{label}: message"
+            );
+            match expected_id {
+                Some(id) => assert_eq!(response["request_id"], id, "{label}: id"),
+                None => {
+                    assert!(response["request_id"].is_null(), "{label}: null id");
+                    assert!(
+                        !response_line.contains("SECRET"),
+                        "{label}: no secret reflection"
+                    );
+                }
+            }
+            assert_eq!(
+                active_fingerprint(&server),
+                fingerprint,
+                "{label}: active session unchanged"
+            );
+            assert_eq!(
+                server.last_exchange, anchor_exchange,
+                "{label}: the private cached exchange is untouched"
+            );
+            assert_eq!(
+                server.handle_line(&anchor_line),
+                anchor_response,
+                "{label}: cached anchor bytes unchanged"
+            );
+            assert_eq!(
+                server.last_exchange, anchor_exchange,
+                "{label}: a cache hit does not replace the cached exchange"
+            );
+        }
+
+        // Unsupported V5-shaped numeric version: frozen V5 error with ID.
+        let unsupported = "{\"request_type\":\"reset\",\"schema_version\":3,\"request_id\":\"u1\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}";
+        let response = parse_line(&server.handle_line(unsupported));
+        assert_eq!(response["schema_version"], 5);
+        assert_eq!(response["request_id"], "u1");
+        assert_eq!(response["error"]["code"], "schema_version_mismatch");
+        assert_eq!(
+            response["error"]["message"],
+            "unsupported request schema_version"
+        );
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        assert_eq!(
+            server.last_exchange, anchor_exchange,
+            "an unsupported schema never replaces the cached exchange"
+        );
+        assert_eq!(
+            server.handle_line(&anchor_line),
+            anchor_response,
+            "unsupported schema is never cached"
+        );
+    }
+
+    #[test]
+    fn jsonl_v6_semantic_retry_and_profiling() {
+        let mut profile = RlPhaseProfileV1::default();
+        let mut server = KernelRlJsonlServerV1::new();
+        let request_a = v6_reset_line("r1", 99, 8);
+        // The same typed payload with different key order and whitespace.
+        let request_a_reordered = "{ \"schema_version\":6,\"request_id\":\"r1\",\"request_type\":\"reset\",\"episode_id\":1,\"deck_ids\":[\"Burn\",\"Burn\"],\"max_policy_steps\":1024,\"max_physical_decisions\":8,\"pair_environment_seed\":99 }";
+        let request_changed_root = v6_reset_line("r1", 100, 8);
+
+        let response1 = server.handle_line_profiled(&request_a, &mut profile);
+        let fingerprint = active_fingerprint(&server);
+        let response2 = server.handle_line_profiled(request_a_reordered, &mut profile);
+        assert_eq!(
+            active_fingerprint(&server),
+            fingerprint,
+            "the reordered cache hit leaves the complete session untouched"
+        );
+        let response3 = server.handle_line_profiled(&request_changed_root, &mut profile);
+        assert_eq!(
+            active_fingerprint(&server),
+            fingerprint,
+            "the changed-root reuse mismatch leaves the complete session untouched"
+        );
+        let response4 = server.handle_line_profiled(&request_a, &mut profile);
+        assert_eq!(
+            active_fingerprint(&server),
+            fingerprint,
+            "the final retry leaves the complete session untouched"
+        );
+
+        assert_eq!(response1, response2, "typed retry ignores formatting");
+        assert_eq!(response1, response4);
+        let mismatch = parse_line(&response3);
+        assert_eq!(mismatch["schema_version"], 6);
+        assert_eq!(mismatch["error"]["code"], "request_id_reuse_mismatch");
+        assert_eq!(
+            mismatch["error"]["message"],
+            "request_id was reused for a different immediate request payload"
+        );
+        let active = server.active.as_ref().expect("active session");
+        assert_eq!(
+            active
+                .session
+                .state
+                .environment_randomization_v2()
+                .expect("v2")
+                .pair_environment_seed(),
+            99,
+            "the active state remains request A"
+        );
+
+        assert_eq!(profile.request_lines, 4);
+        assert_eq!(profile.response_lines, 4);
+        assert_eq!(profile.reset_requests, 4);
+        assert_eq!(profile.step_requests, 0);
+        assert_eq!(profile.phases.parse.count, 4);
+        assert_eq!(profile.phases.decode.count, 4);
+        assert_eq!(profile.phases.retry.count, 4);
+        assert_eq!(profile.phases.response.count, 4);
+        assert_eq!(profile.phases.serialize.count, 4);
+        assert_eq!(profile.phases.reset.count, 1);
+        assert_eq!(profile.phases.advance.count, 1);
+        assert_eq!(profile.phases.observe.count, 1);
+        assert_eq!(profile.phases.actions.count, 1);
+        assert_eq!(profile.phases.postbind.count, 1);
+        assert_eq!(profile.phases.step_validation.count, 0);
+        assert_eq!(profile.phases.step_integrity.count, 0);
+        assert_eq!(profile.phases.step_selection.count, 0);
+        assert_eq!(profile.phases.step_apply.count, 0);
+
+        let mut unprofiled = KernelRlJsonlServerV1::new();
+        assert_eq!(
+            unprofiled.handle_line(&request_a),
+            response1,
+            "profiling never changes response bytes"
+        );
+    }
+
+    #[test]
+    fn jsonl_v6_wire_version_in_retry_identity() {
+        let mut server = KernelRlJsonlServerV1::new();
+        let reset_response = parse_line(&server.handle_line(&v6_reset_line("w0", 99, 8)));
+        let (step, action_id) = first_action_of(&reset_response);
+        let v6_step_line = step_line(6, "X", step, &action_id);
+        let v6_step_response = server.handle_line(&v6_step_line);
+        assert_eq!(parse_line(&v6_step_response)["response_type"], "decision");
+        let fingerprint = active_fingerprint(&server);
+
+        // The otherwise identical Step resent as schema 5 under the same ID.
+        let v5_step_line = step_line(5, "X", step, &action_id);
+        let mismatch = parse_line(&server.handle_line(&v5_step_line));
+        assert_eq!(
+            mismatch["schema_version"], 5,
+            "the reuse-mismatch envelope follows the incoming wire version"
+        );
+        assert_eq!(mismatch["error"]["code"], "request_id_reuse_mismatch");
+        assert_eq!(
+            mismatch["error"]["message"],
+            "request_id was reused for a different immediate request payload"
+        );
+        assert_eq!(active_fingerprint(&server), fingerprint, "no state change");
+        assert_eq!(
+            server.handle_line(&v6_step_line),
+            v6_step_response,
+            "the original V6 request still returns exact cached bytes"
+        );
+        let (next_step, next_action) = first_action_of(&parse_line(&v6_step_response));
+        let next_response =
+            parse_line(&server.handle_line(&step_line(6, "X2", next_step, &next_action)));
+        assert_eq!(next_response["response_type"], "decision");
+        assert_eq!(next_response["schema_version"], 6);
+    }
+
+    #[test]
+    fn jsonl_v6_cross_version_step_prevalidation_and_atomicity() {
+        // Scenario A: active V5 session, poisoned V6 Step.
+        let mut server = KernelRlJsonlServerV1::new();
+        let v5_reset_response = parse_line(&server.handle_line(&v5_reset_line("c1", 99, 8)));
+        let (v5_step, v5_action) = first_action_of(&v5_reset_response);
+        let fingerprint = active_fingerprint(&server);
+        let poisoned_v6 = "{\"request_type\":\"step\",\"schema_version\":6,\"request_id\":\"c2\",\"episode_id\":7,\"expected_step\":42,\"selected_index\":999,\"selected_action_id\":\"nope\"}";
+        let mut poison_profile = RlPhaseProfileV1::default();
+        let mismatch = parse_line(&server.handle_line_profiled(poisoned_v6, &mut poison_profile));
+        assert_eq!(mismatch["schema_version"], 6, "incoming response version");
+        assert_eq!(mismatch["error"]["code"], "schema_version_mismatch");
+        assert_eq!(
+            mismatch["error"]["message"],
+            "step request schema_version does not match the active session schema_version"
+        );
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        assert_eq!(poison_profile.phases.step_validation.count, 0);
+        assert_eq!(poison_profile.phases.step_integrity.count, 0);
+        assert_eq!(poison_profile.phases.step_selection.count, 0);
+        assert_eq!(poison_profile.phases.step_apply.count, 0);
+        assert_eq!(poison_profile.phases.advance.count, 0);
+        assert_eq!(poison_profile.phases.observe.count, 0);
+        assert_eq!(poison_profile.phases.actions.count, 0);
+        assert_eq!(poison_profile.phases.postbind.count, 0);
+        let stepped = parse_line(&server.handle_line(&step_line(5, "c3", v5_step, &v5_action)));
+        assert_eq!(stepped["response_type"], "decision");
+        assert_eq!(stepped["schema_version"], 5);
+
+        // Scenario B: active V6 session, poisoned V5 Step.
+        let mut server = KernelRlJsonlServerV1::new();
+        let v6_reset_response = parse_line(&server.handle_line(&v6_reset_line("d1", 99, 8)));
+        let (v6_step, v6_action) = first_action_of(&v6_reset_response);
+        let fingerprint = active_fingerprint(&server);
+        let poisoned_v5 = "{\"request_type\":\"step\",\"schema_version\":5,\"request_id\":\"d2\",\"episode_id\":7,\"expected_step\":42,\"selected_index\":999,\"selected_action_id\":\"nope\"}";
+        let mut poison_profile = RlPhaseProfileV1::default();
+        let mismatch = parse_line(&server.handle_line_profiled(poisoned_v5, &mut poison_profile));
+        assert_eq!(mismatch["schema_version"], 5, "incoming response version");
+        assert_eq!(mismatch["error"]["code"], "schema_version_mismatch");
+        assert_eq!(
+            mismatch["error"]["message"],
+            "step request schema_version does not match the active session schema_version"
+        );
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        assert_eq!(poison_profile.phases.step_validation.count, 0);
+        assert_eq!(poison_profile.phases.step_integrity.count, 0);
+        assert_eq!(poison_profile.phases.step_selection.count, 0);
+        assert_eq!(poison_profile.phases.step_apply.count, 0);
+        assert_eq!(poison_profile.phases.advance.count, 0);
+        assert_eq!(poison_profile.phases.observe.count, 0);
+        assert_eq!(poison_profile.phases.actions.count, 0);
+        assert_eq!(poison_profile.phases.postbind.count, 0);
+        let stepped = parse_line(&server.handle_line(&step_line(6, "d3", v6_step, &v6_action)));
+        assert_eq!(stepped["response_type"], "decision");
+        assert_eq!(stepped["schema_version"], 6);
+    }
+
+    #[test]
+    fn jsonl_v6_failed_reset_preserves_state_and_version() {
+        const SEAT_0_DECK_MESSAGE: &str =
+            "unsupported deck_id for seat 0; supported exact canonical ids are \"Burn\" and \"Rally\"";
+        let failing_v6 = "{\"request_type\":\"reset\",\"schema_version\":6,\"request_id\":\"f1\",\"deck_ids\":[\"NotADeck\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}";
+        let failing_v5 = "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"f2\",\"deck_ids\":[\"NotADeck\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}";
+
+        // Active V5, failing V6 Reset.
+        let mut server = KernelRlJsonlServerV1::new();
+        let reset_response = parse_line(&server.handle_line(&v5_reset_line("e1", 99, 8)));
+        let (step, action) = first_action_of(&reset_response);
+        let fingerprint = active_fingerprint(&server);
+        let old_exchange = server
+            .last_exchange
+            .clone()
+            .expect("the successful reset is cached");
+        let failure_line = server.handle_line(failing_v6);
+        let failure = parse_line(&failure_line);
+        assert_eq!(failure["schema_version"], 6);
+        assert_eq!(failure["error"]["code"], "unsupported_deck");
+        assert_eq!(failure["error"]["message"], SEAT_0_DECK_MESSAGE);
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        // Direct cache-replacement proof: the new cached exchange differs
+        // from the anchor, holds the failing supported V6 request and its
+        // exact error response, and is value-identical across the retry.
+        let failed_exchange = server
+            .last_exchange
+            .clone()
+            .expect("the failed supported Reset is cached");
+        assert_ne!(failed_exchange, old_exchange);
+        assert_eq!(failed_exchange.request_id, "f1");
+        assert!(matches!(
+            &failed_exchange.request,
+            VersionedKernelRlRequestV1::V6(KernelRlRequestV6::Reset { deck_ids, .. })
+                if deck_ids[0] == "NotADeck"
+        ));
+        assert_eq!(failed_exchange.response_line, failure_line);
+        assert_eq!(
+            server.handle_line(failing_v6),
+            failure_line,
+            "a failed supported Reset replaces the retry cache with its error"
+        );
+        assert_eq!(
+            server.last_exchange.as_ref(),
+            Some(&failed_exchange),
+            "the cached failure is value-identical across the immediate retry"
+        );
+        let stepped = parse_line(&server.handle_line(&step_line(5, "e2", step, &action)));
+        assert_eq!(stepped["response_type"], "decision");
+        assert_eq!(stepped["schema_version"], 5);
+
+        // Active V6, failing V5 Reset.
+        let mut server = KernelRlJsonlServerV1::new();
+        let reset_response = parse_line(&server.handle_line(&v6_reset_line("g1", 99, 8)));
+        let (step, action) = first_action_of(&reset_response);
+        let fingerprint = active_fingerprint(&server);
+        let failure = parse_line(&server.handle_line(failing_v5));
+        assert_eq!(failure["schema_version"], 5);
+        assert_eq!(failure["error"]["code"], "unsupported_deck");
+        assert_eq!(failure["error"]["message"], SEAT_0_DECK_MESSAGE);
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        let stepped = parse_line(&server.handle_line(&step_line(6, "g2", step, &action)));
+        assert_eq!(stepped["response_type"], "decision");
+        assert_eq!(stepped["schema_version"], 6);
+
+        // Active V6, failing V6 Reset.
+        let mut server = KernelRlJsonlServerV1::new();
+        let reset_response = parse_line(&server.handle_line(&v6_reset_line("h1", 99, 8)));
+        let (step, action) = first_action_of(&reset_response);
+        let fingerprint = active_fingerprint(&server);
+        let failure = parse_line(&server.handle_line(failing_v6));
+        assert_eq!(failure["schema_version"], 6);
+        assert_eq!(failure["error"]["code"], "unsupported_deck");
+        assert_eq!(failure["error"]["message"], SEAT_0_DECK_MESSAGE);
+        assert_eq!(active_fingerprint(&server), fingerprint);
+        let stepped = parse_line(&server.handle_line(&step_line(6, "h2", step, &action)));
+        assert_eq!(stepped["response_type"], "decision");
+        assert_eq!(stepped["schema_version"], 6);
+
+        // Profiled failing V6 Reset plus its retry: Reset measured exactly
+        // once overall, so the retried failure is a genuine cache hit and
+        // not a second deterministic execution; no advance work either way.
+        let mut server = KernelRlJsonlServerV1::new();
+        let mut profile = RlPhaseProfileV1::default();
+        let first_failure_line = server.handle_line_profiled(failing_v6, &mut profile);
+        let failure = parse_line(&first_failure_line);
+        assert_eq!(failure["error"]["code"], "unsupported_deck");
+        let cached_failure = server
+            .last_exchange
+            .clone()
+            .expect("the failed supported Reset is cached");
+        let retried_failure_line = server.handle_line_profiled(failing_v6, &mut profile);
+        assert_eq!(retried_failure_line, first_failure_line);
+        assert_eq!(
+            server.last_exchange.as_ref(),
+            Some(&cached_failure),
+            "the retry leaves the cached failure value-identical"
+        );
+        assert_eq!(
+            profile.phases.reset.count, 1,
+            "the retried failure never re-executes Reset"
+        );
+        assert_eq!(profile.phases.retry.count, 2);
+        assert_eq!(profile.phases.advance.count, 0);
+        assert_eq!(profile.phases.observe.count, 0);
+        assert_eq!(profile.phases.actions.count, 0);
+        assert_eq!(profile.phases.postbind.count, 0);
     }
 }

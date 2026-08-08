@@ -14,12 +14,19 @@
 //! land mana are generated from metadata, while exceptional rules text is
 //! still composed explicitly below.
 //!
-//! The build also embeds a Git commit-tree integrity proof: build HEAD,
-//! clean/dirty status, and a deterministic SHA-256 over every tracked path,
-//! mode, type, and Git blob (or gitlink id). This is not a sealed-builder or
+//! The build also embeds a Git commit-tree integrity proof: build HEAD, its
+//! exact Git tree object, clean/dirty status, and a deterministic SHA-256 over
+//! every tracked path, mode, type, and Git blob (or gitlink id). This is not a sealed-builder or
 //! complete rustc-input attestation; it does not claim to capture toolchain,
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
+
+#[allow(dead_code)]
+#[path = "../build_support/native_store_build_capture_v1.rs"]
+mod native_store_build_capture_v1;
+#[allow(dead_code)]
+#[path = "src/strict_source_tree_attestation_v1.rs"]
+mod strict_source_tree_attestation_v1;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -364,6 +371,19 @@ fn configure_commit_tree_binding(repo_root: &Path) {
     {
         panic!("build HEAD binding is not a lowercase SHA-1 commit id");
     }
+    let treeish = format!("{head}^{{tree}}");
+    let tree = git_text(
+        repo_root,
+        &["rev-parse", "--verify", &treeish],
+        "build Git tree binding",
+    );
+    if tree.len() != 40
+        || !tree
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        panic!("build Git tree binding is not a lowercase SHA-1 tree id");
+    }
     let status = git_output(
         repo_root,
         &["status", "--porcelain=v1", "--untracked-files=all"],
@@ -372,6 +392,7 @@ fn configure_commit_tree_binding(repo_root: &Path) {
     let clean = status.is_empty();
     let tree_sha256 = tracked_tree_sha256(repo_root, &head);
     println!("cargo:rustc-env=MTG_KERNEL_BUILD_GIT_HEAD={head}");
+    println!("cargo:rustc-env=MTG_KERNEL_BUILD_GIT_TREE={tree}");
     println!("cargo:rustc-env=MTG_KERNEL_BUILD_GIT_CLEAN={clean}");
     println!("cargo:rustc-env=MTG_KERNEL_BUILD_TRACKED_TREE_SHA256={tree_sha256}");
     println!("cargo:rustc-env=MTG_KERNEL_BUILD_TRACKED_TREE_CONTRACT={TRACKED_TREE_HASH_CONTRACT}");
@@ -1727,6 +1748,11 @@ pub const FLAT_ACTION_CANDIDATE_COMMITMENT_DOMAIN_V2: &[u8; {}] = &[{}];\n",
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let repo_root = Path::new(&manifest_dir).join("..");
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR set by cargo");
+    native_store_build_capture_v1::configure_native_store_build_capture_v1(
+        Path::new(&manifest_dir),
+        Path::new(&out_dir),
+    );
     configure_commit_tree_binding(&repo_root);
     let json_path = Path::new(&manifest_dir)
         .join("..")
@@ -1773,14 +1799,15 @@ fn main() {
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", runtime_decks_path.display()));
     let runtime_decks: RuntimeDeckCatalogJson = serde_json::from_str(&runtime_decks_text)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", runtime_decks_path.display()));
+    let runtime_decks_file_sha256 = sha256_hex(sha256_bytes(runtime_decks_text.as_bytes()));
 
     let out = codegen(&data.cards);
-    let runtime_decks_out = runtime_decks_codegen(&runtime_decks, &data.cards);
+    let runtime_decks_out =
+        runtime_decks_codegen(&runtime_decks, &data.cards, &runtime_decks_file_sha256);
     let flat_policy_contract_out = flat_policy_contract_codegen(&repo_root);
     let (flat_policy_contract_v2_out, flat_action_contract_v2_out) =
         flat_policy_contract_v2_codegen(&repo_root);
 
-    let out_dir = env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let dest = Path::new(&out_dir).join("card_defs.rs");
     fs::write(&dest, out).unwrap_or_else(|e| panic!("failed to write {}: {e}", dest.display()));
     let runtime_decks_dest = Path::new(&out_dir).join("runtime_decks.rs");
@@ -1809,7 +1836,11 @@ fn main() {
     });
 }
 
-fn runtime_decks_codegen(catalog: &RuntimeDeckCatalogJson, cards: &[CardJson]) -> String {
+fn runtime_decks_codegen(
+    catalog: &RuntimeDeckCatalogJson,
+    cards: &[CardJson],
+    catalog_file_sha256: &str,
+) -> String {
     const EXPECTED_SCHEMA: &str = "kernel_runtime_decks/v1";
     const EXPECTED_PROTOCOL: &str = "canonical-mainboard-bo1/v1";
     const EXPECTED_SOURCE_HASH_NORMALIZATION: &str = "utf8_text_crlf_v1";
@@ -2035,6 +2066,11 @@ fn runtime_decks_codegen(catalog: &RuntimeDeckCatalogJson, cards: &[CardJson]) -
     ] {
         writeln!(out, "pub const {name}: &str = {value:?};").unwrap();
     }
+    writeln!(
+        out,
+        "pub const RUNTIME_DECK_CATALOG_FILE_SHA256: &str = {catalog_file_sha256:?};"
+    )
+    .unwrap();
     writeln!(
         out,
         "pub const RUNTIME_DECK_SOURCE_ROW_ORDINAL_BASE: u32 = {};",

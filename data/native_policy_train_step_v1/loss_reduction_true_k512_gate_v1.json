@@ -1,0 +1,181 @@
+{
+  "authority": {
+    "capture_artifact_path": "data/native_policy_train_step_v1/loss_reduction_true_k512_capture_v1.json",
+    "capture_artifact_sha256": "383d804a2a378590478b67c7118e486ae52fccb120fe55c7233864b20d25ab8d",
+    "capture_executable_path_supplied_to_gate": true,
+    "capture_executable_sha256": "8d751f7b43d2ef4a5014561b990b9e2bc2751171be38ed21ed67623b0cb26ca9",
+    "capture_executable_sha256_rederived": true,
+    "capture_harness_path": "mtg-kernel/examples/native_trainer_true_k512_loss_capture_v1.rs",
+    "capture_harness_sha256": "b9416a95a225de8b5bc359f4005151e3845088206a20b0eecb328e9330734d28",
+    "capture_source_git_commit": "19e082191a6520620a2080b782266e70d9bab79f",
+    "capture_source_tree_sha256": "6fe433e31ffb85f7f575d2ec3e1180dab6c715773527fd99f3ed5c91af275318",
+    "intermediate_generator_path": "python/tools/generate_native_policy_loss_reduction_rung_v1.py",
+    "intermediate_generator_sha256": "ad73d06792605703a071dda5fb6366fbc0f4f866841faec12480dc9f7a4a787b",
+    "intermediate_rung_path": "data/native_policy_train_step_v1/loss_reduction_intermediate_rung_v1.json",
+    "intermediate_rung_sha256": "537f86c8f09b3529fb985efc46306dc139b9ce1cfee1fb32515886d6a7fe2cd7",
+    "platform_machine": "AMD64",
+    "platform_system": "Windows",
+    "python_version": "3.13.14",
+    "source_tree_recipe_identity": "mtg-kernel-strict-source-tree-sha256-v1",
+    "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+    "torch_computation_generator_path": "python/tools/evaluate_native_policy_loss_reduction_true_k512_v1.py",
+    "torch_computation_generator_sha256": "5530cd0de3836aa9d51fbd7340b415abb4eb7876b8de055e2da889bbe7b42a4a",
+    "torch_default_dtype": "torch.float32",
+    "torch_deterministic_algorithms": true,
+    "torch_num_interop_threads": 1,
+    "torch_num_threads": 1,
+    "torch_version": "2.13.0+cpu",
+    "trainer_source_path": "python/mtg_kernel_rl/trainer.py",
+    "trainer_source_sha256": "47cd76a243f1b58a695cc0ffe257e8737dcd7bea0b68140349b80139409683ad"
+  },
+  "gate": {
+    "all_frozen_tolerances_hold": true,
+    "all_scalar_margin_floors_hold": true,
+    "diagnostic_code": "true_k512_scalar_loss_reduction_pass",
+    "predeclared_repair_paths": [
+      "versioned deterministic blocked/pairwise Rust reduction with a new train-step identity and fresh cross-language goldens",
+      "separately reviewed scale-aware Higham-style bound for policy_sum, value_sum, and propagated normalized loss while leaving frozen tolerances unchanged"
+    ],
+    "silent_tolerance_loosening_permitted": false,
+    "status": "pass",
+    "triggered_conditions": []
+  },
+  "identity": "torch-stack-vs-rust-production-sequential-genuine-rally-k512-v1",
+  "nonclaim": "one genuine Rally K=512 scalar-loss numerical gate; not learning quality, throughput, XMage comparison, all-deck coverage, or K>512 evidence",
+  "provenance": {
+    "batch_episodes": 512,
+    "broker_batch_target": 16,
+    "composition_identity": "production-native-training-executor-single-update-genuine-rally-v1",
+    "composition_nonclaim": "all 512 episodes were independently executed by production NativeTrainingExecutorV1; no physical group or term was cycled, replayed, expanded, or synthetically generated",
+    "deck_ids": [
+      "Rally",
+      "Rally"
+    ],
+    "distinct_environment_seed_count": 256,
+    "episode_stream_sha256": "2346786d0e75ba5e55d0bb0ba3f02f8ffe63ddaa0cdca41c6cde8a06e466e98b",
+    "independent_episode_count": 512,
+    "logical_actor_count": 16,
+    "run_base_seed": 71501,
+    "rust_numerical_backend_identity": "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-sequential",
+    "sessions_per_worker": 4,
+    "snapshot_sha256": "33455d0fedc5aea8abd4deeaf37c5480f1832dbea34b9391c9a942d95f040771",
+    "source_postflight_equality_validated": true,
+    "source_preflight_validated": true,
+    "strict_source_tree": {
+      "git_commit": "19e082191a6520620a2080b782266e70d9bab79f",
+      "git_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tree_recipe_identity": "mtg-kernel-strict-source-tree-sha256-v1",
+      "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+      "source_tree_sha256": "6fe433e31ffb85f7f575d2ec3e1180dab6c715773527fd99f3ed5c91af275318",
+      "worktree_clean": true
+    },
+    "term_stream_sha256": "bc7d87e810d3eb099a9537068c75391016155fa9a8bb91b974516fd8795407c3",
+    "torch_numerical_backend_identity": "torch-2.13.0+cpu-windows-amd64-f32-deterministic-threads1-stack-sum",
+    "trainer_contract_identity": "mtg-kernel-native-even-batch-trainer-v2",
+    "worker_count": 4
+  },
+  "reduction_contract": {
+    "frozen_tolerance": {
+      "absolute": 5e-05,
+      "comparison_rule": "abs(rust-torch) <= absolute + relative*abs(torch)",
+      "relative": 5e-05
+    },
+    "group_count": 54864,
+    "policy_term_count": 54864,
+    "rust_operation": "ordered f32 policy_sum += (-joint_log_probability * (terminal_return_f32 - value)); value_sum += ((value - terminal_return_f32) * (value - terminal_return_f32)); loss = (policy_sum + 0.5f32 * value_sum) / learner_group_count_f32",
+    "same_term_bits_before_reduction": true,
+    "scalar_margin_floor": {
+      "channels": [
+        "policy_sum",
+        "value_sum",
+        "loss"
+      ],
+      "minimum_allowed_over_delta_ratio": 5.0
+    },
+    "torch_operation": "policy_sum=torch.stack(policy_terms).sum(); value_sum=torch.stack(value_terms).sum(); loss=(policy_sum+0.5*value_sum)/group_count",
+    "value_term_count": 54864
+  },
+  "schema": "native-policy-loss-reduction-true-k512-gate-v1",
+  "sizing_row": {
+    "adam_step_after": 1,
+    "adam_step_before": 0,
+    "changed_non_gauge_parameter_count": 32,
+    "episode_count": 512,
+    "executor_update_elapsed_ns": 107150181600,
+    "learner_group_count": 54864,
+    "learner_physical_decision_group_count": 54864,
+    "learner_policy_step_count": 63505,
+    "model_digest_after": "6f1e64a5f65a4640c4b8c30520a296fb271f256589cea55e9b4d589aac35bc4c",
+    "model_digest_before": "36157c71b9fd736d4913e6c5722dcb9c1e4f119b7b28b108bde9d74f18862d54",
+    "outer_update_elapsed_ns": 114021166800,
+    "physical_decision_count": 110653,
+    "policy_step_count": 127066,
+    "policy_term_count": 54864,
+    "rollout_elapsed_ns": 24680898900,
+    "rust_production_sequential": {
+      "loss": {
+        "f32_bits": "0x3f6a7501",
+        "value": 0.9158478379249573
+      },
+      "policy_sum": {
+        "f32_bits": "0x46a3fc4d",
+        "value": 20990.150390625
+      },
+      "value_sum": {
+        "f32_bits": "0x476491d9",
+        "value": 58513.84765625
+      }
+    },
+    "same_term_rust_sequential_vs_torch_stack": {
+      "loss": {
+        "absolute_delta_f64": 3.337860107421875e-06,
+        "allowed_delta_f64": 9.579255878925324e-05,
+        "gate_holds": true,
+        "margin_floor_applies": true,
+        "margin_floor_holds": true,
+        "margin_ratio_allowed_over_delta_f64": 28.69879375,
+        "required_margin_floor_f64": 5.0,
+        "tolerance_holds": true
+      },
+      "policy_sum": {
+        "absolute_delta_f64": 0.0546875,
+        "allowed_delta_f64": 1.0495547851562501,
+        "gate_holds": true,
+        "margin_floor_applies": true,
+        "margin_floor_holds": true,
+        "margin_ratio_allowed_over_delta_f64": 19.19185892857143,
+        "required_margin_floor_f64": 5.0,
+        "tolerance_holds": true
+      },
+      "value_sum": {
+        "absolute_delta_f64": 0.47265625,
+        "allowed_delta_f64": 2.925766015625,
+        "gate_holds": true,
+        "margin_floor_applies": true,
+        "margin_floor_holds": true,
+        "margin_ratio_allowed_over_delta_f64": 6.19005041322314,
+        "required_margin_floor_f64": 5.0,
+        "tolerance_holds": true
+      }
+    },
+    "scored_action_logit_count": 273309,
+    "scorer_accepted_batch_count": 4414,
+    "scorer_accepted_decision_count": 63505,
+    "torch_stack_sum": {
+      "loss": {
+        "f32_bits": "0x3f6a7539",
+        "value": 0.9158511757850647
+      },
+      "policy_sum": {
+        "f32_bits": "0x46a3fc31",
+        "value": 20990.095703125
+      },
+      "value_sum": {
+        "f32_bits": "0x47649252",
+        "value": 58514.3203125
+      }
+    },
+    "update_ordinal": 0,
+    "value_term_count": 54864
+  }
+}

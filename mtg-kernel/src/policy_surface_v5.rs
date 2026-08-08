@@ -15,6 +15,10 @@ use serde::{Deserialize, Serialize};
 pub const POLICY_SURFACE_VERSION: u32 = 5;
 pub const POLICY_ENVIRONMENT_HASH_ALGORITHM: &str =
     "fnv1a64-serde-json-policy-environment-envelope-v1";
+/// Sibling identity for sessions on environment-v2 randomness states. The
+/// legacy constant above is frozen and unchanged.
+pub const POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2: &str =
+    "fnv1a64-serde-json-policy-environment-envelope-v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -740,6 +744,19 @@ fn surface_binding_hash(state: &GameState, surface: &HarnessSurfaceV2) -> Result
     #[cfg(test)]
     TEST_EXACT_SURFACE_HASH_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
+    Ok(fnv1a64(&surface_binding_envelope_bytes(state, surface)?))
+}
+
+/// Serialized surface-binding outer-envelope bytes, dispatched on the
+/// state's diagnostic algorithm identity. Exactly one typed envelope is
+/// serialized per state; the matching diagnostic identity is hardcoded in
+/// each branch; any unknown future identity is a typed error. Private so
+/// the production API surface is unchanged while same-module tests can
+/// inspect the serialized schema and diagnostic identity.
+fn surface_binding_envelope_bytes(
+    state: &GameState,
+    surface: &HarnessSurfaceV2,
+) -> Result<Vec<u8>, String> {
     #[derive(Serialize)]
     struct SurfaceBindingEnvelopeV1 {
         schema_version: u32,
@@ -748,14 +765,38 @@ fn surface_binding_hash(state: &GameState, surface: &HarnessSurfaceV2) -> Result
         harness_surface_context: crate::surface_v2::HarnessSurfacePublicContextV2,
     }
 
-    let envelope = SurfaceBindingEnvelopeV1 {
-        schema_version: 1,
-        diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
-        diagnostic_state_hash: state.diagnostic_state_hash(),
-        harness_surface_context: surface.public_context(),
-    };
-    let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-    Ok(fnv1a64(&bytes))
+    #[derive(Serialize)]
+    struct SurfaceBindingEnvelopeV2 {
+        schema_version: u32,
+        diagnostic_state_hash_algorithm: &'static str,
+        diagnostic_state_hash: u64,
+        harness_surface_context: crate::surface_v2::HarnessSurfacePublicContextV2,
+    }
+
+    match state.diagnostic_state_hash_algorithm() {
+        crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM => {
+            serde_json::to_vec(&SurfaceBindingEnvelopeV1 {
+                schema_version: 1,
+                diagnostic_state_hash_algorithm: crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+                diagnostic_state_hash: state.diagnostic_state_hash(),
+                harness_surface_context: surface.public_context(),
+            })
+            .map_err(|err| err.to_string())
+        }
+        crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2 => {
+            serde_json::to_vec(&SurfaceBindingEnvelopeV2 {
+                schema_version: 2,
+                diagnostic_state_hash_algorithm:
+                    crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2,
+                diagnostic_state_hash: state.diagnostic_state_hash(),
+                harness_surface_context: surface.public_context(),
+            })
+            .map_err(|err| err.to_string())
+        }
+        unknown => Err(format!(
+            "unrecognized diagnostic state hash algorithm identity: {unknown}"
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -1207,6 +1248,137 @@ mod tests {
     fn external_state_staleness_is_sanitized_nonmutating_and_retryable_after_restore() {
         reset_test_exact_surface_hash_calls();
         let (mut state, _) = attacker_state(2);
+        let mut surface = PolicySurfaceV5::new();
+        let decision = surface.next_decision(&mut state).unwrap();
+        assert_eq!(test_exact_surface_hash_calls(), 1);
+        let actions = legal_action_candidates_v5(&decision, &state).unwrap();
+        let pristine_state = state.clone();
+        let pristine_surface = surface.clone();
+
+        state.players[1].life -= 1;
+        let tampered_state = state.clone();
+        let err = surface
+            .apply(&mut state, actions[1].policy_action.clone())
+            .unwrap_err();
+        assert_eq!(test_exact_surface_hash_calls(), 2);
+        assert_eq!(err, "stale policy combat scan environment binding");
+        assert!(!err.contains("0x"));
+        assert_eq!(state, tampered_state);
+        assert_eq!(surface.scan, pristine_surface.scan);
+
+        state = pristine_state;
+        assert_eq!(surface.next_decision(&mut state).unwrap(), decision);
+        assert_eq!(test_exact_surface_hash_calls(), 3);
+        surface
+            .apply(&mut state, actions[1].policy_action.clone())
+            .unwrap();
+        assert_eq!(test_exact_surface_hash_calls(), 4);
+        assert!(surface.scan_active());
+    }
+
+    fn standalone_binding_states() -> (GameState, GameState) {
+        let mut legacy =
+            GameState::new_from_libraries(&[1, 2, 3], &[4, 5, 6, 7], |c| format!("card-{c}"), 99);
+        legacy.draw_card(PlayerId::P0);
+        legacy.draw_card(PlayerId::P1);
+        let mut v2 = GameState::new_from_libraries_environment_v2(
+            &[1, 2, 3],
+            &[4, 5, 6, 7],
+            |c| format!("card-{c}"),
+            99,
+        );
+        v2.draw_card(PlayerId::P0);
+        v2.draw_card(PlayerId::P1);
+        (legacy, v2)
+    }
+
+    #[test]
+    fn surface_binding_envelopes_are_diagnostic_dispatched_with_exact_goldens() {
+        let (legacy, v2) = standalone_binding_states();
+        let surface = crate::surface_v2::HarnessSurfaceV2::new();
+        assert_eq!(legacy.diagnostic_state_hash(), 0x8650_30b6_0d41_3489);
+        assert_eq!(
+            surface_binding_hash(&legacy, &surface).expect("legacy binding hashes"),
+            0x69cf_6904_0094_98de,
+            "pre-edit captured legacy SurfaceBinding V1 golden"
+        );
+        assert_eq!(v2.diagnostic_state_hash(), 0x9123_6647_2e4e_9520);
+        assert_eq!(
+            surface_binding_hash(&v2, &surface).expect("v2 binding hashes"),
+            0x30f5_defd_054b_41de,
+            "independently derived SurfaceBinding V2 golden"
+        );
+
+        let legacy_bytes =
+            surface_binding_envelope_bytes(&legacy, &surface).expect("legacy envelope bytes");
+        assert!(
+            legacy_bytes.starts_with(br#"{"schema_version":1,"diagnostic_state_hash_algorithm":"#),
+            "V1 field order is frozen"
+        );
+        let legacy_value: serde_json::Value =
+            serde_json::from_slice(&legacy_bytes).expect("legacy envelope parses");
+        assert_eq!(legacy_value["schema_version"], 1);
+        assert_eq!(
+            legacy_value["diagnostic_state_hash_algorithm"],
+            "fnv1a64-serde-json-game-state-envelope-v5"
+        );
+        assert!(
+            legacy_value.get("hash_algorithm").is_none(),
+            "surface binding envelopes carry no hash_algorithm field"
+        );
+
+        let v2_bytes = surface_binding_envelope_bytes(&v2, &surface).expect("v2 envelope bytes");
+        assert!(
+            v2_bytes.starts_with(br#"{"schema_version":2,"diagnostic_state_hash_algorithm":"#),
+            "V2 keeps the identical field order"
+        );
+        let v2_value: serde_json::Value =
+            serde_json::from_slice(&v2_bytes).expect("v2 envelope parses");
+        assert_eq!(v2_value["schema_version"], 2);
+        assert_eq!(
+            v2_value["diagnostic_state_hash_algorithm"],
+            "fnv1a64-serde-json-game-state-envelope-v6"
+        );
+        assert!(v2_value.get("hash_algorithm").is_none());
+    }
+
+    /// Environment-v2 sibling of `attacker_state`: identical battlefield
+    /// construction on a v2 randomness state.
+    fn attacker_state_environment_v2(count: usize) -> (GameState, Vec<ObjectId>) {
+        let mut state = GameState::new_from_libraries_environment_v2(&[], &[], card_name, 91);
+        state.step = Step::DeclareAttackers;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.engine.combat.attackers_declared = false;
+        let card_def = card_id_by_name("Voldaren Epicure").unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..count {
+            let id = state.objects.push(GameObject {
+                card_def,
+                name: "Voldaren Epicure".to_string(),
+                owner: PlayerId::P0,
+                controller: PlayerId::P0,
+                zone: Zone::Battlefield,
+                tapped: false,
+                summoning_sick: false,
+                damage: 0,
+                counters: Counters::default(),
+                attachments: Vec::new(),
+                v4: ObjectStateV4::from_card_def(card_def),
+                spell_copy_origin: None,
+                plotted_turn: None,
+                zone_change_count: 0,
+            });
+            state.players[0].battlefield.push(id);
+            ids.push(id);
+        }
+        (state, ids)
+    }
+
+    #[test]
+    fn external_state_staleness_is_sanitized_on_environment_v2_states() {
+        reset_test_exact_surface_hash_calls();
+        let (mut state, _) = attacker_state_environment_v2(2);
         let mut surface = PolicySurfaceV5::new();
         let decision = surface.next_decision(&mut state).unwrap();
         assert_eq!(test_exact_surface_hash_calls(), 1);

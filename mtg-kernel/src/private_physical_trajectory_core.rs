@@ -60,13 +60,36 @@ pub(crate) enum FlatPhysicalUpdateStagingCore {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FlatGroupedTrajectoryBatchCore<B, I> {
-    pub(crate) learner_seat: PlayerSeatV1,
+    pub(crate) learner_seat_rule: FlatPhysicalLearnerSeatRuleCore,
     pub(crate) first_episode_id: u64,
     pub(crate) episode_count: u64,
     pub(crate) learner_policy_step_count: u64,
     pub(crate) learner_physical_decision_count: u64,
     pub(crate) update_staging: FlatPhysicalUpdateStagingCore,
     pub(crate) episodes: Vec<FlatGroupedEpisodeCore<B, I>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlatPhysicalLearnerSeatRuleCore {
+    Fixed(PlayerSeatV1),
+    EpisodeParity,
+}
+
+impl FlatPhysicalLearnerSeatRuleCore {
+    pub(crate) fn learner_seat(self, episode_id: u64) -> PlayerSeatV1 {
+        match self {
+            Self::Fixed(seat) => seat,
+            Self::EpisodeParity if episode_id & 1 == 0 => PlayerSeatV1::P0,
+            Self::EpisodeParity => PlayerSeatV1::P1,
+        }
+    }
+
+    pub(crate) fn fixed_seat(self) -> Option<PlayerSeatV1> {
+        match self {
+            Self::Fixed(seat) => Some(seat),
+            Self::EpisodeParity => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -294,7 +317,7 @@ impl<B, I> EpisodeAssemblyCore<B, I> {
 
 #[derive(Debug)]
 pub(crate) struct FlatPhysicalTrajectoryObserverCore<B, I> {
-    learner_seat: PlayerSeatV1,
+    learner_seat_rule: FlatPhysicalLearnerSeatRuleCore,
     first_episode_id: u64,
     end_episode_id: u64,
     episode_count: u64,
@@ -308,13 +331,36 @@ impl<B, I> FlatPhysicalTrajectoryObserverCore<B, I> {
         first_episode_id: u64,
         episode_count: u64,
     ) -> Result<Self, FlatPhysicalTrajectoryErrorCore> {
+        Self::new_with_seat_rule(
+            FlatPhysicalLearnerSeatRuleCore::Fixed(learner_seat),
+            first_episode_id,
+            episode_count,
+        )
+    }
+
+    pub(crate) fn new_episode_parity(
+        first_episode_id: u64,
+        episode_count: u64,
+    ) -> Result<Self, FlatPhysicalTrajectoryErrorCore> {
+        Self::new_with_seat_rule(
+            FlatPhysicalLearnerSeatRuleCore::EpisodeParity,
+            first_episode_id,
+            episode_count,
+        )
+    }
+
+    fn new_with_seat_rule(
+        learner_seat_rule: FlatPhysicalLearnerSeatRuleCore,
+        first_episode_id: u64,
+        episode_count: u64,
+    ) -> Result<Self, FlatPhysicalTrajectoryErrorCore> {
         let end_episode_id = first_episode_id
             .checked_add(episode_count)
             .ok_or(FlatPhysicalTrajectoryErrorCore::ExpectedEpisodeRangeOverflow)?;
         usize::try_from(episode_count)
             .map_err(|_| FlatPhysicalTrajectoryErrorCore::EpisodeCountExceedsAddressSpace)?;
         Ok(Self {
-            learner_seat,
+            learner_seat_rule,
             first_episode_id,
             end_episode_id,
             episode_count,
@@ -359,10 +405,11 @@ impl<B, I> FlatPhysicalTrajectoryObserverCore<B, I> {
     {
         let expected = event.expected;
         self.validate_episode_id(expected.episode_id)?;
-        if expected.acting_player != self.learner_seat {
+        let learner_seat = self.learner_seat_rule.learner_seat(expected.episode_id);
+        if expected.acting_player != learner_seat {
             return Err(FlatPhysicalTrajectoryErrorCore::SelectedActorMismatch {
                 episode_id: expected.episode_id,
-                expected: self.learner_seat,
+                expected: learner_seat,
                 actual: expected.acting_player,
             });
         }
@@ -653,19 +700,20 @@ impl<B, I> FlatPhysicalTrajectoryObserverCore<B, I> {
                 episode_id: terminal.episode_id,
             });
         }
-        let learner_return = match (self.learner_seat, terminal.winner) {
+        let learner_seat = self.learner_seat_rule.learner_seat(terminal.episode_id);
+        let learner_return = match (learner_seat, terminal.winner) {
             (_, None) => 0,
             (learner, Some(winner)) if learner == winner => 1,
             _ => -1,
         };
-        let learner_reward_index = match self.learner_seat {
+        let learner_reward_index = match learner_seat {
             PlayerSeatV1::P0 => 0,
             PlayerSeatV1::P1 => 1,
         };
         if terminal.terminal_reward[learner_reward_index] != learner_return {
             return Err(FlatPhysicalTrajectoryErrorCore::LearnerRewardMismatch {
                 episode_id: terminal.episode_id,
-                learner_seat: self.learner_seat,
+                learner_seat,
             });
         }
         if let Some(invalid_group) = episode
@@ -725,7 +773,7 @@ impl<B, I> FlatPhysicalTrajectoryObserverCore<B, I> {
         let groups = std::mem::take(&mut episode.groups);
         episode.completed = Some(FlatGroupedEpisodeCore {
             episode_id: terminal.episode_id,
-            learner_seat: self.learner_seat,
+            learner_seat,
             learner_return,
             learner_policy_step_count: episode.next_learner_ordinal,
             opponent_policy_step_count,
@@ -777,7 +825,7 @@ impl<B, I> FlatPhysicalTrajectoryObserverCore<B, I> {
             }
         };
         Ok(FlatGroupedTrajectoryBatchCore {
-            learner_seat: self.learner_seat,
+            learner_seat_rule: self.learner_seat_rule,
             first_episode_id: self.first_episode_id,
             episode_count: self.episode_count,
             learner_policy_step_count,

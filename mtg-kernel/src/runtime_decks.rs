@@ -3,8 +3,9 @@
 //! `build.rs` reads the checked-in `data/runtime_decks_v1.json`, resolves
 //! every materialized card copy against the stable `cards_v1.json` array,
 //! verifies the frozen deck hash, and emits the static definitions included
-//! below. The release environment never opens repository data files at
-//! runtime.
+//! below. Ordinary release execution uses only those generated definitions;
+//! the explicitly feature-gated Store V2 production capture guard reopens the
+//! raw catalog no-follow solely to prove its exact digest against them.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeDeckDefinition {
@@ -38,6 +39,10 @@ mod tests {
     fn generated_runtime_catalog_is_exact_and_fully_supported() {
         assert_eq!(RUNTIME_DECK_CATALOG_SCHEMA, "kernel_runtime_decks/v1");
         assert_eq!(RUNTIME_DECK_PROTOCOL, "canonical-mainboard-bo1/v1");
+        assert_eq!(
+            RUNTIME_DECK_CATALOG_FILE_SHA256,
+            "5ea19e8a08f0e9c9657e9a6a90382329785f27eeabbbe066e80e7025e8ee62c0"
+        );
         assert_eq!(
             RUNTIME_DECK_MATERIALIZATION_PROTOCOL,
             "xmage_xml_row_then_copy_ordinal/v1"

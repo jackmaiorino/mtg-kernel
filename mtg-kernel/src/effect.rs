@@ -218,6 +218,12 @@ pub enum EffectOp {
     TapObject {
         object: ObjectRef,
     },
+    /// The permanent does not untap during its current controller's next
+    /// untap step. The marker is incarnation-local and is cleared by any
+    /// zone change through `ObjectStateV4::reset_for_zone_change`.
+    SkipNextUntap {
+        object: ObjectRef,
+    },
     AddMana {
         player: PlayerRef,
         colors: Vec<ManaColor>,
@@ -905,6 +911,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         legal,
         selected,
         max_targets,
+        purpose,
         ..
     } = choice
     else {
@@ -920,6 +927,19 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         return Err(format!("{target:?} is not a legal remaining effect target"));
     };
     validate_effect_target_candidate(state, &legal[position])?;
+    // A library search always ends in a shuffle: the shuffle must be
+    // authorizable before this selection mutates. The token is discarded;
+    // the SearchLibraryToHand frame preflights again and commits.
+    if let EffectTargetSelectionPurpose::SearchLibraryToHand {
+        player: search_player,
+        ..
+    } = purpose
+    {
+        let token = state
+            .preflight_library_shuffle(*search_player)
+            .map_err(|error| error.to_string())?;
+        drop(token);
+    }
 
     let continuation = state.engine.pending_effect.as_mut().unwrap();
     let PendingEffectChoice::SelectTargets {
@@ -969,6 +989,27 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
     if selected.len() < usize::from(*min_targets) {
         return Err("the pending effect target selection has not reached its minimum".to_string());
     }
+    // Completing a library search (including a zero-selection completion)
+    // still ends in a shuffle; authorize it before completion mutates the
+    // continuation. The token is discarded; the frame commits later.
+    if let Some(PendingEffectChoice::SelectTargets {
+        purpose:
+            EffectTargetSelectionPurpose::SearchLibraryToHand {
+                player: search_player,
+                ..
+            },
+        ..
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|pending| pending.choice.as_ref())
+    {
+        let token = state
+            .preflight_library_shuffle(*search_player)
+            .map_err(|error| error.to_string())?;
+        drop(token);
+    }
     complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())
 }
 
@@ -977,6 +1018,30 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
 /// pure continuation transition and making post-action snapshots stable.
 pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    if value {
+        // An accepted shuffle must be authorizable before the pending choice
+        // is consumed or any continuation state mutates. The token is
+        // discarded: the later ShuffleLibrary frame preflights again and
+        // commits. Declining (`false`) stays legal at an exhausted ordinal
+        // and consumes nothing.
+        if let Some(PendingEffectChoice::ChooseBoolean {
+            purpose:
+                EffectBooleanChoicePurpose::ShuffleLibrary {
+                    player: library_player,
+                },
+            ..
+        }) = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .and_then(|pending| pending.choice.as_ref())
+        {
+            let token = state
+                .preflight_library_shuffle(*library_player)
+                .map_err(|error| error.to_string())?;
+            drop(token);
+        }
+    }
     let continuation = state
         .engine
         .pending_effect
@@ -1906,7 +1971,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     state.reorder_library_top(player, &ordered_ids, &[player])?;
                 }
                 EffectFrame::ShuffleLibrary { player, path: _ } => {
-                    state.shuffle_library(player);
+                    state
+                        .shuffle_library(player)
+                        .map_err(|error| error.to_string())?;
                 }
                 EffectFrame::PutCardsFromHandOnLibraryTop {
                     player,
@@ -2201,11 +2268,21 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     )?;
                     let candidates =
                         library_search_candidates(state, player, filter, &original_library)?;
-                    if let Some(binding) = selected {
-                        if !candidates.contains(&binding) {
+                    if let Some(binding) = &selected {
+                        if !candidates.contains(binding) {
                             return Err("library-search result is outside the canonical match set"
                                 .to_string());
                         }
+                    }
+                    // The trailing shuffle must be authorized after all of
+                    // the read-only metadata/candidate validation above and
+                    // before the searched card moves or is revealed. The
+                    // token is a nonserialized stack local held across those
+                    // mutations and committed at the shuffle point below.
+                    let shuffle_token = state
+                        .preflight_library_shuffle(player)
+                        .map_err(|error| error.to_string())?;
+                    if let Some(binding) = selected {
                         // The search move itself is an ordinary replaceable
                         // zone change. Public reveal follows the successful
                         // move, then the remaining library is shuffled.
@@ -2221,7 +2298,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             }
                         }
                     }
-                    state.shuffle_library(player);
+                    state
+                        .commit_library_shuffle(player, shuffle_token)
+                        .map_err(|error| error.to_string())?;
                 }
                 EffectFrame::OwnerLibraryPlacement {
                     object,
@@ -3465,6 +3544,10 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let object = ctx.resolve_object(*object);
             event::propose_and_commit(state, event::ProposedEvent::tap(object));
         }
+        EffectOp::SkipNextUntap { object } => {
+            let object = ctx.resolve_object(*object);
+            state.objects.get_mut(object).v4.skip_next_untap = true;
+        }
         EffectOp::AddMana { player, colors } => {
             let player = ctx.resolve_player(*player, state);
             event::propose_and_commit(
@@ -4027,6 +4110,38 @@ mod tests {
         execute(&op, &ctx, &mut state);
         assert!(state.objects.get(land).tapped);
         assert_eq!(state.players[0].mana_pool[ManaColor::R.pool_index()], 1);
+    }
+
+    #[test]
+    fn skip_next_untap_is_incarnation_local_and_snapshot_deterministic() {
+        let mut state = two_card_libraries();
+        let permanent = state.draw_card(PlayerId::P0).unwrap();
+        state.move_hand_to_battlefield(PlayerId::P0, permanent);
+        let before_hash = state.diagnostic_state_hash();
+
+        execute(
+            &EffectOp::SkipNextUntap {
+                object: ObjectRef::ThisSource,
+            },
+            &ExecCtx::no_targets(permanent, PlayerId::P0),
+            &mut state,
+        );
+
+        assert!(state.objects.get(permanent).v4.skip_next_untap);
+        assert_ne!(state.diagnostic_state_hash(), before_hash);
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        let restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+        assert_eq!(restored, state);
+        assert_eq!(
+            restored.diagnostic_state_hash(),
+            state.diagnostic_state_hash()
+        );
+
+        event::propose_and_commit(
+            &mut state,
+            event::ProposedEvent::zone_change(permanent, Zone::Graveyard),
+        );
+        assert!(!state.objects.get(permanent).v4.skip_next_untap);
     }
 
     #[test]

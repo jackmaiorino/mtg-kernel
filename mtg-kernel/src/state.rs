@@ -736,8 +736,10 @@ pub struct HandKnowledgeEntry {
 }
 
 /// Counter-based, seedable, serializable PRNG (SplitMix64). Deterministic:
-/// same seed and same call sequence always produce the same stream.
+/// same seed and same call sequence always produce the same stream. The wire
+/// shape is strict: exactly the one `state` member, unknown members rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SplitMix64 {
     state: u64,
 }
@@ -756,7 +758,134 @@ impl SplitMix64 {
     }
 }
 
+/// The one-of game randomness representation, flattened at the historical
+/// `rng` field position. Externally tagged so legacy states serialize the
+/// exact `"rng"` key and v2 states the exact `"environment_randomization_v2"`
+/// key. `Hash` is manual: the legacy arm delegates directly to the inner
+/// `SplitMix64` with no enum discriminant, preserving the frozen hot-path
+/// `state_hash` sequence; the v2 arm hashes an explicit discriminator plus
+/// root and ordinals.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum GameRandomnessState {
+    #[serde(rename = "rng")]
+    Legacy(SplitMix64),
+    #[serde(rename = "environment_randomization_v2")]
+    EnvironmentV2(crate::environment_randomization_v2::GameEnvironmentRandomizationV2),
+}
+
+impl std::hash::Hash for GameRandomnessState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            GameRandomnessState::Legacy(rng) => rng.hash(state),
+            GameRandomnessState::EnvironmentV2(v2) => {
+                state.write_u8(2);
+                v2.hash(state);
+            }
+        }
+    }
+}
+
+/// The unified library-shuffle error. Minimal and separate from the sealed
+/// KDF error enum; the only automatic conversion is a KDF error into the
+/// `Derivation` variant. Effect trust boundaries map this to `String`
+/// explicitly.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LibraryShuffleError {
+    /// The owner is not exactly `PlayerId::P0` or `PlayerId::P1`.
+    InvalidOwner,
+    /// The owner's committed live-shuffle ordinal has no successor.
+    ExhaustedOwnerOrdinal,
+    /// The caller's owner does not match the token's owner.
+    CallerOwnerMismatch,
+    /// The token does not match the state (mode, root, ordinal, successor,
+    /// expected RNG, or recomputed seed).
+    TokenStateMismatch,
+    /// The KDF rejected the derivation.
+    Derivation(crate::environment_randomization_v2::EnvironmentRandomizationErrorV2),
+}
+
+impl From<crate::environment_randomization_v2::EnvironmentRandomizationErrorV2>
+    for LibraryShuffleError
+{
+    fn from(error: crate::environment_randomization_v2::EnvironmentRandomizationErrorV2) -> Self {
+        LibraryShuffleError::Derivation(error)
+    }
+}
+
+impl std::fmt::Display for LibraryShuffleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LibraryShuffleError::InvalidOwner => write!(f, "library shuffle: invalid owner"),
+            LibraryShuffleError::ExhaustedOwnerOrdinal => {
+                write!(f, "library shuffle: owner live-shuffle ordinal exhausted")
+            }
+            LibraryShuffleError::CallerOwnerMismatch => {
+                write!(
+                    f,
+                    "library shuffle: caller owner does not match token owner"
+                )
+            }
+            LibraryShuffleError::TokenStateMismatch => {
+                write!(f, "library shuffle: token does not match state")
+            }
+            LibraryShuffleError::Derivation(error) => {
+                write!(f, "library shuffle: derivation rejected: {error:?}")
+            }
+        }
+    }
+}
+
+fn library_shuffle_owner(owner: PlayerId) -> Result<PlayerId, LibraryShuffleError> {
+    if owner == PlayerId::P0 || owner == PlayerId::P1 {
+        Ok(owner)
+    } else {
+        Err(LibraryShuffleError::InvalidOwner)
+    }
+}
+
+fn physical_owner_v2_exact(
+    owner: PlayerId,
+) -> Result<crate::environment_randomization_v2::PhysicalOwnerV2, LibraryShuffleError> {
+    use crate::environment_randomization_v2 as env2;
+    if owner == PlayerId::P0 {
+        Ok(env2::PhysicalOwnerV2::P0)
+    } else if owner == PlayerId::P1 {
+        Ok(env2::PhysicalOwnerV2::P1)
+    } else {
+        Err(LibraryShuffleError::InvalidOwner)
+    }
+}
+
+/// The private per-mode authorization carried by a shuffle token. The legacy
+/// arm snapshots the complete expected RNG; commit rechecks it in full.
+#[derive(Debug)]
+enum LibraryShuffleAuthorization {
+    Legacy {
+        expected_rng: SplitMix64,
+    },
+    EnvironmentV2 {
+        pair_root: u64,
+        ordinal: u64,
+        next_ordinal: u64,
+        derived_seed: u64,
+    },
+}
+
+/// A preflighted library-shuffle authorization for either randomness mode.
+/// Crate-private, neither `Clone` nor `Copy` nor serializable, single-use by
+/// move. Obtainable only from `preflight_library_shuffle`; consumed only by
+/// `commit_library_shuffle`, which revalidates every binding against the
+/// state before any mutation. Tokens never enter any `EffectFrame` or
+/// serialized state.
+#[must_use]
+#[derive(Debug)]
+pub(crate) struct LibraryShuffleToken {
+    owner: PlayerId,
+    authorization: LibraryShuffleAuthorization,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GameState {
     pub objects: Arena<GameObject>,
     pub players: [PlayerState; 2],
@@ -777,7 +906,8 @@ pub struct GameState {
     /// Observer x hand-owner identity knowledge. As with library knowledge,
     /// observation code may project only the acting observer's row.
     pub hand_knowledge: [[Vec<HandKnowledgeEntry>; 2]; 2],
-    pub rng: SplitMix64,
+    #[serde(flatten)]
+    randomness: GameRandomnessState,
     /// Priority/stack/turn-structure bookkeeping and the propose-commit
     /// event log, all owned by the `engine`/`event`/`trigger` modules. See
     /// `engine::EngineState`.
@@ -885,7 +1015,7 @@ impl GameState {
             hand_knowledge: std::array::from_fn(|_| {
                 std::array::from_fn(|_| Vec::<HandKnowledgeEntry>::new())
             }),
-            rng: SplitMix64::seed(seed),
+            randomness: GameRandomnessState::Legacy(SplitMix64::seed(seed)),
             engine: crate::engine::EngineState::default(),
         }
     }
@@ -1296,16 +1426,184 @@ impl GameState {
         Ok(())
     }
 
-    /// Deterministically shuffles one library with the game RNG and clears
-    /// every observer's facts about it before any later effect reveals a new
-    /// prefix.
-    pub fn shuffle_library(&mut self, owner: PlayerId) {
-        let len = self.players[owner.index()].library.len();
-        for i in (1..len).rev() {
-            let j = (self.rng.next_u64() % (i as u64 + 1)) as usize;
-            self.players[owner.index()].library.swap(i, j);
+    /// Read-only preflight of one library shuffle in either randomness mode.
+    /// Validates the owner exactly, snapshots the complete legacy RNG or
+    /// derives the v2 substream for the owner's committed ordinal (checking
+    /// the successor before derivation), and mutates nothing.
+    pub(crate) fn preflight_library_shuffle(
+        &self,
+        owner: PlayerId,
+    ) -> Result<LibraryShuffleToken, LibraryShuffleError> {
+        use crate::environment_randomization_v2 as env2;
+        let owner = library_shuffle_owner(owner)?;
+        let authorization = match &self.randomness {
+            GameRandomnessState::Legacy(rng) => LibraryShuffleAuthorization::Legacy {
+                expected_rng: rng.clone(),
+            },
+            GameRandomnessState::EnvironmentV2(v2) => {
+                let physical_owner = physical_owner_v2_exact(owner)?;
+                let ordinal = v2.next_live_shuffle_ordinal(physical_owner);
+                let next_ordinal = ordinal
+                    .checked_add(1)
+                    .ok_or(LibraryShuffleError::ExhaustedOwnerOrdinal)?;
+                let derived_seed = env2::derive_environment_randomization_seed_v2(
+                    v2.pair_environment_seed(),
+                    physical_owner,
+                    env2::ShufflePurposeV2::InGameLibraryShuffle,
+                    ordinal,
+                )?;
+                LibraryShuffleAuthorization::EnvironmentV2 {
+                    pair_root: v2.pair_environment_seed(),
+                    ordinal,
+                    next_ordinal,
+                    derived_seed,
+                }
+            }
+        };
+        Ok(LibraryShuffleToken {
+            owner,
+            authorization,
+        })
+    }
+
+    /// Token-validated commit of one library shuffle. Rechecks the caller
+    /// owner, mode, and complete authorization against the state (legacy: the
+    /// entire expected RNG; v2: root, the selected owner's committed ordinal,
+    /// the checked successor, and a freshly derived seed) before any
+    /// mutation, then computes the shuffled library and successor randomness
+    /// locally and assigns library, randomness, and knowledge atomically.
+    /// Only the selected owner's counter is checked, so P0 and P1 tokens
+    /// preflighted from the same state commit in either order.
+    pub(crate) fn commit_library_shuffle(
+        &mut self,
+        owner: PlayerId,
+        token: LibraryShuffleToken,
+    ) -> Result<(), LibraryShuffleError> {
+        use crate::environment_randomization_v2 as env2;
+        let owner = library_shuffle_owner(owner)?;
+        if token.owner != owner {
+            return Err(LibraryShuffleError::CallerOwnerMismatch);
         }
-        self.clear_library_knowledge(owner);
+        match (&self.randomness, &token.authorization) {
+            (
+                GameRandomnessState::Legacy(rng),
+                LibraryShuffleAuthorization::Legacy { expected_rng },
+            ) => {
+                if rng != expected_rng {
+                    return Err(LibraryShuffleError::TokenStateMismatch);
+                }
+                let mut next_rng = expected_rng.clone();
+                let mut library = self.players[owner.index()].library.clone();
+                for i in (1..library.len()).rev() {
+                    let j = (next_rng.next_u64() % (i as u64 + 1)) as usize;
+                    library.swap(i, j);
+                }
+                self.players[owner.index()].library = library;
+                self.randomness = GameRandomnessState::Legacy(next_rng);
+                self.clear_library_knowledge(owner);
+                Ok(())
+            }
+            (
+                GameRandomnessState::EnvironmentV2(v2),
+                LibraryShuffleAuthorization::EnvironmentV2 {
+                    pair_root,
+                    ordinal,
+                    next_ordinal,
+                    derived_seed,
+                },
+            ) => {
+                let physical_owner = physical_owner_v2_exact(owner)?;
+                if v2.pair_environment_seed() != *pair_root {
+                    return Err(LibraryShuffleError::TokenStateMismatch);
+                }
+                let current = v2.next_live_shuffle_ordinal(physical_owner);
+                if current != *ordinal {
+                    return Err(LibraryShuffleError::TokenStateMismatch);
+                }
+                let expected_successor = current
+                    .checked_add(1)
+                    .ok_or(LibraryShuffleError::ExhaustedOwnerOrdinal)?;
+                if expected_successor != *next_ordinal {
+                    return Err(LibraryShuffleError::TokenStateMismatch);
+                }
+                let recomputed = env2::derive_environment_randomization_seed_v2(
+                    *pair_root,
+                    physical_owner,
+                    env2::ShufflePurposeV2::InGameLibraryShuffle,
+                    current,
+                )?;
+                if recomputed != *derived_seed {
+                    return Err(LibraryShuffleError::TokenStateMismatch);
+                }
+                let mut library = self.players[owner.index()].library.clone();
+                env2::shuffle_slice_in_place_v2(recomputed, &mut library);
+                // Frozen local-computation rule: build the successor
+                // randomness on a local clone of the validated current v2
+                // state, then perform only infallible assignments.
+                let mut successor_randomness = v2.clone();
+                successor_randomness.set_live_shuffle_ordinal(physical_owner, expected_successor);
+                self.players[owner.index()].library = library;
+                self.randomness = GameRandomnessState::EnvironmentV2(successor_randomness);
+                self.clear_library_knowledge(owner);
+                Ok(())
+            }
+            _ => Err(LibraryShuffleError::TokenStateMismatch),
+        }
+    }
+
+    /// The checked one-shot: preflight and commit one library shuffle in the
+    /// state's randomness mode. Legacy states produce exactly the historical
+    /// shuffle and RNG succession; v2 states consume exactly one owner
+    /// ordinal. Fallible: callers must propagate the error. Crate-private
+    /// because no external caller requires it; effect frames are the only
+    /// consumers.
+    pub(crate) fn shuffle_library(&mut self, owner: PlayerId) -> Result<(), LibraryShuffleError> {
+        let token = self.preflight_library_shuffle(owner)?;
+        self.commit_library_shuffle(owner, token)
+    }
+
+    /// Read-only shared view of the legacy RNG; `None` on an environment-v2
+    /// state. There is deliberately no mutable RNG accessor: randomness
+    /// advances only through the library-shuffle transaction. Same-module
+    /// tests that genuinely need to perturb the RNG mutate the private enum
+    /// directly.
+    pub fn legacy_rng(&self) -> Option<&SplitMix64> {
+        match &self.randomness {
+            GameRandomnessState::Legacy(rng) => Some(rng),
+            GameRandomnessState::EnvironmentV2(_) => None,
+        }
+    }
+
+    /// Read-only shared view of the environment-v2 randomness state; `None`
+    /// on a legacy state.
+    pub fn environment_randomization_v2(
+        &self,
+    ) -> Option<&crate::environment_randomization_v2::GameEnvironmentRandomizationV2> {
+        match &self.randomness {
+            GameRandomnessState::Legacy(_) => None,
+            GameRandomnessState::EnvironmentV2(v2) => Some(v2),
+        }
+    }
+
+    /// Explicit v2 constructor: identical zone construction to the legacy
+    /// `new_from_libraries`, but the randomness state is the environment-v2
+    /// pair root with both live-shuffle ordinals at zero and no generic RNG.
+    /// The mode is never inferred: callers choose this constructor
+    /// explicitly with libraries already shuffled by the v2 initial-shuffle
+    /// substreams.
+    pub fn new_from_libraries_environment_v2(
+        library0: &[u16],
+        library1: &[u16],
+        card_name: impl Fn(u16) -> String,
+        pair_environment_seed: u64,
+    ) -> GameState {
+        let mut state = GameState::new_from_libraries(library0, library1, card_name, 0);
+        state.randomness = GameRandomnessState::EnvironmentV2(
+            crate::environment_randomization_v2::GameEnvironmentRandomizationV2::new(
+                pair_environment_seed,
+            ),
+        );
+        state
     }
 
     /// Clears all observers' facts about one library. Used for shuffles and
@@ -1388,6 +1686,16 @@ impl GameState {
     pub fn diagnostic_state_hash(&self) -> u64 {
         fnv1a64(&diagnostic_state_hash_bytes(self))
     }
+
+    /// The exact frozen algorithm identity of `diagnostic_state_hash` for
+    /// this state's randomness representation: the legacy v5 constant on a
+    /// legacy state, the environment-v2 v6 constant on a v2 state.
+    pub fn diagnostic_state_hash_algorithm(&self) -> &'static str {
+        match &self.randomness {
+            GameRandomnessState::Legacy(_) => DIAGNOSTIC_STATE_HASH_ALGORITHM,
+            GameRandomnessState::EnvironmentV2(_) => DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2,
+        }
+    }
 }
 
 struct Fnv1a64 {
@@ -1421,12 +1729,33 @@ struct DiagnosticStateHashEnvelopeV5<'a> {
     state: &'a GameState,
 }
 
+/// Separately typed v6 identity for environment-v2 states. The v5 constants
+/// and envelope are untouched; legacy states keep byte-identical v5 output.
+pub const DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2: &str =
+    "fnv1a64-serde-json-game-state-envelope-v6";
+pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2: u32 = 6;
+
+#[derive(Serialize)]
+struct DiagnosticStateHashEnvelopeV6<'a> {
+    schema_version: u32,
+    state: &'a GameState,
+}
+
 fn diagnostic_state_hash_bytes(state: &GameState) -> Vec<u8> {
-    serde_json::to_vec(&DiagnosticStateHashEnvelopeV5 {
-        schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION,
-        state,
-    })
-    .expect("GameState diagnostic hash envelope must serialize")
+    match &state.randomness {
+        GameRandomnessState::Legacy(_) => serde_json::to_vec(&DiagnosticStateHashEnvelopeV5 {
+            schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION,
+            state,
+        })
+        .expect("GameState diagnostic hash envelope must serialize"),
+        GameRandomnessState::EnvironmentV2(_) => {
+            serde_json::to_vec(&DiagnosticStateHashEnvelopeV6 {
+                schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2,
+                state,
+            })
+            .expect("GameState v6 diagnostic hash envelope must serialize")
+        }
+    }
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -1543,7 +1872,9 @@ mod tests {
             .known_library_cards(PlayerId::P1, PlayerId::P0)
             .is_empty());
 
-        state.shuffle_library(PlayerId::P0);
+        state
+            .shuffle_library(PlayerId::P0)
+            .expect("legacy shuffle succeeds");
         assert!(state
             .known_library_cards(PlayerId::P0, PlayerId::P0)
             .is_empty());
@@ -1654,6 +1985,806 @@ mod tests {
         assert_eq!(a.diagnostic_state_hash(), b.diagnostic_state_hash());
     }
 
+    /// Builds the canonical legacy capture state: the exact state the frozen
+    /// diagnostic golden uses (two-card libraries, seed 99, one draw each).
+    fn legacy_capture_state() -> GameState {
+        let (lib0, lib1) = two_card_libraries();
+        let mut state = GameState::new_from_libraries(&lib0, &lib1, debug_names, 99);
+        state.draw_card(PlayerId::P0);
+        state.draw_card(PlayerId::P1);
+        state
+    }
+
+    /// Gate 1 of environment-v2 step 2: the sealed legacy bytes. The exact
+    /// pre-change GameState JSON, diagnostic envelope bytes, and frozen hash
+    /// must remain byte-identical through any representation work.
+    #[test]
+    fn legacy_randomization_bytes_are_sealed() {
+        let artifact_text = crate::environment_randomization_v2::LEGACY_STATE_BYTES_V1;
+        {
+            use sha2::Digest as _;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(artifact_text.as_bytes());
+            let observed = hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            assert_eq!(
+                observed,
+                crate::environment_randomization_v2::LEGACY_STATE_BYTES_SHA256_V1,
+                "sealed legacy-byte artifact does not match its pinned SHA-256"
+            );
+        }
+        let artifact: serde_json::Value =
+            serde_json::from_str(artifact_text).expect("decode legacy byte artifact");
+        let object = artifact.as_object().expect("artifact is an object");
+        let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "diagnostic_envelope_json",
+                "diagnostic_hash_hex",
+                "schema",
+                "state_hash_hex",
+                "state_json",
+            ],
+            "sealed artifact must carry exactly the five frozen keys"
+        );
+        for key in object.keys() {
+            assert!(
+                object[key].is_string(),
+                "sealed artifact value {key} must be a JSON string"
+            );
+        }
+        assert_eq!(
+            artifact["schema"].as_str().expect("schema"),
+            "mtg-kernel-legacy-randomization-bytes/v1"
+        );
+        let state = legacy_capture_state();
+        let live_state_json =
+            serde_json::to_string(&state).expect("legacy capture state serializes");
+        assert_eq!(
+            live_state_json,
+            artifact["state_json"].as_str().expect("state_json"),
+            "legacy GameState JSON bytes changed"
+        );
+        let live_envelope =
+            String::from_utf8(diagnostic_state_hash_bytes(&state)).expect("envelope is ascii");
+        assert_eq!(
+            live_envelope,
+            artifact["diagnostic_envelope_json"]
+                .as_str()
+                .expect("envelope json"),
+            "legacy diagnostic envelope bytes changed"
+        );
+        assert_eq!(
+            format!("{:016x}", state.diagnostic_state_hash()),
+            artifact["diagnostic_hash_hex"].as_str().expect("hash hex"),
+            "legacy diagnostic hash changed"
+        );
+        assert_eq!(
+            format!("{:016x}", state.state_hash()),
+            artifact["state_hash_hex"].as_str().expect("state hash hex"),
+            "legacy hot-path state_hash changed (Hash derivation drift)"
+        );
+        assert_eq!(state.diagnostic_state_hash(), 0x8650_30b6_0d41_3489);
+    }
+
+    fn v2_capture_state(root: u64) -> GameState {
+        let (lib0, lib1) = two_card_libraries();
+        let mut state =
+            GameState::new_from_libraries_environment_v2(&lib0, &lib1, debug_names, root);
+        state.draw_card(PlayerId::P0);
+        state.draw_card(PlayerId::P1);
+        state
+    }
+
+    const V2_FRAGMENT_7: &str = "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[0,0]}";
+
+    fn v2_json_with_randomness(fragment: &str) -> String {
+        let v2_json = serde_json::to_string(&v2_capture_state(7)).expect("v2 serializes");
+        assert!(
+            v2_json.contains(V2_FRAGMENT_7),
+            "compact [p0,p1] wire bytes must appear verbatim"
+        );
+        v2_json.replacen(V2_FRAGMENT_7, fragment, 1)
+    }
+
+    fn assert_rejected(json: &str, label: &str) {
+        assert!(
+            serde_json::from_str::<GameState>(json).is_err(),
+            "{label} must be rejected"
+        );
+    }
+
+    #[test]
+    fn randomness_representation_rejects_hybrid_and_unknown_forms() {
+        let legacy_json =
+            serde_json::to_string(&legacy_capture_state()).expect("legacy state serializes");
+        let rng_key = "\"rng\":";
+        let rng_start = legacy_json.find(rng_key).expect("legacy rng key present");
+        let rng_end = legacy_json[rng_start..]
+            .find("},")
+            .map(|offset| rng_start + offset + 1)
+            .expect("legacy rng object terminates");
+        let rng_fragment = &legacy_json[rng_start..rng_end];
+
+        assert_rejected(
+            &legacy_json.replacen(rng_fragment, &format!("{rng_fragment},{V2_FRAGMENT_7}"), 1),
+            "both tags, legacy first",
+        );
+        assert_rejected(
+            &legacy_json.replacen(rng_fragment, &format!("{V2_FRAGMENT_7},{rng_fragment}"), 1),
+            "both tags, v2 first",
+        );
+        assert_rejected(
+            &legacy_json.replacen(rng_fragment, &format!("{rng_fragment},{rng_fragment}"), 1),
+            "duplicate legacy tag",
+        );
+        assert_rejected(
+            &v2_json_with_randomness(&format!("{V2_FRAGMENT_7},{V2_FRAGMENT_7}")),
+            "duplicate valid v2 tag",
+        );
+        // Duplicate v2 tags with two distinct valid payloads, both orders.
+        const V2_FRAGMENT_7_ADVANCED: &str = "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[1,0]}";
+        assert_rejected(
+            &v2_json_with_randomness(&format!("{V2_FRAGMENT_7},{V2_FRAGMENT_7_ADVANCED}")),
+            "distinct duplicate v2 tags, base first",
+        );
+        assert_rejected(
+            &v2_json_with_randomness(&format!("{V2_FRAGMENT_7_ADVANCED},{V2_FRAGMENT_7}")),
+            "distinct duplicate v2 tags, advanced first",
+        );
+        let v2_json = serde_json::to_string(&v2_capture_state(7)).expect("v2 serializes");
+        assert_rejected(
+            &v2_json.replacen(V2_FRAGMENT_7, &format!("{V2_FRAGMENT_7},{rng_fragment}"), 1),
+            "v2 then legacy tag",
+        );
+        assert_rejected(
+            &legacy_json.replacen(&format!("{rng_fragment},"), "", 1),
+            "neither tag",
+        );
+        assert_rejected(
+            &legacy_json.replacen(rng_fragment, &format!("{rng_fragment},\"garbage\":1"), 1),
+            "unknown outer key after the randomness tag",
+        );
+        assert_rejected(
+            &legacy_json.replacen(rng_fragment, &format!("\"garbage\":1,{rng_fragment}"), 1),
+            "unknown outer key before the randomness tag",
+        );
+        assert_rejected(
+            &v2_json_with_randomness(&format!("{V2_FRAGMENT_7},\"garbage\":1")),
+            "unknown outer key after the v2 tag",
+        );
+        assert_rejected(
+            &v2_json_with_randomness(&format!("\"garbage\":1,{V2_FRAGMENT_7}")),
+            "unknown outer key before the v2 tag",
+        );
+        // The nested legacy RNG object is strict: exactly one `state` member.
+        let padded_rng = rng_fragment.replacen('}', ",\"junk\":1}", 1);
+        assert_rejected(
+            &legacy_json.replacen(rng_fragment, &padded_rng, 1),
+            "extra nested legacy RNG member",
+        );
+        assert_rejected(
+            &v2_json_with_randomness("\"environment_randomization_v2\":null"),
+            "null v2 payload",
+        );
+        assert_rejected(
+            &legacy_json.replacen(rng_fragment, "\"rng\":null", 1),
+            "null legacy payload",
+        );
+        assert!(serde_json::from_str::<GameState>(&legacy_json).is_ok());
+        assert!(serde_json::from_str::<GameState>(&v2_json).is_ok());
+    }
+
+    #[test]
+    fn v2_nested_serde_matrix() {
+        for (fragment, label) in [
+            (
+                "\"environment_randomization_v2\":{\"next_live_shuffle_ordinal\":[0,0]}",
+                "missing root",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7}",
+                "missing ordinal array",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[0,0],\"extra\":1}",
+                "extra nested key",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[]}",
+                "ordinal array length 0",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[0]}",
+                "ordinal array length 1",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[0,0,0]}",
+                "ordinal array length 3",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":0}",
+                "scalar in place of array",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":{}}",
+                "object in place of array",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":null}",
+                "null in place of array",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[-1,0]}",
+                "negative ordinal",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":18446744073709551616,\"next_live_shuffle_ordinal\":[0,0]}",
+                "root greater than u64",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":-1,\"next_live_shuffle_ordinal\":[0,0]}",
+                "negative root",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[18446744073709551616,0]}",
+                "ordinal greater than u64",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":null,\"next_live_shuffle_ordinal\":[0,0]}",
+                "null root",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[0,0]}",
+                "duplicate nested key",
+            ),
+        ] {
+            assert_rejected(&v2_json_with_randomness(fragment), label);
+        }
+
+        // Serialized extremes: root u64::MAX round-trips; stored ordinal
+        // u64::MAX deserializes and only preflight rejects it.
+        let max_root = v2_json_with_randomness(
+            "\"environment_randomization_v2\":{\"pair_environment_seed\":18446744073709551615,\"next_live_shuffle_ordinal\":[0,0]}",
+        );
+        let state: GameState = serde_json::from_str(&max_root).expect("root u64::MAX is legal");
+        assert_eq!(
+            state
+                .environment_randomization_v2()
+                .expect("v2")
+                .pair_environment_seed(),
+            u64::MAX
+        );
+    }
+
+    #[test]
+    fn v2_exhausted_and_near_exhausted_ordinals() {
+        use crate::environment_randomization_v2 as env2;
+        let exhausted_json = v2_json_with_randomness(
+            "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[18446744073709551615,0]}",
+        );
+        let exhausted: GameState =
+            serde_json::from_str(&exhausted_json).expect("stored ordinal u64::MAX deserializes");
+        let before_json = serde_json::to_string(&exhausted).expect("serializes");
+        let before_state_hash = exhausted.state_hash();
+        let before_diag = exhausted.diagnostic_state_hash();
+        assert_eq!(
+            exhausted
+                .preflight_library_shuffle(PlayerId::P0)
+                .map(|_| ()),
+            Err(LibraryShuffleError::ExhaustedOwnerOrdinal),
+            "exhausted ordinal must fail at preflight"
+        );
+        assert_eq!(
+            serde_json::to_string(&exhausted).expect("serializes"),
+            before_json,
+            "failed preflight must be byte-exact nonmutating"
+        );
+        assert_eq!(exhausted.state_hash(), before_state_hash);
+        assert_eq!(exhausted.diagnostic_state_hash(), before_diag);
+        // P1 remains fully usable while P0 is exhausted.
+        let mut usable = exhausted.clone();
+        let token = usable
+            .preflight_library_shuffle(PlayerId::P1)
+            .expect("P1 preflight");
+        usable
+            .commit_library_shuffle(PlayerId::P1, token)
+            .expect("P1 commit");
+
+        // max-minus-one advances to max exactly once, then exhausts.
+        let near_json = v2_json_with_randomness(
+            "\"environment_randomization_v2\":{\"pair_environment_seed\":7,\"next_live_shuffle_ordinal\":[18446744073709551614,0]}",
+        );
+        let mut near: GameState = serde_json::from_str(&near_json).expect("deserializes");
+        let token = near
+            .preflight_library_shuffle(PlayerId::P0)
+            .expect("max-minus-one preflight");
+        near.commit_library_shuffle(PlayerId::P0, token)
+            .expect("max-minus-one commit");
+        assert_eq!(
+            near.environment_randomization_v2()
+                .expect("v2")
+                .next_live_shuffle_ordinal(env2::PhysicalOwnerV2::P0),
+            u64::MAX
+        );
+        assert_eq!(
+            near.preflight_library_shuffle(PlayerId::P0).map(|_| ()),
+            Err(LibraryShuffleError::ExhaustedOwnerOrdinal)
+        );
+    }
+
+    #[test]
+    fn v2_variant_and_counters_survive_clone_and_serde() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        let mut state = v2_capture_state(940_001);
+        let token = state
+            .preflight_library_shuffle(PlayerId::P1)
+            .expect("preflight succeeds on v2");
+        state
+            .commit_library_shuffle(PlayerId::P1, token)
+            .expect("commit succeeds");
+        let cloned = state.clone();
+        assert_eq!(state, cloned);
+        let json = serde_json::to_string(&state).expect("v2 serializes");
+        let restored: GameState = serde_json::from_str(&json).expect("v2 deserializes");
+        assert_eq!(state, restored);
+        let v2 = restored
+            .environment_randomization_v2()
+            .expect("restored state is v2");
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), 0);
+        assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 1);
+        assert_eq!(v2.pair_environment_seed(), 940_001);
+    }
+
+    /// Serialized bytes, hot hash, and diagnostic hash of one state, taken
+    /// before an expected-failure transaction attempt.
+    fn state_fingerprint(state: &GameState) -> (String, u64, u64) {
+        (
+            serde_json::to_string(state).expect("state serializes"),
+            state.state_hash(),
+            state.diagnostic_state_hash(),
+        )
+    }
+
+    fn assert_fingerprint_unchanged(
+        state: &GameState,
+        fingerprint: &(String, u64, u64),
+        label: &str,
+    ) {
+        assert_eq!(
+            serde_json::to_string(state).expect("state serializes"),
+            fingerprint.0,
+            "{label} must leave serialized bytes identical"
+        );
+        assert_eq!(
+            state.state_hash(),
+            fingerprint.1,
+            "{label} must leave the hot state hash identical"
+        );
+        assert_eq!(
+            state.diagnostic_state_hash(),
+            fingerprint.2,
+            "{label} must leave the diagnostic hash identical"
+        );
+    }
+
+    #[test]
+    fn library_shuffle_transaction_adversarial() {
+        use crate::environment_randomization_v2 as env2;
+        let mut state = v2_capture_state(31);
+        let stale = state
+            .preflight_library_shuffle(PlayerId::P0)
+            .expect("first preflight");
+        let fresh = state
+            .preflight_library_shuffle(PlayerId::P0)
+            .expect("second preflight at same ordinal");
+        match &fresh.authorization {
+            LibraryShuffleAuthorization::EnvironmentV2 { derived_seed, .. } => {
+                assert_eq!(
+                    *derived_seed,
+                    env2::derive_environment_randomization_seed_v2(
+                        31,
+                        env2::PhysicalOwnerV2::P0,
+                        env2::ShufflePurposeV2::InGameLibraryShuffle,
+                        0,
+                    )
+                    .expect("module derivation"),
+                    "preflight seed must equal the module KDF"
+                );
+            }
+            LibraryShuffleAuthorization::Legacy { .. } => panic!("v2 token expected"),
+        }
+        state
+            .commit_library_shuffle(PlayerId::P0, fresh)
+            .expect("fresh commit");
+        let fingerprint = state_fingerprint(&state);
+        assert_eq!(
+            state.commit_library_shuffle(PlayerId::P0, stale),
+            Err(LibraryShuffleError::TokenStateMismatch),
+            "stale token must fail after the ordinal advanced"
+        );
+        assert_fingerprint_unchanged(&state, &fingerprint, "replayed stale token");
+
+        // Cross-root transplant.
+        let donor = v2_capture_state(31);
+        let transplant = donor
+            .preflight_library_shuffle(PlayerId::P1)
+            .expect("donor preflight");
+        let mut other_root = v2_capture_state(32);
+        let fingerprint = state_fingerprint(&other_root);
+        assert_eq!(
+            other_root.commit_library_shuffle(PlayerId::P1, transplant),
+            Err(LibraryShuffleError::TokenStateMismatch),
+            "cross-root transplant must fail"
+        );
+        assert_fingerprint_unchanged(&other_root, &fingerprint, "cross-root transplant");
+
+        // Wrong caller owner.
+        let token = donor
+            .preflight_library_shuffle(PlayerId::P0)
+            .expect("owner preflight");
+        let mut donor_mut = donor.clone();
+        let fingerprint = state_fingerprint(&donor_mut);
+        assert_eq!(
+            donor_mut.commit_library_shuffle(PlayerId::P1, token),
+            Err(LibraryShuffleError::CallerOwnerMismatch)
+        );
+        assert_fingerprint_unchanged(&donor_mut, &fingerprint, "wrong caller owner");
+
+        // Cross-mode in both directions.
+        let legacy = legacy_capture_state();
+        let legacy_token = legacy
+            .preflight_library_shuffle(PlayerId::P0)
+            .expect("legacy preflight");
+        let mut v2_state = v2_capture_state(31);
+        let fingerprint = state_fingerprint(&v2_state);
+        assert_eq!(
+            v2_state.commit_library_shuffle(PlayerId::P0, legacy_token),
+            Err(LibraryShuffleError::TokenStateMismatch)
+        );
+        assert_fingerprint_unchanged(&v2_state, &fingerprint, "legacy token on v2 state");
+        let v2_token = v2_state
+            .preflight_library_shuffle(PlayerId::P0)
+            .expect("v2 preflight");
+        let mut legacy_mut = legacy.clone();
+        let fingerprint = state_fingerprint(&legacy_mut);
+        assert_eq!(
+            legacy_mut.commit_library_shuffle(PlayerId::P0, v2_token),
+            Err(LibraryShuffleError::TokenStateMismatch)
+        );
+        assert_fingerprint_unchanged(&legacy_mut, &fingerprint, "v2 token on legacy state");
+    }
+
+    #[test]
+    fn library_shuffle_rejects_invalid_owner_nonmutating() {
+        for mut state in [legacy_capture_state(), v2_capture_state(45)] {
+            let fingerprint = state_fingerprint(&state);
+            for forged in [PlayerId(2), PlayerId(255)] {
+                assert_eq!(
+                    state.preflight_library_shuffle(forged).map(|_| ()),
+                    Err(LibraryShuffleError::InvalidOwner),
+                    "preflight must reject PlayerId({forged:?}) exactly"
+                );
+                assert_eq!(
+                    state.shuffle_library(forged),
+                    Err(LibraryShuffleError::InvalidOwner)
+                );
+                let token = state
+                    .preflight_library_shuffle(PlayerId::P0)
+                    .expect("honest preflight");
+                assert_eq!(
+                    state.commit_library_shuffle(forged, token),
+                    Err(LibraryShuffleError::InvalidOwner),
+                    "commit must reject a forged owner before any indexing"
+                );
+                assert_fingerprint_unchanged(&state, &fingerprint, "invalid owner");
+            }
+        }
+    }
+
+    #[test]
+    fn library_shuffle_rejects_tampered_and_stale_tokens_nonmutating() {
+        let mut state = v2_capture_state(46);
+        let fingerprint = state_fingerprint(&state);
+        let honest = state
+            .preflight_library_shuffle(PlayerId::P0)
+            .expect("honest preflight");
+        let (pair_root, ordinal, next_ordinal, derived_seed) = match honest.authorization {
+            LibraryShuffleAuthorization::EnvironmentV2 {
+                pair_root,
+                ordinal,
+                next_ordinal,
+                derived_seed,
+            } => (pair_root, ordinal, next_ordinal, derived_seed),
+            LibraryShuffleAuthorization::Legacy { .. } => panic!("v2 token expected"),
+        };
+        for (tampered, label) in [
+            (
+                LibraryShuffleAuthorization::EnvironmentV2 {
+                    pair_root,
+                    ordinal,
+                    next_ordinal: next_ordinal + 1,
+                    derived_seed,
+                },
+                "successor tamper",
+            ),
+            (
+                LibraryShuffleAuthorization::EnvironmentV2 {
+                    pair_root,
+                    ordinal,
+                    next_ordinal,
+                    derived_seed: derived_seed ^ 1,
+                },
+                "derived-seed tamper",
+            ),
+            (
+                LibraryShuffleAuthorization::EnvironmentV2 {
+                    pair_root,
+                    ordinal: ordinal + 1,
+                    next_ordinal: next_ordinal + 1,
+                    derived_seed,
+                },
+                "future-ordinal tamper",
+            ),
+            (
+                LibraryShuffleAuthorization::EnvironmentV2 {
+                    pair_root: pair_root ^ 1,
+                    ordinal,
+                    next_ordinal,
+                    derived_seed,
+                },
+                "root tamper",
+            ),
+        ] {
+            let forged_token = LibraryShuffleToken {
+                owner: PlayerId::P0,
+                authorization: tampered,
+            };
+            assert_eq!(
+                state.commit_library_shuffle(PlayerId::P0, forged_token),
+                Err(LibraryShuffleError::TokenStateMismatch),
+                "{label} must fail"
+            );
+            assert_fingerprint_unchanged(&state, &fingerprint, label);
+        }
+
+        // Stale legacy RNG: the RNG advances between preflight and commit.
+        let mut legacy = legacy_capture_state();
+        let token = legacy
+            .preflight_library_shuffle(PlayerId::P0)
+            .expect("legacy preflight");
+        match &mut legacy.randomness {
+            GameRandomnessState::Legacy(rng) => {
+                rng.next_u64();
+            }
+            GameRandomnessState::EnvironmentV2(_) => panic!("capture state is legacy"),
+        }
+        let fingerprint = state_fingerprint(&legacy);
+        assert_eq!(
+            legacy.commit_library_shuffle(PlayerId::P0, token),
+            Err(LibraryShuffleError::TokenStateMismatch),
+            "a stale legacy RNG snapshot must fail the complete-RNG recheck"
+        );
+        assert_fingerprint_unchanged(&legacy, &fingerprint, "stale legacy RNG");
+    }
+
+    #[test]
+    fn v2_commit_applies_module_permutation_and_scopes_knowledge() {
+        use crate::environment_randomization_v2 as env2;
+        let mut state = v2_capture_state(59);
+        state.reveal_library_top(PlayerId::P0, PlayerId::P0, 1);
+        state.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+        state.reveal_library_top(PlayerId::P1, PlayerId::P1, 1);
+        let p1_own_knowledge =
+            state.library_knowledge[PlayerId::P1.index()][PlayerId::P1.index()].clone();
+        let original = state.players[PlayerId::P0.index()].library.clone();
+        let derived = env2::derive_environment_randomization_seed_v2(
+            59,
+            env2::PhysicalOwnerV2::P0,
+            env2::ShufflePurposeV2::InGameLibraryShuffle,
+            0,
+        )
+        .expect("module derivation");
+        let mut expected = original.clone();
+        env2::shuffle_slice_in_place_v2(derived, &mut expected);
+        state
+            .shuffle_library(PlayerId::P0)
+            .expect("v2 one-shot shuffle");
+        assert_eq!(
+            state.players[PlayerId::P0.index()].library,
+            expected,
+            "commit must apply exactly the module permutation for the committed ordinal"
+        );
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            assert!(
+                state.library_knowledge[observer.index()][PlayerId::P0.index()].is_empty(),
+                "a shuffle must clear every observer's facts about the shuffled library"
+            );
+        }
+        assert_eq!(
+            state.library_knowledge[PlayerId::P1.index()][PlayerId::P1.index()],
+            p1_own_knowledge,
+            "the other owner's library knowledge must survive"
+        );
+        let v2 = state.environment_randomization_v2().expect("v2 state");
+        assert_eq!(
+            v2.next_live_shuffle_ordinal(env2::PhysicalOwnerV2::P0),
+            1,
+            "exactly one P0 ordinal consumed"
+        );
+        assert_eq!(
+            v2.next_live_shuffle_ordinal(env2::PhysicalOwnerV2::P1),
+            0,
+            "a P0 commit must not move P1's counter"
+        );
+    }
+
+    #[test]
+    fn legacy_one_shot_matches_historical_shuffle_exactly() {
+        let mut transactional = legacy_capture_state();
+        let mut manual = legacy_capture_state();
+        assert_eq!(transactional, manual);
+        transactional
+            .shuffle_library(PlayerId::P0)
+            .expect("legacy one-shot succeeds");
+        // Historical algorithm replayed by hand on the twin state.
+        {
+            let mut rng = manual.legacy_rng().expect("legacy").clone();
+            let library = &mut manual.players[PlayerId::P0.index()].library;
+            for i in (1..library.len()).rev() {
+                let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+                library.swap(i, j);
+            }
+            manual.randomness = GameRandomnessState::Legacy(rng);
+            manual.clear_library_knowledge(PlayerId::P0);
+        }
+        assert_eq!(transactional, manual, "legacy behavior must be exact");
+        assert_eq!(transactional.state_hash(), manual.state_hash());
+    }
+
+    #[test]
+    fn v2_owner_tokens_commit_in_either_order() {
+        let base = v2_capture_state(77);
+        let mut forward = base.clone();
+        let p0 = forward.preflight_library_shuffle(PlayerId::P0).expect("p0");
+        let p1 = forward.preflight_library_shuffle(PlayerId::P1).expect("p1");
+        forward
+            .commit_library_shuffle(PlayerId::P0, p0)
+            .expect("p0 first");
+        forward
+            .commit_library_shuffle(PlayerId::P1, p1)
+            .expect("p1 second");
+        let mut reverse = base.clone();
+        let p0 = reverse.preflight_library_shuffle(PlayerId::P0).expect("p0");
+        let p1 = reverse.preflight_library_shuffle(PlayerId::P1).expect("p1");
+        reverse
+            .commit_library_shuffle(PlayerId::P1, p1)
+            .expect("p1 first");
+        reverse
+            .commit_library_shuffle(PlayerId::P0, p0)
+            .expect("p0 second");
+        assert_eq!(forward, reverse, "owner commits must commute");
+        assert_eq!(forward.state_hash(), reverse.state_hash());
+    }
+
+    #[test]
+    fn v2_short_libraries_advance_and_clear_knowledge() {
+        use crate::environment_randomization_v2::PhysicalOwnerV2;
+        for target_len in [0_usize, 1] {
+            let mut state = v2_capture_state(88);
+            while state.players[PlayerId::P0.index()].library.len() > target_len {
+                state.players[PlayerId::P0.index()].library.pop();
+            }
+            if let Some(&object) = state.players[PlayerId::P0.index()].library.first() {
+                for observer in [PlayerId::P0, PlayerId::P1] {
+                    state.library_knowledge[observer.index()][PlayerId::P0.index()].push(
+                        LibraryKnowledgeEntry {
+                            position: 0,
+                            object,
+                            zone_change_count: state.objects.get(object).zone_change_count,
+                        },
+                    );
+                }
+            }
+            let token = state
+                .preflight_library_shuffle(PlayerId::P0)
+                .expect("short-library preflight");
+            state
+                .commit_library_shuffle(PlayerId::P0, token)
+                .expect("short-library commit");
+            assert_eq!(
+                state
+                    .environment_randomization_v2()
+                    .expect("v2")
+                    .next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+                1,
+                "length-{target_len} shuffle must consume exactly one ordinal"
+            );
+            for observer in [PlayerId::P0, PlayerId::P1] {
+                assert!(
+                    state.library_knowledge[observer.index()][PlayerId::P0.index()].is_empty(),
+                    "length-{target_len} shuffle must clear knowledge"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn v2_diagnostic_envelope_and_hash_sensitivity() {
+        let base = v2_capture_state(11);
+        let bytes = diagnostic_state_hash_bytes(&base);
+        assert!(bytes.starts_with(b"{\"schema_version\":6,\"state\":{"));
+        assert_eq!(
+            DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2,
+            "fnv1a64-serde-json-game-state-envelope-v6"
+        );
+        assert_eq!(
+            DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2,
+            6
+        );
+        let text = String::from_utf8(bytes).expect("ascii envelope");
+        assert!(text.contains("\"environment_randomization_v2\":"));
+        assert!(!text.contains("\"rng\":"));
+        assert_ne!(
+            legacy_capture_state().state_hash(),
+            base.state_hash(),
+            "legacy and v2 randomness must hash distinctly in the hot hash"
+        );
+
+        // Root, P0 ordinal, and P1 ordinal each independently change BOTH
+        // the hot state hash and the diagnostic hash.
+        let base_json = serde_json::to_string(&v2_capture_state(11)).expect("serializes");
+        let fragment_11 = "\"environment_randomization_v2\":{\"pair_environment_seed\":11,\"next_live_shuffle_ordinal\":[0,0]}";
+        assert!(base_json.contains(fragment_11));
+        for (replacement, label) in [
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":12,\"next_live_shuffle_ordinal\":[0,0]}",
+                "root",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":11,\"next_live_shuffle_ordinal\":[1,0]}",
+                "p0 ordinal",
+            ),
+            (
+                "\"environment_randomization_v2\":{\"pair_environment_seed\":11,\"next_live_shuffle_ordinal\":[0,1]}",
+                "p1 ordinal",
+            ),
+        ] {
+            let variant: GameState =
+                serde_json::from_str(&base_json.replacen(fragment_11, replacement, 1))
+                    .expect("variant deserializes");
+            assert_ne!(
+                base.state_hash(),
+                variant.state_hash(),
+                "{label} must change the hot state hash"
+            );
+            assert_ne!(
+                base.diagnostic_state_hash(),
+                variant.diagnostic_state_hash(),
+                "{label} must change the diagnostic hash"
+            );
+        }
+    }
+
+    #[test]
+    fn diagnostic_state_hash_algorithm_dispatches_per_representation() {
+        assert_eq!(
+            legacy_capture_state().diagnostic_state_hash_algorithm(),
+            "fnv1a64-serde-json-game-state-envelope-v5",
+            "legacy states report the frozen v5 algorithm"
+        );
+        assert_eq!(
+            v2_capture_state(3).diagnostic_state_hash_algorithm(),
+            "fnv1a64-serde-json-game-state-envelope-v6",
+            "environment-v2 states report the v6 algorithm"
+        );
+    }
+
     #[test]
     fn diagnostic_state_hash_contract_and_golden_value_are_frozen() {
         let (lib0, lib1) = two_card_libraries();
@@ -1712,7 +2843,12 @@ mod tests {
         let (lib0, lib1) = two_card_libraries();
         let mut state = GameState::new_from_libraries(&lib0, &lib1, debug_names, 99);
         let initial = state.diagnostic_state_hash();
-        state.rng.next_u64();
+        match &mut state.randomness {
+            GameRandomnessState::Legacy(rng) => {
+                rng.next_u64();
+            }
+            GameRandomnessState::EnvironmentV2(_) => panic!("capture state is legacy"),
+        }
         assert_ne!(
             state.diagnostic_state_hash(),
             initial,

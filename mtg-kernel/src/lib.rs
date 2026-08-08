@@ -1,3 +1,5 @@
+#![cfg_attr(test, recursion_limit = "512")]
+
 //! Experimental, deterministic, resumable game core for a fixed Pauper pool.
 //!
 //! Scope: exactly the pinned nine-deck Pauper pool (150 unique roster names;
@@ -18,14 +20,43 @@
 //! - Strict single-session JSONL reset/step boundary; parallelism and batching
 //!   are orchestrated outside the Rust process.
 
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    not(all(
+        target_env = "msvc",
+        any(target_arch = "x86_64", target_arch = "aarch64"),
+        not(debug_assertions)
+    ))
+))]
+compile_error!(
+    "native-training-store-v2-production requires Windows MSVC x86_64/aarch64 release without debug assertions"
+);
+
 pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
 pub mod card_def;
+// Fail-closed canonical JSON codec shared by the native training store's
+// records. Schema validation remains a separate layer.
+pub mod canonical_json_v1;
+// Schema-neutral, no-overwrite filesystem publication building blocks for the
+// future native trainer store. This module does not define record identities,
+// CLI behavior, or latest-pointer semantics.
+pub mod durable_publication_v1;
+pub mod environment_randomization_v2;
+// Schema-neutral move-only publication building blocks. Immutable files use a
+// no-replace move; replaceable pointer files use a distinct receipt type.
+pub mod durable_move_publication_v2;
+// Strict Python-authoritative initial-model snapshot loader for matched trials.
+#[allow(dead_code)]
+pub(crate) mod common_model_snapshot_v1;
 pub mod effect;
 pub mod engine;
 pub mod event;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+mod experimental_burn_net8_packed_v1;
 pub mod fast_sampler;
 pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
@@ -35,8 +66,160 @@ pub mod mana;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
 pub(crate) mod native_flat_cpu_reference_v1;
+// Auditable CPU inference reference for Python kernel-policy-value-net-8;
+// deliberately not a production or performance backend.
+#[allow(dead_code)]
+pub(crate) mod native_policy_value_net_v1;
+// Pure in-memory bridge from already-validated Store authorities and exact
+// train-state bytes to a private, immutable native inference model.
+pub mod native_checkpoint_inference_v1;
+// Trainer-schedule-compatible in-memory checkpoint runner. It derives the
+// engine/topology contract from a validated run and publishes no artifacts.
+pub mod native_checkpoint_runner_v1;
+// Exact, schema-neutral comparison of two same-run checkpoint rollouts against
+// the frozen native uniform opponent. It publishes no artifacts or statistics.
+pub mod native_checkpoint_evaluator_v1;
+pub mod native_cuda_qualification_metrics_v1;
+// Exact CPU loss/backward/Adam reference for terminal_reinforce_value/v3;
+// deliberately not a scheduler, checkpoint format, or performance backend.
+#[cfg(feature = "native-flat-tensorizer-diagnostic")]
+pub mod native_flat_tensorizer_diagnostic_v1;
+#[allow(dead_code)]
+pub(crate) mod native_flat_tensorizer_v2;
+#[allow(dead_code)]
+pub(crate) mod native_full_episode_trajectory_v1;
+#[allow(dead_code)]
+pub(crate) mod native_full_episode_trajectory_v2;
+#[allow(dead_code)]
+pub mod native_opponent_sampler_v1;
+// Ladder-opponent identities layered on the frozen uniform sampler above
+// (Self-Play Ladder Design Contract S2, Section 2). The V1 identities stay
+// frozen forever; this module owns only the new ladder identity strings.
+#[allow(dead_code)]
+pub mod native_opponent_policy_v2;
+#[cfg(test)]
+pub(crate) mod native_policy_anchor_v1;
+#[allow(dead_code)]
+pub(crate) mod native_policy_train_step_v1;
+// Headerless, deterministic full model/Adam state payload codec. Store and CLI
+// publication remain separate, later layers.
+#[allow(dead_code)]
+pub(crate) mod native_train_state_payload_v1;
 #[allow(dead_code)]
 pub(crate) mod native_trainer_schedule_v1;
+// Ladder opponent seed schedule additions layered on the V1 schedule above
+// (Self-Play Ladder Design Contract S2, Section 2): two new namespaces only.
+#[allow(dead_code)]
+pub(crate) mod native_trainer_schedule_v2;
+// Ladder opponent engine: runtime bridge from a validated ladder pool
+// contract plus three loaded frozen-checkpoint inference handles to
+// per-decision opponent action selection (Self-Play Ladder Design Contract
+// S2, Sections 2, 3, 5). Layers on native_opponent_policy_v2,
+// native_trainer_schedule_v2, native_opponent_sampler_v1, and
+// native_checkpoint_inference_v1.
+#[allow(dead_code)]
+pub(crate) mod native_ladder_opponent_v1;
+// Eight-slot population-opponent runtime primitive.
+#[allow(dead_code)]
+pub(crate) mod native_population_opponent_v1;
+// Canonical hash-linked authority for each eight-slot population refresh.
+#[allow(dead_code)]
+pub(crate) mod native_population_refresh_manifest_v1;
+// Store-backed resolution of one validated population refresh into eight
+// immutable checkpoint-inference handles.
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) mod native_population_runtime_resolution_v1;
+// Pool resolution loader: an OpponentLadderPoolContractV1's checkpoint refs
+// plus a base directory per ref -> validated NativeCheckpointInferenceV1
+// handles ready for LadderOpponentEngineV1::new_v1 (Self-Play Ladder Design
+// Contract S2, Section 3). Fail-closed digest gate on the three pinned
+// artifacts before any parsing.
+#[allow(dead_code)]
+pub(crate) mod native_ladder_pool_resolution_v1;
+// Pure promotion-gate arithmetic (Self-Play Ladder Design Contract S2,
+// Section 4): the strictly-greater-than-55-percent-of-1,024-pairs win-rate
+// test and the 2-sigma panel-regression check. No I/O, no run-record schema.
+#[allow(dead_code)]
+pub(crate) mod native_ladder_promotion_v1;
+// Opt-in in-memory wall-clock diagnostics. These types are intentionally not a
+// Store, benchmark, checkpoint, or evidence schema and implement no codec.
+pub mod native_training_phase_diagnostic_v1;
+// In-memory native rollout -> tensor -> inference -> grouped Adam integration.
+// Persistence and the external trainer/runner record boundary remain separate.
+#[allow(dead_code)]
+pub(crate) mod native_trainer_v1;
+// Public in-process execution facade for the native trainer. This deliberately
+// owns no CLI grammar, serialized record, or filesystem publication contract.
+pub mod native_training_executor_v1;
+// Non-persisting provenance guard for the exact admitted production build.
+// The non-Windows required-feature binary contains only its parser/refusal stub
+// and therefore never compiles this module or its generated constants.
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
+pub mod native_store_production_capture_v2;
+// Pure genesis and trained parent-bound sidecar/head authority.
+pub mod native_training_store_boundary_v2;
+// Pure checkpoint-v3 authority for genesis and evidence-bound trained state.
+pub mod native_training_store_checkpoint_v3;
+// Pure complete-chain continuation-v2 authority. Largest-prefix partitioning
+// is never claimed from one file in isolation.
+pub mod native_training_store_segment_continuation_v2;
+// Pure SegmentManifestV2 authority for genesis and explicit parent-bound
+// trained continuation/checkpoint state.
+pub mod native_training_store_segment_manifest_v2;
+// Pure Store layout and same-parent stage-leaf grammar authority. This owns
+// exact final basenames and `.B.stage-v2` recognition; it performs no
+// filesystem access and makes no durability or publication claim.
+pub mod native_training_store_layout_v2;
+// One-clone, one-final-payload trained segment guard. Filesystem publication
+// and receipt construction remain separate later layers.
+pub mod native_training_store_prepared_segment_v2;
+// Allocation-free closed-grammar admission plan for one trained segment.
+// The public coordinator consumes this sealed proof before cloning a trainer.
+#[allow(dead_code)]
+pub(crate) mod native_training_store_segment_representability_v2;
+// Pure Episode/UpdateEvidence/UpdateGroup authority. This validates one
+// complete update and advances a move-only evidence-chain context; it owns no
+// continuation partitioning, filesystem, publication, receipt, or mutation.
+pub mod native_training_store_update_group_v1;
+// Schema-neutral checked ATOM/raw32/SHA framing shared by Store records.
+#[allow(dead_code)]
+pub(crate) mod native_training_store_digest_v1;
+// Idempotent B0-B8 root-skeleton bootstrap and pre-run recovery. Run-record
+// byte authority, generation publication, and resume remain later layers.
+pub mod native_training_store_bootstrap_v2;
+// One-command development science loop: bootstrap-or-resume training to the
+// exact target, full Store validation, checkpoint-ref boundary loads, runner
+// episodes, and the seat-swapped uniform reward-delta evaluation. It claims
+// no experiment-manifest authority.
+pub mod native_science_loop_v1;
+// Store-wide currentness validation and resume orchestration: shared-lock
+// full-chain walk, exclusive-lock recognized-stage cleanup, the exact P=N
+// no-op, and latest-checkpoint executor reconstruction.
+pub mod native_training_store_resume_v2;
+// Path-backed Store root authority: no-follow retained handles, local
+// fixed-NTFS admission, identity recapture, and the nonblocking LockFileEx
+// range locks. Non-Windows callers receive the stable unsupported-platform
+// error before any filesystem access.
+pub mod native_training_store_root_v2;
+// Pure typed run/v2 record validation and deterministic digest authority.
+// Capture, filesystem publication, and learning-quality claims live elsewhere.
+pub mod native_training_store_run_v2;
+// Pure checkpoint-reference/latest record authorities. These bind sealed
+// boundary facts only; filesystem location, publication, and currentness are
+// deliberately outside this module.
+pub mod native_training_store_reference_latest_v2;
+// Private-construction persistence receipt and the strict native generation
+// store boundary. The high-level publisher/read/recovery path lands here.
+#[cfg(test)]
+mod native_gate3_terminal_blind_coefficient_screen_v1;
+pub mod native_training_store_v2;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;
@@ -47,9 +230,29 @@ pub mod rl_session;
 pub mod runtime_decks;
 pub mod snapshot;
 pub mod state;
+/// Frozen committed-source-tree capture for science workload preflight and
+/// postflight binding.
+pub mod strict_source_tree_attestation_v1;
 pub mod surface;
 pub mod surface_v2;
 pub mod trace;
 pub mod trigger;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
+
+/// Runs the opt-in production-parameter Burn/CUDA diagnostic. This surface is
+/// intentionally hidden from normal documentation and absent from normal
+/// builds; it is not a production trainer backend contract.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[doc(hidden)]
+pub fn run_experimental_burn_net8_packed_cuda_v1() -> Result<(), Box<dyn std::error::Error>> {
+    experimental_burn_net8_packed_v1::run_cuda_v1()
+}
+
+/// Runs the opt-in Burn/CUDA training-feasibility diagnostic. This is an
+/// experimental gradient/optimizer mapping probe, not a production trainer.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+#[doc(hidden)]
+pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::error::Error>> {
+    experimental_burn_net8_packed_v1::run_cuda_training_v1()
+}

@@ -37,8 +37,27 @@ use crate::flat_policy_v1::{
     FLAT_SCORER_PACKET_VERSION_V1, FLAT_SCORER_VISIBLE_MANIFEST_V1,
     FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V1,
 };
+use crate::flat_policy_v2::FlatScoringDecisionViewV2;
+use crate::native_full_episode_trajectory_v1::{
+    NativeFullEpisodeTrajectoryDecisionRowV1, NativeTrajectoryActorRoleV1,
+};
+use crate::native_full_episode_trajectory_v2::{
+    NativeEnvironmentWindowPreflightAuthorityV2, NativeFullEpisodeTrajectoryStartV2,
+    NativeRunBoundFullEpisodeAccumulatorV2, NativeTrainingTrajectoryReceiptV2,
+};
+use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
+use crate::native_opponent_sampler_v1::select_native_trainer_opponent_action_v1;
+use crate::native_population_opponent_v1::{PopulationOpponentEngineV1, PopulationSlotV1};
+use crate::native_trainer_schedule_v1::{
+    derive_native_trainer_learner_action_seed_v1, derive_native_trainer_opponent_group_seed_v1,
+    native_trainer_episode_schedule_v1,
+};
+use crate::native_trainer_schedule_v2::{
+    derive_native_trainer_opponent_policy_substep_seed_v2, OpponentLadderPoolMemberV2,
+};
 use crate::rl::{
-    derive_env_seed, derive_policy_seed, PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2,
+    derive_env_seed, derive_policy_seed, PlayerSeatV1, TerminalClassificationV1, TerminalOutcomeV1,
+    TerminalSafeCodeV2,
 };
 use crate::rl_session::{
     FastActorDecisionKindV1, FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1,
@@ -65,34 +84,345 @@ pub const ASYNC_FLAT_SCORED_SAMPLER_ID_V1: &str =
 const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-#[cfg(test)]
-static TEST_DELAY_WORKER_ID_V1: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(usize::MAX);
-#[cfg(test)]
-static TEST_DELAY_WORKER_MS_V1: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-static TEST_DELAY_FINAL_REDUCTION_MS_V1: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-static TEST_ENTERED_FINAL_REDUCTION_V1: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-static TEST_EXIT_AFTER_ROUND_WORKER_ID_V1: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(usize::MAX);
-#[cfg(test)]
-static TEST_CONSUMED_ACTION_COUNT_V1: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-static TEST_TERMINAL_ACK_COUNT_V1: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-static TEST_CAPTURE_ACTION_EVENTS_V1: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-static TEST_ACTION_EVENTS_V1: std::sync::Mutex<Vec<TestScoredActionEventV1>> =
-    std::sync::Mutex::new(Vec::new());
-#[cfg(test)]
-pub(crate) static ASYNC_FLAT_SCORED_TEST_LOCK_V1: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Crate-private execution schedule selected before worker construction.
+/// Public V1/V2 entry points always select `Legacy`; only the native trainer
+/// integration path may select the frozen Python-compatible schedule, and
+/// only the environment randomization V2 trainer path, which must also
+/// surrender a consumed window-preflight authority, may select the
+/// environment V2 variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum FlatScoredExecutionScheduleV1 {
+    Legacy,
+    NativeTrainerV1 { base_seed: u64 },
+    NativeTrainerEnvironmentRandomizationV2 { base_seed: u64 },
+}
+
+/// Private worker projection of the sealed run environment, derived once from
+/// the execution schedule after the consumed window-preflight authority has
+/// been validated. This is the only environment fact a worker or session
+/// reset ever sees; the authority itself never crosses into a worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlatScoredSessionEnvironmentV1 {
+    Legacy,
+    EnvironmentRandomizationV2,
+}
+
+impl FlatScoredExecutionScheduleV1 {
+    /// Exhaustive: every schedule maps to exactly one session environment.
+    pub(crate) const fn session_environment_v1(self) -> FlatScoredSessionEnvironmentV1 {
+        match self {
+            Self::Legacy | Self::NativeTrainerV1 { .. } => FlatScoredSessionEnvironmentV1::Legacy,
+            Self::NativeTrainerEnvironmentRandomizationV2 { .. } => {
+                FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeOpenPhysicalGroupV1 {
+    physical_decision_id: u64,
+    acting_player: PlayerSeatV1,
+    substep_count: u32,
+    next_substep_index: u32,
+    next_policy_step: u64,
+    actor_group_ordinal: u64,
+    opponent_group_seed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeActionPreflightV1 {
+    action_seed: u64,
+    actor_physical_decision_ordinal: u64,
+    opponent_selected_index: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeLaneScheduleStateV1 {
+    base_seed: u64,
+    episode_index: u64,
+    learner_seat: PlayerSeatV1,
+    learner_completed_group_count: u64,
+    opponent_completed_group_count: u64,
+    learner_policy_step_count: u64,
+    opponent_policy_step_count: u64,
+    open_group: Option<NativeOpenPhysicalGroupV1>,
+    /// The episode's resolved ladder pool member (Self-Play Ladder Design
+    /// Contract S2, Section 3), or `None` when no ladder engine is
+    /// configured for this lane. `None` reproduces today's opponent branch
+    /// exactly (bit-identical uniform sampling); `Some(UniformFloor)` also
+    /// reproduces it exactly (Section 3's floor slot reuses the frozen
+    /// uniform sampler verbatim); `Some(policy_member)` defers opponent
+    /// action selection to the caller, which must encode the decision and
+    /// consult the ladder engine.
+    ladder_member: Option<OpponentLadderPoolMemberV2>,
+    /// The one immutable population slot selected for this episode, or
+    /// `None` when the population runtime is not installed.
+    population_slot: Option<PopulationSlotV1>,
+}
+
+impl NativeLaneScheduleStateV1 {
+    fn new(
+        base_seed: u64,
+        episode_index: u64,
+        learner_seat: PlayerSeatV1,
+        ladder_member: Option<OpponentLadderPoolMemberV2>,
+    ) -> Self {
+        Self::new_with_population_v1(base_seed, episode_index, learner_seat, ladder_member, None)
+            .expect("the legacy constructor never installs both opponent engines")
+    }
+
+    fn new_with_population_v1(
+        base_seed: u64,
+        episode_index: u64,
+        learner_seat: PlayerSeatV1,
+        ladder_member: Option<OpponentLadderPoolMemberV2>,
+        population_slot: Option<PopulationSlotV1>,
+    ) -> Result<Self, ()> {
+        if ladder_member.is_some() && population_slot.is_some() {
+            return Err(());
+        }
+        Ok(Self {
+            base_seed,
+            episode_index,
+            learner_seat,
+            learner_completed_group_count: 0,
+            opponent_completed_group_count: 0,
+            learner_policy_step_count: 0,
+            opponent_policy_step_count: 0,
+            open_group: None,
+            ladder_member,
+            population_slot,
+        })
+    }
+
+    fn actor_group_ordinal(self, actor: PlayerSeatV1) -> u64 {
+        if actor == self.learner_seat {
+            self.learner_completed_group_count
+        } else {
+            self.opponent_completed_group_count
+        }
+    }
+
+    fn completed_group_count(self) -> Option<u64> {
+        self.learner_completed_group_count
+            .checked_add(self.opponent_completed_group_count)
+    }
+
+    fn committed_policy_step_count(self) -> Option<u64> {
+        self.learner_policy_step_count
+            .checked_add(self.opponent_policy_step_count)
+    }
+
+    /// Validate the entire declared group at substep zero before deriving or
+    /// releasing its first action. The checks depend only on episode-local
+    /// state and frozen trainer caps, never worker/lane/batch topology.
+    fn preflight_action_seed(
+        &mut self,
+        decision: FastActorDecisionV1,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+    ) -> Result<NativeActionPreflightV1, ()> {
+        if decision.episode_id != self.episode_index
+            || decision.legal_action_count == 0
+            || decision.substep_count == 0
+            || decision.substep_index >= decision.substep_count
+            || self.committed_policy_step_count() != Some(decision.step)
+        {
+            return Err(());
+        }
+        let (open, begins_group) = match self.open_group {
+            None => {
+                if decision.substep_index != 0
+                    || self.completed_group_count() != Some(decision.physical_decision_id)
+                    || decision
+                        .physical_decision_id
+                        .checked_add(1)
+                        .is_none_or(|count| count > max_physical_decisions)
+                    || decision
+                        .step
+                        .checked_add(u64::from(decision.substep_count))
+                        .is_none_or(|count| count > max_policy_steps)
+                {
+                    return Err(());
+                }
+                let actor_group_ordinal = self.actor_group_ordinal(decision.acting_player);
+                // A completed group must be representable before its first
+                // action. This keeps ordinal overflow on the preflight side of
+                // the engine-mutation boundary.
+                actor_group_ordinal.checked_add(1).ok_or(())?;
+                let opponent_group_seed = if decision.acting_player == self.learner_seat {
+                    None
+                } else {
+                    Some(
+                        derive_native_trainer_opponent_group_seed_v1(
+                            self.base_seed,
+                            self.episode_index,
+                            actor_group_ordinal,
+                        )
+                        .map_err(|_| ())?,
+                    )
+                };
+                (
+                    NativeOpenPhysicalGroupV1 {
+                        physical_decision_id: decision.physical_decision_id,
+                        acting_player: decision.acting_player,
+                        substep_count: decision.substep_count,
+                        next_substep_index: 0,
+                        next_policy_step: decision.step,
+                        actor_group_ordinal,
+                        opponent_group_seed,
+                    },
+                    true,
+                )
+            }
+            Some(open)
+                if open.physical_decision_id == decision.physical_decision_id
+                    && open.acting_player == decision.acting_player
+                    && open.substep_count == decision.substep_count
+                    && open.next_substep_index == decision.substep_index
+                    && open.next_policy_step == decision.step =>
+            {
+                (open, false)
+            }
+            Some(_) => return Err(()),
+        };
+        let (action_seed, opponent_selected_index) = if decision.acting_player == self.learner_seat
+        {
+            if open.opponent_group_seed.is_some() {
+                return Err(());
+            }
+            (
+                derive_native_trainer_learner_action_seed_v1(
+                    self.base_seed,
+                    self.episode_index,
+                    open.actor_group_ordinal,
+                    decision.substep_index,
+                )
+                .map_err(|_| ())?,
+                None,
+            )
+        } else {
+            // The group seed is derived exactly when the physical group
+            // opens. Every declared substep then enters either the frozen
+            // native opponent sampler (no ladder engine, or this episode's
+            // resolved member is the uniform floor: bit-identical to a
+            // uniform run either way) or is deferred to the caller for
+            // ladder-policy scoring (Self-Play Ladder Design Contract S2,
+            // Section 5): the caller has `session`/`F::encode_packet`,
+            // which this schedule-only state does not.
+            open.opponent_group_seed.ok_or(())?;
+            match (self.ladder_member, self.population_slot) {
+                (None, None) | (Some(OpponentLadderPoolMemberV2::UniformFloor), None) => {
+                    let selected = select_native_trainer_opponent_action_v1(
+                        self.base_seed,
+                        self.episode_index,
+                        open.actor_group_ordinal,
+                        decision.substep_index,
+                        decision.legal_action_count,
+                    )
+                    .map_err(|_| ())?;
+                    (selected.action_seed, Some(selected.selected_index))
+                }
+                (Some(_), None) | (None, Some(_)) => {
+                    // Deferred: `action_seed` here is the
+                    // `train-opponent-policy-substep` seed the caller must
+                    // pass to the ladder engine's softmax sampling, derived
+                    // here (pure schedule math, no session needed) so the
+                    // caller does not duplicate this derivation.
+                    let seed = derive_native_trainer_opponent_policy_substep_seed_v2(
+                        self.base_seed,
+                        self.episode_index,
+                        open.actor_group_ordinal,
+                        decision.substep_index,
+                    )
+                    .map_err(|_| ())?;
+                    (seed, None)
+                }
+                (Some(_), Some(_)) => return Err(()),
+            }
+        };
+        // Opening a group is transactional with seed derivation and opponent
+        // selection. A failed preflight cannot leave a partial open group.
+        if begins_group {
+            self.open_group = Some(open);
+        }
+        Ok(NativeActionPreflightV1 {
+            action_seed,
+            actor_physical_decision_ordinal: open.actor_group_ordinal,
+            opponent_selected_index,
+        })
+    }
+
+    /// Commit only after the selected action has been accepted by the engine.
+    /// Actor-local physical ordinals advance on the declared final substep,
+    /// never on policy substeps or scheduler rounds.
+    fn commit_action(&mut self, decision: FastActorDecisionV1) -> Result<(), ()> {
+        let open = self.open_group.as_mut().ok_or(())?;
+        if open.physical_decision_id != decision.physical_decision_id
+            || open.acting_player != decision.acting_player
+            || open.substep_count != decision.substep_count
+            || open.next_substep_index != decision.substep_index
+            || open.next_policy_step != decision.step
+        {
+            return Err(());
+        }
+        if decision.acting_player == self.learner_seat {
+            self.learner_policy_step_count =
+                self.learner_policy_step_count.checked_add(1).ok_or(())?;
+        } else {
+            self.opponent_policy_step_count =
+                self.opponent_policy_step_count.checked_add(1).ok_or(())?;
+        }
+        let group_complete = decision
+            .substep_index
+            .checked_add(1)
+            .is_some_and(|next| next == decision.substep_count);
+        if group_complete {
+            if decision.acting_player == self.learner_seat {
+                self.learner_completed_group_count = self
+                    .learner_completed_group_count
+                    .checked_add(1)
+                    .ok_or(())?;
+            } else {
+                self.opponent_completed_group_count = self
+                    .opponent_completed_group_count
+                    .checked_add(1)
+                    .ok_or(())?;
+            }
+            self.open_group = None;
+        } else {
+            open.next_substep_index = open.next_substep_index.checked_add(1).ok_or(())?;
+            open.next_policy_step = open.next_policy_step.checked_add(1).ok_or(())?;
+        }
+        Ok(())
+    }
+
+    fn validate_terminal(self, terminal: &RlSessionTerminalV1) -> Result<(), ()> {
+        if self.open_group.is_some()
+            || terminal.episode_id != self.episode_index
+            || terminal.terminal_classification != TerminalClassificationV1::Natural
+            || terminal.terminal_code != TerminalSafeCodeV2::NaturalGameOver
+            || matches!(
+                terminal.terminal_outcome,
+                TerminalOutcomeV1::Truncated | TerminalOutcomeV1::Halted
+            )
+            || self
+                .learner_policy_step_count
+                .checked_add(self.opponent_policy_step_count)
+                != Some(terminal.policy_step_count)
+            || self
+                .learner_completed_group_count
+                .checked_add(self.opponent_completed_group_count)
+                != Some(terminal.physical_decision_count)
+        {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+}
 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +432,247 @@ struct TestScoredActionEventV1 {
     safe_packet_payload: String,
     scorer_value_bits: u32,
     selected_index: u32,
+}
+
+#[cfg(test)]
+struct TestRunInstrumentationV1 {
+    delay_worker_id: std::sync::atomic::AtomicUsize,
+    delay_worker_ms: AtomicU64,
+    delay_final_reduction_ms: AtomicU64,
+    entered_final_reduction: AtomicBool,
+    fail_reply_send_worker_id: std::sync::atomic::AtomicUsize,
+    consumed_action_count: AtomicU64,
+    terminal_ack_count: AtomicU64,
+    legacy_session_reset_count: AtomicU64,
+    environment_v2_session_reset_count: AtomicU64,
+    capture_action_events: AtomicBool,
+    action_events: std::sync::Mutex<Vec<TestScoredActionEventV1>>,
+}
+
+#[cfg(test)]
+impl Default for TestRunInstrumentationV1 {
+    fn default() -> Self {
+        Self {
+            delay_worker_id: std::sync::atomic::AtomicUsize::new(usize::MAX),
+            delay_worker_ms: AtomicU64::new(0),
+            delay_final_reduction_ms: AtomicU64::new(0),
+            entered_final_reduction: AtomicBool::new(false),
+            fail_reply_send_worker_id: std::sync::atomic::AtomicUsize::new(usize::MAX),
+            consumed_action_count: AtomicU64::new(0),
+            terminal_ack_count: AtomicU64::new(0),
+            legacy_session_reset_count: AtomicU64::new(0),
+            environment_v2_session_reset_count: AtomicU64::new(0),
+            capture_action_events: AtomicBool::new(false),
+            action_events: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static ACTIVE_TEST_RUN_INSTRUMENTATION_V1:
+        std::cell::RefCell<Option<Arc<TestRunInstrumentationV1>>> = const {
+            std::cell::RefCell::new(None)
+        };
+}
+
+// Zero-side-effect ordering instrumentation: caller-thread counters proving
+// which rollout construction stages ran before a rejection. Test-only.
+#[cfg(test)]
+std::thread_local! {
+    static ROLLOUT_RESULT_RESERVATION_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+    static ROLLOUT_MESSAGE_CHANNEL_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+    static ROLLOUT_CONTROL_CHANNEL_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+    static ROLLOUT_WORKER_SPAWN_COUNT_V2: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Run-local RAII counting scope: entry zeroes the calling thread's counters
+/// after saving them; drop restores the saved values on every exit path,
+/// including panics, so stale evidence can never leak into a later test on a
+/// reused harness thread and nested scopes stay isolated.
+#[cfg(test)]
+pub(crate) struct RolloutConstructionCountScopeV2 {
+    saved: (u64, u64, u64, u64),
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl RolloutConstructionCountScopeV2 {
+    /// `(result_reservations, message_channels, control_channels,
+    /// worker_spawns)` observed on the calling thread inside this scope.
+    pub(crate) fn counts(&self) -> (u64, u64, u64, u64) {
+        (
+            ROLLOUT_RESULT_RESERVATION_COUNT_V2.with(std::cell::Cell::get),
+            ROLLOUT_MESSAGE_CHANNEL_COUNT_V2.with(std::cell::Cell::get),
+            ROLLOUT_CONTROL_CHANNEL_COUNT_V2.with(std::cell::Cell::get),
+            ROLLOUT_WORKER_SPAWN_COUNT_V2.with(std::cell::Cell::get),
+        )
+    }
+}
+
+#[cfg(test)]
+impl Drop for RolloutConstructionCountScopeV2 {
+    fn drop(&mut self) {
+        ROLLOUT_RESULT_RESERVATION_COUNT_V2.with(|count| count.set(self.saved.0));
+        ROLLOUT_MESSAGE_CHANNEL_COUNT_V2.with(|count| count.set(self.saved.1));
+        ROLLOUT_CONTROL_CHANNEL_COUNT_V2.with(|count| count.set(self.saved.2));
+        ROLLOUT_WORKER_SPAWN_COUNT_V2.with(|count| count.set(self.saved.3));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn rollout_construction_count_scope_v2() -> RolloutConstructionCountScopeV2 {
+    let saved = (
+        ROLLOUT_RESULT_RESERVATION_COUNT_V2.with(|count| count.replace(0)),
+        ROLLOUT_MESSAGE_CHANNEL_COUNT_V2.with(|count| count.replace(0)),
+        ROLLOUT_CONTROL_CHANNEL_COUNT_V2.with(|count| count.replace(0)),
+        ROLLOUT_WORKER_SPAWN_COUNT_V2.with(|count| count.replace(0)),
+    );
+    RolloutConstructionCountScopeV2 {
+        saved,
+        thread_bound: std::marker::PhantomData,
+    }
+}
+
+// Retained for downstream tests that coordinate their own expensive rollout
+// calls. Fault and capture state no longer depends on this process-global lock.
+#[cfg(test)]
+static ASYNC_FLAT_SCORED_TEST_LOCK_V1: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+fn acquire_data_free_coordination_lock_v1(
+    lock: &std::sync::Mutex<()>,
+) -> std::sync::MutexGuard<'_, ()> {
+    let guard = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // This mutex protects no data. A prior test panic must not turn one
+    // diagnostic failure into unrelated follow-on failures, so recovering the
+    // unit guard also restores the coordination primitive for later callers.
+    lock.clear_poison();
+    guard
+}
+
+#[cfg(test)]
+pub(crate) fn acquire_async_flat_scored_test_lock_v1() -> std::sync::MutexGuard<'static, ()> {
+    acquire_data_free_coordination_lock_v1(&ASYNC_FLAT_SCORED_TEST_LOCK_V1)
+}
+
+/// Installs fault/capture instrumentation for runs started by this test
+/// thread. Each run clones the `Arc` into its broker and workers, so unrelated
+/// parallel tests receive neutral state and an unwinding test cannot reset
+/// hooks while its worker threads still hold them.
+#[cfg(test)]
+pub(crate) struct AsyncFlatScoredTestGuardV1 {
+    instrumentation: Arc<TestRunInstrumentationV1>,
+    thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl AsyncFlatScoredTestGuardV1 {
+    fn delay_worker(&self, worker_id: usize, milliseconds: u64) {
+        self.instrumentation
+            .delay_worker_id
+            .store(worker_id, Ordering::SeqCst);
+        self.instrumentation
+            .delay_worker_ms
+            .store(milliseconds, Ordering::SeqCst);
+    }
+
+    fn delay_final_reduction(&self, milliseconds: u64) {
+        self.instrumentation
+            .delay_final_reduction_ms
+            .store(milliseconds, Ordering::SeqCst);
+    }
+
+    fn fail_reply_send(&self, worker_id: usize) {
+        self.instrumentation
+            .fail_reply_send_worker_id
+            .store(worker_id, Ordering::SeqCst);
+    }
+
+    fn consumed_action_count(&self) -> u64 {
+        self.instrumentation
+            .consumed_action_count
+            .load(Ordering::SeqCst)
+    }
+
+    fn terminal_ack_count(&self) -> u64 {
+        self.instrumentation
+            .terminal_ack_count
+            .load(Ordering::SeqCst)
+    }
+
+    fn entered_final_reduction(&self) -> bool {
+        self.instrumentation
+            .entered_final_reduction
+            .load(Ordering::SeqCst)
+    }
+
+    /// Successful legacy session resets observed by runs this guard
+    /// instruments.
+    pub(crate) fn legacy_session_reset_count(&self) -> u64 {
+        self.instrumentation
+            .legacy_session_reset_count
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Successful environment randomization V2 session resets observed by
+    /// runs this guard instruments. Mode-specific on purpose: `Some(outer)`
+    /// on a receipt is never accepted as evidence that a V2 reset actually
+    /// ran; only the family-specific reset succeeding counts here.
+    pub(crate) fn environment_v2_session_reset_count(&self) -> u64 {
+        self.instrumentation
+            .environment_v2_session_reset_count
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn instrumentation_arc(&self) -> Arc<TestRunInstrumentationV1> {
+        Arc::clone(&self.instrumentation)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn acquire_async_flat_scored_test_guard_v1() -> AsyncFlatScoredTestGuardV1 {
+    let instrumentation = Arc::new(TestRunInstrumentationV1::default());
+    ACTIVE_TEST_RUN_INSTRUMENTATION_V1.with(|active| {
+        let mut active = active.borrow_mut();
+        // Occupancy is checked before installation so a rejected nested
+        // acquisition leaves the prior state untouched instead of installing
+        // an orphan inner instrumentation before the panic.
+        assert!(
+            active.is_none(),
+            "nested async-flat-scored test instrumentation is unsupported"
+        );
+        *active = Some(Arc::clone(&instrumentation));
+    });
+    AsyncFlatScoredTestGuardV1 {
+        instrumentation,
+        thread_bound: std::marker::PhantomData,
+    }
+}
+
+#[cfg(test)]
+fn current_test_run_instrumentation_v1() -> Arc<TestRunInstrumentationV1> {
+    ACTIVE_TEST_RUN_INSTRUMENTATION_V1
+        .with(|active| active.borrow().clone())
+        .unwrap_or_else(|| Arc::new(TestRunInstrumentationV1::default()))
+}
+
+#[cfg(test)]
+impl Drop for AsyncFlatScoredTestGuardV1 {
+    fn drop(&mut self) {
+        ACTIVE_TEST_RUN_INSTRUMENTATION_V1.with(|active| {
+            let installed = active.replace(None);
+            debug_assert!(installed
+                .as_ref()
+                .is_some_and(|installed| Arc::ptr_eq(installed, &self.instrumentation)));
+        });
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +785,11 @@ pub(crate) struct FlatScoredTerminalEventV1 {
     pub(crate) terminal: AsyncRolloutTerminalV1,
     pub(crate) learner_action_count: u64,
     pub(crate) learner_trace_hash: u64,
+    /// Present only on the crate-private native schedules. The public legacy
+    /// observer path always supplies `None`. The opaque run-bound wrapper
+    /// carries either the legacy V1 receipt or the environment randomization
+    /// V2 receipt, matching the schedule that produced the episode.
+    pub(crate) native_full_trajectory_receipt: Option<NativeTrainingTrajectoryReceiptV2>,
 }
 
 /// Crate-private staging boundary for a future native learner. Implementations
@@ -740,6 +1316,8 @@ pub(crate) trait FlatScoredFamilyCore: Copy + Send + Sync + 'static {
     fn reset_session(
         config: &AsyncRolloutConfigV2,
         episode_id: u64,
+        environment_seed: u64,
+        environment: FlatScoredSessionEnvironmentV1,
     ) -> Result<FastActorSessionV1, ()>;
 
     fn encode_packet(
@@ -765,6 +1343,38 @@ pub(crate) trait FlatScoredFamilyCore: Copy + Send + Sync + 'static {
         binding: Self::Binding,
         selected_index: u32,
     ) -> Result<FastActorResponseV1, ()>;
+
+    /// Native full-trajectory hook for a broker-scored learner binding. V1
+    /// deliberately keeps the default rejection: the frozen receipt commits
+    /// only explicit Flat Action V2 candidate orderings.
+    fn native_full_trajectory_commitment(_binding: Self::Binding) -> Result<[u8; 16], ()> {
+        Err(())
+    }
+
+    /// Native full-trajectory hook for the worker-local uniform opponent. A
+    /// supporting family must revalidate its private current V2 cache before
+    /// exposing the exact commitment which the immediately following engine
+    /// action will consume.
+    fn native_full_trajectory_opponent_commitment(
+        _session: &FastActorSessionV1,
+        _expected: FastActorDecisionV1,
+    ) -> Result<[u8; 16], ()> {
+        Err(())
+    }
+
+    /// Narrows this family's decision view to a `FlatScoringDecisionViewV2`
+    /// for the ladder opponent engine (Self-Play Ladder Design Contract S2,
+    /// Section 5). The default rejects: only a family whose `DecisionView`
+    /// really is `FlatScoringDecisionViewV2` (currently `FlatScoredFamilyV2`)
+    /// can support a ladder-configured opponent. Configuring a ladder engine
+    /// for an unsupported family is a caller error, fails closed at the
+    /// opponent branch's decision loop rather than silently falling back to
+    /// uniform sampling.
+    fn ladder_scoring_view<'a>(
+        _view: Self::DecisionView<'a>,
+    ) -> Option<FlatScoringDecisionViewV2<'a>> {
+        None
+    }
 }
 
 pub(crate) trait FlatBatchScorerCore<F: FlatScoredFamilyCore> {
@@ -856,6 +1466,7 @@ pub(crate) struct RoundDecisionCore<F: FlatScoredFamilyCore> {
     worker_id: usize,
     logical_lane_id: usize,
     expected: FastActorDecisionV1,
+    native_preflight: Option<NativeActionPreflightV1>,
     pub(crate) packet: F::ValidatedPacket,
 }
 
@@ -931,6 +1542,7 @@ struct RoundTerminalV1 {
     terminal: AsyncRolloutTerminalV1,
     learner_action_count: u64,
     learner_trace_hash: u64,
+    native_full_trajectory_receipt: Option<NativeTrainingTrajectoryReceiptV2>,
 }
 
 struct WorkerRoundCore<F: FlatScoredFamilyCore> {
@@ -981,6 +1593,7 @@ impl FiniteScorerValueV1 {
 struct BoundScoredActionCore<F: FlatScoredFamilyCore> {
     binding: F::Binding,
     learner_ordinal: u64,
+    action_seed: u64,
     selected_index: u32,
     predicted_value: FiniteScorerValueV1,
 }
@@ -1034,6 +1647,7 @@ enum WorkerControlCore<F: FlatScoredFamilyCore> {
 struct WaitingDecisionCore<F: FlatScoredFamilyCore> {
     expected: FastActorDecisionV1,
     binding: F::Binding,
+    native_preflight: Option<NativeActionPreflightV1>,
 }
 
 struct LocalLaneCore<F: FlatScoredFamilyCore> {
@@ -1048,8 +1662,20 @@ struct LocalLaneCore<F: FlatScoredFamilyCore> {
     waiting_decision: Option<WaitingDecisionCore<F>>,
     waiting_terminal: bool,
     opponent_policy: SplitMix64,
+    learner_seat: PlayerSeatV1,
+    native_schedule: Option<NativeLaneScheduleStateV1>,
+    native_full_trajectory: Option<NativeRunBoundFullEpisodeAccumulatorV2>,
     learner_action_count: u64,
     learner_trace_hash: u64,
+    /// Set once per lane at construction; absence reproduces today's
+    /// opponent branch exactly (Self-Play Ladder Design Contract S2,
+    /// Section 5). See `FlatScoredFamilyCore::ladder_scoring_view`.
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    /// Set once per lane at construction. The handle array remains immutable;
+    /// only the episode-selected slot is retained in `native_schedule`.
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    #[cfg(test)]
+    test_instrumentation: Arc<TestRunInstrumentationV1>,
 }
 
 #[cfg(test)]
@@ -1061,6 +1687,8 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
         logical_lane_id: usize,
         first_episode_id: u64,
         end_episode_id: u64,
+        ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+        population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     ) -> Self {
         let next_episode_id = first_episode_id
             .checked_add(logical_lane_id as u64)
@@ -1077,8 +1705,15 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             waiting_decision: None,
             waiting_terminal: false,
             opponent_policy: SplitMix64::seed(0),
+            learner_seat: PlayerSeatV1::P0,
+            native_schedule: None,
+            native_full_trajectory: None,
             learner_action_count: 0,
             learner_trace_hash: FNV1A64_OFFSET,
+            ladder_opponent,
+            population_opponent,
+            #[cfg(test)]
+            test_instrumentation: Arc::new(TestRunInstrumentationV1::default()),
         }
     }
 
@@ -1110,17 +1745,58 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             if action.scored.binding != waiting.binding
                 || F::packet_binding(&action.packet) != waiting.binding
                 || action.scored.learner_ordinal != self.learner_action_count
+                || waiting
+                    .native_preflight
+                    .is_some_and(|preflight| preflight.action_seed != action.scored.action_seed)
                 || action.scored.selected_index >= waiting.expected.legal_action_count
             {
                 return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
             }
+
+            let native_trajectory_row = match (
+                self.native_full_trajectory.as_ref(),
+                waiting.native_preflight,
+            ) {
+                (Some(trajectory), Some(preflight)) => {
+                    let commitment = F::native_full_trajectory_commitment(action.scored.binding)
+                        .map_err(|_| {
+                            self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding)
+                        })?;
+                    let row = NativeFullEpisodeTrajectoryDecisionRowV1 {
+                        row_ordinal: waiting.expected.step,
+                        actor_seat: waiting.expected.acting_player,
+                        actor_role: NativeTrajectoryActorRoleV1::Learner,
+                        physical_decision_ordinal: waiting.expected.physical_decision_id,
+                        actor_physical_decision_ordinal: preflight.actor_physical_decision_ordinal,
+                        substep_index: waiting.expected.substep_index,
+                        substep_count: waiting.expected.substep_count,
+                        action_seed: preflight.action_seed,
+                        legal_action_count: waiting.expected.legal_action_count,
+                        selected_index: action.scored.selected_index,
+                        flat_action_v2_commitment: commitment,
+                    };
+                    trajectory.preflight_candidate(row).map_err(|_| {
+                        self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding)
+                    })?;
+                    Some(row)
+                }
+                (None, None) => None,
+                _ => {
+                    return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
+                }
+            };
             let missing_session = self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol);
             let session = self.session.as_mut().ok_or(missing_session)?;
             let response = F::consume(session, action.scored.binding, action.scored.selected_index)
                 .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerConsume))?;
             #[cfg(test)]
-            if TEST_CAPTURE_ACTION_EVENTS_V1.load(std::sync::atomic::Ordering::SeqCst) {
-                TEST_ACTION_EVENTS_V1
+            if self
+                .test_instrumentation
+                .capture_action_events
+                .load(Ordering::SeqCst)
+            {
+                self.test_instrumentation
+                    .action_events
                     .lock()
                     .expect("test action-event sink mutex poisoned")
                     .push(TestScoredActionEventV1 {
@@ -1134,8 +1810,23 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             self.packet = Some(F::into_owned_packet(action.packet));
             self.response = Some(response);
             self.waiting_decision = None;
+            if let Some(schedule) = self.native_schedule.as_mut() {
+                schedule.commit_action(waiting.expected).map_err(|_| {
+                    self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding)
+                })?;
+            }
+            if let Some(row) = native_trajectory_row {
+                let Some(trajectory) = self.native_full_trajectory.as_mut() else {
+                    return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
+                };
+                if trajectory.record_accepted(row).is_err() {
+                    return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding));
+                }
+            }
             #[cfg(test)]
-            TEST_CONSUMED_ACTION_COUNT_V1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.test_instrumentation
+                .consumed_action_count
+                .fetch_add(1, Ordering::SeqCst);
             self.learner_action_count = self
                 .learner_action_count
                 .checked_add(1)
@@ -1161,10 +1852,14 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                 .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
             reply.terminal_acks.swap_remove(index);
             #[cfg(test)]
-            TEST_TERMINAL_ACK_COUNT_V1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.test_instrumentation
+                .terminal_ack_count
+                .fetch_add(1, Ordering::SeqCst);
             self.session = None;
             self.response = None;
             self.waiting_terminal = false;
+            self.native_schedule = None;
+            self.native_full_trajectory = None;
             self.episode_id = u64::MAX;
         } else if reply.terminal_acks.contains(&self.logical_lane_id) {
             return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
@@ -1175,6 +1870,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
     fn fill(
         &mut self,
         config: &AsyncRolloutConfigV2,
+        execution_schedule: FlatScoredExecutionScheduleV1,
         end_episode_id: u64,
         logical_lane_count: usize,
     ) -> Result<(), WorkerFailureV1> {
@@ -1187,10 +1883,115 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
         self.next_episode_id = episode_id
             .checked_add(logical_lane_count as u64)
             .filter(|next| *next < end_episode_id);
-        let session = F::reset_session(config, episode_id).map_err(|_| {
+        let (environment_seed, learner_seat, native_schedule) = match execution_schedule {
+            FlatScoredExecutionScheduleV1::Legacy => (
+                derive_env_seed(config.environment_seed, episode_id),
+                config.learner_seat,
+                None,
+            ),
+            FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed }
+            | FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 {
+                base_seed,
+            } => {
+                let episode =
+                    native_trainer_episode_schedule_v1(base_seed, episode_id).map_err(|_| {
+                        self.episode_id = episode_id;
+                        self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
+                    })?;
+                let ladder_member = self
+                    .ladder_opponent
+                    .as_ref()
+                    .map(|engine| engine.pool_member_for_episode_v1(base_seed, episode_id))
+                    .transpose()
+                    .map_err(|_| {
+                        self.episode_id = episode_id;
+                        self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
+                    })?;
+                let population_slot = self
+                    .population_opponent
+                    .as_ref()
+                    .map(|engine| engine.slot_for_episode_v1(base_seed, episode_id))
+                    .transpose()
+                    .map_err(|_| {
+                        self.episode_id = episode_id;
+                        self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
+                    })?;
+                (
+                    episode.environment_seed,
+                    episode.learner_seat,
+                    Some(
+                        NativeLaneScheduleStateV1::new_with_population_v1(
+                            base_seed,
+                            episode_id,
+                            episode.learner_seat,
+                            ladder_member,
+                            population_slot,
+                        )
+                        .map_err(|_| {
+                            self.episode_id = episode_id;
+                            self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
+                        })?,
+                    ),
+                )
+            }
+        };
+        let session_environment = execution_schedule.session_environment_v1();
+        let session = F::reset_session(config, episode_id, environment_seed, session_environment)
+            .map_err(|_| {
             self.episode_id = episode_id;
             self.failure(AsyncFlatScoredWorkerPhaseV1::Reset)
         })?;
+        // Counted only after the family-specific reset succeeded: a V1-family
+        // rejection of the V2 projection must never register as a V2 reset,
+        // so this trace is a genuine mode-specific reset witness.
+        #[cfg(test)]
+        {
+            let counter = match session_environment {
+                FlatScoredSessionEnvironmentV1::Legacy => {
+                    &self.test_instrumentation.legacy_session_reset_count
+                }
+                FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2 => {
+                    &self.test_instrumentation.environment_v2_session_reset_count
+                }
+            };
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
+        // The run-bound accumulator variant is decided exhaustively by the
+        // same schedule that selected the session reset, so a legacy lane can
+        // never envelope and a V2 lane can never skip the envelope.
+        let native_full_trajectory = if native_schedule.is_some() {
+            let accumulator = match session_environment {
+                FlatScoredSessionEnvironmentV1::Legacy => {
+                    NativeRunBoundFullEpisodeAccumulatorV2::new_legacy_v1(
+                        episode_id,
+                        environment_seed,
+                        &config.deck_ids,
+                        session.native_full_trajectory_deck_hashes_v1(),
+                        learner_seat,
+                    )
+                }
+                FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2 => {
+                    NativeRunBoundFullEpisodeAccumulatorV2::new_environment_randomization_v2(
+                        &NativeFullEpisodeTrajectoryStartV2 {
+                            episode_index: episode_id,
+                            pair_environment_seed: environment_seed,
+                            deck_ids: config.deck_ids.clone(),
+                            deck_hashes: session.native_full_trajectory_deck_hashes_v1(),
+                            learner_seat,
+                        },
+                    )
+                }
+            };
+            match accumulator {
+                Ok(trajectory) => Some(trajectory),
+                Err(_) => {
+                    self.episode_id = episode_id;
+                    return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Reset));
+                }
+            }
+        } else {
+            None
+        };
         self.response = Some(session.current_response());
         self.session = Some(session);
         self.episode_id = episode_id;
@@ -1198,6 +1999,9 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
         self.waiting_terminal = false;
         self.opponent_policy =
             SplitMix64::seed(derive_policy_seed(config.opponent_policy_seed, episode_id));
+        self.learner_seat = learner_seat;
+        self.native_schedule = native_schedule;
+        self.native_full_trajectory = native_full_trajectory;
         self.learner_action_count = 0;
         self.learner_trace_hash = initial_learner_trace_hash_v1(episode_id);
         Ok(())
@@ -1224,18 +2028,43 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                 .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
             match response {
                 FastActorResponseV1::Terminal(terminal) => {
+                    if let Some(schedule) = self.native_schedule {
+                        if terminal.deck_ids != config.deck_ids {
+                            return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                        }
+                        schedule
+                            .validate_terminal(&terminal)
+                            .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                    }
+                    let terminal_deck_hashes = terminal.deck_hashes;
+                    let compact_terminal = compact_terminal(&terminal);
+                    let native_full_trajectory_receipt =
+                        match (self.native_schedule, self.native_full_trajectory.take()) {
+                            (Some(_), Some(trajectory)) => Some(
+                                trajectory
+                                    .finish_natural(compact_terminal, terminal_deck_hashes)
+                                    .map_err(|_| {
+                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                    })?,
+                            ),
+                            (None, None) => None,
+                            _ => {
+                                return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                            }
+                        };
                     terminals.push(RoundTerminalV1 {
                         worker_id: self.worker_id,
                         logical_lane_id: self.logical_lane_id,
-                        terminal: compact_terminal(&terminal),
+                        terminal: compact_terminal,
                         learner_action_count: self.learner_action_count,
                         learner_trace_hash: self.learner_trace_hash,
+                        native_full_trajectory_receipt,
                     });
                     self.waiting_terminal = true;
                     return Ok(());
                 }
                 FastActorResponseV1::Decision(expected)
-                    if expected.acting_player == config.learner_seat =>
+                    if expected.acting_player == self.learner_seat =>
                 {
                     if expected.legal_action_count == 0
                         || usize::try_from(expected.legal_action_count)
@@ -1243,6 +2072,18 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                     {
                         return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Encode));
                     }
+                    let native_preflight = self
+                        .native_schedule
+                        .as_mut()
+                        .map(|schedule| {
+                            schedule.preflight_action_seed(
+                                expected,
+                                config.max_physical_decisions,
+                                config.max_policy_steps,
+                            )
+                        })
+                        .transpose()
+                        .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
                     let packet = self
                         .packet
                         .take()
@@ -1257,18 +2098,164 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                     )
                     .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Encode))?;
                     let binding = F::packet_binding(&packet);
-                    self.waiting_decision = Some(WaitingDecisionCore { expected, binding });
+                    self.waiting_decision = Some(WaitingDecisionCore {
+                        expected,
+                        binding,
+                        native_preflight,
+                    });
                     decisions.push(RoundDecisionCore {
                         worker_id: self.worker_id,
                         logical_lane_id: self.logical_lane_id,
                         expected,
+                        native_preflight,
                         packet,
                     });
                     return Ok(());
                 }
                 FastActorResponseV1::Decision(decision) => {
-                    let selected_index =
-                        uniform_index(&mut self.opponent_policy, decision.legal_action_count);
+                    let native_preflight = if let Some(schedule) = self.native_schedule.as_mut() {
+                        Some(
+                            schedule
+                                .preflight_action_seed(
+                                    decision,
+                                    config.max_physical_decisions,
+                                    config.max_policy_steps,
+                                )
+                                .map_err(|_| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?,
+                        )
+                    } else {
+                        None
+                    };
+                    let selected_index = if let Some(preflight) = native_preflight {
+                        let ladder_member = self
+                            .native_schedule
+                            .and_then(|schedule| schedule.ladder_member);
+                        let population_slot = self
+                            .native_schedule
+                            .and_then(|schedule| schedule.population_slot);
+                        match (ladder_member, population_slot) {
+                            (None, None)
+                            | (Some(OpponentLadderPoolMemberV2::UniformFloor), None) => {
+                                preflight.opponent_selected_index.ok_or_else(|| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?
+                            }
+                            (Some(_), None) | (None, Some(_)) => {
+                                // Deferred from preflight for either immutable
+                                // policy runtime: build the
+                                // decision's flat encoding the same way the
+                                // learner branch does (F::encode_packet,
+                                // self.encoder, self.packet), then narrow it
+                                // to a FlatScoringDecisionViewV2 for the
+                                // selected engine. Safe to reuse self.packet
+                                // here: whenever this opponent arm runs,
+                                // self.packet is not borrowed by any
+                                // outstanding learner decision (the learner
+                                // branch above always returns immediately
+                                // after taking it, ending this round's loop
+                                // for this lane).
+                                let owned_packet = self.packet.take().ok_or_else(|| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?;
+                                let validated_packet = F::encode_packet(
+                                    self.session.as_ref().ok_or_else(|| {
+                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                    })?,
+                                    decision,
+                                    &mut self.encoder,
+                                    owned_packet,
+                                )
+                                .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Encode))?;
+                                let view =
+                                    F::ladder_scoring_view(F::packet_view(&validated_packet))
+                                        .ok_or_else(|| {
+                                            self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                        });
+                                let index =
+                                    view.and_then(|view| match (ladder_member, population_slot) {
+                                        (Some(policy_member), None) => self
+                                            .ladder_opponent
+                                            .as_ref()
+                                            .ok_or_else(|| {
+                                                self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                            })?
+                                            .select_policy_action_v1(
+                                                policy_member,
+                                                view,
+                                                preflight.action_seed,
+                                            )
+                                            .map_err(|_| {
+                                                self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                            }),
+                                        (None, Some(population_slot)) => self
+                                            .population_opponent
+                                            .as_ref()
+                                            .ok_or_else(|| {
+                                                self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                            })?
+                                            .select_policy_action_v1(
+                                                population_slot,
+                                                view,
+                                                preflight.action_seed,
+                                            )
+                                            .map_err(|_| {
+                                                self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                            }),
+                                        _ => {
+                                            Err(self
+                                                .failure(AsyncFlatScoredWorkerPhaseV1::Protocol))
+                                        }
+                                    });
+                                self.packet = Some(F::into_owned_packet(validated_packet));
+                                index?
+                            }
+                            (Some(_), Some(_)) => {
+                                return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                            }
+                        }
+                    } else {
+                        uniform_index(&mut self.opponent_policy, decision.legal_action_count)
+                    };
+                    let native_trajectory_row = if let Some(preflight) = native_preflight {
+                        let session = self
+                            .session
+                            .as_ref()
+                            .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                        let commitment =
+                            F::native_full_trajectory_opponent_commitment(session, decision)
+                                .map_err(|_| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?;
+                        let row = NativeFullEpisodeTrajectoryDecisionRowV1 {
+                            row_ordinal: decision.step,
+                            actor_seat: decision.acting_player,
+                            actor_role: NativeTrajectoryActorRoleV1::Opponent,
+                            physical_decision_ordinal: decision.physical_decision_id,
+                            actor_physical_decision_ordinal: preflight
+                                .actor_physical_decision_ordinal,
+                            substep_index: decision.substep_index,
+                            substep_count: decision.substep_count,
+                            action_seed: preflight.action_seed,
+                            legal_action_count: decision.legal_action_count,
+                            selected_index,
+                            flat_action_v2_commitment: commitment,
+                        };
+                        let trajectory = self
+                            .native_full_trajectory
+                            .as_ref()
+                            .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                        trajectory
+                            .preflight_candidate(row)
+                            .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                        Some(row)
+                    } else {
+                        if self.native_full_trajectory.is_some() {
+                            return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                        }
+                        None
+                    };
                     let missing_session = self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol);
                     let response = self
                         .session
@@ -1276,6 +2263,19 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         .ok_or(missing_session)?
                         .step(decision.episode_id, decision.step, selected_index)
                         .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::OpponentStep))?;
+                    if let Some(schedule) = self.native_schedule.as_mut() {
+                        schedule
+                            .commit_action(decision)
+                            .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                    }
+                    if let Some(row) = native_trajectory_row {
+                        let Some(trajectory) = self.native_full_trajectory.as_mut() else {
+                            return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                        };
+                        if trajectory.record_accepted(row).is_err() {
+                            return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                        }
+                    }
                     self.response = Some(response);
                 }
             }
@@ -1684,10 +2684,19 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV1 {
     fn reset_session(
         config: &AsyncRolloutConfigV2,
         episode_id: u64,
+        environment_seed: u64,
+        environment: FlatScoredSessionEnvironmentV1,
     ) -> Result<FastActorSessionV1, ()> {
+        // The V1 family explicitly rejects the environment randomization V2
+        // projection before any session allocation: it has no V2 reset and
+        // must never silently fall back to the legacy one.
+        match environment {
+            FlatScoredSessionEnvironmentV1::Legacy => {}
+            FlatScoredSessionEnvironmentV1::EnvironmentRandomizationV2 => return Err(()),
+        }
         FastActorSessionV1::reset_with_decks_and_limits(
             episode_id,
-            derive_env_seed(config.environment_seed, episode_id),
+            environment_seed,
             config.max_physical_decisions,
             config.max_policy_steps,
             config.deck_ids.clone(),
@@ -1752,9 +2761,17 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV1 {
 struct WorkerRuntimeV1 {
     end_episode_id: u64,
     logical_lane_count: usize,
+    execution_schedule: FlatScoredExecutionScheduleV1,
     deadline: Instant,
     cancel: Arc<AtomicBool>,
     released_epoch: Arc<AtomicU64>,
+    /// Set once per rollout run; absence reproduces today's opponent branch
+    /// exactly (Self-Play Ladder Design Contract S2, Section 5).
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    /// Optional immutable eight-slot population runtime for the full run.
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    #[cfg(test)]
+    test_instrumentation: Arc<TestRunInstrumentationV1>,
 }
 
 fn worker_loop<F: FlatScoredFamilyCore>(
@@ -1765,9 +2782,17 @@ fn worker_loop<F: FlatScoredFamilyCore>(
     control_rx: &Receiver<WorkerControlCore<F>>,
 ) -> Result<(), WorkerFailureV1> {
     #[cfg(test)]
-    if TEST_DELAY_WORKER_ID_V1.load(std::sync::atomic::Ordering::SeqCst) == worker_id {
+    if runtime
+        .test_instrumentation
+        .delay_worker_id
+        .load(Ordering::SeqCst)
+        == worker_id
+    {
         thread::sleep(std::time::Duration::from_millis(
-            TEST_DELAY_WORKER_MS_V1.load(std::sync::atomic::Ordering::SeqCst),
+            runtime
+                .test_instrumentation
+                .delay_worker_ms
+                .load(Ordering::SeqCst),
         ));
     }
     let first_lane = worker_id
@@ -1780,12 +2805,20 @@ fn worker_loop<F: FlatScoredFamilyCore>(
         })?;
     let mut lanes: Vec<LocalLaneCore<F>> = (0..config.sessions_per_worker)
         .map(|slot| {
-            LocalLaneCore::vacant(
+            let lane = LocalLaneCore::vacant(
                 worker_id,
                 first_lane + slot,
                 config.first_episode_id,
                 runtime.end_episode_id,
-            )
+                runtime.ladder_opponent.clone(),
+                runtime.population_opponent.clone(),
+            );
+            #[cfg(test)]
+            let lane = LocalLaneCore {
+                test_instrumentation: Arc::clone(&runtime.test_instrumentation),
+                ..lane
+            };
+            lane
         })
         .collect();
     let mut round = WorkerRoundCore::with_capacity(worker_id, config.sessions_per_worker);
@@ -1814,7 +2847,12 @@ fn worker_loop<F: FlatScoredFamilyCore>(
         }
 
         for lane in &mut lanes {
-            lane.fill(config, runtime.end_episode_id, runtime.logical_lane_count)?;
+            lane.fill(
+                config,
+                runtime.execution_schedule,
+                runtime.end_episode_id,
+                runtime.logical_lane_count,
+            )?;
             lane.advance_to_event(
                 config,
                 runtime.deadline,
@@ -1855,11 +2893,6 @@ fn worker_loop<F: FlatScoredFamilyCore>(
                 episode_id: u64::MAX,
                 phase: AsyncFlatScoredWorkerPhaseV1::Protocol,
             })?;
-        #[cfg(test)]
-        if TEST_EXIT_AFTER_ROUND_WORKER_ID_V1.load(std::sync::atomic::Ordering::SeqCst) == worker_id
-        {
-            return Ok(());
-        }
         let remaining = runtime.deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Ok(());
@@ -1948,13 +2981,24 @@ impl BrokerEpisodeV1 {
 
     fn sample_seed(
         &mut self,
+        execution_schedule: FlatScoredExecutionScheduleV1,
         learner_policy_seed: u64,
         episode_id: u64,
+        native_preflight: Option<NativeActionPreflightV1>,
     ) -> Result<(u64, u64), AsyncFlatScoredRolloutErrorV1> {
         self.bind(episode_id)?;
         let ordinal = self.learner_decision_ordinal;
-        let seed =
-            derive_async_flat_scored_action_seed_v1(learner_policy_seed, episode_id, ordinal);
+        let seed = match (execution_schedule, native_preflight) {
+            (FlatScoredExecutionScheduleV1::Legacy, None) => {
+                derive_async_flat_scored_action_seed_v1(learner_policy_seed, episode_id, ordinal)
+            }
+            (
+                FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. }
+                | FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { .. },
+                Some(preflight),
+            ) if preflight.opponent_selected_index.is_none() => preflight.action_seed,
+            _ => return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation),
+        };
         Ok((ordinal, seed))
     }
 
@@ -2039,6 +3083,7 @@ impl MembershipDigestV1 {
 fn sample_validated_round_decision_v1<F: FlatScoredFamilyCore>(
     broker_episodes: &mut [BrokerEpisodeV1],
     sampler: &mut FastCategoricalScratch,
+    execution_schedule: FlatScoredExecutionScheduleV1,
     learner_policy_seed: u64,
     decision: &RoundDecisionCore<F>,
     action_logits: &[f32],
@@ -2047,8 +3092,12 @@ fn sample_validated_round_decision_v1<F: FlatScoredFamilyCore>(
     let broker_episode = broker_episodes
         .get_mut(decision.logical_lane_id)
         .ok_or(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
-    let (learner_ordinal, action_seed) =
-        broker_episode.sample_seed(learner_policy_seed, decision.expected.episode_id)?;
+    let (learner_ordinal, action_seed) = broker_episode.sample_seed(
+        execution_schedule,
+        learner_policy_seed,
+        decision.expected.episode_id,
+        decision.native_preflight,
+    )?;
     let selected_index = sampler
         .sample(action_logits, action_seed)
         .map_err(|error| AsyncFlatScoredRolloutErrorV1::SamplingFailed {
@@ -2098,6 +3147,7 @@ fn stage_validated_action_reply_v1<F: FlatScoredFamilyCore>(
             scored: BoundScoredActionCore {
                 binding,
                 learner_ordinal: sample.learner_ordinal,
+                action_seed: sample.action_seed,
                 selected_index: sample.selected_index,
                 predicted_value: sample.predicted_value,
             },
@@ -2120,6 +3170,23 @@ fn protocol_or_deadline_error_v1(deadline: Instant) -> AsyncFlatScoredRolloutErr
     } else {
         AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation
     }
+}
+
+#[cfg(test)]
+fn send_worker_control_v1<F: FlatScoredFamilyCore>(
+    sender: &mpsc::Sender<WorkerControlCore<F>>,
+    worker_id: usize,
+    control: WorkerControlCore<F>,
+    test_instrumentation: &TestRunInstrumentationV1,
+) -> Result<(), mpsc::SendError<WorkerControlCore<F>>> {
+    if test_instrumentation
+        .fail_reply_send_worker_id
+        .load(Ordering::SeqCst)
+        == worker_id
+    {
+        return Err(mpsc::SendError(control));
+    }
+    sender.send(control)
 }
 
 /// Runs the finite multi-session scored rollout. The scorer remains on the
@@ -2155,7 +3222,14 @@ pub(crate) fn run_async_flat_scored_rollout_observed_v1<O: FlatScoredTrajectoryO
 {
     let mut scorer = FlatBatchScorerAdapterV1(scorer);
     let observer = FlatScoredTrajectoryObserverAdapterV1(observer);
-    run_async_flat_scored_rollout_core::<FlatScoredFamilyV1, _, _>(config, &mut scorer, observer)
+    run_async_flat_scored_rollout_core::<FlatScoredFamilyV1, _, _>(
+        config,
+        FlatScoredExecutionScheduleV1::Legacy,
+        None,
+        None,
+        &mut scorer,
+        observer,
+    )
 }
 
 pub(crate) fn run_async_flat_scored_rollout_core<
@@ -2164,11 +3238,42 @@ pub(crate) fn run_async_flat_scored_rollout_core<
     O: FlatScoredTrajectoryObserverCore<F>,
 >(
     config: AsyncRolloutConfigV2,
+    execution_schedule: FlatScoredExecutionScheduleV1,
+    environment_authority: Option<NativeEnvironmentWindowPreflightAuthorityV2>,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    scorer: &mut S,
+    observer: O,
+) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
+{
+    run_async_flat_scored_rollout_core_with_population_v1(
+        config,
+        execution_schedule,
+        environment_authority,
+        ladder_opponent,
+        None,
+        scorer,
+        observer,
+    )
+}
+
+pub(crate) fn run_async_flat_scored_rollout_core_with_population_v1<
+    F: FlatScoredFamilyCore,
+    S: FlatBatchScorerCore<F>,
+    O: FlatScoredTrajectoryObserverCore<F>,
+>(
+    config: AsyncRolloutConfigV2,
+    execution_schedule: FlatScoredExecutionScheduleV1,
+    environment_authority: Option<NativeEnvironmentWindowPreflightAuthorityV2>,
+    ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
+    population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     scorer: &mut S,
     mut observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
 {
     let api_started = Instant::now();
+    if ladder_opponent.is_some() && population_opponent.is_some() {
+        return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
+    }
     if !(1..=ASYNC_ROLLOUT_MAX_WORKERS_V2).contains(&config.worker_count) {
         return Err(AsyncFlatScoredRolloutErrorV1::InvalidWorkerCount {
             requested: config.worker_count,
@@ -2205,11 +3310,61 @@ pub(crate) fn run_async_flat_scored_rollout_core<
         .first_episode_id
         .checked_add(config.episode_count)
         .ok_or(AsyncFlatScoredRolloutErrorV1::EpisodeRangeOverflow)?;
+    match execution_schedule {
+        FlatScoredExecutionScheduleV1::Legacy => {}
+        FlatScoredExecutionScheduleV1::NativeTrainerV1 { base_seed }
+        | FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { base_seed } => {
+            native_trainer_episode_schedule_v1(base_seed, config.first_episode_id)
+                .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+            native_trainer_episode_schedule_v1(base_seed, end_episode_id - 1)
+                .map_err(|_| AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation)?;
+        }
+    }
+    // Exhaustive schedule/authority diagonal, after the basic range and
+    // topology checks and before result reservation, channel creation,
+    // worker spawn, or any session reset. The move-only authority is
+    // consumed here, exactly once; workers only ever see the private
+    // session-environment projection derived from the schedule.
+    match (execution_schedule, environment_authority) {
+        (
+            FlatScoredExecutionScheduleV1::Legacy
+            | FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. },
+            None,
+        ) => {}
+        (
+            FlatScoredExecutionScheduleV1::Legacy
+            | FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. },
+            Some(_),
+        ) => {
+            return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
+        }
+        (FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { .. }, None) => {
+            return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
+        }
+        (
+            FlatScoredExecutionScheduleV1::NativeTrainerEnvironmentRandomizationV2 { base_seed },
+            Some(authority),
+        ) => {
+            if !authority.matches_window_v2(
+                base_seed,
+                config.first_episode_id,
+                config.episode_count,
+                &config.deck_ids,
+            ) {
+                return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
+            }
+            drop(authority);
+        }
+    }
+    #[cfg(test)]
+    let test_instrumentation = current_test_run_instrumentation_v1();
     let episode_count_usize = usize::try_from(config.episode_count).map_err(|_| {
         AsyncFlatScoredRolloutErrorV1::EpisodeCountExceedsAddressSpace {
             requested: config.episode_count,
         }
     })?;
+    #[cfg(test)]
+    ROLLOUT_RESULT_RESERVATION_COUNT_V2.with(|count| count.set(count.get() + 1));
     let mut episodes = Vec::new();
     episodes
         .try_reserve_exact(episode_count_usize)
@@ -2217,23 +3372,34 @@ pub(crate) fn run_async_flat_scored_rollout_core<
             requested: config.episode_count,
         })?;
 
+    #[cfg(test)]
+    ROLLOUT_MESSAGE_CHANNEL_COUNT_V2.with(|count| count.set(count.get() + 1));
     let (message_tx, message_rx) = mpsc::sync_channel(config.worker_count);
     let cancel = Arc::new(AtomicBool::new(false));
     let released_epoch = Arc::new(AtomicU64::new(0));
     let worker_runtime = WorkerRuntimeV1 {
         end_episode_id,
         logical_lane_count,
+        execution_schedule,
         deadline,
         cancel: Arc::clone(&cancel),
         released_epoch: Arc::clone(&released_epoch),
+        ladder_opponent,
+        population_opponent,
+        #[cfg(test)]
+        test_instrumentation: Arc::clone(&test_instrumentation),
     };
     let mut control_txs = Vec::with_capacity(config.worker_count);
     let mut handles: Vec<Option<JoinHandle<()>>> = Vec::with_capacity(config.worker_count);
     for worker_id in 0..config.worker_count {
+        #[cfg(test)]
+        ROLLOUT_CONTROL_CHANNEL_COUNT_V2.with(|count| count.set(count.get() + 1));
         let (control_tx, control_rx) = mpsc::channel();
         let worker_message_tx = message_tx.clone();
         let worker_runtime = worker_runtime.clone();
         let worker_config = config.clone();
+        #[cfg(test)]
+        ROLLOUT_WORKER_SPAWN_COUNT_V2.with(|count| count.set(count.get() + 1));
         let spawn = thread::Builder::new()
             .name(format!("{}-{worker_id}", F::WORKER_NAME))
             .spawn(move || {
@@ -2524,6 +3690,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
                     let sample = sample_validated_round_decision_v1(
                         &mut broker_episodes,
                         &mut sampler,
+                        execution_schedule,
                         config.learner_policy_seed,
                         decision,
                         &round_logits[logit_start..logit_end],
@@ -2570,6 +3737,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
                     let sample = sample_validated_round_decision_v1(
                         &mut broker_episodes,
                         &mut sampler,
+                        execution_schedule,
                         config.learner_policy_seed,
                         &decision,
                         &round_logits[logit_start..logit_end],
@@ -2600,6 +3768,7 @@ pub(crate) fn run_async_flat_scored_rollout_core<
                             terminal: episode.terminal,
                             learner_action_count: episode.learner_action_count,
                             learner_trace_hash: episode.learner_trace_hash,
+                            native_full_trajectory_receipt: terminal.native_full_trajectory_receipt,
                         },
                     ) {
                         observer_interruption = Some(interruption);
@@ -2635,12 +3804,20 @@ pub(crate) fn run_async_flat_scored_rollout_core<
                     return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation);
                 }
                 ensure_before_deadline_v1(deadline)?;
-                control_txs[worker_id]
-                    .send(WorkerControlCore::Continue {
-                        release_epoch,
-                        round,
-                    })
-                    .map_err(|_| protocol_or_deadline_error_v1(deadline))?;
+                let control = WorkerControlCore::Continue {
+                    release_epoch,
+                    round,
+                };
+                #[cfg(test)]
+                let send_result = send_worker_control_v1(
+                    &control_txs[worker_id],
+                    worker_id,
+                    control,
+                    &test_instrumentation,
+                );
+                #[cfg(not(test))]
+                let send_result = control_txs[worker_id].send(control);
+                send_result.map_err(|_| protocol_or_deadline_error_v1(deadline))?;
                 ensure_before_deadline_v1(deadline)?;
             }
             ensure_before_deadline_v1(deadline)?;
@@ -2680,9 +3857,13 @@ pub(crate) fn run_async_flat_scored_rollout_core<
     }
     #[cfg(test)]
     {
-        TEST_ENTERED_FINAL_REDUCTION_V1.store(true, std::sync::atomic::Ordering::SeqCst);
+        test_instrumentation
+            .entered_final_reduction
+            .store(true, Ordering::SeqCst);
         thread::sleep(std::time::Duration::from_millis(
-            TEST_DELAY_FINAL_REDUCTION_MS_V1.load(std::sync::atomic::Ordering::SeqCst),
+            test_instrumentation
+                .delay_final_reduction_ms
+                .load(Ordering::SeqCst),
         ));
     }
 
@@ -2880,12 +4061,35 @@ fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
     use crate::fast_sampler::splitmix64_first;
+    use crate::native_opponent_sampler_v1::UNIFORM_INDEX_MODULO_U64_IDENTITY_V1;
+    use crate::native_trainer_schedule_v1::{
+        derive_native_trainer_opponent_action_seed_v1, NATIVE_TRAINER_SCHEDULE_CONTRACT_V1,
+        NATIVE_TRAINER_SCHEDULE_VERSION_V1, PYTHON_REFERENCE_SEED_VERSION_V1,
+    };
     use sha2::{Digest, Sha256};
     use std::collections::BTreeSet;
     use std::time::Duration;
 
-    use super::ASYNC_FLAT_SCORED_TEST_LOCK_V1 as TEST_LOCK;
+    use super::acquire_async_flat_scored_test_guard_v1;
     const TEST_LEARNER_POLICY_SEED: u64 = 83_501;
+
+    #[test]
+    fn data_free_coordination_lock_recovers_after_a_panicking_holder() {
+        let lock = Arc::new(std::sync::Mutex::new(()));
+        let panicking_lock = Arc::clone(&lock);
+        let panicked = std::thread::spawn(move || {
+            let _guard = panicking_lock.lock().unwrap();
+            panic!("intentional coordination-lock poison");
+        })
+        .join();
+        assert!(panicked.is_err());
+        assert!(lock.is_poisoned());
+
+        let guard = acquire_data_free_coordination_lock_v1(&lock);
+        assert!(!lock.is_poisoned());
+        drop(guard);
+        assert!(lock.try_lock().is_ok());
+    }
 
     #[derive(Default)]
     struct ZeroScorer {
@@ -3293,17 +4497,24 @@ mod tests {
     fn capture_async_action_events<T>(
         run: impl FnOnce() -> T,
     ) -> (T, Vec<TestScoredActionEventV1>) {
-        TEST_ACTION_EVENTS_V1
+        let instrumentation = current_test_run_instrumentation_v1();
+        instrumentation
+            .action_events
             .lock()
-            .expect("test action-event sink mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
-        TEST_CAPTURE_ACTION_EVENTS_V1.store(true, std::sync::atomic::Ordering::SeqCst);
+        instrumentation
+            .capture_action_events
+            .store(true, Ordering::SeqCst);
         let result = run();
-        TEST_CAPTURE_ACTION_EVENTS_V1.store(false, std::sync::atomic::Ordering::SeqCst);
+        instrumentation
+            .capture_action_events
+            .store(false, Ordering::SeqCst);
         let mut events = std::mem::take(
-            &mut *TEST_ACTION_EVENTS_V1
+            &mut *instrumentation
+                .action_events
                 .lock()
-                .expect("test action-event sink mutex poisoned"),
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
         events.sort_unstable_by_key(|event| (event.expected.episode_id, event.learner_ordinal));
         (result, events)
@@ -3760,7 +4971,7 @@ mod tests {
 
     #[test]
     fn scored_rollout_is_natural_exact_and_repeatable() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut first_scorer = ZeroScorer::default();
         let first =
             run_async_flat_scored_rollout_v1(config(2, 2, 4, 16), &mut first_scorer).unwrap();
@@ -3808,7 +5019,7 @@ mod tests {
 
     #[test]
     fn public_noop_path_matches_private_noop_core() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let shaped = config(2, 2, 3, 8);
         let mut public_scorer = ZeroScorer::default();
         let public = run_async_flat_scored_rollout_v1(shaped.clone(), &mut public_scorer).unwrap();
@@ -3848,7 +5059,7 @@ mod tests {
 
     #[test]
     fn logical_transcript_is_schedule_invariant() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut base = config(1, 1, 1, 9);
         base.first_episode_id = 37;
         let reference = synchronous_content_sensitive_reference(&base);
@@ -3903,7 +5114,7 @@ mod tests {
 
     #[test]
     fn observed_selected_and_terminal_stream_is_canonical_and_schedule_invariant() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut base = config(1, 1, 1, 9);
         base.first_episode_id = 37;
         let shapes = [(1, 1, 1), (1, 4, 3), (4, 1, 3), (4, 2, 5)];
@@ -3944,6 +5155,7 @@ mod tests {
                     terminal: episode.terminal,
                     learner_action_count: episode.learner_action_count,
                     learner_trace_hash: episode.learner_trace_hash,
+                    native_full_trajectory_receipt: None,
                 })
                 .collect::<Vec<_>>();
             assert_eq!(observed_terminals, expected_terminals);
@@ -3959,7 +5171,7 @@ mod tests {
 
     #[test]
     fn synchronous_reference_oracle_rejects_packet_misassociation() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut config = config(1, 1, 1, 9);
         config.first_episode_id = 37;
         let reference = synchronous_content_sensitive_reference(&config);
@@ -3984,7 +5196,7 @@ mod tests {
 
     #[test]
     fn synchronous_reference_oracle_rejects_value_misassociation() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut config = config(1, 1, 1, 9);
         config.first_episode_id = 37;
         let reference = synchronous_content_sensitive_reference(&config);
@@ -4009,7 +5221,7 @@ mod tests {
 
     #[test]
     fn asynchronous_oracle_rejects_scorer_value_row_swap() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut config = config(1, 4, 4, 9);
         config.first_episode_id = 37;
         let reference = synchronous_content_sensitive_reference(&config);
@@ -4049,7 +5261,7 @@ mod tests {
 
     #[test]
     fn later_chunk_scorer_failure_cancels_without_hanging() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = FailingScorer {
             calls: 0,
             fail_on: 2,
@@ -4066,8 +5278,7 @@ mod tests {
 
     #[test]
     fn first_selected_observer_error_releases_no_multi_lane_action_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let callback_count = Arc::new(AtomicU64::new(0));
         let finished = Arc::new(AtomicBool::new(false));
         let observer = FailingFirstSelectedObserverV1 {
@@ -4091,13 +5302,12 @@ mod tests {
         assert_eq!(scorer.decisions, 4);
         assert_eq!(callback_count.load(Ordering::SeqCst), 1);
         assert!(!finished.load(Ordering::SeqCst));
-        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert_eq!(_test_state.consumed_action_count(), 0);
     }
 
     #[test]
     fn first_selected_observer_panic_releases_no_multi_lane_action_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let callback_count = Arc::new(AtomicU64::new(0));
         let finished = Arc::new(AtomicBool::new(false));
         let observer = PanickingFirstSelectedObserverV1 {
@@ -4120,13 +5330,12 @@ mod tests {
         assert_eq!(scorer.decisions, 4);
         assert_eq!(callback_count.load(Ordering::SeqCst), 1);
         assert!(!finished.load(Ordering::SeqCst));
-        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert_eq!(_test_state.consumed_action_count(), 0);
     }
 
     #[test]
     fn slow_first_selected_observer_deadline_releases_no_action_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let callback_count = Arc::new(AtomicU64::new(0));
         let finished = Arc::new(AtomicBool::new(false));
         let observer = SlowFirstSelectedObserverV1 {
@@ -4151,14 +5360,12 @@ mod tests {
         assert_eq!(scorer.decisions, 4);
         assert_eq!(callback_count.load(Ordering::SeqCst), 1);
         assert!(!finished.load(Ordering::SeqCst));
-        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert_eq!(_test_state.consumed_action_count(), 0);
     }
 
     #[test]
     fn terminal_observer_error_maps_phase_and_releases_no_terminal_ack_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
-        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = ZeroScorer::default();
 
         let error = run_async_flat_scored_rollout_observed_v1(
@@ -4175,15 +5382,13 @@ mod tests {
                 error: 92,
             }
         ));
-        assert!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst) > 0);
-        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert!(_test_state.consumed_action_count() > 0);
+        assert_eq!(_test_state.terminal_ack_count(), 0);
     }
 
     #[test]
     fn terminal_observer_panic_maps_phase_and_releases_no_terminal_ack_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
-        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = ZeroScorer::default();
 
         let error = run_async_flat_scored_rollout_observed_v1(
@@ -4199,14 +5404,13 @@ mod tests {
                 phase: FlatScoredObserverPhaseV1::Terminal,
             }
         ));
-        assert!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst) > 0);
-        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert!(_test_state.consumed_action_count() > 0);
+        assert_eq!(_test_state.terminal_ack_count(), 0);
     }
 
     #[test]
     fn finish_observer_error_maps_phase_and_returns_no_result_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = ZeroScorer::default();
 
         let error = run_async_flat_scored_rollout_observed_v1(
@@ -4223,13 +5427,12 @@ mod tests {
                 error: 93,
             }
         ));
-        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 1);
+        assert_eq!(_test_state.terminal_ack_count(), 1);
     }
 
     #[test]
     fn finish_observer_panic_maps_phase_and_returns_no_result_or_output() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_TERMINAL_ACK_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = ZeroScorer::default();
 
         let error = run_async_flat_scored_rollout_observed_v1(
@@ -4245,7 +5448,7 @@ mod tests {
                 phase: FlatScoredObserverPhaseV1::Finish,
             }
         ));
-        assert_eq!(TEST_TERMINAL_ACK_COUNT_V1.load(Ordering::SeqCst), 1);
+        assert_eq!(_test_state.terminal_ack_count(), 1);
     }
 
     struct UnwrittenScorer;
@@ -4263,7 +5466,7 @@ mod tests {
 
     #[test]
     fn unwritten_scorer_output_fails_closed() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let error =
             run_async_flat_scored_rollout_v1(config(1, 1, 1, 1), &mut UnwrittenScorer).unwrap_err();
         assert!(matches!(
@@ -4296,7 +5499,7 @@ mod tests {
 
     #[test]
     fn non_finite_scorer_value_fails_closed_with_exact_bits() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         for value_bits in [0x7fc0_1234, f32::INFINITY.to_bits()] {
             let error = run_async_flat_scored_rollout_v1(
                 config(1, 1, 1, 1),
@@ -4317,7 +5520,7 @@ mod tests {
 
     #[test]
     fn finite_scorer_value_wrapper_rejects_every_non_finite_class() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         assert_eq!(
             FiniteScorerValueV1::new(-0.0),
             Some(FiniteScorerValueV1(0x8000_0000))
@@ -4329,12 +5532,19 @@ mod tests {
 
     #[test]
     fn apply_reply_rejects_corrupted_learner_ordinal_before_consume() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let shaped = config(1, 1, 1, 1);
         let end_episode_id = shaped.first_episode_id + shaped.episode_count;
-        let mut lane = LocalLaneV1::vacant(0, 0, shaped.first_episode_id, end_episode_id);
-        lane.fill(&shaped, end_episode_id, 1).unwrap();
+        let mut lane =
+            LocalLaneV1::vacant(0, 0, shaped.first_episode_id, end_episode_id, None, None);
+        lane.test_instrumentation = _test_state.instrumentation_arc();
+        lane.fill(
+            &shaped,
+            FlatScoredExecutionScheduleV1::Legacy,
+            end_episode_id,
+            1,
+        )
+        .unwrap();
         let mut decisions = Vec::new();
         let mut terminals = Vec::new();
         lane.advance_to_event(
@@ -4355,6 +5565,7 @@ mod tests {
                 scored: BoundScoredActionV1 {
                     binding,
                     learner_ordinal: 1,
+                    action_seed: 0,
                     selected_index: 0,
                     predicted_value: FiniteScorerValueV1::new(0.0).unwrap(),
                 },
@@ -4369,21 +5580,18 @@ mod tests {
             AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding
         );
         assert_eq!(lane.learner_action_count, 0);
-        assert_eq!(TEST_CONSUMED_ACTION_COUNT_V1.load(Ordering::SeqCst), 0);
+        assert_eq!(_test_state.consumed_action_count(), 0);
     }
 
     #[test]
     fn partial_round_deadline_disconnects_senders_and_joins() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_DELAY_WORKER_ID_V1.store(1, std::sync::atomic::Ordering::SeqCst);
-        TEST_DELAY_WORKER_MS_V1.store(100, std::sync::atomic::Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
+        _test_state.delay_worker(1, 100);
         let mut delayed = config(2, 1, 2, 2);
         delayed.scheduler_timeout = Duration::from_millis(20);
         let started = Instant::now();
         let error =
             run_async_flat_scored_rollout_v1(delayed, &mut ZeroScorer::default()).unwrap_err();
-        TEST_DELAY_WORKER_ID_V1.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
-        TEST_DELAY_WORKER_MS_V1.store(0, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
             error,
             AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded
@@ -4393,15 +5601,12 @@ mod tests {
 
     #[test]
     fn worker_disconnect_at_deadline_has_stable_deadline_error() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_DELAY_WORKER_ID_V1.store(0, std::sync::atomic::Ordering::SeqCst);
-        TEST_DELAY_WORKER_MS_V1.store(50, std::sync::atomic::Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
+        _test_state.delay_worker(0, 50);
         let mut delayed = config(1, 1, 1, 1);
         delayed.scheduler_timeout = Duration::from_millis(10);
         let error =
             run_async_flat_scored_rollout_v1(delayed, &mut ZeroScorer::default()).unwrap_err();
-        TEST_DELAY_WORKER_ID_V1.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
-        TEST_DELAY_WORKER_MS_V1.store(0, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
             error,
             AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded
@@ -4410,15 +5615,13 @@ mod tests {
 
     #[test]
     fn final_reduction_cannot_return_success_after_public_deadline() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_ENTERED_FINAL_REDUCTION_V1.store(false, std::sync::atomic::Ordering::SeqCst);
-        TEST_DELAY_FINAL_REDUCTION_MS_V1.store(1_100, std::sync::atomic::Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
+        _test_state.delay_final_reduction(1_100);
         let mut delayed = config(1, 1, 1, 1);
         delayed.scheduler_timeout = Duration::from_secs(1);
         let error =
             run_async_flat_scored_rollout_v1(delayed, &mut ZeroScorer::default()).unwrap_err();
-        TEST_DELAY_FINAL_REDUCTION_MS_V1.store(0, std::sync::atomic::Ordering::SeqCst);
-        assert!(TEST_ENTERED_FINAL_REDUCTION_V1.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(_test_state.entered_final_reduction());
         assert_eq!(
             error,
             AsyncFlatScoredRolloutErrorV1::SchedulerDeadlineExceeded
@@ -4427,21 +5630,68 @@ mod tests {
 
     #[test]
     fn late_reply_send_failure_releases_no_partial_round() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        TEST_EXIT_AFTER_ROUND_WORKER_ID_V1.store(1, std::sync::atomic::Ordering::SeqCst);
-        TEST_CONSUMED_ACTION_COUNT_V1.store(0, std::sync::atomic::Ordering::SeqCst);
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
+        _test_state.fail_reply_send(1);
         let error =
             run_async_flat_scored_rollout_v1(config(2, 1, 2, 2), &mut ZeroScorer::default())
                 .unwrap_err();
-        TEST_EXIT_AFTER_ROUND_WORKER_ID_V1.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
             error,
             AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation
         );
+        assert_eq!(_test_state.consumed_action_count(), 0);
+    }
+
+    #[test]
+    fn fault_instrumentation_is_run_local_across_parallel_callers() {
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let finish = Arc::new(std::sync::Barrier::new(2));
+
+        let fault_start = Arc::clone(&start);
+        let fault_finish = Arc::clone(&finish);
+        let faulted = std::thread::spawn(move || {
+            let test_state = acquire_async_flat_scored_test_guard_v1();
+            test_state.fail_reply_send(0);
+            fault_start.wait();
+            let error =
+                run_async_flat_scored_rollout_v1(config(1, 1, 1, 1), &mut ZeroScorer::default())
+                    .unwrap_err();
+            fault_finish.wait();
+            (error, test_state.consumed_action_count())
+        });
+
+        let clean_start = Arc::clone(&start);
+        let clean_finish = Arc::clone(&finish);
+        let clean = std::thread::spawn(move || {
+            // Deliberately no test guard: this models V2/native-trainer callers
+            // that enter the same generic core while another test faults a run.
+            clean_start.wait();
+            let result =
+                run_async_flat_scored_rollout_v1(config(1, 1, 1, 1), &mut ZeroScorer::default());
+            clean_finish.wait();
+            result
+        });
+
+        let (fault_error, fault_consumed) = faulted.join().unwrap();
+        let clean_result = clean.join().unwrap().unwrap();
         assert_eq!(
-            TEST_CONSUMED_ACTION_COUNT_V1.load(std::sync::atomic::Ordering::SeqCst),
-            0
+            fault_error,
+            AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation
         );
+        assert_eq!(fault_consumed, 0);
+        assert!(clean_result.all_natural());
+        assert!(clean_result.metrics.sampled_action_count > 0);
+    }
+
+    #[test]
+    fn worker_owned_instrumentation_survives_caller_context_drop() {
+        let worker_owned = {
+            let test_state = acquire_async_flat_scored_test_guard_v1();
+            test_state.delay_worker(7, 123);
+            test_state.instrumentation_arc()
+        };
+        assert_eq!(worker_owned.delay_worker_id.load(Ordering::SeqCst), 7);
+        assert_eq!(worker_owned.delay_worker_ms.load(Ordering::SeqCst), 123);
     }
 
     #[derive(Default)]
@@ -4500,7 +5750,7 @@ mod tests {
 
     #[test]
     fn first_five_scorer_packets_have_exact_safe_golden() {
-        let _lock = TEST_LOCK.lock().unwrap();
+        let _test_state = acquire_async_flat_scored_test_guard_v1();
         let mut scorer = PacketGoldenScorer::default();
         let result = run_async_flat_scored_rollout_v1(config(1, 1, 1, 1), &mut scorer).unwrap();
         assert!(result.all_natural());
@@ -4525,5 +5775,517 @@ mod tests {
             digest,
             "e1aa12d2736f4c52fed56fc89defb9f16bcda852631b2eee8c2e8bb707943981"
         );
+    }
+
+    fn native_schedule_decision(
+        episode_id: u64,
+        step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        acting_player: PlayerSeatV1,
+    ) -> FastActorDecisionV1 {
+        FastActorDecisionV1 {
+            episode_id,
+            step,
+            environment_revision: step,
+            physical_decision_id,
+            substep_index,
+            substep_count,
+            acting_player,
+            decision_kind: FastActorDecisionKindV1::Surface,
+            legal_action_count: 3,
+        }
+    }
+
+    fn native_schedule_decision_with_width(
+        episode_id: u64,
+        step: u64,
+        physical_decision_id: u64,
+        substep_index: u32,
+        substep_count: u32,
+        acting_player: PlayerSeatV1,
+        legal_action_count: u32,
+    ) -> FastActorDecisionV1 {
+        FastActorDecisionV1 {
+            legal_action_count,
+            ..native_schedule_decision(
+                episode_id,
+                step,
+                physical_decision_id,
+                substep_index,
+                substep_count,
+                acting_player,
+            )
+        }
+    }
+
+    #[test]
+    fn native_opponent_preflight_calls_frozen_sampler_for_practical_widths() {
+        assert_eq!(
+            NATIVE_TRAINER_SCHEDULE_CONTRACT_V1.trainer_schedule_version,
+            NATIVE_TRAINER_SCHEDULE_VERSION_V1
+        );
+        assert_eq!(
+            NATIVE_TRAINER_SCHEDULE_VERSION_V1,
+            "mtg-kernel-native-trainer-schedule-sha256-v1"
+        );
+        assert_eq!(
+            PYTHON_REFERENCE_SEED_VERSION_V1,
+            "kernel-python-rl-trainer-sha256-v2"
+        );
+        assert_eq!(
+            UNIFORM_INDEX_MODULO_U64_IDENTITY_V1,
+            "mtg-kernel-uniform-index-modulo-u64-v1"
+        );
+
+        let base_seed = 71_501;
+        let episode_index = 1;
+        let opponent = PlayerSeatV1::P0;
+        for legal_action_count in [1, 2, 64] {
+            let decision = native_schedule_decision_with_width(
+                episode_index,
+                0,
+                0,
+                0,
+                1,
+                opponent,
+                legal_action_count,
+            );
+            let mut schedule =
+                NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1, None);
+            let actual = schedule
+                .preflight_action_seed(decision, 4, 8)
+                .expect("valid opponent preflight");
+            let expected = select_native_trainer_opponent_action_v1(
+                base_seed,
+                episode_index,
+                0,
+                0,
+                legal_action_count,
+            )
+            .expect("frozen opponent sampler accepts nonzero width");
+            assert_eq!(actual.action_seed, expected.action_seed);
+            assert_eq!(
+                actual.opponent_selected_index,
+                Some(expected.selected_index)
+            );
+            assert!(expected.selected_index < legal_action_count);
+            assert_eq!(
+                schedule
+                    .open_group
+                    .expect("preflight opens the physical group")
+                    .opponent_group_seed,
+                Some(
+                    derive_native_trainer_opponent_group_seed_v1(base_seed, episode_index, 0)
+                        .unwrap()
+                )
+            );
+
+            let state_after_first = schedule;
+            assert_eq!(
+                schedule.preflight_action_seed(decision, 4, 8),
+                Ok(actual),
+                "repeat preflight must be deterministic"
+            );
+            assert_eq!(
+                schedule, state_after_first,
+                "repeat preflight must be inert"
+            );
+        }
+    }
+
+    /// Self-Play Ladder Design Contract S2, Section 5: `ladder_member =
+    /// None` and `ladder_member = Some(UniformFloor)` must both preflight
+    /// bit-identically to today's frozen sampler (proving the pool's floor
+    /// slot is truly a no-op relative to a non-ladder run at this layer),
+    /// while a policy member defers `opponent_selected_index` to the
+    /// caller and reports the `train-opponent-policy-substep` seed as
+    /// `action_seed` instead of a resolved uniform action seed.
+    #[test]
+    fn native_opponent_preflight_ladder_member_selects_floor_bit_identity_or_defers_policy() {
+        let base_seed = 71_501_u64;
+        let episode_index = 1_u64;
+        let opponent = PlayerSeatV1::P0;
+        let decision = native_schedule_decision_with_width(episode_index, 0, 0, 0, 1, opponent, 5);
+
+        let baseline =
+            NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1, None)
+                .preflight_action_seed(decision, 4, 8)
+                .unwrap();
+
+        for ladder_member in [None, Some(OpponentLadderPoolMemberV2::UniformFloor)] {
+            let actual = NativeLaneScheduleStateV1::new(
+                base_seed,
+                episode_index,
+                PlayerSeatV1::P1,
+                ladder_member,
+            )
+            .preflight_action_seed(decision, 4, 8)
+            .unwrap();
+            assert_eq!(actual, baseline, "ladder_member={ladder_member:?}");
+        }
+
+        for policy_member in [
+            OpponentLadderPoolMemberV2::Primary,
+            OpponentLadderPoolMemberV2::PredecessorA,
+            OpponentLadderPoolMemberV2::PredecessorB,
+        ] {
+            let actual = NativeLaneScheduleStateV1::new(
+                base_seed,
+                episode_index,
+                PlayerSeatV1::P1,
+                Some(policy_member),
+            )
+            .preflight_action_seed(decision, 4, 8)
+            .unwrap();
+            assert_eq!(actual.opponent_selected_index, None);
+            assert_eq!(actual.actor_physical_decision_ordinal, 0);
+            assert_eq!(
+                actual.action_seed,
+                derive_native_trainer_opponent_policy_substep_seed_v2(
+                    base_seed,
+                    episode_index,
+                    0,
+                    0
+                )
+                .unwrap()
+            );
+            assert_ne!(
+                actual.action_seed, baseline.action_seed,
+                "policy substep seed must not collide with the uniform action seed"
+            );
+        }
+    }
+
+    #[test]
+    fn population_extension_preserves_uniform_and_k4_preflight_and_rejects_dual_state() {
+        let base_seed = 71_501_u64;
+        let episode_index = 1_u64;
+        let decision =
+            native_schedule_decision_with_width(episode_index, 0, 0, 0, 1, PlayerSeatV1::P0, 5);
+        let legacy =
+            NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1, None)
+                .preflight_action_seed(decision, 4, 8)
+                .unwrap();
+        let population_absent = NativeLaneScheduleStateV1::new_with_population_v1(
+            base_seed,
+            episode_index,
+            PlayerSeatV1::P1,
+            None,
+            None,
+        )
+        .unwrap()
+        .preflight_action_seed(decision, 4, 8)
+        .unwrap();
+        assert_eq!(population_absent, legacy);
+
+        let population_slot = PopulationSlotV1::from_index_v1(6).unwrap();
+        let population = NativeLaneScheduleStateV1::new_with_population_v1(
+            base_seed,
+            episode_index,
+            PlayerSeatV1::P1,
+            None,
+            Some(population_slot),
+        )
+        .unwrap()
+        .preflight_action_seed(decision, 4, 8)
+        .unwrap();
+        assert_eq!(population.opponent_selected_index, None);
+        assert_eq!(
+            population.action_seed,
+            derive_native_trainer_opponent_policy_substep_seed_v2(base_seed, episode_index, 0, 0,)
+                .unwrap()
+        );
+
+        assert!(NativeLaneScheduleStateV1::new_with_population_v1(
+            base_seed,
+            episode_index,
+            PlayerSeatV1::P1,
+            Some(OpponentLadderPoolMemberV2::Primary),
+            Some(population_slot),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn native_opponent_width_one_consumes_leaf_without_shifting_later_group() {
+        fn run_prefix(
+            first_width: u32,
+            second_width: u32,
+        ) -> (
+            NativeActionPreflightV1,
+            NativeActionPreflightV1,
+            NativeActionPreflightV1,
+            u64,
+            u64,
+        ) {
+            let base_seed = 71_501;
+            let episode_index = 1;
+            let opponent = PlayerSeatV1::P0;
+            let mut schedule =
+                NativeLaneScheduleStateV1::new(base_seed, episode_index, PlayerSeatV1::P1, None);
+
+            let first = native_schedule_decision_with_width(
+                episode_index,
+                0,
+                0,
+                0,
+                2,
+                opponent,
+                first_width,
+            );
+            let first_preflight = schedule.preflight_action_seed(first, 8, 16).unwrap();
+            let first_group_seed = schedule
+                .open_group
+                .expect("first group is open")
+                .opponent_group_seed
+                .expect("opponent group carries its seed");
+            schedule.commit_action(first).unwrap();
+            assert_eq!(
+                schedule
+                    .open_group
+                    .expect("non-final substep retains the group")
+                    .opponent_group_seed,
+                Some(first_group_seed)
+            );
+
+            let second = native_schedule_decision_with_width(
+                episode_index,
+                1,
+                0,
+                1,
+                2,
+                opponent,
+                second_width,
+            );
+            let second_preflight = schedule.preflight_action_seed(second, 8, 16).unwrap();
+            schedule.commit_action(second).unwrap();
+            assert!(schedule.open_group.is_none());
+
+            let later =
+                native_schedule_decision_with_width(episode_index, 2, 1, 0, 1, opponent, 64);
+            let later_preflight = schedule.preflight_action_seed(later, 8, 16).unwrap();
+            let later_group_seed = schedule
+                .open_group
+                .expect("later group is open")
+                .opponent_group_seed
+                .expect("later opponent group carries its seed");
+            (
+                first_preflight,
+                second_preflight,
+                later_preflight,
+                first_group_seed,
+                later_group_seed,
+            )
+        }
+
+        let (width_one, successor, later, first_group_seed, later_group_seed) = run_prefix(1, 2);
+        assert_eq!(width_one.opponent_selected_index, Some(0));
+        assert_eq!(
+            width_one.action_seed,
+            derive_native_trainer_opponent_action_seed_v1(71_501, 1, 0, 0).unwrap()
+        );
+        assert_eq!(
+            successor.action_seed,
+            derive_native_trainer_opponent_action_seed_v1(71_501, 1, 0, 1).unwrap()
+        );
+        assert_ne!(
+            width_one.action_seed, successor.action_seed,
+            "a width-one substep must not reuse its leaf seed at the successor"
+        );
+        assert_eq!(
+            first_group_seed,
+            derive_native_trainer_opponent_group_seed_v1(71_501, 1, 0).unwrap()
+        );
+        assert_eq!(
+            later_group_seed,
+            derive_native_trainer_opponent_group_seed_v1(71_501, 1, 1).unwrap()
+        );
+        assert_ne!(first_group_seed, later_group_seed);
+
+        let (counterfactual_first, counterfactual_second, counterfactual_later, _, cf_later_seed) =
+            run_prefix(64, 1);
+        assert_eq!(width_one.action_seed, counterfactual_first.action_seed);
+        assert_eq!(successor.action_seed, counterfactual_second.action_seed);
+        assert_eq!(later.action_seed, counterfactual_later.action_seed);
+        assert_eq!(later_group_seed, cf_later_seed);
+        assert!(later
+            .opponent_selected_index
+            .is_some_and(|index| index < 64));
+    }
+
+    #[test]
+    fn native_opponent_zero_width_is_transactional_and_positions_are_distinct() {
+        let base_seed = 71_501;
+        let mut zero = NativeLaneScheduleStateV1::new(base_seed, 1, PlayerSeatV1::P1, None);
+        let before = zero;
+        let empty = native_schedule_decision_with_width(1, 0, 0, 0, 1, PlayerSeatV1::P0, 0);
+        assert_eq!(zero.preflight_action_seed(empty, 4, 8), Err(()));
+        assert_eq!(zero, before);
+
+        let episode_one = select_native_trainer_opponent_action_v1(base_seed, 1, 0, 0, 2)
+            .expect("episode-one selection");
+        let episode_three = select_native_trainer_opponent_action_v1(base_seed, 3, 0, 0, 2)
+            .expect("episode-three selection");
+        let later_decision = select_native_trainer_opponent_action_v1(base_seed, 1, 1, 0, 2)
+            .expect("later physical-decision selection");
+        assert_ne!(episode_one.action_seed, episode_three.action_seed);
+        assert_ne!(episode_one.action_seed, later_decision.action_seed);
+        assert_ne!(episode_three.action_seed, later_decision.action_seed);
+        for selected in [episode_one, episode_three, later_decision] {
+            assert!(selected.selected_index < 2);
+        }
+    }
+
+    #[test]
+    fn native_schedule_preflights_caps_and_never_commits_partial_groups() {
+        let mut schedule = NativeLaneScheduleStateV1::new(71_501, 0, PlayerSeatV1::P0, None);
+        let first = native_schedule_decision(0, 0, 0, 0, 2, PlayerSeatV1::P0);
+        assert_eq!(
+            schedule
+                .preflight_action_seed(first, 2, 8)
+                .unwrap()
+                .action_seed,
+            derive_native_trainer_learner_action_seed_v1(71_501, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            schedule
+                .preflight_action_seed(first, 2, 8)
+                .unwrap()
+                .actor_physical_decision_ordinal,
+            0
+        );
+        schedule.commit_action(first).unwrap();
+        assert_eq!(schedule.learner_completed_group_count, 0);
+        assert!(schedule.open_group.is_some());
+
+        let shifted_policy_step = native_schedule_decision(0, 2, 0, 1, 2, PlayerSeatV1::P0);
+        assert_eq!(
+            schedule.preflight_action_seed(shifted_policy_step, 2, 8),
+            Err(())
+        );
+        assert_eq!(schedule.learner_completed_group_count, 0);
+        assert!(schedule.open_group.is_some());
+
+        let malformed = native_schedule_decision(0, 1, 1, 0, 1, PlayerSeatV1::P0);
+        assert_eq!(schedule.preflight_action_seed(malformed, 2, 8), Err(()));
+        assert_eq!(schedule.learner_completed_group_count, 0);
+        assert!(schedule.open_group.is_some());
+
+        let synthetic_terminal = RlSessionTerminalV1 {
+            schema_version: 0,
+            deck_ids: Default::default(),
+            deck_hashes: Default::default(),
+            episode_id: 0,
+            terminal_outcome: TerminalOutcomeV1::Draw,
+            terminal_classification: TerminalClassificationV1::Natural,
+            terminal_code: TerminalSafeCodeV2::NaturalGameOver,
+            winner: None,
+            terminal_reward: [0, 0],
+            terminal_reason: String::new(),
+            policy_step_count: 1,
+            physical_decision_count: 0,
+        };
+        assert_eq!(schedule.validate_terminal(&synthetic_terminal), Err(()));
+
+        let mut capped = NativeLaneScheduleStateV1::new(71_501, 0, PlayerSeatV1::P0, None);
+        let exceeds_policy_cap = native_schedule_decision(0, 7, 1, 0, 2, PlayerSeatV1::P0);
+        assert_eq!(
+            capped.preflight_action_seed(exceeds_policy_cap, 2, 8),
+            Err(())
+        );
+        assert!(capped.open_group.is_none());
+        let exceeds_physical_cap = native_schedule_decision(0, 0, 2, 0, 1, PlayerSeatV1::P0);
+        assert_eq!(
+            capped.preflight_action_seed(exceeds_physical_cap, 2, 8),
+            Err(())
+        );
+        assert!(capped.open_group.is_none());
+    }
+
+    #[test]
+    fn native_actor_ordinals_advance_only_on_final_substep_and_are_role_local() {
+        let mut schedule = NativeLaneScheduleStateV1::new(71_501, 1, PlayerSeatV1::P1, None);
+        let opponent_first = native_schedule_decision(1, 0, 0, 0, 2, PlayerSeatV1::P0);
+        let opponent_last = native_schedule_decision(1, 1, 0, 1, 2, PlayerSeatV1::P0);
+        assert_eq!(
+            schedule
+                .preflight_action_seed(opponent_first, 10, 10)
+                .unwrap()
+                .action_seed,
+            derive_native_trainer_opponent_action_seed_v1(71_501, 1, 0, 0).unwrap()
+        );
+        schedule.commit_action(opponent_first).unwrap();
+        assert_eq!(schedule.opponent_completed_group_count, 0);
+        assert_eq!(
+            schedule
+                .preflight_action_seed(opponent_last, 10, 10)
+                .unwrap()
+                .action_seed,
+            derive_native_trainer_opponent_action_seed_v1(71_501, 1, 0, 1).unwrap()
+        );
+        schedule.commit_action(opponent_last).unwrap();
+        assert_eq!(schedule.opponent_completed_group_count, 1);
+        assert_eq!(schedule.learner_completed_group_count, 0);
+
+        let learner = native_schedule_decision(1, 2, 1, 0, 1, PlayerSeatV1::P1);
+        assert_eq!(
+            schedule
+                .preflight_action_seed(learner, 10, 10)
+                .unwrap()
+                .action_seed,
+            derive_native_trainer_learner_action_seed_v1(71_501, 1, 0, 0).unwrap()
+        );
+        schedule.commit_action(learner).unwrap();
+        assert_eq!(schedule.learner_completed_group_count, 1);
+        assert_eq!(schedule.opponent_completed_group_count, 1);
+
+        let skipped_physical_id = native_schedule_decision(1, 3, 3, 0, 1, PlayerSeatV1::P1);
+        assert_eq!(
+            schedule.preflight_action_seed(skipped_physical_id, 10, 10),
+            Err(())
+        );
+        let reused_physical_id = native_schedule_decision(1, 3, 1, 0, 1, PlayerSeatV1::P1);
+        assert_eq!(
+            schedule.preflight_action_seed(reused_physical_id, 10, 10),
+            Err(())
+        );
+        let shifted_new_group_step = native_schedule_decision(1, 4, 2, 0, 1, PlayerSeatV1::P1);
+        assert_eq!(
+            schedule.preflight_action_seed(shifted_new_group_step, 10, 10),
+            Err(())
+        );
+        assert!(schedule.open_group.is_none());
+
+        let natural_terminal = RlSessionTerminalV1 {
+            schema_version: 0,
+            deck_ids: Default::default(),
+            deck_hashes: Default::default(),
+            episode_id: 1,
+            terminal_outcome: TerminalOutcomeV1::Draw,
+            terminal_classification: TerminalClassificationV1::Natural,
+            terminal_code: TerminalSafeCodeV2::NaturalGameOver,
+            winner: None,
+            terminal_reward: [0, 0],
+            terminal_reason: String::new(),
+            policy_step_count: 3,
+            physical_decision_count: 2,
+        };
+        assert_eq!(schedule.validate_terminal(&natural_terminal), Ok(()));
+        let truncated = RlSessionTerminalV1 {
+            terminal_outcome: TerminalOutcomeV1::Truncated,
+            terminal_classification: TerminalClassificationV1::Truncated,
+            terminal_code: TerminalSafeCodeV2::DecisionCap,
+            ..natural_terminal.clone()
+        };
+        assert_eq!(schedule.validate_terminal(&truncated), Err(()));
+        let halted = RlSessionTerminalV1 {
+            terminal_outcome: TerminalOutcomeV1::Halted,
+            terminal_classification: TerminalClassificationV1::Halted,
+            terminal_code: TerminalSafeCodeV2::FailClosed,
+            ..natural_terminal
+        };
+        assert_eq!(schedule.validate_terminal(&halted), Err(()));
     }
 }

@@ -1,19 +1,24 @@
-use mtg_kernel::card_def::{card_id_by_name, CardType, TargetSpec, CARD_DEFS};
+use mtg_kernel::card_def::{card_id_by_name, CardType, DeckPreflightError, TargetSpec, CARD_DEFS};
 use mtg_kernel::effect::EffectOp;
 use mtg_kernel::engine::{
     self, Action, CastMode, DiscardResume, EffectDuration, Layers, PendingCast, PendingDiscard,
     PendingOptionalCost, PendingOptionalCostSacrifice, PendingSpellCopy, PlayOrCast,
     PlayPermission, PlayPermissionExpiry, SpellCopyStage, UntilEndOfTurnEffect,
 };
+use mtg_kernel::environment_randomization_v2::{
+    derive_environment_randomization_seed_v2, permutation_v2, PhysicalOwnerV2, ShufflePurposeV2,
+};
+use mtg_kernel::event::CommittedEvent;
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::rl::{
-    build_deck_pair_state, build_run_manifest, burn_deck_hash, burn_deck_ids, card_name,
-    derive_env_seed, derive_policy_seed, legal_action_candidates_v1, make_legal_action_v1,
-    observe_v2, parse_audit_episode_jsonl, parse_policy_episode_jsonl, parse_run_manifest_json,
-    rally_deck_hash, rally_deck_ids, record_burn_mirror_episode, validate_policy_episode_records,
-    validate_rollout_artifact_bundle, write_rollout_artifacts, ActionSemanticV1,
-    EngineDecisionStageV2, EpisodeTerminalSummaryV1, GitDirtyFlagV1, GitMetadataV1, LegalActionV1,
-    ObservationV2, PlayerSeatV1, PolicyEpisodeRecordV2, SpellCopyStageV2, TerminalClassificationV1,
+    build_deck_pair_state, build_deck_pair_state_environment_v2, build_run_manifest,
+    burn_deck_hash, burn_deck_ids, card_name, derive_env_seed, derive_policy_seed,
+    legal_action_candidates_v1, make_legal_action_v1, observe_v2, parse_audit_episode_jsonl,
+    parse_policy_episode_jsonl, parse_run_manifest_json, rally_deck_hash, rally_deck_ids,
+    record_burn_mirror_episode, validate_policy_episode_records, validate_rollout_artifact_bundle,
+    write_rollout_artifacts, ActionSemanticV1, DeckPairBuildErrorV2, EngineDecisionStageV2,
+    EpisodeTerminalSummaryV1, GitDirtyFlagV1, GitMetadataV1, LegalActionV1, ObservationV2,
+    PlayerSeatV1, PolicyEpisodeRecordV2, SpellCopyStageV2, TerminalClassificationV1,
     TerminalOutcomeV1, AUDIT_EPISODE_JSONL_FILENAME, AUDIT_EPISODE_SCHEMA_VERSION,
     LEGAL_ACTION_SCHEMA_VERSION, LEGAL_ACTION_SCHEMA_VERSION_V5, MANIFEST_SCHEMA_VERSION,
     OBSERVATION_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION_V5, POLICY_EPISODE_JSONL_FILENAME,
@@ -26,6 +31,7 @@ use mtg_kernel::state::{
 use mtg_kernel::surface_v2::{HarnessSurfaceV2, SurfaceAction, SurfaceDecision};
 use serde::Serialize;
 use serde_json::Value;
+use sha2::Digest as _;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -3278,4 +3284,280 @@ fn rl_contract_card_type_flags_are_structured() {
     assert!(def.has_type(CardType::Artifact));
     assert!(blood.characteristics.type_flags.artifact);
     assert!(!blood.characteristics.type_flags.creature);
+}
+
+fn v2_pair_state(root: u64, p0_deck: &[u16], p1_deck: &[u16]) -> GameState {
+    build_deck_pair_state_environment_v2(root, p0_deck, p1_deck).expect("v2 deck pair builds")
+}
+
+/// Hand definition order for one owner: the seven draws come off the
+/// shuffled library top in order, so this is the exact post-shuffle prefix.
+fn hand_definition_order(state: &GameState, player: PlayerId) -> Vec<u16> {
+    state.players[player.index()]
+        .hand
+        .iter()
+        .map(|&object| state.objects.get(object).card_def)
+        .collect()
+}
+
+/// Remaining library definition order for one owner: the exact post-shuffle
+/// suffix after the seven draws.
+fn library_definition_order(state: &GameState, player: PlayerId) -> Vec<u16> {
+    state.players[player.index()]
+        .library
+        .iter()
+        .map(|&object| state.objects.get(object).card_def)
+        .collect()
+}
+
+/// Asserts one owner's exact hand slice (first seven) and library slice
+/// (remainder) separately against the full permutation oracle.
+fn assert_owner_slices_match_oracle(
+    state: &GameState,
+    player: PlayerId,
+    oracle: &[u16],
+    label: &str,
+) {
+    assert_eq!(
+        hand_definition_order(state, player),
+        oracle[..7],
+        "{label}: hand slice must equal the first seven oracle definitions"
+    );
+    assert_eq!(
+        library_definition_order(state, player),
+        oracle[7..],
+        "{label}: library slice must equal the oracle remainder"
+    );
+}
+
+#[test]
+fn v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins() {
+    let burn = burn_deck_ids();
+    let rally = rally_deck_ids();
+    let p0_seed = derive_environment_randomization_seed_v2(
+        940_001,
+        PhysicalOwnerV2::P0,
+        ShufflePurposeV2::InitialLibraryShuffle,
+        0,
+    )
+    .expect("P0 initial seed derives");
+    let p1_seed = derive_environment_randomization_seed_v2(
+        940_001,
+        PhysicalOwnerV2::P1,
+        ShufflePurposeV2::InitialLibraryShuffle,
+        0,
+    )
+    .expect("P1 initial seed derives");
+    assert_eq!(p0_seed, 7_479_945_427_805_527_300, "pinned P0 initial seed");
+    assert_eq!(
+        p1_seed, 17_206_394_138_497_251_163,
+        "pinned P1 initial seed"
+    );
+
+    let state = v2_pair_state(940_001, &burn, &rally);
+    assert_eq!(
+        state,
+        v2_pair_state(940_001, &burn, &rally),
+        "deterministic equality"
+    );
+    let json = serde_json::to_string(&state).expect("state serializes");
+    let restored: GameState = serde_json::from_str(&json).expect("state round-trips");
+    assert_eq!(state, restored, "serde round-trip equality");
+
+    assert!(state.legacy_rng().is_none(), "no legacy RNG is exposed");
+    let v2 = state
+        .environment_randomization_v2()
+        .expect("v2-only randomness");
+    assert_eq!(v2.pair_environment_seed(), 940_001, "exact full-width root");
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), 0);
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+    assert_eq!(
+        state.diagnostic_state_hash_algorithm(),
+        "fnv1a64-serde-json-game-state-envelope-v6",
+        "v6 diagnostic identity"
+    );
+
+    assert_eq!(state.players[0].hand.len(), 7);
+    assert_eq!(state.players[1].hand.len(), 7);
+    assert_eq!(state.players[0].library.len(), 53);
+    assert_eq!(state.players[1].library.len(), 53);
+
+    assert_eq!(
+        state.engine.event_history.len(),
+        14,
+        "fourteen committed events exactly"
+    );
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let expected_player = if index % 2 == 0 {
+            PlayerId::P0
+        } else {
+            PlayerId::P1
+        };
+        assert!(
+            matches!(
+                event,
+                CommittedEvent::Draw { player, .. } if *player == expected_player
+            ),
+            "event {index} must be a committed draw by {expected_player:?}"
+        );
+    }
+
+    assert_owner_slices_match_oracle(
+        &state,
+        PlayerId::P0,
+        &permutation_v2(p0_seed, &burn),
+        "root oracle P0 (Burn)",
+    );
+    assert_owner_slices_match_oracle(
+        &state,
+        PlayerId::P1,
+        &permutation_v2(p1_seed, &rally),
+        "root oracle P1 (Rally)",
+    );
+
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(json.as_bytes());
+    let serialized_sha256 = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(
+        serialized_sha256, "0c6ffa74853cf03e657938c9fdb58c182cd8cb38e62cdac565737f55514e2174",
+        "pinned SHA-256 of the serialized Burn/Rally root-940001 state"
+    );
+    assert_eq!(
+        format!("{:016x}", state.diagnostic_state_hash()),
+        "d995f6c870f6643c",
+        "pinned v6 diagnostic hash of the Burn/Rally root-940001 state"
+    );
+}
+
+#[test]
+fn v2_deck_pair_sibling_independence_and_max_root() {
+    let burn = burn_deck_ids();
+    let rally = rally_deck_ids();
+    // The changed sibling is a valid deck of a DIFFERENT length (the first
+    // forty Burn cards, each individually fully supported), so independence
+    // is proven even when the other seat's deck length changes.
+    let short = burn[..40].to_vec();
+    assert_ne!(short.len(), burn.len());
+    assert_ne!(short.len(), rally.len());
+    let p0_seed = derive_environment_randomization_seed_v2(
+        940_001,
+        PhysicalOwnerV2::P0,
+        ShufflePurposeV2::InitialLibraryShuffle,
+        0,
+    )
+    .expect("P0 initial seed derives");
+    let p1_seed = derive_environment_randomization_seed_v2(
+        940_001,
+        PhysicalOwnerV2::P1,
+        ShufflePurposeV2::InitialLibraryShuffle,
+        0,
+    )
+    .expect("P1 initial seed derives");
+    let burn_p0_oracle = permutation_v2(p0_seed, &burn);
+    let rally_p1_oracle = permutation_v2(p1_seed, &rally);
+
+    let base = v2_pair_state(940_001, &burn, &rally);
+    // Orientation 1: only P0 changes, to the different-length deck. The
+    // untouched P1 sibling's exact hand and library slices must equal the
+    // same root oracle in both states.
+    let p0_changed = v2_pair_state(940_001, &short, &rally);
+    assert_owner_slices_match_oracle(&base, PlayerId::P1, &rally_p1_oracle, "baseline P1");
+    assert_owner_slices_match_oracle(
+        &p0_changed,
+        PlayerId::P1,
+        &rally_p1_oracle,
+        "untouched P1 sibling after a different-length P0 change",
+    );
+    // The changed seat itself is exact against its own different-length
+    // oracle, end to end (7-card hand, 33-card library).
+    let short_p0_oracle = permutation_v2(p0_seed, &short);
+    assert_owner_slices_match_oracle(
+        &p0_changed,
+        PlayerId::P0,
+        &short_p0_oracle,
+        "changed different-length P0",
+    );
+    assert_eq!(p0_changed.players[0].library.len(), 33);
+
+    // Orientation 2: only P1 changes, to the different-length deck. The
+    // untouched P0 sibling's exact slices must equal the same root oracle.
+    let p1_changed = v2_pair_state(940_001, &burn, &short);
+    assert_owner_slices_match_oracle(&base, PlayerId::P0, &burn_p0_oracle, "baseline P0");
+    assert_owner_slices_match_oracle(
+        &p1_changed,
+        PlayerId::P0,
+        &burn_p0_oracle,
+        "untouched P0 sibling after a different-length P1 change",
+    );
+    let short_p1_oracle = permutation_v2(p1_seed, &short);
+    assert_owner_slices_match_oracle(
+        &p1_changed,
+        PlayerId::P1,
+        &short_p1_oracle,
+        "changed different-length P1",
+    );
+    assert_eq!(p1_changed.players[1].library.len(), 33);
+
+    let max_state = v2_pair_state(u64::MAX, &burn, &rally);
+    assert_eq!(
+        max_state,
+        v2_pair_state(u64::MAX, &burn, &rally),
+        "root u64::MAX builds deterministically"
+    );
+    assert!(max_state.legacy_rng().is_none());
+    let v2 = max_state
+        .environment_randomization_v2()
+        .expect("v2 randomness at max root");
+    assert_eq!(
+        v2.pair_environment_seed(),
+        u64::MAX,
+        "full-width root exact"
+    );
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P0), 0);
+    assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
+    assert_eq!(max_state.players[0].hand.len(), 7);
+    assert_eq!(max_state.players[1].hand.len(), 7);
+    assert_eq!(max_state.players[0].library.len(), 53);
+    assert_eq!(max_state.players[1].library.len(), 53);
+}
+
+#[test]
+fn v2_deck_pair_builder_rejects_bad_decks_with_typed_errors_p0_first() {
+    let burn = burn_deck_ids();
+    let mut bad_p0 = burn.clone();
+    bad_p0[3] = 60_000;
+    let mut bad_p1 = burn.clone();
+    bad_p1[0] = 61_000;
+
+    // Both decks bad with distinct failures: the reported error must be
+    // P0's, proving P0 preflight precedes P1.
+    assert_eq!(
+        build_deck_pair_state_environment_v2(940_001, &bad_p0, &bad_p1)
+            .expect_err("both decks are bad"),
+        DeckPairBuildErrorV2::DeckPreflight(DeckPreflightError::UnknownCardDefinition {
+            index: 3,
+            card_def: 60_000,
+        }),
+        "P0 preflight must run before P1"
+    );
+    assert_eq!(
+        build_deck_pair_state_environment_v2(940_001, &bad_p0, &burn)
+            .expect_err("bad P0 deck rejects"),
+        DeckPairBuildErrorV2::DeckPreflight(DeckPreflightError::UnknownCardDefinition {
+            index: 3,
+            card_def: 60_000,
+        })
+    );
+    assert_eq!(
+        build_deck_pair_state_environment_v2(940_001, &burn, &bad_p1)
+            .expect_err("bad P1 deck rejects"),
+        DeckPairBuildErrorV2::DeckPreflight(DeckPreflightError::UnknownCardDefinition {
+            index: 0,
+            card_def: 61_000,
+        })
+    );
 }

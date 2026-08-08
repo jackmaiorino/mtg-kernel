@@ -5,6 +5,16 @@ members = ["mtg-kernel"]
 [workspace.package]
 edition = "2021"
 
+# Activates the already-vendored SimpleUnit qualification fork of
+# `burn-cubecl` (tree object 6fad4dfdc90762682675f0e9d3313af35c1a9572,
+# byte-identical between this commit and 52ffc5c). The fork's only delta is
+# forcing the SimpleUnit matmul register strategy, which the action-block
+# gradient diagnostic requires for its declared numerical-backend identity.
+# This is a build-graph redirect only: no production Store identity, Store
+# decoder, or admitted-backend literal changes.
+[patch.crates-io]
+burn-cubecl = { path = "qualification/burn-cubecl-simpleunit" }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -1,0 +1,84 @@
+{
+  "alpha": 0.00875,
+  "c": 0.5,
+  "campaign_ledger": {
+    "bytes": 4045,
+    "path": "C:\\Users\\Jack\\IdeaProjects\\mtg-kernel-composed-factorial-v1-codex\\docs\\pro_level_v3_campaign_ledger_v1.md",
+    "sha256": "7fbcc9350c28954b5b7ba16352959d1c009a909cc73bc37edc9d17b32733ec59"
+  },
+  "candidate": {
+    "checkpoint_sha256": "8d6219e0c5acf040de202793b6f73131a30585ce3a1fea33b73e52734e91e53b",
+    "generation": 1536,
+    "identity_bundle_sha256": "f996aeefe6a4e9d656657b1230adf8f094d455e78e9d20460150f98e18c51fe5",
+    "model_parameter_sha256": "429446148ee88c527c307e0d9cde545a450a9f94e5be445b683d1d9955d93e53",
+    "role": "lineage-970002-generation-1536",
+    "run_sha256": "dc171fe72549154e533e337bc39884faa76811809abc0bc573bb975cea500a42",
+    "sidecar_sha256": "c26160867d4b378c5e714a2ce7ddbb7577b4852e222a4d3b8b170081bb6ab8d6",
+    "state_sha256": "dc0f3c0d6ae9b4c87745c802b0b5b71b398b378d1689e9dd040c86ad12853ba2",
+    "store_root": "D:\\mtg-kernel-scaled-selfplay-population-v1\\replay\\three-lineage-replay\\attempt-001\\wave-00-seed-970002-gpu1\\run-0\\store"
+  },
+  "chunk_pair_count": 2048,
+  "concurrent_chunks": 2,
+  "conditional_mean_stability": "IID-MIXTURE",
+  "confirmation": {
+    "first_evaluation_seed": 2808070001,
+    "gate_id": "candidate-02-population-g1536-confirm",
+    "pre_outcome_schedule_sha256": "bd7612fc6a937b55a1f0ed9efec0042200a0effe3d3eaee822a5032de8af0100"
+  },
+  "contract": {
+    "erratum_path": "C:\\Users\\Jack\\IdeaProjects\\collab\\SEQUENTIAL-GATE-CONTRACT-V3-ERRATUM-1.md",
+    "erratum_sha256": "f205f6067b81bdc4245281cfa47dad1d5ea9980975329e1b9be9594285fd5091",
+    "native_schedule_goldens_path": "C:\\Users\\Jack\\IdeaProjects\\mtg-kernel-scaled-selfplay-v1-codex\\data\\native_trainer_schedule_v1_goldens.json",
+    "native_schedule_goldens_sha256": "6b2e1edbbe49b4e02f98794f9057f5c2bb8e3079d2ba8cb3e2a4b9ea6c34867c",
+    "reference_path": "C:\\Users\\Jack\\IdeaProjects\\collab\\eb_cs_reference_v1.py",
+    "reference_sha256": "ffae17bdc020578a34d7cc420e138951fcb587531cf5191c978384a4bd4b73ef",
+    "test_vectors_path": "C:\\Users\\Jack\\IdeaProjects\\collab\\eb_cs_test_vectors.json",
+    "test_vectors_sha256": "de9ae592add1d077431ec44bebfc50a08f5263b15ed9b86061ca97ea9a9c41e1",
+    "v3_path": "C:\\Users\\Jack\\IdeaProjects\\collab\\SEQUENTIAL-GATE-CONTRACT-DRAFT-V3.md",
+    "v3_sha256": "3220e9b17ad13ff44e21e3f0bf4119d7f2b19652db30c0d77e03a164cca79d0f"
+  },
+  "delta_promote": 0.01,
+  "delta_worthwhile": 0.01,
+  "evaluation_seed_stride": 1000000,
+  "expected_rally_deck_hashes_u64": [
+    909447583901160127,
+    909447583901160127
+  ],
+  "executable": {
+    "path": "C:\\Users\\Jack\\IdeaProjects\\mtg-kernel-scaled-selfplay-v1-codex\\target\\release\\deps\\mtg_kernel-ef7a967b57e62b35.exe",
+    "sha256": "906710ed483b11aa33ccd33a8b95180dd1b23089968e7043413b45632f9cf648",
+    "source_commit": "7cbc64e5ac43d22e2acef1faf1609cf1a319f2f0"
+  },
+  "gate_class": "LARGE-EFFECT",
+  "freshness_manifest": {
+    "bytes": 2098,
+    "path": "C:\\Users\\Jack\\IdeaProjects\\mtg-kernel-scaled-selfplay-v1-codex\\docs\\native_scaled_selfplay_candidate_02_v3_freshness_v1.json",
+    "sha256": "e334b9641891b16337a94dc23cc1f405721087126e5a6c98ac90b3a2171f0a03"
+  },
+  "initial": {
+    "first_evaluation_seed": 2608070001,
+    "gate_id": "candidate-02-population-g1536-initial",
+    "pre_outcome_schedule_sha256": "b8609141d42f5c5230dadc95d279ff17d5869de523a8b579e3ec93c10561868c"
+  },
+  "joint_component_law": "P((Primary,Primary))=1",
+  "max_N": 131072,
+  "opponent_and_control": {
+    "checkpoint_sha256": "4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8",
+    "generation": 384,
+    "identity_bundle_sha256": "6403add9a8749a1b5bb422b1af130d45828708b2f720f154a2b287581210e0e8",
+    "model_parameter_sha256": "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d",
+    "role": "promoted-2-generation-384",
+    "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+    "sidecar_sha256": "7511c0377edd4e8d918fa5843f89a0270a8264e5466c329f6b4ef18bbf9e76bb",
+    "state_sha256": "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99",
+    "store_root": "D:\\mtg-kernel-ladder-pilot-20260725\\pool3\\primary"
+  },
+  "screen": {
+    "chunk_count": 2,
+    "first_evaluation_seed": 1936300001,
+    "gate_id": "candidate-02-population-g1536-throughput-screen",
+    "pair_count_per_chunk": 256,
+    "pre_outcome_schedule_sha256": "b5328f15c4e5ae848f2beca9b68bf763fb405bcaae066a46a6c28a88f57433a4"
+  },
+  "schema": "scaled-selfplay-candidate-02-v3-spec/v1"
+}
