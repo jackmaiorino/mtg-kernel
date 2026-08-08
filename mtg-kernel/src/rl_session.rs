@@ -11464,7 +11464,7 @@ mod tests {
             assert!(session.state.environment_randomization_v2().is_none());
             assert_eq!(
                 session.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v5"
+                "fnv1a64-serde-json-game-state-envelope-v6"
             );
             assert_eq!(session.state, canonical.state);
             assert_eq!(
@@ -11490,7 +11490,7 @@ mod tests {
             assert!(fast.state.environment_randomization_v2().is_none());
             assert_eq!(
                 fast.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v5"
+                "fnv1a64-serde-json-game-state-envelope-v6"
             );
             assert_eq!(fast.state, fast_canonical.state);
             assert_eq!(fast.current, fast_canonical.current);
@@ -11572,7 +11572,7 @@ mod tests {
         assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
         assert_eq!(
             full.state.diagnostic_state_hash_algorithm(),
-            "fnv1a64-serde-json-game-state-envelope-v6"
+            "fnv1a64-serde-json-game-state-envelope-v7"
         );
         let serialized = serde_json::to_value(&full.state).unwrap();
         assert!(serialized.get("environment_randomization_v2").is_some());
@@ -11772,7 +11772,7 @@ mod tests {
             assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
             assert_eq!(
                 state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v6"
+                "fnv1a64-serde-json-game-state-envelope-v7"
             );
         }
         assert_eq!(
@@ -12265,7 +12265,7 @@ mod tests {
             assert_eq!(v2.pair_environment_seed(), 99);
             assert_eq!(
                 active.session.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v6"
+                "fnv1a64-serde-json-game-state-envelope-v7"
             );
         }
 

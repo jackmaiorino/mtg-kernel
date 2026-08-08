@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+    "registry_raw_sha256": "f3772381c44603d8fa8c92ef5d5d4b3cdd9284769cdd82873160c6eda8ab241e"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 45,
+    "full_cards": 46,
     "partial_cards": 0,
-    "no_effect_cards": 105,
+    "no_effect_cards": 104,
     "token_dependencies": 4
   },
   "deck_mainboard_copy_totals": [
@@ -59,9 +59,9 @@
     },
     {
       "deck_id": "Terror",
-      "full": 54,
+      "full": 56,
       "partial": 0,
-      "no_effect": 6,
+      "no_effect": 4,
       "total": 60
     },
     {
@@ -2984,10 +2984,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Snap",

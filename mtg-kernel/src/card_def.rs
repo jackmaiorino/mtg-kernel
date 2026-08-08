@@ -325,11 +325,10 @@ pub enum CostComponent {
     DiscardSelf,
     /// Discard `n` cards from hand, chosen by the payer (`engine::Decision::Discard`).
     DiscardCards(u8),
-    /// Sacrifice `n` controlled lands. This pool's only land is Mountain,
-    /// so "sacrifice a land" and "sacrifice a Mountain" coincide; which
-    /// specific lands are picked is not a real decision (they're
-    /// interchangeable) so it's resolved the same deterministic way the
-    /// mana solver auto-picks tap sources -- see `engine::sacrifice_lands`.
+    /// Sacrifice `n` controlled lands. Exact lands are staged one at a time
+    /// through `engine::Decision::ChooseCostTargets`; the public
+    /// `PendingCast::sacrifice_chosen` compatibility field also carries the
+    /// mutually-exclusive Escape graveyard selection family.
     SacrificeLands(u8),
     /// An ordinary mana payment, solved by `mana::solve` same as a spell's
     /// printed cost.
@@ -338,6 +337,11 @@ pub enum CostComponent {
     /// non-mana component, so the payer must have at least this much life and
     /// may legally pay down to exactly zero.
     PayLife(u8),
+    /// Exile `n` other cards from the payer's own graveyard. The source is
+    /// excluded even before 601.2a moves it to the stack, and the exact cards
+    /// are staged through `engine::Decision::ChooseCostTargets` before any
+    /// mana or zone-change payment commits. Escape is the first consumer.
+    ExileOtherCardsFromOwnGraveyard(u8),
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -346,6 +350,14 @@ pub enum CostComponent {
 /// such as Deep Analysis's `{1}{U}`, pay 3 life without making flashback a
 /// parallel card-shaped cost system.
 pub struct FlashbackDef {
+    pub cost: &'static [CostComponent],
+}
+
+/// The ordered alternative cost for casting a card from its owner's
+/// graveyard via escape (702.138). Unlike flashback, escape does not replace
+/// where the spell goes when it later leaves the stack; its graveyard exile
+/// component is paid while casting and is represented explicitly here.
+pub struct EscapeDef {
     pub cost: &'static [CostComponent],
 }
 
@@ -483,6 +495,10 @@ pub struct CardDef {
     /// it ceases to exist -- this is a state-based action"). Only `Blood
     /// Token` this increment.
     pub is_token: bool,
+    /// `Some` iff this card can be cast from its owner's graveyard for an
+    /// escape cost. Appended independently from `flashback` because the two
+    /// mechanics have different stack-departure contracts.
+    pub escape: Option<EscapeDef>,
 }
 
 impl CardDef {
@@ -640,11 +656,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v5_is_frozen() {
-        // Version 5 keeps the complete generated-selector grammar while
-        // adding Deem Inferior's nonland target, draw reducer, and generic
-        // owner-library placement recipe.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xa06f_a956_6106_f0ea);
+    fn card_db_hash_v6_is_frozen() {
+        // Version 6 appends Escape's ordered cost definition and Sleep of
+        // the Dead's creature-target tap/skip-next-untap recipe.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xcf2b_0b92_dfac_dad2);
     }
 
     #[test]
@@ -721,6 +736,7 @@ mod tests {
                 def.name
             );
             assert!(def.flashback.is_none(), "{} has flashback", def.name);
+            assert!(def.escape.is_none(), "{} has escape", def.name);
             assert!(def.plot_cost.is_none(), "{} has plot", def.name);
             assert!(def.madness_cost.is_none(), "{} has madness", def.name);
         }

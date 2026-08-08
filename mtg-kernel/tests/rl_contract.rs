@@ -2432,8 +2432,8 @@ fn rl_contract_episode_records_use_independent_schema_versions_and_pin_hash_algo
     let policy_seed = derive_policy_seed(9999, 0);
     let run = record_burn_mirror_episode(0, env_seed, policy_seed, 64).unwrap();
 
-    assert_eq!(AUDIT_EPISODE_SCHEMA_VERSION, 10);
-    assert_eq!(MANIFEST_SCHEMA_VERSION, 8);
+    assert_eq!(AUDIT_EPISODE_SCHEMA_VERSION, 11);
+    assert_eq!(MANIFEST_SCHEMA_VERSION, 9);
     assert_eq!(POLICY_EPISODE_SCHEMA_VERSION, 5);
     let audit_header = serde_json::to_value(&run.audit_records[0]).unwrap();
     assert_eq!(audit_header["schema_version"], AUDIT_EPISODE_SCHEMA_VERSION);
@@ -2525,9 +2525,9 @@ fn rl_contract_audit_reader_fails_closed_on_legacy_missing_or_unknown_hash_contr
         .contains("unsupported diagnostic_state_hash_algorithm"));
 
     values[0]["diagnostic_state_hash_algorithm"] =
-        Value::String("fnv1a64-serde-json-game-state-envelope-v4".to_string());
-    let known_legacy_v4_algorithm = records_to_jsonl(&values);
-    assert!(parse_audit_episode_jsonl(&known_legacy_v4_algorithm)
+        Value::String("fnv1a64-serde-json-game-state-envelope-v5".to_string());
+    let known_legacy_v5_algorithm = records_to_jsonl(&values);
+    assert!(parse_audit_episode_jsonl(&known_legacy_v5_algorithm)
         .unwrap_err()
         .to_string()
         .contains("unsupported diagnostic_state_hash_algorithm"));
@@ -3105,7 +3105,7 @@ fn rl_contract_terminal_outcome_accounting_is_explicit() {
 
     let mut known_legacy_algorithm = value.clone();
     known_legacy_algorithm["diagnostic_state_hash_algorithm"] =
-        Value::String("fnv1a64-serde-json-game-state-envelope-v4".to_string());
+        Value::String("fnv1a64-serde-json-game-state-envelope-v5".to_string());
     assert!(parse_run_manifest_json(&known_legacy_algorithm.to_string())
         .unwrap_err()
         .to_string()
@@ -3373,8 +3373,8 @@ fn v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins() {
     assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
     assert_eq!(
         state.diagnostic_state_hash_algorithm(),
-        "fnv1a64-serde-json-game-state-envelope-v6",
-        "v6 diagnostic identity"
+        "fnv1a64-serde-json-game-state-envelope-v7",
+        "v7 diagnostic identity"
     );
 
     assert_eq!(state.players[0].hand.len(), 7);
@@ -3428,8 +3428,8 @@ fn v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins() {
     );
     assert_eq!(
         format!("{:016x}", state.diagnostic_state_hash()),
-        "d995f6c870f6643c",
-        "pinned v6 diagnostic hash of the Burn/Rally root-940001 state"
+        "7f8b6be5f208635b",
+        "pinned v7 diagnostic hash of the Burn/Rally root-940001 state"
     );
 }
 

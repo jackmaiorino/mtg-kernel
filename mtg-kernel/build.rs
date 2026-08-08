@@ -2266,6 +2266,10 @@ enum Special {
     /// Target nonland permanent; its owner chooses whether the exact bound
     /// incarnation goes second from top or on the bottom of their library.
     DeemInferior,
+    /// Tap target creature and mark that exact battlefield incarnation to
+    /// skip its current controller's next untap. Sleep of the Dead is the
+    /// first consumer.
+    TapAndSkipNextUntap,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2403,6 +2407,7 @@ impl Special {
                 format!("scry_then_draw:{scry}:{draw}")
             }
             Special::DeemInferior => "deem_inferior".to_string(),
+            Special::TapAndSkipNextUntap => "tap_and_skip_next_untap".to_string(),
         }
     }
 }
@@ -2501,6 +2506,7 @@ fn special_for(name: &str) -> Special {
         "Brainstorm" => Special::DrawThenPutHandOnLibraryTop { draw: 3, put: 2 },
         "Preordain" => Special::ScryThenDraw { scry: 2, draw: 1 },
         "Deem Inferior" => Special::DeemInferior,
+        "Sleep of the Dead" => Special::TapAndSkipNextUntap,
         _ => Special::None,
     }
 }
@@ -2594,6 +2600,10 @@ fn effect_recipe_for(card: &CardJson) -> String {
             format!("target=None;spell=ScryThenDraw(Controller,{scry},{draw});mana=None")
         }
         Special::DeemInferior => "target=NonlandPermanent;spell=PutObjectInOwnersLibrarySecondOrBottom(Target0);mana=None".to_string(),
+        Special::TapAndSkipNextUntap => {
+            "target=Creature;spell=Sequence(TapObject(Target0),SkipNextUntap(Target0));mana=None"
+                .to_string()
+        }
     }
 }
 
@@ -2665,6 +2675,23 @@ fn flashback_for(name: &str) -> String {
             let (pips, generic, x_count) = parse_cost("{1}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::PayLife(3)] }})",
+                pips.join(", ")
+            )
+        }
+        _ => "None".to_string(),
+    }
+}
+
+/// `Some` ordered escape-cost definition. Sleep of the Dead pays `{2}{U}`
+/// and exiles three other cards from its owner's graveyard. The source is
+/// excluded by the shared cast-cost candidate contract, not by a card-name
+/// branch in the engine.
+fn escape_for(name: &str) -> String {
+    match name {
+        "Sleep of the Dead" => {
+            let (pips, generic, x_count) = parse_cost("{2}{U}");
+            format!(
+                "Some(EscapeDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::ExileOtherCardsFromOwnGraveyard(3)] }})",
                 pips.join(", ")
             )
         }
@@ -3375,6 +3402,31 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::TapAndSkipNextUntap))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_tap_and_skip_next_untap() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::TapObject {{ object: ObjectRef::Target(0) }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::SkipNextUntap {{ object: ObjectRef::Target(0) }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     let mut mill_then_draw_shapes = Vec::new();
     for card in cards {
         if let Special::MillThenDraw { player, mill, draw } = special_for(&card.name) {
@@ -3873,6 +3925,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_deem_inferior".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::TapAndSkipNextUntap => (
+                "TargetSpec::Creature",
+                "spell_effect_tap_and_skip_next_untap".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::MillThenDraw { player, mill, draw } => {
                 let (target_spec, player_suffix) = match player {
                     MillPlayer::Controller => ("TargetSpec::None", "controller"),
@@ -3974,6 +4031,7 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        madness_cost: {},", madness_cost_for(&c.name)).unwrap();
         writeln!(out, "        mode2: {},", mode2_for(&c.name)).unwrap();
         writeln!(out, "        is_token: {},", c.is_token).unwrap();
+        writeln!(out, "        escape: {},", escape_for(&c.name)).unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -3991,14 +4049,15 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out).unwrap();
 
     // ---- content + executable-recipe hash ------------------------------
-    // v5 hashes every generated CardDef selector plus semantic tokens from
+    // v6 hashes every generated CardDef selector plus semantic tokens from
     // the same `Special` and structured activated-ability recipes that emit
     // executable definitions. Lorien's Draw3/search and Deep Analysis's
-    // target-player draw/ordered flashback remain bound alongside each
-    // Blast's checked color and targeting-versus-resolution filter timing.
+    // target-player draw/ordered flashback and Sleep's ordered Escape cost
+    // remain bound alongside each Blast's checked color and
+    // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v5\n");
+    let mut canon = String::from("kernel_carddb/v6\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -4066,6 +4125,9 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str("activated=");
         canon.push_str(&activated_abilities_token(&c.name));
+        canon.push('|');
+        canon.push_str("escape=");
+        canon.push_str(&escape_for(&c.name));
         canon.push('\n');
     }
     let hash = fnv1a64(canon.as_bytes());

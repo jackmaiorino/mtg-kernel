@@ -551,9 +551,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 45,
+                "full_cards": 46,
                 "partial_cards": 0,
-                "no_effect_cards": 105,
+                "no_effect_cards": 104,
                 "token_dependencies": 4,
             },
         )
@@ -564,7 +564,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Elves", "full": 17, "partial": 0, "no_effect": 43, "total": 60},
             {"deck_id": "Spy", "full": 8, "partial": 0, "no_effect": 52, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Terror", "full": 54, "partial": 0, "no_effect": 6, "total": 60},
+            {"deck_id": "Terror", "full": 56, "partial": 0, "no_effect": 4, "total": 60},
             {"deck_id": "CawGates", "full": 16, "partial": 0, "no_effect": 44, "total": 60},
             {"deck_id": "Faeries", "full": 24, "partial": 0, "no_effect": 36, "total": 60},
         ]

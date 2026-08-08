@@ -1585,8 +1585,18 @@ fn cast_spell_or_pass_native(
         let text = match state.objects.get(id).zone {
             Zone::Graveyard => {
                 let cd = &CARD_DEFS[state.objects.get(id).card_def as usize];
-                let fb = cd.flashback.as_ref().map(|f| f.cost).unwrap_or(&[]);
-                format!("Flashback {}", render_flashback_cost(fb))
+                match (cd.flashback.as_ref(), cd.escape.as_ref()) {
+                    (Some(flashback), None) => {
+                        format!("Flashback {}", render_flashback_cost(flashback.cost))
+                    }
+                    // `EscapeAbility` sets the spell card name to
+                    // "<card> with Escape"; `SpellAbility::toString()` then
+                    // exposes "Cast <card> with Escape" to ComputerPlayerRL.
+                    (None, Some(_)) => format!("Cast {name} with Escape"),
+                    _ => panic!(
+                        "graveyard cast candidate {name:?} lacks one unambiguous rendered method"
+                    ),
+                }
             }
             Zone::Exile => format!("Cast {name} using Plot"),
             _ => format!("Cast {name}"),
@@ -1686,6 +1696,12 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             card_def::CostComponent::DiscardCards(n) => format!("Discard {n} cards"),
             card_def::CostComponent::SacrificeLands(1) => "Sacrifice a land".to_string(),
             card_def::CostComponent::SacrificeLands(n) => format!("Sacrifice {n} lands"),
+            card_def::CostComponent::ExileOtherCardsFromOwnGraveyard(1) => {
+                "Exile another card from your graveyard".to_string()
+            }
+            card_def::CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
+                format!("Exile {n} other cards from your graveyard")
+            }
             card_def::CostComponent::PayLife(1) => "Pay 1 life".to_string(),
             card_def::CostComponent::PayLife(n) => format!("Pay {n} life"),
         })

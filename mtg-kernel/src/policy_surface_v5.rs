@@ -1320,7 +1320,7 @@ mod tests {
         assert_eq!(legacy_value["schema_version"], 1);
         assert_eq!(
             legacy_value["diagnostic_state_hash_algorithm"],
-            "fnv1a64-serde-json-game-state-envelope-v5"
+            "fnv1a64-serde-json-game-state-envelope-v6"
         );
         assert!(
             legacy_value.get("hash_algorithm").is_none(),
@@ -1337,7 +1337,7 @@ mod tests {
         assert_eq!(v2_value["schema_version"], 2);
         assert_eq!(
             v2_value["diagnostic_state_hash_algorithm"],
-            "fnv1a64-serde-json-game-state-envelope-v6"
+            "fnv1a64-serde-json-game-state-envelope-v7"
         );
         assert!(v2_value.get("hash_algorithm").is_none());
     }

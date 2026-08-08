@@ -42,9 +42,9 @@ pub const OBSERVATION_SCHEMA_VERSION: u32 = 4;
 pub const LEGAL_ACTION_SCHEMA_VERSION: u32 = 4;
 pub const OBSERVATION_SCHEMA_VERSION_V5: u32 = 5;
 pub const LEGAL_ACTION_SCHEMA_VERSION_V5: u32 = 5;
-pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 10;
+pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 11;
 pub const POLICY_EPISODE_SCHEMA_VERSION: u32 = 5;
-pub const MANIFEST_SCHEMA_VERSION: u32 = 8;
+pub const MANIFEST_SCHEMA_VERSION: u32 = 9;
 pub const DEFAULT_MAX_PHYSICAL_DECISIONS: u64 = 200_000;
 pub const DEFAULT_MAX_POLICY_STEPS: u64 = 25_600_000;
 pub const BURN_MIRROR_MATCHUP: &str = "burn_mirror";
@@ -502,6 +502,10 @@ pub struct PendingCastSemanticV2 {
     pub additional_cost_discarded: Option<Vec<CardStableRefV1>>,
     pub mode_chosen: Option<u8>,
     pub origin_zone: Zone,
+    /// Frozen sacrifice-only public binding. Privileged Escape graveyard
+    /// selections are never reinterpreted through this field; a versioned
+    /// policy successor must expose generic object-cost selections before an
+    /// Escape deck can be admitted to training.
     pub sacrifice_chosen: Vec<CardStableRefV1>,
     pub kicked: Option<bool>,
 }
@@ -1722,6 +1726,17 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         return Err(RlContractError(format!(
             "invalid physical decision substep {substep_index}/{substep_count}"
         )));
+    }
+    if state
+        .engine
+        .pending_cast
+        .as_ref()
+        .is_some_and(|pending| pending.source_contract.cast_method == CastMethodV4::Escape)
+    {
+        return Err(RlContractError(
+            "policy schema v5 cannot represent a staged Escape graveyard-exile prefix; a versioned object-cost successor is required"
+                .to_string(),
+        ));
     }
     // V5 wraps the complete V2 projection but does not expose V2's standalone
     // projection hash. Building V2 without hashing avoids serializing the same
@@ -5067,6 +5082,19 @@ fn pending_cast_semantic_v2(
 ) -> Result<PendingCastSemanticV2> {
     engine::validate_pending_cast(state, p)
         .map_err(|error| RlContractError(format!("invalid pending cast: {error}")))?;
+    // `sacrifice_chosen` is a frozen public binding whose name and flat
+    // feature role mean exactly "sacrificed permanents". Escape reuses the
+    // compatibility-named vector only in privileged serialized engine state.
+    // Exposing graveyard-exile picks here would silently reinterpret the
+    // existing V1 row/binding without the required public version bump. The
+    // current value encoder also does not pool legal actions, so candidate
+    // exclusion alone is not a Markov substitute; Escape remains gated from
+    // current policy-training authority until the explicit successor lands.
+    let sacrifice_chosen = if p.source_contract.cast_method == CastMethodV4::Escape {
+        Vec::new()
+    } else {
+        visible_card_refs(state, &p.sacrifice_chosen, acting_player)?
+    };
     Ok(PendingCastSemanticV2 {
         source: visible_card_ref(state, p.spell, acting_player)?,
         controller: p.controller.into(),
@@ -5079,7 +5107,7 @@ fn pending_cast_semantic_v2(
         },
         mode_chosen: p.mode_chosen,
         origin_zone: p.origin_zone,
-        sacrifice_chosen: visible_card_refs(state, &p.sacrifice_chosen, acting_player)?,
+        sacrifice_chosen,
         kicked: p.kicked,
     })
 }

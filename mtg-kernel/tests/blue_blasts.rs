@@ -381,7 +381,7 @@ fn blue_blasts_with_zero_viable_modes_are_not_offered_or_castable() {
 }
 
 #[test]
-fn blue_pending_cast_is_frozen_into_diagnostic_hash_v5() {
+fn blue_pending_cast_is_frozen_into_diagnostic_hash_v6() {
     let mut state = ready_game();
     put_spell_on_stack(&mut state, PlayerId::P1, "Lightning Bolt", false, false);
     let red_permanent = put_object(&mut state, PlayerId::P1, "Guttersnipe", Zone::Battlefield);
@@ -402,7 +402,7 @@ fn blue_pending_cast_is_frozen_into_diagnostic_hash_v5() {
     );
     assert_eq!(
         DIAGNOSTIC_STATE_HASH_ALGORITHM,
-        "fnv1a64-serde-json-game-state-envelope-v5"
+        "fnv1a64-serde-json-game-state-envelope-v6"
     );
     let json = serde_json::to_string(&state).unwrap();
     assert!(json.contains("\"target_spec\":\"RedSpellOnStack\""));
@@ -412,7 +412,7 @@ fn blue_pending_cast_is_frozen_into_diagnostic_hash_v5() {
         restored.diagnostic_state_hash(),
         state.diagnostic_state_hash()
     );
-    assert_eq!(state.diagnostic_state_hash(), 0xb531_c85b_c876_5b42);
+    assert_eq!(state.diagnostic_state_hash(), 0xf472_21ff_c00c_88e3);
 
     engine::step(&mut state, Action::ChooseSpellMode(1)).unwrap();
     let decision = engine::advance_until_decision(&mut state);

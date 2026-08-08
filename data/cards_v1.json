@@ -3197,6 +3197,7 @@
     },
     {
       "name": "Sleep of the Dead",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [

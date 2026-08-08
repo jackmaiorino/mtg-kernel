@@ -13,13 +13,13 @@ pub const STARTING_LIFE: i32 = 20;
 
 /// Exact diagnostic full-state hash contract written into privileged audit
 /// artifacts. The algorithm is FNV-1a-64 over the compact UTF-8 JSON bytes of
-/// `DiagnosticStateHashEnvelopeV5` below.
+/// `DiagnosticStateHashEnvelopeV6` below.
 ///
 /// Changing the envelope, JSON representation, or digest algorithm requires a
 /// new constant value and an audit-artifact schema bump. Policy artifacts do
 /// not contain this privileged full-state diagnostic.
-pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v5";
-pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 5;
+pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v6";
+pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
@@ -362,6 +362,7 @@ pub enum SpellCastRouteV4 {
         plotted_turn: u32,
     },
     Madness,
+    GraveyardEscape,
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -1838,36 +1839,37 @@ impl Hasher for Fnv1a64 {
 }
 
 #[derive(Serialize)]
-struct DiagnosticStateHashEnvelopeV5<'a> {
+struct DiagnosticStateHashEnvelopeV6<'a> {
     schema_version: u32,
     state: &'a GameState,
 }
 
-/// Separately typed v6 identity for environment-v2 states. The v5 constants
-/// and envelope are untouched; legacy states keep byte-identical v5 output.
+/// Separately typed v7 identity for environment-v2 states. Sleep of the Dead's
+/// untap marker changes the full serialized state for both randomness modes,
+/// so legacy advances from v5 to v6 and environment-v2 advances from v6 to v7.
 pub const DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2: &str =
-    "fnv1a64-serde-json-game-state-envelope-v6";
-pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2: u32 = 6;
+    "fnv1a64-serde-json-game-state-envelope-v7";
+pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2: u32 = 7;
 
 #[derive(Serialize)]
-struct DiagnosticStateHashEnvelopeV6<'a> {
+struct DiagnosticStateHashEnvelopeV7<'a> {
     schema_version: u32,
     state: &'a GameState,
 }
 
 fn diagnostic_state_hash_bytes(state: &GameState) -> Vec<u8> {
     match &state.randomness {
-        GameRandomnessState::Legacy(_) => serde_json::to_vec(&DiagnosticStateHashEnvelopeV5 {
+        GameRandomnessState::Legacy(_) => serde_json::to_vec(&DiagnosticStateHashEnvelopeV6 {
             schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION,
             state,
         })
         .expect("GameState diagnostic hash envelope must serialize"),
         GameRandomnessState::EnvironmentV2(_) => {
-            serde_json::to_vec(&DiagnosticStateHashEnvelopeV6 {
+            serde_json::to_vec(&DiagnosticStateHashEnvelopeV7 {
                 schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2,
                 state,
             })
-            .expect("GameState v6 diagnostic hash envelope must serialize")
+            .expect("GameState v7 diagnostic hash envelope must serialize")
         }
     }
 }
@@ -2847,14 +2849,14 @@ mod tests {
     fn v2_diagnostic_envelope_and_hash_sensitivity() {
         let base = v2_capture_state(11);
         let bytes = diagnostic_state_hash_bytes(&base);
-        assert!(bytes.starts_with(b"{\"schema_version\":6,\"state\":{"));
+        assert!(bytes.starts_with(b"{\"schema_version\":7,\"state\":{"));
         assert_eq!(
             DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2,
-            "fnv1a64-serde-json-game-state-envelope-v6"
+            "fnv1a64-serde-json-game-state-envelope-v7"
         );
         assert_eq!(
             DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2,
-            6
+            7
         );
         let text = String::from_utf8(bytes).expect("ascii envelope");
         assert!(text.contains("\"environment_randomization_v2\":"));
@@ -2904,13 +2906,13 @@ mod tests {
     fn diagnostic_state_hash_algorithm_dispatches_per_representation() {
         assert_eq!(
             legacy_capture_state().diagnostic_state_hash_algorithm(),
-            "fnv1a64-serde-json-game-state-envelope-v5",
-            "legacy states report the frozen v5 algorithm"
+            "fnv1a64-serde-json-game-state-envelope-v6",
+            "legacy states report the v6 algorithm"
         );
         assert_eq!(
             v2_capture_state(3).diagnostic_state_hash_algorithm(),
-            "fnv1a64-serde-json-game-state-envelope-v6",
-            "environment-v2 states report the v6 algorithm"
+            "fnv1a64-serde-json-game-state-envelope-v7",
+            "environment-v2 states report the v7 algorithm"
         );
     }
 
@@ -2923,13 +2925,13 @@ mod tests {
 
         assert_eq!(
             DIAGNOSTIC_STATE_HASH_ALGORITHM,
-            "fnv1a64-serde-json-game-state-envelope-v5"
+            "fnv1a64-serde-json-game-state-envelope-v6"
         );
-        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 5);
+        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 6);
         assert!(
-            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":5,\"state\":{")
+            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":6,\"state\":{")
         );
-        assert_eq!(state.diagnostic_state_hash(), 0x8650_30b6_0d41_3489);
+        assert_eq!(state.diagnostic_state_hash(), 0x493e_77f4_b594_2c10);
     }
 
     /// Draws to different players don't interact, so interleaving order

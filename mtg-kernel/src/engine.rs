@@ -510,11 +510,10 @@ pub enum CastMode {
     Alternative,
 }
 
-/// Which cost `Decision::ChooseCostTargets` is picking permanents for.
-/// One variant today (this pool's only "choose which permanents" cost
-/// shape); kept as its own type rather than inlined so a future cost kind
-/// (e.g. a generic sacrifice-a-creature cost) doesn't have to overload
-/// this one's meaning.
+/// Which interactive object-cost family `Decision::ChooseCostTargets` is
+/// currently paying. The stable enum reserves more families than the engine
+/// executes today; land sacrifice and Escape graveyard exile are the two
+/// live cast-payment variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CostKind {
     SacrificeLands,
@@ -568,20 +567,21 @@ pub struct PendingCast {
     /// `mode2`.
     pub mode_chosen: Option<u8>,
     /// Which zone this cast was announced from (Hand, Graveyard for
-    /// flashback, or Exile for Plot/Madness) -- `begin_cast` captures the
+    /// Flashback/Escape, or Exile for Plot/Madness) -- `begin_cast` captures the
     /// spell's zone *before* `move_to_stack` changes it, purely so
-    /// `abort_cast` (unreachable this increment, but kept in shape rather
-    /// than papered over) knows where to return the card if its cost turns
-    /// out to be unpayable.
+    /// `abort_cast` knows where to return the card if its cost turns out to
+    /// be unpayable or a staged payment continuation becomes impossible.
     pub origin_zone: Zone,
-    /// Which lands have been chosen so far to pay a `SacrificeLands`
-    /// sub-cost of this cast (Fireblast's alt cost, once `cast_mode`
-    /// resolves to `Alternative`; Lava Dart's flashback cost,
-    /// unconditionally) -- see `sacrifice_lands_needed`/
-    /// `Decision::ChooseCostTargets`. Always empty for a cast that doesn't
-    /// need one (`sacrifice_lands_needed` returns 0), same "just stays at
-    /// its zero value, never consulted" shape `additional_cost_discarded`
-    /// has for a card with no additional cost.
+    /// Objects chosen so far for this cast's one interactive object-cost
+    /// component. The privileged serialized compatibility name predates Escape:
+    /// Fireblast/Lava Dart store lands selected for `SacrificeLands`, while
+    /// an Escape cast stores cards selected for
+    /// `ExileOtherCardsFromOwnGraveyard`. Supported cost shapes make those
+    /// two families mutually exclusive. The current public semantic/flat
+    /// projection retains its frozen sacrifice-only meaning and deliberately
+    /// hides this vector for Escape. Escape therefore remains outside the
+    /// current policy-training authority until a versioned successor exposes
+    /// generic object-cost selections to the value-state encoder.
     pub sacrifice_chosen: Vec<ObjectId>,
     /// `None` until resolved, only meaningful for a card with `CardDef::
     /// kicker_cost` (Goblin Bushwhacker) -- pre-seeded to `Some(false)` at
@@ -781,10 +781,10 @@ pub struct CombatState {
 pub enum Decision {
     CastSpellOrPass {
         player: PlayerId,
-        /// Hand-castable spells, graveyard flashback-castable cards
-        /// (`CardDef::flashback`), and exiled Plotted cards castable for
-        /// free (`CardDef::plot_cost`, cast on a later turn); `step()`
-        /// tells them apart by the object's current zone.
+        /// Hand-castable spells, cards with one unambiguous graveyard cast
+        /// method (`CardDef::flashback` or `CardDef::escape`), and exiled
+        /// Plotted cards castable for free (`CardDef::plot_cost`, cast on a
+        /// later turn); `step()` tells them apart by zone and definition.
         castable_spells: Vec<ObjectId>,
         mana_abilities: Vec<ObjectId>,
         land_drops: Vec<ObjectId>,
@@ -808,25 +808,22 @@ pub enum Decision {
         remaining: u8,
         legal_targets: Vec<Target>,
     },
-    /// A cost component whose payment requires choosing WHICH permanents
-    /// pay it, not merely how many -- Fireblast's alt cost (sacrifice 2
-    /// Mountains, `CostComponent::SacrificeLands`) and Lava Dart's
-    /// flashback cost (sacrifice 1 Mountain, `CostComponent::
-    /// SacrificeLands`), this increment. Previously auto-solved silently
+    /// A cost component whose payment requires choosing WHICH objects pay
+    /// it, not merely how many -- permanent sacrifices and Escape's choice
+    /// of other graveyard cards. Fireblast's and Lava Dart's sacrifice
+    /// choices were previously auto-solved silently
     /// by `sacrifice_lowest_id_lands`'s tapped-status heuristic with no
     /// `Decision` at all; the reference logs a real `SELECT_TARGETS`
     /// record for this pick (increment 11 characterization), so it's a
-    /// real decision here too. Asked one permanent at a time (`remaining`
+    /// real decision here too. Asked one object at a time (`remaining`
     /// counts down, `candidates` excludes whatever was already picked for
     /// this same cost) -- same shape as `ChooseTargets`'s `remaining`/
-    /// `legal_targets`. Auto-resolved (no `Decision` returned, every
-    /// remaining candidate silently sacrificed) whenever `candidates.len()
-    /// <= remaining` -- no real choice left -- matching every other "don't
-    /// ask when there's one legal answer" shortcut in this module
-    /// (`ChooseCastMode`, `Discard`).
+    /// `legal_targets`. A single pick auto-resolves only when its current
+    /// candidate pool has at most one object; an aggregate-forced multi-pick
+    /// still exposes every step whose current pool contains two or more.
     ChooseCostTargets {
         player: PlayerId,
-        /// The spell (cast or flashback-cast) this cost belongs to.
+        /// The spell (normal, Flashback, or Escape cast) this cost belongs to.
         source: ObjectId,
         cost_kind: CostKind,
         remaining: u8,
@@ -999,8 +996,8 @@ pub enum Action {
     ActivateAbility(ObjectId, u8),
     Pass,
     ChooseTarget(Target),
-    /// Answers one `Decision::ChooseCostTargets` pick (one permanent at a
-    /// time -- see that decision's doc).
+    /// Answers one `Decision::ChooseCostTargets` pick (one object at a time
+    /// -- see that decision's doc).
     ChooseCostTarget(ObjectId),
     ChooseCastMode(CastMode),
     /// Answers a `Decision::ChooseKicker`: `true` pays Kicker on top of the
@@ -1288,6 +1285,7 @@ fn validate_physical_spell_cast_origin(
                 && source.owner == item.controller
                 && cast_method == CastMethodV4::Flashback
                 && def.flashback.is_some()
+                && def.escape.is_none()
         }
         SpellCastRouteV4::ExilePermission {
             holder,
@@ -1324,6 +1322,13 @@ fn validate_physical_spell_cast_origin(
                 && source.owner == item.controller
                 && cast_method == CastMethodV4::Madness
                 && def.madness_cost.is_some()
+        }
+        SpellCastRouteV4::GraveyardEscape => {
+            origin.origin_zone == Zone::Graveyard
+                && source.owner == item.controller
+                && cast_method == CastMethodV4::Escape
+                && def.escape.is_some()
+                && def.flashback.is_none()
         }
     };
     if !route_supports_method {
@@ -1408,6 +1413,7 @@ fn validate_spell_source_contract_fields(
         CastMethodV4::Alternative if def.alt_cost.is_some() => {}
         CastMethodV4::Flashback if def.flashback.is_some() => {}
         CastMethodV4::Madness if def.madness_cost.is_some() => {}
+        CastMethodV4::Escape if def.escape.is_some() => {}
         CastMethodV4::Plotted
             if def.plot_cost.is_some()
                 && source
@@ -1416,10 +1422,11 @@ fn validate_spell_source_contract_fields(
         CastMethodV4::Alternative
         | CastMethodV4::Flashback
         | CastMethodV4::Madness
-        | CastMethodV4::Plotted => {
+        | CastMethodV4::Plotted
+        | CastMethodV4::Escape => {
             return Err("spell cast method is unsupported by its source definition".to_string())
         }
-        CastMethodV4::Escape | CastMethodV4::Bestow | CastMethodV4::Omen => {
+        CastMethodV4::Bestow | CastMethodV4::Omen => {
             return Err("spell stack item uses an unsupported cast method".to_string())
         }
     }
@@ -1707,6 +1714,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut saw_source_changing_component = false;
     let mut discard_count = 0;
     let mut sacrifice_lands_count = 0;
+    let mut graveyard_exile_count = 0;
     let mut pay_life_count = 0;
     let mut tap_count = 0;
     let mut source_departure_count = 0;
@@ -1742,6 +1750,13 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 sacrifice_lands_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::ExileOtherCardsFromOwnGraveyard(amount) => {
+                if *amount == 0 {
+                    return false;
+                }
+                graveyard_exile_count += 1;
+                saw_source_changing_component = true;
+            }
             CostComponent::PayLife(amount) => {
                 if *amount == 0 {
                     return false;
@@ -1752,7 +1767,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     }
 
     if discard_count > 1
-        || sacrifice_lands_count > 1
+        || sacrifice_lands_count + graveyard_exile_count > 1
         || pay_life_count > 1
         || tap_count > 1
         || source_departure_count > 1
@@ -1769,13 +1784,18 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
 }
 
 /// Activated abilities do not yet have the `ChooseCostTargets` staging used
-/// by casts, so a land-sacrifice component must fail closed in this context
-/// even though the shared payer supports it for flashback/alternative costs.
+/// by casts, so any interactive object-selection component must fail closed
+/// in this context even though the shared payer supports the currently
+/// admitted cast-cost families.
 fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
     component_payment_shape_supported(components)
-        && !components
-            .iter()
-            .any(|component| matches!(component, CostComponent::SacrificeLands(_)))
+        && !components.iter().any(|component| {
+            matches!(
+                component,
+                CostComponent::SacrificeLands(_)
+                    | CostComponent::ExileOtherCardsFromOwnGraveyard(_)
+            )
+        })
 }
 
 fn can_pay_activation_components(
@@ -1853,6 +1873,10 @@ fn can_pay_components(
                 hand_other >= *n as usize
             }
             CostComponent::SacrificeLands(n) => count_controlled_lands(player, state) >= *n as u32,
+            CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
+                checked_graveyard_exile_candidates(player, source, state, &[])
+                    .is_some_and(|candidates| candidates.len() >= usize::from(*n))
+            }
             CostComponent::Mana(cost) => mana::can_pay(cost, 0, player, state).is_some(),
             CostComponent::PayLife(amount) => {
                 state.players[player.index()].life >= i32::from(*amount)
@@ -1867,21 +1891,19 @@ fn can_pay_components(
 
 /// Pays every component of `components` except `DiscardCards` (already
 /// paid via the `pending_discard` staging by the time this runs -- see
-/// `EngineState::pending_discard`'s doc). `sacrifice_chosen` is the
-/// already-decided answer to any `CostComponent::SacrificeLands(n)` in
-/// `components` (`PendingCast::sacrifice_chosen`, staged by
-/// `Decision::ChooseCostTargets` before this ever runs -- see
-/// `sacrifice_lands_needed`'s doc); pass `&[]` for a `components` list
-/// that's statically known never to contain `SacrificeLands` (every
-/// activated-ability cost and every `additional_cost` in this pool), where
-/// the `debug_assert_eq!` below is the fail-loud guard against that
-/// assumption silently going stale.
+/// `EngineState::pending_discard`'s doc). `object_cost_chosen` is the
+/// already-decided answer to the one supported interactive object-cost
+/// component (`SacrificeLands` or `ExileOtherCardsFromOwnGraveyard`) in
+/// `components`. It is staged in `PendingCast::sacrifice_chosen` by
+/// `Decision::ChooseCostTargets`; the field name is a frozen compatibility
+/// alias. Pass `&[]` for a component list statically known not to contain
+/// either family.
 fn pay_cost_components(
     state: &mut GameState,
     player: PlayerId,
     source: ObjectId,
     components: &[CostComponent],
-    sacrifice_chosen: &[ObjectId],
+    object_cost_chosen: &[ObjectId],
 ) -> bool {
     if !component_payment_shape_supported(components) {
         return false;
@@ -1896,15 +1918,19 @@ fn pay_cost_components(
         _ => None,
     });
     if let Some(needed) = sacrifice_needed {
-        let duplicate = sacrifice_chosen
+        let duplicate = object_cost_chosen
             .iter()
             .enumerate()
-            .any(|(index, id)| sacrifice_chosen[..index].contains(id));
-        let invalid_land = sacrifice_chosen.iter().any(|id| {
+            .any(|(index, id)| object_cost_chosen[..index].contains(id));
+        let invalid_land = object_cost_chosen.iter().any(|id| {
             !state.players[player.index()].battlefield.contains(id)
-                || !card_def::CARD_DEFS[state.objects.get(*id).card_def as usize].is_land
+                || state.objects.try_get(*id).is_none_or(|object| {
+                    object.controller != player
+                        || object.zone != Zone::Battlefield
+                        || !card_def::CARD_DEFS[object.card_def as usize].is_land
+                })
         });
-        let aliases_source_departure = sacrifice_chosen.contains(&source)
+        let aliases_source_departure = object_cost_chosen.contains(&source)
             && components.iter().any(|component| {
                 matches!(
                     component,
@@ -1913,10 +1939,27 @@ fn pay_cost_components(
                         | CostComponent::DiscardSelf
                 )
             });
-        if sacrifice_chosen.len() != needed || duplicate || invalid_land || aliases_source_departure
+        if object_cost_chosen.len() != needed
+            || duplicate
+            || invalid_land
+            || aliases_source_departure
         {
             return false;
         }
+    }
+    let graveyard_exile_needed = components.iter().find_map(|component| match component {
+        CostComponent::ExileOtherCardsFromOwnGraveyard(amount) => Some(*amount as usize),
+        _ => None,
+    });
+    if let Some(needed) = graveyard_exile_needed {
+        if object_cost_chosen.len() != needed
+            || checked_graveyard_exile_candidates(player, source, state, object_cost_chosen)
+                .is_none()
+        {
+            return false;
+        }
+    } else if sacrifice_needed.is_none() && !object_cost_chosen.is_empty() {
+        return false;
     }
 
     // Derive the sole mana plan before applying any state-changing component.
@@ -1957,11 +2000,19 @@ fn pay_cost_components(
             ),
             CostComponent::SacrificeLands(n) => {
                 debug_assert_eq!(
-                    sacrifice_chosen.len(),
+                    object_cost_chosen.len(),
                     *n as usize,
                     "sacrifice_chosen must be exactly this component's already-decided picks"
                 );
-                commit_sacrifice(state, sacrifice_chosen);
+                commit_sacrifice(state, object_cost_chosen);
+            }
+            CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
+                debug_assert_eq!(
+                    object_cost_chosen.len(),
+                    *n as usize,
+                    "sacrifice_chosen compatibility field must contain the exact graveyard picks"
+                );
+                commit_graveyard_exile(state, object_cost_chosen);
             }
             CostComponent::Mana(_) => pay_plan(
                 state,
@@ -1987,6 +2038,18 @@ fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
     for &id in chosen {
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
     }
+}
+
+/// Exiles the exact graveyard cards already selected for an escape cost.
+/// All candidates and the mana plan are validated before this helper runs,
+/// so no failed cast can leave behind a partially paid graveyard cost.
+fn commit_graveyard_exile(state: &mut GameState, chosen: &[ObjectId]) {
+    let events = chosen
+        .iter()
+        .copied()
+        .map(|id| ProposedEvent::zone_change(id, Zone::Exile))
+        .collect();
+    event::propose_and_commit_batch(state, events);
 }
 
 /// How many lands (0 if none) the cast currently staged in `pending`
@@ -2042,6 +2105,68 @@ fn sacrificeable_lands(
         .collect()
 }
 
+fn graveyard_exile_cards_needed(pending: &PendingCast, def: &card_def::CardDef) -> u8 {
+    if pending.source_contract.cast_method != CastMethodV4::Escape {
+        return 0;
+    }
+    def.escape
+        .as_ref()
+        .and_then(|escape| {
+            escape.cost.iter().find_map(|component| match component {
+                CostComponent::ExileOtherCardsFromOwnGraveyard(amount) => Some(*amount),
+                _ => None,
+            })
+        })
+        .unwrap_or(0)
+}
+
+/// Ordered live candidates for the next Escape graveyard-cost pick. The
+/// spell itself is excluded explicitly even though 601.2a normally moved it
+/// to the stack before this helper runs.
+fn checked_graveyard_exile_candidates(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    already_chosen: &[ObjectId],
+) -> Option<Vec<ObjectId>> {
+    let graveyard = &state.players[player.index()].graveyard;
+    let mut indexed = Vec::with_capacity(graveyard.len());
+    for &id in graveyard {
+        let object = state.objects.try_get(id)?;
+        if object.owner != player
+            || object.zone != Zone::Graveyard
+            || object.v4.is_token
+            || indexed.contains(&id)
+        {
+            return None;
+        }
+        indexed.push(id);
+    }
+    // Ceased tokens remain in the arena with their last physical zone marker
+    // but are removed from every live zone index. Require reverse membership
+    // only for non-token cards, and reject an indexed token outright: normal
+    // SBA-clean decision states cannot expose one as an Escape candidate.
+    if state.objects.iter().any(|(id, object)| {
+        object.owner == player
+            && object.zone == Zone::Graveyard
+            && !object.v4.is_token
+            && !indexed.contains(&id)
+    }) {
+        return None;
+    }
+    if already_chosen.iter().enumerate().any(|(index, id)| {
+        *id == source || !indexed.contains(id) || already_chosen[..index].contains(id)
+    }) {
+        return None;
+    }
+    Some(
+        indexed
+            .into_iter()
+            .filter(|id| *id != source && !already_chosen.contains(id))
+            .collect(),
+    )
+}
+
 /// Derives the printed-cost branch used by both cast offers and final
 /// payment. Current consumers (Cryptic Serpent and Deem Inferior, with
 /// Tolarian Terror planned) have no generic additional/alternative cost, so
@@ -2082,10 +2207,26 @@ fn effective_normal_cast_cost(
     cost
 }
 
-/// Whether `id` (from hand or graveyard) is castable right now, given
-/// sorcery-speed timing and every cost path (`is_flashback` selects
-/// between the normal cost/alt-cost pair and the flashback cost).
-fn is_castable_now(player: PlayerId, id: ObjectId, is_flashback: bool, state: &GameState) -> bool {
+/// Returns the one graveyard cast method this definition can expose through
+/// the current object-id-only `Action::CastSpell` surface. A future card with
+/// both Flashback and Escape is deliberately omitted until the action schema
+/// can carry an explicit method choice.
+fn unambiguous_graveyard_cast_method(def: &card_def::CardDef) -> Option<CastMethodV4> {
+    match (def.flashback.is_some(), def.escape.is_some()) {
+        (true, false) => Some(CastMethodV4::Flashback),
+        (false, true) => Some(CastMethodV4::Escape),
+        (false, false) | (true, true) => None,
+    }
+}
+
+/// Whether `id` is castable right now through the requested definition-owned
+/// route, including timing, targets, and the complete cost shape.
+fn is_castable_now(
+    player: PlayerId,
+    id: ObjectId,
+    cast_method: CastMethodV4,
+    state: &GameState,
+) -> bool {
     let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
     if !def.is_castable() {
         return false;
@@ -2116,41 +2257,54 @@ fn is_castable_now(player: PlayerId, id: ObjectId, is_flashback: bool, state: &G
         return false;
     }
 
-    if is_flashback {
-        let fb = def
+    match cast_method {
+        CastMethodV4::Flashback => def
             .flashback
             .as_ref()
-            .expect("caller only passes is_flashback=true for cards with a flashback cost");
-        can_pay_components(fb.cost, player, id, state)
-    } else {
-        let normal_cost = effective_normal_cast_cost(def, player, state);
-        let normal_ok = mana::can_pay(&normal_cost, 0, player, state).is_some();
-        let alt_ok = def
-            .alt_cost
-            .map(|c| can_pay_components(c, player, id, state))
-            .unwrap_or(false);
-        if !normal_ok && !alt_ok {
-            return false;
-        }
-        if let Some(add) = def.additional_cost {
-            if !can_pay_components(add, player, id, state) {
+            .is_some_and(|flashback| can_pay_components(flashback.cost, player, id, state)),
+        CastMethodV4::Escape => def.escape.as_ref().is_some_and(|escape| {
+            def.additional_cost.is_none()
+                && def.kicker_cost.is_none()
+                && def.generic_cost_reduction.is_none()
+                && can_pay_components(escape.cost, player, id, state)
+        }),
+        CastMethodV4::Normal => {
+            let normal_cost = effective_normal_cast_cost(def, player, state);
+            let normal_ok = mana::can_pay(&normal_cost, 0, player, state).is_some();
+            let alt_ok = def
+                .alt_cost
+                .map(|c| can_pay_components(c, player, id, state))
+                .unwrap_or(false);
+            if !normal_ok && !alt_ok {
                 return false;
             }
+            if let Some(add) = def.additional_cost {
+                if !can_pay_components(add, player, id, state) {
+                    return false;
+                }
+            }
+            true
         }
-        true
+        CastMethodV4::Alternative
+        | CastMethodV4::Madness
+        | CastMethodV4::Plotted
+        | CastMethodV4::Bestow
+        | CastMethodV4::Omen => false,
     }
 }
 
 fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     let mut out = Vec::new();
     for &id in &state.players[player.index()].hand {
-        if is_castable_now(player, id, false, state) {
+        if is_castable_now(player, id, CastMethodV4::Normal, state) {
             out.push(id);
         }
     }
     for &id in &state.players[player.index()].graveyard {
         let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-        if def.flashback.is_some() && is_castable_now(player, id, true, state) {
+        if unambiguous_graveyard_cast_method(def)
+            .is_some_and(|method| is_castable_now(player, id, method, state))
+        {
             out.push(id);
         }
     }
@@ -2168,7 +2322,9 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         // -- no separate "impulse-castable" legality system), the `Play`
         // half through `land_drop_candidates` instead.
         if let Some(perm) = active_permission_for(player, id, state) {
-            if perm.play_or_cast == PlayOrCast::Cast && is_castable_now(player, id, false, state) {
+            if perm.play_or_cast == PlayOrCast::Cast
+                && is_castable_now(player, id, CastMethodV4::Normal, state)
+            {
                 out.push(id);
             }
         }
@@ -2710,11 +2866,14 @@ fn remaining_cast_payment_is_payable(
         CastMethodV4::Flashback => def.flashback.as_ref().is_some_and(|flashback| {
             can_pay_components(flashback.cost, pending.controller, pending.spell, state)
         }),
+        CastMethodV4::Escape => def.escape.as_ref().is_some_and(|escape| {
+            can_pay_components(escape.cost, pending.controller, pending.spell, state)
+        }),
         CastMethodV4::Madness => def
             .madness_cost
             .is_some_and(|cost| mana::can_pay(&cost, 0, pending.controller, state).is_some()),
         CastMethodV4::Plotted => true,
-        CastMethodV4::Escape | CastMethodV4::Bestow | CastMethodV4::Omen => false,
+        CastMethodV4::Bestow | CastMethodV4::Omen => false,
     };
     base_payable
         && def.additional_cost.is_none_or(|components| {
@@ -3408,9 +3567,23 @@ pub(crate) fn validate_pending_cast(
             if pending.origin_zone != Zone::Graveyard
                 || source.owner != pending.controller
                 || def.flashback.is_none()
+                || def.escape.is_some()
                 || pending.cast_mode != Some(CastMode::Normal)
             {
                 return Err("flashback cast has a noncanonical origin or definition".to_string());
+            }
+        }
+        CastMethodV4::Escape => {
+            if pending.origin_zone != Zone::Graveyard
+                || source.owner != pending.controller
+                || def.escape.is_none()
+                || def.flashback.is_some()
+                || def.additional_cost.is_some()
+                || def.kicker_cost.is_some()
+                || def.generic_cost_reduction.is_some()
+                || pending.cast_mode != Some(CastMode::Normal)
+            {
+                return Err("escape cast has a noncanonical origin or definition".to_string());
             }
         }
         CastMethodV4::Plotted => {
@@ -3434,7 +3607,7 @@ pub(crate) fn validate_pending_cast(
                 return Err("Madness cast has a noncanonical origin or definition".to_string());
             }
         }
-        CastMethodV4::Escape | CastMethodV4::Bestow | CastMethodV4::Omen => {
+        CastMethodV4::Bestow | CastMethodV4::Omen => {
             return Err("pending cast uses an unsupported cast method".to_string())
         }
     }
@@ -3491,29 +3664,54 @@ pub(crate) fn validate_pending_cast(
     }
 
     let sacrifice_needed = sacrifice_lands_needed(pending, def);
-    if pending.sacrifice_chosen.len() > usize::from(sacrifice_needed) {
-        return Err("pending cast chose too many sacrifice-cost lands".to_string());
+    let graveyard_exile_needed = graveyard_exile_cards_needed(pending, def);
+    if sacrifice_needed != 0 && graveyard_exile_needed != 0 {
+        return Err("pending cast has multiple interactive object-cost families".to_string());
     }
-    let mut sacrifice_dedup = pending.sacrifice_chosen.clone();
-    sacrifice_dedup.sort_unstable();
-    sacrifice_dedup.dedup();
-    if sacrifice_dedup.len() != pending.sacrifice_chosen.len()
-        || pending.sacrifice_chosen.iter().any(|&land| {
-            land == pending.spell
-                || !state.players[pending.controller.index()]
-                    .battlefield
-                    .contains(&land)
-                || !card_def::CARD_DEFS[state.objects.get(land).card_def as usize].is_land
-        })
-    {
-        return Err("pending cast sacrifice prefix is not unique controlled lands".to_string());
+    let interactive_object_cost_needed = sacrifice_needed.max(graveyard_exile_needed);
+    if pending.sacrifice_chosen.len() > usize::from(interactive_object_cost_needed) {
+        return Err("pending cast chose too many interactive cost objects".to_string());
+    }
+    if sacrifice_needed != 0 {
+        let mut chosen = pending.sacrifice_chosen.clone();
+        chosen.sort_unstable();
+        chosen.dedup();
+        if chosen.len() != pending.sacrifice_chosen.len()
+            || pending.sacrifice_chosen.iter().any(|&land| {
+                land == pending.spell
+                    || !state.players[pending.controller.index()]
+                        .battlefield
+                        .contains(&land)
+                    || state
+                        .objects
+                        .try_get(land)
+                        .is_none_or(|object| !card_def::CARD_DEFS[object.card_def as usize].is_land)
+            })
+        {
+            return Err("pending cast sacrifice prefix is not unique controlled lands".to_string());
+        }
+    } else if graveyard_exile_needed != 0 {
+        if checked_graveyard_exile_candidates(
+            pending.controller,
+            pending.spell,
+            state,
+            &pending.sacrifice_chosen,
+        )
+        .is_none()
+        {
+            return Err(
+                "pending cast graveyard-exile prefix or graveyard index is malformed".to_string(),
+            );
+        }
+    } else if !pending.sacrifice_chosen.is_empty() {
+        return Err("pending cast without an object cost carries chosen objects".to_string());
     }
     if !pending.sacrifice_chosen.is_empty()
         && (pending.cast_mode.is_none()
             || pending.targets_chosen.len() != required_targets
             || pending.kicked.is_none())
     {
-        return Err("pending cast chose sacrifice costs before prior stages completed".to_string());
+        return Err("pending cast chose object costs before prior stages completed".to_string());
     }
 
     let interactive_discard = def.additional_cost.and_then(discard_count_in);
@@ -3569,10 +3767,10 @@ pub(crate) fn validate_pending_cast(
     {
         return Err("pending cast advanced past an unresolved cast-mode choice".to_string());
     }
-    if pending.sacrifice_chosen.len() < usize::from(sacrifice_needed)
+    if pending.sacrifice_chosen.len() < usize::from(interactive_object_cost_needed)
         && (!additional_is_at_seed || state.engine.pending_discard.is_some())
     {
-        return Err("pending cast advanced past an incomplete sacrifice cost".to_string());
+        return Err("pending cast advanced past an incomplete object cost".to_string());
     }
     match (
         def.additional_cost,
@@ -3622,7 +3820,7 @@ pub(crate) fn validate_pending_cast(
             || pending.targets_chosen.len() != required_targets
             || pending.cast_mode.is_none()
             || pending.kicked.is_none()
-            || pending.sacrifice_chosen.len() != usize::from(sacrifice_needed)
+            || pending.sacrifice_chosen.len() != usize::from(interactive_object_cost_needed)
         {
             return Err("pending cast discard binding or stage changed".to_string());
         }
@@ -3815,6 +4013,45 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             player: pending.controller,
             source: pending.spell,
             cost_kind: CostKind::SacrificeLands,
+            remaining,
+            candidates,
+        });
+    }
+
+    let graveyard_exile_needed = graveyard_exile_cards_needed(&pending, def);
+    if (pending.sacrifice_chosen.len() as u8) < graveyard_exile_needed {
+        let Some(candidates) = checked_graveyard_exile_candidates(
+            pending.controller,
+            pending.spell,
+            state,
+            &pending.sacrifice_chosen,
+        ) else {
+            let cast_method = finalized_cast_method(&pending, staged_method);
+            let pending = state.engine.pending_cast.take().unwrap();
+            abort_cast(state, pending, cast_method);
+            return None;
+        };
+        let remaining = graveyard_exile_needed - pending.sacrifice_chosen.len() as u8;
+        if candidates.len() < usize::from(remaining) {
+            let cast_method = finalized_cast_method(&pending, staged_method);
+            let pending = state.engine.pending_cast.take().unwrap();
+            abort_cast(state, pending, cast_method);
+            return None;
+        }
+        if candidates.len() <= 1 {
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .sacrifice_chosen
+                .extend(candidates);
+            return drain_pending_cast_or_decide(state);
+        }
+        return Some(Decision::ChooseCostTargets {
+            player: pending.controller,
+            source: pending.spell,
+            cost_kind: CostKind::ExileFromGraveyard,
             remaining,
             candidates,
         });
@@ -5212,6 +5449,9 @@ fn pending_cast_action_stage(
     if pending.sacrifice_chosen.len() < usize::from(sacrifice_lands_needed(pending, def)) {
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
+    if pending.sacrifice_chosen.len() < usize::from(graveyard_exile_cards_needed(pending, def)) {
+        return Ok(PendingCastActionStage::ChooseCostTarget);
+    }
     Ok(PendingCastActionStage::AwaitEngineAdvance)
 }
 
@@ -5599,11 +5839,10 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
 }
 
 /// Answers one `Decision::ChooseCostTargets` pick -- see that decision's
-/// doc. Two pending shapes stage this: `PendingCast` (Fireblast's alt cost,
-/// Lava Dart's flashback cost) and `PendingOptionalCostSacrifice` (Highway
-/// Robbery's `SacrificeLand` optional cost); no activated ability in this
-/// pool has a `SacrificeLands` cost component, unlike `ChooseTarget` which
-/// also answers `PendingActivation`'s targeting.
+/// doc. `PendingCast` stages permanent sacrifices and Escape graveyard
+/// exiles; `PendingOptionalCostSacrifice` stages Highway Robbery's
+/// `SacrificeLand` choice. No activated ability in this pool has an
+/// interactive object-selection cost component.
 fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), String> {
     if let Some(pending) = state.engine.pending_cast.clone() {
         validate_pending_cast(state, &pending)?;
@@ -5651,6 +5890,58 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .push(id);
             return Ok(());
         }
+        let graveyard_exile_needed = graveyard_exile_cards_needed(&pending, def);
+        if (pending.sacrifice_chosen.len() as u8) < graveyard_exile_needed {
+            let active_target_spec = match pending.mode_chosen {
+                Some(0) => def.target_spec,
+                Some(1) => {
+                    def.mode2
+                        .as_ref()
+                        .ok_or("pending cast selected a nonexistent second mode")?
+                        .target_spec
+                }
+                Some(_) => return Err("pending cast selected an unknown spell mode".to_string()),
+                None => {
+                    return Err(
+                        "cast graveyard-exile target chosen before spell mode completed"
+                            .to_string(),
+                    )
+                }
+            };
+            if pending.kicked.is_none()
+                || pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
+                || pending.cast_mode.is_none()
+            {
+                return Err(
+                    "cast graveyard-exile target chosen before prior cast stages completed"
+                        .to_string(),
+                );
+            }
+            let candidates = checked_graveyard_exile_candidates(
+                pending.controller,
+                pending.spell,
+                state,
+                &pending.sacrifice_chosen,
+            )
+            .ok_or("escape graveyard index or chosen prefix is malformed")?;
+            let remaining = graveyard_exile_needed - pending.sacrifice_chosen.len() as u8;
+            if candidates.len() < usize::from(remaining) {
+                return Err("cast graveyard-exile cost can no longer be completed".to_string());
+            }
+            if !candidates.contains(&id) {
+                return Err(format!(
+                    "{id} is not a legal graveyard-exile cost candidate"
+                ));
+            }
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .sacrifice_chosen
+                .push(id);
+            return Ok(());
+        }
     }
     if let Some(pending) = state.engine.pending_optional_cost_sacrifice.as_ref() {
         if (pending.chosen.len() as u8) < pending.remaining {
@@ -5672,7 +5963,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
             return Ok(());
         }
     }
-    Err("no sacrifice-cost-target decision is pending".to_string())
+    Err("no cost-target decision is pending".to_string())
 }
 
 fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<(), String> {
@@ -6377,7 +6668,7 @@ fn plot_spell(state: &mut GameState, player: PlayerId, id: ObjectId) {
 }
 
 /// 601.2a: announcing a cast moves the spell from hand (or graveyard, for a
-/// flashback cast) onto the stack immediately -- *before* modes/targets are
+/// Flashback/Escape cast) onto the stack immediately -- *before* modes/targets are
 /// chosen (601.2b/601.2c) or costs are paid (601.2f-h), which is why
 /// `PendingCast`'s later stages (see `drain_pending_cast_or_decide`) mutate
 /// the `StackItem` this pushes in place rather than building one from
@@ -6393,8 +6684,8 @@ fn begin_cast(state: &mut GameState, player: PlayerId, spell_id: ObjectId) {
 /// (moved there by `apply_discard`'s Madness interception), and its exact
 /// definition-owned Madness cost is derived later from this method. `None` covers every
 /// ordinary `Action::CastSpell`, where the cost (if overridden at all) is
-/// inferred from the spell's zone instead (`Cost::zero()` for a Plotted
-/// card cast from exile).
+/// inferred from the spell's zone and definition instead (Flashback or
+/// Escape from the graveyard; `Cost::zero()` for a Plotted card from exile).
 fn begin_cast_ex(
     state: &mut GameState,
     player: PlayerId,
@@ -6409,7 +6700,6 @@ fn begin_cast_ex(
         forced_cast_method,
         None | Some(CastMethodV4::Madness)
     ));
-    let is_flashback = forced_cast_method.is_none() && origin_zone == Zone::Graveyard;
     // A card sitting in Exile isn't necessarily Plotted any more: an
     // impulse-draw effect (`effect::EffectOp::ImpulseDraw`) also exiles
     // cards that must still be cast for their *real* mana cost, not for
@@ -6425,15 +6715,21 @@ fn begin_cast_ex(
         && def.plot_cost.is_some()
         && plotted_turn.is_some_and(|turn| turn < state.turn);
     let target_spec = def.target_spec;
-    let cast_method = forced_cast_method.unwrap_or(if is_flashback {
-        CastMethodV4::Flashback
-    } else if is_plotted {
-        CastMethodV4::Plotted
-    } else {
-        CastMethodV4::Normal
+    let cast_method = forced_cast_method.unwrap_or_else(|| {
+        if origin_zone == Zone::Graveyard {
+            unambiguous_graveyard_cast_method(def).expect(
+                "a graveyard CastSpell action was offered through exactly one supported method",
+            )
+        } else if is_plotted {
+            CastMethodV4::Plotted
+        } else {
+            CastMethodV4::Normal
+        }
     });
+    let is_flashback = cast_method == CastMethodV4::Flashback;
     let cast_route = match cast_method {
         CastMethodV4::Flashback => SpellCastRouteV4::GraveyardFlashback,
+        CastMethodV4::Escape => SpellCastRouteV4::GraveyardEscape,
         CastMethodV4::Plotted => SpellCastRouteV4::Plotted {
             plotted_turn: plotted_turn
                 .expect("a Plotted cast was derived from an exact Plot marker"),
@@ -6588,6 +6884,23 @@ fn finalize_owned_cast(
 ) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let mut was_kicked = false;
+    // Escape choices are intentionally absent from the frozen public
+    // sacrifice feature. Canonicalize the selected set by the controller's
+    // graveyard-vector order before it can affect payment events or immutable
+    // stack provenance, so two public-equivalent pick orders have identical
+    // future behavior. Other object costs preserve their established order.
+    let object_cost_chosen = if cast_method == CastMethodV4::Escape {
+        let ordered: Vec<_> = state.players[pending.controller.index()]
+            .graveyard
+            .iter()
+            .copied()
+            .filter(|object| pending.sacrifice_chosen.contains(object))
+            .collect();
+        debug_assert_eq!(ordered.len(), pending.sacrifice_chosen.len());
+        ordered
+    } else {
+        pending.sacrifice_chosen.clone()
+    };
 
     match cast_method {
         CastMethodV4::Plotted => {}
@@ -6611,7 +6924,23 @@ fn finalize_owned_cast(
                 pending.controller,
                 pending.spell,
                 fb.cost,
-                &pending.sacrifice_chosen,
+                &object_cost_chosen,
+            ) {
+                abort_cast(state, pending, cast_method);
+                return Ok(());
+            }
+        }
+        CastMethodV4::Escape => {
+            let escape = def
+                .escape
+                .as_ref()
+                .expect("validated Escape cast has a definition-owned cost");
+            if !pay_cost_components(
+                state,
+                pending.controller,
+                pending.spell,
+                escape.cost,
+                &object_cost_chosen,
             ) {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
@@ -6644,13 +6973,13 @@ fn finalize_owned_cast(
                 pending.controller,
                 pending.spell,
                 alt,
-                &pending.sacrifice_chosen,
+                &object_cost_chosen,
             ) {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
             }
         }
-        CastMethodV4::Escape | CastMethodV4::Bestow | CastMethodV4::Omen => {
+        CastMethodV4::Bestow | CastMethodV4::Omen => {
             unreachable!("validate_pending_cast rejects unsupported cast methods")
         }
     }
@@ -6661,7 +6990,7 @@ fn finalize_owned_cast(
         }
     }
 
-    let mut paid_cost_objects = pending.sacrifice_chosen.clone();
+    let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
     // Capture after sacrifice/discard zone changes have committed. These refs
     // describe the payment-time incarnation and visibility forever; later
@@ -7119,6 +7448,10 @@ mod tests {
             CostComponent::PayLife(3),
         ]));
         assert!(component_payment_shape_supported(&[
+            CostComponent::Mana(blue),
+            CostComponent::ExileOtherCardsFromOwnGraveyard(3),
+        ]));
+        assert!(component_payment_shape_supported(&[
             CostComponent::Mana(Cost {
                 pips: &[],
                 generic: 1,
@@ -7149,9 +7482,45 @@ mod tests {
             CostComponent::PayLife(2),
             CostComponent::PayLife(1),
         ]));
+        assert!(!component_payment_shape_supported(&[
+            CostComponent::ExileOtherCardsFromOwnGraveyard(0),
+        ]));
+        assert!(!component_payment_shape_supported(&[
+            CostComponent::SacrificeLands(1),
+            CostComponent::ExileOtherCardsFromOwnGraveyard(3),
+        ]));
         assert!(!activation_payment_shape_supported(&[
             CostComponent::SacrificeLands(1),
         ]));
+    }
+
+    #[test]
+    fn escape_component_payment_preflights_mana_before_batch_exile() {
+        let mut state = ready_game_in_main1(0);
+        let source = put_in_graveyard(&mut state, PlayerId::P0, "Sleep of the Dead");
+        let chosen = [
+            put_in_graveyard(&mut state, PlayerId::P0, "Lightning Bolt"),
+            put_in_graveyard(&mut state, PlayerId::P0, "Fireblast"),
+            put_in_graveyard(&mut state, PlayerId::P0, "Counterspell"),
+        ];
+        let components = [
+            CostComponent::Mana(Cost {
+                pips: &[mana::Pip::Colored(ManaColor::U)],
+                generic: 2,
+                x_count: 0,
+            }),
+            CostComponent::ExileOtherCardsFromOwnGraveyard(3),
+        ];
+        let before = state.clone();
+
+        assert!(!pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &components,
+            &chosen,
+        ));
+        assert_eq!(state, before, "failed payment must be exactly nonmutating");
     }
 
     #[test]
@@ -8016,10 +8385,11 @@ mod tests {
                 Some(state.turn.saturating_sub(1)),
             ),
             CastMethodV4::Madness => (Zone::Exile, SpellCastRouteV4::Madness, None),
+            CastMethodV4::Escape => (Zone::Graveyard, SpellCastRouteV4::GraveyardEscape, None),
             CastMethodV4::Normal | CastMethodV4::Alternative => {
                 (Zone::Hand, SpellCastRouteV4::Hand, None)
             }
-            CastMethodV4::Escape | CastMethodV4::Bestow | CastMethodV4::Omen => {
+            CastMethodV4::Bestow | CastMethodV4::Omen => {
                 panic!("test helper cannot fabricate an unsupported cast method")
             }
         };
@@ -10951,7 +11321,7 @@ mod tests {
     }
 
     #[test]
-    fn mid_cast_source_contracts_round_trip_for_normal_flashback_plot_and_madness() {
+    fn mid_cast_source_contracts_round_trip_for_normal_flashback_escape_plot_and_madness() {
         let mut normal = ready_game_in_main1(1);
         let bolt = put_in_hand(&mut normal, PlayerId::P0, "Lightning Bolt");
         step(&mut normal, Action::CastSpell(bolt)).unwrap();
@@ -10959,6 +11329,17 @@ mod tests {
         let mut flashback = ready_game_in_main1(1);
         let dart = put_in_graveyard(&mut flashback, PlayerId::P0, "Lava Dart");
         step(&mut flashback, Action::CastSpell(dart)).unwrap();
+
+        let mut escape = ready_game_in_main1(0);
+        for _ in 0..3 {
+            put_on_battlefield(&mut escape, PlayerId::P0, "Island");
+        }
+        put_on_battlefield(&mut escape, PlayerId::P1, "Cryptic Serpent");
+        let sleep = put_in_graveyard(&mut escape, PlayerId::P0, "Sleep of the Dead");
+        for name in ["Lightning Bolt", "Fireblast", "Counterspell"] {
+            put_in_graveyard(&mut escape, PlayerId::P0, name);
+        }
+        step(&mut escape, Action::CastSpell(sleep)).unwrap();
 
         let mut plotted = ready_game_in_main1(0);
         plotted.turn = 2;
@@ -10989,6 +11370,11 @@ mod tests {
                 flashback,
                 CastMethodV4::Flashback,
                 SpellCastRouteV4::GraveyardFlashback,
+            ),
+            (
+                escape,
+                CastMethodV4::Escape,
+                SpellCastRouteV4::GraveyardEscape,
             ),
             (
                 plotted,
@@ -11028,6 +11414,17 @@ mod tests {
         let dart = put_in_graveyard(&mut flashback, PlayerId::P0, "Lava Dart");
         step(&mut flashback, Action::CastSpell(dart)).unwrap();
 
+        let mut escape = ready_game_in_main1(0);
+        for _ in 0..3 {
+            put_on_battlefield(&mut escape, PlayerId::P0, "Island");
+        }
+        let escape_target = put_on_battlefield(&mut escape, PlayerId::P1, "Cryptic Serpent");
+        let sleep = put_in_graveyard(&mut escape, PlayerId::P0, "Sleep of the Dead");
+        for name in ["Lightning Bolt", "Fireblast", "Counterspell"] {
+            put_in_graveyard(&mut escape, PlayerId::P0, name);
+        }
+        step(&mut escape, Action::CastSpell(sleep)).unwrap();
+
         let mut plotted = ready_game_in_main1(0);
         plotted.turn = 2;
         let robbery = put_in_hand(&mut plotted, PlayerId::P0, "Highway Robbery");
@@ -11057,6 +11454,7 @@ mod tests {
                 flashback,
                 Action::ChooseTarget(Target::Player(PlayerId::P1)),
             ),
+            (escape, Action::ChooseTarget(Target::Object(escape_target))),
             (plotted, Action::Pass),
             (madness, Action::ChooseTarget(Target::Player(PlayerId::P1))),
         ] {
@@ -11745,6 +12143,34 @@ mod tests {
         .unwrap();
         let _ = advance_until_decision(&mut flashback);
         assert_relabel_rejected(flashback, dart, CastMethodV4::Normal, false);
+
+        // Escape has the same graveyard origin as Flashback but deliberately
+        // retains ordinary stack departure. A coherent Escape -> Normal
+        // relabel must still fail against the frozen GraveyardEscape route.
+        let mut escape = ready_game_in_main1(0);
+        for _ in 0..3 {
+            put_on_battlefield(&mut escape, PlayerId::P0, "Island");
+        }
+        let target = put_on_battlefield(&mut escape, PlayerId::P1, "Cryptic Serpent");
+        let sleep = put_in_graveyard(&mut escape, PlayerId::P0, "Sleep of the Dead");
+        for name in ["Lightning Bolt", "Fireblast", "Counterspell"] {
+            put_in_graveyard(&mut escape, PlayerId::P0, name);
+        }
+        step(&mut escape, Action::CastSpell(sleep)).unwrap();
+        step(&mut escape, Action::ChooseTarget(Target::Object(target))).unwrap();
+        for _ in 0..2 {
+            let pick = match advance_until_decision(&mut escape) {
+                Decision::ChooseCostTargets { candidates, .. } => candidates[0],
+                other => panic!("expected Escape cost target, got {other:?}"),
+            };
+            step(&mut escape, Action::ChooseCostTarget(pick)).unwrap();
+        }
+        let _ = advance_until_decision(&mut escape);
+        assert_eq!(
+            escape.stack.last().unwrap().v4.cast_method,
+            Some(CastMethodV4::Escape)
+        );
+        assert_relabel_rejected(escape, sleep, CastMethodV4::Normal, false);
 
         // The paid method stamp also distinguishes two casts sharing the
         // same Hand route. Fireblast's successfully paid alternative cost
