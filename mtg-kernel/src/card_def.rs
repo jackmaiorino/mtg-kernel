@@ -398,11 +398,13 @@ pub struct ModeDef {
 
 /// A deterministic value sampled while deriving a spell's total generic
 /// mana cost. Kept data-driven and card-name-neutral so the same cast-cost
-/// path can serve graveyard reducers (Cryptic Serpent/Tolarian Terror) and
-/// turn counters (Deem Inferior) without teaching the engine individual
-/// card names.
+/// path can serve battlefield reducers (Affinity), graveyard reducers
+/// (Cryptic Serpent/Tolarian Terror), and turn counters (Deem Inferior)
+/// without teaching the engine individual card names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DynamicCountDef {
+    /// Count permanents the caster controls that have any listed card type.
+    ControllerBattlefieldAnyType(&'static [CardType]),
     /// Count cards in the caster's graveyard that have any listed type.
     ControllerGraveyardAnyType(&'static [CardType]),
     /// Count cards the caster has drawn during the current turn.
@@ -686,10 +688,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v9_is_frozen() {
-        // Version 9 combines the Faerie entry triggers with exact repeatable
-        // mana choices and the enters-the-battlefield-tapped characteristic.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x236a_a412_7b5d_9dc3);
+    fn card_db_hash_v10_is_frozen() {
+        // Version 10 adds the shared controlled-artifact reducer used by
+        // Myr Enforcer and Thoughtcast to the combined catalog.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xd818_94d2_698c_b53a);
     }
 
     #[test]
@@ -734,6 +736,43 @@ mod tests {
             })
         );
         assert!(def.is_castable());
+    }
+
+    #[test]
+    fn affinity_cards_share_the_artifact_reducer_and_keep_their_own_programs() {
+        let reducer = Some(GenericCostReductionDef {
+            generic_per_count: 1,
+            count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]),
+        });
+
+        let enforcer = &CARD_DEFS[card_id_by_name("Myr Enforcer").unwrap() as usize];
+        assert_eq!(enforcer.capability, CardCapability::Full);
+        assert_eq!(enforcer.cost.generic, 7);
+        assert!(enforcer.cost.pips.is_empty());
+        assert_eq!(enforcer.generic_cost_reduction, reducer);
+        assert_eq!(enforcer.types, &[CardType::Artifact, CardType::Creature]);
+        assert_eq!((enforcer.power, enforcer.toughness), (Some(4), Some(4)));
+        assert!(matches!(
+            (enforcer.spell_effect)(),
+            Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        ));
+
+        let thoughtcast = &CARD_DEFS[card_id_by_name("Thoughtcast").unwrap() as usize];
+        assert_eq!(thoughtcast.capability, CardCapability::Full);
+        assert_eq!(thoughtcast.cost.generic, 4);
+        assert_eq!(thoughtcast.cost.pips, &[Pip::Colored(ManaColor::U)]);
+        assert_eq!(thoughtcast.generic_cost_reduction, reducer);
+        assert_eq!(thoughtcast.types, &[CardType::Sorcery]);
+        assert_eq!(
+            (thoughtcast.spell_effect)(),
+            Some(EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 2,
+            })
+        );
     }
 
     #[test]

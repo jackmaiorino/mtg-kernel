@@ -551,16 +551,16 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 59,
+                "full_cards": 61,
                 "partial_cards": 0,
-                "no_effect_cards": 91,
+                "no_effect_cards": 89,
                 "token_dependencies": 4,
             },
         )
         expected_copy_totals = [
             {"deck_id": "Wildfire", "full": 19, "partial": 0, "no_effect": 41, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Affinity", "full": 27, "partial": 0, "no_effect": 33, "total": 60},
+            {"deck_id": "Affinity", "full": 35, "partial": 0, "no_effect": 25, "total": 60},
             {"deck_id": "Elves", "full": 26, "partial": 0, "no_effect": 34, "total": 60},
             {"deck_id": "Spy", "full": 8, "partial": 0, "no_effect": 52, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
@@ -599,6 +599,15 @@ class PauperPoolManifestTest(unittest.TestCase):
         }
         self.assertEqual(set(promoted), {"Mental Note", "Thought Scour"})
         for row in promoted.values():
+            self.assertEqual(row["support_status"], "full")
+            self.assertEqual(row["blockers"], [])
+        affinity_promoted = {
+            row["name"]: row
+            for row in self.support["cards"]
+            if row["name"] in {"Myr Enforcer", "Thoughtcast"}
+        }
+        self.assertEqual(set(affinity_promoted), {"Myr Enforcer", "Thoughtcast"})
+        for row in affinity_promoted.values():
             self.assertEqual(row["support_status"], "full")
             self.assertEqual(row["blockers"], [])
         ponder = next(row for row in self.support["cards"] if row["name"] == "Ponder")

@@ -2395,6 +2395,7 @@
     },
     {
       "name": "Myr Enforcer",
+      "engine_capability": "full",
       "mana_cost": "{7}",
       "mana_value": 7,
       "colors": [],
@@ -3572,6 +3573,7 @@
     },
     {
       "name": "Thoughtcast",
+      "engine_capability": "full",
       "mana_cost": "{4}{U}",
       "mana_value": 5,
       "colors": [

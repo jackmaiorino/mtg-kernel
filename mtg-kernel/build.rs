@@ -2458,6 +2458,7 @@ fn special_for(name: &str) -> Special {
         // mana ability is rules text, not intrinsic to a basic land type.
         "Great Furnace" => Special::GreatFurnace,
         "Lorien Revealed" => Special::DrawCards(3),
+        "Thoughtcast" => Special::DrawCards(2),
         "Lightning Bolt" => Special::BurnAnyTarget(3),
         "Fiery Temper" => Special::BurnAnyTarget(3),
         "Fireblast" => Special::BurnAnyTarget(4),
@@ -2980,6 +2981,9 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
+        "Myr Enforcer" | "Thoughtcast" => {
+            "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
+        }
         "Cryptic Serpent" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerGraveyardAnyType(&[CardType::Instant, CardType::Sorcery]) })"
         }

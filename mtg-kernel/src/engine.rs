@@ -2172,9 +2172,9 @@ fn checked_graveyard_exile_candidates(
 }
 
 /// Derives the printed-cost branch used by both cast offers and final
-/// payment. Current consumers (Cryptic Serpent and Deem Inferior, with
-/// Tolarian Terror planned) have no generic additional/alternative cost, so
-/// reducing the printed generic component is the complete CR 601.2f total-
+/// payment. Current consumers (Affinity, Cryptic Serpent, and Deem Inferior,
+/// with Tolarian Terror planned) have no generic additional/alternative cost,
+/// so reducing the printed generic component is the complete CR 601.2f total-
 /// cost calculation for this certified shape. A future reducer paired with
 /// Kicker or another generic additional cost must deliberately extend this
 /// helper across the combined total rather than silently reusing it.
@@ -2187,6 +2187,20 @@ fn effective_normal_cast_cost(
         return def.cost;
     };
     let count = match reducer.count {
+        card_def::DynamicCountDef::ControllerBattlefieldAnyType(types) => state.players
+            [player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&object| {
+            let object = state.objects.get(object);
+            object.zone == Zone::Battlefield
+                && object.controller == player
+                && card_def::CARD_DEFS[object.card_def as usize]
+                    .types
+                    .iter()
+                    .any(|card_type| types.contains(card_type))
+        })
+        .count() as u32,
         card_def::DynamicCountDef::ControllerGraveyardAnyType(types) => state.players
             [player.index()]
         .graveyard
@@ -8614,6 +8628,123 @@ mod tests {
         state.priority_player = PlayerId::P0;
         state.step = Step::Main1;
         state
+    }
+
+    #[test]
+    fn affinity_reducer_counts_only_controlled_artifact_permanents_and_floors_generic() {
+        let mut state = ready_game_in_main1(0);
+        let enforcer = &card_def::CARD_DEFS
+            [card_id_by_name("Myr Enforcer").expect("Myr Enforcer in pool") as usize];
+        let thoughtcast = &card_def::CARD_DEFS
+            [card_id_by_name("Thoughtcast").expect("Thoughtcast in pool") as usize];
+
+        let zero_enforcer = effective_normal_cast_cost(enforcer, PlayerId::P0, &state);
+        let zero_thoughtcast = effective_normal_cast_cost(thoughtcast, PlayerId::P0, &state);
+        assert_eq!(zero_enforcer.generic, 7);
+        assert_eq!(zero_thoughtcast.generic, 4);
+        assert_eq!(zero_thoughtcast.pips, &[mana::Pip::Colored(ManaColor::U)]);
+
+        put_on_battlefield(&mut state, PlayerId::P0, "Myr Enforcer");
+        put_on_battlefield(&mut state, PlayerId::P0, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        put_on_battlefield(&mut state, PlayerId::P1, "Blood Token");
+        let partial_enforcer = effective_normal_cast_cost(enforcer, PlayerId::P0, &state);
+        let partial_thoughtcast = effective_normal_cast_cost(thoughtcast, PlayerId::P0, &state);
+        assert_eq!(
+            partial_enforcer.generic, 5,
+            "artifact creature and land count"
+        );
+        assert_eq!(partial_thoughtcast.generic, 2);
+        assert_eq!(
+            partial_thoughtcast.pips,
+            &[mana::Pip::Colored(ManaColor::U)],
+            "Affinity never removes the colored pip"
+        );
+
+        for _ in 0..6 {
+            put_on_battlefield(&mut state, PlayerId::P0, "Blood Token");
+        }
+        let excess_enforcer = effective_normal_cast_cost(enforcer, PlayerId::P0, &state);
+        let excess_thoughtcast = effective_normal_cast_cost(thoughtcast, PlayerId::P0, &state);
+        assert_eq!(excess_enforcer.generic, 0);
+        assert_eq!(excess_thoughtcast.generic, 0);
+        assert_eq!(excess_thoughtcast.pips, &[mana::Pip::Colored(ManaColor::U)]);
+    }
+
+    #[test]
+    fn myr_enforcer_affinity_controls_offer_payment_and_permanent_resolution() {
+        let mut short = ready_game_in_main1(0);
+        for name in ["Myr Enforcer", "Ichor Wellspring", "Blood Token"] {
+            put_on_battlefield(&mut short, PlayerId::P0, name);
+        }
+        short.players[0].mana_pool[ManaColor::R.pool_index()] = 3;
+        let unaffordable = put_in_hand(&mut short, PlayerId::P0, "Myr Enforcer");
+        match advance_until_decision(&mut short) {
+            Decision::CastSpellOrPass {
+                castable_spells, ..
+            } => assert!(!castable_spells.contains(&unaffordable)),
+            other => panic!("expected CastSpellOrPass, got {other:?}"),
+        }
+        let before = short.clone();
+        assert!(step(&mut short, Action::CastSpell(unaffordable)).is_err());
+        assert_eq!(short, before, "an unaffordable cast attempt is nonmutating");
+
+        let mut payable = ready_game_in_main1(0);
+        for name in ["Myr Enforcer", "Ichor Wellspring", "Blood Token"] {
+            put_on_battlefield(&mut payable, PlayerId::P0, name);
+        }
+        payable.players[0].mana_pool[ManaColor::R.pool_index()] = 4;
+        let enforcer = put_in_hand(&mut payable, PlayerId::P0, "Myr Enforcer");
+        match advance_until_decision(&mut payable) {
+            Decision::CastSpellOrPass {
+                castable_spells, ..
+            } => assert!(castable_spells.contains(&enforcer)),
+            other => panic!("expected CastSpellOrPass, got {other:?}"),
+        }
+        step(&mut payable, Action::CastSpell(enforcer)).unwrap();
+        let _ = advance_until_decision(&mut payable);
+        assert_eq!(payable.players[0].mana_pool, [0; 6]);
+        assert_eq!(payable.stack.last().map(|item| item.source), Some(enforcer));
+        pass_until_stack_resolves(&mut payable);
+        assert_eq!(payable.objects.get(enforcer).zone, Zone::Battlefield);
+        assert!(payable.players[0].battlefield.contains(&enforcer));
+        let def = &card_def::CARD_DEFS[payable.objects.get(enforcer).card_def as usize];
+        assert_eq!((def.power, def.toughness), (Some(4), Some(4)));
+    }
+
+    #[test]
+    fn thoughtcast_affinity_draws_exactly_two_and_replays_from_snapshot() {
+        let mut state = ready_game_in_main1(0);
+        for _ in 0..4 {
+            put_on_battlefield(&mut state, PlayerId::P0, "Blood Token");
+        }
+        state.players[0].mana_pool[ManaColor::U.pool_index()] = 1;
+        let thoughtcast = put_in_hand(&mut state, PlayerId::P0, "Thoughtcast");
+        for name in ["Mountain", "Island", "Lightning Bolt"] {
+            set_library_top(&mut state, PlayerId::P0, name);
+        }
+        let snapshot = state.snapshot();
+
+        let run = |state: &mut GameState| {
+            match advance_until_decision(state) {
+                Decision::CastSpellOrPass {
+                    castable_spells, ..
+                } => assert!(castable_spells.contains(&thoughtcast)),
+                other => panic!("expected CastSpellOrPass, got {other:?}"),
+            }
+            step(state, Action::CastSpell(thoughtcast)).unwrap();
+            pass_until_stack_resolves(state);
+            assert_eq!(state.players[0].mana_pool, [0; 6]);
+            assert_eq!(state.objects.get(thoughtcast).zone, Zone::Graveyard);
+            assert_eq!(state.players[0].hand.len(), 2);
+            assert_eq!(state.players[0].library.len(), 1);
+        };
+
+        run(&mut state);
+        let resolved_hash = state.state_hash();
+        state.restore(&snapshot);
+        run(&mut state);
+        assert_eq!(state.state_hash(), resolved_hash);
     }
 
     #[test]

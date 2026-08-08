@@ -107,7 +107,7 @@ TOKEN_DEPENDENCIES = (
 EXPECTED_MAINBOARD_SUPPORT = {
     "Wildfire": {"full": 19, "partial": 0, "no_effect": 41},
     "Rally": {"full": 60, "partial": 0, "no_effect": 0},
-    "Affinity": {"full": 27, "partial": 0, "no_effect": 33},
+    "Affinity": {"full": 35, "partial": 0, "no_effect": 25},
     "Elves": {"full": 26, "partial": 0, "no_effect": 34},
     "Spy": {"full": 8, "partial": 0, "no_effect": 52},
     "Burn": {"full": 60, "partial": 0, "no_effect": 0},

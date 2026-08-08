@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "887f3b660e8002c7bb6e0ffe54188653379b0c9765b88031db4acf033cb9b4dc"
+    "registry_raw_sha256": "61fc30f5f207a7d9fcbda43e7e31d2e2b2f8c2f7b878128b855bbf6ac1977ae0"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 59,
+    "full_cards": 61,
     "partial_cards": 0,
-    "no_effect_cards": 91,
+    "no_effect_cards": 89,
     "token_dependencies": 4
   },
   "deck_mainboard_copy_totals": [
@@ -31,9 +31,9 @@
     },
     {
       "deck_id": "Affinity",
-      "full": 27,
+      "full": 35,
       "partial": 0,
-      "no_effect": 33,
+      "no_effect": 25,
       "total": 60
     },
     {
@@ -2250,10 +2250,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Nihil Spellbomb",
@@ -3231,10 +3229,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Thraben Charm",
