@@ -35,8 +35,28 @@ import time
 from typing import Any
 
 
+# Two model authority modes, matching checkpoint_shadow_stdio_v1's two
+# ShadowCheckpointAuthorityV1 loading paths. "population" issues
+# --population-store-root (PopulationStoreGeneration): any store trained
+# under the environment-randomization-v2 contract, generation required.
+# "original" issues --store-root with an explicit --generation
+# (OriginalPromoted2StoreGeneration): the promoted(2) lineage pin, hard-wired
+# to accept only the one canonical promoted(2) run (its own source_run_sha256
+# constant, verified Rust-side) and to the legacy-v1 environment contract.
+# The two authority_kind / environment_trajectory_contract wire strings below
+# are read verbatim from checkpoint_shadow_stdio_v1's own source
+# (native_checkpoint_shadow_stdio_v1.rs: AUTHORITY_KIND matches
+# PopulationStoreGeneration's "population-store-validated-generation" /
+# OriginalPromoted2StoreGeneration's "original-promoted2-validated-store-
+# generation"; ENVIRONMENT_CONTRACT matches POPULATION_STORE_ENVIRONMENT_
+# TRAJECTORY_CONTRACT_V1 / SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1) so the
+# outcome-jsonl "checkpoint" field's exact-match validation in
+# validate_outcome_shard agrees with what the binary actually emits.
+MODEL_AUTHORITY_MODES = ("population", "original")
 AUTHORITY_KIND = "population-store-validated-generation"
+AUTHORITY_KIND_ORIGINAL = "original-promoted2-validated-store-generation"
 ENVIRONMENT_CONTRACT = "environment-randomization-v2"
+ENVIRONMENT_CONTRACT_ORIGINAL = "legacy-v1"
 SAMPLER_IDENTITY = "f32-q8-expq63-hamilton-splitmix64-v1"
 SAMPLER_CONTRACT = "276407494966b195b7c011caf984d2354484f7532161107b19ecc83388de92b6"
 OUTCOME_CONTRACT = "mtg-kernel-xmage-cp7-outcome-jsonl/v2"
@@ -141,7 +161,10 @@ def _git_commit(repo: Path) -> str:
                      "rev-parse", "HEAD"])
 
 
-def load_store_identity(root: Path, generation: int) -> dict[str, Any]:
+def load_store_identity(root: Path, generation: int, *,
+                        mode: str = "population") -> dict[str, Any]:
+    if mode not in MODEL_AUTHORITY_MODES:
+        fail(f"invalid model authority mode: {mode}")
     if generation < 0 or not root.is_dir():
         fail("population Store root or generation is invalid")
     root = root.resolve()
@@ -199,8 +222,11 @@ def load_store_identity(root: Path, generation: int) -> dict[str, Any]:
         or sampler.get("contract_sha256") != SAMPLER_CONTRACT
     ):
         fail("population Store checkpoint chain mismatch")
+    authority_kind = AUTHORITY_KIND if mode == "population" else AUTHORITY_KIND_ORIGINAL
+    environment_contract = (
+        ENVIRONMENT_CONTRACT if mode == "population" else ENVIRONMENT_CONTRACT_ORIGINAL)
     identity = {
-        "authority_kind": AUTHORITY_KIND,
+        "authority_kind": authority_kind,
         "source_run_sha256": run_sha,
         "source_generation": generation,
         "source_checkpoint_sha256": checkpoint_sha,
@@ -213,12 +239,12 @@ def load_store_identity(root: Path, generation: int) -> dict[str, Any]:
         "loaded_payload_sha256": state_sha,
         "loaded_train_state_sha256": train_state["state_sha256"],
         "model_parameter_sha256": train_state["model_parameter_sha256"],
-        "environment_trajectory_contract": ENVIRONMENT_CONTRACT,
+        "environment_trajectory_contract": environment_contract,
         "sampler_identity": SAMPLER_IDENTITY,
         "sampler_contract_sha256": SAMPLER_CONTRACT,
     }
     return {
-        "root": str(root), "generation": generation, "checkpoint": identity,
+        "root": str(root), "generation": generation, "mode": mode, "checkpoint": identity,
         "store_files": {
             "run_json_sha256": run_sha, "checkpoint_json_sha256": checkpoint_sha,
             "sidecar_json_sha256": sidecar_sha, "state_payload_sha256": state_sha,
@@ -278,9 +304,20 @@ def _exec_argument_string(parts: list[str]) -> str:
 
 def anchor_command(args: argparse.Namespace, model: dict[str, Any], first_pair: int,
                    pair_count: int, outcome: Path) -> list[str]:
+    mode = model.get("mode", "population")
+    if mode not in MODEL_AUTHORITY_MODES:
+        fail(f"invalid model authority mode: {mode}")
+    # --store-root (original) issues checkpoint_shadow_stdio_v1's
+    # OriginalPromoted2StoreGeneration authority when --generation is also
+    # given (the promoted(2) lineage pin): source_run_sha256 must equal its
+    # own hard-coded constant, so this is only ever usable for the one
+    # canonical promoted(2) store. --population-store-root (population)
+    # issues PopulationStoreGeneration: any environment-randomization-v2
+    # store, generation required either way.
+    root_flag = "--population-store-root" if mode == "population" else "--store-root"
     execution_args = _exec_argument_string([
         "--repo-root", str(args.mage_repo), "--scorer-exe", str(args.scorer_exe),
-        "--population-store-root", model["root"], "--generation", str(args.generation),
+        root_flag, model["root"], "--generation", str(args.generation),
         "--base-seed", str(args.base_seed), "--first-episode", str(first_pair * 2),
         "--pairs", str(pair_count), "--opponent", "cp7", "--cp7-skill", "7",
         "--outcome-export", str(outcome),
@@ -296,7 +333,15 @@ def environment(database_root: Path, model: dict[str, Any], *,
     value.update({"MAGE_DB_DIR": str(database_root), "MAGE_DB_AUTO_SERVER": "false",
                   "AI_DETERMINISTIC_TIEBREAKS": "true", "AI_DETERMINISTIC_SEARCH": "true",
                   "AI_DETERMINISTIC_MAX_NODES": "5000", "AI_MAX_THREADS_FOR_SIMULATIONS": "1",
-                  "CUDA_VISIBLE_DEVICES": "1", "MAVEN_OPTS": maven_opts(model["checkpoint"])})
+                  "CUDA_VISIBLE_DEVICES": "1"})
+    # The xmage.rally.populationStore.* system properties are only read by
+    # the Java bridge client when it selects population-store mode
+    # (XMageRallyBridgeProcessClient.fromSystemProperties, gated on
+    # selectsPopulationStore); an --original-store-root model never reads
+    # them, so MAVEN_OPTS is left unset rather than asserting properties the
+    # loaded authority mode does not use.
+    if model.get("mode", "population") == "population":
+        value["MAVEN_OPTS"] = maven_opts(model["checkpoint"])
     if tolerate_engine_faults:
         value["AI_ANCHOR_TOLERATE_ENGINE_FAULTS"] = "1"
     return value
@@ -785,8 +830,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         fail("smoke requires one pair and formal requires 128 pairs")
     if sha256(args.source_database) != CARD_DB_HASH:
         fail("card database hash mismatch")
-    models = dict(args.models)
-    identities = {label: load_store_identity(root, args.generation) for label, root in models.items()}
+    models = {label: (mode, root) for label, mode, root in args.models}
+    identities = {label: load_store_identity(root, args.generation, mode=mode)
+                  for label, (mode, root) in models.items()}
     chunks = chunk_ranges(args.pair_start, args.pairs, args.task_pairs)
     task_plan = planned_tasks(list(identities), chunks)
     args.evidence_root.mkdir(parents=True)
@@ -997,6 +1043,36 @@ def parser() -> argparse.ArgumentParser:
     return value
 
 
+def parse_model_spec(spec: str) -> tuple[str, str, Path]:
+    """Parses one --model spec: label=[MODE:]STORE_ROOT.
+
+    MODE is one of MODEL_AUTHORITY_MODES ("population" or "original"),
+    defaulting to "population" when no recognized MODE: prefix is present --
+    this is the exact bareword label=STORE_ROOT shape every existing
+    invocation (and the running cells 1/2 driver) already uses, so it keeps
+    working unchanged. Matching is a literal startswith check against the
+    two known prefixes, never a blind split on the first colon, because a
+    Windows store root routinely starts with its own drive-letter colon
+    (e.g. "D:\\...") that must not be mistaken for a mode prefix.
+    """
+    if spec.count("=") != 1:
+        fail("model must be label=[MODE:]STORE_ROOT")
+    label, raw_root = spec.split("=", 1)
+    if not label or not label.replace("-", "").replace("_", "").isalnum():
+        fail("model label is invalid")
+    mode = "population"
+    remainder = raw_root
+    for candidate in MODEL_AUTHORITY_MODES:
+        prefix = candidate + ":"
+        if raw_root.startswith(prefix):
+            mode = candidate
+            remainder = raw_root[len(prefix):]
+            break
+    if not remainder:
+        fail("model store root is empty")
+    return label, mode, Path(remainder)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.self_test:
@@ -1008,17 +1084,10 @@ def main(argv: list[str] | None = None) -> int:
             or args.pair_start < 0 or not 1 <= args.task_pairs <= 128
             or args.task_timeout_seconds < 60):
         fail("missing or invalid panel arguments")
-    parsed: list[tuple[str, Path]] = []
-    for spec in args.model_specs:
-        if spec.count("=") != 1:
-            fail("model must be label=STORE_ROOT")
-        label, raw_root = spec.split("=", 1)
-        if not label or not label.replace("-", "").replace("_", "").isalnum():
-            fail("model label is invalid")
-        parsed.append((label, Path(raw_root)))
-    if len(parsed) != 3 or len({label for label, _ in parsed}) != 3:
+    parsed: list[tuple[str, str, Path]] = [parse_model_spec(spec) for spec in args.model_specs]
+    if len(parsed) != 3 or len({label for label, _, _ in parsed}) != 3:
         fail("exactly three uniquely labelled models are required")
-    if len({root.resolve() for _, root in parsed}) != 3:
+    if len({root.resolve() for _, _, root in parsed}) != 3:
         fail("three distinct population Store roots are required")
     args.models = parsed
     run(args)

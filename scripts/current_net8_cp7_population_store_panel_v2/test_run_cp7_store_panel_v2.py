@@ -377,6 +377,86 @@ class PanelRunnerTest(unittest.TestCase):
         self.assertIn(("seed-b", 2), expected)
         self.assertEqual(len(expected), len(identities) * len(pairs) - len(voided))
 
+    # -- new: per-model authority mode spec parsing ----------------------------
+
+    def test_model_spec_defaults_to_population_mode_unprefixed(self) -> None:
+        # The exact bareword shape every existing invocation (including the
+        # live cells-1/2 driver) already uses must keep parsing identically.
+        label, mode, root = panel.parse_model_spec(
+            r"seed-970001=D:\mtg-kernel-scaled-selfplay-population-v1\store")
+        self.assertEqual(label, "seed-970001")
+        self.assertEqual(mode, "population")
+        self.assertEqual(root, Path(r"D:\mtg-kernel-scaled-selfplay-population-v1\store"))
+
+    def test_model_spec_windows_drive_letter_colon_is_not_a_mode_prefix(self) -> None:
+        # "D:" must never be mistaken for a "population:"/"original:" prefix.
+        label, mode, root = panel.parse_model_spec(r"promoted2=D:\pool3\primary")
+        self.assertEqual(mode, "population")
+        self.assertEqual(root, Path(r"D:\pool3\primary"))
+
+    def test_model_spec_explicit_population_prefix(self) -> None:
+        label, mode, root = panel.parse_model_spec(
+            r"denovo-256=population:D:\denovo-store\run-0\store")
+        self.assertEqual(mode, "population")
+        self.assertEqual(root, Path(r"D:\denovo-store\run-0\store"))
+
+    def test_model_spec_explicit_original_prefix(self) -> None:
+        label, mode, root = panel.parse_model_spec(
+            r"promoted2=original:D:\mtg-kernel-ladder-pilot-20260725\pool3\primary")
+        self.assertEqual(label, "promoted2")
+        self.assertEqual(mode, "original")
+        self.assertEqual(root, Path(r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary"))
+
+    def test_model_spec_rejects_empty_root_and_bad_label(self) -> None:
+        with self.assertRaises(ValueError):
+            panel.parse_model_spec("promoted2=original:")
+        with self.assertRaises(ValueError):
+            panel.parse_model_spec("bad label=original:D:\\store")
+        with self.assertRaises(ValueError):
+            panel.parse_model_spec("no-equals-sign")
+
+    def test_load_store_identity_rejects_invalid_mode(self) -> None:
+        with self.assertRaises(ValueError):
+            panel.load_store_identity(Path("."), 0, mode="bogus")
+
+    def test_anchor_command_selects_flag_by_mode(self) -> None:
+        args = types.SimpleNamespace(mage_repo=Path("mage"), scorer_exe=Path("scorer"),
+                                     generation=384, base_seed=7, maven=Path("mvn"))
+        population_model = {"root": "store", "mode": "population", "checkpoint": self.checkpoint}
+        original_model = {"root": "store", "mode": "original", "checkpoint": self.checkpoint}
+        population_command = panel.anchor_command(args, population_model, 0, 1, Path("o.jsonl"))
+        original_command = panel.anchor_command(args, original_model, 0, 1, Path("o.jsonl"))
+        self.assertIn("--population-store-root", population_command[-1])
+        self.assertIn("--store-root store", original_command[-1])
+        self.assertNotIn("--population-store-root", original_command[-1])
+        # A model dict with no "mode" key at all (the shape every pre-existing
+        # caller and fixture uses) must still default to population, exactly
+        # as before this change.
+        legacy_model = {"root": "store", "checkpoint": self.checkpoint}
+        legacy_command = panel.anchor_command(args, legacy_model, 0, 1, Path("o.jsonl"))
+        self.assertIn("--population-store-root", legacy_command[-1])
+
+    def test_environment_omits_population_maven_opts_for_original_mode(self) -> None:
+        original_model = {"root": "store", "mode": "original", "checkpoint": self.checkpoint}
+        env = panel.environment(Path("db"), original_model, tolerate_engine_faults=False)
+        self.assertNotIn("MAVEN_OPTS", env)
+        population_model = {"root": "store", "mode": "population", "checkpoint": self.checkpoint}
+        env = panel.environment(Path("db"), population_model, tolerate_engine_faults=False)
+        self.assertIn("MAVEN_OPTS", env)
+        self.assertIn("xmage.rally.populationStore.authorityKind", env["MAVEN_OPTS"])
+
+    def test_load_store_identity_authority_kind_and_contract_are_mode_specific(self) -> None:
+        # Wire strings verified against checkpoint_shadow_stdio_v1's own
+        # source (native_checkpoint_shadow_stdio_v1.rs): AUTHORITY_KIND_
+        # ORIGINAL matches OriginalPromoted2StoreGeneration's authority_kind,
+        # ENVIRONMENT_CONTRACT_ORIGINAL matches SOURCE_ENVIRONMENT_
+        # TRAJECTORY_CONTRACT_V1 ("legacy-v1"), independent of any live store.
+        self.assertEqual(panel.AUTHORITY_KIND_ORIGINAL,
+                         "original-promoted2-validated-store-generation")
+        self.assertEqual(panel.ENVIRONMENT_CONTRACT_ORIGINAL, "legacy-v1")
+        self.assertNotEqual(panel.AUTHORITY_KIND, panel.AUTHORITY_KIND_ORIGINAL)
+        self.assertNotEqual(panel.ENVIRONMENT_CONTRACT, panel.ENVIRONMENT_CONTRACT_ORIGINAL)
+
 
 if __name__ == "__main__":
     unittest.main()
