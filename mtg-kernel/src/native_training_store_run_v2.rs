@@ -7768,6 +7768,86 @@ mod tests {
         );
     }
 
+    /// Ported-contract integration check against the two REAL, currently
+    /// -running denovo-screen store `run.json` files on this machine (not
+    /// fixtures; read-only; each path is skipped, not failed, if the
+    /// external evidence directory is absent on a given machine).
+    ///
+    /// The 512-horizon store (generation target 512, role
+    /// "denovo-screen-512") decodes cleanly under the ported current
+    /// contract and re-encodes to byte-identical canonical bytes: the
+    /// Phase 2 horizon amendment's own build already stamps
+    /// `authorized_denovo_512_seeds`.
+    ///
+    /// The 256-horizon store (generation target 256, role "denovo-screen")
+    /// does NOT decode under the ported current contract, and this is the
+    /// CORRECT, fail-closed outcome, not a porting defect: that store's
+    /// `run.json` was minted by a build that predates the Phase 2
+    /// 512-horizon amendment (file mtime 2026-08-07 23:21, roughly 8.5
+    /// hours before the denovo branch commit 17e45f5 that stamped the
+    /// amendment), so its `response_exploiter_v1` section is missing the
+    /// now-unconditionally-required `authorized_denovo_512_seeds` field
+    /// (confirmed directly: `serde_json::from_value::<ResponseExploiterContractV1>`
+    /// on that section fails with exactly `missing field
+    /// "authorized_denovo_512_seeds"`). Loosening the field to
+    /// `#[serde(default)]` to make this store decode would be precisely the
+    /// "passthrough or ignore-unknown shortcut" this codebase's fail-closed
+    /// doctrine forbids, so the port deliberately does not do that; this
+    /// test pins and documents the rejection instead of hiding it. See the
+    /// task's final report for this same finding surfaced at the
+    /// `checkpoint_shadow_stdio_v1` scorer smoke-test layer.
+    #[test]
+    fn real_denovo_stores_response_exploiter_section_matches_expected_ported_contract_outcome() {
+        const DENOVO_256_RUN_JSON_PATH: &str = r"D:\mtg-kernel-denovo-screen-v1\denovo-screen-build\attempt-002\denovo-store\run-0\store\run.json";
+        const DENOVO_512_RUN_JSON_PATH: &str = r"D:\mtg-kernel-denovo-512-screen-v1\denovo-512-screen-build\attempt-002\denovo-512-store\run-0\store\run.json";
+
+        match std::fs::read(DENOVO_512_RUN_JSON_PATH) {
+            Err(error) => eprintln!(
+                "skipping denovo-512 real-store check, evidence directory absent on this machine: {DENOVO_512_RUN_JSON_PATH}: {error}"
+            ),
+            Ok(bytes) => {
+                let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+                    panic!("real denovo-512 run.json failed validation: {error:?}")
+                });
+                assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+                let response = validated
+                    .record()
+                    .contracts()
+                    .response_exploiter_v1
+                    .as_ref()
+                    .unwrap();
+                assert_eq!(response.run_role, "denovo-screen-512");
+                assert_eq!(response.expected_base_seed, 971_202);
+                assert_eq!(response.expected_completion_generation, 512);
+                assert_eq!(response.training_update_count, 512);
+                assert_eq!(
+                    response.authorized_denovo_512_seeds,
+                    RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1
+                );
+                assert!(response.parent_source_run_sha256.is_none());
+            }
+        }
+
+        match std::fs::read(DENOVO_256_RUN_JSON_PATH) {
+            Err(error) => eprintln!(
+                "skipping denovo-256 real-store check, evidence directory absent on this machine: {DENOVO_256_RUN_JSON_PATH}: {error}"
+            ),
+            Ok(bytes) => {
+                let decode_error = decode_train_run_v2(&bytes).expect_err(
+                    "the real pre-Phase-2-amendment denovo-256 run.json is expected to be \
+                     rejected by the ported current contract (missing \
+                     authorized_denovo_512_seeds); if this now decodes, the store was \
+                     re-minted under Phase-2-aware code and this test's documented finding \
+                     is stale and should be revisited",
+                );
+                assert_eq!(
+                    decode_error.kind(),
+                    TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization)
+                );
+            }
+        }
+    }
+
     // =========================================================================
     // Capacity-experiment wide-net record section
     // (CAPACITY-EXPERIMENT-CONTRACT-DRAFT.md Section 3, SHA-256
