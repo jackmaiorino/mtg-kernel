@@ -689,6 +689,156 @@ class PanelRunnerTest(unittest.TestCase):
         self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_TRAIN_STATE_SHA256), 64)
         self.assertEqual(panel.FIXED_NATIVE_STATE_SOURCE_GENERATION, 384)
 
+    # -- new: outcome schema v1 vs v2 is mode-gated, not just shape-checked ---
+
+    def _terminal_v1(self, pair: int, seat: str, ordinal: int) -> dict[str, object]:
+        row = dict(self._terminal(pair, seat, ordinal))
+        row["schema_version"] = 1
+        del row["checkpoint"]
+        return row
+
+    def _decision_v1(self, pair: int, seat: str, ordinal: int,
+                     outcome_decision_ordinal: int) -> dict[str, object]:
+        row = dict(self._decision(pair, seat, ordinal, outcome_decision_ordinal))
+        row["schema_version"] = 1
+        del row["checkpoint"]
+        return row
+
+    def _rows_v1(self, pairs: int = 2) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = [panel.expected_header(self.checkpoint, schema_version=1)]
+        for pair in range(pairs):
+            rows.extend((self._terminal_v1(pair, "p0", len(rows)),
+                         self._terminal_v1(pair, "p1", len(rows) + 1)))
+        return rows
+
+    def test_expected_header_v1_has_no_checkpoint_shaped_export_contract_change(self) -> None:
+        header_v1 = panel.expected_header(self.checkpoint, schema_version=1)
+        header_v2 = panel.expected_header(self.checkpoint, schema_version=2)
+        self.assertEqual(header_v1["export_contract"], "mtg-kernel-xmage-cp7-outcome-jsonl/v1")
+        self.assertEqual(header_v2["export_contract"], panel.OUTCOME_CONTRACT)
+        self.assertEqual(header_v1["schema_version"], 1)
+        # The header row itself always carries "checkpoint" in both schemas;
+        # only decision/terminal rows drop it in v1.
+        self.assertIn("checkpoint", header_v1)
+        with self.assertRaises(ValueError):
+            panel.expected_header(self.checkpoint, schema_version=3)
+
+    def test_schema_v1_accepted_for_original_mode_model(self) -> None:
+        original_model = {"root": "store", "mode": "original", "generation": 384,
+                          "checkpoint": self.checkpoint}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "outcome.jsonl"
+            self._write(path, self._rows_v1())
+            result = panel.validate_outcome_shard(
+                path, original_model, base_seed=7, first_pair=0, pair_count=2)
+            self.assertEqual(result["schema_version"], 1)
+            self.assertEqual(len(result["outcomes"]), 4)
+            self.assertEqual(result["voided_pairs"], [])
+
+    def test_schema_v1_rejected_for_population_mode_model(self) -> None:
+        population_model = {"root": "store", "mode": "population", "generation": 384,
+                            "checkpoint": self.checkpoint}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "outcome.jsonl"
+            self._write(path, self._rows_v1())
+            with self.assertRaises(ValueError):
+                panel.validate_outcome_shard(
+                    path, population_model, base_seed=7, first_pair=0, pair_count=2)
+
+    def test_schema_v1_rejected_for_fixedstate_mode_model(self) -> None:
+        fixedstate_model = {"root": "staging-dir", "mode": "fixedstate", "generation": 384,
+                            "checkpoint": self.checkpoint}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "outcome.jsonl"
+            self._write(path, self._rows_v1())
+            with self.assertRaises(ValueError):
+                panel.validate_outcome_shard(
+                    path, fixedstate_model, base_seed=7, first_pair=0, pair_count=2)
+
+    def test_schema_v1_rejected_for_legacy_model_dict_with_no_mode_key(self) -> None:
+        # A model dict with no "mode" key at all defaults to population
+        # (the same default anchor_command/environment use), so it must
+        # reject v1 rows exactly like an explicit mode="population" model.
+        legacy_model = {"root": "store", "generation": 384, "checkpoint": self.checkpoint}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "outcome.jsonl"
+            self._write(path, self._rows_v1())
+            with self.assertRaises(ValueError):
+                panel.validate_outcome_shard(
+                    path, legacy_model, base_seed=7, first_pair=0, pair_count=2)
+
+    def test_schema_v2_rejected_for_original_mode_model(self) -> None:
+        # Strict, mode-aware means the mapping goes both ways: an
+        # original-mode model that is (incorrectly) handed v2 rows must
+        # fail closed rather than pass under a looser union check.
+        original_model = {"root": "store", "mode": "original", "generation": 384,
+                          "checkpoint": self.checkpoint}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "outcome.jsonl"
+            self._write(path, self._rows())
+            with self.assertRaises(ValueError):
+                panel.validate_outcome_shard(
+                    path, original_model, base_seed=7, first_pair=0, pair_count=2)
+
+    def test_schema_v2_unchanged_for_population_and_fixedstate_mode_models(self) -> None:
+        # Regression coverage: threading expected_schema_version through
+        # validate_outcome_shard/_validate_decision/_validate_terminal must
+        # not change v2 behavior at all for the two modes that always
+        # required it.
+        population_model = {"root": "store", "mode": "population", "generation": 384,
+                            "checkpoint": self.checkpoint}
+        fixedstate_model = {"root": "staging-dir", "mode": "fixedstate", "generation": 384,
+                            "checkpoint": self.checkpoint}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, model in (("population", population_model), ("fixedstate", fixedstate_model)):
+                with self.subTest(name=name):
+                    path = Path(directory) / f"{name}.jsonl"
+                    self._write(path, self._rows())
+                    result = panel.validate_outcome_shard(
+                        path, model, base_seed=7, first_pair=0, pair_count=2)
+                    self.assertEqual(result["schema_version"], 2)
+                    self.assertEqual(len(result["outcomes"]), 4)
+
+    def test_schema_v1_decision_rows_are_validated_strictly_not_loosely(self) -> None:
+        # A v1 row must still be rejected for the same malformed-field
+        # reasons a v2 row would be; only the "checkpoint" key's presence
+        # requirement differs. Also confirms a v1 row that still carries a
+        # (disallowed) "checkpoint" key is rejected, not silently accepted.
+        original_model = {"root": "store", "mode": "original", "generation": 384,
+                          "checkpoint": self.checkpoint}
+        with tempfile.TemporaryDirectory() as directory:
+            malformed = self._rows_v1()
+            # rows[1] is pair 0's p0 terminal, whose reward is already 1;
+            # rows[2] (p1's terminal, normally reward -1) is the one that
+            # actually corrupts the expected-outcome cross-check.
+            malformed[2] = dict(malformed[2])
+            malformed[2]["candidate_terminal_reward"] = 1
+            path = Path(directory) / "malformed.jsonl"
+            self._write(path, malformed)
+            with self.assertRaises(ValueError):
+                panel.validate_outcome_shard(
+                    path, original_model, base_seed=7, first_pair=0, pair_count=2)
+
+            with_checkpoint = self._rows_v1()
+            with_checkpoint[1] = dict(with_checkpoint[1])
+            with_checkpoint[1]["checkpoint"] = self.checkpoint
+            path = Path(directory) / "with-checkpoint.jsonl"
+            self._write(path, with_checkpoint)
+            with self.assertRaises(ValueError):
+                panel.validate_outcome_shard(
+                    path, original_model, base_seed=7, first_pair=0, pair_count=2)
+
+    def test_run_manifest_records_per_model_outcome_schema_version(self) -> None:
+        # aggregate_terminal_wdl and the manifest-building logic in run()
+        # aren't exercised end-to-end offline (they need a live store and
+        # scorer), so this checks the narrower, directly testable contract:
+        # DECISION_KEYS_V1/TERMINAL_KEYS_V1 are exactly the v2 sets minus
+        # "checkpoint", nothing else differs.
+        self.assertEqual(panel.DECISION_KEYS_V1, panel.DECISION_KEYS - {"checkpoint"})
+        self.assertEqual(panel.TERMINAL_KEYS_V1, panel.TERMINAL_KEYS - {"checkpoint"})
+        self.assertIn("checkpoint", panel.DECISION_KEYS)
+        self.assertIn("checkpoint", panel.TERMINAL_KEYS)
+
 
 if __name__ == "__main__":
     unittest.main()

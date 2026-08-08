@@ -97,6 +97,19 @@ FIXED_NATIVE_STATE_ENVIRONMENT_CONTRACT = "environment-randomization-v2"
 SAMPLER_IDENTITY = "f32-q8-expq63-hamilton-splitmix64-v1"
 SAMPLER_CONTRACT = "276407494966b195b7c011caf984d2354484f7532161107b19ecc83388de92b6"
 OUTCOME_CONTRACT = "mtg-kernel-xmage-cp7-outcome-jsonl/v2"
+# checkpoint_shadow_stdio_v1's outcome-jsonl writer emits schema v1 instead of
+# v2 whenever a loaded checkpoint's identity matches the promoted(2) g384
+# anchor exactly, field for field (exact_g384, native_checkpoint_shadow_
+# stdio_v1.rs) -- which is exactly what --store-root --generation 384
+# (original mode) always resolves to in this harness. v1 rows are v2's rows
+# minus the per-row "checkpoint" block (confirmed field-for-field against a
+# real promoted2 outcome export): the header still carries checkpoint once,
+# but decision/terminal rows do not repeat it, since v1 has no other
+# checkpoint it could ever be. Schema v1 is therefore accepted ONLY for
+# models bound via original mode; population and fixedstate models must
+# still carry the full v2 per-row checkpoint block, strictly, with no v1
+# fallback -- see validate_outcome_shard.
+OUTCOME_CONTRACT_V1 = "mtg-kernel-xmage-cp7-outcome-jsonl/v1"
 CARD_DB_HASH = "b833d6a7b44ad1f7bd6aef9a21d1f2498136ef61e44db0e48e60e5ec471ce09d"
 HEX_16 = re.compile(r"[0-9a-f]{16}\Z")
 HEX_32 = re.compile(r"[0-9a-f]{32}\Z")
@@ -112,6 +125,7 @@ DECISION_KEYS = {
     "tensor", "model_input_sha256", "old_policy_logits_f32_bits",
     "old_value_f32_bits", "checkpoint",
 }
+DECISION_KEYS_V1 = DECISION_KEYS - {"checkpoint"}
 TERMINAL_KEYS = {
     "record_type", "schema_version", "record_ordinal", "pair_index", "episode_id",
     "candidate_seat", "base_seed_u64_hex", "pair_environment_seed_u64_hex",
@@ -119,6 +133,7 @@ TERMINAL_KEYS = {
     "diagnostic_state_hash_u64_hex", "first_outcome_decision_ordinal",
     "outcome_decision_count", "terminal", "candidate_terminal_reward", "checkpoint",
 }
+TERMINAL_KEYS_V1 = TERMINAL_KEYS - {"checkpoint"}
 
 # Structured stdout markers emitted by XMageRallyAnchorSpike (mage-kernel-anchor-
 # spike-v1). PAIR_VOID_MARKER/SPIKE_VOID_STOP_MARKER only ever appear when the
@@ -497,10 +512,12 @@ def environment(database_root: Path, model: dict[str, Any], *,
     return value
 
 
-def expected_header(checkpoint: dict[str, Any]) -> dict[str, Any]:
+def expected_header(checkpoint: dict[str, Any], schema_version: int = 2) -> dict[str, Any]:
+    if schema_version not in (1, 2):
+        fail(f"invalid outcome schema version: {schema_version}")
     return {
-        "record_type": "header", "schema_version": 2, "record_ordinal": 0,
-        "export_contract": OUTCOME_CONTRACT,
+        "record_type": "header", "schema_version": schema_version, "record_ordinal": 0,
+        "export_contract": OUTCOME_CONTRACT if schema_version == 2 else OUTCOME_CONTRACT_V1,
         "selection_source": "candidate_checkpoint_policy",
         "tensorizer_identity": "mtg-kernel-python-encoded-decision-tensor-contract-v2",
         "tensorizer_features_source_sha256":
@@ -534,10 +551,12 @@ def _plain_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _validate_decision(path: Path, row: dict[str, Any], ordinal: int) -> None:
+def _validate_decision(path: Path, row: dict[str, Any], ordinal: int,
+                       schema_version: int) -> None:
+    expected_keys = DECISION_KEYS if schema_version == 2 else DECISION_KEYS_V1
     legal_count, selected = row.get("legal_action_count"), row.get("selected_index")
     semantics, logits = row.get("action_semantics"), row.get("old_policy_logits_f32_bits")
-    if (set(row) != DECISION_KEYS or row.get("record_type") != "decision"
+    if (set(row) != expected_keys or row.get("record_type") != "decision"
             or row.get("selection_source") != "candidate_checkpoint_policy"
             or not _plain_int(row.get("outcome_decision_ordinal"))
             or not _plain_int(legal_count) or legal_count < 1
@@ -558,10 +577,12 @@ def _validate_decision(path: Path, row: dict[str, Any], ordinal: int) -> None:
             or not _plain_int(row.get("substep_index"))
             or not _plain_int(row.get("substep_count")) or row["substep_count"] < 1
             or not 0 <= row["substep_index"] < row["substep_count"]):
-        fail(f"{path}: malformed outcome-v2 decision at record {ordinal}")
+        fail(f"{path}: malformed outcome-v{schema_version} decision at record {ordinal}")
 
 
-def _validate_terminal(path: Path, row: dict[str, Any], ordinal: int) -> str:
+def _validate_terminal(path: Path, row: dict[str, Any], ordinal: int,
+                       schema_version: int) -> str:
+    expected_keys = TERMINAL_KEYS if schema_version == 2 else TERMINAL_KEYS_V1
     terminal, reward = row.get("terminal"), row.get("candidate_terminal_reward")
     if not isinstance(terminal, dict):
         fail(f"{path}: terminal payload missing at record {ordinal}")
@@ -569,7 +590,7 @@ def _validate_terminal(path: Path, row: dict[str, Any], ordinal: int) -> str:
     expected = {"p0_win": ("p0", [1, -1]), "p1_win": ("p1", [-1, 1]),
                 "draw": (None, [0, 0])}.get(outcome)
     seat_index = 0 if row.get("candidate_seat") == "p0" else 1
-    if (set(row) != TERMINAL_KEYS or row.get("record_type") != "terminal"
+    if (set(row) != expected_keys or row.get("record_type") != "terminal"
             or terminal.get("schema_version") != 5
             or terminal.get("episode_id") != row.get("episode_id")
             or terminal.get("terminal_classification") != "natural"
@@ -580,7 +601,7 @@ def _validate_terminal(path: Path, row: dict[str, Any], ordinal: int) -> str:
             or reward not in (-1, 0, 1) or expected[1][seat_index] != reward
             or not _plain_int(row.get("outcome_decision_count"))
             or row["outcome_decision_count"] < 0):
-        fail(f"{path}: terminal is not an exact natural outcome at record {ordinal}")
+        fail(f"{path}: terminal is not an exact outcome-v{schema_version} outcome at record {ordinal}")
     return "win" if reward == 1 else "draw" if reward == 0 else "loss"
 
 
@@ -593,7 +614,13 @@ def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
     if not set(voided_pairs) <= set(task_pairs):
         fail(f"{path}: voided pair outside the task range")
     expected_checkpoint = model["checkpoint"]
-    exact_header = expected_header(expected_checkpoint)
+    # Schema v1 (no per-row checkpoint block -- see the OUTCOME_CONTRACT_V1
+    # comment above) is accepted ONLY for models bound via original mode.
+    # population and fixedstate models always require the full v2 shape;
+    # a v1 row from either is rejected outright, never silently accepted
+    # under a looser check.
+    expected_schema_version = 1 if model.get("mode", "population") == "original" else 2
+    exact_header = expected_header(expected_checkpoint, schema_version=expected_schema_version)
     # Only non-voided pairs must appear, in full, in order. Rows that belong to
     # a voided pair are still fully schema-validated below (evidence, not
     # noise) but are never required to close with a terminal -- the engine
@@ -627,12 +654,15 @@ def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
             record_count += 1
             if ordinal == 0:
                 if row != exact_header:
-                    fail(f"{path}: first row is not the exact population outcome-v2 header")
+                    fail(f"{path}: first row is not the exact population "
+                         f"outcome-v{expected_schema_version} header")
                 continue
             if row.get("record_type") == "header":
                 fail(f"{path}: duplicate header at record {ordinal}")
-            if (row.get("schema_version") != 2 or row.get("record_ordinal") != ordinal
-                    or row.get("checkpoint") != expected_checkpoint):
+            if (row.get("schema_version") != expected_schema_version
+                    or row.get("record_ordinal") != ordinal
+                    or (expected_schema_version == 2
+                        and row.get("checkpoint") != expected_checkpoint)):
                 fail(f"{path}: schema, ordinal, or checkpoint mismatch at record {ordinal}")
             pair, episode, seat = row.get("pair_index"), row.get("episode_id"), row.get("candidate_seat")
             if (not _plain_int(pair) or pair not in task_pairs
@@ -651,7 +681,7 @@ def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
                 fail(f"{path}: pair environment seed changed for pair {pair}")
             environment_seeds[pair] = environment_seed
             if row.get("record_type") == "decision":
-                _validate_decision(path, row, ordinal)
+                _validate_decision(path, row, ordinal, expected_schema_version)
                 if active_episode is None:
                     active_episode, active_episode_voided = episode, pair_voided
                     active_first_decision = decision_ordinal
@@ -663,7 +693,7 @@ def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
                 decision_ordinal += 1
                 active_decision_count += 1
             elif row.get("record_type") == "terminal":
-                result = _validate_terminal(path, row, ordinal)
+                result = _validate_terminal(path, row, ordinal, expected_schema_version)
                 if active_episode is None:
                     active_episode, active_episode_voided = episode, pair_voided
                     active_first_decision = None
@@ -698,7 +728,8 @@ def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
             "first_pair": first_pair, "pair_count": pair_count,
             "record_count": record_count, "decision_count": decision_ordinal,
             "outcomes": outcomes, "environment_seeds": environment_seeds,
-            "voided_pairs": sorted(voided_pairs)}
+            "voided_pairs": sorted(voided_pairs),
+            "schema_version": expected_schema_version}
 
 
 class DatabaseLeasePool:
@@ -1026,6 +1057,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     pair_results: dict[tuple[str, int], dict[str, Any]] = {}
     all_voids: list[dict[str, Any]] = []
     model_void_counts = {label: 0 for label in identities}
+    model_schema_versions: dict[str, set[int]] = {label: set() for label in identities}
     for result in results:
         for segment in result["segments"]:
             voided_pairs = frozenset(segment["voided_pairs"])
@@ -1034,6 +1066,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 base_seed=args.base_seed, first_pair=segment["first_pair"],
                 pair_count=segment["pair_count"], voided_pairs=voided_pairs,
             )
+            model_schema_versions[result["label"]].add(validation["schema_version"])
             segment["validation"] = {
                 key: value for key, value in validation.items()
                 if key not in {"outcomes", "environment_seeds"}
@@ -1057,6 +1090,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if voided * VOID_CAP_FRACTION_DENOMINATOR > args.pairs * VOID_CAP_FRACTION_NUMERATOR:
             fail(f"void rate for model {label} exceeds the "
                  f"{VOID_CAP_FRACTION_NUMERATOR}% cap: {voided}/{args.pairs} pairs voided")
+
+    # Every segment's outcome rows for a given model are validated against the
+    # same mode-derived expected_schema_version (original -> v1, population and
+    # fixedstate -> v2), so a model can never carry a mix of schema versions
+    # across its segments; this is a defensive cross-check of that invariant,
+    # not a new source of truth.
+    outcome_schema_versions: dict[str, int] = {}
+    for label, versions in model_schema_versions.items():
+        if len(versions) != 1:
+            fail(f"model {label} outcome rows carried inconsistent schema versions: {sorted(versions)}")
+        outcome_schema_versions[label] = next(iter(versions))
 
     pairs = list(range(args.pair_start, args.pair_start + args.pairs))
     voided_pair_keys = {(record["label"], record["pair_index"]) for record in all_voids}
@@ -1093,6 +1137,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "tolerate_engine_faults": args.tolerate_engine_faults,
         "plan": {"path": str(plan_path.resolve()), "sha256": sha256(plan_path)},
         "tasks": results, "terminal_wdl": summary,
+        "outcome_schema_versions": outcome_schema_versions,
         "voids": {
             "schema": "mtg-kernel-cp7-panel-pair-void/v1",
             "cap_fraction": VOID_CAP_FRACTION_NUMERATOR / VOID_CAP_FRACTION_DENOMINATOR,
