@@ -30,13 +30,27 @@ outcome-export time -- loading and exporting are gated separately).
 Directory inventory must be EXACTLY these two files (the loader lists the
 directory and requires an exact BTreeSet match), so nothing else may be placed
 alongside them in the same directory.
+
+CLI (seed-widening campaign generalization): pass --store-root, --generation,
+--staging-root (and optionally --authority-kind, default
+"response-exploiter-denovo-screen-v1") to stage exactly ONE (store,
+generation) pair per invocation, so the campaign's checkpoint stagings (four
+seeds x however many retained checkpoints each; promoted2 needs none, since
+it loads through --original-store-root, never through this fixed-native
+-state path) are one call each, without editing this file. Invoking with NO
+arguments at all keeps staging exactly the original two already-published
+pairs (denovo-256 g256, denovo-512 g512) unchanged, for backward
+compatibility with the existing staging-manifest-index.json consumers.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sys
 from pathlib import Path
+
+AUTHORITY_KIND_DEFAULT = "response-exploiter-denovo-screen-v1"
 
 FIXED_NATIVE_STATE_SCHEMA_V1 = "mtg-kernel-xmage-fixed-native-state/v1"
 FIXED_NATIVE_STATE_PAYLOAD_FILENAME_V1 = "checkpoint.state.f32le"
@@ -130,23 +144,78 @@ def stage(store_root: Path, generation: int, authority_kind: str,
     return record
 
 
-def main() -> int:
-    staging_parent = Path(r"D:\mtg-kernel-cp7-anchor-panel-v3\denovo-fixed-state-staging")
-    targets = [
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Stage one de-novo checkpoint as a fixed-native-state package. "
+                     "With no arguments at all, stages the original two "
+                     "already-published pairs (denovo-256 g256, denovo-512 g512) "
+                     "unchanged, for backward compatibility.")
+    parser.add_argument("--store-root", type=Path,
+                         help="Store root containing checkpoints/update-<gen>.checkpoint.json")
+    parser.add_argument("--generation", type=int,
+                         help="Checkpoint generation (adam_step) to stage")
+    parser.add_argument("--staging-root", type=Path,
+                         help="Destination directory for this pair's fixed_native_state.json "
+                              "and checkpoint.state.f32le (created fresh; must not exist)")
+    parser.add_argument("--authority-kind", default=AUTHORITY_KIND_DEFAULT,
+                         help=f"FixedNativeStateManifestV1 authority_kind "
+                              f"(default: {AUTHORITY_KIND_DEFAULT})")
+    parser.add_argument("--index-path", type=Path,
+                         help="Where to write this single pair's manifest-index JSON "
+                              "(default: <staging-root>.index.json, sibling of staging-root)")
+    return parser.parse_args(argv)
+
+
+def legacy_default_targets(staging_parent: Path) -> list[tuple[Path, int, str, Path]]:
+    return [
         (Path(r"D:\mtg-kernel-denovo-screen-v1\denovo-screen-build\attempt-002\denovo-store\run-0\store"),
-         256, "response-exploiter-denovo-screen-v1", staging_parent / "denovo-256"),
+         256, AUTHORITY_KIND_DEFAULT, staging_parent / "denovo-256"),
         (Path(r"D:\mtg-kernel-denovo-512-screen-v1\denovo-512-screen-build\attempt-002\denovo-512-store\run-0\store"),
-         512, "response-exploiter-denovo-screen-v1", staging_parent / "denovo-512"),
+         512, AUTHORITY_KIND_DEFAULT, staging_parent / "denovo-512"),
     ]
-    records = []
-    for store_root, generation, authority_kind, staging_root in targets:
-        record = stage(store_root, generation, authority_kind, staging_root)
-        records.append(record)
-        print(json.dumps(record, indent=2))
-    manifest_index_path = staging_parent / "staging-manifest-index.json"
-    manifest_index_path.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n",
-                                   encoding="utf-8", newline="\n")
-    print(f"\nwritten index: {manifest_index_path}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    args = parse_args(argv)
+
+    if args.store_root is None and args.generation is None and args.staging_root is None:
+        # Legacy no-argument mode: exactly the original two already-published
+        # pairs, unchanged behavior and unchanged output shape.
+        staging_parent = Path(r"D:\mtg-kernel-cp7-anchor-panel-v3\denovo-fixed-state-staging")
+        targets = legacy_default_targets(staging_parent)
+        records = []
+        for store_root, generation, authority_kind, staging_root in targets:
+            record = stage(store_root, generation, authority_kind, staging_root)
+            records.append(record)
+            print(json.dumps(record, indent=2))
+        manifest_index_path = staging_parent / "staging-manifest-index.json"
+        manifest_index_path.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n",
+                                       encoding="utf-8", newline="\n")
+        print(f"\nwritten index: {manifest_index_path}")
+        return 0
+
+    # Single-pair CLI mode (seed-widening campaign): one (store, generation)
+    # per invocation. --store-root, --generation, and --staging-root are all
+    # required together in this mode.
+    missing = [name for name, value in (
+        ("--store-root", args.store_root),
+        ("--generation", args.generation),
+        ("--staging-root", args.staging_root),
+    ) if value is None]
+    if missing:
+        raise SystemExit(
+            f"single-pair mode requires all of --store-root, --generation, "
+            f"--staging-root (missing: {', '.join(missing)})")
+
+    record = stage(args.store_root, args.generation, args.authority_kind, args.staging_root)
+    print(json.dumps(record, indent=2))
+    index_path = args.index_path
+    if index_path is None:
+        index_path = args.staging_root.with_name(args.staging_root.name + ".index.json")
+    index_path.write_text(json.dumps([record], indent=2, sort_keys=True) + "\n",
+                           encoding="utf-8", newline="\n")
+    print(f"\nwritten index: {index_path}")
     return 0
 
 
