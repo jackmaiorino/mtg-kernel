@@ -204,15 +204,48 @@ fn response_exploiter_runtime_bindings_match_v1(
     let Ok(declared_beta_bits) = u32::from_str_radix(declared_beta_f32_bits, 16) else {
         return false;
     };
-    let Some(installed_anchor) = installed_anchor else {
-        return false;
-    };
     let Some(runtime_weights) = runtime_weights else {
         return false;
     };
-    declared_beta_bits == installed_anchor.bits_v1()
+    // De-novo screen declares beta bits 0x00000000 (0.0f32) and installs no
+    // anchor at all -- `policy_anchor_runtime_v1` returns `Ok(None)` for the
+    // literal "0" before ever touching a ladder-init reference. Every other
+    // declared beta (build/screen's 0.1/0.03) still requires a real
+    // installed anchor whose bits match exactly, unchanged from before this
+    // arm was added.
+    let anchor_matches = if declared_beta_bits == 0 {
+        installed_anchor.is_none()
+    } else {
+        installed_anchor.is_some_and(|anchor| declared_beta_bits == anchor.bits_v1())
+    };
+    anchor_matches
         && declared_weight_units == runtime_weights.weights_v1()
         && declared_weight_total_units == runtime_weights.total_v1()
+}
+
+/// De-novo response screen (CLAUDE-DENOVO-SCREEN-SHEET-V1.md): the pure
+/// boolean predicate behind the multirun harness's response-exploiter
+/// runtime assert, extracted so both branches (warm-start "build"/"screen"
+/// and fresh-init "denovo-screen") are unit-testable without spawning a real
+/// training run. `ladder_init_present` and `denovo_enabled` are mutually
+/// exclusive by construction: a warm-start response-exploiter run always
+/// supplies `MULTIRUN_LADDER_INIT_STORE`; a denovo-screen run never does and
+/// instead sets `MULTIRUN_RESPONSE_EXPLOITER_DENOVO=1`. Any other
+/// combination (both, or neither) is invalid and this returns `false`.
+#[cfg(test)]
+const fn response_exploiter_runtime_requirements_satisfied_v1(
+    ladder_enabled: bool,
+    environment_randomization_v2: bool,
+    ladder_init_present: bool,
+    denovo_enabled: bool,
+    updates: u64,
+    population_authority_enabled: bool,
+) -> bool {
+    ladder_enabled
+        && environment_randomization_v2
+        && (ladder_init_present != denovo_enabled)
+        && updates == 256
+        && !population_authority_enabled
 }
 
 #[cfg(test)]
@@ -920,6 +953,78 @@ mod policy_anchor_parse_tests {
             Some(&runtime),
         ));
     }
+
+    #[test]
+    fn response_exploiter_runtime_bindings_denovo_beta_requires_no_installed_anchor() {
+        let declared = [125_407, 115_542, 127_252, 127_098, 128_077, 127_916, 0, 0];
+        let runtime = PopulationWeightVectorV1::new_v1(declared, 751_292).unwrap();
+        // Declared beta 0x00000000 (0.0f32) with no installed anchor: matches.
+        assert!(response_exploiter_runtime_bindings_match_v1(
+            "00000000",
+            &declared,
+            751_292,
+            None,
+            Some(&runtime),
+        ));
+        // Declared beta 0.0 but an anchor is actually installed: a real
+        // mismatch between what the contract claims and what the trainer
+        // built -- must reject, not silently accept.
+        assert!(!response_exploiter_runtime_bindings_match_v1(
+            "00000000",
+            &declared,
+            751_292,
+            Some(NativePolicyAnchorCoefficientV1::Beta0p1),
+            Some(&runtime),
+        ));
+        // Weight-vector binding still enforced under the denovo beta arm.
+        let wrong_runtime = PopulationWeightVectorV1::new_v1(
+            [125_408, 115_541, 127_252, 127_098, 128_077, 127_916, 0, 0],
+            751_292,
+        )
+        .unwrap();
+        assert!(!response_exploiter_runtime_bindings_match_v1(
+            "00000000",
+            &declared,
+            751_292,
+            None,
+            Some(&wrong_runtime),
+        ));
+    }
+
+    #[test]
+    fn response_exploiter_runtime_requirements_accept_warm_start_xor_denovo_only() {
+        // Warm-start ("build"/"screen"): ladder init present, denovo unset.
+        assert!(response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, true, false, 256, false,
+        ));
+        // De-novo screen: ladder init absent, denovo set.
+        assert!(response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, false, true, 256, false,
+        ));
+        // Neither warm-start nor denovo: invalid (a response-exploiter run
+        // must declare exactly one genesis source).
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, false, false, 256, false,
+        ));
+        // Both warm-start and denovo: invalid (contradictory genesis claim).
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, true, true, 256, false,
+        ));
+        // Every other requirement stays load-bearing under the denovo arm
+        // exactly as it already was under the warm-start arm.
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            false, true, false, true, 256, false,
+        ));
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            true, false, false, true, 256, false,
+        ));
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, false, true, 255, false,
+        ));
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, false, true, 256, true,
+        ));
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -1205,6 +1310,14 @@ mod windows_science_loop_tests {
         let population_runtime_enabled = env_knob_v1("MULTIRUN_POPULATION_RUNTIME", 0) != 0;
         let response_exploiter_runtime_enabled =
             env_knob_v1("MULTIRUN_RESPONSE_EXPLOITER_RUNTIME", 0) != 0;
+        // De-novo response screen (CLAUDE-DENOVO-SCREEN-SHEET-V1.md): an
+        // explicit, independent boolean knob rather than an implicit
+        // beta=="0" signal, matching this harness's existing one-concept-one-
+        // knob style (MULTIRUN_WIDE, MULTIRUN_POPULATION_RUNTIME, ...).
+        // Meaningful only alongside MULTIRUN_RESPONSE_EXPLOITER_RUNTIME=1;
+        // see `response_exploiter_runtime_requirements_satisfied_v1`.
+        let response_exploiter_denovo_enabled =
+            env_knob_v1("MULTIRUN_RESPONSE_EXPLOITER_DENOVO", 0) != 0;
         // Macro Self-Play Envrand-V2 Rung V1. This knob changes only the
         // run-record trajectory declaration. Runtime dispatch remains owned
         // by the validated record and its sealed executor-mode diagonal.
@@ -1335,13 +1448,22 @@ mod windows_science_loop_tests {
             "population and response-exploiter runtimes are mutually exclusive"
         );
         assert!(
+            !response_exploiter_denovo_enabled || response_exploiter_runtime_enabled,
+            "MULTIRUN_RESPONSE_EXPLOITER_DENOVO=1 requires MULTIRUN_RESPONSE_EXPLOITER_RUNTIME=1"
+        );
+        assert!(
             !response_exploiter_runtime_enabled
-                || (ladder_enabled
-                    && environment_randomization_v2
-                    && ladder_init_section.is_some()
-                    && updates == 256
-                    && !population_authority_enabled),
-            "response-exploiter runtime requires ladder parent init, envrand-v2, and exactly 256 updates"
+                || response_exploiter_runtime_requirements_satisfied_v1(
+                    ladder_enabled,
+                    environment_randomization_v2,
+                    ladder_init_section.is_some(),
+                    response_exploiter_denovo_enabled,
+                    updates,
+                    population_authority_enabled,
+                ),
+            "response-exploiter runtime requires ladder pool, envrand-v2, exactly 256 updates, \
+             and exactly one of parent init (warm-start build/screen) or \
+             MULTIRUN_RESPONSE_EXPLOITER_DENOVO=1 (fresh-init denovo-screen)"
         );
         let population_engine = if population_runtime_enabled || response_exploiter_runtime_enabled {
             let (chain_name, roots_name) = if response_exploiter_runtime_enabled {
@@ -1454,6 +1576,7 @@ mod windows_science_loop_tests {
              population_authority={population_authority_enabled} \
              population_runtime={population_runtime_enabled} \
              response_exploiter_runtime={response_exploiter_runtime_enabled} \
+             response_exploiter_denovo={response_exploiter_denovo_enabled} \
              policy_anchor_beta={} stop_after_generation={} expected_resume_generation={}",
             ladder_init_store.is_some(),
             std::env::var("MULTIRUN_POLICY_ANCHOR_BETA").unwrap_or_else(|_| "absent".to_owned()),
@@ -1472,7 +1595,30 @@ mod windows_science_loop_tests {
                 let population_engine = population_engine.clone();
                 std::thread::spawn(move || {
                     let run_seed = base_seed + seed_offset + ordinal as u64;
-                    let patched = if response_exploiter_runtime_enabled {
+                    let patched = if response_exploiter_runtime_enabled
+                        && response_exploiter_denovo_enabled
+                    {
+                        // De-novo screen: same ladder-pool/mixture binding,
+                        // but no parent initialization at all -- the
+                        // runtime assert above already proved
+                        // `ladder_init_section` is `None` here.
+                        crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_denovo_environment_v2(
+                            NativeTrainingNumericalBackendV1::CudaBurnDense,
+                            64,
+                            4,
+                            updates,
+                            workers,
+                            sessions,
+                            broker_target,
+                            1_024,
+                            2_048,
+                            run_seed,
+                            ladder_pool
+                                .as_ref()
+                                .expect("denovo-screen Run requires ladder pool")
+                                .clone(),
+                        )
+                    } else if response_exploiter_runtime_enabled {
                         crate::native_training_store_run_v2::test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_environment_v2(
                             NativeTrainingNumericalBackendV1::CudaBurnDense,
                             64,
@@ -1674,7 +1820,16 @@ mod windows_science_loop_tests {
                         );
                         assert_eq!(
                             response.run_role,
-                            if stop_after_generation.is_some() {
+                            if response_exploiter_denovo_enabled {
+                                // Denovo-screen has no early-stop smoke
+                                // variant in this phase: it is always the
+                                // full 256-update run, matching "build".
+                                assert!(
+                                    stop_after_generation.is_none(),
+                                    "denovo-screen does not support an early stop generation"
+                                );
+                                "denovo-screen"
+                            } else if stop_after_generation.is_some() {
                                 "screen"
                             } else {
                                 "build"

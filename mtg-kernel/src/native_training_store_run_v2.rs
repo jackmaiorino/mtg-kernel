@@ -403,6 +403,29 @@ const RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1: u64 = 4;
 const RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1: &str = "3dcccccd";
 const RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1: &str = "3cf5c28f";
 
+// De-novo response screen (CLAUDE-DENOVO-SCREEN-SHEET-V1.md, Mechanism
+// Decision Memo V1 Option A / coordinator ruling 2026-08-07): a third
+// response-exploiter run role, structurally distinct from "build" and
+// "screen" (both of which always warm-start from promoted(2) gen-384 under a
+// nonzero KL anchor). "denovo-screen" trains a fresh Net8 from the frozen
+// common model snapshot (no warm start, beta=0, no KL anchor) against the
+// exact same frozen refresh-008 mixture "build"/"screen" already use. One
+// authorized seed today (971_201, verified fresh against collab and every
+// sibling mtg-kernel-* worktree before authorization); the array stays
+// closed/compile-bound like its build/screen siblings and is widened, not
+// reinterpreted, if a future seed is authorized.
+const RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1: [u64; 1] = [971_201];
+// 0.0f32 bits: exactly the literal `parse_policy_anchor_coefficient_v1`
+// (native_science_loop_v1) already maps to "no anchor installed" for the
+// string "0", independent of this contract.
+const RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1: &str = "00000000";
+// Denovo-screen is a full 256-update run like "build" (unlike "screen",
+// which is a 4-update infrastructure smoke test); reusing
+// RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1 directly as its own completion
+// generation keeps this a widening, not a new schedule shape.
+const RESPONSE_EXPLOITER_DENOVO_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1: &str =
+    "weights-bit-exact-from-common-model-snapshot-adam-moments-positive-zero-adam-step-zero/v1";
+
 // V2 opponent seed-schedule namespace declarations (Self-Play Ladder Design
 // Contract S2, Section 2), owned by `native_trainer_schedule_v2`. Present in
 // a record if and only if `opponent_policy.identity` carries the ladder
@@ -846,16 +869,35 @@ pub struct ResponseExploiterContractV1 {
     pub(crate) fresh_adam_after_weight_init_identity: String,
     pub(crate) authorized_base_seeds: [u64; 5],
     pub(crate) authorized_screen_seeds: [u64; 4],
+    pub(crate) authorized_denovo_seeds: [u64; 1],
     pub(crate) expected_base_seed: u64,
     pub(crate) run_role: String,
     pub(crate) expected_completion_generation: u64,
     pub(crate) policy_anchor_beta_f32_bits: String,
-    pub(crate) parent_source_run_sha256: String,
-    pub(crate) parent_generation: u64,
-    pub(crate) parent_checkpoint_sha256: String,
-    pub(crate) parent_sidecar_sha256: String,
-    pub(crate) parent_state_sha256: String,
-    pub(crate) parent_model_parameter_sha256: String,
+    // Option-per-role by design, not a sentinel/zero-digest scheme: "build"
+    // and "screen" roles always carry `Some` (bound to promoted(2) gen-384,
+    // matching `contracts.opponent_ladder_initialization`); "denovo-screen"
+    // always carries `None` (there is no parent -- genesis is the frozen
+    // common model snapshot, already declared and verified on every record
+    // via `TrainRunV2::model_snapshot`, independent of this contract).
+    // `#[serde(default, skip_serializing_if = "Option::is_none")]` keeps
+    // every existing "build"/"screen" record's canonical bytes unchanged
+    // (the field is always `Some` there and serializes exactly as before);
+    // only new "denovo-screen" records omit the field. Validation (not
+    // deserialization) enforces that presence is role-consistent -- see
+    // `validate_response_exploiter_v1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_source_run_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_generation: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_checkpoint_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_sidecar_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_state_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_model_parameter_sha256: Option<String>,
 }
 
 /// Capacity-experiment wide-net record section. See
@@ -2478,8 +2520,52 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         .contains(&response.expected_base_seed)
     {
         ("screen", RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1)
+    } else if RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1
+        .contains(&response.expected_base_seed)
+    {
+        ("denovo-screen", RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1)
     } else {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    };
+    let is_denovo = response.run_role == "denovo-screen";
+
+    // Parent lineage and warm-start initialization are role-conditional, not
+    // sentinel-filled: "build"/"screen" always bind the exact promoted(2)
+    // gen-384 identity on both this contract's parent_* fields and the
+    // record's own `opponent_ladder_initialization` section; "denovo-screen"
+    // requires both to be entirely absent, since there is no parent for a
+    // fresh-init run. Never a partial match either direction.
+    let parent_and_initialization_invalid = if is_denovo {
+        response.parent_source_run_sha256.is_some()
+            || response.parent_generation.is_some()
+            || response.parent_checkpoint_sha256.is_some()
+            || response.parent_sidecar_sha256.is_some()
+            || response.parent_state_sha256.is_some()
+            || response.parent_model_parameter_sha256.is_some()
+            || response.fresh_adam_after_weight_init_identity
+                != RESPONSE_EXPLOITER_DENOVO_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1
+            || initialization.is_some()
+    } else {
+        response.parent_source_run_sha256.as_deref() != Some(POPULATION_PARENT_SOURCE_RUN_SHA256_V1)
+            || response.parent_generation != Some(POPULATION_PARENT_GENERATION_V1)
+            || response.parent_checkpoint_sha256.as_deref()
+                != Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1)
+            || response.parent_sidecar_sha256.as_deref()
+                != Some(POPULATION_PARENT_SIDECAR_SHA256_V1)
+            || response.parent_state_sha256.as_deref() != Some(POPULATION_PARENT_STATE_SHA256_V1)
+            || response.parent_model_parameter_sha256.as_deref()
+                != Some(POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1)
+            || response.fresh_adam_after_weight_init_identity
+                != RESPONSE_EXPLOITER_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1
+            || initialization.is_none_or(|initialization| {
+                initialization.source_run_sha256 != POPULATION_PARENT_SOURCE_RUN_SHA256_V1
+                    || initialization.generation != POPULATION_PARENT_GENERATION_V1
+                    || initialization.checkpoint_sha256 != POPULATION_PARENT_CHECKPOINT_SHA256_V1
+                    || initialization.sidecar_sha256 != POPULATION_PARENT_SIDECAR_SHA256_V1
+                    || initialization.state_sha256 != POPULATION_PARENT_STATE_SHA256_V1
+                    || initialization.derived_model_parameter_sha256
+                        != POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1
+            })
     };
 
     if response.identity != RESPONSE_EXPLOITER_IDENTITY_V1
@@ -2501,10 +2587,9 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         || response.training_update_count != RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1
         || response.episodes_per_update != RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
         || response.reward_identity != POPULATION_REWARD_IDENTITY_V1
-        || response.fresh_adam_after_weight_init_identity
-            != RESPONSE_EXPLOITER_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1
         || response.authorized_base_seeds != RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
         || response.authorized_screen_seeds != RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1
+        || response.authorized_denovo_seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1
         || response.expected_base_seed != record.schedule.base_seed
         || response.run_role != expected_role_and_completion.0
         || response.expected_completion_generation != expected_role_and_completion.1
@@ -2512,17 +2597,16 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
             response.policy_anchor_beta_f32_bits.as_str(),
             RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1
                 | RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1
+                | RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1
         )
         || (response.run_role == "screen"
             && response.policy_anchor_beta_f32_bits
                 != RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1)
-        || response.parent_source_run_sha256 != POPULATION_PARENT_SOURCE_RUN_SHA256_V1
-        || response.parent_generation != POPULATION_PARENT_GENERATION_V1
-        || response.parent_checkpoint_sha256 != POPULATION_PARENT_CHECKPOINT_SHA256_V1
-        || response.parent_sidecar_sha256 != POPULATION_PARENT_SIDECAR_SHA256_V1
-        || response.parent_state_sha256 != POPULATION_PARENT_STATE_SHA256_V1
-        || response.parent_model_parameter_sha256
-            != POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1
+        || (is_denovo
+            && response.policy_anchor_beta_f32_bits != RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1)
+        || (!is_denovo
+            && response.policy_anchor_beta_f32_bits == RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1)
+        || parent_and_initialization_invalid
         || record.contracts.population_program_v1.is_some()
         || record.contracts.wide_model_experiment_v1.is_some()
         || record.environment.environment_randomization_v2.is_none()
@@ -2530,15 +2614,6 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
             != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
         || record.contracts.opponent_ladder_pool.is_none()
         || record.contracts.opponent_schedule_v2.is_none()
-        || initialization.is_none_or(|initialization| {
-            initialization.source_run_sha256 != POPULATION_PARENT_SOURCE_RUN_SHA256_V1
-                || initialization.generation != POPULATION_PARENT_GENERATION_V1
-                || initialization.checkpoint_sha256 != POPULATION_PARENT_CHECKPOINT_SHA256_V1
-                || initialization.sidecar_sha256 != POPULATION_PARENT_SIDECAR_SHA256_V1
-                || initialization.state_sha256 != POPULATION_PARENT_STATE_SHA256_V1
-                || initialization.derived_model_parameter_sha256
-                    != POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1
-        })
         || record.schedule.batch_episodes != RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
         || record.schedule.checkpoint_segment_updates
             != RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1
@@ -3365,6 +3440,45 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_
         pool,
         initialization,
         policy_anchor_beta_f32_bits,
+    )
+}
+
+/// De-novo sibling of
+/// [`test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_environment_v2`]:
+/// same ladder-pool/mixture/schedule binding, but takes no
+/// `OpponentLadderInitializationContractV1` at all (there is no parent to
+/// pin) and stamps the "denovo-screen" role/beta=0 contract instead. Built
+/// on the existing no-init ladder+envrand-v2 fixture
+/// (`fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2`, the
+/// same builder the generic `(Some(pool), None, true)` multirun-harness
+/// dispatch arm already uses), not the init variant.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_denovo_environment_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+    pool: OpponentLadderPoolContractV1,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_response_exploiter_denovo_environment_v2(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+        pool,
     )
 }
 
@@ -4721,6 +4835,47 @@ mod tests {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_response_exploiter_denovo_environment_v2(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+        pool: OpponentLadderPoolContractV1,
+    ) -> Vec<u8> {
+        // Built on the no-init ladder+envrand-v2 base (no
+        // `opponent_ladder_initialization` at all), unlike the
+        // warm-start-response-exploiter builder above, which is built on the
+        // init variant. This is the structural fact that makes
+        // "denovo-screen" fresh-init by construction rather than by a
+        // separately-checked flag.
+        let base = fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
+            backend,
+            batch_episodes,
+            checkpoint_segment_updates,
+            requested_successful_updates,
+            worker_count,
+            sessions_per_worker,
+            broker_batch_target,
+            max_physical_decisions,
+            max_policy_steps,
+            base_seed,
+            pool,
+        );
+        let wire: TrainRunWireV2 = serde_json::from_slice(&base).unwrap();
+        let mut record = TrainRunV2::from(wire);
+        record.contracts.response_exploiter_v1 =
+            Some(response_exploiter_denovo_fixture_for_seed(base_seed));
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn fixture_bytes_with_schedule_and_base_seed_ladder_init(
         backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
         batch_episodes: u64,
@@ -5749,6 +5904,7 @@ mod tests {
                 RESPONSE_EXPLOITER_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1.to_owned(),
             authorized_base_seeds: RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1,
             authorized_screen_seeds: RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1,
+            authorized_denovo_seeds: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1,
             expected_base_seed,
             run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
                 .contains(&expected_base_seed)
@@ -5765,12 +5921,35 @@ mod tests {
                 RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1
             },
             policy_anchor_beta_f32_bits: RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned(),
-            parent_source_run_sha256: POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned(),
-            parent_generation: POPULATION_PARENT_GENERATION_V1,
-            parent_checkpoint_sha256: POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned(),
-            parent_sidecar_sha256: POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned(),
-            parent_state_sha256: POPULATION_PARENT_STATE_SHA256_V1.to_owned(),
-            parent_model_parameter_sha256: POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1.to_owned(),
+            parent_source_run_sha256: Some(POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned()),
+            parent_generation: Some(POPULATION_PARENT_GENERATION_V1),
+            parent_checkpoint_sha256: Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned()),
+            parent_sidecar_sha256: Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned()),
+            parent_state_sha256: Some(POPULATION_PARENT_STATE_SHA256_V1.to_owned()),
+            parent_model_parameter_sha256: Some(
+                POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1.to_owned(),
+            ),
+        }
+    }
+
+    /// De-novo sibling of [`response_exploiter_fixture_for_seed`]: same
+    /// mixture/schedule binding, "denovo-screen" role, beta=0 bits, no
+    /// parent lineage (see the struct's own doc comment: Option-per-role,
+    /// not a sentinel).
+    fn response_exploiter_denovo_fixture_for_seed(expected_base_seed: u64) -> ResponseExploiterContractV1 {
+        ResponseExploiterContractV1 {
+            fresh_adam_after_weight_init_identity:
+                RESPONSE_EXPLOITER_DENOVO_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1.to_owned(),
+            run_role: "denovo-screen".to_owned(),
+            expected_completion_generation: RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
+            policy_anchor_beta_f32_bits: RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1.to_owned(),
+            parent_source_run_sha256: None,
+            parent_generation: None,
+            parent_checkpoint_sha256: None,
+            parent_sidecar_sha256: None,
+            parent_state_sha256: None,
+            parent_model_parameter_sha256: None,
+            ..response_exploiter_fixture_for_seed(expected_base_seed)
         }
     }
 
@@ -5794,6 +5973,33 @@ mod tests {
         record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
         record.contracts.response_exploiter_v1 =
             Some(response_exploiter_fixture_for_seed(expected_base_seed));
+        refresh_derived(&mut record);
+        record
+    }
+
+    /// De-novo sibling of [`response_exploiter_record_for_seed`]: identical
+    /// mixture/ladder-pool/schedule binding, but
+    /// `opponent_ladder_initialization` stays `None` (no warm start) and the
+    /// attached contract is the "denovo-screen" fixture.
+    fn response_exploiter_denovo_record_for_seed(expected_base_seed: u64) -> TrainRunV2 {
+        let mut record = coherent_v2_record();
+        record.schedule.base_seed = expected_base_seed;
+        record.schedule.batch_episodes = RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1;
+        record.schedule.checkpoint_segment_updates =
+            RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1;
+        record.schedule.requested_successful_updates =
+            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1;
+        record.schedule.checkpoint_episode_interval = RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
+            * RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1;
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
+        record.contracts.opponent_ladder_initialization = None;
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
+        record.contracts.response_exploiter_v1 =
+            Some(response_exploiter_denovo_fixture_for_seed(expected_base_seed));
         refresh_derived(&mut record);
         record
     }
@@ -6256,7 +6462,7 @@ mod tests {
             .response_exploiter_v1
             .as_mut()
             .unwrap()
-            .parent_generation = 383;
+            .parent_generation = Some(383);
         wrong_parent
             .contracts
             .opponent_ladder_initialization
@@ -6299,22 +6505,169 @@ mod tests {
             |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
             |r| r.authorized_base_seeds = [971_001, 971_002, 971_101, 971_102, 971_003],
             |r| r.authorized_screen_seeds = [971_091, 971_092, 971_191, 971_003],
+            |r| r.authorized_denovo_seeds = [971_202],
             |r| r.expected_base_seed = 971_002,
             |r| r.run_role = "screen".to_owned(),
+            |r| r.run_role = "denovo-screen".to_owned(),
             |r| r.expected_completion_generation = 4,
             |r| r.policy_anchor_beta_f32_bits = "3dccccce".to_owned(),
-            |r| r.parent_source_run_sha256 = ZERO_SHA256.to_owned(),
-            |r| r.parent_generation = 383,
-            |r| r.parent_checkpoint_sha256 = ZERO_SHA256.to_owned(),
-            |r| r.parent_sidecar_sha256 = ZERO_SHA256.to_owned(),
-            |r| r.parent_state_sha256 = ZERO_SHA256.to_owned(),
-            |r| r.parent_model_parameter_sha256 = ZERO_SHA256.to_owned(),
+            |r| r.policy_anchor_beta_f32_bits = "00000000".to_owned(),
+            |r| r.parent_source_run_sha256 = Some(ZERO_SHA256.to_owned()),
+            |r| r.parent_generation = Some(383),
+            |r| r.parent_checkpoint_sha256 = Some(ZERO_SHA256.to_owned()),
+            |r| r.parent_sidecar_sha256 = Some(ZERO_SHA256.to_owned()),
+            |r| r.parent_state_sha256 = Some(ZERO_SHA256.to_owned()),
+            |r| r.parent_model_parameter_sha256 = Some(ZERO_SHA256.to_owned()),
+            |r| r.parent_source_run_sha256 = None,
+            |r| r.parent_generation = None,
+            |r| r.parent_checkpoint_sha256 = None,
+            |r| r.parent_sidecar_sha256 = None,
+            |r| r.parent_state_sha256 = None,
+            |r| r.parent_model_parameter_sha256 = None,
         ];
         for mutate in mutations {
             let mut record = response_exploiter_record_for_seed(971_001);
             mutate(record.contracts.response_exploiter_v1.as_mut().unwrap());
             refresh_derived(&mut record);
             assert!(validate_train_run_record_v2(record).is_err());
+        }
+    }
+
+    /// De-novo-screen mirror of
+    /// `response_exploiter_target_literals_hashes_and_vector_fail_closed`:
+    /// every field that must be role-specific for "denovo-screen" (role
+    /// string, completion generation, beta bits, and each formerly-sentinel
+    /// parent_* field flipping back to `Some`) rejects under one-at-a-time
+    /// mutation of an otherwise-valid denovo record.
+    #[test]
+    fn response_exploiter_denovo_role_fields_fail_closed() {
+        let mutations: &[fn(&mut ResponseExploiterContractV1)] = &[
+            |r| r.run_role = "build".to_owned(),
+            |r| r.run_role = "screen".to_owned(),
+            |r| r.expected_completion_generation = 4,
+            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned(),
+            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned(),
+            |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
+            |r| {
+                r.parent_source_run_sha256 = Some(POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned())
+            },
+            |r| r.parent_generation = Some(POPULATION_PARENT_GENERATION_V1),
+            |r| {
+                r.parent_checkpoint_sha256 =
+                    Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned())
+            },
+            |r| {
+                r.parent_sidecar_sha256 = Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned())
+            },
+            |r| r.parent_state_sha256 = Some(POPULATION_PARENT_STATE_SHA256_V1.to_owned()),
+            |r| {
+                r.parent_model_parameter_sha256 =
+                    Some(POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1.to_owned())
+            },
+        ];
+        for mutate in mutations {
+            let mut record = response_exploiter_denovo_record_for_seed(971_201);
+            mutate(record.contracts.response_exploiter_v1.as_mut().unwrap());
+            refresh_derived(&mut record);
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+    }
+
+    /// A "denovo-screen" record with the warm-start
+    /// `opponent_ladder_initialization` section installed (the exact section
+    /// "build"/"screen" require) must fail closed: presence, not just
+    /// content, is role-conditional.
+    #[test]
+    fn response_exploiter_denovo_role_rejects_installed_initialization() {
+        let mut record = response_exploiter_denovo_record_for_seed(971_201);
+        record.contracts.opponent_ladder_initialization =
+            Some(population_parent_initialization_fixture());
+        refresh_derived(&mut record);
+        assert!(validate_train_run_record_v2(record).is_err());
+    }
+
+    /// The valid "denovo-screen" record (no parent, no initialization, beta
+    /// bits 0.0, role/completion-generation matching seed 971_201) validates
+    /// cleanly, matching the equivalent build/screen positive tests above.
+    #[test]
+    fn response_exploiter_denovo_role_validates_with_no_parent_and_no_initialization() {
+        let record = response_exploiter_denovo_record_for_seed(971_201);
+        let validated = validate_train_run_record_v2(record).unwrap();
+        let response = validated
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .unwrap();
+        assert_eq!(response.run_role, "denovo-screen");
+        assert_eq!(response.expected_completion_generation, 256);
+        assert_eq!(response.policy_anchor_beta_f32_bits, "00000000");
+        assert!(response.parent_source_run_sha256.is_none());
+        assert!(response.parent_generation.is_none());
+        assert!(response.parent_checkpoint_sha256.is_none());
+        assert!(response.parent_sidecar_sha256.is_none());
+        assert!(response.parent_state_sha256.is_none());
+        assert!(response.parent_model_parameter_sha256.is_none());
+        assert!(
+            validated
+                .record()
+                .contracts()
+                .opponent_ladder_initialization
+                .is_none()
+        );
+        assert!(
+            validated
+                .record()
+                .contracts()
+                .opponent_ladder_pool
+                .is_some()
+        );
+    }
+
+    /// Builder round-trip for the authorized denovo seed, mirroring
+    /// `response_exploiter_builder_mints_bounded_screen_seeds`: the omitted
+    /// parent_* fields must not appear in the canonical bytes at all
+    /// (`skip_serializing_if`, not `null`).
+    #[test]
+    fn response_exploiter_denovo_builder_mints_authorized_seed() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+
+        for seed in RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1 {
+            let bytes =
+                test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_denovo_environment_v2(
+                    NativeTrainingNumericalBackendV1::Sequential,
+                    64,
+                    4,
+                    256,
+                    2,
+                    32,
+                    16,
+                    1_024,
+                    2_048,
+                    seed,
+                    valid_ladder_pool_fixture(),
+                );
+            let validated = decode_train_run_v2(&bytes).unwrap();
+            let response = validated
+                .record()
+                .contracts()
+                .response_exploiter_v1
+                .as_ref()
+                .unwrap();
+            assert_eq!(response.expected_base_seed, seed);
+            assert_eq!(response.run_role, "denovo-screen");
+            assert!(validated.record().contracts().population_program_v1.is_none());
+            assert_eq!(
+                validated.record().contracts().opponent_ladder_initialization,
+                None
+            );
+            let text = String::from_utf8(bytes).unwrap();
+            assert!(!text.contains("parent_source_run_sha256"));
+            assert!(!text.contains("parent_generation"));
+            assert!(!text.contains("parent_checkpoint_sha256"));
+            assert!(!text.contains("parent_sidecar_sha256"));
+            assert!(!text.contains("parent_state_sha256"));
+            assert!(!text.contains("parent_model_parameter_sha256"));
         }
     }
 
