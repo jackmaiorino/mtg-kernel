@@ -232,6 +232,14 @@ fn response_exploiter_runtime_bindings_match_v1(
 /// supplies `MULTIRUN_LADDER_INIT_STORE`; a denovo-screen run never does and
 /// instead sets `MULTIRUN_RESPONSE_EXPLOITER_DENOVO=1`. Any other
 /// combination (both, or neither) is invalid and this returns `false`.
+///
+/// Phase 2 horizon amendment (CLAUDE-DENOVO-SCREEN-SHEET-V1.md): 512 updates
+/// is permitted, but only alongside `denovo_enabled` (the "denovo-screen-512"
+/// role) -- warm-started "build"/"screen" runs stay fixed at 256, unchanged.
+/// The record-level contract (`validate_response_exploiter_v1`,
+/// native_training_store_run_v2) is the authority that further ties the
+/// exact seed to the exact update count; this predicate only enforces the
+/// coarser structural shape.
 #[cfg(test)]
 const fn response_exploiter_runtime_requirements_satisfied_v1(
     ladder_enabled: bool,
@@ -244,7 +252,7 @@ const fn response_exploiter_runtime_requirements_satisfied_v1(
     ladder_enabled
         && environment_randomization_v2
         && (ladder_init_present != denovo_enabled)
-        && updates == 256
+        && (updates == 256 || (denovo_enabled && updates == 512))
         && !population_authority_enabled
 }
 
@@ -1024,6 +1032,33 @@ mod policy_anchor_parse_tests {
         assert!(!response_exploiter_runtime_requirements_satisfied_v1(
             true, true, false, true, 256, true,
         ));
+        // Phase 2 horizon amendment (CLAUDE-DENOVO-SCREEN-SHEET-V1.md):
+        // 512 updates is accepted, but only for the de-novo arm.
+        assert!(response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, false, true, 512, false,
+        ));
+        // 512 updates is rejected for warm-start (build/screen never widen
+        // past 256).
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, true, false, 512, false,
+        ));
+        // 512 updates is rejected without the de-novo arm enabled at all.
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, false, false, 512, false,
+        ));
+        // 512 updates still requires every other requirement (ladder,
+        // envrand-v2, not population authority) to hold.
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            false, true, false, true, 512, false,
+        ));
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, false, true, 512, true,
+        ));
+        // An update count that is neither 256 nor 512 is rejected even under
+        // the de-novo arm.
+        assert!(!response_exploiter_runtime_requirements_satisfied_v1(
+            true, true, false, true, 511, false,
+        ));
     }
 }
 
@@ -1461,7 +1496,8 @@ mod windows_science_loop_tests {
                     updates,
                     population_authority_enabled,
                 ),
-            "response-exploiter runtime requires ladder pool, envrand-v2, exactly 256 updates, \
+            "response-exploiter runtime requires ladder pool, envrand-v2, exactly 256 updates \
+             (or 512 updates, de-novo only -- Phase 2 horizon amendment), \
              and exactly one of parent init (warm-start build/screen) or \
              MULTIRUN_RESPONSE_EXPLOITER_DENOVO=1 (fresh-init denovo-screen)"
         );
@@ -1823,12 +1859,27 @@ mod windows_science_loop_tests {
                             if response_exploiter_denovo_enabled {
                                 // Denovo-screen has no early-stop smoke
                                 // variant in this phase: it is always the
-                                // full 256-update run, matching "build".
+                                // full-horizon run, matching "build" -- 256
+                                // updates for the original "denovo-screen"
+                                // role, or 512 for the Phase 2 horizon
+                                // amendment's "denovo-screen-512" role
+                                // (CLAUDE-DENOVO-SCREEN-SHEET-V1.md). The
+                                // record's own contract (seed membership in
+                                // RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1
+                                // vs RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1,
+                                // native_training_store_run_v2) is the
+                                // authority that ties the exact seed to the
+                                // exact role; this assert only checks the
+                                // coarser updates-to-role-name shape matches.
                                 assert!(
                                     stop_after_generation.is_none(),
                                     "denovo-screen does not support an early stop generation"
                                 );
-                                "denovo-screen"
+                                if updates == 512 {
+                                    "denovo-screen-512"
+                                } else {
+                                    "denovo-screen"
+                                }
                             } else if stop_after_generation.is_some() {
                                 "screen"
                             } else {
@@ -2879,9 +2930,19 @@ mod windows_science_loop_tests {
         // whichever of those nine generations the probe stage picked for a
         // given seed, so the non-diagnostic allowlist widens to the same
         // nine-value set (superset of the v1 {0,256}).
+        //
+        // De-novo screen Phase 2 horizon amendment
+        // (CLAUDE-DENOVO-SCREEN-SHEET-V1.md): the 512-update probe's own
+        // every-64 grid {0,64,128,192,256,320,384,448,512} is unioned into
+        // the diagnostic allowlist only (the denovo screens always run
+        // diagnostic; the non-diagnostic build v2 confirmation branch below
+        // never reads a denovo candidate and is left untouched).
         if diagnostic_v1 {
             assert!(
-                matches!(candidate_gen, 0 | 32 | 64 | 96 | 128 | 160 | 192 | 224 | 256),
+                matches!(
+                    candidate_gen,
+                    0 | 32 | 64 | 96 | 128 | 160 | 192 | 224 | 256 | 320 | 384 | 448 | 512
+                ),
                 "diagnostic mixture arm must use the shared genesis control or a retained checkpoint"
             );
         } else {
