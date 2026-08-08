@@ -441,11 +441,19 @@ const RESPONSE_EXPLOITER_DENOVO_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1: &str =
 // seed array and its own training-update-count/completion-generation
 // constant, mirroring exactly how "build" and "screen" already use separate
 // arrays and separate completion generations rather than one shared,
-// reinterpreted array. One authorized seed today (971_202, verified fresh
-// against collab and every sibling mtg-kernel-* worktree before
-// authorization; the array stays closed/compile-bound and is widened, not
-// reinterpreted, if a future seed is authorized).
-const RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1: [u64; 1] = [971_202];
+// reinterpreted array. Widened from the original one-seed authorization
+// (971_202, verified fresh against collab and every sibling mtg-kernel-*
+// worktree before authorization) to the campaign set of four
+// (971_202, 971_211, 971_212, 971_213; the three new seeds independently
+// verified fresh the same way): the array stays closed/compile-bound and
+// is widened, never reinterpreted, in place, appending only. Widening in
+// place (not replacing the array wholesale) is exactly why the record
+// field below is prefix-validated rather than exact-match validated: the
+// already-published seed-971_202 record's run.json pinned only the
+// single-element array that was authorized when it was minted, and that
+// pin must stay a true prefix of this array forever.
+const RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1: [u64; 4] =
+    [971_202, 971_211, 971_212, 971_213];
 const RESPONSE_EXPLOITER_DENOVO_512_TRAINING_UPDATE_COUNT_V1: u64 = 512;
 
 // V2 opponent seed-schedule namespace declarations (Self-Play Ladder Design
@@ -893,9 +901,10 @@ pub struct ResponseExploiterContractV1 {
     pub(crate) authorized_screen_seeds: [u64; 4],
     pub(crate) authorized_denovo_seeds: [u64; 1],
     // Phase 2 horizon amendment (CLAUDE-DENOVO-SCREEN-SHEET-V1.md), amended
-    // again for backward compatibility: the 512-update denovo-screen-512
-    // role's own dedicated authorized-seed array. It was originally
-    // modeled as an unconditional, always-present field like
+    // again for backward compatibility, then amended a third time for the
+    // seed-array widening campaign: the 512-update denovo-screen-512 role's
+    // own dedicated authorized-seed array. It was originally modeled as an
+    // unconditional, always-present [u64; 1] field like
     // `authorized_base_seeds`/`authorized_screen_seeds`/`authorized_denovo_seeds`,
     // but that orphaned every record written before this field existed
     // (denovo-screen-256's real store's run.json among them) with a hard
@@ -905,13 +914,24 @@ pub struct ResponseExploiterContractV1 {
     // `#[serde(default, skip_serializing_if = "Option::is_none")]` lets a
     // pre-amendment record (any role) decode with the field absent and
     // keeps its canonical bytes unchanged on re-encode (absence never
-    // serializes as `null`). Presence/content is still role-conditional
-    // and fail-closed, not merely tolerated: see
-    // `validate_response_exploiter_v1` for the exact rule (denovo-screen-512
-    // REQUIRES it present and exactly correct; every other role accepts
-    // absence but still rejects wrong content if present).
+    // serializes as `null`).
+    //
+    // Vec<u64>, not a fixed-size array: NEW pattern for this contract (no
+    // prior Vec-shaped field exists here; every other seed array is a
+    // fixed-size array snapshotting a closed, non-growing set). This field
+    // is different in kind, not just in size: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1
+    // itself grows over the campaign (971_202, then +971_211/971_212/971_213),
+    // and each already-published record pins only however many seeds were
+    // authorized when IT was minted, not the eventual full count. A
+    // fixed-size array can't represent that varying, per-record pin length;
+    // Vec<u64> can. Presence/content is still role-conditional and
+    // fail-closed, not merely tolerated: see `validate_response_exploiter_v1`
+    // for the exact rule (denovo-screen-512 REQUIRES it present, non-empty,
+    // and an exact PREFIX of the current authorized array; every other role
+    // accepts absence but still requires the same prefix property if
+    // present).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) authorized_denovo_512_seeds: Option<[u64; 1]>,
+    pub(crate) authorized_denovo_512_seeds: Option<Vec<u64>>,
     pub(crate) expected_base_seed: u64,
     pub(crate) run_role: String,
     pub(crate) expected_completion_generation: u64,
@@ -2608,11 +2628,24 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
     // run.json among them). Absence is accepted for every role except
     // "denovo-screen-512" itself, which cannot have a pre-amendment shape
     // (the role did not exist before the amendment that added this field).
-    // Presence is still checked exactly, for every role: a record that
-    // does carry the field but with wrong content is rejected, the same
-    // fail-closed treatment every other literal in this contract gets.
-    let authorized_denovo_512_seeds_invalid = match response.authorized_denovo_512_seeds {
-        Some(seeds) => seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1,
+    //
+    // Presence is checked by PREFIX, not exact equality, because the
+    // widening campaign amendment lets RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1
+    // itself grow (append-only) over time: the real, already-published
+    // seed-971_202 record's run.json pinned the array as it stood when
+    // that record was minted (the single-element [971_202]), and that
+    // exact pin must keep decoding forever, byte-canonically, even though
+    // the array has since grown to four elements. A record's pin is valid
+    // if and only if it is a true, non-empty prefix of the CURRENT array:
+    // this accepts the historical one-element pin, accepts a full
+    // four-element pin, and still fails closed on any content that
+    // deviates from the authorized sequence at any position, including
+    // (the widening campaign's own required regression) a pin whose last
+    // element alone is wrong.
+    let authorized_denovo_512_seeds_invalid = match &response.authorized_denovo_512_seeds {
+        Some(seeds) => {
+            seeds.is_empty() || !RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1.starts_with(seeds)
+        }
         None => expected_role_and_completion.0 == "denovo-screen-512",
     };
 
@@ -5992,7 +6025,7 @@ mod tests {
             authorized_base_seeds: RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1,
             authorized_screen_seeds: RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1,
             authorized_denovo_seeds: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1,
-            authorized_denovo_512_seeds: Some(RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1),
+            authorized_denovo_512_seeds: Some(RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1.to_vec()),
             expected_base_seed,
             run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
                 .contains(&expected_base_seed)
@@ -6617,7 +6650,12 @@ mod tests {
             |r| r.authorized_base_seeds = [971_001, 971_002, 971_101, 971_102, 971_003],
             |r| r.authorized_screen_seeds = [971_091, 971_092, 971_191, 971_003],
             |r| r.authorized_denovo_seeds = [971_202],
-            |r| r.authorized_denovo_512_seeds = Some([971_299]),
+            |r| r.authorized_denovo_512_seeds = Some(vec![971_299]),
+            |r| r.authorized_denovo_512_seeds = Some(vec![]),
+            |r| {
+                r.authorized_denovo_512_seeds =
+                    Some(vec![971_202, 971_211, 971_212, 971_299])
+            },
             |r| r.expected_base_seed = 971_002,
             |r| r.run_role = "screen".to_owned(),
             |r| r.run_role = "denovo-screen".to_owned(),
@@ -6725,7 +6763,16 @@ mod tests {
             // (the role did not exist before the field did), so an absent
             // array must still be rejected for this role specifically.
             |r| r.authorized_denovo_512_seeds = None,
-            |r| r.authorized_denovo_512_seeds = Some([971_299]),
+            |r| r.authorized_denovo_512_seeds = Some(vec![]),
+            |r| r.authorized_denovo_512_seeds = Some(vec![971_299]),
+            // Seed-widening campaign regression: a pin that matches the
+            // authorized array everywhere except its own last element is
+            // still not a true prefix of the authorized array (the
+            // widening amendment's required test shape), and must still be
+            // rejected exactly like any other wrong-content pin.
+            |r| {
+                r.authorized_denovo_512_seeds = Some(vec![971_202, 971_211, 971_212, 971_299])
+            },
         ];
         for mutate in mutations {
             let mut record = response_exploiter_denovo_record_for_seed(971_202);
@@ -7851,6 +7898,52 @@ mod tests {
         assert!(!String::from_utf8(bytes)
             .unwrap()
             .contains("authorized_denovo_512_seeds"));
+    }
+
+    /// Seed-widening campaign regression: this reads the REAL,
+    /// already-published denovo-screen-512 store's run.json (read-only; not
+    /// a fixture, not modified by this test) and proves it keeps decoding
+    /// and recomputing the exact same `run_sha256` the store already
+    /// published for it, now that `RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1`
+    /// has widened from one seed to four. This record's own
+    /// `authorized_denovo_512_seeds` pin is the historical single-element
+    /// `[971_202]` (minted before the other three seeds were authorized),
+    /// which is exactly the prefix case `validate_response_exploiter_v1`'s
+    /// widened check must keep accepting. This test depends on that
+    /// external evidence directory remaining present on this machine.
+    #[test]
+    fn real_denovo_screen_512_run_json_decodes_after_seed_widening_v1() {
+        const REAL_RUN_JSON_PATH: &str = r"D:\mtg-kernel-denovo-512-screen-v1\denovo-512-screen-build\attempt-002\denovo-512-store\run-0\store\run.json";
+        // Independently confirmed via `certutil -hashfile run.json SHA256`.
+        const STORED_RUN_SHA256: &str =
+            "3353b2a0de19407d3027724e3afaf79a6340f36cabb03a67ec84b059ce2239ea";
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!(
+                "could not read the real denovo-screen-512 run.json fixture at {REAL_RUN_JSON_PATH}: {error}"
+            )
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real denovo-screen-512 run.json failed validation: {error:?}")
+        });
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+
+        let response = validated
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .expect("this store's record carries the response-exploiter contract");
+        assert_eq!(response.run_role, "denovo-screen-512");
+        assert_eq!(response.expected_base_seed, 971_202);
+        // The real, pre-widening shape: this record's own pin is genuinely
+        // the historical one-element array, not the current four-element
+        // authorized array, and it must still be present (denovo-screen-512
+        // requires presence) and byte-identical on re-encode.
+        assert_eq!(response.authorized_denovo_512_seeds, Some(vec![971_202]));
     }
 
     /// Direct fixture-level companion to the real-store regression above:
