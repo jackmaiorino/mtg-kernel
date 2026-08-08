@@ -52,11 +52,48 @@ from typing import Any
 # TRAJECTORY_CONTRACT_V1 / SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1) so the
 # outcome-jsonl "checkpoint" field's exact-match validation in
 # validate_outcome_shard agrees with what the binary actually emits.
-MODEL_AUTHORITY_MODES = ("population", "original")
+MODEL_AUTHORITY_MODES = ("population", "original", "fixedstate")
 AUTHORITY_KIND = "population-store-validated-generation"
 AUTHORITY_KIND_ORIGINAL = "original-promoted2-validated-store-generation"
 ENVIRONMENT_CONTRACT = "environment-randomization-v2"
 ENVIRONMENT_CONTRACT_ORIGINAL = "legacy-v1"
+
+# Third authority mode: checkpoint_shadow_stdio_v1's XmageCp7OutcomeDerivative
+# "fixed native state" sub-path (--xmage-cp7-outcome-root PATH, no --generation).
+# Unlike population/original, this does not read a population-Store layout at
+# all: PATH is a staging directory containing exactly two files, a canonical
+# fixed_native_state.json manifest and a checkpoint.state.f32le payload copy
+# (see stage_fixed_native_state.py-style staging, done once, out of band).
+# Every field name/value below is read verbatim from
+# native_checkpoint_shadow_stdio_v1.rs's XmageCp7OutcomeDerivative dispatch
+# (checkpoint_shadow_stdio_v1, mtg-kernel-composed-factorial-v1-codex,
+# read-only reference): the six FIXED_NATIVE_STATE_SOURCE_* constants below are
+# what that dispatch unconditionally reports as source_run_sha256 /
+# source_generation / source_checkpoint_sha256 / source_sidecar_sha256 /
+# source_payload_sha256 / source_train_state_sha256 / loaded_run_sha256 for
+# EVERY fixed-native-state load, regardless of which state was actually
+# loaded -- they are the promoted(2) g384 anchor's own identity (independently
+# cross-checked here: they match promoted(2)'s own run.json-embedded
+# opponent_ladder_initialization block byte for byte).
+FIXED_NATIVE_STATE_SCHEMA = "mtg-kernel-xmage-fixed-native-state/v1"
+FIXED_NATIVE_STATE_PAYLOAD_FILENAME = "checkpoint.state.f32le"
+FIXED_NATIVE_STATE_MANIFEST_FILENAME = "fixed_native_state.json"
+FIXED_NATIVE_STATE_NON_CLAIMS = [
+    "external software anchor is not professional-level evidence",
+    "terminal win/loss/draw is the only playing-strength outcome",
+]
+FIXED_NATIVE_STATE_SOURCE_RUN_SHA256 = \
+    "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae"
+FIXED_NATIVE_STATE_SOURCE_GENERATION = 384
+FIXED_NATIVE_STATE_SOURCE_CHECKPOINT_SHA256 = \
+    "4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8"
+FIXED_NATIVE_STATE_SOURCE_SIDECAR_SHA256 = \
+    "7511c0377edd4e8d918fa5843f89a0270a8264e5466c329f6b4ef18bbf9e76bb"
+FIXED_NATIVE_STATE_SOURCE_PAYLOAD_SHA256 = \
+    "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99"
+FIXED_NATIVE_STATE_SOURCE_TRAIN_STATE_SHA256 = \
+    "fc471f85d28293d72b42dc61de628859173bd67426e251a51bfbbe86c7d586d8"
+FIXED_NATIVE_STATE_ENVIRONMENT_CONTRACT = "environment-randomization-v2"
 SAMPLER_IDENTITY = "f32-q8-expq63-hamilton-splitmix64-v1"
 SAMPLER_CONTRACT = "276407494966b195b7c011caf984d2354484f7532161107b19ecc83388de92b6"
 OUTCOME_CONTRACT = "mtg-kernel-xmage-cp7-outcome-jsonl/v2"
@@ -161,10 +198,81 @@ def _git_commit(repo: Path) -> str:
                      "rev-parse", "HEAD"])
 
 
+def load_fixed_native_state_identity(root: Path, generation: int) -> dict[str, Any]:
+    if generation < 0 or not root.is_dir():
+        fail("fixed native state root or generation is invalid")
+    root = root.resolve()
+    manifest_path = root / FIXED_NATIVE_STATE_MANIFEST_FILENAME
+    payload_path = root / FIXED_NATIVE_STATE_PAYLOAD_FILENAME
+    entries = sorted(entry.name for entry in root.iterdir() if entry.is_file())
+    if entries != sorted((FIXED_NATIVE_STATE_MANIFEST_FILENAME, FIXED_NATIVE_STATE_PAYLOAD_FILENAME)):
+        fail(f"fixed native state directory must contain exactly the manifest and payload: {root}")
+    manifest = load_canonical_json(manifest_path)
+    if (
+        manifest.get("schema") != FIXED_NATIVE_STATE_SCHEMA
+        or not isinstance(manifest.get("authority_kind"), str) or not manifest["authority_kind"]
+        or manifest.get("non_claims") != FIXED_NATIVE_STATE_NON_CLAIMS
+    ):
+        fail(f"fixed native state manifest schema, authority_kind, or non_claims mismatch: {manifest_path}")
+    payload = manifest.get("payload")
+    if not isinstance(payload, dict) or payload.get("filename") != FIXED_NATIVE_STATE_PAYLOAD_FILENAME:
+        fail(f"fixed native state payload block is invalid: {manifest_path}")
+    require_sha(manifest.get("source_result_sha256"), "fixed native state source result")
+    payload_sha = require_sha(payload.get("payload_sha256"), "fixed native state payload")
+    require_sha(payload.get("parameters_sha256"), "fixed native state parameters")
+    require_sha(payload.get("first_moments_sha256"), "fixed native state first moments")
+    require_sha(payload.get("second_moments_sha256"), "fixed native state second moments")
+    model_parameter_sha = require_sha(payload.get("model_parameter_sha256"),
+                                       "fixed native state model parameter")
+    native_state_sha = require_sha(payload.get("native_state_sha256"), "fixed native state native state")
+    if not _plain_int(payload.get("adam_step")) or payload["adam_step"] != generation:
+        fail(f"fixed native state adam_step does not match the requested generation: {manifest_path}")
+    if not _plain_int(payload.get("byte_count")) or payload["byte_count"] != payload_path.stat().st_size:
+        fail(f"fixed native state payload byte_count mismatch: {payload_path}")
+    if sha256(payload_path) != payload_sha:
+        fail(f"fixed native state payload sha256 mismatch: {payload_path}")
+    manifest_sha = sha256(manifest_path)
+    identity = {
+        "authority_kind": manifest["authority_kind"],
+        "source_run_sha256": FIXED_NATIVE_STATE_SOURCE_RUN_SHA256,
+        "source_generation": FIXED_NATIVE_STATE_SOURCE_GENERATION,
+        "source_checkpoint_sha256": FIXED_NATIVE_STATE_SOURCE_CHECKPOINT_SHA256,
+        "source_sidecar_sha256": FIXED_NATIVE_STATE_SOURCE_SIDECAR_SHA256,
+        "source_payload_sha256": FIXED_NATIVE_STATE_SOURCE_PAYLOAD_SHA256,
+        "source_train_state_sha256": FIXED_NATIVE_STATE_SOURCE_TRAIN_STATE_SHA256,
+        "loaded_run_sha256": FIXED_NATIVE_STATE_SOURCE_RUN_SHA256,
+        "loaded_generation": generation,
+        "loaded_checkpoint_sha256": manifest_sha,
+        "loaded_payload_sha256": payload_sha,
+        "loaded_train_state_sha256": native_state_sha,
+        "model_parameter_sha256": model_parameter_sha,
+        "environment_trajectory_contract": FIXED_NATIVE_STATE_ENVIRONMENT_CONTRACT,
+        "sampler_identity": SAMPLER_IDENTITY,
+        "sampler_contract_sha256": SAMPLER_CONTRACT,
+    }
+    return {
+        "root": str(root), "generation": generation, "mode": "fixedstate", "checkpoint": identity,
+        "store_files": {
+            "manifest_sha256": manifest_sha, "payload_sha256": payload_sha,
+            "parameters_sha256": payload["parameters_sha256"],
+            "first_moments_sha256": payload["first_moments_sha256"],
+            "second_moments_sha256": payload["second_moments_sha256"],
+        },
+        "payload": {
+            "byte_count": payload["byte_count"],
+            "parameters_sha256": payload["parameters_sha256"],
+            "first_moments_sha256": payload["first_moments_sha256"],
+            "second_moments_sha256": payload["second_moments_sha256"],
+        },
+    }
+
+
 def load_store_identity(root: Path, generation: int, *,
                         mode: str = "population") -> dict[str, Any]:
     if mode not in MODEL_AUTHORITY_MODES:
         fail(f"invalid model authority mode: {mode}")
+    if mode == "fixedstate":
+        return load_fixed_native_state_identity(root, generation)
     if generation < 0 or not root.is_dir():
         fail("population Store root or generation is invalid")
     root = root.resolve()
@@ -276,6 +384,23 @@ def maven_opts(identity: dict[str, Any]) -> str:
     return " ".join(prefix + key + "=" + str(identity[value]) for key, value in names.items())
 
 
+def xmage_cp7_outcome_maven_opts(identity: dict[str, Any]) -> str:
+    # Names and required set verified against XMageCp7OutcomeExpectation.
+    # fromSystemProperties() (XMageRallyBridgeProcessClient.java): a smaller
+    # set than population-store's, since source_run_sha256 and friends are
+    # always the fixed promoted(2) anchor for this authority and Java does
+    # not ask Python to assert them separately.
+    prefix = "-Dxmage.rally.cp7Outcome."
+    names = {
+        "authorityKind": "authority_kind", "adamStep": "loaded_generation",
+        "manifestSha256": "loaded_checkpoint_sha256", "payloadSha256": "loaded_payload_sha256",
+        "trainStateSha256": "loaded_train_state_sha256",
+        "modelParameterSha256": "model_parameter_sha256",
+        "environmentTrajectoryContract": "environment_trajectory_contract",
+    }
+    return " ".join(prefix + key + "=" + str(identity[value]) for key, value in names.items())
+
+
 def chunk_ranges(pair_start: int, pairs: int, task_pairs: int) -> list[tuple[int, int]]:
     if pair_start < 0 or pairs < 1 or task_pairs < 1:
         fail("invalid shard range")
@@ -314,16 +439,31 @@ def anchor_command(args: argparse.Namespace, model: dict[str, Any], first_pair: 
     # canonical promoted(2) store. --population-store-root (population)
     # issues PopulationStoreGeneration: any environment-randomization-v2
     # store, generation required either way.
-    root_flag = "--population-store-root" if mode == "population" else "--store-root"
+    # population -> --population-store-root ROOT --generation N
+    # original   -> --store-root ROOT --generation N (Java's own flag name;
+    #               Java itself translates this to --original-store-root when
+    #               it builds the Rust bridge command)
+    # fixedstate -> --outcome-root ROOT, no --generation at all: Java rejects
+    #               --generation alongside --outcome-root (Args.parse), and
+    #               the Rust CLI rejects --generation alongside
+    #               --xmage-cp7-outcome-root the same way (parse_args_v1,
+    #               bin/checkpoint_shadow_stdio_v1.rs). ROOT is the staging
+    #               directory, not a population-Store layout.
     # Per-model generation (model["generation"], set by load_store_identity):
     # every model in a group shares one panel-level --generation in the
     # common case, but a group built from per-spec GENERATION values (see
     # parse_model_spec / main()'s mixing check) can legitimately differ
     # model to model, so this must never read the shared args.generation
     # directly.
+    if mode == "population":
+        root_args = ["--population-store-root", model["root"], "--generation", str(model["generation"])]
+    elif mode == "original":
+        root_args = ["--store-root", model["root"], "--generation", str(model["generation"])]
+    else:
+        root_args = ["--outcome-root", model["root"]]
     execution_args = _exec_argument_string([
         "--repo-root", str(args.mage_repo), "--scorer-exe", str(args.scorer_exe),
-        root_flag, model["root"], "--generation", str(model["generation"]),
+        *root_args,
         "--base-seed", str(args.base_seed), "--first-episode", str(first_pair * 2),
         "--pairs", str(pair_count), "--opponent", "cp7", "--cp7-skill", "7",
         "--outcome-export", str(outcome),
@@ -340,14 +480,18 @@ def environment(database_root: Path, model: dict[str, Any], *,
                   "AI_DETERMINISTIC_TIEBREAKS": "true", "AI_DETERMINISTIC_SEARCH": "true",
                   "AI_DETERMINISTIC_MAX_NODES": "5000", "AI_MAX_THREADS_FOR_SIMULATIONS": "1",
                   "CUDA_VISIBLE_DEVICES": "1"})
-    # The xmage.rally.populationStore.* system properties are only read by
-    # the Java bridge client when it selects population-store mode
-    # (XMageRallyBridgeProcessClient.fromSystemProperties, gated on
-    # selectsPopulationStore); an --original-store-root model never reads
-    # them, so MAVEN_OPTS is left unset rather than asserting properties the
-    # loaded authority mode does not use.
-    if model.get("mode", "population") == "population":
+    # The xmage.rally.populationStore.* / xmage.rally.cp7Outcome.* system
+    # properties are only read by the Java bridge client when it selects the
+    # matching mode (XMageRallyBridgeProcessClient.fromSystemProperties,
+    # gated on selectsPopulationStore / selectsXMageCp7Outcome respectively);
+    # an --original-store-root model reads neither, so MAVEN_OPTS is left
+    # unset rather than asserting properties the loaded authority mode does
+    # not use.
+    mode = model.get("mode", "population")
+    if mode == "population":
         value["MAVEN_OPTS"] = maven_opts(model["checkpoint"])
+    elif mode == "fixedstate":
+        value["MAVEN_OPTS"] = xmage_cp7_outcome_maven_opts(model["checkpoint"])
     if tolerate_engine_faults:
         value["AI_ANCHOR_TOLERATE_ENGINE_FAULTS"] = "1"
     return value
@@ -1063,11 +1207,11 @@ GENERATION_PREFIX = re.compile(r"^([0-9]+):")
 def parse_model_spec(spec: str) -> tuple[str, str, int | None, Path]:
     """Parses one --model spec: label=[MODE:][GENERATION:]STORE_ROOT.
 
-    MODE is one of MODEL_AUTHORITY_MODES ("population" or "original"),
-    defaulting to "population" when no recognized MODE: prefix is present --
-    this is the exact bareword label=STORE_ROOT shape every existing
-    invocation already uses, so it keeps working unchanged. Matching is a
-    literal startswith check against the two known prefixes, never a blind
+    MODE is one of MODEL_AUTHORITY_MODES ("population", "original", or
+    "fixedstate"), defaulting to "population" when no recognized MODE: prefix
+    is present -- this is the exact bareword label=STORE_ROOT shape every
+    existing invocation already uses, so it keeps working unchanged. Matching
+    is a literal startswith check against the known prefixes, never a blind
     split on the first colon, because a Windows store root routinely starts
     with its own drive-letter colon (e.g. "D:\\...") that must not be
     mistaken for a mode prefix.

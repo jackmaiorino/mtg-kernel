@@ -558,6 +558,137 @@ class PanelRunnerTest(unittest.TestCase):
         self.assertNotEqual(panel.AUTHORITY_KIND, panel.AUTHORITY_KIND_ORIGINAL)
         self.assertNotEqual(panel.ENVIRONMENT_CONTRACT, panel.ENVIRONMENT_CONTRACT_ORIGINAL)
 
+    # -- new: third authority mode, fixedstate (XmageCp7OutcomeDerivative) ----
+
+    def test_model_spec_fixedstate_with_generation(self) -> None:
+        label, mode, generation, root = panel.parse_model_spec(
+            r"denovo-256=fixedstate:256:D:\staging\denovo-256")
+        self.assertEqual(mode, "fixedstate")
+        self.assertEqual(generation, 256)
+        self.assertEqual(root, Path(r"D:\staging\denovo-256"))
+
+    @staticmethod
+    def _write_fixed_native_state(staging_root: Path, *, generation: int,
+                                  authority_kind: str = "test-fixed-native-state-v1",
+                                  byte_count: int = 32, tamper_payload: bool = False,
+                                  tamper_adam_step: bool = False) -> dict[str, object]:
+        staging_root.mkdir(parents=True)
+        payload_bytes = bytes(range(byte_count)) if not tamper_payload else b"\x00" * byte_count
+        import hashlib
+        payload_sha = hashlib.sha256(payload_bytes).hexdigest()
+        manifest = {
+            "schema": panel.FIXED_NATIVE_STATE_SCHEMA,
+            "authority_kind": authority_kind,
+            "source_result_sha256": "7" * 64,
+            "payload": {
+                "filename": panel.FIXED_NATIVE_STATE_PAYLOAD_FILENAME,
+                "byte_count": byte_count,
+                "adam_step": generation + (1 if tamper_adam_step else 0),
+                "scorer_bias_anchor_f32_bits": 3141403366,
+                "payload_sha256": payload_sha,
+                "parameters_sha256": "1" * 64,
+                "first_moments_sha256": "2" * 64,
+                "second_moments_sha256": "3" * 64,
+                "model_parameter_sha256": "4" * 64,
+                "native_state_sha256": "5" * 64,
+            },
+            "non_claims": list(panel.FIXED_NATIVE_STATE_NON_CLAIMS),
+        }
+        manifest_bytes = (json.dumps(manifest, indent=2) + "\n").encode("ascii")
+        (staging_root / panel.FIXED_NATIVE_STATE_MANIFEST_FILENAME).write_bytes(manifest_bytes)
+        (staging_root / panel.FIXED_NATIVE_STATE_PAYLOAD_FILENAME).write_bytes(payload_bytes)
+        return manifest
+
+    def test_load_fixed_native_state_identity_accepts_a_well_formed_package(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "denovo-256"
+            self._write_fixed_native_state(root, generation=256)
+            identity = panel.load_store_identity(root, 256, mode="fixedstate")
+            self.assertEqual(identity["mode"], "fixedstate")
+            checkpoint = identity["checkpoint"]
+            self.assertEqual(checkpoint["authority_kind"], "test-fixed-native-state-v1")
+            self.assertEqual(checkpoint["loaded_generation"], 256)
+            # The six promoted(2) anchor fields are always the fixed constants,
+            # never derived from this package's own content.
+            self.assertEqual(checkpoint["source_run_sha256"],
+                             panel.FIXED_NATIVE_STATE_SOURCE_RUN_SHA256)
+            self.assertEqual(checkpoint["source_generation"], 384)
+            self.assertEqual(checkpoint["loaded_run_sha256"],
+                             panel.FIXED_NATIVE_STATE_SOURCE_RUN_SHA256)
+            self.assertEqual(checkpoint["environment_trajectory_contract"],
+                             "environment-randomization-v2")
+
+    def test_load_fixed_native_state_identity_rejects_generation_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "denovo-256"
+            self._write_fixed_native_state(root, generation=256, tamper_adam_step=True)
+            with self.assertRaises(ValueError):
+                panel.load_store_identity(root, 256, mode="fixedstate")
+
+    def test_load_fixed_native_state_identity_rejects_payload_tamper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "denovo-256"
+            manifest = self._write_fixed_native_state(root, generation=256)
+            # Corrupt the payload bytes in place without touching the manifest's
+            # own recorded digest, exactly the tamper the Rust loader's own test
+            # exercises (fixed_native_state_package_loads_dotted_authority_and_
+            # rejects_payload_tamper_v1).
+            payload_path = root / panel.FIXED_NATIVE_STATE_PAYLOAD_FILENAME
+            corrupted = bytearray(payload_path.read_bytes())
+            corrupted[0] ^= 1
+            payload_path.write_bytes(bytes(corrupted))
+            with self.assertRaises(ValueError):
+                panel.load_store_identity(root, 256, mode="fixedstate")
+
+    def test_load_fixed_native_state_identity_rejects_extra_files_in_staging_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "denovo-256"
+            self._write_fixed_native_state(root, generation=256)
+            (root / "stray-extra-file.txt").write_text("should not be here", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                panel.load_store_identity(root, 256, mode="fixedstate")
+
+    def test_load_fixed_native_state_identity_rejects_wrong_non_claims(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "denovo-256"
+            manifest = self._write_fixed_native_state(root, generation=256)
+            manifest["non_claims"] = ["something else entirely"]
+            manifest_bytes = (json.dumps(manifest, indent=2) + "\n").encode("ascii")
+            (root / panel.FIXED_NATIVE_STATE_MANIFEST_FILENAME).write_bytes(manifest_bytes)
+            with self.assertRaises(ValueError):
+                panel.load_store_identity(root, 256, mode="fixedstate")
+
+    def test_anchor_command_fixedstate_uses_outcome_root_with_no_generation_flag(self) -> None:
+        args = types.SimpleNamespace(mage_repo=Path("mage"), scorer_exe=Path("scorer"),
+                                     generation=None, base_seed=7, maven=Path("mvn"))
+        fixedstate_model = {"root": "staging-dir", "mode": "fixedstate", "generation": 256,
+                            "checkpoint": self.checkpoint}
+        command = panel.anchor_command(args, fixedstate_model, 0, 1, Path("o.jsonl"))
+        self.assertIn("--outcome-root staging-dir", command[-1])
+        self.assertNotIn("--generation", command[-1])
+        self.assertNotIn("--population-store-root", command[-1])
+        self.assertNotIn("--store-root", command[-1])
+
+    def test_environment_uses_cp7_outcome_maven_opts_for_fixedstate(self) -> None:
+        fixedstate_model = {"root": "staging-dir", "mode": "fixedstate",
+                            "checkpoint": self.checkpoint}
+        env = panel.environment(Path("db"), fixedstate_model, tolerate_engine_faults=False)
+        self.assertIn("MAVEN_OPTS", env)
+        self.assertIn("xmage.rally.cp7Outcome.authorityKind", env["MAVEN_OPTS"])
+        self.assertNotIn("xmage.rally.populationStore", env["MAVEN_OPTS"])
+
+    def test_fixed_native_state_source_constants_match_promoted2_run_json(self) -> None:
+        # Cross-checked against promoted(2)'s own run.json-embedded
+        # opponent_ladder_initialization block (independent source from the
+        # same identity, read once during the original diagnosis): every
+        # field here must agree with what that block already carries.
+        self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_RUN_SHA256), 64)
+        self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_CHECKPOINT_SHA256), 64)
+        self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_SIDECAR_SHA256), 64)
+        self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_PAYLOAD_SHA256), 64)
+        self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_TRAIN_STATE_SHA256), 64)
+        self.assertEqual(panel.FIXED_NATIVE_STATE_SOURCE_GENERATION, 384)
+
 
 if __name__ == "__main__":
     unittest.main()
