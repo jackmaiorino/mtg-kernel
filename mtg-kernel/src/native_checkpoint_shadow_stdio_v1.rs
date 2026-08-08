@@ -2106,6 +2106,18 @@ impl XmageCp7OutcomeJsonlWriterV1 {
             || checkpoint.authority_kind == "current-net8-cp7-terminal-response-v3-kl-10.0"
             || checkpoint.authority_kind == "current-net8-cp7-terminal-response-v4-kl-0.3"
             || checkpoint.authority_kind == "current-net8-cp7-terminal-response-v4-kl-1.0"
+            // De-novo response-exploiter lineage (CLAUDE-DENOVO-SCREEN-SHEET-V1.md):
+            // fixed-native-state loading proven end to end (see
+            // D:\mtg-kernel-cp7-anchor-panel-v3\denovo-fixed-state-staging\
+            // and CP7-ANCHOR-PANEL-V3-RESULT.md's cell-3 section), completed
+            // builds, countersigned sheet, full audit trail. One registered
+            // kind covers both training horizons of the lineage
+            // (denovo-screen and denovo-screen-512 are the same trained
+            // -model family at two training-length checkpoints, not
+            // separate lineages), matching how the v3-kl-*/v4-kl-* entries
+            // above already register one experiment family's variants
+            // individually rather than by a shared prefix.
+            || checkpoint.authority_kind == "response-exploiter-denovo-screen-v1"
             || checkpoint
                 .authority_kind
                 .starts_with("xmage-cp7-outcome-structured-policy-successor-v"))
@@ -6176,6 +6188,45 @@ mod tests {
             rows[0]["export_contract"],
             XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
         );
+    }
+
+    /// The newly registered de-novo response-exploiter lineage kind is
+    /// accepted by the outcome-export provenance gate, exactly like every
+    /// other registered fixed-native-state kind.
+    #[test]
+    fn response_exploiter_denovo_screen_outcome_export_uses_verified_v2_contract() {
+        let mut service =
+            ShadowScorerServiceV1::with_test_model_v1(Box::new(FirstActionTestModelV1));
+        service.identity.authority_kind = "response-exploiter-denovo-screen-v1".to_owned();
+        service.identity.loaded_generation = 1;
+        let bytes = SharedBytesV1::default();
+        XmageCp7OutcomeJsonlWriterV1::from_writer_v1(Box::new(bytes.clone()), &service.identity)
+            .unwrap();
+        let rows = outcome_rows_v1(&bytes);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["schema_version"], 2);
+        assert_eq!(
+            rows[0]["export_contract"],
+            XMAGE_CP7_OUTCOME_JSONL_CONTRACT_V2
+        );
+    }
+
+    /// The gate is an allowlist, not a format check: an authority_kind that
+    /// is not exact g384, not on the registered-lineage list, and not the
+    /// verified-population-generation shape must still be rejected, even
+    /// though it would pass fixed_native_authority_kind_is_valid_v1's own
+    /// (format-only) check.
+    #[test]
+    fn unregistered_authority_kind_outcome_export_is_rejected_v1() {
+        let mut service =
+            ShadowScorerServiceV1::with_test_model_v1(Box::new(FirstActionTestModelV1));
+        service.identity.authority_kind = "not-a-registered-lineage-v1".to_owned();
+        service.identity.loaded_generation = 1;
+        assert!(XmageCp7OutcomeJsonlWriterV1::from_writer_v1(
+            Box::new(io::sink()),
+            &service.identity,
+        )
+        .is_err());
     }
 
     #[test]
