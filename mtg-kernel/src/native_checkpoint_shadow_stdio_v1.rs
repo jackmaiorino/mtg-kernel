@@ -5036,85 +5036,29 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads the external CP7 behavior-clone derivative"]
-    fn real_cp7_behavior_clone_derivative_loads_scores_and_reports_identity_v1() {
-        let root = std::env::var_os("MTG_KERNEL_CP7_BEHAVIOR_CLONE_ROOT_V1")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                if cfg!(windows) {
-                    PathBuf::from(r"D:\mtg-kernel-cp7-bc-train-base970001-grid-strict-v1")
-                } else {
-                    PathBuf::from("/mnt/d/mtg-kernel-cp7-bc-train-base970001-grid-strict-v1")
-                }
-            });
-        let mut service = ShadowScorerServiceV1::load_v1(
-            ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative { root },
-        )
-        .unwrap();
-        let response = value_v1(&service.handle_line_v1(&reset_line_v1("cp7-bc")));
-        assert_eq!(response["response_type"], "decision");
-        assert_eq!(
-            response["checkpoint"]["authority_kind"],
-            "cp7-behavior-clone-derivative-v1"
+    fn cp7_behavior_clone_derivative_authority_fails_closed_on_this_lineage_v1() {
+        // This lineage deliberately omits the behavior-clone scorer subsystem
+        // (see the port commit); the authority must error loudly, never fall
+        // through to a default scorer.
+        let result = ShadowScorerServiceV1::load_v1(
+            ShadowCheckpointAuthorityV1::Cp7BehaviorCloneDerivative {
+                root: PathBuf::from("unused"),
+            },
         );
-        assert_eq!(response["checkpoint"]["loaded_generation"], 141);
-        assert_eq!(
-            response["checkpoint"]["loaded_checkpoint_sha256"],
-            "6ba733fead0d36c26cd24630245fa6f2a1216ae60c73f46d45e83b4cc714676c"
-        );
-        assert_eq!(
-            response["checkpoint"]["loaded_payload_sha256"],
-            "de1132f6b8b55975154133b91a2f2ea90bc1159676a041057fd827e728eca4e1"
-        );
-        assert_eq!(
-            response["checkpoint"]["loaded_train_state_sha256"],
-            "64df1692fae7f78d0d4d4a4d6489325d253125276ca578c94912c9bd12374b56"
-        );
-        assert_eq!(
-            response["checkpoint"]["model_parameter_sha256"],
-            "3f4da9d761771cf0d7cfe2da19b52dd93dd0bc59466d92318cc11fc850d8c4dc"
-        );
+        assert!(result.is_err());
     }
 
     #[test]
-    #[ignore = "reads the external XMage CP7 outcome derivative"]
-    fn real_xmage_cp7_outcome_derivative_loads_scores_and_reports_identity_v1() {
-        let root = std::env::var_os("MTG_KERNEL_XMAGE_CP7_OUTCOME_ROOT_V1")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                if cfg!(windows) {
-                    PathBuf::from(r"D:\mtg-kernel-xmage-cp7-outcome-base1010001-lr1e-4-vc0p5-v1")
-                } else {
-                    PathBuf::from("/mnt/d/mtg-kernel-xmage-cp7-outcome-base1010001-lr1e-4-vc0p5-v1")
-                }
-            });
-        let mut service = ShadowScorerServiceV1::load_v1(
-            ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative { root },
-        )
-        .unwrap();
-        let response = value_v1(&service.handle_line_v1(&reset_line_v1("xmage-cp7-outcome")));
-        assert_eq!(response["response_type"], "decision");
-        assert_eq!(
-            response["checkpoint"]["authority_kind"],
-            "xmage-cp7-outcome-reinforce-derivative-v1"
+    fn xmage_cp7_outcome_reinforce_variant_fails_closed_on_this_lineage_v1() {
+        // The outcome-REINFORCE sub-variant was trimmed in the port; only the
+        // fixed_native_state sub-path remains supported. The trimmed variant
+        // must error loudly.
+        let result = ShadowScorerServiceV1::load_v1(
+            ShadowCheckpointAuthorityV1::XmageCp7OutcomeDerivative {
+                root: PathBuf::from("unused"),
+            },
         );
-        assert_eq!(response["checkpoint"]["loaded_generation"], 1);
-        assert_eq!(
-            response["checkpoint"]["loaded_checkpoint_sha256"],
-            "b02c16c403fa09bd435b46b3763a819635644dc61a02330ccd12861ebb5244e0"
-        );
-        assert_eq!(
-            response["checkpoint"]["loaded_payload_sha256"],
-            "a61084a0e505a4aecdf84123dff6dfc8d1ba2296eb54c71f4b3fedb5f25c9b7b"
-        );
-        assert_eq!(
-            response["checkpoint"]["loaded_train_state_sha256"],
-            "06a8bdc8f3a3173d9ff0aaf2e1bb42c2d44571b3093be08b3419c68d0c627170"
-        );
-        assert_eq!(
-            response["checkpoint"]["model_parameter_sha256"],
-            "aeeb6f6e51131e983743814f59494b799e43898c5e06da339f4d6649e72f5b74"
-        );
+        assert!(result.is_err());
     }
 
     #[test]
