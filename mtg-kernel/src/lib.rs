@@ -40,6 +40,7 @@ pub mod async_rollout_v2;
 pub mod bounded_staleness_async_harness_v1;
 pub mod bounded_staleness_async_production_v1;
 pub mod bounded_staleness_async_v1;
+pub mod bo3_match;
 pub mod card_def;
 // Fail-closed canonical JSON codec shared by the native training store's
 // records. Schema validation remains a separate layer.
@@ -239,6 +240,7 @@ pub(crate) mod private_physical_trajectory_v2;
 pub mod rl;
 pub mod rl_session;
 pub mod runtime_decks;
+pub mod sideboard;
 pub mod snapshot;
 pub mod state;
 /// Frozen committed-source-tree capture for science workload preflight and

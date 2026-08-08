@@ -1,0 +1,21 @@
+{
+  "schema": "kernel_pauper_sideboard_policy/v1",
+  "policy_id": "pauper-registered-75-static/v1",
+  "deck_ids": [
+    "Wildfire",
+    "Rally",
+    "Affinity",
+    "Elves",
+    "Spy",
+    "Burn",
+    "Terror",
+    "CawGates",
+    "Faeries"
+  ],
+  "coverage": {
+    "ordered_matchups": "all_registered_deck_pairs",
+    "game_indices": [2, 3]
+  },
+  "default_plan": "keep_registered_configuration",
+  "plans": []
+}
