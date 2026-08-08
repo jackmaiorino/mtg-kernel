@@ -2049,23 +2049,23 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
                 for &id in mana_abilities {
-                    push_action(
-                        &mut out,
-                        ActionSemanticV1::ActivateManaAbility {
-                            actor,
-                            source: card_ref(state, id)?,
-                            mana_choice: {
-                                let choices = CARD_DEFS[state.objects.get(id).card_def as usize]
-                                    .produces_mana;
-                                if choices.len() == 1 {
-                                    Some(choices[0])
-                                } else {
-                                    None
-                                }
+                    let choices =
+                        CARD_DEFS[state.objects.get(id).card_def as usize].mana_ability_choices;
+                    for &choice in choices {
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ActivateManaAbility {
+                                actor,
+                                source: card_ref(state, id)?,
+                                mana_choice: Some(choice),
                             },
-                        },
-                        SurfaceAction::Action(Action::ActivateManaAbility(id)),
-                    )?;
+                            SurfaceAction::Action(if choices.len() == 1 {
+                                Action::ActivateManaAbility(id)
+                            } else {
+                                Action::ActivateManaAbilityChoice(id, choice)
+                            }),
+                        )?;
+                    }
                 }
                 for &id in land_drops {
                     push_action(

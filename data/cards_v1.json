@@ -712,6 +712,7 @@
     },
     {
       "name": "Drossforge Bridge",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -798,6 +799,7 @@
     },
     {
       "name": "Elvish Mystic",
+      "engine_capability": "full",
       "mana_cost": "{G}",
       "mana_value": 1,
       "colors": [
@@ -1213,6 +1215,7 @@
     },
     {
       "name": "Fyndhorn Elves",
+      "engine_capability": "full",
       "mana_cost": "{G}",
       "mana_value": 1,
       "colors": [
@@ -2047,6 +2050,7 @@
     },
     {
       "name": "Llanowar Elves",
+      "engine_capability": "full",
       "mana_cost": "{G}",
       "mana_value": 1,
       "colors": [
@@ -2235,6 +2239,7 @@
     },
     {
       "name": "Mistvault Bridge",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3111,6 +3116,7 @@
     },
     {
       "name": "Seat of the Synod",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3139,6 +3145,7 @@
     },
     {
       "name": "Silverbluff Bridge",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3170,6 +3177,7 @@
     },
     {
       "name": "Slagwoods Bridge",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3799,6 +3807,7 @@
     },
     {
       "name": "Vault of Whispers",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],

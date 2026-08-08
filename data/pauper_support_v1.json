@@ -5,21 +5,21 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "b6e734ad2baaa33ebe8b12f6f2d51525d950eb70cca32ca9002fcb316861e91c"
+    "registry_raw_sha256": "887f3b660e8002c7bb6e0ffe54188653379b0c9765b88031db4acf033cb9b4dc"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 50,
+    "full_cards": 59,
     "partial_cards": 0,
-    "no_effect_cards": 100,
+    "no_effect_cards": 91,
     "token_dependencies": 4
   },
   "deck_mainboard_copy_totals": [
     {
       "deck_id": "Wildfire",
-      "full": 10,
+      "full": 19,
       "partial": 0,
-      "no_effect": 50,
+      "no_effect": 41,
       "total": 60
     },
     {
@@ -31,16 +31,16 @@
     },
     {
       "deck_id": "Affinity",
-      "full": 12,
+      "full": 27,
       "partial": 0,
-      "no_effect": 48,
+      "no_effect": 33,
       "total": 60
     },
     {
       "deck_id": "Elves",
-      "full": 17,
+      "full": 26,
       "partial": 0,
-      "no_effect": 43,
+      "no_effect": 34,
       "total": 60
     },
     {
@@ -752,10 +752,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Duress",
@@ -839,10 +837,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "End the Festivities",
@@ -1217,10 +1213,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Galvanic Blast",
@@ -1925,10 +1919,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lorien Revealed",
@@ -2142,10 +2134,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Monstrous Emergence",
@@ -2910,10 +2900,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Silverbluff Bridge",
@@ -2932,10 +2920,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Slagwoods Bridge",
@@ -2954,10 +2940,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Sleep of the Dead",
@@ -3477,10 +3461,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Vitu-Ghazi Inspector",

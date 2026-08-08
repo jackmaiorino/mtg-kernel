@@ -17,10 +17,9 @@
 //! Hydroblast can target any spell/permanent and checks red only when it
 //! resolves. XMage's color predicate reads dynamic `getColor(game)` and its
 //! destroy effect honors indestructible/regeneration. This kernel slice is
-//! deliberately bounded to the frozen pool's static card-definition colors
-//! and its existing shared destroy-as-zone-change behavior: no executable
-//! effect can change color, and no valid red target exercises either destroy
-//! exception.
+//! deliberately bounded to the frozen pool's static card-definition colors:
+//! no executable effect can change color, indestructible is enforced by the
+//! shared destroy primitive, and no valid red target has regeneration.
 
 use mtg_kernel::card_def::{card_id_by_name, TargetSpec, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};

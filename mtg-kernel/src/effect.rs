@@ -409,6 +409,14 @@ pub enum EffectOp {
         owner: PlayerId,
         placement: event::LibraryPlacement,
     },
+    /// Destroys a battlefield permanent without conflating destruction with
+    /// an ordinary zone move. Indestructible prevents this operation and the
+    /// lethal-damage state-based action, but does not prevent sacrifice,
+    /// exile, bounce, or the zero-toughness state-based action. Appended to
+    /// preserve all existing effect variant identities.
+    DestroyObject {
+        object: ObjectRef,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -3546,6 +3554,21 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 }
             }
             event::propose_and_commit(state, event::ProposedEvent::zone_change(object, *to_zone));
+        }
+        EffectOp::DestroyObject { object } => {
+            let object = ctx.resolve_object(*object);
+            if state.objects.get(object).zone == Zone::Battlefield
+                && !crate::engine::has_effective_keyword(
+                    state,
+                    object,
+                    crate::card_def::Keywords::INDESTRUCTIBLE,
+                )
+            {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(object, Zone::Graveyard),
+                );
+            }
         }
         EffectOp::TapObject { object } => {
             let object = ctx.resolve_object(*object);

@@ -193,24 +193,17 @@ pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
             continue;
         }
         let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
-        // `CardDef::produces_mana` (from `cards_v1.json`) describes every
-        // color a card's rules text can ever add to the pool, including a
-        // one-time triggered/ETB effect (Burning-Tree Emissary's "When this
-        // enters, add {R}{G}") -- it is *not* a promise that the permanent
-        // itself has a repeatable, tappable mana ability. Only
-        // `CardDef::mana_ability` being `Some` (Mountain, Great Furnace)
-        // means "tap this for mana" is actually legal; gathering by
-        // `produces_mana` alone let the solver silently tap (and mark
-        // summoning-sickness-irrelevant, haste-irrelevant) a *creature* as
-        // if it were a land. Root-caused adding Rally's Burning-Tree
-        // Emissary: with this bug, the mana solver could pick it to help
-        // pay a later cost, tapping it and making it illegally unable to
-        // attack afterward even though nothing in its own text lets anyone
-        // tap it for mana more than once, on ETB, automatically.
-        if def.mana_ability_program().is_some() {
+        // `produces_mana` also covers one-shot production such as
+        // Burning-Tree Emissary's ETB trigger. The generated
+        // `mana_ability_choices` field is the narrower repeatable tap-source
+        // contract. A creature source also obeys summoning sickness for the
+        // tap symbol in its activation cost.
+        if def.has_mana_ability()
+            && !(def.has_type(crate::card_def::CardType::Creature) && obj.summoning_sick)
+        {
             sources.push(ManaSource {
                 id,
-                choices: def.produces_mana.to_vec(),
+                choices: def.mana_ability_choices.to_vec(),
             });
         }
     }

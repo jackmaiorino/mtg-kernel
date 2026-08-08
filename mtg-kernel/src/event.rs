@@ -487,16 +487,15 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
             }
         }
         ProposedEvent::CreateToken(t) => {
-            let name = crate::card_def::CARD_DEFS[t.token_def as usize]
-                .name
-                .to_string();
+            let token_def = &crate::card_def::CARD_DEFS[t.token_def as usize];
+            let name = token_def.name.to_string();
             let object = state.objects.push(crate::state::GameObject {
                 card_def: t.token_def,
                 name,
                 owner: t.controller,
                 controller: t.controller,
                 zone: Zone::Battlefield,
-                tapped: false,
+                tapped: token_def.enters_battlefield_tapped,
                 // A token entering the battlefield is exactly as summoning-
                 // sick as any other permanent that just entered (see
                 // `commit_zone_change`'s identical `= true` a few lines
@@ -631,6 +630,9 @@ fn commit_zone_change(
     }
 
     let turn = state.turn;
+    let enters_battlefield_tapped = to_zone == Zone::Battlefield
+        && crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
+            .enters_battlefield_tapped;
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
@@ -651,7 +653,7 @@ fn commit_zone_change(
         obj.zone_change_count += 1;
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
         if to_zone == Zone::Battlefield {
-            obj.tapped = false;
+            obj.tapped = enters_battlefield_tapped;
             obj.summoning_sick = true;
             obj.damage = 0;
             obj.counters = Default::default();

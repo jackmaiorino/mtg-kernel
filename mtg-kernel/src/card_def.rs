@@ -451,7 +451,9 @@ pub struct CardDef {
     /// implemented this increment (present in the table, not castable).
     pub spell_effect: fn() -> Option<EffectOp>,
     /// Program run when the card's mana ability is activated. `None` = no
-    /// mana ability (or not implemented).
+    /// mana ability (or not implemented). This legacy function-pointer form
+    /// represents single-color abilities. `mana_ability_choices` below is
+    /// authoritative for multi-color permanents.
     pub mana_ability: fn() -> Option<EffectOp>,
     /// `Some` iff this card has an alternative cost you may pay instead of
     /// its mana cost (Fireblast). Choosing between them is a real decision
@@ -499,6 +501,14 @@ pub struct CardDef {
     /// escape cost. Appended independently from `flashback` because the two
     /// mechanics have different stack-departure contracts.
     pub escape: Option<EscapeDef>,
+    /// Exact colors available from this permanent's repeatable tap-for-mana
+    /// abilities. This is deliberately distinct from `produces_mana`, which
+    /// also includes one-shot production such as Burning-Tree Emissary's ETB
+    /// trigger. Appended to preserve prior generated field identities.
+    pub mana_ability_choices: &'static [ManaColor],
+    /// Whether this permanent enters the battlefield tapped. The shared
+    /// zone-change commit path enforces this for every battlefield entry.
+    pub enters_battlefield_tapped: bool,
 }
 
 impl CardDef {
@@ -519,9 +529,29 @@ impl CardDef {
     }
 
     pub fn mana_ability_program(&self) -> Option<EffectOp> {
-        self.is_executable()
+        (self.is_executable() && self.mana_ability_choices.len() == 1)
             .then(|| (self.mana_ability)())
             .flatten()
+    }
+
+    pub fn has_mana_ability(&self) -> bool {
+        self.is_executable() && !self.mana_ability_choices.is_empty()
+    }
+
+    /// Builds the exact tap-and-add program for one printed mana ability.
+    /// A dual land has two legal programs, each adding exactly one mana.
+    pub fn mana_ability_program_for(&self, choice: ManaColor) -> Option<EffectOp> {
+        (self.has_mana_ability() && self.mana_ability_choices.contains(&choice)).then(|| {
+            EffectOp::Sequence(vec![
+                EffectOp::TapObject {
+                    object: ObjectRef::ThisSource,
+                },
+                EffectOp::AddMana {
+                    player: PlayerRef::Controller,
+                    colors: vec![choice],
+                },
+            ])
+        })
     }
 
     pub const fn is_playable_land(&self) -> bool {
@@ -656,10 +686,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v8_is_frozen() {
-        // Version 8 promotes Faerie Miscreant and Faerie Seer as ordinary
-        // flying permanents with their exact ETB trigger programs.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x09f1_4312_14fb_2e60);
+    fn card_db_hash_v9_is_frozen() {
+        // Version 9 combines the Faerie entry triggers with exact repeatable
+        // mana choices and the enters-the-battlefield-tapped characteristic.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x236a_a412_7b5d_9dc3);
     }
 
     #[test]
@@ -786,7 +816,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 49, "45 deck cards plus four required tokens");
+        assert_eq!(full, 59, "55 deck cards plus four required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -893,7 +923,6 @@ mod tests {
             "Burning-Tree Emissary",
             "Azorius Guildgate",
             "Twisted Landscape",
-            "Vault of Whispers",
         ] {
             let def = &CARD_DEFS[card_id_by_name(name).unwrap() as usize];
             assert!(

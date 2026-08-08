@@ -65,6 +65,8 @@ struct CardJson {
     produces_mana: Vec<String>,
     #[serde(default)]
     colors: Vec<String>,
+    #[serde(default)]
+    mechanics: Vec<String>,
     decks: Vec<String>,
     /// A permanent token (e.g. Blood), not itself a deck card: exempt from
     /// the empty-deck-coverage check (see `main`'s validation loop) and
@@ -2616,8 +2618,15 @@ fn effect_recipe_for(card: &CardJson) -> String {
 /// or "as long as you control an artifact") and temporary/derived, so it is
 /// deliberately NOT here -- see `engine::static_self_boost_for` and
 /// `EffectOp::PumpControlled`'s `grant_haste` instead.
-fn keywords_for(name: &str) -> &'static str {
-    match name {
+fn keywords_for(card: &CardJson) -> &'static str {
+    if card
+        .mechanics
+        .iter()
+        .any(|mechanic| mechanic == "indestructible")
+    {
+        return "Keywords::INDESTRUCTIBLE";
+    }
+    match card.name.as_str() {
         "Masked Meower" | "Clockwork Percussionist" => "Keywords::HASTE",
         "Sneaky Snacker"
         | "Bird Illusion Token"
@@ -2626,6 +2635,27 @@ fn keywords_for(name: &str) -> &'static str {
         "Samurai Token" => "Keywords::VIGILANCE",
         _ => "Keywords::NONE",
     }
+}
+
+/// Whether the registry describes a repeatable tap-for-mana ability rather
+/// than one-shot mana production such as Burning-Tree Emissary's ETB trigger.
+/// Lands with `mana_ability` and nonlands with the explicit `tap_ability`
+/// marker share the same generated substrate.
+fn has_repeatable_mana_ability(card: &CardJson) -> bool {
+    card.mechanics
+        .iter()
+        .any(|mechanic| mechanic == "mana_ability")
+        && (card.is_land
+            || card
+                .mechanics
+                .iter()
+                .any(|mechanic| mechanic == "tap_ability"))
+}
+
+fn enters_battlefield_tapped(card: &CardJson) -> bool {
+    card.mechanics
+        .iter()
+        .any(|mechanic| mechanic == "enters_tapped")
 }
 
 /// `Some` Kicker cost source text (`CardDef::kicker_cost`), verified against
@@ -3056,8 +3086,8 @@ fn codegen(cards: &[CardJson]) -> String {
     ] {
         let used = cards.iter().any(|card| {
             card.engine_capability != EngineCapabilityJson::NoEffect
-                && (intrinsic_basic_mana_color(card) == Some(color)
-                    || (color == "R" && matches!(special_for(&card.name), Special::GreatFurnace)))
+                && has_repeatable_mana_ability(card)
+                && card.produces_mana.iter().any(|produced| produced == color)
         });
         if !used {
             continue;
@@ -3691,7 +3721,11 @@ fn codegen(cards: &[CardJson]) -> String {
             "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
         )
         .unwrap();
-        writeln!(out, "        then: Box::new(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Graveyard }}),").unwrap();
+        writeln!(
+            out,
+            "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
         writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
         writeln!(out, "    }}").unwrap();
         writeln!(out, "}}").unwrap();
@@ -3715,7 +3749,11 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "        ),").unwrap();
-        writeln!(out, "        then: Box::new(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Graveyard }}),").unwrap();
+        writeln!(
+            out,
+            "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
         writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
         writeln!(out, "    }}").unwrap();
         writeln!(out, "}}").unwrap();
@@ -3952,18 +3990,23 @@ fn codegen(cards: &[CardJson]) -> String {
             spell_effect_src = "spell_effect_ordinary_permanent".to_string();
         }
 
-        let intrinsic_basic_color = intrinsic_basic_mana_color(c);
-        if let (true, Some(color)) = (executable, intrinsic_basic_color) {
+        // Keep the historical function-pointer program for single-color
+        // sources. Multi-color sources expose one action per printed mana
+        // ability through `CardDef::mana_ability_choices` below.
+        let mana_ability_colors = if executable && has_repeatable_mana_ability(c) {
+            &c.produces_mana[..]
+        } else {
+            &[]
+        };
+        if mana_ability_colors.len() == 1 {
+            let color = mana_ability_colors[0].as_str();
             let suffix = color.to_ascii_lowercase();
-            // Validate the metadata symbol through the same closed color set
-            // used to render `CardDef::produces_mana` before naming the
-            // generated one-color ability.
             color_variant(color);
             mana_ability_src = format!("mana_ability_add_{suffix}");
         }
 
         let has_spell_program = spell_effect_src != "no_effect";
-        let has_mana_program = mana_ability_src != "no_effect";
+        let has_mana_program = !mana_ability_colors.is_empty();
         if executable && !c.is_token {
             if c.is_land && !has_mana_program {
                 panic!(
@@ -4013,7 +4056,7 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        produces_mana: &[{produces_src}],").unwrap();
         writeln!(out, "        colors: &[{colors_src}],").unwrap();
         writeln!(out, "        target_spec: {target_spec_src},").unwrap();
-        writeln!(out, "        keywords: {},", keywords_for(&c.name)).unwrap();
+        writeln!(out, "        keywords: {},", keywords_for(c)).unwrap();
         writeln!(out, "        spell_effect: {spell_effect_src},").unwrap();
         writeln!(out, "        mana_ability: {mana_ability_src},").unwrap();
         writeln!(out, "        alt_cost: {},", alt_cost_for(&c.name)).unwrap();
@@ -4036,6 +4079,22 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        mode2: {},", mode2_for(&c.name)).unwrap();
         writeln!(out, "        is_token: {},", c.is_token).unwrap();
         writeln!(out, "        escape: {},", escape_for(&c.name)).unwrap();
+        let mana_ability_choices_src = mana_ability_colors
+            .iter()
+            .map(|color| format!("ManaColor::{}", color_variant(color)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            out,
+            "        mana_ability_choices: &[{mana_ability_choices_src}],"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        enters_battlefield_tapped: {},",
+            executable && enters_battlefield_tapped(c)
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -4053,7 +4112,7 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out).unwrap();
 
     // ---- content + executable-recipe hash ------------------------------
-    // v6 hashes every generated CardDef selector plus semantic tokens from
+    // v7 hashes every generated CardDef selector plus semantic tokens from
     // the same `Special` and structured activated-ability recipes that emit
     // executable definitions. Lorien's Draw3/search and Deep Analysis's
     // target-player draw/ordered flashback and Sleep's ordered Escape cost
@@ -4061,7 +4120,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v6\n");
+    let mut canon = String::from("kernel_carddb/v7\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -4102,7 +4161,22 @@ fn codegen(cards: &[CardJson]) -> String {
         // recipe token. This covers every field selected by the generator for
         // `CardDef`; runtime primitive implementation changes remain pinned
         // separately by the source revision.
-        canon.push_str(keywords_for(&c.name));
+        canon.push_str(keywords_for(c));
+        canon.push('|');
+        canon.push_str("mana_ability_choices=");
+        if c.engine_capability != EngineCapabilityJson::NoEffect && has_repeatable_mana_ability(c) {
+            canon.push_str(&c.produces_mana.join(","));
+        }
+        canon.push('|');
+        canon.push_str("enters_battlefield_tapped=");
+        canon.push_str(
+            if c.engine_capability != EngineCapabilityJson::NoEffect && enters_battlefield_tapped(c)
+            {
+                "true"
+            } else {
+                "false"
+            },
+        );
         canon.push('|');
         canon.push_str(alt_cost_for(&c.name));
         canon.push('|');

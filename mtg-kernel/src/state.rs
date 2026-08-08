@@ -1775,9 +1775,16 @@ impl GameState {
         self.forget_hand_object(id);
         self.clear_object_relations(id);
         let turn = self.turn;
+        let enters_battlefield_tapped = crate::card_def::CARD_DEFS
+            [self.objects.get(id).card_def as usize]
+            .enters_battlefield_tapped;
         let obj = self.objects.get_mut(id);
         obj.zone = Zone::Battlefield;
+        obj.tapped = enters_battlefield_tapped;
         obj.summoning_sick = true;
+        obj.damage = 0;
+        obj.counters = Counters::default();
+        obj.attachments.clear();
         obj.zone_change_count += 1;
         obj.v4
             .reset_for_zone_change(obj.card_def, Zone::Battlefield, turn);

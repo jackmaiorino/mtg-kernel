@@ -43,7 +43,7 @@ use crate::card_def::{self, CardType, CostComponent, Keywords, TargetSpec};
 use crate::effect::{self, EffectOp, ExecCtx, ObjectRef, TargetRef};
 use crate::event::{self, ActiveReplacement, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
-use crate::mana::{self, Cost};
+use crate::mana::{self, Cost, ManaColor};
 use crate::state::{
     stack_target_contract_is_structurally_valid, AbilityKindV4, CastMethodV4, GameState,
     MadnessOfferSourceContractV4, ObjectStateV4, PaidCostRefV4, SpellCastOriginV4,
@@ -1054,6 +1054,10 @@ pub enum Action {
     /// Answers `Decision::ChooseEffectBoolean`. Appended to preserve the
     /// ordering of every pre-existing engine action variant.
     ChooseEffectBoolean(bool),
+    /// Activates one explicitly selected printed mana ability on a source
+    /// with multiple choices. Single-color sources retain the historical
+    /// `ActivateManaAbility` variant and therefore retain its action identity.
+    ActivateManaAbilityChoice(ObjectId, ManaColor),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -2414,12 +2418,72 @@ fn available_mana_abilities(player: PlayerId, state: &GameState) -> Vec<ObjectId
         .copied()
         .filter(|&id| {
             let obj = state.objects.get(id);
+            let def = &card_def::CARD_DEFS[obj.card_def as usize];
             !obj.tapped
-                && card_def::CARD_DEFS[obj.card_def as usize]
-                    .mana_ability_program()
-                    .is_some()
+                && def.has_mana_ability()
+                && !(def.has_type(CardType::Creature) && obj.summoning_sick)
         })
         .collect()
+}
+
+fn activate_mana_ability_for(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    choice: ManaColor,
+) -> Result<(), String> {
+    if !available_mana_abilities(player, state).contains(&source) {
+        return Err(format!(
+            "{source} has no available mana ability for {player:?}"
+        ));
+    }
+    let definition = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
+    let ability_index = definition
+        .mana_ability_choices
+        .iter()
+        .position(|candidate| *candidate == choice)
+        .ok_or_else(|| format!("{source} cannot produce {choice:?}"))?;
+    let program = definition
+        .mana_ability_program_for(choice)
+        .expect("validated mana choice has a generated program");
+    let ctx = ExecCtx::no_targets(source, player);
+    effect::execute(&program, &ctx, state);
+    state.objects.get_mut(source).v4.note_ability_use(
+        AbilityKindV4::Mana,
+        u16::try_from(ability_index).expect("mana ability index fits u16"),
+    );
+
+    // 605.3b: mana abilities don't use the stack, so nothing goes on
+    // it and no new *stack item* appears -- but this is not the same
+    // claim as "doesn't reset the priority-passing count": Java's
+    // `PlayerImpl.activateAbility` ends with an unconditional
+    // `game.getPlayers().resetPassed()` for *any* successful action,
+    // `ACTIVATED_MANA` included (same method, same shared tail as
+    // the `SPELL`/other-ability branches; see `play_land`'s own
+    // identical reset, for the same reason, on the land-drop side of
+    // that method). Without this, a stale `priority_passes[other]
+    // == true` left over from *before* this activation can combine
+    // with the *activating* player's own next real pass to
+    // spuriously satisfy `[true, true]` and advance the step/phase,
+    // skipping the other player's now-legitimately-fresh priority
+    // window entirely. Root-caused (increment 13) against
+    // `game_20260713_002203_0026.txt` decision 64: PlayerRL1 taps a
+    // Mountain in Postcombat Main after SelfPlay had already passed
+    // once this round; the reference still lets SelfPlay act again
+    // (two more Lava Dart casts, both self-targeted, -2 life) before
+    // the turn ends, but the kernel -- never re-arming SelfPlay's
+    // stale pass -- skipped straight to the next turn once
+    // PlayerRL1 next had nothing left to do, silently losing both
+    // points of self-damage.
+    state.engine.priority_passes = [false, false];
+    // See `EngineState::mana_ability_activations`'s doc: the
+    // `DeclareAttackers`/`DeclareBlockers` combat throttle
+    // (`HarnessSurfaceV2::combat_priority_stack_len_seen`) needs its
+    // own re-arm signal for this action, since it never touches the
+    // stack the way a cast/non-mana-activation does.
+    state.engine.mana_ability_activations += 1;
+    state.engine.last_mana_ability_activator = Some(player);
+    Ok(())
 }
 
 fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(ObjectId, u8)> {
@@ -5547,50 +5611,25 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
         Action::ActivateManaAbility(id) => {
             let p = state.priority_player;
-            if !available_mana_abilities(p, state).contains(&id) {
-                return Err(format!("{id} has no available mana ability for {p:?}"));
+            let choices = card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
+                .mana_ability_choices;
+            let [choice] = choices else {
+                return Err(format!(
+                    "{id} requires an explicit mana choice from {choices:?}"
+                ));
+            };
+            activate_mana_ability_for(state, p, id, *choice)
+        }
+        Action::ActivateManaAbilityChoice(id, choice) => {
+            let p = state.priority_player;
+            let choices = card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
+                .mana_ability_choices;
+            if choices.len() < 2 {
+                return Err(format!(
+                    "{id} is a single-color source and uses ActivateManaAbility"
+                ));
             }
-            let program = card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
-                .mana_ability_program()
-                .expect("checked available_mana_abilities above");
-            let ctx = ExecCtx::no_targets(id, p);
-            effect::execute(&program, &ctx, state);
-            state
-                .objects
-                .get_mut(id)
-                .v4
-                .note_ability_use(AbilityKindV4::Mana, 0);
-            // 605.3b: mana abilities don't use the stack, so nothing goes on
-            // it and no new *stack item* appears -- but this is not the same
-            // claim as "doesn't reset the priority-passing count": Java's
-            // `PlayerImpl.activateAbility` ends with an unconditional
-            // `game.getPlayers().resetPassed()` for *any* successful action,
-            // `ACTIVATED_MANA` included (same method, same shared tail as
-            // the `SPELL`/other-ability branches; see `play_land`'s own
-            // identical reset, for the same reason, on the land-drop side of
-            // that method). Without this, a stale `priority_passes[other]
-            // == true` left over from *before* this activation can combine
-            // with the *activating* player's own next real pass to
-            // spuriously satisfy `[true, true]` and advance the step/phase,
-            // skipping the other player's now-legitimately-fresh priority
-            // window entirely. Root-caused (increment 13) against
-            // `game_20260713_002203_0026.txt` decision 64: PlayerRL1 taps a
-            // Mountain in Postcombat Main after SelfPlay had already passed
-            // once this round; the reference still lets SelfPlay act again
-            // (two more Lava Dart casts, both self-targeted, -2 life) before
-            // the turn ends, but the kernel -- never re-arming SelfPlay's
-            // stale pass -- skipped straight to the next turn once
-            // PlayerRL1 next had nothing left to do, silently losing both
-            // points of self-damage.
-            state.engine.priority_passes = [false, false];
-            // See `EngineState::mana_ability_activations`'s doc: the
-            // `DeclareAttackers`/`DeclareBlockers` combat throttle
-            // (`HarnessSurfaceV2::combat_priority_stack_len_seen`) needs its
-            // own re-arm signal for this action, since it never touches the
-            // stack the way a cast/non-mana-activation does.
-            state.engine.mana_ability_activations += 1;
-            state.engine.last_mana_ability_activator = Some(p);
-            Ok(())
+            activate_mana_ability_for(state, p, id, choice)
         }
         Action::ActivateAbility(source, index) => {
             let p = state.priority_player;

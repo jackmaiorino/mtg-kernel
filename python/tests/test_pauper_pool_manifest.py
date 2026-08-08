@@ -551,17 +551,17 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 50,
+                "full_cards": 59,
                 "partial_cards": 0,
-                "no_effect_cards": 100,
+                "no_effect_cards": 91,
                 "token_dependencies": 4,
             },
         )
         expected_copy_totals = [
-            {"deck_id": "Wildfire", "full": 10, "partial": 0, "no_effect": 50, "total": 60},
+            {"deck_id": "Wildfire", "full": 19, "partial": 0, "no_effect": 41, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Affinity", "full": 12, "partial": 0, "no_effect": 48, "total": 60},
-            {"deck_id": "Elves", "full": 17, "partial": 0, "no_effect": 43, "total": 60},
+            {"deck_id": "Affinity", "full": 27, "partial": 0, "no_effect": 33, "total": 60},
+            {"deck_id": "Elves", "full": 26, "partial": 0, "no_effect": 34, "total": 60},
             {"deck_id": "Spy", "full": 8, "partial": 0, "no_effect": 52, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 56, "partial": 0, "no_effect": 4, "total": 60},

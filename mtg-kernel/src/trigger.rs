@@ -342,6 +342,14 @@ pub struct PendingTrigger {
     pub kicked: bool,
 }
 
+fn creature_dies_to_state_based_actions(
+    toughness: i32,
+    marked_damage: i32,
+    indestructible: bool,
+) -> bool {
+    toughness <= 0 || (marked_damage >= toughness && !indestructible)
+}
+
 /// Runs state-based actions to a fixed point: repeat the full SBA sweep
 /// until one pass makes no change (704.3).
 pub fn sba_fixed_point(state: &mut GameState) {
@@ -361,7 +369,15 @@ pub fn sba_fixed_point(state: &mut GameState) {
                 continue;
             }
             let toughness = crate::engine::effective_toughness(state, id);
-            if toughness <= 0 || obj.damage as i32 >= toughness {
+            let indestructible = crate::engine::has_effective_keyword(
+                state,
+                id,
+                crate::card_def::Keywords::INDESTRUCTIBLE,
+            );
+            // 704.5g is a put-into-graveyard action and ignores
+            // indestructible. 704.5h destroys for lethal damage, so
+            // indestructible prevents only that branch.
+            if creature_dies_to_state_based_actions(toughness, obj.damage as i32, indestructible) {
                 dying.push(id);
             }
         }
@@ -665,6 +681,13 @@ mod tests {
         state.players[1].drew_from_empty = true;
         sba_fixed_point(&mut state);
         assert!(state.players[1].has_lost);
+    }
+
+    #[test]
+    fn indestructible_prevents_lethal_destruction_but_not_zero_toughness() {
+        assert!(!creature_dies_to_state_based_actions(3, 3, true));
+        assert!(creature_dies_to_state_based_actions(3, 3, false));
+        assert!(creature_dies_to_state_based_actions(0, 0, true));
     }
 
     #[test]

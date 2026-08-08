@@ -1704,9 +1704,22 @@ fn flat_validate_origin_decision_v1(
             activatable_abilities,
             plot_actions,
         } => {
+            let mut mana_action_count = 0_usize;
+            for object in mana_abilities {
+                let state_object = state.objects.try_get(*object).ok_or_else(invalid)?;
+                let definition = crate::card_def::CARD_DEFS
+                    .get(usize::from(state_object.card_def))
+                    .ok_or_else(invalid)?;
+                if definition.mana_ability_choices.is_empty() {
+                    return Err(invalid());
+                }
+                mana_action_count = mana_action_count
+                    .checked_add(definition.mana_ability_choices.len())
+                    .ok_or_else(invalid)?;
+            }
             let expected_count = castable_spells
                 .len()
-                .checked_add(mana_abilities.len())
+                .checked_add(mana_action_count)
                 .and_then(|count| count.checked_add(land_drops.len()))
                 .and_then(|count| count.checked_add(activatable_abilities.len()))
                 .and_then(|count| count.checked_add(plot_actions.len()))
@@ -1736,28 +1749,48 @@ fn flat_validate_origin_decision_v1(
                 let choices = crate::card_def::CARD_DEFS
                     .get(usize::from(state_object.card_def))
                     .ok_or_else(invalid)?
-                    .produces_mana;
-                let expected_choice = (choices.len() == 1).then_some(choices[0]);
-                let candidate = &candidates[cursor];
-                if !matches!(
-                    (&candidate.semantic, &candidate.policy_action),
-                    (
-                        ActionSemanticV1::ActivateManaAbility {
-                            actor,
-                            source,
-                            mana_choice,
-                        },
-                        PolicyActionV5::Surface(SurfaceAction::Action(
-                            Action::ActivateManaAbility(action)
-                        ))
-                    ) if actor_matches(*actor, *player)
-                        && flat_ref_matches_object_v1(source, *object)
-                        && *mana_choice == expected_choice
-                        && action == object
-                ) {
-                    return Err(invalid());
+                    .mana_ability_choices;
+                for &choice in choices {
+                    let candidate = &candidates[cursor];
+                    let valid = match (&candidate.semantic, &candidate.policy_action) {
+                        (
+                            ActionSemanticV1::ActivateManaAbility {
+                                actor,
+                                source,
+                                mana_choice,
+                            },
+                            PolicyActionV5::Surface(SurfaceAction::Action(
+                                Action::ActivateManaAbility(action),
+                            )),
+                        ) if choices.len() == 1 => {
+                            actor_matches(*actor, *player)
+                                && flat_ref_matches_object_v1(source, *object)
+                                && *mana_choice == Some(choice)
+                                && action == object
+                        }
+                        (
+                            ActionSemanticV1::ActivateManaAbility {
+                                actor,
+                                source,
+                                mana_choice,
+                            },
+                            PolicyActionV5::Surface(SurfaceAction::Action(
+                                Action::ActivateManaAbilityChoice(action, action_choice),
+                            )),
+                        ) if choices.len() > 1 => {
+                            actor_matches(*actor, *player)
+                                && flat_ref_matches_object_v1(source, *object)
+                                && *mana_choice == Some(choice)
+                                && action == object
+                                && *action_choice == choice
+                        }
+                        _ => false,
+                    };
+                    if !valid {
+                        return Err(invalid());
+                    }
+                    cursor += 1;
                 }
-                cursor += 1;
             }
             for object in land_drops {
                 let candidate = &candidates[cursor];
@@ -2215,6 +2248,17 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::PlotSpell { source, .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::PlotSpell(actual))),
         ) => ObjectId(source.arena_id) == *actual,
+        (
+            ActionSemanticV1::ActivateManaAbility {
+                source,
+                mana_choice: Some(expected_choice),
+                ..
+            },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateManaAbilityChoice(
+                actual,
+                actual_choice,
+            ))),
+        ) => ObjectId(source.arena_id) == *actual && expected_choice == actual_choice,
         (
             ActionSemanticV1::ActivateAbility {
                 source,
