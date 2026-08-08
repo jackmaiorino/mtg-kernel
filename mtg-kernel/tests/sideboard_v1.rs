@@ -1,7 +1,13 @@
+use mtg_kernel::card_def::card_id_by_name;
 use mtg_kernel::sideboard::{
-    CardCountV1, DeterministicSideboardPolicyV1, RegisteredDeckV1, SideboardDefaultPlanV1,
-    SideboardErrorV1, SideboardPlanV1, SideboardZoneV1, REGISTERED_DECK_SIZE_V1,
+    checked_in_pauper_registered_decks_v1, CardCountV1, DeterministicSideboardPolicyV1,
+    RegisteredDeckV1, SideboardDefaultPlanV1, SideboardErrorV1, SideboardPlanV1, SideboardZoneV1,
+    REGISTERED_DECK_SIZE_V1,
 };
+
+fn card_id(name: &str) -> u16 {
+    card_id_by_name(name).unwrap_or_else(|| panic!("{name} in CARD_DEFS"))
+}
 
 fn registered_a_v1() -> RegisteredDeckV1 {
     let mut mainboard = vec![10; 4];
@@ -58,6 +64,64 @@ fn exact_registration_is_canonical_and_rejects_wrong_zone_sizes() {
         RegisteredDeckV1::new_exact_v1("Deck", vec![1; 60], vec![2; 14]),
         Err(SideboardErrorV1::WrongSideboardSize { actual: 14 })
     );
+}
+
+#[test]
+fn executable_registration_rejects_unknown_token_and_unsupported_cards() {
+    let mountain = card_id("Mountain");
+    let island = card_id("Island");
+    let admitted =
+        RegisteredDeckV1::new_fully_supported_v1("Deck", vec![mountain; 60], vec![island; 15])
+            .unwrap();
+    assert_eq!(admitted.registered_configuration().mainboard().len(), 60);
+    assert_eq!(admitted.registered_configuration().sideboard().len(), 15);
+
+    assert_eq!(
+        RegisteredDeckV1::new_fully_supported_v1("Deck", vec![mountain; 60], vec![u16::MAX; 15],),
+        Err(SideboardErrorV1::UnknownRegisteredCardId {
+            zone: SideboardZoneV1::RegisteredSideboard,
+            card_id: u16::MAX,
+        })
+    );
+
+    let blood = card_id("Blood Token");
+    assert_eq!(
+        RegisteredDeckV1::new_fully_supported_v1("Deck", vec![mountain; 60], vec![blood; 15]),
+        Err(SideboardErrorV1::TokenInRegisteredDeck {
+            zone: SideboardZoneV1::RegisteredSideboard,
+            card_id: blood,
+            card_name: "Blood Token".to_owned(),
+        })
+    );
+
+    let annul = card_id("Annul");
+    assert_eq!(
+        RegisteredDeckV1::new_fully_supported_v1("Deck", vec![annul; 60], vec![island; 15]),
+        Err(SideboardErrorV1::CardNotFullySupported {
+            zone: SideboardZoneV1::RegisteredMainboard,
+            card_id: annul,
+            card_name: "Annul".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn checked_in_pool_is_wired_to_the_executable_bo3_admission_gate() {
+    match checked_in_pauper_registered_decks_v1() {
+        Ok(decks) => {
+            assert_eq!(decks.len(), 9);
+            assert!(decks.iter().all(|deck| {
+                deck.registered_configuration().mainboard().len() == 60
+                    && deck.registered_configuration().sideboard().len() == 15
+            }));
+        }
+        Err(SideboardErrorV1::CardNotFullySupported { .. })
+        | Err(SideboardErrorV1::UnregisteredPoolCard { .. }) => {
+            // This is the intended current outcome until the remaining pool
+            // cards are promoted. No structural or policy error is accepted.
+        }
+        Err(other) => panic!("unexpected checked-in pool admission error: {other}"),
+    }
 }
 
 #[test]

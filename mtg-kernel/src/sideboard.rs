@@ -18,9 +18,11 @@ pub const REGISTERED_DECK_SIZE_V1: usize =
     REGISTERED_MAINBOARD_SIZE_V1 + REGISTERED_SIDEBOARD_SIZE_V1;
 pub const SIDEBOARD_POLICY_SCHEMA_V1: &str = "kernel_pauper_sideboard_policy/v1";
 pub const SIDEBOARD_RECEIPT_SCHEMA_V1: &str = "kernel_sideboard_receipt/v1";
+pub const PAUPER_POOL_SCHEMA_V1: &str = "kernel_pauper_pool/v1";
 pub const SIDEBOARD_POLICY_MATCHUP_COVERAGE_V1: &str = "all_registered_deck_pairs";
 pub const PAUPER_SIDEBOARD_POLICY_JSON_V1: &str =
     include_str!("../../data/pauper_sideboard_policy_v1.json");
+pub const PAUPER_POOL_JSON_V1: &str = include_str!("../../data/pauper_pool_v1.json");
 
 const DECK_CONFIGURATION_HASH_DOMAIN_V1: &str = "kernel-deck-configuration-sha256/v1";
 const REGISTERED_DECK_HASH_DOMAIN_V1: &str = "kernel-registered-75-sha256/v1";
@@ -108,6 +110,28 @@ impl RegisteredDeckV1 {
         })
     }
 
+    /// Admits a registered deck for executable BO3 play. The structural
+    /// constructor above remains available for isolated exchange-policy
+    /// tests, while this constructor additionally rejects unknown ids,
+    /// tokens, and any card whose rules implementation is not fully
+    /// supported. This is the sideboard sibling of BO1 deck preflight.
+    pub fn new_fully_supported_v1(
+        deck_id: impl Into<String>,
+        mainboard: Vec<u16>,
+        sideboard: Vec<u16>,
+    ) -> Result<Self, SideboardErrorV1> {
+        let deck = Self::new_exact_v1(deck_id, mainboard, sideboard)?;
+        validate_registered_cards_v1(
+            deck.configuration.mainboard(),
+            SideboardZoneV1::RegisteredMainboard,
+        )?;
+        validate_registered_cards_v1(
+            deck.configuration.sideboard(),
+            SideboardZoneV1::RegisteredSideboard,
+        )?;
+        Ok(deck)
+    }
+
     pub fn deck_id(&self) -> &str {
         &self.deck_id
     }
@@ -184,6 +208,64 @@ impl RegisteredDeckV1 {
         };
         Ok((configuration, receipt))
     }
+}
+
+/// Parses the checked-in nine-deck pool into exact executable 60/15
+/// registrations. It deliberately fails until every referenced card exists
+/// in the registry and has full rules support, making completion of the card
+/// pool an executable BO3 admission gate rather than a documentation claim.
+pub fn checked_in_pauper_registered_decks_v1() -> Result<Vec<RegisteredDeckV1>, SideboardErrorV1> {
+    let document: PauperPoolDocumentV1 = serde_json::from_str(PAUPER_POOL_JSON_V1)
+        .map_err(|error| SideboardErrorV1::PoolJson(error.to_string()))?;
+    if document.schema != PAUPER_POOL_SCHEMA_V1 {
+        return Err(SideboardErrorV1::PoolSchemaMismatch {
+            actual: document.schema,
+        });
+    }
+    if document.decks.len() != 9 {
+        return Err(SideboardErrorV1::PoolDeckCount {
+            actual: document.decks.len(),
+        });
+    }
+
+    let mut deck_ids = document
+        .decks
+        .iter()
+        .map(|deck| deck.id.clone())
+        .collect::<Vec<_>>();
+    for deck_id in &deck_ids {
+        validate_identifier_v1("pool deck id", deck_id)?;
+    }
+    deck_ids.sort();
+    for pair in deck_ids.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(SideboardErrorV1::DuplicatePoolDeckId {
+                deck_id: pair[0].clone(),
+            });
+        }
+    }
+    let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1()?;
+    if deck_ids != policy.deck_ids {
+        return Err(SideboardErrorV1::PoolPolicyDeckSetMismatch);
+    }
+
+    document
+        .decks
+        .into_iter()
+        .map(|deck| {
+            let mainboard = expand_pool_zone_v1(
+                &deck.id,
+                SideboardZoneV1::RegisteredMainboard,
+                deck.mainboard,
+            )?;
+            let sideboard = expand_pool_zone_v1(
+                &deck.id,
+                SideboardZoneV1::RegisteredSideboard,
+                deck.sideboard,
+            )?;
+            RegisteredDeckV1::new_fully_supported_v1(deck.id, mainboard, sideboard)
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -609,6 +691,52 @@ pub enum SideboardErrorV1 {
         plan: String,
     },
     RegisteredMultisetChanged,
+    UnknownRegisteredCardId {
+        zone: SideboardZoneV1,
+        card_id: u16,
+    },
+    TokenInRegisteredDeck {
+        zone: SideboardZoneV1,
+        card_id: u16,
+        card_name: String,
+    },
+    CardNotFullySupported {
+        zone: SideboardZoneV1,
+        card_id: u16,
+        card_name: String,
+    },
+    PoolJson(String),
+    PoolSchemaMismatch {
+        actual: String,
+    },
+    PoolDeckCount {
+        actual: usize,
+    },
+    DuplicatePoolDeckId {
+        deck_id: String,
+    },
+    PoolPolicyDeckSetMismatch,
+    PoolCopyCountMismatch {
+        deck_id: String,
+        zone: SideboardZoneV1,
+        declared: usize,
+        actual: usize,
+    },
+    DuplicatePoolCardName {
+        deck_id: String,
+        zone: SideboardZoneV1,
+        card_name: String,
+    },
+    ZeroPoolCardCount {
+        deck_id: String,
+        zone: SideboardZoneV1,
+        card_name: String,
+    },
+    UnregisteredPoolCard {
+        deck_id: String,
+        zone: SideboardZoneV1,
+        card_name: String,
+    },
     EmptyPolicyDeckSet,
     DuplicatePolicyDeckId {
         deck_id: String,
@@ -682,6 +810,71 @@ impl fmt::Display for SideboardErrorV1 {
             Self::RegisteredMultisetChanged => {
                 formatter.write_str("sideboarding changed the registered 75-card multiset")
             }
+            Self::UnknownRegisteredCardId { zone, card_id } => {
+                write!(formatter, "unknown card id {card_id} in {zone}")
+            }
+            Self::TokenInRegisteredDeck {
+                zone,
+                card_id,
+                card_name,
+            } => write!(
+                formatter,
+                "token {card_name:?} ({card_id}) cannot be registered in {zone}"
+            ),
+            Self::CardNotFullySupported {
+                zone,
+                card_id,
+                card_name,
+            } => write!(
+                formatter,
+                "card {card_name:?} ({card_id}) in {zone} is not fully supported"
+            ),
+            Self::PoolJson(error) => write!(formatter, "invalid Pauper pool JSON: {error}"),
+            Self::PoolSchemaMismatch { actual } => {
+                write!(formatter, "unexpected Pauper pool schema {actual:?}")
+            }
+            Self::PoolDeckCount { actual } => {
+                write!(formatter, "Pauper pool must contain 9 decks, got {actual}")
+            }
+            Self::DuplicatePoolDeckId { deck_id } => {
+                write!(formatter, "duplicate Pauper pool deck id {deck_id:?}")
+            }
+            Self::PoolPolicyDeckSetMismatch => {
+                formatter.write_str("Pauper pool and sideboard policy deck sets differ")
+            }
+            Self::PoolCopyCountMismatch {
+                deck_id,
+                zone,
+                declared,
+                actual,
+            } => write!(
+                formatter,
+                "Pauper pool deck {deck_id:?} {zone} declares {declared} copies but expands to {actual}"
+            ),
+            Self::DuplicatePoolCardName {
+                deck_id,
+                zone,
+                card_name,
+            } => write!(
+                formatter,
+                "Pauper pool deck {deck_id:?} {zone} lists {card_name:?} twice"
+            ),
+            Self::ZeroPoolCardCount {
+                deck_id,
+                zone,
+                card_name,
+            } => write!(
+                formatter,
+                "Pauper pool deck {deck_id:?} {zone} gives {card_name:?} zero copies"
+            ),
+            Self::UnregisteredPoolCard {
+                deck_id,
+                zone,
+                card_name,
+            } => write!(
+                formatter,
+                "Pauper pool deck {deck_id:?} {zone} references unregistered card {card_name:?}"
+            ),
             Self::EmptyPolicyDeckSet => formatter.write_str("policy deck set is empty"),
             Self::DuplicatePolicyDeckId { deck_id } => {
                 write!(formatter, "duplicate policy deck id {deck_id:?}")
@@ -754,6 +947,99 @@ struct SideboardPlanDocumentV1 {
     game_index: u8,
     cards_in: Vec<CardCountV1>,
     cards_out: Vec<CardCountV1>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PauperPoolDocumentV1 {
+    schema: String,
+    decks: Vec<PauperPoolDeckDocumentV1>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PauperPoolDeckDocumentV1 {
+    id: String,
+    mainboard: PauperPoolZoneDocumentV1,
+    sideboard: PauperPoolZoneDocumentV1,
+}
+
+#[derive(Debug, Deserialize)]
+struct PauperPoolZoneDocumentV1 {
+    copy_count: usize,
+    cards: Vec<PauperPoolCardDocumentV1>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PauperPoolCardDocumentV1 {
+    name: String,
+    count: u8,
+}
+
+fn validate_registered_cards_v1(
+    cards: &[u16],
+    zone: SideboardZoneV1,
+) -> Result<(), SideboardErrorV1> {
+    for &card_id in cards {
+        let Some(definition) = crate::card_def::CARD_DEFS.get(card_id as usize) else {
+            return Err(SideboardErrorV1::UnknownRegisteredCardId { zone, card_id });
+        };
+        if definition.is_token {
+            return Err(SideboardErrorV1::TokenInRegisteredDeck {
+                zone,
+                card_id,
+                card_name: definition.name.to_owned(),
+            });
+        }
+        if !definition.has_full_support() || !definition.is_executable() {
+            return Err(SideboardErrorV1::CardNotFullySupported {
+                zone,
+                card_id,
+                card_name: definition.name.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn expand_pool_zone_v1(
+    deck_id: &str,
+    zone: SideboardZoneV1,
+    document: PauperPoolZoneDocumentV1,
+) -> Result<Vec<u16>, SideboardErrorV1> {
+    let mut names = BTreeSet::new();
+    let mut cards = Vec::with_capacity(document.copy_count);
+    for row in document.cards {
+        if !names.insert(row.name.clone()) {
+            return Err(SideboardErrorV1::DuplicatePoolCardName {
+                deck_id: deck_id.to_owned(),
+                zone,
+                card_name: row.name,
+            });
+        }
+        if row.count == 0 {
+            return Err(SideboardErrorV1::ZeroPoolCardCount {
+                deck_id: deck_id.to_owned(),
+                zone,
+                card_name: row.name,
+            });
+        }
+        let Some(card_id) = crate::card_def::card_id_by_name(&row.name) else {
+            return Err(SideboardErrorV1::UnregisteredPoolCard {
+                deck_id: deck_id.to_owned(),
+                zone,
+                card_name: row.name,
+            });
+        };
+        cards.extend(std::iter::repeat_n(card_id, row.count as usize));
+    }
+    if cards.len() != document.copy_count {
+        return Err(SideboardErrorV1::PoolCopyCountMismatch {
+            deck_id: deck_id.to_owned(),
+            zone,
+            declared: document.copy_count,
+            actual: cards.len(),
+        });
+    }
+    Ok(cards)
 }
 
 fn validate_identifier_v1(field: &'static str, value: &str) -> Result<(), SideboardErrorV1> {
