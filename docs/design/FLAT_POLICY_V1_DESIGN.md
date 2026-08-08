@@ -4,7 +4,7 @@ Status: validated bounded typed full-state record checkpoint. The checked-in
 `FlatDecisionV1` producer covers globals, objects, relations, variable auxiliary
 rows, and the pre-existing action slice, but it does not yet admit an
 accelerator projection, model, checkpoint, training, evaluation, or performance
-contract. See `FLAT_POLICY_V1_VALIDATION.md` for the bounded engineering
+contract. See `docs/reports/FLAT_POLICY_V1_VALIDATION.md` for the bounded engineering
 evidence and explicit limitations. All diagnostic timings remain noncanonical
 until their separate source and measurement gates pass.
 

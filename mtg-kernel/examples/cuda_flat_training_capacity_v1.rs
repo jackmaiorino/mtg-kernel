@@ -20,7 +20,7 @@
 //! small synthetic forward, detached loss, output gradients, and all fourteen
 //! parameter tensors through full-vector summaries, order-sensitive evidence,
 //! and fixed representatives. It is still not an elementwise production-model
-//! oracle; see `CUDA_FLAT_TRAINING_GOLDEN_V1.md`.
+//! oracle; see `docs/reports/CUDA_FLAT_TRAINING_GOLDEN_V1.md`.
 
 use cudarc::cublas::{sys as blas_sys, CudaBlas, Gemm, GemmConfig};
 use cudarc::driver::{
